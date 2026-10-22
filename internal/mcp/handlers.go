@@ -131,33 +131,35 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	embeddingStatus      EmbeddingStatusReader
-	delegatedOnly        bool
-	downloads            *downloadCache
-	engine               query.Engine
-	archiveSQLQuerier    ArchiveSQLQuerier
-	attachmentsDir       string
-	attachmentReader     AttachmentReader
-	manifestSaver        DeletionManifestSaver
-	hybridSearcher       HybridSearcher
-	similarSearcher      SimilarSearcher
-	dataDir              string
-	documentSearcher     DocumentSearcher
-	mediaSearcher        MediaSearcher
-	personFileSearcher   PersonFileSearcher
-	peopleBackend        peoplebrowser.Backend
-	directoryBackend     peoplebrowser.DirectoryLister
-	savedViews           savedview.Service
-	meetings             MeetingBackend
-	calendar             CalendarBackend
-	personAgendaBackend  PersonAgendaBackend
-	kata                 KataBackend
-	identityReview       IdentityReviewBackend
-	personCardDAV        PersonCardDAVBackend
-	messageTags          MessageTagBackend
-	identityScoring      IdentityScoringBackend
-	drafts               DraftRunner
-	contactRoutesBackend ContactRoutesBackend
+	embeddingStatus          EmbeddingStatusReader
+	delegatedOnly            bool
+	downloads                *downloadCache
+	engine                   query.Engine
+	archiveSQLQuerier        ArchiveSQLQuerier
+	attachmentsDir           string
+	attachmentReader         AttachmentReader
+	manifestSaver            DeletionManifestSaver
+	hybridSearcher           HybridSearcher
+	similarSearcher          SimilarSearcher
+	dataDir                  string
+	documentSearcher         DocumentSearcher
+	mediaSearcher            MediaSearcher
+	personFileSearcher       PersonFileSearcher
+	peopleBackend            peoplebrowser.Backend
+	directoryBackend         peoplebrowser.DirectoryLister
+	savedViews               savedview.Service
+	meetings                 MeetingBackend
+	calendar                 CalendarBackend
+	calEvents                CalendarEventsBackend
+	calendarEventsAdvertised bool
+	personAgendaBackend      PersonAgendaBackend
+	kata                     KataBackend
+	identityReview           IdentityReviewBackend
+	personCardDAV            PersonCardDAVBackend
+	messageTags              MessageTagBackend
+	identityScoring          IdentityScoringBackend
+	drafts                   DraftRunner
+	contactRoutesBackend     ContactRoutesBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -781,14 +783,14 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	}
 	if result.TotalCount < 0 {
 		return jsonResult(searchMetadataResponse{
-			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState,
+			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState, Hint: h.calendarSearchHint(q),
 		})
 	}
-	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState)
+	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState, h.calendarSearchHint(q))
 }
 
-func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string) (*toolResult, error) {
-	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state})
+func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string, hint string) (*toolResult, error) {
+	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state, Hint: hint})
 }
 
 func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -994,6 +996,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 
 	return jsonResult(searchMessageBodiesResponse{
 		paginatedResponse: newPaginatedResponseNoTotal(data, offset, hasMore),
+		Hint:              h.calendarSearchHint(q),
 		Mode:              searchModeKeyword,
 		IndexState:        result.IndexState,
 	})
@@ -1063,6 +1066,7 @@ type searchMessageBodiesResponse struct {
 	paginatedResponse[searchMessageItem]
 
 	IndexState    string                  `json:"index_state,omitempty"`
+	Hint          string                  `json:"hint,omitempty"`
 	Mode          string                  `json:"mode"`
 	PoolSaturated bool                    `json:"pool_saturated"`
 	Accelerator   string                  `json:"accelerator,omitempty"`
@@ -1228,6 +1232,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 
 	return jsonResult(searchMessageBodiesResponse{
 		paginatedResponse: newPaginatedResponseNoTotal(page, offset, hasMore),
+		Hint:              h.calendarSearchHint(parsed),
 		Mode:              mode,
 		PoolSaturated:     meta.PoolSaturated,
 		Accelerator:       meta.Accelerator,
@@ -1333,6 +1338,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 
 	return jsonResult(searchMessageBodiesResponse{
 		paginatedResponse: newPaginatedResponseNoTotal(items, offset, hasMore),
+		Hint:              h.calendarSearchHint(parsed),
 		Mode:              mode,
 		PoolSaturated:     result.PoolSaturated,
 		Accelerator:       result.Accelerator,

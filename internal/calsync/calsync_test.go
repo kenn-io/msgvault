@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -939,5 +941,79 @@ func TestSnippet(t *testing.T) {
 			assert.LessOrEqual(len(got), maxSnippetBytes)
 			assert.True(utf8.ValidString(got))
 		})
+	}
+}
+
+func TestSparseStandaloneCancellationOccurrences(t *testing.T) {
+	for _, known := range []bool{false, true} {
+		t.Run(strconv.FormatBool(known), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+
+			s, st := newSyncer(t, gcal.NewMockAPI(), Options{})
+			src, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+			requirements.NoError(err)
+			cal := gcal.Calendar{ID: "primary", TimeZone: "UTC"}
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			if known {
+				_, err = s.ingestEvent(src.ID, cal, gcal.Event{ID: "single", Status: "confirmed", Start: gcal.EventDateTime{DateTime: from.Add(9 * time.Hour)}, End: gcal.EventDateTime{DateTime: from.Add(10 * time.Hour)}})
+				requirements.NoError(err)
+			}
+			ev, err := gcalmodel.DecodeEvent([]byte(`{"id":"single","status":"cancelled"}`))
+			requirements.NoError(err)
+			id, _, err := s.flagCancelled(src.ID, cal, ev)
+			requirements.NoError(err)
+			var kind, status string
+			var start, end sql.NullTime
+			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT kind, status, start_at, end_at FROM calendar_events WHERE message_id = ?`), id).Scan(&kind, &status, &start, &end))
+			assertions.Equal("single", kind)
+			assertions.Equal("cancelled", status)
+			assertions.Equal(known, start.Valid)
+			assertions.Equal(known, end.Valid)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
+			requirements.NoError(err)
+			if known {
+				requirements.Len(page.Occurrences, 1)
+				assertions.Equal("cancelled", page.Occurrences[0].Status)
+				assertions.Equal(id, page.Occurrences[0].MessageID)
+			} else {
+				assertions.Empty(page.Unexpandable)
+			}
+		})
+	}
+}
+
+func TestCancellationPreservesEmptyExceptionSnapshot(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	s, st := newSyncer(t, gcal.NewMockAPI(), Options{})
+	src, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	requirements.NoError(err)
+	cal := gcal.Calendar{ID: "primary", TimeZone: "UTC"}
+	for _, raw := range []string{
+		`{"id":"master","summary":"Master title","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"],"attendees":[{"email":"guest@example.com"}]}`,
+		`{"id":"exception","recurringEventId":"master","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T09:00:00Z"},"end":{"dateTime":"2027-03-09T10:00:00Z"}}`,
+	} {
+		ev, err := gcalmodel.DecodeEvent([]byte(raw))
+		requirements.NoError(err)
+		_, err = s.ingestEvent(src.ID, cal, ev)
+		requirements.NoError(err)
+	}
+	from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
+	for _, cancelled := range []bool{false, true} {
+		if cancelled {
+			ev, err := gcalmodel.DecodeEvent([]byte(`{"id":"exception","recurringEventId":"master","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"status":"cancelled"}`))
+			requirements.NoError(err)
+			_, inserted, err := s.flagCancelled(src.ID, cal, ev)
+			requirements.NoError(err)
+			assertions.False(inserted)
+		}
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
+		requirements.NoError(err)
+		requirements.Len(page.Occurrences, 1)
+		assertions.Empty(page.Occurrences[0].Subject)
+		assertions.Empty(page.Occurrences[0].Attendees)
+		if cancelled {
+			assertions.Equal("cancelled", page.Occurrences[0].Status)
+		}
 	}
 }

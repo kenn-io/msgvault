@@ -157,6 +157,26 @@ func (c CalendarResultOutcomeCode) Validate() error {
 	}
 }
 
+type CalendarSourceCoverageStatus string
+
+const (
+	CalendarSourceCoverageStatusComplete        CalendarSourceCoverageStatus = "complete"
+	CalendarSourceCoverageStatusNoBaseline      CalendarSourceCoverageStatus = "no_baseline"
+	CalendarSourceCoverageStatusPartialEvidence CalendarSourceCoverageStatus = "partial_evidence"
+	CalendarSourceCoverageStatusStale           CalendarSourceCoverageStatus = "stale"
+	CalendarSourceCoverageStatusSyncFailed      CalendarSourceCoverageStatus = "sync_failed"
+)
+
+// Validate checks if the CalendarSourceCoverageStatus value is valid
+func (c CalendarSourceCoverageStatus) Validate() error {
+	switch c {
+	case CalendarSourceCoverageStatusComplete, CalendarSourceCoverageStatusNoBaseline, CalendarSourceCoverageStatusPartialEvidence, CalendarSourceCoverageStatusStale, CalendarSourceCoverageStatusSyncFailed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CalendarSourceCoverageStatus value, got: %v", c))
+	}
+}
+
 type CandidateClassification string
 
 const (
