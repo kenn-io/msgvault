@@ -27,7 +27,7 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 		`INSERT INTO document_extractions (id,profile_id,canonical_blob_hash,extraction_input_key,state,local_bytes) VALUES ('extraction','profile','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','original','ready',128)`,
 		`INSERT INTO document_chunks (extraction_id,chunk_key,ordinal,text,heading_path,first_unit_index,last_unit_index,checksum,char_count) VALUES ('extraction','chunk',0,'synthetic extracted text','[]',0,0,'checksum',24)`,
 		`DELETE FROM applied_migrations WHERE name IN ('drop_document_message_triggers_v1','person_sweep_change_triggers_v6')`,
-		`UPDATE archive_metadata SET value='11' WHERE key='schema_version'`,
+		`UPDATE archive_metadata SET value='13' WHERE key='schema_version'`,
 	} {
 		_, err = f.Store.DB().ExecContext(t.Context(), statement)
 		requirements.NoError(err)
