@@ -608,15 +608,14 @@ func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAtt
 	defer cancel()
 	if d.Outcome == "requested" || d.Outcome == "operator_required" {
 		job, err := w.client.JobStatus(ctx, d.JobID)
-		return job, d.JobID, err
+		if !docbankmedia.IsNotFound(err) {
+			return job, d.JobID, err
+		}
 	}
 	selector := docbankmedia.ProcessingSelector{NodeID: d.NodeID, ContentVersionID: d.VersionID, Profile: w.options.DocumentProfile}
 	plan, err := w.client.PlanProcessing(ctx, selector)
-	if err != nil {
-		return docbankmedia.JobStatus{}, "", err
-	}
-	if plan.RenditionIneligibleReason != "" {
-		return docbankmedia.JobStatus{State: "failed", FailureCode: plan.RenditionIneligibleReason}, "", nil
+	if err != nil || plan.RenditionIneligibleReason != "" {
+		return docbankmedia.JobStatus{State: "failed", FailureCode: plan.RenditionIneligibleReason}, "", err
 	}
 	jobID, err := w.client.StartProcessing(ctx, selector, plan.Fingerprint)
 	return docbankmedia.JobStatus{State: "queued"}, jobID, err
