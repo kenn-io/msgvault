@@ -144,6 +144,19 @@ func (o *AttributeOptions) ChoiceValues() []string {
 	return values
 }
 
+// AttributeStability describes how quickly an attribute can change.
+type AttributeStability string
+
+const (
+	AttributeStabilityFixed    AttributeStability = "fixed"
+	AttributeStabilityDurable  AttributeStability = "durable"
+	AttributeStabilityVolatile AttributeStability = "volatile"
+)
+
+func (s AttributeStability) Valid() bool {
+	return s == AttributeStabilityFixed || s == AttributeStabilityDurable || s == AttributeStabilityVolatile
+}
+
 // AttributeDefinition is portable metadata for one typed field.
 type AttributeDefinition struct {
 	ID            int64                `json:"id"`
@@ -164,6 +177,7 @@ type AttributeDefinition struct {
 	APIMutable    bool                 `json:"api_mutable"`
 	IsSearchable  bool                 `json:"is_searchable"`
 	IsSensitive   bool                 `json:"is_sensitive"`
+	Stability     AttributeStability   `json:"stability" enum:"fixed,durable,volatile"`
 	IsAudited     bool                 `json:"is_audited"`
 	IsDeletable   bool                 `json:"is_deletable"`
 	HistoryExempt bool                 `json:"history_exempt"`
@@ -195,6 +209,7 @@ type AttributeDefinitionInput struct {
 	APIMutable    bool
 	IsSearchable  bool
 	IsSensitive   bool
+	Stability     AttributeStability
 	IsAudited     bool
 	IsDeletable   bool
 	HistoryExempt bool
@@ -209,6 +224,7 @@ type AttributeDefinitionUpdate struct {
 	Description  **string
 	DisplayOrder *int64
 	IsSensitive  *bool
+	Stability    *AttributeStability
 	IsActive     *bool
 }
 
@@ -264,6 +280,9 @@ func derivedAttributeSlugCandidate(base string, attempt int) string {
 // PrepareAttributeDefinitionInput applies server-side create defaults shared
 // by persistent and local validation paths.
 func PrepareAttributeDefinitionInput(input AttributeDefinitionInput) AttributeDefinitionInput {
+	if input.Stability == "" {
+		input.Stability = AttributeStabilityDurable
+	}
 	if input.Slug == "" {
 		input.Slug = deriveAttributeSlug(input.Label)
 	}
@@ -289,6 +308,9 @@ func validateAttributeDefinitionInput(
 			"%w: %s", ErrAttributeDefinitionInvalid, fmt.Sprintf(format, args...))
 	}
 
+	if !input.Stability.Valid() {
+		return invalid("stability %q is not supported", input.Stability)
+	}
 	input.UniversalID = strings.TrimSpace(input.UniversalID)
 	input.Slug = strings.TrimSpace(input.Slug)
 	input.Label = strings.TrimSpace(input.Label)
@@ -574,7 +596,7 @@ const attributeDefinitionColumns = `
 	value_type, field_type, record_target, cardinality, display_order,
 	is_required, ownership, ui_creatable, ui_editable, api_mutable,
 	is_searchable, is_sensitive, is_audited, is_deletable, history_exempt, derived_source,
-	options, vcard_property, is_active, revision, created_at, updated_at
+	options, vcard_property, is_active, revision, created_at, updated_at, stability
 `
 
 // CreateAttributeDefinitionContext validates and inserts a definition row.
@@ -623,8 +645,8 @@ func (s *Store) createAttributeDefinitionTx(
 			    value_type, field_type, record_target, cardinality, display_order,
 			    is_required, ownership, ui_creatable, ui_editable, api_mutable,
 			    is_searchable, is_sensitive, is_audited, is_deletable, history_exempt,
-			    derived_source, options, vcard_property
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?)
+			    derived_source, options, vcard_property, stability
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?)
 			ON CONFLICT DO NOTHING
 			RETURNING %s
 		`, s.dialect.JSONBindExpr(), attributeDefinitionColumns)
@@ -636,7 +658,7 @@ func (s *Store) createAttributeDefinitionTx(
 		input.IsRequired, string(input.Ownership), input.UICreatable,
 		input.UIEditable, input.APIMutable, input.IsSearchable,
 		input.IsSensitive, input.IsAudited, input.IsDeletable, input.HistoryExempt,
-		input.DerivedSource, options, input.VCardProperty)
+		input.DerivedSource, options, input.VCardProperty, input.Stability)
 	created, scanErr := scanAttributeDefinition(row)
 	if scanErr != nil {
 		return nil, s.attributeDefinitionWriteError(ctx, tx, input, scanErr)
@@ -794,6 +816,13 @@ func (s *Store) updateAttributeDefinitionOnce(
 ) (*AttributeDefinition, error) {
 	assignments := make([]string, 0, 5)
 	args := make([]any, 0, 6)
+	if update.Stability != nil {
+		if !update.Stability.Valid() {
+			return nil, fmt.Errorf("%w: stability %q is not supported", ErrAttributeDefinitionInvalid, *update.Stability)
+		}
+		assignments = append(assignments, "stability = ?")
+		args = append(args, *update.Stability)
+	}
 	if update.Label != nil {
 		label := strings.TrimSpace(*update.Label)
 		if label == "" {
@@ -878,8 +907,8 @@ func (s *Store) updateAttributeDefinitionOnce(
 			return fmt.Errorf("update attribute definition %d: %w", id, scanErr)
 		}
 		definition = updated
-		// Label, description, and display order are presentation only and
-		// never projected; toggling is_active adds or removes the definition
+		// Label, description, display order, and stability do not change
+		// projected values; toggling is_active adds or removes the definition
 		// from every snapshot that lists it.
 		if update.IsActive == nil {
 			return nil
@@ -974,7 +1003,7 @@ func scanAttributeDefinition(row scanner) (*AttributeDefinition, error) {
 		&definition.IsSearchable, &definition.IsSensitive, &definition.IsAudited, &definition.IsDeletable,
 		&definition.HistoryExempt, &derivedSource, &options, &vcardProperty,
 		&definition.IsActive, &definition.Revision, &definition.CreatedAt,
-		&definition.UpdatedAt,
+		&definition.UpdatedAt, &definition.Stability,
 	); err != nil {
 		return nil, err
 	}

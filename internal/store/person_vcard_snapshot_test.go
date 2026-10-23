@@ -135,6 +135,51 @@ func TestPersonNotesSnapshotCarriesVCardDefinitionAndValue(t *testing.T) {
 	assert.Equal(note, *attribute.Values[0].Value.Text)
 }
 
+func TestPersonVCardSnapshotFingerprintIgnoresDefinitionStability(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	person := createEnvelopePerson(t, st, "stability@example.test")
+
+	before, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+	require.NoError(err)
+	var notes store.PersonVCardAttribute
+	found := false
+	for _, attribute := range before.Attributes {
+		if attribute.Definition.Slug == store.AttributeSlugNotes {
+			notes = attribute
+			found = true
+			break
+		}
+	}
+	require.True(found, "standard Notes definition is included in the vCard snapshot")
+	assert.Empty(notes.Values)
+
+	definition, err := st.GetAttributeDefinitionContext(t.Context(), notes.Definition.ID)
+	require.NoError(err)
+	nextStability := store.AttributeStabilityVolatile
+	if definition.Stability == nextStability {
+		nextStability = store.AttributeStabilityFixed
+	}
+	updated, err := st.UpdateAttributeDefinitionContext(
+		t.Context(), definition.ID, definition.Revision,
+		store.AttributeDefinitionUpdate{Stability: &nextStability},
+	)
+	require.NoError(err)
+	assert.Equal(nextStability, updated.Stability)
+
+	after, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+	require.NoError(err)
+	assert.Equal(before.Fingerprint, after.Fingerprint)
+	for _, attribute := range after.Attributes {
+		if attribute.Definition.Slug == store.AttributeSlugNotes {
+			assert.Equal(nextStability, attribute.Definition.Stability)
+			return
+		}
+	}
+	require.Fail("standard Notes definition is retained after a stability update")
+}
+
 // A snapshot's employment set doubles as the projection's retention set, so a
 // page-sized read would delete the mapped properties of every employment past
 // the first page.
