@@ -356,7 +356,7 @@ func TestDetect(t *testing.T) {
 				assert.True(now.Add(-tt.wantActivity).Equal(loop.LastActivity))
 			}
 			if tt.wantSummary != "" {
-				assert.Equal(tt.wantSummary, summary(loop.Anchor))
+				assert.Equal(tt.wantSummary, loop.Summary)
 			}
 			assert.True(loop.OwedSince.Equal(loop.Anchor.OccurredAt))
 			if tt.wantLastAsk != 0 {
