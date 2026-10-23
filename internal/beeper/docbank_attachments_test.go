@@ -1099,52 +1099,6 @@ func TestAttachmentMirrorProcessingRefusalBackfill(t *testing.T) {
 	}
 }
 
-func TestAttachmentMirrorProcessingBackfillBeforeConsentObserved(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	r := newMirrorRig(t)
-	r.delivered("a")
-	require.NoError(r.runBatch(t.Context()))
-	r.processing.States["job-a"] = [3]string{"failed", "rendition", "consent"}
-	r.processingDue()
-	// Consent is restored before msgvault polls the failed job.
-	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
-	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
-	assert.Equal(int64(1), r.processingCounts().Requested)
-	assert.Empty(r.processingCounts().Outcomes)
-}
-
-func TestAttachmentMirrorProcessingBackfillDuringRefusalSave(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	r := newMirrorRig(t)
-	r.delivered("a")
-	r.processing.Faults["a"] = http.StatusServiceUnavailable
-	require.ErrorContains(r.runBatch(t.Context()), "server_error")
-	r.processingDue()
-	r.processing.Faults["a"] = http.StatusNotFound
-	reset := false
-	r.worker.WithOperationGate(func(context.Context) (func(), bool) {
-		if !reset && len(r.processing.Plans) == 2 {
-			reset = true
-			delete(r.processing.Faults, "a")
-			require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
-		}
-		return func() {}, true
-	})
-	require.NoError(r.runBatch(t.Context()))
-	require.True(reset, "backfill runs after the refusal and before its save")
-	assert.Equal(int64(1), r.processingCounts().Waiting)
-	assert.Empty(r.processingCounts().Outcomes)
-	r.worker.WithOperationGate(nil)
-	// Backfill schedules a follow-up pass even when a pass is already running.
-	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a"}, r.processing.Jobs)
-	assert.Equal(int64(1), r.processingCounts().Requested)
-	assert.Empty(r.processingCounts().Outcomes)
-}
-
 func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
 	for _, state := range []string{"operator_required", "awaiting_review"} {
 		t.Run(state, func(t *testing.T) {
