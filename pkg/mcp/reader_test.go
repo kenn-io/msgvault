@@ -12,6 +12,7 @@ import (
 	internalmcp "go.kenn.io/msgvault/internal/mcp"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -72,7 +73,7 @@ func TestReaderScopedMCP(t *testing.T) {
 		requirements.NoError(err)
 		sdkmcp.AddTool(server, tool, func(ctx context.Context, req *sdkmcp.CallToolRequest, args map[string]any) (*sdkmcp.CallToolResult, any, error) {
 			mu.Lock()
-			ids := append([]int64(nil), scope...)
+			ids := slices.Clone(scope)
 			mu.Unlock()
 			return reader.Call(ctx, ids, req, args)
 		})
