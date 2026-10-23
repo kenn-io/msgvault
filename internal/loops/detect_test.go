@@ -161,6 +161,10 @@ func TestDetect(t *testing.T) {
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "Thanks!"},
 		}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
+		{"emoji acknowledgement does not close your question", script{msgs: []msg{
+			{out: true, ago: 5 * day, body: "Can you review it?"},
+			{from: alex, ago: 4 * day, body: "👍"},
+		}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
 		{"recipientless outbound keeps a question open", script{msgs: []msg{
 			{ago: 5 * day, body: "Can you approve the contract?"},
 			{out: true, to: []store.LoopParticipant{}, ago: 3 * day, body: "The report is ready for review."},
@@ -168,6 +172,10 @@ func TestDetect(t *testing.T) {
 		{"requester acknowledgement keeps the question open", script{msgs: []msg{
 			{ago: 5 * day, body: "Can you approve the contract?"},
 			{ago: day, body: "Thanks!"},
+		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, day, ""},
+		{"outbound emoji acknowledgement keeps the question open", script{msgs: []msg{
+			{from: alex, ago: 5 * day, body: "Can you send the contract?"},
+			{out: true, to: []store.LoopParticipant{alex}, ago: day, body: "🙏"},
 		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, day, ""},
 		{"outbound acknowledgement keeps the awaited person active", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you review it?"},

@@ -14,7 +14,7 @@ var (
 	// or "please" plus an action verb.
 	request = regexp.MustCompile(`(?i)\?|\b(?:(?:can|could|would|will)\s+you|let\s+(?:me|us)\s+know|lmk|please\s+(?:(?:kindly|just)\s+)?(?:send|confirm|review|reply|advise|share|check|call))\b`)
 
-	acknowledgement = regexp.MustCompile(`(?i)^(?:(?:thanks|thank you|thx|ty|many thanks|got it|noted|received|ack|ok|okay|cheers|perfect|great)[\s!.,]*)+$`)
+	acknowledgement = regexp.MustCompile(`(?i)^(?:(?:thanks|thank you|thx|ty|many thanks|got it|noted|received|ack|ok|okay|cheers|perfect|great|(?:👍|🙏|👌|👏|🙌)(?:🏻|🏼|🏽|🏾|🏿)?|✅|❤|💯)[\s!.,]*)+$`)
 )
 
 // ownText removes loop-specific quotations while preserving replies above and below them.
@@ -40,5 +40,6 @@ func stripURLTokens(text string) string {
 
 func isAcknowledgementOnly(text string) bool {
 	text = strings.Join(strings.Fields(text), " ")
+	text = strings.ReplaceAll(text, "\ufe0f", "")
 	return utf8.RuneCountInString(text) <= 60 && acknowledgement.MatchString(text)
 }

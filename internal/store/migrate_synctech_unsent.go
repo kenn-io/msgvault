@@ -31,20 +31,29 @@ func (s *Store) migrateSynctechUnsentMessages(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("list Synctech messages for send-state migration: %w", err)
 			}
-			type candidate struct {
-				id          int64
-				messageType string
-				raw         []byte
-				compression sql.NullString
-			}
-			var page []candidate
+			var count int
+			var unsent []int64
 			for rows.Next() {
-				var item candidate
-				if err := rows.Scan(&item.id, &item.messageType, &item.raw, &item.compression); err != nil {
+				var id int64
+				var messageType string
+				var raw []byte
+				var compression sql.NullString
+				if err := rows.Scan(&id, &messageType, &raw, &compression); err != nil {
 					_ = rows.Close()
 					return fmt.Errorf("scan Synctech message for send-state migration: %w", err)
 				}
-				page = append(page, item)
+				count++
+				after = id
+				if len(raw) == 0 {
+					continue
+				}
+				raw, err = decodeMessageRaw(raw, compression)
+				if err != nil {
+					continue
+				}
+				if synctechRawRecordIsUnsent(messageType, raw) {
+					unsent = append(unsent, id)
+				}
 			}
 			if err := rows.Err(); err != nil {
 				_ = rows.Close()
@@ -53,28 +62,10 @@ func (s *Store) migrateSynctechUnsentMessages(ctx context.Context) error {
 			if err := rows.Close(); err != nil {
 				return fmt.Errorf("close Synctech messages for send-state migration: %w", err)
 			}
-			if len(page) == 0 {
-				return nil
-			}
-			after = page[len(page)-1].id
-
-			var unsent []int64
-			for _, item := range page {
-				if len(item.raw) == 0 {
-					continue
-				}
-				raw, err := decodeMessageRaw(item.raw, item.compression)
-				if err != nil {
-					continue
-				}
-				if synctechRawRecordIsUnsent(item.messageType, raw) {
-					unsent = append(unsent, item.id)
-				}
-			}
 			if err := markSynctechMessagesUnsent(ctx, tx, unsent); err != nil {
 				return err
 			}
-			if len(page) < synctechMigrationPageSize {
+			if count < synctechMigrationPageSize {
 				return nil
 			}
 		}

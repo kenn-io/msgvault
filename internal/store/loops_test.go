@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
 const (
@@ -184,6 +185,76 @@ func TestLoopWalkExcludesUnsentReplies(t *testing.T) {
 		}
 	}
 	assert.Equal([]int64{question}, ids, "the store walk excludes unsent drafts")
+}
+
+func TestLoopStoredListIDExcludesLegacyMessages(t *testing.T) {
+	for _, scenario := range []string{"opens question", "settles question"} {
+		t.Run(scenario, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			var question int64
+			if scenario == "settles question" {
+				question = f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
+			}
+			body := "Can you send the contract?"
+			if scenario == "settles question" {
+				body = "I sent the contract."
+			}
+			id := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: body, SentAt: loopAgo(3 * loopDay),
+				Raw: "From: " + loopAlex + "\r\nTo: " + loopOwner + "\r\nList-Id: Updates <updates.example.test>\r\n\r\n" + body})
+			var listID string
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COALESCE(list_id, '') FROM messages WHERE id = ?`), id).Scan(&listID))
+			require.Empty(listID, "legacy rows have List-Id only in stored MIME")
+			// The previous MIME rules cached this mailing-list message as human.
+			const previousVersion = 2<<20 | preprocess.LoopEvidenceTextVersion<<10 | 1
+			_, token, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, previousVersion)
+			require.NoError(err)
+			require.False(hit)
+			require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, previousVersion, token, store.LoopMessageEvidence{Asks: scenario == "opens question"}))
+
+			got := listLoops(t, f, loopNow)
+			if scenario == "opens question" {
+				assert.Empty(got)
+			} else {
+				require.Len(got, 1)
+				assert.Equal(question, got[0].Anchor.ID)
+				assert.Equal(loops.AwaitingReply, got[0].Kind)
+			}
+		})
+	}
+}
+
+func TestLoopEmojiAcknowledgementsDoNotSettleQuestions(t *testing.T) {
+	for _, scenario := range []struct {
+		name       string
+		questioner string
+		responder  string
+		ack        string
+		kind       string
+	}{
+		{name: "other person acknowledges", questioner: loopOwner, responder: loopAlex, ack: "👍", kind: loops.AwaitingReply},
+		{name: "owner acknowledges", questioner: loopAlex, responder: loopOwner, ack: "🙏", kind: loops.ReplyOwed},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			question := f.PersistEmail(storetest.EmailSpec{
+				From: scenario.questioner, To: []string{scenario.responder},
+				Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay),
+			})
+			f.PersistEmail(storetest.EmailSpec{
+				From: scenario.responder, To: []string{scenario.questioner},
+				Body: scenario.ack, SentAt: loopAgo(3 * loopDay),
+			})
+
+			got := listLoops(t, f, loopNow)
+			require.Len(got, 1)
+			assert.Equal(question, got[0].Anchor.ID)
+			assert.Equal(scenario.kind, got[0].Kind)
+		})
+	}
 }
 
 func TestLoopAutomationSignalsReadStoredRaw(t *testing.T) {

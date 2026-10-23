@@ -15,6 +15,7 @@ func TestParseAutomationSignals(t *testing.T) {
 		want          AutomationSignals
 	}{
 		{"ordinary", "", AutomationSignals{}},
+		{"list id", "List-Id: Updates <updates.example.test>\n", AutomationSignals{ListID: true}},
 		{"bulk", "Precedence: BuLk\n", AutomationSignals{PrecedenceBulk: true}},
 		{"list", "Precedence: list\n", AutomationSignals{PrecedenceBulk: true}},
 		{"junk", "Precedence: junk\n", AutomationSignals{PrecedenceBulk: true}},

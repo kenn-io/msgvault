@@ -8,7 +8,7 @@ import (
 
 // AutomationEvidenceVersion changes when parsing or classifying automation
 // signals changes, so persisted loop evidence is recomputed with the new rules.
-const AutomationEvidenceVersion = 1
+const AutomationEvidenceVersion = 2
 
 // AutomationSignals records MIME evidence rather than deciding whether a
 // conversation deserves a reply. The parser owns this value type so archive
@@ -16,6 +16,7 @@ const AutomationEvidenceVersion = 1
 type AutomationSignals struct {
 	AutoSubmitted   bool
 	PrecedenceBulk  bool
+	ListID          bool
 	ListUnsubscribe bool
 	CalendarPart    bool
 	ReplyToNoReply  bool
@@ -44,6 +45,7 @@ func (m *Message) AutomationSignals() AutomationSignals {
 	autoSubmitted = strings.TrimSpace(autoSubmitted)
 	result := AutomationSignals{
 		AutoSubmitted:   autoSubmitted != "" && !strings.EqualFold(autoSubmitted, "no"),
+		ListID:          m.ListID != "",
 		ListUnsubscribe: m.ListUnsubscribe,
 		CalendarPart:    m.HasCalendarPart,
 	}
