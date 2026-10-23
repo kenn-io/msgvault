@@ -177,7 +177,7 @@ func TestPersonFactEvidenceInputPreservesHostMetadata(t *testing.T) {
 
 func TestPersonFactEvidenceInputMapsSweepLaneToArchiveClass(t *testing.T) {
 	lanes := []SourceClass{
-		SourceConversationText, SourceMeetingText, SourceMeetingText,
+		SourceConversationText, SourceMeetingText,
 		SourceAttachmentCaption, SourceAttachmentOCR,
 	}
 	for index, lane := range lanes {

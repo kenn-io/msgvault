@@ -307,7 +307,7 @@ type Server struct {
 	startOnce                 sync.Once
 	rateLimiter               *RateLimiter
 	changesRateLimiter        *RateLimiter
-	documentSearchRateLimiter *RateLimiter
+	mediaSearchRateLimiter    *RateLimiter
 	visualCoverageRateLimiter *RateLimiter
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
@@ -740,8 +740,8 @@ func (s *Server) setupRouter() http.Handler {
 	s.rateLimiter = NewRateLimiter(10, 20)
 	s.changesRateLimiter = NewRateLimiter(
 		changeFeedRequestsPerSecond, changeFeedRequestBurst)
-	s.documentSearchRateLimiter = NewRateLimiter(
-		documentSearchRequestsPerSecond, documentSearchRequestBurst)
+	s.mediaSearchRateLimiter = NewRateLimiter(
+		mediaSearchRequestsPerSecond, mediaSearchRequestBurst)
 	s.visualCoverageRateLimiter = NewRateLimiter(
 		visualCoverageScansPerSecond, visualCoverageScanBurst)
 
@@ -955,8 +955,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.changesRateLimiter != nil {
 		s.changesRateLimiter.Close()
 	}
-	if s.documentSearchRateLimiter != nil {
-		s.documentSearchRateLimiter.Close()
+	if s.mediaSearchRateLimiter != nil {
+		s.mediaSearchRateLimiter.Close()
 	}
 	if s.visualCoverageRateLimiter != nil {
 		s.visualCoverageRateLimiter.Close()

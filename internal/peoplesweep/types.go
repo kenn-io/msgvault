@@ -60,14 +60,11 @@ type CursorKey struct {
 type Cursor struct {
 	Key                    CursorKey
 	OptimisticSequence     int64
-	OptimisticDocumentKey  string
 	ReconcileUpperKey      string
 	ReconcileAfterKey      string
-	ReconcileDocumentKey   string
 	ReconciliationComplete bool
 	BackstopUpperKey       string
 	BackstopAfterKey       string
-	BackstopDocumentKey    string
 	LastBackstopAt         *time.Time
 }
 
@@ -89,8 +86,6 @@ type GenerationCursor struct {
 	CursorThrough    int64                `json:"cursor_through"`
 	ReconcileFromKey string               `json:"reconcile_from_key"`
 	ReconcileToKey   string               `json:"reconcile_to_key"`
-	DocumentFromKey  string               `json:"document_from_key"`
-	DocumentToKey    string               `json:"document_to_key"`
 	BackstopUpperKey string               `json:"backstop_upper_key"`
 }
 
@@ -408,7 +403,6 @@ type WindowRequest struct {
 	ReconcileAfter  string
 	ReconcileUpper  string
 	BackstopUpper   string
-	DocumentAfter   string
 	Limit           int
 }
 
@@ -417,18 +411,8 @@ type PersonWindow struct {
 	Seeds              []EvidenceItem
 	NextSequence       int64
 	NextReconcileKey   string
-	NextDocumentKey    string
 	CapturedUpperKey   string
 	ReconciliationDone bool
-}
-
-type DocumentContextRequest struct {
-	PersonID            int64
-	CandidateMessageIDs []int64
-	Query               string
-	After               *time.Time
-	Before              *time.Time
-	Limit               int
 }
 
 type ContextRequest struct {

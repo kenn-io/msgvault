@@ -886,13 +886,6 @@ func TestPersonSweepWorkerPlansNoBriefWhenTheProfileHasNoBriefLane(t *testing.T)
 
 	plan, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, ProviderProfile{
 		Fingerprint: "profile", AllowSensitive: true,
-		AllowedSources: []SourceClass{SourceMeetingText},
-	}, now)
-	require.NoError(err)
-	assert.False(plan.run, "meeting_text is not a brief lane in this version (R13)")
-
-	plan, err = worker.planPersonBrief(t.Context(), 7, BriefModeAuto, ProviderProfile{
-		Fingerprint: "profile", AllowSensitive: true,
 		AllowedSources: []SourceClass{SourceMeetingText, SourceConversationText},
 	}, now)
 	require.NoError(err)

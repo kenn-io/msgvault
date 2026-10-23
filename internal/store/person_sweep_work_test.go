@@ -63,16 +63,16 @@ func loadPersonSweepCursor(
 	)
 	cursor.Key = key
 	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
-		SELECT optimistic_sequence, optimistic_document_key,
-		       reconcile_upper_key, reconcile_after_key, reconcile_document_key,
-		       reconciliation_complete, backstop_document_key, last_backstop_at
+		SELECT optimistic_sequence,
+		       reconcile_upper_key, reconcile_after_key,
+		       reconciliation_complete, last_backstop_at
 		FROM person_sweep_cursors
 		WHERE person_id = ? AND source_lane = ? AND program_fingerprint = ?
 		  AND catalog_fingerprint = ?`), key.PersonID, key.SourceLane,
 		key.ProgramFingerprint, key.CatalogFingerprint).Scan(
-		&cursor.OptimisticSequence, &cursor.OptimisticDocumentKey, &cursor.ReconcileUpperKey,
-		&cursor.ReconcileAfterKey, &cursor.ReconcileDocumentKey, &cursor.ReconciliationComplete,
-		&cursor.BackstopDocumentKey, &lastBackstop)
+		&cursor.OptimisticSequence, &cursor.ReconcileUpperKey,
+		&cursor.ReconcileAfterKey, &cursor.ReconciliationComplete,
+		&lastBackstop)
 	require.NoError(t, err)
 	if lastBackstop.Valid {
 		value := lastBackstop.Time.UTC()

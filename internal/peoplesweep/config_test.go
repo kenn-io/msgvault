@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -867,11 +868,35 @@ func TestConfigValidationAcceptsNegotiatedProtocolCapabilities(t *testing.T) {
 	}
 }
 
-func TestRemovedDocumentSourceGuidesMigration(t *testing.T) {
-	cfg := validConfig()
-	for name, provider := range cfg.Providers {
-		provider.AllowedSources = []peoplesweep.SourceClass{"document_text"}
-		cfg.Providers[name] = provider
+func TestRemovedDocumentSourceWarnsAndIsIgnored(t *testing.T) {
+	for name, documentOnly := range map[string]bool{"mixed sources": false, "document only": true} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			var warnings bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&warnings, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			cfg := validConfig()
+			for name, provider := range cfg.Providers {
+				if documentOnly {
+					provider.AllowedSources = nil
+				}
+				provider.AllowedSources = append(provider.AllowedSources, peoplesweep.SourceDocumentText)
+				cfg.Providers[name] = provider
+			}
+			cfg.ApplyDefaults()
+			require.NoError(cfg.Validate())
+			assert.Equal(!documentOnly, cfg.Enabled)
+			for _, provider := range cfg.Providers {
+				assert.NotContains(provider.AllowedSources, peoplesweep.SourceDocumentText)
+			}
+			if cfg.Enabled {
+				profile, err := cfg.Profile()
+				require.NoError(err)
+				assert.NotContains(profile.AllowedSources, peoplesweep.SourceDocumentText)
+			}
+			assert.Contains(warnings.String(), "document_text was removed; drop it from allowed_sources")
+		})
 	}
-	require.ErrorContains(t, cfg.Validate(), "document_text was removed; drop it from allowed_sources")
 }

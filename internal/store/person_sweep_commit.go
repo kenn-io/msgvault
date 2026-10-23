@@ -604,9 +604,6 @@ func (s *Store) advanceBoundPersonSweepCursorsTx(
 		if a.ExpectedReconcileKey != b.ExpectedReconcileKey {
 			return strings.Compare(a.ExpectedReconcileKey, b.ExpectedReconcileKey)
 		}
-		if a.ExpectedDocumentKey != b.ExpectedDocumentKey {
-			return strings.Compare(a.ExpectedDocumentKey, b.ExpectedDocumentKey)
-		}
 		return strings.Compare(a.NextReconcileKey, b.NextReconcileKey)
 	})
 	count := 0
@@ -615,13 +612,12 @@ func (s *Store) advanceBoundPersonSweepCursorsTx(
 		var args []any
 		switch advance.Mode {
 		case peoplesweep.GenerationCursorOptimistic:
-			query = `UPDATE person_sweep_cursors SET optimistic_sequence = ?, optimistic_document_key = ?,
+			query = `UPDATE person_sweep_cursors SET optimistic_sequence = ?,
 				updated_at = ` + s.dialect.Now() + `
 				WHERE person_id = ? AND source_lane = ? AND program_fingerprint = ?
-				AND catalog_fingerprint = ? AND optimistic_sequence = ? AND optimistic_document_key = ?`
-			args = []any{advance.NextSequence, advance.NextDocumentKey, advance.Key.PersonID, advance.Key.SourceLane,
-				advance.Key.ProgramFingerprint, advance.Key.CatalogFingerprint, advance.ExpectedSequence,
-				advance.ExpectedDocumentKey}
+				AND catalog_fingerprint = ? AND optimistic_sequence = ?`
+			args = []any{advance.NextSequence, advance.Key.PersonID, advance.Key.SourceLane,
+				advance.Key.ProgramFingerprint, advance.Key.CatalogFingerprint, advance.ExpectedSequence}
 		case peoplesweep.GenerationCursorReconciliation:
 			queryUpper := `SELECT reconcile_upper_key FROM person_sweep_cursors
 				WHERE person_id = ? AND source_lane = ? AND program_fingerprint = ?
@@ -634,48 +630,43 @@ func (s *Store) advanceBoundPersonSweepCursorsTx(
 				advance.Key.ProgramFingerprint, advance.Key.CatalogFingerprint).Scan(&upper); err != nil {
 				return 0, fmt.Errorf("lock person sweep reconciliation cursor: %w", err)
 			}
-			if (advance.NextReconcileKey >= upper && advance.NextDocumentKey == "") != advance.ReconciliationDone {
+			if (advance.NextReconcileKey >= upper) != advance.ReconciliationDone {
 				return 0, errors.New("person sweep reconciliation completion does not match upper bound")
 			}
-			query = `UPDATE person_sweep_cursors SET reconcile_after_key = ?, reconcile_document_key = ?,
+			query = `UPDATE person_sweep_cursors SET reconcile_after_key = ?,
 				reconciliation_complete = ?,
 				updated_at = ` + s.dialect.Now() + ` WHERE person_id = ? AND source_lane = ?
 				AND program_fingerprint = ? AND catalog_fingerprint = ?
-				AND optimistic_sequence = ? AND reconcile_after_key = ? AND reconcile_document_key = ?
+				AND optimistic_sequence = ? AND reconcile_after_key = ?
 				AND ? <= reconcile_upper_key AND reconciliation_complete = FALSE`
-			args = []any{advance.NextReconcileKey, advance.NextDocumentKey, advance.ReconciliationDone, advance.Key.PersonID,
+			args = []any{advance.NextReconcileKey, advance.ReconciliationDone, advance.Key.PersonID,
 				advance.Key.SourceLane, advance.Key.ProgramFingerprint, advance.Key.CatalogFingerprint,
-				advance.ExpectedSequence, advance.ExpectedReconcileKey, advance.ExpectedDocumentKey,
+				advance.ExpectedSequence, advance.ExpectedReconcileKey,
 				advance.NextReconcileKey}
 		case peoplesweep.GenerationCursorBackstop:
 			if advance.CapturedBackstopUpperKey == "" ||
 				(advance.ExpectedBackstopUpperKey == "" && advance.ExpectedReconcileKey != "") ||
 				(advance.ExpectedBackstopUpperKey != "" &&
 					advance.ExpectedBackstopUpperKey != advance.CapturedBackstopUpperKey) ||
-				!personSweepDocumentCoordinateAdvanced(advance.ExpectedReconcileKey,
-					advance.ExpectedDocumentKey, advance.NextReconcileKey, advance.NextDocumentKey) ||
+				advance.NextReconcileKey <= advance.ExpectedReconcileKey ||
 				advance.NextReconcileKey > advance.CapturedBackstopUpperKey ||
-				advance.BackstopComplete != (advance.NextReconcileKey == advance.CapturedBackstopUpperKey &&
-					advance.NextDocumentKey == "") {
+				advance.BackstopComplete != (advance.NextReconcileKey == advance.CapturedBackstopUpperKey) {
 				return 0, errors.New("person sweep backstop advance has invalid bounded progress")
 			}
-			nextUpper, nextAfter, nextDocument := advance.CapturedBackstopUpperKey,
-				advance.NextReconcileKey, advance.NextDocumentKey
+			nextUpper, nextAfter := advance.CapturedBackstopUpperKey, advance.NextReconcileKey
 			if advance.BackstopComplete {
-				nextUpper, nextAfter, nextDocument = "", "", ""
+				nextUpper, nextAfter = "", ""
 			}
 			query = `UPDATE person_sweep_cursors SET backstop_upper_key = ?, backstop_after_key = ?,
-				backstop_document_key = ?,
 				last_backstop_at = CASE WHEN ? THEN ? ELSE last_backstop_at END,
 				updated_at = ` + s.dialect.Now() + `
 				WHERE person_id = ? AND source_lane = ? AND program_fingerprint = ?
 				AND catalog_fingerprint = ? AND optimistic_sequence = ?
-				AND backstop_upper_key = ? AND backstop_after_key = ? AND backstop_document_key = ?`
-			args = []any{nextUpper, nextAfter, nextDocument, advance.BackstopComplete,
+				AND backstop_upper_key = ? AND backstop_after_key = ?`
+			args = []any{nextUpper, nextAfter, advance.BackstopComplete,
 				s.dialect.TimestampParam(request.CompletedAt), advance.Key.PersonID,
 				advance.Key.SourceLane, advance.Key.ProgramFingerprint, advance.Key.CatalogFingerprint,
-				advance.ExpectedSequence, advance.ExpectedBackstopUpperKey, advance.ExpectedReconcileKey,
-				advance.ExpectedDocumentKey}
+				advance.ExpectedSequence, advance.ExpectedBackstopUpperKey, advance.ExpectedReconcileKey}
 		default:
 			return 0, errors.New("apply person sweep has unsupported cursor advance mode")
 		}
@@ -690,10 +681,6 @@ func (s *Store) advanceBoundPersonSweepCursorsTx(
 		count++
 	}
 	return count, nil
-}
-
-func personSweepDocumentCoordinateAdvanced(from, fromDocument, to, toDocument string) bool {
-	return to > from || (to == from && toDocument > fromDocument)
 }
 
 func personSweepCursorApplyOrder(mode peoplesweep.GenerationCursorMode) int {
@@ -729,8 +716,8 @@ func (s *Store) finishPersonSweepWorkTx(
 		err = tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM person_sweep_cursors c WHERE c.person_id = ?
 		AND c.program_fingerprint = ? AND c.catalog_fingerprint = ?
-		AND (c.backstop_upper_key <> '' OR c.optimistic_document_key <> '' OR
-		c.reconcile_document_key <> '' OR
+		AND c.source_lane <> 'document_text'
+		AND (c.backstop_upper_key <> '' OR
 		(c.reconciliation_complete = FALSE AND c.reconcile_after_key <> c.reconcile_upper_key) OR EXISTS (
 			SELECT 1 FROM person_sweep_changes ch WHERE ch.person_id = c.person_id
 			AND ch.source_lane = c.source_lane AND ch.sequence > c.optimistic_sequence)))`,

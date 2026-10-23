@@ -3,11 +3,11 @@ package api
 import "net/http"
 
 const (
-	documentSearchRequestsPerSecond = 1
-	documentSearchRequestBurst      = 2
+	mediaSearchRequestsPerSecond = 1
+	mediaSearchRequestBurst      = 2
 )
 
-func (s *Server) documentSearchGuard(label string, next http.HandlerFunc) http.HandlerFunc {
+func (s *Server) mediaSearchGuard(label string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.requestAuthentication(r).Mode == AuthModeLoopback &&
 			s.crossOriginAmbientReadRequest(r) {
@@ -16,7 +16,7 @@ func (s *Server) documentSearchGuard(label string, next http.HandlerFunc) http.H
 					"configure an API key for cross-origin access")
 			return
 		}
-		if !s.documentSearchRateLimiter.Allow(clientIP(r)) {
+		if !s.mediaSearchRateLimiter.Allow(clientIP(r)) {
 			writeRateLimitExceeded(w)
 			return
 		}

@@ -273,32 +273,26 @@ func TestApplyPersonSweepRequeuesExplicitlyDeferredCursorWork(t *testing.T) {
 	checks.Empty(owner)
 }
 
-func TestFinishPersonSweepWorkRequeuesDocumentContinuations(t *testing.T) {
-	for _, column := range []string{"optimistic_document_key", "reconcile_document_key"} {
-		t.Run(column, func(t *testing.T) {
-			checks := assert.New(t)
-			must := require.New(t)
-			f := newPersonSweepApplyFixture(t, "document-continuation-"+column, false)
-			_, err := f.store.db.ExecContext(t.Context(), `UPDATE person_sweep_cursors
-				SET `+column+` = 'live:00000000000000000002' WHERE person_id = ?`, f.personID)
-			must.NoError(err)
-			var changed int
-			must.NoError(f.store.withTxContext(t.Context(), func(tx *loggedTx) error {
-				changed, err = f.store.finishPersonSweepWorkTx(t.Context(), tx, personSweepWorkCompletion{
-					Lease: f.request.Lease, ProgramFingerprint: f.request.Generation.ProgramFingerprint,
-					CatalogFingerprint: f.request.Generation.CatalogFingerprint,
-				})
-				return err
-			}))
-			checks.Equal(1, changed)
-			var count int
-			var owner string
-			must.NoError(f.store.db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(lease_owner), '')
-				FROM person_sweep_work WHERE person_id = ?`, f.personID).Scan(&count, &owner))
-			checks.Equal(1, count)
-			checks.Empty(owner)
-		})
-	}
+func TestApplyPersonSweepIgnoresRetiredDocumentWork(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newPersonSweepApplyFixture(t, "retired-document-work", false)
+	_, err := f.store.db.ExecContext(t.Context(), `INSERT INTO person_sweep_cursors
+		(person_id, source_lane, program_fingerprint, catalog_fingerprint,
+		 optimistic_document_key, reconcile_document_key, backstop_upper_key,
+		 optimistic_sequence, reconcile_upper_key, reconcile_after_key, reconciliation_complete)
+		VALUES (?, 'document_text', ?, ?, 'live:2', 'live:2', '00000000000000000002', 0, '2', '', FALSE)`,
+		f.personID, f.request.Generation.ProgramFingerprint, f.request.Generation.CatalogFingerprint)
+	require.NoError(err)
+	_, err = f.store.db.ExecContext(t.Context(), `INSERT INTO person_sweep_changes
+		(sequence, person_id, source_lane, change_kind, evidence_effect, source_id, message_id, recorded_at)
+		SELECT COALESCE(MAX(sequence),0)+1, ?, 'document_text', 'upsert', 'source-reimported', 1, 1, CURRENT_TIMESTAMP FROM person_sweep_changes`, f.personID)
+	require.NoError(err)
+	_, err = f.store.ApplyPersonSweep(t.Context(), f.request)
+	require.NoError(err)
+	var count int
+	require.NoError(f.store.db.QueryRow(`SELECT COUNT(*) FROM person_sweep_work WHERE person_id = ?`, f.personID).Scan(&count))
+	assert.Zero(count, "retired lane rows do not keep the work queued")
 }
 
 func TestApplyPersonSweepStoresGenerationIDAndKeyOnAttempt(t *testing.T) {

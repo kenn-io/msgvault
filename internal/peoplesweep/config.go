@@ -10,6 +10,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"reflect"
@@ -273,7 +274,18 @@ func (c *Config) ApplyDefaults() {
 	}
 	for name, provider := range c.Providers {
 		applyProviderDefaults(&provider)
-		provider.AllowedSources = slices.Clone(provider.AllowedSources)
+		hadSources := len(provider.AllowedSources) > 0
+		provider.AllowedSources = slices.DeleteFunc(slices.Clone(provider.AllowedSources), func(source SourceClass) bool {
+			if source == SourceDocumentText {
+				slog.Warn("document_text was removed; drop it from allowed_sources", "provider", name)
+				return true
+			}
+			return false
+		})
+		if hadSources && len(provider.AllowedSources) == 0 && c.Provider.Name == name && c.Enabled {
+			slog.Warn("people sweep disabled because allowed_sources contains only retired sources", "provider", name)
+			c.Enabled = false
+		}
 		c.Providers[name] = provider
 	}
 }
@@ -921,8 +933,6 @@ func validateSources(sources []SourceClass) error {
 	for _, source := range sources {
 		switch source {
 		case SourceConversationText, SourceMeetingText:
-		case SourceDocumentText:
-			return errors.New("document_text was removed; drop it from allowed_sources")
 		case SourceAttachmentCaption, SourceAttachmentOCR:
 			return fmt.Errorf("[people.sweep.provider] allowed_sources %q is not yet supported", source)
 		default:

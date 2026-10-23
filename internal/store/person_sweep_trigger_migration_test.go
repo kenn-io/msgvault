@@ -48,7 +48,7 @@ func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 	assert.Equal(t, messageID, changes[0].MessageID)
 }
 
-func TestDropDocumentIndexInterruptedUpgradeKeepsMessageWrites(t *testing.T) {
+func TestDropDocumentMessageTriggersInterruptedUpgradeKeepsMessageWrites(t *testing.T) {
 	require := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	if !f.store.IsPostgreSQL() {
@@ -62,11 +62,11 @@ func TestDropDocumentIndexInterruptedUpgradeKeepsMessageWrites(t *testing.T) {
 		require.NoError(err)
 	}
 	_, err := f.store.DB().ExecContext(t.Context(), `
-		DELETE FROM applied_migrations WHERE name IN ('drop_document_index_v1', 'person_sweep_change_triggers_v6');
+		DELETE FROM applied_migrations WHERE name IN ('drop_document_message_triggers_v1', 'person_sweep_change_triggers_v6');
 		UPDATE archive_metadata SET value='11' WHERE key='schema_version';
 		CREATE FUNCTION interrupt_document_upgrade() RETURNS trigger AS $$
 		BEGIN
-			IF NEW.name = 'drop_document_index_v1' THEN RAISE EXCEPTION 'interrupt after document drop'; END IF;
+			IF NEW.name = 'drop_document_message_triggers_v1' THEN RAISE EXCEPTION 'interrupt after document trigger removal'; END IF;
 			RETURN NEW;
 		END $$ LANGUAGE plpgsql;
 		CREATE TRIGGER interrupt_document_upgrade BEFORE INSERT ON applied_migrations
@@ -76,7 +76,7 @@ func TestDropDocumentIndexInterruptedUpgradeKeepsMessageWrites(t *testing.T) {
 	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), id)
 	require.NoError(err)
 	err = f.store.InitSchemaContext(t.Context())
-	require.ErrorContains(err, "interrupt after document drop")
+	require.ErrorContains(err, "interrupt after document trigger removal")
 	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET deleted_at=NULL, snippet=? WHERE id=?`), "after", id)
 	require.NoError(err, "message writes survive interruption between migrations")
 	var snippet string

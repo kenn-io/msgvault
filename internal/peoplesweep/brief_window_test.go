@@ -550,12 +550,11 @@ func TestBuildBriefWindowRejectsInvalidRequests(t *testing.T) {
 		briefWindowItem(10, SourceConversationText, 10, "note"),
 	}}
 	for name, mutate := range map[string]func(*BriefWindowRequest){
-		"no person":     func(r *BriefWindowRequest) { r.PersonID = 0 },
-		"no items":      func(r *BriefWindowRequest) { r.MaxItems = 0 },
-		"no bytes":      func(r *BriefWindowRequest) { r.MaxBytes = 0 },
-		"bad overlap":   func(r *BriefWindowRequest) { r.OverlapItems = -1 },
-		"bad sequence":  func(r *BriefWindowRequest) { r.ThroughSequence = -1 },
-		"no brief lane": func(r *BriefWindowRequest) { r.Profile.AllowedSources = []SourceClass{SourceMeetingText} },
+		"no person":    func(r *BriefWindowRequest) { r.PersonID = 0 },
+		"no items":     func(r *BriefWindowRequest) { r.MaxItems = 0 },
+		"no bytes":     func(r *BriefWindowRequest) { r.MaxBytes = 0 },
+		"bad overlap":  func(r *BriefWindowRequest) { r.OverlapItems = -1 },
+		"bad sequence": func(r *BriefWindowRequest) { r.ThroughSequence = -1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			request := briefWindowRequest(t)

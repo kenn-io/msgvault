@@ -437,17 +437,17 @@ func (s *Store) loadPersonSweepCursorTx(
 	cursor := peoplesweep.Cursor{Key: key}
 	var lastBackstop nullableTimestamp
 	err := tx.QueryRowContext(ctx, s.Rebind(`
-		SELECT optimistic_sequence, optimistic_document_key,
-		       reconcile_upper_key, reconcile_after_key, reconcile_document_key,
-		       reconciliation_complete, backstop_upper_key, backstop_after_key, backstop_document_key,
+		SELECT optimistic_sequence,
+		       reconcile_upper_key, reconcile_after_key,
+		       reconciliation_complete, backstop_upper_key, backstop_after_key,
 		       last_backstop_at
 		FROM person_sweep_cursors
 		WHERE person_id = ? AND source_lane = ? AND program_fingerprint = ?
 		  AND catalog_fingerprint = ?`), key.PersonID, key.SourceLane,
 		key.ProgramFingerprint, key.CatalogFingerprint).Scan(
-		&cursor.OptimisticSequence, &cursor.OptimisticDocumentKey, &cursor.ReconcileUpperKey,
-		&cursor.ReconcileAfterKey, &cursor.ReconcileDocumentKey, &cursor.ReconciliationComplete,
-		&cursor.BackstopUpperKey, &cursor.BackstopAfterKey, &cursor.BackstopDocumentKey, &lastBackstop)
+		&cursor.OptimisticSequence, &cursor.ReconcileUpperKey,
+		&cursor.ReconcileAfterKey, &cursor.ReconciliationComplete,
+		&cursor.BackstopUpperKey, &cursor.BackstopAfterKey, &lastBackstop)
 	if err != nil {
 		return peoplesweep.Cursor{}, fmt.Errorf("load person sweep cursor: %w", err)
 	}
@@ -476,21 +476,18 @@ func (s *Store) AdvancePersonSweepReconciliation(
 	)
 	switch cursor.Mode {
 	case peoplesweep.GenerationCursorOptimistic:
-		if cursor.CursorFrom < 0 || (cursor.CursorThrough < cursor.CursorFrom ||
-			(cursor.CursorThrough == cursor.CursorFrom && cursor.DocumentToKey <= cursor.DocumentFromKey)) {
+		if cursor.CursorFrom < 0 || cursor.CursorThrough <= cursor.CursorFrom {
 			return errors.New("advance person sweep optimistic cursor: invalid sequence range")
 		}
-		setClause = "optimistic_sequence = ?, optimistic_document_key = ?"
-		modeArgs = []any{cursor.CursorThrough, cursor.DocumentToKey}
+		setClause = "optimistic_sequence = ?"
+		modeArgs = []any{cursor.CursorThrough}
 	case peoplesweep.GenerationCursorReconciliation:
-		if !personSweepDocumentCoordinateAdvanced(cursor.ReconcileFromKey, cursor.DocumentFromKey,
-			cursor.ReconcileToKey, cursor.DocumentToKey) {
+		if cursor.ReconcileToKey <= cursor.ReconcileFromKey {
 			return errors.New("advance person sweep reconciliation cursor: invalid key range")
 		}
-		setClause = `reconcile_after_key = ?, reconcile_document_key = ?,
-			reconciliation_complete = CASE WHEN ? >= reconcile_upper_key AND ? = '' THEN TRUE ELSE FALSE END`
-		modeArgs = []any{cursor.ReconcileToKey, cursor.DocumentToKey,
-			cursor.ReconcileToKey, cursor.DocumentToKey}
+		setClause = `reconcile_after_key = ?,
+			reconciliation_complete = CASE WHEN ? >= reconcile_upper_key THEN TRUE ELSE FALSE END`
+		modeArgs = []any{cursor.ReconcileToKey, cursor.ReconcileToKey}
 	default:
 		return fmt.Errorf("advance person sweep cursor: unsupported mode %q", cursor.Mode)
 	}
@@ -508,9 +505,9 @@ func (s *Store) AdvancePersonSweepReconciliation(
 	args := append(slices.Clone(modeArgs), cursor.Key.PersonID, cursor.Key.SourceLane,
 		cursor.Key.ProgramFingerprint, cursor.Key.CatalogFingerprint)
 	if cursor.Mode == peoplesweep.GenerationCursorOptimistic {
-		args = append(args, cursor.CursorFrom, cursor.DocumentFromKey)
+		args = append(args, cursor.CursorFrom)
 	} else {
-		args = append(args, cursor.ReconcileFromKey, cursor.DocumentFromKey, cursor.ReconcileToKey)
+		args = append(args, cursor.ReconcileFromKey, cursor.ReconcileToKey)
 	}
 	args = append(args, lease.WorkerID, lease.Fence)
 	result, err := s.db.ExecContext(ctx, s.Rebind(query), args...)
@@ -536,9 +533,9 @@ func (s *Store) AdvancePersonSweepReconciliation(
 
 func personSweepCursorCASPredicate(mode peoplesweep.GenerationCursorMode) string {
 	if mode == peoplesweep.GenerationCursorOptimistic {
-		return "optimistic_sequence = ? AND optimistic_document_key = ?"
+		return "optimistic_sequence = ?"
 	}
-	return "reconcile_after_key = ? AND reconcile_document_key = ? AND ? <= reconcile_upper_key AND reconciliation_complete = FALSE"
+	return "reconcile_after_key = ? AND ? <= reconcile_upper_key AND reconciliation_complete = FALSE"
 }
 
 func (s *Store) personSweepLeaseCurrent(
