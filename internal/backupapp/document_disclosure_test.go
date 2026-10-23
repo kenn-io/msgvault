@@ -4,15 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/backupapp"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestBackupManifestDisclosesAndRestoresDocumentPlaintext(t *testing.T) {
@@ -25,72 +27,36 @@ func TestBackupManifestDisclosesAndRestoresDocumentPlaintext(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			archive := t.TempDir()
-			databasePath, attachmentsDirectory := seedCompatArchive(t, archive)
-			database, err := sql.Open("sqlite3", databasePath)
+			databasePath := filepath.Join(archive, "msgvault.db")
+			attachmentsDirectory := filepath.Join(archive, "attachments")
+			require.NoError(os.MkdirAll(attachmentsDirectory, 0o700))
+			database, err := store.OpenForTest(databasePath)
 			require.NoError(err)
-			_, err = database.Exec(`
-		CREATE TABLE document_chunks (
-			id INTEGER PRIMARY KEY,
-			text TEXT NOT NULL,
-			char_count INTEGER NOT NULL
-		);
-		CREATE TABLE document_extraction_profiles (
-			id TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL, retired_at DATETIME
-		);
-		INSERT INTO document_extraction_profiles(id, enabled, retired_at)
-		VALUES ('active', TRUE, NULL), ('retired', FALSE, CURRENT_TIMESTAMP);
-		CREATE TABLE document_provider_consents (profile_id TEXT PRIMARY KEY);
-		INSERT INTO document_provider_consents(profile_id) VALUES ('active');
-		CREATE TABLE document_extractions (id TEXT PRIMARY KEY);
-		INSERT INTO document_extractions(id) VALUES ('one'), ('two'), ('three');
-		CREATE TABLE document_extraction_heads (extraction_id TEXT PRIMARY KEY);
-		INSERT INTO document_extraction_heads(extraction_id) VALUES ('one'), ('two')`)
+			require.NoError(database.InitSchema())
+			hash := strings.Repeat("b", 64)
+			_, err = database.DB().Exec(`
+		INSERT INTO document_extraction_profiles
+			(id, fingerprint, provider, endpoint, region, model, retention_posture, training_posture, allowed_media_types, policy_json, enabled, retired_at)
+		VALUES ('active', ?, 'docling', 'http://127.0.0.1:5001', 'local', 'synthetic', 'operator-controlled', 'operator-controlled', '["application/pdf"]', '{}', TRUE, NULL),
+			('retired', ?, 'docling', 'http://127.0.0.1:5001', 'local', 'synthetic', 'operator-controlled', 'operator-controlled', '["application/pdf"]', '{}', FALSE, CURRENT_TIMESTAMP);
+		INSERT INTO document_provider_consents (profile_id, profile_fingerprint, retention_posture, training_posture)
+		VALUES ('active', ?, 'operator-controlled', 'operator-controlled');
+		INSERT INTO document_extractions (id, profile_id, canonical_blob_hash, state, local_bytes)
+		VALUES ('one', 'active', ?, 'ready', 128), ('two', 'retired', ?, 'ready', 128), ('three', 'active', ?, 'terminal', 128);
+		INSERT INTO document_extraction_heads (profile_id, canonical_blob_hash, extraction_input_key, extraction_id)
+		VALUES ('active', ?, 'original', 'one'), ('retired', ?, 'original', 'two')`, strings.Repeat("a", 64), strings.Repeat("c", 64), strings.Repeat("a", 64), hash, hash, hash, hash, hash)
 			require.NoError(err)
 			if stagedRanges {
-				_, err = database.Exec(`CREATE TABLE document_extraction_ranges (
-			extraction_id TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
-			first_page INTEGER NOT NULL CHECK (first_page >= 1),
-			last_page INTEGER NOT NULL CHECK (last_page >= first_page),
-			total_pages INTEGER NOT NULL CHECK (total_pages >= last_page),
-			evidence TEXT NOT NULL,
-			evidence_checksum TEXT NOT NULL,
-			markdown TEXT NOT NULL,
-			char_count BIGINT NOT NULL CHECK (char_count >= 0),
-			payload_bytes BIGINT NOT NULL CHECK (payload_bytes > 0),
-			PRIMARY KEY (extraction_id, first_page)
-		)`)
-				require.NoError(err)
-				policy, err := document.NewEvidencePolicy(10000)
-				require.NoError(err)
-				source := document.SourceEvidenceV1{
-					ContractVersion: document.SourceEvidenceContractV1,
-					Completeness:    document.EvidenceComplete, Family: "pdf", UnitKind: document.EvidenceUnitPage,
-				}
-				for page := 1; page <= 50; page++ {
-					text := ""
-					if page == 1 {
-						text = "checkpoint sentinel"
-					}
-					source.Units = append(source.Units, document.SourceEvidenceUnitV1{
-						Order: page - 1, Text: text,
-						Locator: document.SourceEvidenceLocatorV1{
-							Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: int64(page), End: int64(page),
-						},
-					})
-				}
-				evidence, err := document.NormalizeEvidenceV1(source, policy)
-				require.NoError(err)
-				encoded, checksum, err := document.MarshalNormalizedEvidenceV1(evidence)
-				require.NoError(err)
-				_, err = database.Exec(`INSERT INTO document_extraction_ranges (
-			extraction_id, first_page, last_page, total_pages, evidence, evidence_checksum, markdown, char_count, payload_bytes
-		) VALUES ('three', 1, 50, 51, ?, ?, '', 19, ?)`, string(encoded), checksum, len(encoded))
-				require.NoError(err)
+				// Backup treats evidence as opaque bytes; only its stored character count is disclosed.
+				_, err = database.DB().Exec(`INSERT INTO document_extraction_ranges
+			(extraction_id, first_page, last_page, total_pages, evidence, evidence_checksum, markdown, char_count, payload_bytes)
+		VALUES ('three', 1, 50, 51, 'checkpoint sentinel', 'synthetic checksum', '', 19, 19)`)
 			} else {
-				_, err = database.Exec(`INSERT INTO document_chunks(text, char_count)
-			VALUES ('synthetic normalized attachment evidence', 40)`)
-				require.NoError(err)
+				_, err = database.DB().Exec(`INSERT INTO document_chunks
+			(extraction_id, chunk_key, ordinal, text, heading_path, first_unit_index, last_unit_index, checksum, char_count)
+		VALUES ('one', 'synthetic', 0, 'synthetic normalized attachment evidence', '[]', 0, 0, 'synthetic checksum', 40)`)
 			}
+			require.NoError(err)
 			require.NoError(database.Close())
 
 			repository, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
