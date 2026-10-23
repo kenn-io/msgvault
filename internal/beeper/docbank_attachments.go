@@ -223,7 +223,7 @@ func (u *attachmentUploader) send(ctx context.Context, d store.DocbankAttachment
 	if uploadErr != nil && reason == "" {
 		return u.retryLater(ctx, d, uploadErr)
 	}
-	u.endStreak()
+	u.endStreak(nil)
 	ref.Endpoint, ref.Folder = strings.TrimRight(strings.TrimSpace(w.options.URL), "/"), w.options.Folder
 	return w.gated(ctx, func() error {
 		return w.store.RecordDocbankAttachment(ctx, w.destination, d, ref, reason)
@@ -241,7 +241,7 @@ func (u *attachmentUploader) retryLater(ctx context.Context, d store.DocbankAtta
 		return err
 	}
 	if !isDestinationFault(uploadErr) {
-		u.endStreak()
+		u.endStreak(nil)
 		return err
 	}
 	return errors.Join(err, u.retry(errors.Join(uploadErr, err)))
@@ -257,8 +257,8 @@ func (u *attachmentRetryStreak) retry(err error) error {
 	return nil
 }
 
-func (u *attachmentRetryStreak) endStreak() {
-	u.reported = errors.Join(u.reported, u.streak)
+func (u *attachmentRetryStreak) endStreak(report error) {
+	u.reported = errors.Join(u.reported, u.streak, report)
 	u.streak = nil
 }
 
@@ -589,7 +589,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 					return false, errors.Join(failures.reported, stopErr)
 				}
 			} else {
-				failures.endStreak()
+				failures.endStreak(answer.report)
 			}
 		}
 	}
@@ -599,7 +599,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (docbankmedia.JobStatus, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
 	defer cancel()
-	if d.Outcome == "requested" || d.Outcome == "operator_required" {
+	if d.JobID != "" {
 		job, err := w.client.JobStatus(ctx, d.JobID)
 		return job, d.JobID, err
 	}
@@ -622,6 +622,7 @@ func (w *AttachmentMirror) processingBlocked(err error) error {
 type documentProcessingAnswer struct {
 	outcome string
 	delay   time.Duration
+	report  error
 	retry   bool
 	blocked bool
 }
@@ -629,15 +630,7 @@ type documentProcessingAnswer struct {
 // processingAnswer is the single classification of Docbank answers into saved steps.
 func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingAnswer {
 	if err == nil {
-		outcome := processingJobOutcome(job)
-		answer := documentProcessingAnswer{outcome: outcome}
-		switch outcome {
-		case "requested":
-			answer.delay = store.BeeperMediaPollDelay
-		case "operator_required":
-			answer.delay = store.BeeperMediaRetryDelay
-		}
-		return answer
+		return processingJobAnswer(job)
 	}
 	httpErr, isHTTP := errors.AsType[*docbankmedia.HTTPError](err)
 	if errors.Is(err, docbankmedia.ErrCredentialUnavailable) || isHTTP && (httpErr.Status == http.StatusUnauthorized || httpErr.Status == http.StatusForbidden ||
@@ -657,21 +650,28 @@ func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingA
 	return documentProcessingAnswer{outcome: code}
 }
 
-func processingJobOutcome(job docbankmedia.JobStatus) string {
+func processingJobAnswer(job docbankmedia.JobStatus) documentProcessingAnswer {
 	switch {
 	case job.State == "completed" || job.State == "partial" || job.Phase == "embedding":
 		// Docbank publishes rendition text before starting embeddings, even if embeddings fail.
-		return "extracted"
+		return documentProcessingAnswer{outcome: "extracted"}
 	case job.State == "queued" || job.State == "running" || job.State == "retry_wait":
-		return "requested"
+		return documentProcessingAnswer{outcome: "requested", delay: store.BeeperMediaPollDelay}
 	case job.State == "operator_required":
-		return "operator_required"
+		return documentProcessingAnswer{outcome: job.State, delay: store.BeeperMediaRetryDelay}
 	case job.State == "failed" || job.State == "abandoned":
-		if job.FailureCode != "" && len(job.FailureCode) <= 128 && strings.Trim(job.FailureCode, "abcdefghijklmnopqrstuvwxyz_") == "" {
-			return job.FailureCode
-		}
-		return job.State
+		return documentProcessingAnswer{outcome: processingCode(job.FailureCode, job.State)}
 	default:
-		return "requested"
+		// A newer Docbank may add states; keep the job and look again later instead of guessing.
+		report := fmt.Errorf("document processing job %s has unrecognized state %q", job.JobID, job.State)
+		return documentProcessingAnswer{outcome: processingCode(job.State, "unrecognized_state"), delay: store.BeeperMediaRetryDelay, report: report}
 	}
+}
+
+// processingCode returns code when it is a short snake_case outcome, otherwise fallback.
+func processingCode(code, fallback string) string {
+	if code != "" && len(code) <= 128 && strings.Trim(code, "abcdefghijklmnopqrstuvwxyz_") == "" {
+		return code
+	}
+	return fallback
 }
