@@ -716,7 +716,6 @@ func (s *Store) finishPersonSweepWorkTx(
 		err = tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM person_sweep_cursors c WHERE c.person_id = ?
 		AND c.program_fingerprint = ? AND c.catalog_fingerprint = ?
-		AND c.source_lane <> 'document_text'
 		AND (c.backstop_upper_key <> '' OR
 		(c.reconciliation_complete = FALSE AND c.reconcile_after_key <> c.reconcile_upper_key) OR EXISTS (
 			SELECT 1 FROM person_sweep_changes ch WHERE ch.person_id = c.person_id
