@@ -385,6 +385,7 @@ CREATE TABLE IF NOT EXISTS persons (
     id                        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     vcard_uid                 TEXT NOT NULL UNIQUE,
     display_name              TEXT,
+    display_name_source_name_id BIGINT,
     revision                  BIGINT NOT NULL DEFAULT 1,
     vcard_projection_revision BIGINT NOT NULL DEFAULT 1,
     created_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

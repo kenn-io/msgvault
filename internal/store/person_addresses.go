@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 type PersonAddressKind string
@@ -47,6 +49,126 @@ type PersonAddress struct {
 	OriginalValue      string            `json:"original_value"`
 }
 
+// PersonAddressVCardProjection contains the property value and parameters
+// rendered from a stored address. CardDAV inference review uses the same
+// projection.
+type PersonAddressVCardProjection struct {
+	Property    string  `json:"property"`
+	Value       string  `json:"value"`
+	ValueType   *string `json:"value_type"`
+	Label       *string `json:"label"`
+	GeoURI      *string `json:"geo_uri"`
+	Timezone    *string `json:"timezone"`
+	CountryCode *string `json:"country_code"`
+}
+
+func (address PersonAddress) VCardProjection() (PersonAddressVCardProjection, bool, error) {
+	switch address.AddressKind {
+	case PersonAddressPostal:
+		value, label, err := address.postalVCardValue()
+		if err != nil {
+			return PersonAddressVCardProjection{}, false, err
+		}
+		if strings.TrimSpace(value) == "" {
+			return PersonAddressVCardProjection{}, false, nil
+		}
+		return PersonAddressVCardProjection{
+			Property: "ADR", Value: value,
+			Label:       vcardProjectionParameterValue(label),
+			GeoURI:      vcardProjectionParameterValue(address.GeoURI),
+			Timezone:    vcardProjectionParameterValue(address.Timezone),
+			CountryCode: vcardProjectionParameterValue(address.CountryCode),
+		}, true, nil
+	case PersonAddressBirthPlace, PersonAddressDeathPlace:
+		value, isURI := address.placeVCardValue()
+		if strings.TrimSpace(value) == "" {
+			return PersonAddressVCardProjection{}, false, nil
+		}
+		property := "BIRTHPLACE"
+		if address.AddressKind == PersonAddressDeathPlace {
+			property = "DEATHPLACE"
+		}
+		valueType := "text"
+		if isURI {
+			valueType = "uri"
+		}
+		return PersonAddressVCardProjection{
+			Property: property, Value: value, ValueType: &valueType,
+		}, true, nil
+	default:
+		return PersonAddressVCardProjection{}, false, nil
+	}
+}
+
+func (address PersonAddress) postalVCardValue() (string, *string, error) {
+	components, err := address.postalVCardComponents()
+	if err != nil {
+		return "", nil, err
+	}
+	if !allVCardComponentsBlank(components) {
+		return vcard.JoinStructuredText(components), address.Label, nil
+	}
+	original := strings.TrimSpace(address.OriginalValue)
+	parsed, err := vcard.SplitStructuredText(original)
+	if err == nil && len(parsed) > 1 && !allVCardComponentsBlank(parsed) {
+		return vcard.JoinStructuredText(parsed), address.Label, nil
+	}
+	for _, text := range []*string{address.Label, address.FreeText, &original} {
+		if vcardProjectionParameterValue(text) != nil {
+			return vcard.JoinStructuredText(components), text, nil
+		}
+	}
+	return "", nil, nil
+}
+
+func (address PersonAddress) postalVCardComponents() ([]string, error) {
+	components := []string{
+		derefString(address.PostOfficeBox), derefString(address.ExtendedAddress),
+		derefString(address.StreetAddress), derefString(address.Locality),
+		derefString(address.Region), derefString(address.PostalCode),
+		derefString(address.CountryName),
+	}
+	if address.ExtendedComponents == nil || strings.TrimSpace(*address.ExtendedComponents) == "" {
+		return components, nil
+	}
+	parsed, err := vcard.SplitStructuredText(*address.ExtendedComponents)
+	if err != nil {
+		return nil, fmt.Errorf("decode extended ADR components: %w", err)
+	}
+	if len(parsed) > len(components) {
+		components = append(components, parsed[len(components):]...)
+	}
+	return components, nil
+}
+
+func (address PersonAddress) placeVCardValue() (string, bool) {
+	placeURI := ""
+	if address.PlaceURI != nil {
+		placeURI = strings.TrimSpace(*address.PlaceURI)
+	}
+	if placeURI != "" && vcard.IsURIValue(placeURI) {
+		return placeURI, true
+	}
+	for _, value := range []*string{address.FreeText, address.Label} {
+		if vcardProjectionParameterValue(value) != nil {
+			return vcard.EscapeText(*value), false
+		}
+	}
+	if placeURI != "" {
+		return vcard.EscapeText(placeURI), false
+	}
+	return vcard.EscapeText(address.OriginalValue), false
+}
+
+func allVCardComponentsBlank(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 type PersonAddressInput struct {
 	AddressKind        PersonAddressKind  `json:"address_kind"`
 	PostOfficeBox      *string            `json:"post_office_box,omitzero" nullable:"false"`
@@ -68,8 +190,9 @@ type PersonAddressInput struct {
 }
 
 var (
-	ErrInvalidPersonAddressKind  = errors.New("invalid person address kind")
-	ErrPersonAddressValueMissing = errors.New("person address requires at least one component")
+	ErrInvalidPersonAddressKind               = errors.New("invalid person address kind")
+	ErrPersonAddressValueMissing              = errors.New("person address requires at least one component")
+	ErrInvalidPersonAddressExtendedComponents = errors.New("extended address components must not contain CR or NUL")
 )
 
 func (s *Store) AddPersonAddressContext(
@@ -83,9 +206,11 @@ func (s *Store) AddPersonAddressContext(
 		if err := ensureProfilePersonTx(ctx, tx, personID); err != nil {
 			return err
 		}
-		var err error
-		result, err = s.addPersonAddressTx(ctx, tx, personID, input)
-		if err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			var err error
+			result, err = s.addPersonAddressTx(ctx, tx, personID, input)
+			return err
+		}); err != nil {
 			return err
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
@@ -115,9 +240,9 @@ func (s *Store) SupersedePersonAddressContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := s.supersedePersonAddressTx(
-			ctx, tx, personID, addressID, activeUntil,
-		); err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			return s.supersedePersonAddressTx(ctx, tx, personID, addressID, activeUntil)
+		}); err != nil {
 			return err
 		}
 		return s.bumpPersonRevisionsTx(ctx, tx, personID)
@@ -132,6 +257,11 @@ func (s *Store) addPersonAddressTx(
 	}
 	if !personAddressHasValue(input) {
 		return nil, ErrPersonAddressValueMissing
+	}
+	if input.AddressKind == PersonAddressPostal && input.ExtendedComponents != nil {
+		if _, err := vcard.SplitStructuredText(*input.ExtendedComponents); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidPersonAddressExtendedComponents, err)
+		}
 	}
 	original := strings.TrimSpace(input.OriginalValue)
 	if original == "" {

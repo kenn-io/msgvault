@@ -43,9 +43,9 @@ func assertPostgreSQLPersonProfileSnapshot(t *testing.T, history bool) {
 	require.NoError(err)
 
 	type readResult struct {
-		revision  int64
-		addresses []store.PersonAddress
-		err       error
+		revision int64
+		dates    []store.PersonDate
+		err      error
 	}
 	result := make(chan readResult, 1)
 	go func() {
@@ -55,7 +55,7 @@ func assertPostgreSQLPersonProfileSnapshot(t *testing.T, history bool) {
 				result <- readResult{err: readErr}
 				return
 			}
-			result <- readResult{revision: profile.Person.Revision, addresses: profile.Addresses}
+			result <- readResult{revision: profile.Person.Revision, dates: profile.Dates}
 			return
 		}
 		profile, readErr := st.GetPersonProfileContext(ctx, personID)
@@ -63,7 +63,7 @@ func assertPostgreSQLPersonProfileSnapshot(t *testing.T, history bool) {
 			result <- readResult{err: readErr}
 			return
 		}
-		result <- readResult{revision: profile.Person.Revision, addresses: profile.Addresses}
+		result <- readResult{revision: profile.Person.Revision, dates: profile.Dates}
 	}()
 
 	var lockErr error
@@ -81,10 +81,11 @@ func assertPostgreSQLPersonProfileSnapshot(t *testing.T, history bool) {
 	}, 5*time.Second, 10*time.Millisecond, "profile read must reach the blocked later table")
 	require.NoError(lockErr)
 
-	_, err = st.AddPersonAddressContext(ctx, personID, store.PersonAddressInput{
-		AddressKind:   store.PersonAddressPostal,
-		StreetAddress: new("123 Example St."),
-		Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	// Date writes do not need the contact-point table held by the read barrier.
+	_, err = st.AddPersonDateContext(ctx, personID, store.PersonDateInput{
+		DateKind: store.PersonDateBirthday,
+		Date:     store.PartialDate{Month: new(4), Day: new(12)},
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 	})
 	require.NoError(err)
 	require.NoError(blocker.Commit())
@@ -93,9 +94,15 @@ func assertPostgreSQLPersonProfileSnapshot(t *testing.T, history bool) {
 	case read := <-result:
 		require.NoError(read.err)
 		assert.Equal(before.Revision, read.revision)
-		assert.Empty(read.addresses,
+		assert.Empty(read.dates,
 			"an old person revision must not be paired with a later profile row")
 	case <-time.After(5 * time.Second):
 		require.Fail("profile read did not finish after releasing the table lock")
 	}
+
+	after, err := st.GetPersonProfileContext(ctx, personID)
+	require.NoError(err)
+	assert.Equal(before.Revision+1, after.Person.Revision)
+	require.Len(after.Dates, 1)
+	assert.Equal("--04-12", after.Dates[0].OriginalValue)
 }

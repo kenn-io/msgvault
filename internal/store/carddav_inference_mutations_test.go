@@ -295,8 +295,41 @@ func TestInferenceExportResolverStatusAndUnpin(t *testing.T) {
 	}
 }
 
+func TestInferenceExportUnrelatedPinPreservesDerivedFullNameReview(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, id, targets := newPersonFactProjectionStore(t)
+	_, err := st.AddPersonNameContext(t.Context(), id, PersonNameInput{
+		NameKind: PersonNameStructured, FamilyName: new("Example"), GivenName: new("Riley"),
+		Envelope: ValueEnvelopeInput{Source: ProvenanceExtraction},
+	})
+	require.NoError(err)
+	beforeRevision := inferenceRevision(t, st, id)
+	require.Equal(int64(1), beforeRevision)
+	profile, err := st.GetPersonProfileContext(t.Context(), id)
+	require.NoError(err)
+	beforeName, _, beforeInferred, ok := profile.DerivedVCardFullName()
+	require.True(ok)
+	require.True(beforeInferred)
+	assert.Equal("Riley Example", beforeName)
+
+	target := targets[AttributeSlugPrimaryChannel]
+	_, err = st.SetPersonFactPinContext(t.Context(), id,
+		personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, true, "test")
+	require.NoError(err)
+
+	profile, err = st.GetPersonProfileContext(t.Context(), id)
+	require.NoError(err)
+	afterName, _, afterInferred, ok := profile.DerivedVCardFullName()
+	require.True(ok)
+	require.True(afterInferred)
+	assert.Equal(beforeName, afterName)
+	assert.Equal(beforeRevision, inferenceRevision(t, st, id),
+		"pinning an unrelated fact must preserve review for an unchanged derived FN")
+}
+
 func TestInferenceExportMergeAndSplit(t *testing.T) {
-	for _, kind := range []string{"attribute", "employment", "declared"} {
+	for _, kind := range []string{"attribute", "employment", "contact", "address", "declared"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -306,12 +339,20 @@ func TestInferenceExportMergeAndSplit(t *testing.T) {
 			if kind == "declared" {
 				source = ProvenanceUser
 			}
-			if kind == "employment" {
+			switch kind {
+			case "employment":
 				org, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Example Org", Kind: OrganizationKindCompany})
 				require.NoError(err)
 				_, err = st.AddEmploymentContext(t.Context(), EmploymentInput{PersonID: absorbed.ID, OrganizationID: org.ID, Source: source})
 				require.NoError(err)
-			} else {
+			case "contact":
+				_, err := st.AddPersonContactPointContext(t.Context(), absorbed.ID, PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "inferred@example.com", Envelope: ValueEnvelopeInput{Source: source}})
+				require.NoError(err)
+			case "address":
+				street := "1 Inferred Street"
+				_, err := st.AddPersonAddressContext(t.Context(), absorbed.ID, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: &street, OriginalValue: street, Envelope: ValueEnvelopeInput{Source: source}})
+				require.NoError(err)
+			default:
 				inferenceNote(t, st, absorbed.ID, source, "Transferred")
 			}
 			_, err := st.db.Exec(`UPDATE person_carddav_inference_state SET approved_revision=inference_revision WHERE person_id=?`, absorbed.ID)
