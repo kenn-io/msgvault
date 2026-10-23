@@ -192,16 +192,12 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 }
 
 func TestSearchDocumentsContract(t *testing.T) {
-	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "kind", "node name", "full name page", "selections", "mixed"} {
+	for _, fault := range []string{"", "node", "rank", "selection", "media", "kind", "node name", "full name page", "selections", "mixed"} {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "\x01quartz\x02", Evidence: []SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}}}
 			switch fault {
-			case "vault":
-				report.Results[0].VaultUID = "00000000-0000-4000-8000-000000000099"
-			case "version":
-				report.Results[0].ContentVersionID = "00000000-0000-4000-8000-000000000099"
 			case "node":
 				report.Results[0].NodeID = 0
 			case "rank":

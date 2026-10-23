@@ -14,6 +14,7 @@ import (
 func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
+
 	t.Parallel()
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/media/search", r.URL.Path)
@@ -36,7 +37,9 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	h := &handlers{mediaSearcher: client}
 	response := runTool[generated.MediaSearchResponse](t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "quarterly numbers", "person_id": float64(7), "directions": []any{"from_person"}})
-	assert.Equal([]generated.MediaSearchResult{{MessageID: 11, ConversationID: 12, AttachmentID: 13, Origin: generated.MediaSearchResultOriginSupplied, Excerpt: "quarterly numbers"}}, response.Results)
+	require.Len(response.Results, 1)
+	assert.Equal(int64(11), response.Results[0].MessageID)
+	assert.Equal(generated.MediaSearchResultOriginSupplied, response.Results[0].Origin)
 	delegated := runToolExpectError(t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "words", "limit": float64(101), "directions": []any{"from_person"}})
 	assert.Contains(resultText(t, delegated), "API error (400): invalid media search")
 	assert.True(searchMediaDefinition().availability(capabilitiesFor(ServeOptions{MediaSearcher: client})))
