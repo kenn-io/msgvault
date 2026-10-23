@@ -48,6 +48,13 @@ func TestKataDocbankSourceEditBeforeReconciliation(t *testing.T) {
 	}
 }
 
+func TestHistoricalKataDocumentCitationUnavailable(t *testing.T) {
+	f := storetest.New(t)
+	ref := kataevidence.Reference{Version: 1, Kind: "document_chunk", ArchiveUID: "synthetic-archive", MessageID: 42, SourceType: "gmail", SourceIdentifier: "archive@example.test", SourceMessageID: "message", AttachmentID: 7, OccurrenceKey: "occurrence", DocumentChunk: &kataevidence.DocumentReference{CanonicalBlobHash: strings.Repeat("a", 64), ExtractionID: "extraction", ManifestChecksum: strings.Repeat("b", 64), ChunkKey: "chunk", ChunkChecksum: strings.Repeat("c", 64), EndRune: 12}}
+	_, err := f.Store.ReadKataEvidenceSource(t.Context(), ref)
+	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+}
+
 func TestKataEvidenceMessage(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

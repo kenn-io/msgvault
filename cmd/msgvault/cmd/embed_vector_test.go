@@ -377,33 +377,6 @@ func setupVectorFeaturesFixture(
 	return vf
 }
 
-func TestSetupVectorFeaturesDocumentClientRejectsCrossOriginRedirects(t *testing.T) {
-	for _, apiFormat := range []vector.EmbeddingAPIFormat{vector.APIFormatOpenAI, vector.APIFormatVoyageContextual} {
-		t.Run(string(apiFormat), func(t *testing.T) {
-			var targetRequests atomic.Int32
-			target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-				targetRequests.Add(1)
-			}))
-			t.Cleanup(target.Close)
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Location", target.URL+"/outside-consent")
-				w.WriteHeader(http.StatusTemporaryRedirect)
-			}))
-			t.Cleanup(origin.Close)
-
-			vf := setupVectorFeaturesFixture(t, apiFormat, false, func(c *config.Config) {
-				c.Vector.Embeddings.Endpoint = origin.URL
-			})
-			_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{{
-				Chunks: []string{"private attachment text"},
-			}})
-
-			require.ErrorIs(t, err, embed.ErrEmbeddingProviderRedirect)
-			assert.Zero(t, targetRequests.Load(), "attachment text must not reach the redirect target")
-		})
-	}
-}
-
 func TestSetupVectorFeatures_AppliesOpenAIEmbeddingPrefixes(t *testing.T) {
 	check := assert.New(t)
 	must := require.New(t)

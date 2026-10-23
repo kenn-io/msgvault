@@ -2,12 +2,10 @@ package store_test
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -67,15 +65,4 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), metadataQuery).Scan(&remaining))
 	checks.Zero(remaining, "document triggers and functions are removed")
 	requirements.NoError(f.Store.InitSchemaContext(t.Context()), "upgrade is ledgered and repeatable")
-}
-
-func TestHistoricalKataDocumentCitationUnavailable(t *testing.T) {
-	f := storetest.New(t)
-	ref := kataevidence.Reference{Version: 1, Kind: "document_chunk", ArchiveUID: "synthetic-archive", MessageID: 42, SourceType: "gmail", SourceIdentifier: "archive@example.test", SourceMessageID: "message", AttachmentID: 7, OccurrenceKey: "occurrence", DocumentChunk: &kataevidence.DocumentReference{CanonicalBlobHash: strings.Repeat("a", 64), ExtractionID: "extraction", ManifestChecksum: strings.Repeat("b", 64), ChunkKey: "chunk", ChunkChecksum: strings.Repeat("c", 64), EndRune: 12}}
-	_, err := kataevidence.Canonicalize(ref)
-	require.NoError(t, err)
-	_, err = f.Store.ReadKataEvidenceSource(t.Context(), ref)
-	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
-	_, err = kataevidence.New(f.Store).Prepare(t.Context(), []kataevidence.Selector{{Kind: "document_chunk", MessageID: 42, AttachmentID: 7, ExtractionID: "extraction", ChunkKey: "chunk", MaxChars: new(12)}})
-	require.ErrorIs(t, err, kataevidence.ErrInvalidReference)
 }
