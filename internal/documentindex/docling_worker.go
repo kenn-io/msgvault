@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/msgvault/internal/store"
@@ -253,16 +254,16 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 	var source document.SourceDocument
 	ranged := false
 	if route.Format.ID == "pdf" && w.rangeClient != nil {
-		record, inspectErr := w.inspectPDF(content, candidate)
+		pages, inspectErr := media.CountPDFPages(content)
 		if inspectErr != nil {
 			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, inspectErr))
 		}
-		if !record.Eligible {
-			return result, fail(errors.New("docling PDF exceeds the configured inspection bounds"))
+		if pages > int64(w.config.Documents.MaxPagesPerDocument) {
+			return result, fail(errors.New("docling PDF exceeds the configured page bound"))
 		}
-		if record.Measurements.Pages > doclingPDFRangePages {
+		if pages > doclingPDFRangePages {
 			ranged = true
-			source, err = w.renderPageRanges(workCtx, content, candidate, route.Format, claim, record, &accounting)
+			source, err = w.renderPageRanges(workCtx, content, candidate, route.Format, claim, int(pages), &accounting)
 		}
 	}
 	if !ranged {
@@ -372,11 +373,8 @@ func (w *DoclingWorker) readSource(ctx context.Context, candidate store.Document
 type doclingMemoryUpload struct {
 	*bytes.Reader
 
-	metadata   document.AuthorizedUploadMetadata
-	capability document.UploadCapability
+	metadata document.AuthorizedUploadMetadata
 }
-
-func (u *doclingMemoryUpload) CapabilityProof() document.UploadCapability { return u.capability }
 
 func (u *doclingMemoryUpload) Close() error                                { return nil }
 func (u *doclingMemoryUpload) Metadata() document.AuthorizedUploadMetadata { return u.metadata }

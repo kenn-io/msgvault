@@ -13,27 +13,13 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const doclingPDFRangePages = 50
 
-func (w *DoclingWorker) inspectPDF(content []byte, candidate store.DocumentExtractionCandidate) (media.CapabilityRecord, error) {
-	limit := w.config.Documents.MaxFileBytes
-	record, err := media.InspectCapability(bytes.NewReader(content), media.InspectionPolicy{
-		Filename: "document.pdf", DeclaredMediaType: "application/pdf", ExpectedBytes: int64(len(content)), ExpectedSHA256: candidate.CanonicalBlobHash,
-		DescriptorFingerprint: w.descriptor.Fingerprint, ProfileFingerprint: w.descriptor.PolicyFingerprint, DisclosureFingerprint: w.descriptor.PolicyFingerprint, InputKind: document.RenditionInputOriginalFile,
-		MaxSourceBytes: limit, MaxExpandedBytes: limit, MaxEntryBytes: limit, MaxEntries: 100_000, MaxNestingDepth: 1, MaxTextLines: 1_000_000, MaxCharacters: limit, MaxRecords: 1_000_000, MaxPages: int64(w.config.Documents.MaxPagesPerDocument), MaxSlides: 100_000, MaxSheets: 100_000, MaxCells: 10_000_000, MaxSpineItems: 100_000, MaxResources: 1_000_000, MaxDurationMS: 24 * 60 * 60 * 1000,
-	})
-	if err != nil {
-		return media.CapabilityRecord{}, fmt.Errorf("inspect Docling PDF: %w", err)
-	}
-	return record, nil
-}
-
-func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, candidate store.DocumentExtractionCandidate, format mistral.CandidateFormat, claim store.DocumentExtractionClaim, record media.CapabilityRecord, accounting *documentPublicationAccounting) (document.SourceDocument, error) {
+func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, candidate store.DocumentExtractionCandidate, format mistral.CandidateFormat, claim store.DocumentExtractionClaim, pages int, accounting *documentPublicationAccounting) (document.SourceDocument, error) {
 	checkpoints, err := w.catalog.LoadDocumentExtractionRanges(ctx, claim, w.config.Documents.MaxResponseBytes)
 	if err != nil {
 		return document.SourceDocument{}, err
@@ -41,7 +27,7 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 	saved := make(map[int]store.DocumentExtractionRange, len(checkpoints))
 	var payloadBytes int64
 	for _, r := range checkpoints {
-		if r.TotalPages != int(record.Measurements.Pages) || (r.FirstPage-1)%doclingPDFRangePages != 0 || r.LastPage != min(r.FirstPage+doclingPDFRangePages-1, r.TotalPages) {
+		if r.TotalPages != pages || (r.FirstPage-1)%doclingPDFRangePages != 0 || r.LastPage != min(r.FirstPage+doclingPDFRangePages-1, r.TotalPages) {
 			return document.SourceDocument{}, errors.New("document range checkpoint has inconsistent page bounds")
 		}
 		saved[r.FirstPage] = r
@@ -50,28 +36,19 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 	source := document.SourceDocument{Family: "pdf", UnitKind: "page"}
 	var markdown []string
 	degraded := false
-	for first := 1; first <= int(record.Measurements.Pages); first += doclingPDFRangePages {
-		last := min(first+doclingPDFRangePages-1, int(record.Measurements.Pages))
+	for first := 1; first <= pages; first += doclingPDFRangePages {
+		last := min(first+doclingPDFRangePages-1, pages)
 		checkpoint, ok := saved[first]
 		if !ok {
 			upload, authorization, err := w.authorizeUpload(content, candidate, format, claim)
 			if err != nil {
 				return document.SourceDocument{}, err
 			}
-			upload.capability = record.UploadCapability()
-			upload.metadata.CapabilityRecordChecksum = record.Checksum
-			upload.metadata.ProviderMetadataChecksum = ""
-			upload.metadata.ProviderMetadataChecksum, err = documentIdentityChecksum(upload.metadata)
-			if err != nil {
-				return document.SourceDocument{}, err
-			}
-			authorization.CapabilityRecordChecksum = record.Checksum
-			authorization.ProviderMetadataChecksum = upload.metadata.ProviderMetadataChecksum
 			authorization.RenditionRequestFingerprint, err = documentIdentityChecksum(struct {
 				Extraction  string
 				First, Last int
 				Capability  string
-			}{claim.ExtractionID, first, last, record.Checksum})
+			}{claim.ExtractionID, first, last, authorization.CapabilityRecordChecksum})
 			if err != nil {
 				return document.SourceDocument{}, err
 			}
@@ -100,7 +77,7 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 			if err != nil {
 				return document.SourceDocument{}, fmt.Errorf("encode range evidence: %w", err)
 			}
-			checkpoint = store.DocumentExtractionRange{FirstPage: first, LastPage: last, TotalPages: int(record.Measurements.Pages), Evidence: encoded, EvidenceChecksum: checksum, Markdown: string(rendered.ProviderMarkdown)}
+			checkpoint = store.DocumentExtractionRange{FirstPage: first, LastPage: last, TotalPages: pages, Evidence: encoded, EvidenceChecksum: checksum, Markdown: string(rendered.ProviderMarkdown)}
 			checkpoint.CharCount = utf8.RuneCountInString(checkpoint.Markdown)
 			for _, unit := range evidence.Units {
 				checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
@@ -110,8 +87,10 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 				return document.SourceDocument{}, errors.New("document range checkpoints exceed response byte bound")
 			}
 			// Validate before saving so an incomplete selection can be retried.
-			if _, _, err := doclingRangeUnits(checkpoint); err != nil {
+			if _, fallback, err := doclingRangeUnits(checkpoint); err != nil {
 				return document.SourceDocument{}, err
+			} else if fallback && strings.TrimSpace(checkpoint.Markdown) == "" {
+				return document.SourceDocument{}, errors.New("docling range has no bounded Markdown fallback")
 			}
 			if err := w.catalog.SaveDocumentExtractionRange(ctx, claim, checkpoint, w.config.Documents.MaxResponseBytes); err != nil {
 				return document.SourceDocument{}, err
@@ -123,9 +102,20 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 		}
 		degraded = degraded || fallback
 		source.Units = append(source.Units, units...)
-		markdown = append(markdown, checkpoint.Markdown)
+		rangeMarkdown := checkpoint.Markdown
+		if strings.TrimSpace(rangeMarkdown) == "" {
+			if fallback {
+				return document.SourceDocument{}, errors.New("docling range has no bounded Markdown fallback")
+			}
+			var text []string
+			for _, unit := range units {
+				text = append(text, unit.Markdown)
+			}
+			rangeMarkdown = strings.Join(text, "\n\n")
+		}
+		markdown = append(markdown, rangeMarkdown)
 	}
-	accounting.UnitsProcessed = int(record.Measurements.Pages)
+	accounting.UnitsProcessed = pages
 	if degraded {
 		combined := strings.Join(markdown, "\n\n")
 		if strings.TrimSpace(combined) == "" {

@@ -296,6 +296,9 @@ func (s *Store) ClaimDocumentExtraction(
                 FROM document_extraction_ranges WHERE extraction_id = ?`, input.ExtractionID, precedingID); err != nil {
 				return fmt.Errorf("transfer PDF range checkpoints: %w", err)
 			}
+			if _, err := q.Exec(`DELETE FROM document_extraction_ranges WHERE extraction_id = ?`, precedingID); err != nil {
+				return fmt.Errorf("delete transferred PDF range checkpoints: %w", err)
+			}
 		}
 		return nil
 	})

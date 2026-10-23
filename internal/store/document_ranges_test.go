@@ -40,10 +40,12 @@ func TestDocumentRangesSurviveRetryAndFenceWrites(t *testing.T) {
 	ranges, err := f.Store.LoadDocumentExtractionRanges(t.Context(), next, 1<<20)
 	requirements.NoError(err)
 	assertions.Equal([]store.DocumentExtractionRange{checkpoint}, ranges)
+	var count int
+	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges WHERE extraction_id = 'range-first'").Scan(&count))
+	assertions.Zero(count, "checkpoint plaintext belongs only to the replacement attempt")
 	assertions.Zero(documentFTSMatchCount(t, f.Store, "sentinel"))
 	requirements.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t, next, "published sentinel", strings.Repeat("e", 64))))
-	var count int
-	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges WHERE extraction_id = 'range-retry'").Scan(&count))
+	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 	assertions.Zero(count)
 }
 

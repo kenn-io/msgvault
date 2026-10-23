@@ -1,10 +1,13 @@
 package documentindex
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,15 +25,20 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func doclingPDFPages(pages int) []byte {
+func doclingPDFPages(t *testing.T, pages int) []byte {
+	t.Helper()
+	var imageBytes bytes.Buffer
+	require.NoError(t, jpeg.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 1, 1)), nil))
 	objects := make([]string, 2, pages+2)
 	objects[0] = "<< /Type /Catalog /Pages 2 0 R >>"
 	var kids strings.Builder
 	for page := range pages {
 		fmt.Fprintf(&kids, "%d 0 R ", page+3)
-		objects = append(objects, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 16 16] >>")
+		objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 16 16] /Resources << /XObject << /Im %d 0 R >> >> /Contents %d 0 R >>", pages+3, pages+4))
 	}
 	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", kids.String(), pages)
+	objects = append(objects, fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream", imageBytes.Len(), imageBytes.String()))
+	objects = append(objects, "<< /Length 10 >>\nstream\nq /Im Do Q\nendstream")
 	return mediatest.PDFObjects("synthetic document range fixture", objects)
 }
 
@@ -39,7 +47,7 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 		t.Run(strconv.Itoa(pages), func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			content := doclingPDFPages(pages)
+			content := doclingPDFPages(t, pages)
 			count, err := media.CountPDFPages(content)
 			requirements.NoError(err)
 			assertions.Equal(int64(pages), count)
@@ -127,7 +135,7 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			f := storetest.New(t)
-			content := doclingPDFPages(101)
+			content := doclingPDFPages(t, 101)
 			digest := sha256.Sum256(content)
 			hash := hex.EncodeToString(digest[:])
 			var selections []string
@@ -263,11 +271,13 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 
 func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 	for _, test := range []struct {
-		name                                                 string
-		degrade, missing, rebase, truncated, cap, blankFirst bool
+		name                                                                                   string
+		degrade, missing, rebase, truncated, cap, blankFirst, structuredFirst, missingFallback bool
 	}{
 		{name: "Markdown from all ranges", degrade: true},
 		{name: "blank range before degraded range", degrade: true, blankFirst: true},
+		{name: "structured text before degraded range", degrade: true, structuredFirst: true},
+		{name: "degraded range without Markdown", degrade: true, missingFallback: true},
 		{name: "missing page", missing: true},
 		{name: "rebased page", rebase: true},
 		{name: "truncate after complete coverage", truncated: true},
@@ -276,7 +286,7 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			content := doclingPDFPages(51)
+			content := doclingPDFPages(t, 51)
 			first, last := 0, 0
 			var selections []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -333,6 +343,9 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 						doc["texts"] = []any{}
 						wire["md_content"] = ""
 					}
+					if (test.structuredFirst && first == 1) || (test.missingFallback && first == 51) {
+						wire["md_content"] = ""
+					}
 					if test.degrade && first == 51 {
 						doc["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{}}}}
 					}
@@ -357,9 +370,12 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 			requirements.NoError(err)
 			digest := sha256.Sum256(content)
 			result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))})
-			if test.missing || test.rebase || test.cap {
+			if test.missing || test.rebase || test.cap || test.missingFallback {
 				requirements.Error(err)
 				assertions.Nil(catalog.publication)
+				if test.missingFallback {
+					assertions.Len(catalog.ranges, 1, "retry must request the degraded range again")
+				}
 				if test.missing || test.cap {
 					assertions.Empty(catalog.ranges)
 				}
@@ -376,6 +392,10 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 				requirements.Len(catalog.publication.Units, 1)
 				if test.blankFirst {
 					assertions.Equal("range 51..51 Markdown sentinel", catalog.publication.Units[0].Text)
+				} else if test.structuredFirst {
+					assertions.Contains(catalog.publication.Units[0].Text, "page 1 sentinel")
+					assertions.Contains(catalog.publication.Units[0].Text, "page 50 sentinel")
+					assertions.Contains(catalog.publication.Units[0].Text, "range 51..51 Markdown sentinel")
 				} else {
 					assertions.Equal("range 1..50 Markdown sentinel\nrange 51..51 Markdown sentinel", catalog.publication.Units[0].Text)
 				}
