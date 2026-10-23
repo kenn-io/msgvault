@@ -197,11 +197,11 @@ func selectorRange(sel Selector) (int, int, error) {
 	switch sel.Kind {
 	case "docbank_rendition":
 		// msgvault reads a transcript a window at a time, so it can't search all of it for a quote.
-		if sel.AttachmentID < 1 || sel.ExtractionID != "" || sel.ChunkKey != "" || sel.Quote != "" {
+		if sel.AttachmentID < 1 || sel.Quote != "" {
 			return 0, 0, ErrInvalidReference
 		}
 	case "message":
-		if sel.AttachmentID != 0 || sel.ExtractionID != "" || sel.ChunkKey != "" {
+		if sel.AttachmentID != 0 {
 			return 0, 0, ErrInvalidReference
 		}
 

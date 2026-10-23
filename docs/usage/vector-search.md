@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-10-08"
 title: Vector Search
-description: Find messages by meaning and set up separate people, visual, and document search indexes.
+description: Find messages by meaning and set up separate people and visual search indexes.
 ---
 
 Semantic search finds messages by meaning:

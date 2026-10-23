@@ -3,6 +3,7 @@
 package pgvector
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +15,10 @@ func TestMigrate_ReclaimsRetiredDocumentVectors(t *testing.T) {
 	_, err := db.Exec(`CREATE EXTENSION IF NOT EXISTS vector`)
 	require.NoError(t, err)
 	_, err = db.Exec(schemaSQL)
+	require.NoError(t, err)
+	retiredSchema, err := os.ReadFile("testdata/retired_document_vectors.sql")
+	require.NoError(t, err)
+	_, err = db.Exec(string(retiredSchema))
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO document_vector_backend_generations (generation_id, dimension) VALUES (1, 4);
 		INSERT INTO document_vector_embeddings (token, generation_id, dimension, embedding)

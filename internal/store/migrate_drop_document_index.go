@@ -35,7 +35,7 @@ var retiredDocumentCursorColumns = []string{
 	"optimistic_document_key", "reconcile_document_key", "backstop_document_key",
 }
 
-func (s *Store) dropDocumentMessageTriggers(ctx context.Context) error {
+func (s *Store) dropDocumentIndex(ctx context.Context) error {
 	postgres := s.IsPostgreSQL()
 	var deletedRows int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
@@ -68,7 +68,7 @@ func (s *Store) dropDocumentMessageTriggers(ctx context.Context) error {
 		)
 		for _, statement := range statements {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
-				return fmt.Errorf("drop document message triggers: %w", err)
+				return fmt.Errorf("drop document index: %w", err)
 			}
 		}
 		for _, table := range retiredDocumentTables {

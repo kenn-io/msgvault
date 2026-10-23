@@ -2163,7 +2163,7 @@ export const getMCPCapabilities = (
   );
 };
 /**
- * @summary Search recordings and attachments as visible messages
+ * @summary Search recording transcripts and mirrored attachment text as visible messages
  */
 export const searchMedia = (
   params: SearchMediaParams,

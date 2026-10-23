@@ -5,6 +5,7 @@ package sqlitevec
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,6 +41,10 @@ func TestMigrate_ReclaimsRetiredDocumentVectors(t *testing.T) {
 	db := openTestDB(t, filepath.Join(t.TempDir(), "vectors.db"))
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	_, err := db.Exec(schemaSQL)
+	require.NoError(t, err)
+	retiredSchema, err := os.ReadFile("testdata/retired_document_vectors.sql")
+	require.NoError(t, err)
+	_, err = db.Exec(string(retiredSchema))
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO document_vector_embeddings (token, generation_id, dimension)
 		VALUES ('retired-4', 1, 4), ('retired-8', 2, 8);
