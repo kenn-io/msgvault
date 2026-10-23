@@ -115,20 +115,20 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 		{
 			name: "processing", args: []string{"attachments", "status"},
 			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
-			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":9,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"grant consent in Docbank","processing":{"profile":"documents","waiting":3,"requested":1,"extracted":2,"outcomes":{"provider_timeout":1,"unsupported_format":2}}}`,
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":9,"sending":0,"remaining":0,"failed":0,"reasons":{}},"processing":{"profile":"documents","waiting":3,"requested":1,"extracted":2,"outcomes":{"provider_timeout":1,"unsupported_format":2}}}`,
 			want:     "Document profile: documents\nText extracted: 2\nProcessing: 1\nNot yet requested: 3\nWithout text (provider_timeout): 1\nWithout text (unsupported_format): 2",
 			notWant:  "msgvault docbank attachments backfill",
 		},
 		{
 			name: "consent_recovery", args: []string{"attachments", "status"},
 			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
-			response: `{"state":"running","counts":{},"processing":{"profile":"documents","outcomes":{"consent":2}}}`,
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{},"processing":{"profile":"documents","outcomes":{"consent":2}}}`,
 			want:     "After restoring consent or authority in Docbank, run msgvault docbank attachments backfill to retry processing.",
 		},
 		{
 			name: "authority_recovery", args: []string{"attachments", "status"},
 			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
-			response: `{"state":"running","counts":{},"processing":{"profile":"documents","outcomes":{"stale_authority":1}}}`,
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{},"processing":{"profile":"documents","outcomes":{"stale_authority":1}}}`,
 			want:     "After restoring consent or authority in Docbank, run msgvault docbank attachments backfill to retry processing.",
 		},
 		{
@@ -141,7 +141,7 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 			name: "json", args: []string{"attachments", "status", "--json"},
 			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
 			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":4,"remaining":2,"failed":3,"reasons":{"forbidden":3,"retrying":4}},"last_error":"upload failed"}`,
-			want:     `"upload_consent":true`,
+			want:     `"last_error":"upload failed"`,
 		},
 		{
 			name: "backfill", args: []string{"attachments", "backfill"},
