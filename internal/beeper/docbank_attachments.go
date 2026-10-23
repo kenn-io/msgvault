@@ -626,7 +626,7 @@ func (w *AttachmentMirror) processingBlocked(err error) error {
 	if httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err); ok && httpErr.Reason != "" {
 		err = fmt.Errorf("%s: %w", httpErr.Reason, err)
 	}
-	return fmt.Errorf("document_profile %q: check the profile and grant consent in Docbank: %w", w.options.DocumentProfile, err)
+	return fmt.Errorf("document_profile %q: check the profile and grant consent in Docbank: %w; after restoring consent or authority, run msgvault docbank attachments backfill", w.options.DocumentProfile, err)
 }
 
 type documentProcessingAnswer struct {
