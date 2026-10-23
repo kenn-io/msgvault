@@ -16,7 +16,7 @@ All notable changes to msgvault, grouped by release.
 
   The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent, and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled. The API schema is 4.0.0.
 
-  Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. Existing local extracted text, chunks, and consent rows stay in the archive, unused, until a Docbank transfer or an explicit purge. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Older backups retain their text and remain marked by `backup list`. Stored Kata document citations retain their saved quote and resolve as unavailable.
+  Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. The upgrade deletes locally extracted text, chunks, and consent rows. Backups made before the upgrade keep them, still restore, and stay marked by `backup list`. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Stored Kata document citations retain their saved quote and resolve as unavailable.
 
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
