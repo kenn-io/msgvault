@@ -16,17 +16,33 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func doclingPDFPages(pages int) []byte {
+	objects := make([]string, 2, pages+2)
+	objects[0] = "<< /Type /Catalog /Pages 2 0 R >>"
+	var kids strings.Builder
+	for page := range pages {
+		fmt.Fprintf(&kids, "%d 0 R ", page+3)
+		objects = append(objects, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 16 16] >>")
+	}
+	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", kids.String(), pages)
+	return mediatest.PDFObjects("synthetic document range fixture", objects)
+}
 
 func TestDoclingWorkerPageRanges(t *testing.T) {
 	for _, pages := range []int{50, 51, 101} {
 		t.Run(strconv.Itoa(pages), func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			content := mediatest.PDFPages(pages)
+			content := doclingPDFPages(pages)
+			count, err := media.CountPDFPages(content)
+			requirements.NoError(err)
+			assertions.Equal(int64(pages), count)
 			var selections []string
 			var first, last int
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +127,7 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			f := storetest.New(t)
-			content := mediatest.PDFPages(101)
+			content := doclingPDFPages(101)
 			digest := sha256.Sum256(content)
 			hash := hex.EncodeToString(digest[:])
 			var selections []string
@@ -260,7 +276,7 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			content := mediatest.PDFPages(51)
+			content := doclingPDFPages(51)
 			first, last := 0, 0
 			var selections []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
