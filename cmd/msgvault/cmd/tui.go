@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/tui"
-	apiclient "go.kenn.io/msgvault/pkg/client/generated"
 )
 
 var forceLocalTUI bool
@@ -111,6 +110,7 @@ HTTP Mode:
 		// Create and run TUI
 		semanticSearch := tuiSemanticSearcher(cmd.Context(), backend.client, backend.engine)
 		collectionScopes := tuiCollectionScopes(cmd.Context(), backend.client, backend.engine)
+		gate := newTUITelemetryGate(currentCfg.Data.DataDir, backend.client.BaseURL())
 		model := tui.New(backend.engine, tui.Options{
 			DataDir:               currentCfg.Data.DataDir,
 			ExportDir:             currentCfg.ExportDir(),
@@ -123,8 +123,8 @@ HTTP Mode:
 			AnalyticsNotice:       notice,
 			SettingsBackend:       backend.settings,
 			CollectionScopeLister: collectionScopes,
-			ReportScreen:          tuiScreenReporter(backend.client, currentCfg),
-			ReportAction:          tuiActionReporter(backend.client, currentCfg),
+			ReportScreen:          tuiScreenReporter(gate, backend.client, currentCfg),
+			ReportAction:          tuiActionReporter(gate, backend.client, currentCfg),
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -148,7 +148,7 @@ HTTP Mode:
 			started := time.Now()
 			_, err := p.Run()
 			if err == nil || errors.Is(err, tea.ErrInterrupted) {
-				reportTUISession(cmd.Context(), currentCfg, backend.info, time.Since(started))
+				reportTUISession(cmd.Context(), currentCfg, backend.info, time.Since(started), gate)
 			}
 			if err != nil {
 				return fmt.Errorf("run tui: %w", err)
@@ -162,7 +162,7 @@ HTTP Mode:
 	},
 }
 
-func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInfo, duration time.Duration) {
+func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInfo, duration time.Duration, gate *tuiTelemetryGate) {
 	if !clientTelemetryEnabled(cfg) {
 		return
 	}
@@ -182,20 +182,16 @@ func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInf
 			return
 		}
 		defer func() { _ = client.Close() }()
-		// daemonclient.New already built and cached the generated client.
-		generated, _ := client.GeneratedClient()
-		_, _ = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
-			Body: &apiclient.CaptureTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: map[string]any{"surface": "tui", "duration_bucket": telemetry.DurationBucket(duration)}},
-		})
+		_ = gate.report(ctx, client, telemetry.EventSessionEnded, "duration_bucket", telemetry.DurationBucket(duration))
 	})
 }
 
-func tuiScreenReporter(client *daemonclient.Client, cfg *config.Config) func(context.Context, string) error {
+func tuiScreenReporter(gate *tuiTelemetryGate, client *daemonclient.Client, cfg *config.Config) func(context.Context, string) error {
 	return func(ctx context.Context, screen string) error {
 		if !clientTelemetryEnabled(cfg) {
 			return nil
 		}
-		return sendActionTelemetry(ctx, client, "tui", "screen_viewed", "screen", screen)
+		return gate.report(ctx, client, telemetry.EventScreenViewed, "screen", screen)
 	}
 }
 
@@ -406,11 +402,11 @@ func init() {
 	_ = tuiCmd.Flags().MarkHidden("no-sqlite-scanner")
 }
 
-func tuiActionReporter(client *daemonclient.Client, cfg *config.Config) func(context.Context, string, string, string) error {
+func tuiActionReporter(gate *tuiTelemetryGate, client *daemonclient.Client, cfg *config.Config) func(context.Context, string, string, string) error {
 	return func(ctx context.Context, event, property, value string) error {
 		if !clientTelemetryEnabled(cfg) {
 			return nil
 		}
-		return sendActionTelemetry(ctx, client, "tui", event, property, value)
+		return gate.report(ctx, client, event, property, value)
 	}
 }

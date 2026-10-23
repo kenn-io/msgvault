@@ -56,11 +56,12 @@ func TestTUISessionUsesSelectedDaemonAfterCancellation(t *testing.T) {
 					ctx, cancel := context.WithCancel(cmd.Context())
 					enabled := !tc.configOff
 					cfg := &config.Config{Telemetry: config.TelemetryConfig{Enabled: &enabled}}
+					cfg.Data.DataDir = t.TempDir()
 					cfg.Remote.APIKey = "selected-daemon-key"
 					cfg.Remote.AllowInsecure = true
 					cancel()
 					require.ErrorIs(ctx.Err(), context.Canceled)
-					reportTUISession(ctx, cfg, HTTPStoreInfo{Kind: HTTPStoreConfiguredRemote, URL: server.URL}, 2*time.Minute)
+					reportTUISession(ctx, cfg, HTTPStoreInfo{Kind: HTTPStoreConfiguredRemote, URL: server.URL}, 2*time.Minute, newTUITelemetryGate(cfg.Data.DataDir, server.URL))
 					exitStart = time.Now()
 					return nil
 				}}

@@ -328,7 +328,7 @@
   {#if loading}<p role="status">Loading source status…</p>
   {:else if sources.length === 0}{#if !statusError}<p class="notice" role="status">No archived sources are available.</p>{/if}
   {:else}
-    <Table ariaLabel="Source status" zebra={false} class="source-table">
+    <Table unsorted ariaLabel="Source status" zebra={false} class="source-table">
       {#snippet header()}
         <TableHeaderCell label="Source" />
         <TableHeaderCell label="Schedule" />

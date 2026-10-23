@@ -16,7 +16,7 @@ type TelemetryEventRequest struct {
 
 // TelemetryEventResponse documents kit's accepted response.
 type TelemetryEventResponse struct {
-	Status string `json:"status" enum:"queued,disabled" doc:"queued when accepted, including suppressed daily screen duplicates or invalid screen names; disabled when telemetry is off"`
+	Status string `json:"status" enum:"queued,disabled" doc:"queued when accepted, including suppressed daily screen_viewed and message_opened duplicates or invalid screen names; disabled when telemetry is off"`
 }
 
 func (s *Server) registerTelemetryRoutes(apiV1 huma.API) {

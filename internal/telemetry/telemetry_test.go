@@ -61,6 +61,10 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 	}
 	opts := Options{DataDir: os.Getenv(wireDirEnv), Version: "v1.2.3", Commit: "test-commit", ConfigEnabled: os.Getenv(wireConfigOffEnv) == ""}
 	require := require.New(t)
+	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") == "rollover" {
+		exerciseDailyViewRollover(t, opts)
+		return
+	}
 	reporter := newReporterOrDisabled(opts, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
 	if os.Getenv("MSGVAULT_OUTCOMES_TEST") != "" {
@@ -104,16 +108,18 @@ type wireStub struct {
 func newWireStub(t *testing.T) *wireStub {
 	t.Helper()
 	stub := &wireStub{}
-	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		stub.mu.Lock()
-		stub.requests = append(stub.requests, recordedRequest{path: r.URL.Path, body: body})
-		stub.mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":1}`))
-	}))
+	stub.server = httptest.NewServer(http.HandlerFunc(stub.serveHTTP))
 	t.Cleanup(stub.server.Close)
 	return stub
+}
+
+func (s *wireStub) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	s.mu.Lock()
+	s.requests = append(s.requests, recordedRequest{path: r.URL.Path, body: body})
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":1}`))
 }
 
 func (s *wireStub) recorded() []recordedRequest {

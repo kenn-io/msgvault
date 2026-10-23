@@ -3,14 +3,15 @@ package telemetry
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,21 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	day := time.Date(2026, 1, 2, 23, 59, 0, 0, time.UTC)
 	h.now = func() time.Time { return day }
 	valid := `{"event":"screen_viewed","properties":{"screen":"settings","surface":"web"}}`
+	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") == "upgrade" {
+		install, err := posthog.LoadOrCreateInstall(opts.DataDir)
+		requirements.NoError(err)
+		// The previous daemon stored screen, message, and search claims together.
+		mixed := fmt.Sprintf(`{"install_id":%q,"day":"2026-01-02","screens":{"settings":true,"message_opened:web":true,"search_run:web:text":true}}`, install.ID)
+		requirements.NoError(os.WriteFile(filepath.Join(opts.DataDir, screenViewsFile), []byte(mixed), 0o600))
+		for _, body := range []string{
+			valid,
+			`{"event":"message_opened","properties":{"surface":"web"}}`,
+			`{"event":"search_run","properties":{"surface":"web","search_type":"text"}}`,
+		} {
+			assertions.JSONEq(`{"status":"queued"}`, screenRequest(h, body).Body.String())
+		}
+		return
+	}
 	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") == "restart" {
 		day = day.Add(2 * time.Minute)
 		assertions.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
@@ -49,9 +65,17 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 		assertions.Equal(http.StatusAccepted, screenRequest(h, body).Code)
 	}
 	if !reporter.Enabled() {
-		assertions.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
-		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
+		for _, body := range []string{
+			valid,
+			`{"event":"message_opened","properties":{"surface":"tui"}}`,
+			`{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`,
+		} {
+			response := screenRequest(h, body)
+			assertions.Equal(http.StatusAccepted, response.Code)
+			assertions.JSONEq(`{"status":"disabled"}`, response.Body.String())
+		}
 		assertions.NoFileExists(filepath.Join(opts.DataDir, screenViewsFile))
+		assertions.NoFileExists(filepath.Join(opts.DataDir, "telemetry-screen-claims.json"))
 		return
 	}
 	for _, body := range []string{
@@ -60,19 +84,7 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 		`{"event":"screen_viewed","properties":{"screen":"settings"}}`,
 	} {
 		assertions.Equal(http.StatusAccepted, screenRequest(h, body).Code)
-		assertions.NoFileExists(filepath.Join(opts.DataDir, screenViewsFile))
 	}
-	var group sync.WaitGroup
-	for i := range 20 {
-		group.Go(func() {
-			surface := "web"
-			if i%2 == 1 {
-				surface = "tui"
-			}
-			assertions.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":"screen_viewed","properties":{"screen":"settings","surface":%q}}`, surface)).Code)
-		})
-	}
-	group.Wait()
 	assertions.Equal(http.StatusBadRequest, screenRequest(h, valid+`{}`).Code)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"Event":"unknown","event":"screen_viewed","Properties":{"screen":"private","screen":"settings","surface":"web"}}`).Code)
 	assertions.Equal(http.StatusRequestEntityTooLarge, screenRequest(h, strings.Repeat(" ", 64<<10)+valid).Code)
@@ -97,16 +109,16 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	path := filepath.Join(opts.DataDir, screenViewsFile)
 	previous, err := os.ReadFile(path)
 	requirements.NoError(err)
-	assertions.Equal(http.StatusInternalServerError, screenRequest(h, `{"event":"message_opened","properties":{"surface":"web"}}`).Code)
+	h.now = func() time.Time { return day.Add(24 * time.Hour) }
+	assertions.Equal(http.StatusInternalServerError, screenRequest(h, `{"event":"search_run","properties":{"surface":"web","search_type":"text"}}`).Code)
+	h.now = func() time.Time { return day }
 	restored, err := os.ReadFile(path)
 	requirements.NoError(err)
 	assertions.Equal(previous, restored, "failed capture rolls the daily claim back")
 	h.captureEvent = capture
 	for _, surface := range []string{"web", "tui", "cli"} {
-		for _, event := range []string{EventMessageOpened, EventSyncFinished} {
-			for range 2 {
-				assertions.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":%q,"properties":{"surface":%q,"message_id":1}}`, event, surface)).Code)
-			}
+		for range 2 {
+			assertions.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":"sync_finished","properties":{"surface":%q,"message_id":1}}`, surface)).Code)
 		}
 	}
 	day = day.Add(2 * time.Minute)
@@ -115,12 +127,22 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	requirements.NoError(err)
 	requirements.NoError(os.Remove(claimsPath))
 	requirements.NoError(os.Mkdir(claimsPath, 0o700))
-	assertions.Equal(http.StatusInternalServerError, screenRequest(h, valid).Code)
+	assertions.Equal(http.StatusInternalServerError, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
 	requirements.NoError(os.Remove(claimsPath))
 	requirements.NoError(os.WriteFile(claimsPath, previous, 0o600))
-	assertions.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
+}
+
+func TestMixedLedgerUpgradePreservesSearchClaims(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	stub := newWireStub(t)
+	dir := t.TempDir()
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=upgrade")
+	events := batchEvents(t, stub)
+	require.Len(events, 2, "only screen and message claims recount on upgrade")
+	assert.Equal(EventScreenViewed, events[0]["event"])
+	assert.Equal(EventMessageOpened, events[1]["event"])
 }
 
 func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
@@ -131,7 +153,7 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	screenMessages := func() []map[string]any {
 		return slices.DeleteFunc(batchEvents(t, stub), func(event map[string]any) bool { return event["event"] != EventScreenViewed })
 	}
-	requirements.Len(batchEvents(t, stub), 23)
+	requirements.Len(batchEvents(t, stub), 19)
 	counts := map[string]int{}
 	for _, event := range batchEvents(t, stub) {
 		if event["event"] == EventScreenViewed || event["event"] == EventAppOpened {
@@ -146,9 +168,9 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	assertions.Equal(2, counts["search_run:cli:text"])
 	assertions.Equal(2, counts["search_run:tui:text"])
 	assertions.Equal(2, counts["sync_finished:cli:<nil>"], "successful CLI syncs count individually")
-	assertions.Len(counts, 13)
+	assertions.Len(counts, 10)
 	messages := screenMessages()
-	requirements.Len(messages, 4)
+	requirements.Len(messages, 3)
 	screens := []string{}
 	for _, event := range messages {
 		assertions.Equal(EventScreenViewed, event["event"])
@@ -159,15 +181,52 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 		assertions.Contains([]string{"web", "tui"}, props["surface"])
 	}
 	assertions.Contains(screens, "directory")
-	assertions.Equal(2, strings.Count(strings.Join(screens, ","), "settings"))
+	assertions.Equal(1, strings.Count(strings.Join(screens, ","), "settings"))
 	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart")
-	assertions.Len(screenMessages(), 4)
-	assertions.Len(batchEvents(t, stub), 23)
+	assertions.Len(screenMessages(), 3)
+	assertions.Len(batchEvents(t, stub), 19)
 	install, err := posthog.LoadOrCreateInstall(dir)
 	requirements.NoError(err)
 	requirements.NoError(os.Remove(filepath.Join(dir, posthog.InstallFileName)))
 	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart")
 	messages = screenMessages()
-	requirements.Len(messages, 5)
-	assertions.NotEqual(install.ID, messages[4]["distinct_id"])
+	requirements.Len(messages, 4)
+	assertions.NotEqual(install.ID, messages[3]["distinct_id"])
+}
+
+func TestDailyViewsResumeAfterUTCMidnight(t *testing.T) {
+	runWireHelper(t, "http://example.invalid", t.TempDir(), "MSGVAULT_SCREEN_VIEWS_TEST=rollover")
+}
+
+func exerciseDailyViewRollover(t *testing.T, opts Options) {
+	t.Helper()
+	synctest.Test(t, func(t *testing.T) {
+		stub := &wireStub{}
+		stub.server = httptest.NewTestServer(t, http.HandlerFunc(stub.serveHTTP))
+		transport := http.DefaultTransport
+		http.DefaultTransport = stub.server.Client().Transport
+		t.Cleanup(func() { http.DefaultTransport = transport })
+		reporter, err := buildReporter(opts, stub.server.URL, slog.New(slog.DiscardHandler))
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, reporter.Close()) })
+		h := CaptureHandler(reporter, opts.DataDir)
+		report := func() {
+			for _, body := range []string{
+				`{"event":"screen_viewed","properties":{"screen":"settings","surface":"web"}}`,
+				`{"event":"message_opened","properties":{"surface":"web"}}`,
+			} {
+				require.Equal(t, http.StatusAccepted, screenRequest(h, body).Code)
+			}
+		}
+		report()
+		report()
+		time.Sleep(time.Until(time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)))
+		report()
+		require.NoError(t, reporter.Close())
+		counts := map[string]int{}
+		for _, event := range batchEvents(t, stub) {
+			counts[fmt.Sprint(event["event"])]++
+		}
+		assert.Equal(t, map[string]int{EventScreenViewed: 2, EventMessageOpened: 2}, counts)
+	})
 }

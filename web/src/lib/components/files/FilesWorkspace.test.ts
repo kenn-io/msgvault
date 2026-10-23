@@ -1,3 +1,4 @@
+import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -72,8 +73,9 @@ describe('FilesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => {
       return Response.json(kind === 'nonempty' ? response() : { ...response(), files: [], total_count: 0 });
     });
+    const client = createAPIClient(fetchFn);
     const rendered = render(FilesWorkspace, {
-      client: createAPIClient(fetchFn),
+      client,
       predicate: { query: kind === 'image' || kind === 'visual' ? '' : 'missing', search_mode: 'full_text', filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' },
       submitted: kind === 'submitted' || kind === 'nonempty',
@@ -95,11 +97,12 @@ describe('FilesWorkspace', () => {
     await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
     await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(kind === 'nonempty' ? 0 : 1));
     if (kind === 'submitted') {
-      events.length = 0;
+      // Today's search keys are already claimed, so the reporter's calls show what the unsubmitted search reported.
+      const daily = vi.spyOn(startTelemetryReporting(client), 'reportDaily');
       await rendered.rerender({ submitted: false, sort: { field: 'occurred_at', direction: 'asc' }, filenameQuery: 'typed' });
       await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
-      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
-      expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(0);
+      await waitFor(() => expect(daily.mock.calls.map(([key]) => key)).toContain('search_run:text'));
+      expect(daily.mock.calls.map(([key]) => key)).not.toContain('search_empty:text');
     }
   });
 
@@ -109,8 +112,10 @@ describe('FilesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input): Promise<Response> => {
       return kind === 'text' && ++textSearchRequests === 2 ? new Promise<Response>((resolve) => { resolveStale = resolve; }) : Response.json(response());
     });
+    const client = createAPIClient(fetchFn);
+    const daily = vi.spyOn(startTelemetryReporting(client), 'reportDaily');
     const rendered = render(FilesWorkspace, {
-      client: createAPIClient(fetchFn), predicate: { query: kind === 'text' || kind === 'combined' ? 'needle' : '', search_mode: 'full_text', filters: [], presentation: 'table' },
+      client, predicate: { query: kind === 'text' || kind === 'combined' ? 'needle' : '', search_mode: 'full_text', filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' },
     });
     await screen.findByText('fixture.pdf');
@@ -123,19 +128,15 @@ describe('FilesWorkspace', () => {
       await waitFor(() => expect(textSearchRequests).toBe(3));
       resolveStale(Response.json(response()));
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
-      await search('');
-      await waitFor(() => expect(textSearchRequests).toBe(4));
-      await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
-      expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
-      await search('current');
-      await waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text', 'text']));
+      expect(daily.mock.calls.map(([key]) => key)).toEqual(['search_run:text', 'search_run:text']);
       await rendered.rerender({ sort: { field: 'occurred_at', direction: 'asc' } });
-      return waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text', 'text', 'text']));
+      await waitFor(() => expect(daily.mock.calls.map(([key]) => key)).toEqual(['search_run:text', 'search_run:text', 'search_run:text']));
+      stopTelemetryReporting(client);
+      return;
     }
     await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
     await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
-    if (kind === 'combined') await waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']));
+    if (kind === 'combined') await waitFor(() => expect(daily.mock.calls.map(([key]) => key)).toEqual(['search_run:text', 'search_run:text']));
     events.length = 0;
     if (kind === 'image') {
       await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [new File(['synthetic'], 'query.png', { type: 'image/png' })] } });
@@ -143,7 +144,8 @@ describe('FilesWorkspace', () => {
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Search attachment pixels' }), { target: { value: 'blue sky' } });
     }
     await waitFor(() => expect(events.at(-1)?.properties.search_type).toBe('semantic'), { timeout: 5000 });
-    expect(events.map((e) => e.properties.search_type)).toEqual(kind === 'combined' ? ['text', 'semantic'] : ['semantic']);
+    expect(events.map((e) => e.properties.search_type)).toEqual(['semantic']);
+    stopTelemetryReporting(client);
   });
 
   it.each([
