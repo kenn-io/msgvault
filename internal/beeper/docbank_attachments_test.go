@@ -1422,7 +1422,7 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 		{"queued", "rendition", "", "requested"},
 		{"running", "rendition", "", "requested"},
 		{"retry_wait", "rendition", "provider_timeout", "requested"},
-		{"new_state", "rendition", "provider_code", "requested"},
+		{"new_state", "rendition", "provider_code", "new_state"},
 		{"operator_required", "rendition", "other", "operator_required"},
 		{"failed", "rendition", "provider_timeout", "provider_timeout"},
 		{"failed", "rendition", "", "failed"},
@@ -1435,7 +1435,7 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 	} {
 		t.Run(tc.state+"_"+tc.phase+"_"+tc.code, func(t *testing.T) {
 			job := docbankmedia.JobStatus{State: tc.state, Phase: tc.phase, FailureCode: tc.code}
-			assert.Equal(t, tc.outcome, processingJobOutcome(job))
+			assert.Equal(t, tc.outcome, processingJobAnswer(job).outcome)
 			answer := processingAnswer(job, nil)
 			assert.Equal(t, tc.outcome, answer.outcome)
 		})
