@@ -303,6 +303,9 @@ func (s *Store) mergePersonsOnce(
 			result = replayed
 			return nil
 		}
+		if err := s.lockObservationPeopleTx(ctx, tx, request.SurvivorID, request.AbsorbedID); err != nil {
+			return err
+		}
 		if err := s.lockMergePeopleTx(ctx, tx, request.SurvivorID, request.AbsorbedID); err != nil {
 			return err
 		}
@@ -357,6 +360,9 @@ func (s *Store) mergePersonsOnce(
 		if err := s.moveCorePersonProfileTx(
 			ctx, tx, mergeID, survivor.ID, absorbed.ID, survivor.VCardUID,
 		); err != nil {
+			return err
+		}
+		if err := s.movePersonObservationsTx(ctx, tx, mergeID, survivor.ID, absorbed.ID); err != nil {
 			return err
 		}
 		projectionIDs := []int64{}

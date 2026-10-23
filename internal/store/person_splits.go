@@ -99,6 +99,9 @@ func (s *Store) splitPersonMergeOnce(
 			return nil
 		}
 
+		if err := s.lockObservationPeopleTx(ctx, tx, request.SourcePersonID); err != nil {
+			return err
+		}
 		var sourceRevision int64
 		var sourceUID string
 		err = tx.QueryRowContext(ctx, `SELECT revision, vcard_uid FROM persons WHERE id = ?`+
@@ -744,7 +747,7 @@ func (s *Store) restorePersonSplitRowsTx(
 	}
 	rowsByPath := make(map[string]personMergeSnapshotRow, len(snapshot.Rows))
 	for index, row := range snapshot.Rows {
-		rowsByPath["rows/"+strconv.Itoa(index)] = row
+		rowsByPath["rows/"+strconv.Itoa(index)] = observationSplitSnapshotRow(row)
 	}
 
 	move := make([]personSplitJournalRow, 0, len(journal))
@@ -960,6 +963,11 @@ func (s *Store) restorePersonSplitRowsTx(
 			return nil, err
 		}
 	}
+	if selection.restoresAbsorbed {
+		if err := s.restoreObservationCopiesTx(ctx, tx, mergeID, sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID, snapshot); err != nil {
+			return nil, err
+		}
+	}
 	return ambiguous, nil
 }
 
@@ -1149,6 +1157,8 @@ var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency
 }
 
 var personSplitSnapshotColumnDependencies = map[string]map[string]personSplitSnapshotDependency{
+	"person_observation_events": {"generation_id": {column: "generation_id", table: "person_fact_generations", key: "id"}, "evidence_id": {column: "evidence_id", table: "person_fact_evidence", key: "id"}},
+	"person_observations":       {"generation_id": {column: "generation_id", table: "person_fact_generations", key: "id"}, "superseded_by_id": {column: "superseded_by_id", table: "person_observations", key: "id"}},
 	personRelationshipReviewsTableName: {
 		"accepted_relationship_id": {
 			column: "accepted_relationship_id", table: personRelationshipsTableName, key: "id",
@@ -1271,7 +1281,8 @@ func (s *Store) personSplitSnapshotRecordTargetPresentTx(
 }
 
 func personSplitNullablePersonReference(table, column string) bool {
-	return (table == personRelationshipReviewsTableName && column == "matched_person_id") ||
+	return (table == "person_observations" && column == "subject_person_id") ||
+		(table == personRelationshipReviewsTableName && column == "matched_person_id") ||
 		(table == "person_uid_aliases" && column == "surviving_person_id") ||
 		(table == "person_merges" && column == "current_person_id")
 }
@@ -1443,6 +1454,10 @@ func personSplitJournalRef(row personSplitJournalRow) PersonMergeRowRef {
 
 func personSplitRestorePriority(table string) int {
 	switch table {
+	case "person_observations":
+		return 5
+	case "person_observation_evidence", "person_observation_premises", "person_observation_categories", "person_observation_events":
+		return 35
 	case identityMatchCandidatesTableName, personRelationshipsTableName, personAttributeValuesTableName:
 		return 10
 	case "identity_match_candidate_redirects", identityMatchCandidateSourcesTableName,
@@ -1509,6 +1524,9 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	assignments := make([]string, 0, len(row.Columns))
 	args := make([]any, 0, len(row.Columns)+3)
 	for _, column := range row.Columns {
+		if row.TableName == "person_observation_clocks" && row.OriginSide == personMergeOriginSurvivor && column.Name == "last_sequence" {
+			continue
+		}
 		if !recordTargetPresent &&
 			(column.Name == "active_until" || column.Name == "superseded_at") {
 			continue
