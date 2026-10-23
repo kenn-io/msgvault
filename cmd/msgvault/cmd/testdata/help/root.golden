@@ -149,7 +149,6 @@ Indexes, embeddings, and analytics cache:
   activity    Build the derived activity spine
   build-cache Build analytics cache for fast TUI queries
   cache-stats Show statistics about the analytics cache
-  documents   Manage document attachment indexing
   embeddings  Manage message vector embeddings
   eval        Score search quality against relevance judgments (qrels)
   multimodal  Manage and search visual attachment embeddings

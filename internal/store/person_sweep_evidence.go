@@ -740,7 +740,7 @@ func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts
 	if decodeErr != nil {
 		return reject(personfacts.ReasonUnalignedEvidence, "invalid person sweep evidence ref"), nil //nolint:nilerr // Malformed evidence is a recorded domain rejection.
 	}
-	if ref.SourceLane == peoplesweep.SourceAttachmentCaption || ref.SourceLane == peoplesweep.SourceAttachmentOCR {
+	if ref.SourceLane == "document_text" || ref.SourceLane == peoplesweep.SourceAttachmentCaption || ref.SourceLane == peoplesweep.SourceAttachmentOCR {
 		return personfacts.AlignmentResult{}, peoplesweep.ErrSourceTextUnavailable
 	}
 	if a.Store == nil {
@@ -829,6 +829,9 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 		ref, err := peoplesweep.DecodePersonSweepEvidenceRef(stored.Input.SourceRef)
 		if err != nil {
 			return nil, fmt.Errorf("decode stored person sweep evidence %s: %w", stored.Key, err)
+		}
+		if ref.SourceLane == "document_text" {
+			continue
 		}
 		for _, change := range changes {
 			if !personSweepChangeMatchesRef(personID, change, ref) {

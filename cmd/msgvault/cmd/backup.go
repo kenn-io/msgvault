@@ -282,6 +282,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		Progress:           renderer.handle,
 		PackedContent:      backupRestorePackedContentTarget(looseAttachments),
 		TargetCoordinator:  targetCoordinatorOption,
+		AuxiliaryTarget:    backupapp.DocumentAuxiliaryTarget{},
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
