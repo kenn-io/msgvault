@@ -55,13 +55,11 @@ func TestDropDocumentMessageTriggersInterruptedUpgradeKeepsMessageWrites(t *test
 		t.Skip("PostgreSQL trigger function dependency")
 	}
 	id := f.insertMessage(t, "interrupted-document-upgrade", "email", f.aliceID, time.Now().UTC())
-	for _, path := range []string{"testdata/document_index_postgres.sql", "testdata/person_sweep_document_triggers_postgres.sql"} {
-		schema, err := os.ReadFile(path)
-		require.NoError(err)
-		_, err = f.store.DB().ExecContext(t.Context(), string(schema))
-		require.NoError(err)
-	}
-	_, err := f.store.DB().ExecContext(t.Context(), `
+	schema, err := os.ReadFile("testdata/person_sweep_document_triggers_postgres.sql")
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), string(schema))
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), `
 		DELETE FROM applied_migrations WHERE name IN ('drop_document_message_triggers_v1', 'person_sweep_change_triggers_v6');
 		UPDATE archive_metadata SET value='11' WHERE key='schema_version';
 		CREATE FUNCTION interrupt_document_upgrade() RETURNS trigger AS $$
