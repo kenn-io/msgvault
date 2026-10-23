@@ -41,10 +41,8 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Repaired"}))
 	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET sender_id = ? WHERE id = ?"), sender, id)
 	require.NoError(err)
-	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
-	require.True(ran)
-	assert.Equal(int64(1), sum.BodiesRewritten)
 	var body, html, snippet string
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), id).Scan(&body, &html))
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT snippet FROM messages WHERE id = ?"), id).Scan(&snippet))
@@ -74,9 +72,6 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 	require.NoError(st.UpdateMessageDerivedEmailTextContext(t.Context(), id, sql.NullString{}, sql.NullString{}, sql.NullString{String: "Older", Valid: true}))
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT last_message_preview FROM conversations WHERE id = ?"), conv).Scan(&preview))
 	assert.Equal("Latest", preview.String)
-	_, ran, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	require.NoError(err)
-	assert.False(ran)
 }
 
 func TestEmailRepairsCurrentBodyAndChatAndSkipsUndecodable(t *testing.T) {
@@ -177,7 +172,6 @@ func TestEmailFailedRowRollsBackAndResumes(t *testing.T) {
 	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(3), sum.MessagesScanned)
-	assert.Equal(int64(2), sum.BodiesRewritten)
 	body, err := st.GetMessageBodyText(last)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)

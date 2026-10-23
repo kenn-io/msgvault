@@ -102,7 +102,7 @@ Examples:
 	return cmd
 }
 
-// repairDerivedSource runs a source's typed re-derivation pass, if any, then
+// repairDerivedSource runs a source's re-derivation passes, then
 // derives its pending account attribution, printing a summary of each.
 func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src *store.Source) error {
 	label := src.SourceType + "/" + src.Identifier
@@ -111,7 +111,9 @@ func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprint(out, formatRepairDerivedSummary(label, textSum))
+	if textSum.MessagesScanned > 0 {
+		_, _ = fmt.Fprint(out, formatRepairDerivedSummary(label, textSum))
+	}
 	if textSum.Undecodable > 0 {
 		_, _ = fmt.Fprintf(out, "  %d archived payloads could not be decoded — left unchanged\n", textSum.Undecodable)
 	}

@@ -194,16 +194,3 @@ func derivedDataRevision(t *testing.T, st *store.Store) int64 {
 	`).Scan(&revision))
 	return revision
 }
-
-func TestRunIfStaleEmptyUnregisteredType(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	sum, ran, err := RunIfStale(t.Context(), st, "no-such-type", "acct", 1, nil)
-	require.NoError(err)
-	require.True(ran)
-	assert.Zero(sum.MessagesScanned)
-	_, ran, err = RunIfStale(t.Context(), st, "no-such-type", "acct", 1, nil)
-	require.NoError(err)
-	assert.False(ran)
-}

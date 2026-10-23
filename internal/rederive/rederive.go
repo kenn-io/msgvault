@@ -78,11 +78,15 @@ func Lookup(sourceType string) (Func, string, bool) {
 	return e.fn, e.version, ok
 }
 
-func resolve(sourceType string) (Func, string) {
+func resolve(sourceType string) []entry {
+	email := entry{fn: repairEmail, version: emailVersion}
 	if fn, version, ok := Lookup(sourceType); ok {
-		return fn, version
+		// Provider versions already have ledger entries, including v1. Track
+		// MIME separately so those entries cannot suppress its first repair.
+		email.version = "mime:" + email.version
+		return []entry{{fn: fn, version: version}, email}
 	}
-	return repairEmail, emailVersion
+	return []entry{email}
 }
 
 // SourceTypes lists every registered source type, sorted for stable output.
@@ -102,8 +106,8 @@ func LedgerKey(sourceType, identifier, version string) string {
 	return fmt.Sprintf("rederive:%s:%s:%s", sourceType, identifier, version)
 }
 
-// Run executes a source's pass and records it in the ledger, whether or not the
-// ledger already held it. This is the on-demand path; recording still matters
+// Run executes a source's passes and records each in the ledger, whether or not
+// the ledger already held it. This is the on-demand path; recording still matters
 // here, or the next sync would repeat a full scan of an archive that is already
 // current.
 //
@@ -112,8 +116,12 @@ func LedgerKey(sourceType, identifier, version string) string {
 func Run(
 	ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string),
 ) (*Summary, error) {
-	fn, version := resolve(sourceType)
-	sum, err := fn(ctx, s, sourceID, progress)
+	sum, _, err := run(ctx, s, sourceType, identifier, sourceID, progress, false)
+	return sum, err
+}
+
+func runPass(ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string), pass entry) (*Summary, error) {
+	sum, err := pass.fn(ctx, s, sourceID, progress)
 	if err != nil {
 		// A pass can fail after earlier message transactions committed. Make
 		// those partial authoritative writes visible to cache maintenance even
@@ -128,7 +136,7 @@ func Run(
 	if sum != nil && sum.Errors > 0 {
 		return sum, s.AdvanceDerivedDataRevisionContext(ctx)
 	}
-	ledgerKey := LedgerKey(sourceType, identifier, version)
+	ledgerKey := LedgerKey(sourceType, identifier, pass.version)
 	if sum == nil || sum.MessagesScanned == 0 {
 		// New and empty sources have no existing derived rows to invalidate.
 		// Record the pass so sync does not repeat it, but keep a current cache
@@ -141,17 +149,37 @@ func Run(
 	return sum, nil
 }
 
-// RunIfStale runs a source's pass unless the ledger already records its current
-// version. Sources without a registered pass rebuild retained MIME. ran reports
-// whether the pass executed. This is the upgrade path, called from a sync.
+// RunIfStale runs each stale pass for a source, including retained MIME repair.
+// ran reports whether any pass executed. This is the upgrade path, called from a sync.
 func RunIfStale(
 	ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string),
 ) (sum *Summary, ran bool, err error) {
-	_, version := resolve(sourceType)
-	applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, version), 1)
-	if err != nil || applied {
-		return nil, false, err
+	return run(ctx, s, sourceType, identifier, sourceID, progress, true)
+}
+
+func run(ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string), onlyStale bool) (sum *Summary, ran bool, err error) {
+	for _, pass := range resolve(sourceType) {
+		if onlyStale {
+			applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, pass.version), 1)
+			if err != nil {
+				return sum, ran, err
+			}
+			if applied {
+				continue
+			}
+		}
+		if sum == nil {
+			sum = &Summary{}
+		}
+		partial, err := runPass(ctx, s, sourceType, identifier, sourceID, progress, pass)
+		sum.Add(partial)
+		if partial != nil {
+			sum.Duration += partial.Duration
+		}
+		ran = true
+		if err != nil {
+			return sum, ran, err
+		}
 	}
-	sum, err = Run(ctx, s, sourceType, identifier, sourceID, progress)
-	return sum, true, err
+	return sum, ran, nil
 }
