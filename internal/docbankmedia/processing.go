@@ -17,7 +17,8 @@ type ProcessingSelector struct {
 }
 
 type ProcessingPlan struct {
-	Fingerprint string `json:"fingerprint"`
+	Fingerprint               string `json:"fingerprint"`
+	RenditionIneligibleReason string `json:"rendition_ineligible_reason"`
 }
 
 func (c *Client) PlanProcessing(ctx context.Context, selector ProcessingSelector) (ProcessingPlan, error) {

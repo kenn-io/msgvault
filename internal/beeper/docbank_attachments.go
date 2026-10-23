@@ -572,7 +572,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 				return false, ctx.Err()
 			}
 			answer := processingAnswer(job, err)
-			if answer.blocked {
+			if answer.blocked && answer.outcome == "" {
 				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(err))
 			}
 			if !answer.retry {
@@ -588,7 +588,10 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			}); saveErr != nil {
 				return false, errors.Join(failures.reported, failures.streak, err, endMediaPass(saveErr))
 			}
-			if answer.retry {
+			if answer.blocked {
+				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(errors.New(answer.outcome)))
+			}
+			if answer.retry && isDestinationFault(err) {
 				if stopErr := failures.retry(err); stopErr != nil {
 					return false, errors.Join(failures.reported, stopErr)
 				}
@@ -599,11 +602,11 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 	}
 }
 
-// askProcessing polls a requested job, or plans and starts one.
+// askProcessing polls a saved job, or plans and starts one.
 func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (docbankmedia.JobStatus, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
 	defer cancel()
-	if d.Outcome == "requested" {
+	if d.Outcome == "requested" || d.Outcome == "operator_required" {
 		job, err := w.client.JobStatus(ctx, d.JobID)
 		return job, d.JobID, err
 	}
@@ -611,6 +614,9 @@ func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAtt
 	plan, err := w.client.PlanProcessing(ctx, selector)
 	if err != nil {
 		return docbankmedia.JobStatus{}, "", err
+	}
+	if plan.RenditionIneligibleReason != "" {
+		return docbankmedia.JobStatus{State: "failed", FailureCode: plan.RenditionIneligibleReason}, "", nil
 	}
 	jobID, err := w.client.StartProcessing(ctx, selector, plan.Fingerprint)
 	return docbankmedia.JobStatus{State: "queued"}, jobID, err
@@ -635,8 +641,13 @@ func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingA
 	if err == nil {
 		outcome := processingJobOutcome(job)
 		answer := documentProcessingAnswer{outcome: outcome}
-		if outcome == "requested" {
+		switch outcome {
+		case "requested":
 			answer.delay = store.BeeperMediaPollDelay
+		case "operator_required":
+			answer.delay = store.BeeperMediaRetryDelay
+		case "consent":
+			answer.blocked = true
 		}
 		return answer
 	}
@@ -672,9 +683,7 @@ func processingJobOutcome(job docbankmedia.JobStatus) string {
 			return job.FailureCode
 		}
 		return job.State
-	case job.State != "":
-		return "requested"
 	default:
-		return "invalid_receipt"
+		return "requested"
 	}
 }
