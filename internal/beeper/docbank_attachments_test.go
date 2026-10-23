@@ -1099,6 +1099,22 @@ func TestAttachmentMirrorProcessingRefusalBackfill(t *testing.T) {
 	}
 }
 
+func TestAttachmentMirrorProcessingBackfillBeforeConsentObserved(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	r.processing.States["job-a"] = [3]string{"failed", "rendition", "consent"}
+	r.processingDue()
+	// Consent is restored before msgvault polls the failed job.
+	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Empty(r.processingCounts().Outcomes)
+}
+
 func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
 	for _, state := range []string{"operator_required", "awaiting_review"} {
 		t.Run(state, func(t *testing.T) {
