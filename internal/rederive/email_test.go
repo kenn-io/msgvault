@@ -30,7 +30,6 @@ func archiveEmail(t *testing.T, st *store.Store, src *store.Source, key, kind, b
 func TestEmailRebuildsArchivedText(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	testutil.SkipIfPostgres(t, "asserts SQLite FTS body and address columns")
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "archive@example.net")
 	require.NoError(err)
@@ -41,24 +40,25 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Repaired"}))
 	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET sender_id = ? WHERE id = ?"), sender, id)
 	require.NoError(err)
-	var matches int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'body:Heizkörper'").Scan(&matches))
-	assert.Zero(matches)
+	matches, _, err := st.SearchMessages("Heizkörper", 0, 10)
+	require.NoError(err)
+	assert.Empty(matches)
 	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	require.True(ran)
 	assert.Equal(int64(1), sum.BodiesRewritten)
-	var body, html, snippet, from, subject string
+	var body, html, snippet string
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), id).Scan(&body, &html))
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT snippet FROM messages WHERE id = ?"), id).Scan(&snippet))
 	assert.Equal("Heizkörper", body)
 	assert.Equal("<p>Heizkörper</p>", html)
 	assert.Equal("Heizkörper", snippet)
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'body:Heizkörper'").Scan(&matches))
-	assert.Equal(1, matches)
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT from_addr, subject FROM messages_fts WHERE rowid = ?"), id).Scan(&from, &subject))
-	assert.Contains(from, "repaired@example.net")
-	assert.Equal("Stored subject", subject)
+	for _, query := range []string{"Heizkörper", "Stored", "repaired"} {
+		matches, _, err = st.SearchMessages(query, 0, 10)
+		require.NoError(err)
+		require.Len(matches, 1, query)
+		assert.Equal(id, matches[0].ID)
+	}
 	_, ran, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.False(ran)
