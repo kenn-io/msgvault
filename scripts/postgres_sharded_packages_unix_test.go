@@ -14,9 +14,15 @@ import (
 )
 
 func TestPostgresShardedPackages(t *testing.T) {
-	require := require.New(t)
+	must := require.New(t)
 	data, err := os.ReadFile("../.github/workflows/ci.yml")
-	require.NoError(err)
+	must.NoError(err)
+	type matrixEntry struct {
+		Name    string `yaml:"name"`
+		Package string `yaml:"package"`
+		Part    int    `yaml:"part"`
+		Parts   *int   `yaml:"parts"`
+	}
 	var workflow struct {
 		Jobs map[string]struct {
 			Steps []struct {
@@ -25,19 +31,51 @@ func TestPostgresShardedPackages(t *testing.T) {
 			} `yaml:"steps"`
 			Strategy struct {
 				Matrix struct {
-					Include []struct {
-						Package string `yaml:"package"`
-					} `yaml:"include"`
+					Include []matrixEntry `yaml:"include"`
 				} `yaml:"matrix"`
 			} `yaml:"strategy"`
 		} `yaml:"jobs"`
 	}
-	require.NoError(yaml.Unmarshal(data, &workflow))
+	must.NoError(yaml.Unmarshal(data, &workflow))
+	for jobName, job := range workflow.Jobs {
+		byPackage := make(map[string][]matrixEntry)
+		for _, entry := range job.Strategy.Matrix.Include {
+			byPackage[entry.Package] = append(byPackage[entry.Package], entry)
+		}
+		for pkg, entries := range byPackage {
+			var parts *int
+			for _, entry := range entries {
+				if entry.Parts != nil {
+					parts = entry.Parts
+					break
+				}
+			}
+			if parts == nil {
+				continue
+			}
+			t.Run(jobName+"/"+pkg, func(t *testing.T) {
+				require := require.New(t)
+				require.NotEmpty(pkg)
+				require.Positive(*parts)
+				var got []int
+				for _, entry := range entries {
+					require.NotNil(entry.Parts, "%s must declare parts", entry.Name)
+					require.Equal(*parts, *entry.Parts, "%s must agree on parts", entry.Name)
+					got = append(got, entry.Part)
+				}
+				want := make([]int, *parts)
+				for i := range want {
+					want[i] = i + 1
+				}
+				require.ElementsMatch(want, got, "package must cover parts 1..%d exactly once", *parts)
+			})
+		}
+	}
 	entries := workflow.Jobs["test-postgres-sharded"].Strategy.Matrix.Include
-	require.NotEmpty(entries)
+	must.NotEmpty(entries)
 	packages := make(map[string]bool)
 	for _, entry := range entries {
-		require.NotEmpty(entry.Package)
+		must.NotEmpty(entry.Package)
 		packages[entry.Package] = true
 	}
 
@@ -48,11 +86,11 @@ func TestPostgresShardedPackages(t *testing.T) {
 			break
 		}
 	}
-	require.NotEmpty(run, "jobs.test-postgres must have a Test (PostgreSQL) step with a run command")
-	match := regexp.MustCompile(`\bSHARDED_TEST_PKGS="([^"]*)"`).FindStringSubmatch(run)
-	require.Len(match, 2, "Test (PostgreSQL) must set an explicit quoted SHARDED_TEST_PKGS override")
-	want := strings.Fields(match[1])
-	require.NotEmpty(want, "SHARDED_TEST_PKGS override must list the PostgreSQL sharded packages")
+	must.NotEmpty(run, "jobs.test-postgres must have a Test (PostgreSQL) step with a run command")
+	match := regexp.MustCompile(`\bSHARDED_TEST_PKGS=(?:"([^"]*)"|'([^']*)')`).FindStringSubmatch(run)
+	must.Len(match, 3, "Test (PostgreSQL) must set an explicit quoted SHARDED_TEST_PKGS override")
+	want := strings.Fields(match[1] + match[2])
+	must.NotEmpty(want, "SHARDED_TEST_PKGS override must list the PostgreSQL sharded packages")
 	var got []string
 	for pkg := range packages {
 		got = append(got, pkg)
