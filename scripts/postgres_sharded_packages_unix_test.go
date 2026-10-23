@@ -4,7 +4,7 @@ package scripts
 
 import (
 	"os"
-	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -19,6 +19,10 @@ func TestPostgresShardedPackages(t *testing.T) {
 	require.NoError(err)
 	var workflow struct {
 		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
 			Strategy struct {
 				Matrix struct {
 					Include []struct {
@@ -37,13 +41,18 @@ func TestPostgresShardedPackages(t *testing.T) {
 		packages[entry.Package] = true
 	}
 
-	cmd := exec.Command("make", "-s", "--no-print-directory", "-f", "Makefile", "-f", "-", "print-pg-sharded-packages")
-	cmd.Dir = ".."
-	cmd.Stdin = strings.NewReader("print-pg-sharded-packages:\n\t@echo $(PG_SHARDED_TEST_PKGS)\n")
-	output, err := cmd.CombinedOutput()
-	require.NoError(err, string(output))
-	want := strings.Fields(string(output))
-	require.NotEmpty(want)
+	var run string
+	for _, step := range workflow.Jobs["test-postgres"].Steps {
+		if step.Name == "Test (PostgreSQL)" {
+			run = step.Run
+			break
+		}
+	}
+	require.NotEmpty(run, "jobs.test-postgres must have a Test (PostgreSQL) step with a run command")
+	match := regexp.MustCompile(`\bSHARDED_TEST_PKGS="([^"]*)"`).FindStringSubmatch(run)
+	require.Len(match, 2, "Test (PostgreSQL) must set an explicit quoted SHARDED_TEST_PKGS override")
+	want := strings.Fields(match[1])
+	require.NotEmpty(want, "SHARDED_TEST_PKGS override must list the PostgreSQL sharded packages")
 	var got []string
 	for pkg := range packages {
 		got = append(got, pkg)

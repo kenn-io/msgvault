@@ -756,7 +756,8 @@ jobs:
       # The largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped-unsharded
+        # Keep this override in step with the test-postgres-sharded matrix below.
+        run: make test-pg-shipped-unsharded SHARDED_TEST_PKGS="./cmd/msgvault/cmd ./internal/store ./internal/api ./internal/beeper ./internal/query"
 
       - name: Save Go caches
         uses: ./.github/actions/go-cache-save
