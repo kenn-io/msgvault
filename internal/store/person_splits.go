@@ -12,6 +12,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 const (
@@ -271,6 +274,17 @@ func (s *Store) splitPersonMergeOnce(
 				return fmt.Errorf("%w: ancestor absorbed UID alias is not owned by source",
 					ErrPersonSplitParticipants)
 			}
+		}
+		if err := s.restorePersonInstructionLinksTx(ctx, tx, request.MergeID, snapshot); err != nil {
+			return err
+		}
+		for _, ancestor := range ancestorRestorations {
+			if err := s.restorePersonInstructionLinksTx(ctx, tx, ancestor.merge.ID, ancestor.snapshot); err != nil {
+				return err
+			}
+		}
+		if err := s.markSplitPersonInstructionsTx(ctx, tx, newPersonID); err != nil {
+			return err
 		}
 		var ownershipQuery strings.Builder
 		ownershipQuery.WriteString(`UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`)
@@ -1149,6 +1163,13 @@ var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency
 }
 
 var personSplitSnapshotColumnDependencies = map[string]map[string]personSplitSnapshotDependency{
+	"person_instructions": {
+		"contact_point_id": {column: "contact_point_id", table: "person_contact_points", key: "id"},
+		"supersedes_id":    {column: "supersedes_id", table: "person_instructions", key: "id"},
+	},
+	"person_instruction_events": {
+		"instruction_id": {column: "instruction_id", table: "person_instructions", key: "id"},
+	},
 	personRelationshipReviewsTableName: {
 		"accepted_relationship_id": {
 			column: "accepted_relationship_id", table: personRelationshipsTableName, key: "id",
@@ -1447,7 +1468,7 @@ func personSplitRestorePriority(table string) int {
 		return 10
 	case "identity_match_candidate_redirects", identityMatchCandidateSourcesTableName,
 		identityMatchEvidenceTableName, personRelationshipReviewsTableName,
-		personMergeReviewCandidatesTableName:
+		personMergeReviewCandidatesTableName, "person_instruction_events":
 		return 20
 	case identityMatchEvidenceSourcesTableName:
 		return 30
@@ -1502,6 +1523,7 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 		}
 		postByName = personSplitSnapshotColumnsByName(post.Columns)
 	}
+	preserveInstructionLifecycle := row.TableName == "person_instructions" && personSplitInstructionLifecycleChanged(currentByName, postByName)
 	keyColumns := make(map[string]struct{}, len(spec.keyColumns()))
 	for _, name := range spec.keyColumns() {
 		keyColumns[name] = struct{}{}
@@ -1509,6 +1531,9 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	assignments := make([]string, 0, len(row.Columns))
 	args := make([]any, 0, len(row.Columns)+3)
 	for _, column := range row.Columns {
+		if preserveInstructionLifecycle && personSplitInstructionLifecycleColumn(column.Name) {
+			continue
+		}
 		if !recordTargetPresent &&
 			(column.Name == "active_until" || column.Name == "superseded_at") {
 			continue
@@ -1770,7 +1795,7 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 
 func personSplitRevisionedTable(table string) bool {
 	switch table {
-	case "vcard_resource_envelopes", personRelationshipsTableName, "employments":
+	case "vcard_resource_envelopes", personRelationshipsTableName, "employments", "person_instructions":
 		return true
 	default:
 		return false
@@ -2253,6 +2278,7 @@ func (s *Store) preparePersonSplitDeduplicatedRowTx(
 			return original, false, nil
 		}
 	}
+	preserveInstructionLifecycle := original.TableName == "person_instructions" && personSplitInstructionLifecycleChanged(currentByName, postByName)
 	reconciled := original
 	reconciled.Columns = slices.Clone(original.Columns)
 	for index := range reconciled.Columns {
@@ -2262,7 +2288,8 @@ func (s *Store) preparePersonSplitDeduplicatedRowTx(
 		}
 		currentValue, hasCurrent := currentByName[name]
 		postValue, hasPost := postByName[name]
-		if hasCurrent && hasPost && !reflect.DeepEqual(currentValue, postValue) {
+		if hasCurrent && hasPost && (!reflect.DeepEqual(currentValue, postValue) ||
+			(preserveInstructionLifecycle && personSplitInstructionLifecycleColumn(name))) {
 			reconciled.Columns[index].Value = currentValue
 		}
 	}
@@ -2392,4 +2419,61 @@ func (s *Store) recomputePersonSplitActivityTx(
 		}
 	}
 	return nil
+}
+
+func (s *Store) restorePersonInstructionLinksTx(ctx context.Context, tx *loggedTx, mergeID int64, snapshot personMergeSnapshot) error {
+	for _, row := range snapshot.Rows {
+		if row.TableName != "person_instructions" {
+			continue
+		}
+		target := personSplitSnapshotRowInteger(row, "supersedes_id")
+		if target <= 0 {
+			continue
+		}
+		// Only journal rows actually restored by this split may receive old links.
+		if _, err := tx.ExecContext(ctx, `UPDATE person_instructions SET supersedes_id=? WHERE id=? AND EXISTS(SELECT 1 FROM person_instructions target WHERE target.id=?) AND EXISTS(SELECT 1 FROM person_merge_rows journal WHERE journal.merge_id=? AND journal.table_name='person_instructions' AND journal.original_row_id=? AND journal.split_id IS NOT NULL)`, target, row.RowID, target, mergeID, row.RowID); err != nil {
+			return fmt.Errorf("restore split instruction supersession: %w", err)
+		}
+	}
+	return nil
+}
+func (s *Store) markSplitPersonInstructionsTx(ctx context.Context, tx *loggedTx, newPersonID int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE instruction_id IN (SELECT id FROM person_instructions WHERE person_id=?)`, newPersonID, newPersonID); err != nil {
+		return fmt.Errorf("reparent split instruction events: %w", err)
+	}
+	rows, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+` WHERE i.person_id=? ORDER BY i.id`, time.Now().UTC(), newPersonID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET review_state='split' WHERE id=?`, row.ID); err != nil {
+			return fmt.Errorf("mark split instruction: %w", err)
+		}
+		if err = appendPersonInstructionEventTx(ctx, tx, &row, personfacts.InstructionActionSplitMoved, "system", map[string]any{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Lifecycle columns must reverse or retain an owner decision together. In
+// particular, restoring only half of the confirmation pair violates its CHECK.
+func personSplitInstructionLifecycleColumn(name string) bool {
+	switch name {
+	case "origin", "stated_at", "generation_id", "source_observation_id", "status", "adopted", "valid_from", "valid_until", "confirmed_at", "confirmed_by", "review_state":
+		return true
+	default:
+		return false
+	}
+}
+
+func personSplitInstructionLifecycleChanged(current, post map[string]personMergeSnapshotValue) bool {
+	for name, value := range current {
+		if personSplitInstructionLifecycleColumn(name) {
+			if baseline, ok := post[name]; ok && !reflect.DeepEqual(value, baseline) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -194,6 +194,8 @@ type SearchPersonFilesBody = PersonFileSearchHTTPRequest
 
 type SuggestPersonFilesBody = PersonFileSuggestionHTTPRequest
 
+type AddPersonInstructionBody = AddPersonInstructionRequest
+
 type MergePersonsBody = MergePersonRequest
 
 type AppendPersonNoteBody = AppendPersonNoteRequest
@@ -203,6 +205,8 @@ type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
 type SplitPersonMergeBody = SplitPersonRequest
 
 type SetPersonTrackingBody = PutPersonTrackingRequest
+
+type DecidePersonInstructionBody = DecidePersonInstructionRequest
 
 type DecidePersonMergeCandidateBody = DecidePersonMergeCandidateRequest
 

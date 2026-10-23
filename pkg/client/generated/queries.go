@@ -1148,6 +1148,14 @@ type ListPersonFactEvidenceStatusEventsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonInstructionsQuery struct {
+	// Status Comma-separated lifecycle statuses
+	Status *string `json:"status,omitempty"`
+
+	// IncludeExpired Include expired instructions
+	IncludeExpired *bool `json:"include_expired,omitempty"`
+}
+
 type ListPersonMergesQuery struct {
 	// Limit Maximum results
 	Limit *int64 `json:"limit,omitempty"`
@@ -1180,6 +1188,11 @@ type ListPersonRelationshipsQuery struct {
 type ListPersonFactTargetsQuery struct {
 	// IncludeSensitive Include sensitive targets
 	IncludeSensitive *bool `json:"include_sensitive,omitempty"`
+}
+
+type ListPersonInstructionReviewQuery struct {
+	// Limit Maximum rows (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
 }
 
 type ListPersonRelationshipReviewsQuery struct {

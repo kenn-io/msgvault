@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-22"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2933,6 +2933,28 @@ For setup, privacy controls, budgets, and recovery, see
 [Provider status](#person-provider-status), [reverify](#person-provider-reverify),
 [set](#person-provider-set), and [briefs](#person-brief) have additional details
 below.
+
+### person instructions
+
+Record and review a person's stated communication preferences through the daemon.
+Instructions narrow communication; a delivery policy must authorize sends
+separately. Every operation is owner-only, including reads.
+
+| Command | Purpose |
+|---|---|
+| `person instructions list <person-id> [--all]` | List visible instructions; `--all` includes every status and expired rows |
+| `person instructions review [--limit N]` | List proposals and rows needing owner review; default 50, range 1–200 |
+| `person instructions add <person-id> --kind K --text T [--value V] [--contact-point ID] [--until YYYY-MM-DD]` | Record an owner-entered instruction as active |
+| `person instructions confirm <id> [--kind K] [--text T] [--value V]` | Confirm an instruction, optionally editing it |
+| `person instructions <action> <id> [--reason R]` | Record `reject`, `unsure`, `revoke`, or `adopt` |
+
+All commands accept `--json`. Decision commands read the current revision before
+posting; a concurrent change returns a conflict. Follow-on suggestions are
+printed as hints and never applied. `--until` means midnight UTC, must be in the
+future, and may be no more than 183 days away.
+
+See [standing instructions](usage/people-instructions.md) for kinds, validation,
+expiry, and merge/split behavior.
 
 ### person enrichment
 

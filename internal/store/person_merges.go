@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 const maxPersonOperationIdempotencyKeyBytes = 128
@@ -889,6 +891,9 @@ func (s *Store) moveCorePersonProfileTx(
 	}
 	if err := s.reconcilePersonBriefEnrollmentTx(
 		ctx, tx, mergeID, survivorID, absorbedID); err != nil {
+		return err
+	}
+	if err := s.movePersonInstructionsTx(ctx, tx, mergeID, survivorID, absorbedID); err != nil {
 		return err
 	}
 	projectionPersonIDs, err := personMergeRowIDsTx(ctx, tx, `SELECT person_id
@@ -2309,4 +2314,152 @@ func listPersonMergeReviewCandidatesTx(
 		return nil, fmt.Errorf("iterate person merge review candidates: %w", err)
 	}
 	return result, nil
+}
+
+func instructionLifecycleRank(i PersonInstruction) int {
+	if i.Origin == personfacts.InstructionOriginOwner {
+		return 2
+	}
+	if i.ConfirmedAt != nil {
+		return 1
+	}
+	return 0
+}
+func instructionLive(i PersonInstruction) bool {
+	return i.Status == personfacts.InstructionStatusProposed || i.Status == personfacts.InstructionStatusActive || i.Status == personfacts.InstructionStatusSuspended
+}
+
+func (s *Store) movePersonInstructionsTx(ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64) error {
+	now := personFactPortableTime(time.Now().UTC())
+	absorbed, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+` WHERE i.person_id=? ORDER BY i.id`, now, absorbedID)
+	if err != nil {
+		return err
+	}
+	survivor, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+` WHERE i.person_id=? ORDER BY i.id`, now, survivorID)
+	if err != nil {
+		return err
+	}
+	live := make(map[string]PersonInstruction)
+	for _, row := range survivor {
+		if instructionLive(row) {
+			live[row.InstructionKey] = row
+		}
+	}
+	moved := make(map[int64]bool)
+	for _, row := range absorbed {
+		if instructionLifecycleRank(row) == 0 {
+			continue
+		}
+		destination := row
+		detail := map[string]any{"absorbed_instruction_id": row.ID, "collision": false}
+		if existing, ok := live[row.InstructionKey]; ok && instructionLive(row) {
+			source, sourceName := existing, "survivor"
+			aRank, sRank := instructionLifecycleRank(row), instructionLifecycleRank(existing)
+			if aRank > sRank || (aRank == sRank && (row.UpdatedAt.After(existing.UpdatedAt) || (row.UpdatedAt.Equal(existing.UpdatedAt) && row.ID > existing.ID))) {
+				source, sourceName = row, "absorbed"
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE person_instructions SET origin=?,stated_at=?,generation_id=?,source_observation_id=?,status=?,adopted=?,valid_from=?,valid_until=?,confirmed_at=?,confirmed_by=?,review_state='merged',revision=revision+1,updated_at=? WHERE id=?`, source.Origin, source.StatedAt, source.GenerationID, source.SourceObservationID, source.Status, source.Adopted, source.ValidFrom, source.ValidUntil, source.ConfirmedAt, source.ConfirmedBy, now, existing.ID)
+			if err != nil {
+				return fmt.Errorf("reconcile merged instruction: %w", err)
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=?,instruction_id=? WHERE instruction_id=?`, survivorID, existing.ID, row.ID); err != nil {
+				return fmt.Errorf("reparent merged instruction events: %w", err)
+			}
+			if _, err = tx.ExecContext(ctx, `DELETE FROM person_instructions WHERE id=?`, row.ID); err != nil {
+				return fmt.Errorf("deduplicate merged instruction: %w", err)
+			}
+			if err = s.setPersonMergeRowDispositionTx(ctx, tx, mergeID, "person_instructions", row.ID, "deduplicated", &existing.ID); err != nil {
+				return err
+			}
+			destination = existing
+			detail["collision"], detail["lifecycle_source"] = true, sourceName
+		} else {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET person_id=?,review_state='merged',revision=revision+1,updated_at=? WHERE id=?`, survivorID, now, row.ID); err != nil {
+				return fmt.Errorf("move merged instruction: %w", err)
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE instruction_id=?`, survivorID, row.ID); err != nil {
+				return fmt.Errorf("move instruction events: %w", err)
+			}
+			destination.PersonID = survivorID
+		}
+		moved[destination.ID] = true
+		if err = appendPersonInstructionEventTx(ctx, tx, &destination, personfacts.InstructionActionMergeMoved, "system", detail); err != nil {
+			return err
+		}
+	}
+	for id := range moved {
+		row, err := scanPersonInstruction(tx.QueryRowContext(ctx, personInstructionSelect+` WHERE i.id=?`, id), now)
+		if err != nil {
+			return err
+		}
+		if row.ContactPointID == nil {
+			continue
+		}
+		var deduplicated bool
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_merge_rows WHERE merge_id=? AND table_name='person_contact_points' AND original_row_id=? AND action='deduplicated')`, mergeID, *row.ContactPointID).Scan(&deduplicated)
+		if err != nil {
+			return fmt.Errorf("load merged instruction scope disposition: %w", err)
+		}
+		if !deduplicated {
+			continue
+		}
+		counterpart, found, err := s.personMergeContactCounterpartTx(ctx, tx, survivorID, *row.ContactPointID)
+		if err != nil {
+			return err
+		}
+		if found {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET contact_point_id=? WHERE id=?`, counterpart, id); err != nil {
+				return fmt.Errorf("remap merged instruction scope: %w", err)
+			}
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET review_state='conflict',revision=revision+1,updated_at=? WHERE person_id=? AND review_state<>'conflict' AND status='active' AND kind IN ('address_as','prefer_channel') AND EXISTS(SELECT 1 FROM person_instructions other WHERE other.person_id=person_instructions.person_id AND other.kind=person_instructions.kind AND other.scope_key=person_instructions.scope_key AND other.status='active' AND other.instruction_key<>person_instructions.instruction_key)`, now, survivorID); err != nil {
+		return fmt.Errorf("flag merged instruction conflicts: %w", err)
+	}
+	for _, row := range absorbed {
+		if instructionLifecycleRank(row) != 0 {
+			continue
+		}
+		if err = s.setPersonMergeRowDispositionTx(ctx, tx, mergeID, "person_instructions", row.ID, "deleted_snapshot", nil); err != nil {
+			return err
+		}
+		events, err := personMergeRowIDsTx(ctx, tx, `SELECT id FROM person_instruction_events WHERE person_id=? AND instruction_id=? AND action<>'reject'`, absorbedID, row.ID)
+		if err != nil {
+			return err
+		}
+		for _, id := range events {
+			if err = s.setPersonMergeRowDispositionTx(ctx, tx, mergeID, "person_instruction_events", id, "deleted_snapshot", nil); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE person_id=? AND instruction_id=? AND action='reject'`, survivorID, absorbedID, row.ID); err != nil {
+			return fmt.Errorf("inherit instruction rejection memory: %w", err)
+		}
+	}
+	// Events can outlive the instruction that originally produced them.
+	if _, err = tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE person_id=? AND action='reject'`, survivorID, absorbedID); err != nil {
+		return fmt.Errorf("inherit detached instruction rejections: %w", err)
+	}
+	remaining, err := personMergeRowIDsTx(ctx, tx, `SELECT id FROM person_instruction_events WHERE person_id=?`, absorbedID)
+	if err != nil {
+		return err
+	}
+	for _, id := range remaining {
+		if err = s.setPersonMergeRowDispositionTx(ctx, tx, mergeID, "person_instruction_events", id, "deleted_snapshot", nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) personMergeContactCounterpartTx(ctx context.Context, tx *loggedTx, survivorID, contactPointID int64) (int64, bool, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT survivor.id FROM person_contact_points survivor WHERE survivor.person_id=? AND survivor.id<>? AND survivor.superseded_at IS NULL AND EXISTS(SELECT 1 FROM person_contact_points original WHERE original.id=? AND original.source_ref IS NOT NULL AND original.vcard_prop_id IS NOT NULL AND survivor.source=original.source AND survivor.source_ref IS NOT DISTINCT FROM original.source_ref AND COALESCE(survivor.source_resource_uid,'')=COALESCE(original.source_resource_uid,'') AND survivor.vcard_property IS NOT DISTINCT FROM original.vcard_property AND survivor.vcard_prop_id IS NOT DISTINCT FROM original.vcard_prop_id AND survivor.address_kind=original.address_kind AND survivor.normalized_value=original.normalized_value) ORDER BY survivor.id LIMIT 1`, survivorID, contactPointID, contactPointID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("find merged contact counterpart: %w", err)
+	}
+	return id, true, nil
 }
