@@ -9,8 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const attachmentSearchProfile = "supplied-transcript"
-
 // MediaAttachmentResult links extracted text to a visible message attachment.
 type MediaAttachmentResult struct {
 	MessageID       int64      `json:"message_id"`
@@ -52,7 +50,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 	}
 	// Docbank lexical search spans profiles but requires a registered name.
 	report, err := reader.Client.SearchDocuments(remoteCtx, docbankmedia.SearchRequest{
-		Query: query, Mode: "lexical", ContentFirst: true, Profile: attachmentSearchProfile,
+		Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile,
 		Limit: limit, Fence: &docbankmedia.SearchFence{VaultUID: vault, ContentVersionIDs: versions},
 	})
 	if err != nil {
@@ -77,7 +75,7 @@ func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *Me
 	for _, hit := range hits {
 		ids = append(ids, hit.ContentVersionID)
 	}
-	occurrences, err := reader.Store.DocumentSearchOccurrences(ctx, reader.Destination, scope, ids)
+	occurrences, err := reader.Store.DocumentSearchOccurrences(ctx, reader.Destination, scope, ids, limit)
 	if err != nil {
 		return err
 	}

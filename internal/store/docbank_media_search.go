@@ -101,17 +101,25 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 }
 
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.
-func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope, versionIDs []string) ([]DocumentSearchOccurrence, error) {
+// Each version returns at most limit+1 rows so callers can detect truncation.
+func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope, versionIDs []string, limit int) ([]DocumentSearchOccurrence, error) {
 	var result []DocumentSearchOccurrence
 	if len(versionIDs) == 0 {
 		return result, nil
 	}
 	query, args := documentSearchRows(destination, scope)
-	query = `SELECT d.version_id, a.id, m.id, cv.id, COALESCE(a.filename,''), ` + containingTitleMCVSQL + `, COALESCE(m.sent_at,m.received_at,m.internal_date)` + query + `
- AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(versionIDs)-1) + `) ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST, a.id`
+	query = `WITH ranked AS (
+ SELECT d.version_id, a.id AS attachment_id, m.id AS message_id, cv.id AS conversation_id,
+ COALESCE(a.filename,'') AS filename, ` + containingTitleMCVSQL + ` AS containing_title,
+ COALESCE(m.sent_at,m.received_at,m.internal_date) AS occurred_at,
+ ROW_NUMBER() OVER (PARTITION BY d.version_id ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST, a.id) AS occurrence_rank` + query + `
+ AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(versionIDs)-1) + `)
+ ) SELECT version_id, attachment_id, message_id, conversation_id, filename, containing_title, occurred_at
+ FROM ranked WHERE occurrence_rank <= ? ORDER BY occurred_at DESC NULLS LAST, attachment_id`
 	for _, id := range versionIDs {
 		args = append(args, id)
 	}
+	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list document search occurrences: %w", err)

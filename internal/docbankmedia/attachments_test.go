@@ -122,35 +122,21 @@ func TestVaultUID(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			calls := 0
 			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/info" {
-					assert.Equal(http.MethodGet, r.Method)
-					calls++
-					_, _ = io.WriteString(w, body)
-					return
-				}
-				assert.Equal("/api/v1/search", r.URL.Path)
-				w.WriteHeader(http.StatusBadRequest)
+				assert.Equal("/api/v1/info", r.URL.Path)
+				assert.Equal(http.MethodGet, r.Method)
+				_, _ = io.WriteString(w, body)
 			}))
 			defer remote.Close()
 			client, err := NewClient(remote.URL, nil)
 			require.NoError(err)
-			for range 2 {
-				vault, err := client.VaultUID(t.Context())
-				if body == `{}` {
-					require.ErrorIs(err, ErrInvalidReceipt)
-					return
-				}
-				require.NoError(err)
-				assert.Equal("00000000-0000-4000-8000-000000000010", vault)
+			vault, err := client.VaultUID(t.Context())
+			if body == `{}` {
+				require.ErrorIs(err, ErrInvalidReceipt)
+				return
 			}
-			assert.Equal(1, calls)
-			_, err = client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", ContentFirst: true, Limit: 20, Profile: "supplied-transcript", Fence: &SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001"}}})
-			require.Error(err)
-			_, err = client.VaultUID(t.Context())
 			require.NoError(err)
-			assert.Equal(2, calls)
+			assert.Equal("00000000-0000-4000-8000-000000000010", vault)
 		})
 	}
 }

@@ -70,19 +70,47 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 	require.NoError(err)
 	assert.False(scopeExceeded)
 	assert.ElementsMatch([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
-	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids)
+	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100)
 	require.NoError(err)
 	var mids []int64
 	for _, o := range occurrences {
 		mids = append(mids, o.MessageID)
 	}
 	assert.Equal([]int64{visible[3], visible[1], visible[0], visible[4], visible[6], visible[2], visible[5]}, mids)
-	other, err := f.Store.DocumentSearchOccurrences(t.Context(), "other", scope, ids)
+	other, err := f.Store.DocumentSearchOccurrences(t.Context(), "other", scope, ids, 100)
 	require.NoError(err)
 	assert.Empty(other)
-	onlyNew, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, []string{"00000000-0000-4000-8000-000000000004"})
+	onlyNew, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, []string{"00000000-0000-4000-8000-000000000004"}, 100)
 	require.NoError(err)
 	require.Len(onlyNew, 2)
 	assert.Equal("new.pdf", onlyNew[0].Filename)
 	assert.Equal("new earlier.pdf", onlyNew[1].Filename)
+}
+
+func TestDocumentSearchOccurrencesPerVersionLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	versions := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
+	want := make(map[string][]int64)
+	for i, version := range versions {
+		hash := fmt.Sprintf("%064x", i+1)
+		require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: int64(i + 1), VersionID: version}, ""))
+		for day := 5; day >= 1; day-- {
+			mid := f.CreateMessage(fmt.Sprintf("version-%d-day-%d", i, day))
+			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "report.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC), mid)
+			require.NoError(err)
+			if day >= 3 {
+				want[version] = append(want[version], mid)
+			}
+		}
+	}
+	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2)
+	require.NoError(err)
+	got := make(map[string][]int64)
+	for _, occurrence := range occurrences {
+		got[occurrence.VersionID] = append(got[occurrence.VersionID], occurrence.MessageID)
+	}
+	assert.Equal(want, got)
 }

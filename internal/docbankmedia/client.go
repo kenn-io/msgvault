@@ -14,7 +14,6 @@ import (
 	"net/textproto"
 	"net/url"
 	"strings"
-	"sync/atomic"
 )
 
 const (
@@ -103,7 +102,6 @@ func ErrorCode(err error) string {
 
 // Client is a transport-only adapter for the Docbank media routes.
 type Client struct {
-	vaultUID  atomic.Pointer[string]
 	baseURL   string
 	lookupKey func() (string, error)
 	http      *http.Client

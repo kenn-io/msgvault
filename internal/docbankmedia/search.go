@@ -193,7 +193,6 @@ func validSearchHit(hit SearchHit, vault string, ids map[string]bool) bool {
 func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (SearchReport, error) {
 	report, err := c.searchReport(ctx, request)
 	if err != nil {
-		c.clearVaultUID()
 		return SearchReport{}, err
 	}
 	if report.MediaSourceSelection || len(report.MediaSelections) != 0 {
@@ -204,6 +203,7 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 		ids[id] = true
 	}
 	results := make([]SearchHit, 0, len(report.Results))
+	lastHitHasContent := false
 	for _, hit := range report.Results {
 		if !validSearchHit(hit, request.Fence.VaultUID, ids) || len(hit.Evidence) == 0 {
 			return SearchReport{}, ErrInvalidReceipt
@@ -215,12 +215,14 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 			}
 			content = content || evidence.Kind != "node_name"
 		}
+		lastHitHasContent = content
 		if !content {
 			continue
 		}
 		hit.Excerpt = plainSearchExcerpt(hit.Excerpt)
 		results = append(results, hit)
 	}
+	report.Truncated = report.Truncated && lastHitHasContent
 	report.Results = results
 	return report, nil
 }
