@@ -75,46 +75,73 @@ func TestDocumentRangesSurviveRetryAndFenceWrites(t *testing.T) {
 	assertions.Zero(count)
 }
 
-func TestDocumentRangesGCRebuildAndPurge(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := storetest.New(t)
-	profile, hash := seedDocumentPublicationAuthority(t, f)
-	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{ExtractionID: "range-gc", ProfileID: profile.ID, CanonicalBlobHash: hash, ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1})
-	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
-	requirements.NoError(err)
-	checkpoint := documentRangeCheckpoint(t)
-	requirements.NoError(f.Store.SaveDocumentExtractionRange(t.Context(), claim, checkpoint, 1<<20))
-	requirements.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{Claim: claim, ReasonCode: "provider_timeout", Terminal: true}))
-	_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Hour), 100)
-	requirements.NoError(err)
-	var count int
-	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	assertions.Equal(1, count, "retain the latest unfinished live ranges")
-	_, err = f.Store.StartDocumentExtractionRebuild(t.Context(), "range-rebuild", profile.ID, "original", []string{"application/pdf"}, nil)
-	requirements.NoError(err)
-	input.ExtractionID = "range-rebuild-attempt"
-	input.RebuildID = "range-rebuild"
-	rebuilt, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t, rebuilt, "rebuilt sentinel", strings.Repeat("e", 64))))
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ?, created_at = ? WHERE id = ?"), time.Now().UTC().Add(-24*time.Hour), time.Now().UTC().Add(-9*24*time.Hour), claim.ExtractionID)
-	requirements.NoError(err)
-	cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour)
-	_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	assertions.Equal(1, count, "superseded ranges stay inside the recovery window")
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
-	requirements.NoError(err)
-	_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	assertions.Zero(count, "published replacement makes old terminal ranges collectible")
-	_, err = f.Store.PurgeDocumentDerivedByHash(t.Context(), hash)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	assertions.Zero(count)
+func TestDocumentRangesCleanup(t *testing.T) {
+	for _, action := range []string{"superseding rebuild", "purge-derived", "source removed"} {
+		t.Run(action, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f := storetest.New(t)
+			profile, hash := seedDocumentPublicationAuthority(t, f)
+			input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{ExtractionID: "range-gc", ProfileID: profile.ID, CanonicalBlobHash: hash, ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1})
+			claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
+			requirements.NoError(err)
+			checkpoint := documentRangeCheckpoint(t)
+			requirements.NoError(f.Store.SaveDocumentExtractionRange(t.Context(), claim, checkpoint, 1<<20))
+			requirements.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{Claim: claim, ReasonCode: "provider_timeout", Terminal: true}))
+			_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Hour), 100)
+			requirements.NoError(err)
+			var count int
+			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+			assertions.Equal(1, count, "retain the latest unfinished live ranges")
+			if action == "purge-derived" {
+				purged, err := f.Store.PurgeDocumentDerivedByHash(t.Context(), hash)
+				requirements.NoError(err)
+				assertions.Equal(1, purged.ExtractionsRemoved)
+				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+				assertions.Zero(count)
+				return
+			}
+			if action == "source removed" {
+				_, _, err = f.Store.RemoveSourceSerialized(t.Context(), f.Source.ID)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+				assertions.Equal(1, count)
+				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-6*24*time.Hour), claim.ExtractionID)
+				requirements.NoError(err)
+				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(-7*24*time.Hour), 100)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+				assertions.Equal(1, count)
+				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
+				requirements.NoError(err)
+				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(-7*24*time.Hour), 100)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+				assertions.Zero(count)
+				return
+			}
+			_, err = f.Store.StartDocumentExtractionRebuild(t.Context(), "range-rebuild", profile.ID, "original", []string{"application/pdf"}, nil)
+			requirements.NoError(err)
+			input.ExtractionID = "range-rebuild-attempt"
+			input.RebuildID = "range-rebuild"
+			rebuilt, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
+			requirements.NoError(err)
+			requirements.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t, rebuilt, "rebuilt sentinel", strings.Repeat("e", 64))))
+			_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ?, created_at = ? WHERE id = ?"), time.Now().UTC().Add(-24*time.Hour), time.Now().UTC().Add(-9*24*time.Hour), claim.ExtractionID)
+			requirements.NoError(err)
+			cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour)
+			_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
+			requirements.NoError(err)
+			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+			assertions.Equal(1, count, "superseded ranges stay inside the recovery window")
+			_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
+			requirements.NoError(err)
+			_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
+			requirements.NoError(err)
+			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+			assertions.Zero(count, "published replacement makes old terminal ranges collectible")
+		})
+	}
 }
 
 func documentRangeCheckpoint(t *testing.T) store.DocumentExtractionRange {
