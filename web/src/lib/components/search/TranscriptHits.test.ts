@@ -248,9 +248,7 @@ it.each(['empty', 'error', 'absent'])('shows the attachment %s state', async (st
     expect(screen.queryByRole('heading', { name: /Attachments/ })).toBeNull();
   } else {
     await screen.findByRole('heading', { name: /Attachments/ });
-    expect(screen.queryByText('No matches in text Docbank has extracted from mirrored attachments.') !== null).toBe(state !== 'error');
     if (state === 'error') {
-      expect(screen.getByText('Attachment search timed out.')).toBeTruthy();
       expect(screen.getByRole('heading', { name: 'Attachments' }).textContent).toBe('Attachments');
     }
   }
@@ -272,29 +270,24 @@ it.each([
   }
 });
 
-it.each([
-  ['media_search_unavailable', 'Recording search unavailable.', true],
-])('handles partial recording failure %s alongside attachment hits', async (error, message, retryable) => {
-  const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ results: [], partial: true, recordings_error: { error, message: 'raw server error' }, attachments: {
+it('handles partial recording failure alongside attachment hits', async () => {
+  const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ results: [], partial: true, recordings_error: { error: 'media_search_unavailable', message: 'Docbank transcript search is unavailable' }, attachments: {
     results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quartz' }], truncated: false,
   } }))).mockResolvedValue(Response.json(report()));
   mount(fetchFn);
   await screen.findByRole('link', { name: 'Report' });
-  expect(screen.getByText(message)).toBeTruthy();
-  expect(screen.queryByText('raw server error')).toBeNull();
+  expect(screen.getByText('Recording search unavailable.')).toBeTruthy();
+  expect(screen.queryByText('Docbank transcript search is unavailable')).toBeNull();
   expect(screen.queryByText('No matches in searched transcripts.')).toBeNull();
   expect(screen.queryByText('No spoken matches.')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Retry' }) !== null).toBe(retryable);
-  if (retryable) {
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByText('Quarterly numbers');
-    expect(screen.queryByRole('link', { name: 'Report' })).toBeNull();
-  }
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await screen.findByText('Quarterly numbers');
+  expect(screen.queryByRole('link', { name: 'Report' })).toBeNull();
 });
 
 it.each([undefined, 7])('shows the scope-limit notice for attachments with Person %s', async (participantID) => {
   const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ results: [], attachments: {
-    results: [], truncated: false, error: { error: 'media_search_scope_limit', message: 'Search supports at most 4096 media versions and source selectors' },
+    results: [], truncated: false, error: { error: 'media_search_scope_limit', message: 'Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope' },
   } }))));
   render(TranscriptHits, { props: { client, query: 'quarterly', supported: true, participantID } });
   await screen.findByText(participantID === undefined

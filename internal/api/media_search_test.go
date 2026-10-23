@@ -91,8 +91,6 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 	}}
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/info":
-			w.WriteHeader(http.StatusInternalServerError)
 		case "/api/v1/processing/source-fences/resolve":
 			assert.Equal(t, http.MethodPost, r.Method)
 			var request struct {
@@ -924,36 +922,27 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 	return first, second
 }
 
-func TestMediaSearchDocumentsWithStaleVersion(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newMediaSearchFixture(t)
-	server := f.server(false)
-	first, second := f.document(t, server)
-	hash := strings.Repeat("b", 64)
-	f.staleDocumentVersion = "00000000-0000-4000-8000-000000000002"
-	require.NoError(f.f.Store.UpsertAttachmentRecord(t.Context(), first, store.AttachmentWrite{ContentHash: hash, Filename: "stale.pdf", StoragePath: "bb/" + hash, State: "stored"}))
-	require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 8, VersionID: f.staleDocumentVersion}, ""))
-
-	status, response, raw := searchMediaFor(t, server, "q=quartz")
-	require.Equal(http.StatusOK, status, raw)
-	require.NotNil(response.Attachments)
-	require.Nil(response.Attachments.Error, raw)
-	require.Len(response.Attachments.Results, 2)
-	assert.ElementsMatch([]int64{first, second}, []int64{response.Attachments.Results[0].MessageID, response.Attachments.Results[1].MessageID})
-}
-
 func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "recording rejected query", "recording timeout", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
+	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "rejected query without versions", "recording rejected query", "recording timeout", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newMediaSearchFixture(t)
 			recording := f.match(t, "audio")
 			server := f.server(false)
-			first, second := f.document(t, server)
+			var first, second int64
+			if scenario == "rejected query without versions" {
+				server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
+			} else {
+				first, second = f.document(t, server)
+			}
 			query := "q=quartz"
 			switch scenario {
+			case "shared":
+				hash := strings.Repeat("b", 64)
+				f.staleDocumentVersion = "00000000-0000-4000-8000-000000000002"
+				require.NoError(f.f.Store.UpsertAttachmentRecord(t.Context(), first, store.AttachmentWrite{ContentHash: hash, Filename: "stale.pdf", StoragePath: "bb/" + hash, State: "stored"}))
+				require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 8, VersionID: f.staleDocumentVersion}, ""))
 			case "attachment scope limit":
 				participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
 				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?,?)`), participant, first, second, recording.messageID)
@@ -978,6 +967,8 @@ func TestMediaSearchDocuments(t *testing.T) {
 				f.documentStatus = 503
 			case "rejected query":
 				f.documentStatus = http.StatusBadRequest
+			case "rejected query without versions":
+				f.validationStatus = http.StatusBadRequest
 			case "recording rejected query":
 				f.remoteStatus = http.StatusBadRequest
 			case "recording timeout":
@@ -1061,11 +1052,14 @@ func TestMediaSearchDocuments(t *testing.T) {
 				assert.Empty(f.documentRequests)
 				return
 			}
-			if scenario == "attachment failure" || scenario == "rejected query" {
+			if scenario == "attachment failure" || scenario == "rejected query" || scenario == "rejected query without versions" {
 				require.NotNil(response.Attachments.Error)
 				assert.Empty(response.Attachments.Results)
-				if scenario == "rejected query" {
+				if scenario == "rejected query" || scenario == "rejected query without versions" {
 					assert.Equal("invalid_media_search", response.Attachments.Error.Error)
+				}
+				if scenario == "rejected query without versions" {
+					assert.Equal(1, f.validated)
 				}
 				return
 			}
@@ -1085,6 +1079,10 @@ func TestMediaSearchDocuments(t *testing.T) {
 				want = 1
 			}
 			require.Len(response.Attachments.Results, want)
+			if scenario == "shared" {
+				require.Nil(response.Attachments.Error, raw)
+				assert.ElementsMatch([]int64{first, second}, []int64{response.Attachments.Results[0].MessageID, response.Attachments.Results[1].MessageID})
+			}
 			for _, hit := range response.Attachments.Results {
 				assert.Equal("quartz in the PDF", hit.Excerpt)
 			}
@@ -1134,21 +1132,4 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMediaSearchRejectedQueryWithEmptyAttachments(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newMediaSearchFixture(t)
-	f.match(t, "audio")
-	server := f.server(false)
-	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
-	f.validationStatus = http.StatusBadRequest
-	status, response, raw := searchMediaFor(t, server, "q=quartz")
-	require.Equal(http.StatusOK, status, raw)
-	require.NotNil(response.Attachments)
-	require.NotNil(response.Attachments.Error)
-	assert.Equal("invalid_media_search", response.Attachments.Error.Error)
-	assert.Empty(response.Attachments.Results)
-	assert.Equal(1, f.validated)
 }

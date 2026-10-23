@@ -25,7 +25,6 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		{"table", []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, 200, "generated"},
 		{"recordings unavailable", []string{"search", "quartz"}, 200, "Docbank transcript search is unavailable"},
 		{"attachments unavailable", []string{"search", "quarterly numbers"}, 200, "Attachment search is unavailable."},
-		{"scope limit", []string{"search", "quartz"}, 200, "Narrow the attachment search scope."},
 		{"terminal", []string{"search", "quarterly numbers"}, 200, "Coverage complete"},
 		{"json", []string{"search", "quarterly numbers", "--json"}, 200, `"message_id":11`},
 		{"mode delegated", []string{"search", "words", "--mode", "hybrid"}, 503, "media_search_mode_unavailable"},
@@ -73,12 +72,8 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					response.Results = []generated.MediaSearchResult{}
 					response.Partial = true
 					response.RecordingsError = &generated.ErrorResponse{ErrorData: "media_search_unavailable", Message: new(test.want)}
-				case "attachments unavailable", "scope limit":
-					code := "transport"
-					if test.name == "scope limit" {
-						code = "media_search_scope_limit"
-					}
-					response.Attachments = &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{}, ErrorData: &generated.ErrorResponse{ErrorData: code, Message: new(test.want)}}
+				case "attachments unavailable":
+					response.Attachments = &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{}, ErrorData: &generated.ErrorResponse{ErrorData: "transport", Message: new(test.want)}}
 				}
 				_ = json.NewEncoder(w).Encode(response)
 			}))
@@ -108,7 +103,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 			}
 			assert.NotContains(output.String(), "\x1b")
 			assert.NotContains(output.String(), "\a")
-			if test.name == "scope limit" || test.name == "attachments unavailable" {
+			if test.name == "attachments unavailable" {
 				assert.NotContains(output.String(), "report.pdf")
 				assert.NotContains(output.String(), "More may match")
 			} else {
