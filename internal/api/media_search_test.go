@@ -27,6 +27,7 @@ type mediaSearchFixture struct {
 	documentReport       *docbankmedia.SearchReport
 	documentRequests     []docbankmedia.SearchRequest
 	documentStatus       int
+	staleDocumentVersion string
 	duringDocumentSearch func()
 	report               docbankmedia.SearchReport
 	requests             []docbankmedia.SearchRequest
@@ -98,6 +99,10 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 				ContentVersionIDs []string `json:"content_version_ids"`
 			}
 			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+				return
+			}
+			if slices.Contains(request.ContentVersionIDs, f.staleDocumentVersion) {
+				w.WriteHeader(http.StatusConflict)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(struct {
@@ -917,6 +922,25 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
 	f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "quartz in the PDF", Evidence: []docbankmedia.SearchEvidence{{Kind: "content_blob"}}}}}
 	return first, second
+}
+
+func TestMediaSearchDocumentsWithStaleVersion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	server := f.server(false)
+	first, second := f.document(t, server)
+	hash := strings.Repeat("b", 64)
+	f.staleDocumentVersion = "00000000-0000-4000-8000-000000000002"
+	require.NoError(f.f.Store.UpsertAttachmentRecord(t.Context(), first, store.AttachmentWrite{ContentHash: hash, Filename: "stale.pdf", StoragePath: "bb/" + hash, State: "stored"}))
+	require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 8, VersionID: f.staleDocumentVersion}, ""))
+
+	status, response, raw := searchMediaFor(t, server, "q=quartz")
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Nil(response.Attachments.Error, raw)
+	require.Len(response.Attachments.Results, 2)
+	assert.ElementsMatch([]int64{first, second}, []int64{response.Attachments.Results[0].MessageID, response.Attachments.Results[1].MessageID})
 }
 
 func TestMediaSearchDocuments(t *testing.T) {
