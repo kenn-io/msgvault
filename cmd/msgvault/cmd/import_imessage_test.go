@@ -1,13 +1,68 @@
 package cmd
 
 import (
+	"io/fs"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/imessage"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
+
+// The command must hand the archive directory and --messages-root to the
+// importer, so the attachment bytes land in the configured archive.
+func TestBuildImessageOptsWiresAttachmentCapture(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		noAttachments bool
+		wantStored    bool
+	}{
+		{"capture stores the bytes in the archive", false, true},
+		{"--no-attachments stores none", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			tmp := t.TempDir()
+			archive, messagesRoot := filepath.Join(tmp, "archive"), filepath.Join(tmp, "Messages")
+			requirements.NoError(os.MkdirAll(filepath.Join(messagesRoot, "Attachments"), 0o700))
+			requirements.NoError(os.WriteFile(filepath.Join(messagesRoot, "Attachments", "voice.caf"), []byte("caffSYNTHETIC"), 0o600))
+			chatPath, _ := testutil.NewIMessageAttachmentChatDB(t)
+
+			s, err := store.Open(filepath.Join(tmp, "msgvault.db"))
+			requirements.NoError(err)
+			t.Cleanup(func() { _ = s.Close() })
+			requirements.NoError(s.InitSchema())
+			src, err := resolveImessageSource(s)
+			requirements.NoError(err)
+
+			opts, err := buildImessageOpts(slog.Default(), archive, messagesRoot, tc.noAttachments)
+			requirements.NoError(err)
+			client, err := imessage.NewClient(chatPath, opts...)
+			requirements.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			_, err = client.Import(t.Context(), s, src.ID)
+			requirements.NoError(err)
+
+			var stored []string
+			_ = filepath.WalkDir(archive, func(path string, d fs.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					stored = append(stored, path)
+				}
+				return nil
+			})
+			if !tc.wantStored {
+				assert.Empty(t, stored)
+				return
+			}
+			requirements.Len(stored, 1)
+		})
+	}
+}
 
 // TestImportIMessage_NoAutoDefaultIdentity pins the documented behavior: the
 // apple_messages source uses identifier "local" and the spec explicitly excludes
