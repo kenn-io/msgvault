@@ -714,6 +714,7 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 				return nil, fmt.Errorf("invalidate route evidence for deferred Beeper chat %q: %w", chatID, err)
 			}
 			imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusSkipped, "beeper_probe_deferred", nil)
+			sum.failChat(chatID, false, errors.New("probe deferred after an earlier timeout"))
 			sum.FetchErrors++
 			sum.Errors++
 			continue
@@ -759,6 +760,7 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 				return nil, fmt.Errorf("invalidate route evidence for failed Beeper chat %q: %w", chatID, err)
 			}
 			imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
+			sum.failChat(chatID, false, gerr)
 			sum.FetchErrors++
 			sum.Errors++
 			continue
@@ -939,6 +941,7 @@ func (imp *Importer) ensureConversation(
 				return 0, false, chatMembership{}, ctx.Err()
 			}
 			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
+			sum.failChat(ch.ID, false, gerr)
 			sum.FetchErrors++
 			sum.Errors++
 		} else {
@@ -1069,6 +1072,7 @@ func (imp *Importer) recordChatFetchError(ctx context.Context, cc *chatScope, su
 		}
 	}
 	imp.recordItem(cc.syncID, cc.chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", err)
+	sum.failChat(cc.chatID, false, err)
 	sum.FetchErrors++
 	sum.Errors++
 	return nil
@@ -1559,6 +1563,7 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 			return ctx.Err()
 		}
 		imp.recordItem(cc.syncID, m.ID, "reaction", store.SyncRunItemStatusError, "beeper_fetch_error", err)
+		sum.failChat(cc.chatID, false, err)
 		sum.FetchErrors++
 		sum.Errors++
 		return errRetryPage
@@ -1631,7 +1636,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 
 	if len(m.Attachments) > 0 || (!cc.opts.NoMedia && cc.opts.AttachmentsDir != "") {
 		requestCtx, cancel := cc.opts.requestContext(ctx)
-		imp.persistAttachments(requestCtx, cc.syncID, messageID, m, cc.opts, sum)
+		imp.persistAttachments(requestCtx, cc.syncID, messageID, cc.chatID, m, cc.opts, sum)
 		cancel()
 		if cc.opts.budgetExpired() {
 			sum.Stopped = true

@@ -174,7 +174,7 @@ func isConfirmedAssetNotFound(previous store.AttachmentRef, timestamp, now time.
 // later run's not-found confirms the previous run's provisional miss (see
 // isConfirmedAssetNotFound). The message itself is always archived
 // regardless.
-func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID int64, m *Message, opts ImportOptions, sum *ImportSummary) {
+func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID int64, chatID string, m *Message, opts ImportOptions, sum *ImportSummary) {
 	if imp.mediaFailures == nil {
 		imp.mediaFailures = make(map[mediaAttemptKey]store.AttachmentRef)
 	}
@@ -271,6 +271,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			}
 			if status == store.SyncRunItemStatusError {
 				sum.Errors++
+				sum.failChat(chatID, true, err)
 			}
 		}
 		if opts.NoMedia || opts.AttachmentsDir == "" {
@@ -439,6 +440,7 @@ func (imp *Importer) refreshChatContext(
 			return nil, err
 		}
 		imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
+		sum.failChat(chatID, false, gerr)
 		sum.FetchErrors++
 		sum.Errors++
 		return &chatRefresh{err: gerr}, nil
@@ -601,6 +603,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 			// still pending so the summary cannot claim a clean state — and
 			// the run reports the error.
 			imp.recordItem(syncID, item.SourceMessageID, "attachment", store.SyncRunItemStatusError, "beeper_media_error", gerr)
+			sum.failChat(item.ChatID, true, gerr)
 			sum.AttachmentsPending++
 			sum.FetchErrors++
 			sum.Errors++
@@ -610,7 +613,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		itemOpts.MediaConversation = attachmentpolicy.Conversation{
 			Type: item.ConversationType, ParticipantCount: item.ParticipantCount,
 		}
-		imp.persistAttachments(ctx, syncID, item.MessageID, m, itemOpts, sum)
+		imp.persistAttachments(ctx, syncID, item.MessageID, item.ChatID, m, itemOpts, sum)
 		sum.MessagesProcessed++
 		if opts.Progress != nil && sum.MessagesProcessed%100 == 0 {
 			opts.Progress(fmt.Sprintf("media backfill: %d messages, %d downloaded, %d still pending",

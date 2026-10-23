@@ -128,7 +128,7 @@ func TestOpenBeeperImporterExplainsFilteredAccountsWithoutBlamingHistoryOnly(t *
 	require.NoError(err)
 	require.NoError(st.Close())
 
-	importer, accountIDs, dbPath, cleanup, err := openBeeperImporter(nil, testInvocationWithConfig(cfg), false)
+	importer, _, accountIDs, dbPath, cleanup, err := openBeeperImporter(nil, testInvocationWithConfig(cfg), false)
 	if cleanup != nil {
 		cleanup()
 	}
@@ -284,7 +284,7 @@ func TestPrintBeeperSummaryReportsIdentityReplayPending(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 
-	printBeeperSummary(cmd, "telegram", &beeper.ImportSummary{
+	printBeeperSummary(cmd.OutOrStdout(), "telegram", &beeper.ImportSummary{
 		IdentityReplayErrors: 1,
 		Errors:               1,
 	})

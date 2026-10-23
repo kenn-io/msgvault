@@ -21,7 +21,7 @@ func TestProviderSyncSummariesReportPolicySkips(t *testing.T) {
 		{
 			name: "beeper",
 			print: func(cmd *cobra.Command) {
-				printBeeperSummary(cmd, "account", &beeper.ImportSummary{AttachmentsSkipped: 2})
+				printBeeperSummary(cmd.OutOrStdout(), "account", &beeper.ImportSummary{AttachmentsSkipped: 2})
 			},
 		},
 		{
@@ -47,7 +47,7 @@ func TestBeeperSummariesReportUnavailableMedia(t *testing.T) {
 	var syncOut bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&syncOut)
-	printBeeperSummary(cmd, "account", sum)
+	printBeeperSummary(cmd.OutOrStdout(), "account", sum)
 	assert.Contains(t, syncOut.String(), ", 3 media no longer available at source")
 
 	var backfillOut bytes.Buffer
@@ -149,7 +149,7 @@ func TestBeeperSummariesReportOverCapBytesSeparately(t *testing.T) {
 			print: func(out *bytes.Buffer, sum *beeper.ImportSummary) {
 				cmd := &cobra.Command{}
 				cmd.SetOut(out)
-				printBeeperSummary(cmd, "account", sum)
+				printBeeperSummary(cmd.OutOrStdout(), "account", sum)
 			},
 			want: "2 media over size cap (15.0M total), 1 media skipped by policy",
 		},

@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var (
@@ -59,7 +60,7 @@ Examples:
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 
-			imp, accountIDs, dbPath, cleanup, err := openBeeperImporter(syncBeeperAccounts, state, false)
+			imp, s, accountIDs, dbPath, cleanup, err := openBeeperImporter(syncBeeperAccounts, state, false)
 			if err != nil {
 				return err
 			}
@@ -67,30 +68,15 @@ Examples:
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Saving checkpoint...")
 			defer stop()
 
-			var syncErrors []string
-			for _, accountID := range accountIDs {
-				if ctx.Err() != nil {
-					break
-				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Beeper account %s\n", accountID)
-				opts := beeperImportOptions(accountID, cfg)
-				opts.Limit = syncBeeperLimit
-				opts.Full = syncBeeperFull
-				opts.NoMedia = opts.NoMedia || syncBeeperNoMedia
-				opts.Progress = func(s string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+s) }
-				sum, err := imp.Import(ctx, opts)
-				if ctx.Err() != nil {
-					break
-				}
-				// One broken network must not block the others; collect and
-				// keep syncing (same convention as the multi-account sync
-				// commands and the beeper scheduler path).
-				if err != nil {
-					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", accountID, err))
-					continue
-				}
-				printBeeperSummary(cmd, accountID, sum)
-			}
+			syncErrors := runBeeperSyncAccounts(ctx, cmd.OutOrStdout(), s, accountIDs,
+				func(ctx context.Context, accountID string) (*beeper.ImportSummary, error) {
+					opts := beeperImportOptions(accountID, cfg)
+					opts.Limit = syncBeeperLimit
+					opts.Full = syncBeeperFull
+					opts.NoMedia = opts.NoMedia || syncBeeperNoMedia
+					opts.Progress = func(s string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+s) }
+					return imp.Import(ctx, opts)
+				})
 
 			// Successful accounts' messages must reach the analytics cache
 			// regardless of interruptions or per-account failures.
@@ -119,41 +105,137 @@ Examples:
 	return cmd
 }
 
-func printBeeperSummary(cmd *cobra.Command, accountID string, sum *beeper.ImportSummary) {
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s done in %s: %d chats, %d messages (%d added)",
-		accountID, sum.Duration.Round(time.Second), sum.ChatsProcessed, sum.MessagesProcessed, sum.MessagesAdded)
+func runBeeperSyncAccounts(ctx context.Context, out io.Writer, s *store.Store, accountIDs []string,
+	importAccount func(context.Context, string) (*beeper.ImportSummary, error),
+) []string {
+	var syncErrors []string
+	for _, accountID := range accountIDs {
+		if ctx.Err() != nil {
+			break
+		}
+		_, _ = fmt.Fprintf(out, "Syncing Beeper account %s\n", textutil.SanitizeTerminal(accountID))
+		sum, err := importAccount(ctx, accountID)
+		if ctx.Err() != nil {
+			break
+		}
+		var partial *beeper.PartialSyncError
+		if sum != nil && (err == nil || errors.As(err, &partial)) {
+			printBeeperSummary(out, accountID, sum)
+		}
+		writeBeeperRunFailures(ctx, out, s, sum, accountID, "sync-beeper")
+		if err != nil {
+			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", accountID, err))
+		}
+	}
+	return syncErrors
+}
+
+func writeBeeperRunFailures(ctx context.Context, out io.Writer, s *store.Store, sum *beeper.ImportSummary, accountID, fetchCmd string) {
+	const mediaCmd = "backfill-beeper-media"
+	if sum == nil || sum.Errors == 0 {
+		return
+	}
+	ids := make([]string, 0, len(sum.FailedChats))
+	var total, fetch, media int64
+	for id, cf := range sum.FailedChats {
+		ids = append(ids, id)
+		fetch += cf.FetchErrors
+		media += cf.MediaErrors
+	}
+	total = fetch + media
+	slices.SortFunc(ids, func(a, b string) int {
+		ac, bc := sum.FailedChats[a], sum.FailedChats[b]
+		if diff := ac.FetchErrors + ac.MediaErrors - bc.FetchErrors - bc.MediaErrors; diff != 0 {
+			if diff > 0 {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+	titles, _ := s.ConversationTitlesBatchContext(ctx, sum.SourceID, ids[:min(len(ids), 20)])
+	if len(ids) > 0 {
+		_, _ = fmt.Fprintf(out, "  Failed chats (%d errors in %d chats):\n", total, len(ids))
+	}
+	for i, id := range ids {
+		if i == 20 {
+			_, _ = fmt.Fprintf(out, "    ...and %d more chats\n", len(ids)-i)
+			break
+		}
+		cf := sum.FailedChats[id]
+		label := textutil.SanitizeTerminal(id)
+		if title := textutil.SanitizeTerminal(titles[id]); title != "" {
+			label = fmt.Sprintf("%s (%s)", title, label)
+		}
+		var phases []string
+		if cf.MediaErrors > 0 {
+			phases = append(phases, fmt.Sprintf("%d attachment", cf.MediaErrors))
+		}
+		if cf.FetchErrors > 0 {
+			phases = append(phases, fmt.Sprintf("%d fetch", cf.FetchErrors))
+		}
+		_, _ = fmt.Fprintf(out, "    %s: %s %s; last: %s\n", label, strings.Join(phases, ", "), plural(cf.MediaErrors+cf.FetchErrors, "error", "errors"), textutil.TruncateRunes(textutil.SanitizeTerminal(cf.LastError), 160))
+	}
+	if remaining := sum.Errors - total; remaining > 0 {
+		_, _ = fmt.Fprintf(out, "  %d other %s listed by chat; re-run to retry.\n", remaining, plural(remaining, "error isn't", "errors aren't"))
+	}
+	if total > 0 {
+		_, _ = fmt.Fprintln(out, "  Retry with the same global options (such as --local):")
+		if fetch > 0 && media > 0 && fetchCmd == mediaCmd {
+			_, _ = fmt.Fprintf(out, "    msgvault %s --account %s\n", fetchCmd, textutil.SanitizeTerminal(accountID))
+			return
+		}
+		if fetch > 0 {
+			_, _ = fmt.Fprintf(out, "    fetch errors: msgvault %s --account %s\n", fetchCmd, textutil.SanitizeTerminal(accountID))
+		}
+		if media > 0 {
+			_, _ = fmt.Fprintf(out, "    attachment errors: msgvault %s --account %s\n", mediaCmd, textutil.SanitizeTerminal(accountID))
+		}
+	}
+}
+
+func plural(n int64, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+func printBeeperSummary(out io.Writer, accountID string, sum *beeper.ImportSummary) {
+	_, _ = fmt.Fprintf(out, "  %s done in %s: %d chats, %d messages (%d added)",
+		textutil.SanitizeTerminal(accountID), sum.Duration.Round(time.Second), sum.ChatsProcessed, sum.MessagesProcessed, sum.MessagesAdded)
 	if sum.ReactionsRefreshed > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d reactions refreshed", sum.ReactionsRefreshed)
+		_, _ = fmt.Fprintf(out, ", %d reactions refreshed", sum.ReactionsRefreshed)
 	}
 	if sum.ChatsReopened > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d chats reopened for backfilled history", sum.ChatsReopened)
+		_, _ = fmt.Fprintf(out, ", %d chats reopened for backfilled history", sum.ChatsReopened)
 	}
 	if sum.ObservationsRecorded > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d address observations", sum.ObservationsRecorded)
+		_, _ = fmt.Fprintf(out, ", %d address observations", sum.ObservationsRecorded)
 	}
 	if sum.IdentityAutoResolved > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d identities resolved", sum.IdentityAutoResolved)
+		_, _ = fmt.Fprintf(out, ", %d identities resolved", sum.IdentityAutoResolved)
 	}
 	if sum.IdentityCandidates > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d identity suggestions", sum.IdentityCandidates)
+		_, _ = fmt.Fprintf(out, ", %d identity suggestions", sum.IdentityCandidates)
 	}
 	if sum.IdentityConflicts > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d identity conflicts", sum.IdentityConflicts)
+		_, _ = fmt.Fprintf(out, ", %d identity conflicts", sum.IdentityConflicts)
 	}
 	if sum.IdentityReplayErrors > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d identity replay pending", sum.IdentityReplayErrors)
+		_, _ = fmt.Fprintf(out, ", %d identity replay pending", sum.IdentityReplayErrors)
 	}
 	if sum.AttachmentsDownloaded > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d attachments", sum.AttachmentsDownloaded)
+		_, _ = fmt.Fprintf(out, ", %d attachments", sum.AttachmentsDownloaded)
 	}
 	if sum.AttachmentsPending > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media pending (see backfill-beeper-media)", sum.AttachmentsPending)
+		_, _ = fmt.Fprintf(out, ", %d media pending (see backfill-beeper-media)", sum.AttachmentsPending)
 	}
-	writeBeeperMediaSkipSummary(cmd.OutOrStdout(), sum)
+	writeBeeperMediaSkipSummary(out, sum)
 	if sum.Errors > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d errors", sum.Errors)
+		_, _ = fmt.Fprintf(out, ", %d errors", sum.Errors)
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(out)
 }
 
 func writeBeeperMediaSkipSummary(out io.Writer, sum *beeper.ImportSummary) {
@@ -284,30 +366,30 @@ func beeperImportOptions(accountID string, cfg *config.Config) beeper.ImportOpti
 // openBeeperImporter performs the shared beeper-command prologue: open the
 // store, load the token, resolve the target accounts, and build the importer.
 // The returned cleanup closes the store.
-func openBeeperImporter(flagAccounts []string, state *invocation, allowHistoryOnly bool) (imp *beeper.Importer, accountIDs []string, dbPath string, cleanup func(), err error) {
+func openBeeperImporter(flagAccounts []string, state *invocation, allowHistoryOnly bool) (imp *beeper.Importer, s *store.Store, accountIDs []string, dbPath string, cleanup func(), err error) {
 	if state == nil {
-		return nil, nil, "", nil, errors.New("configuration is unavailable")
+		return nil, nil, nil, "", nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err = openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
-		return nil, nil, "", nil, err
+		return nil, nil, nil, "", nil, err
 	}
 	token, err := beeper.LoadToken(cfg.TokensDir())
 	if err != nil {
 		cleanup()
-		return nil, nil, "", nil, err
+		return nil, nil, nil, "", nil, err
 	}
 	accountIDs, err = resolveBeeperAccounts(s, flagAccounts, cfg, allowHistoryOnly)
 	if err != nil {
 		cleanup()
-		return nil, nil, "", nil, err
+		return nil, nil, nil, "", nil, err
 	}
 	if len(accountIDs) == 0 {
 		cleanup()
-		return nil, nil, "", nil, errors.New("no active Beeper accounts to sync")
+		return nil, nil, nil, "", nil, errors.New("no active Beeper accounts to sync")
 	}
-	return beeper.NewImporter(s, beeperClient(cfg, token)), accountIDs, cfg.DatabaseDSN(), cleanup, nil
+	return beeper.NewImporter(s, beeperClient(cfg, token)), s, accountIDs, cfg.DatabaseDSN(), cleanup, nil
 }
 
 // withInterruptCancel derives a context canceled on SIGINT/SIGTERM, printing
