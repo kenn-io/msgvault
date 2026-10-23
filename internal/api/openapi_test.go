@@ -802,6 +802,32 @@ func TestOpenAPIClientUsesPresenceAwareFileMetadataStrings(t *testing.T) {
 	}
 }
 
+func TestOpenAPIMediaAttachmentMetadataRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {
+	t.Parallel()
+	for name, doc := range map[string]*huma.OpenAPI{"public": OpenAPIDocument(), "client": openAPIClientDocument()} {
+		t.Run(name, func(t *testing.T) {
+			schema := doc.Components.Schemas.Map()["MediaAttachmentResult"]
+			require.NotNil(t, schema)
+			payload := map[string]any{
+				"attachment_id": float64(1), "message_id": float64(2), "conversation_id": float64(3),
+				"filename": "", "containing_title": "", "excerpt": "matching text",
+			}
+			var result huma.ValidateResult
+			huma.Validate(doc.Components.Schemas, schema, &huma.PathBuffer{}, huma.ModeReadFromServer, payload, &result)
+			require.Empty(t, result.Errors)
+			for _, property := range []string{"filename", "containing_title"} {
+				t.Run(property, func(t *testing.T) {
+					delete(payload, property)
+					var missing huma.ValidateResult
+					huma.Validate(doc.Components.Schemas, schema, &huma.PathBuffer{}, huma.ModeReadFromServer, payload, &missing)
+					assert.NotEmpty(t, missing.Errors, "missing %s must fail schema validation", property)
+					payload[property] = ""
+				})
+			}
+		})
+	}
+}
+
 func TestOpenAPIJSONVersionPrettyPrintsSchema(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

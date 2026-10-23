@@ -993,6 +993,8 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	// candidates whose saved display name has been cleared.
 	for _, field := range []struct{ schema, property string }{
 		{"ContactCandidate", "display_name"},
+		{"MediaAttachmentResult", "filename"},
+		{"MediaAttachmentResult", "containing_title"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},

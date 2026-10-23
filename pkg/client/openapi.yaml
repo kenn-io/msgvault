@@ -7412,6 +7412,9 @@ components:
           type: integer
         containing_title:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         conversation_id:
           format: int64
           type: integer
@@ -7419,6 +7422,9 @@ components:
           type: string
         filename:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         message_id:
           format: int64
           type: integer
