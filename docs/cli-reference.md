@@ -3007,6 +3007,44 @@ For setup, privacy controls, budgets, and recovery, see
 [set](#person-provider-set), and [briefs](#person-brief) have additional details
 below.
 
+### person observations
+
+Record and curate statements about saved people. These statements do not change
+profile fields. Observation references accept a bare ID or `observation:<id>`.
+All subcommands accept `--json`.
+
+| Command | Purpose |
+|---|---|
+| `person observations list <person-id>` | List statements; filter by `--level`, `--status`, `--kind`, or `--as-of` |
+| `person observations show <observation:id>` | Read citations, premises, dependents, and history |
+| `person observations add <person-id> <content>` | Add an owner statement containing `[PERSON]` |
+| `person observations decide <observation:id> <action>` | `confirm`, `unsure`, `clear`, `reject`, `pin`, `unpin`, `end`, or `forget` |
+| `person observations suppressions <person-id>` | List active hash-only suppressions |
+| `person observations suppressions clear <person-id> <content-key>` | Allow the key to be proposed again |
+
+List and show hide sensitive statements unless `--include-sensitive` is set.
+The human `decide` output prints only the observation reference and action;
+`decide --json` returns the updated observation record, including content when
+the statement is sensitive. Lists accept `--limit` (1–500, default 100) and
+`--offset` (default 0). Filter values accept comma-separated alternatives.
+`--as-of` is an RFC3339 timestamp.
+
+Add accepts `--kind` (default `state`), `--subject-ref`, `--stability`, repeatable
+`--category`, `--valid-from`, `--valid-until`, and `--occurs-on` (`YYYY`,
+`YYYY-MM`, or `YYYY-MM-DD`). Decisions accept `--reason` (`wrong`, `not_useful`,
+`outdated`), `--end-at`, and `--expected-updated-at`. Dates other than
+`--occurs-on` use RFC3339. Owner decisions can target any saved row, including
+unsupported, superseded, and rejected rows; `confirm`, `unsure`, `clear`,
+`pin`, and `unpin` update owner state without restoring a non-active row.
+Without `--expected-updated-at`, the CLI fetches the latest revision
+immediately before submitting the decision. It detects changes only between
+that read and the write. To detect changes since an earlier inspection, pass
+the inspected `updated_at` value with `--expected-updated-at`.
+
+See [person observations](usage/people-observations.md) for action semantics,
+category handling, and suppression behavior. These commands need API schema
+3.25.0 or newer.
+
 ### person enrichment
 
 Look up public person information through independently configured and
