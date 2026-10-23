@@ -108,12 +108,14 @@ func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination strin
 		return result, nil
 	}
 	query, args := documentSearchRows(destination, scope)
-	query = `WITH ranked AS (
+	query = `WITH duplicates AS (
  SELECT d.version_id, a.id AS attachment_id, m.id AS message_id, cv.id AS conversation_id,
  COALESCE(a.filename,'') AS filename, ` + containingTitleMCVSQL + ` AS containing_title,
  COALESCE(m.sent_at,m.received_at,m.internal_date) AS occurred_at,
- ROW_NUMBER() OVER (PARTITION BY d.version_id ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST, a.id) AS occurrence_rank` + query + `
+ ROW_NUMBER() OVER (PARTITION BY d.version_id, m.id ORDER BY a.id) AS duplicate_rank` + query + `
  AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(versionIDs)-1) + `)
+ ), ranked AS (SELECT *,
+ ROW_NUMBER() OVER (PARTITION BY version_id ORDER BY occurred_at DESC NULLS LAST, attachment_id) AS occurrence_rank FROM duplicates WHERE duplicate_rank = 1
  ) SELECT version_id, attachment_id, message_id, conversation_id, filename, containing_title, occurred_at
  FROM ranked WHERE occurrence_rank <= ? ORDER BY occurred_at DESC NULLS LAST, attachment_id`
 	for _, id := range versionIDs {

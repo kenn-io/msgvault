@@ -99,6 +99,8 @@ func TestDocumentSearchOccurrencesPerVersionLimit(t *testing.T) {
 		for day := 5; day >= 1; day-- {
 			mid := f.CreateMessage(fmt.Sprintf("version-%d-day-%d", i, day))
 			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "report.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
+			// The same file can appear twice under separate source attachment IDs.
+			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourceAttachmentID: "duplicate", ContentHash: hash, Filename: "copy.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
 			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC), mid)
 			require.NoError(err)
 			if day >= 3 {

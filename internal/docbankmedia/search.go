@@ -189,6 +189,28 @@ func validSearchHit(hit SearchHit, vault string, ids map[string]bool) bool {
 	return hit.VaultUID == vault && ids[hit.ContentVersionID] && hit.NodeID > 0 && hit.Rank > 0 && len(hit.Excerpt) <= 2048
 }
 
+// ResolveSearchFence resolves exact versions without inventorying vault storage.
+func (c *Client) ResolveSearchFence(ctx context.Context, versions []string) (SearchFence, error) {
+	request := struct {
+		ContentVersionIDs []string `json:"content_version_ids"`
+	}{versions}
+	var response struct {
+		Fence SearchFence `json:"fence"`
+	}
+	if err := c.jsonRequest(ctx, http.MethodPost, "/api/v1/processing/source-fences/resolve", request, &response); err != nil {
+		return SearchFence{}, err
+	}
+	if response.Fence.VaultUID == "" || len(response.Fence.ContentVersionIDs) != len(versions) {
+		return SearchFence{}, ErrInvalidReceipt
+	}
+	for _, id := range response.Fence.ContentVersionIDs {
+		if !slices.Contains(versions, id) {
+			return SearchFence{}, ErrInvalidReceipt
+		}
+	}
+	return response.Fence, nil
+}
+
 // SearchDocuments searches exact mirrored versions without transcript selectors.
 func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (SearchReport, error) {
 	report, err := c.searchReport(ctx, request)
@@ -203,7 +225,6 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 		ids[id] = true
 	}
 	results := make([]SearchHit, 0, len(report.Results))
-	lastHitHasContent := false
 	for _, hit := range report.Results {
 		if !validSearchHit(hit, request.Fence.VaultUID, ids) || len(hit.Evidence) == 0 {
 			return SearchReport{}, ErrInvalidReceipt
@@ -215,14 +236,12 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 			}
 			content = content || evidence.Kind != "node_name"
 		}
-		lastHitHasContent = content
 		if !content {
 			continue
 		}
 		hit.Excerpt = plainSearchExcerpt(hit.Excerpt)
 		results = append(results, hit)
 	}
-	report.Truncated = report.Truncated && lastHitHasContent
 	report.Results = results
 	return report, nil
 }

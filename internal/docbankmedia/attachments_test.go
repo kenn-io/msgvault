@@ -116,27 +116,3 @@ func TestEnsureAttachmentFolderCreatesParents(t *testing.T) {
 		})
 	}
 }
-
-func TestVaultUID(t *testing.T) {
-	for _, body := range []string{`{"vault_id":"00000000-0000-4000-8000-000000000010"}`, `{}`} {
-		t.Run(body, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal("/api/v1/info", r.URL.Path)
-				assert.Equal(http.MethodGet, r.Method)
-				_, _ = io.WriteString(w, body)
-			}))
-			defer remote.Close()
-			client, err := NewClient(remote.URL, nil)
-			require.NoError(err)
-			vault, err := client.VaultUID(t.Context())
-			if body == `{}` {
-				require.ErrorIs(err, ErrInvalidReceipt)
-				return
-			}
-			require.NoError(err)
-			assert.Equal("00000000-0000-4000-8000-000000000010", vault)
-		})
-	}
-}

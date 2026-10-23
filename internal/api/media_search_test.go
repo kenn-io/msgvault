@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,8 @@ type mediaSearchFixture struct {
 	duringDocumentSearch func()
 	report               docbankmedia.SearchReport
 	requests             []docbankmedia.SearchRequest
+	validationMu         sync.Mutex
+	validationStatus     int
 	validated            int
 	duringSearch         func()
 	remoteStatus         int
@@ -88,7 +91,18 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/info":
-			_, _ = w.Write([]byte(`{"vault_id":"00000000-0000-4000-8000-000000000010"}`))
+			w.WriteHeader(http.StatusInternalServerError)
+		case "/api/v1/processing/source-fences/resolve":
+			assert.Equal(t, http.MethodPost, r.Method)
+			var request struct {
+				ContentVersionIDs []string `json:"content_version_ids"`
+			}
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+				return
+			}
+			_ = json.NewEncoder(w).Encode(struct {
+				Fence docbankmedia.SearchFence `json:"fence"`
+			}{docbankmedia.SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: request.ContentVersionIDs}})
 		case "/api/v1/search", "/api/v1/search/validate":
 			var request docbankmedia.SearchRequest
 			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
@@ -98,7 +112,13 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 			assert.True(t, request.ContentFirst)
 			if r.URL.Path == "/api/v1/search/validate" {
 				assert.Nil(t, request.Fence)
+				f.validationMu.Lock()
 				f.validated++
+				f.validationMu.Unlock()
+				if f.validationStatus != 0 {
+					w.WriteHeader(f.validationStatus)
+					return
+				}
 				_, _ = w.Write([]byte(`{"valid":true}`))
 				return
 			}
@@ -900,7 +920,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 }
 
 func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "recording timeout", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
+	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "recording rejected query", "recording timeout", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -934,6 +954,8 @@ func TestMediaSearchDocuments(t *testing.T) {
 				f.documentStatus = 503
 			case "rejected query":
 				f.documentStatus = http.StatusBadRequest
+			case "recording rejected query":
+				f.remoteStatus = http.StatusBadRequest
 			case "recording timeout":
 				f.waitForCancel = true
 			case "recording failure":
@@ -977,6 +999,11 @@ func TestMediaSearchDocuments(t *testing.T) {
 				require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
 			} else {
 				status, response, raw = searchMediaFor(t, server, query)
+			}
+			if scenario == "recording rejected query" {
+				assert.Equal(http.StatusBadRequest, status, raw)
+				assert.Contains(raw, `"error":"invalid_media_search"`)
+				return
 			}
 			if scenario == "both fail" {
 				assert.Equal(http.StatusServiceUnavailable, status, raw)
@@ -1083,4 +1110,21 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMediaSearchRejectedQueryWithEmptyAttachments(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
+	f.validationStatus = http.StatusBadRequest
+	status, response, raw := searchMediaFor(t, server, "q=quartz")
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.NotNil(response.Attachments.Error)
+	assert.Equal("invalid_media_search", response.Attachments.Error.Error)
+	assert.Empty(response.Attachments.Results)
+	assert.Equal(1, f.validated)
 }

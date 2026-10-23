@@ -41,18 +41,20 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 	if scopeExceeded {
 		return fail(errMediaSearchScope)
 	}
+	// Docbank lexical search spans profiles but requires a registered name.
+	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile, Limit: limit}
 	if len(versions) == 0 {
+		if err := reader.Client.ValidateSearch(remoteCtx, request); err != nil {
+			return fail(err)
+		}
 		return response, nil
 	}
-	vault, err := reader.Client.VaultUID(remoteCtx)
+	fence, err := reader.Client.ResolveSearchFence(remoteCtx, versions)
 	if err != nil {
 		return fail(err)
 	}
-	// Docbank lexical search spans profiles but requires a registered name.
-	report, err := reader.Client.SearchDocuments(remoteCtx, docbankmedia.SearchRequest{
-		Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile,
-		Limit: limit, Fence: &docbankmedia.SearchFence{VaultUID: vault, ContentVersionIDs: versions},
-	})
+	request.Fence = &fence
+	report, err := reader.Client.SearchDocuments(remoteCtx, request)
 	if err != nil {
 		return fail(err)
 	}

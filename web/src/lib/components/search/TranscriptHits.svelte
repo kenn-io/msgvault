@@ -42,7 +42,7 @@
     const requestedQuery = query.trim();
     const requestedClient = client;
     const requestedParticipantID = participantID;
-    const allowed = supported && admitted && Boolean(requestedQuery);
+    const allowed = supported && admitted;
     const retryRequested = retry !== previousRetry;
     previousRetry = retry;
     result = undefined;
@@ -198,7 +198,7 @@
   </section>
   {#if result?.attachments}
     <section class="attachments" aria-label="Attachments">
-      <h2>Attachments{#if !result.attachments.error || result.attachments.results.length > 0}<span class="count">{result.attachments.results.length}</span>{/if}</h2>
+      <h2>Attachments{#if !result.attachments.error}<span class="count">{result.attachments.results.length}</span>{/if}</h2>
       {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.error === 'media_search_scope_limit' ? attachmentScopeNotice(participantID) : result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
       <ol>
         {#each result.attachments.results as hit, index (index)}
