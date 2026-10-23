@@ -1631,6 +1631,10 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 	bookID, personID, href := resource.AddressBookID, *resource.PersonID, resource.Href
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
 	remoteOwnsDisplay := resource.OwnsDisplayName
+	inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, personID)
+	if err != nil {
+		return err
+	}
 
 	for _, table := range []string{personNamesTableName, personContactPointsTableName} {
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET
@@ -1669,7 +1673,7 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 			return err
 		}
 	}
-	return nil
+	return s.invalidateInferenceFullNameExposureChangesTx(ctx, tx, inferenceBefore)
 }
 
 // refreshCardDAVImportedPersonBindBaselineTx records the revision produced by

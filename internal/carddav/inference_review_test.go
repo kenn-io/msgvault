@@ -559,6 +559,97 @@ func TestInferenceReviewTracksDerivedFullNameSelection(t *testing.T) {
 	}
 }
 
+func TestImportConnectionIdentityChangeReviewsExposedInferredFullName(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		source         store.Provenance
+		reviewRequired bool
+	}{
+		{"inferred name", store.ProvenanceEnrichment, true},
+		{"declared name", store.ProvenanceUser, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture := &mutationFixture{}
+			server := httptest.NewServer(fixture.handler(t))
+			t.Cleanup(server.Close)
+			service, st, publicationBook := newPullService(t, server, false)
+			input := store.CardDAVDiscoveryInput{
+				ConnectionName: "import", BaseURL: "https://import.example.test/dav", Username: "before",
+				PrincipalURL: "https://import.example.test/principal/", HomeURL: "https://import.example.test/books/",
+				Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://import.example.test/books/contacts/", CanCreate: new(false)}},
+			}
+			account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
+			require.NoError(err)
+			require.Len(books, 1)
+			importBook := books[0]
+			require.NotEqual(publicationBook.AccountID, importBook.AccountID)
+			require.NoError(st.SetCardDAVBookRolesContext(t.Context(), importBook.ID, store.CardDAVBookRoles{
+				IsSubscribed: true, IsLookupSource: true,
+			}))
+			books, err = st.ListCardDAVAddressBooksContext(t.Context(), account.ID)
+			require.NoError(err)
+			require.Len(books, 1)
+			importBook = books[0]
+			resource, err := parseRemoteResource(importBook.CanonicalURL+"person.vcf", `"imported"`,
+				[]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Imported Example\r\nEND:VCARD\r\n"))
+			require.NoError(err)
+			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+				AddressBookID: importBook.ID, ConnectionGeneration: account.ConnectionGeneration,
+				SyncRevision: importBook.SyncRevision, Upserts: []store.CardDAVRemoteResource{resource},
+			})
+			require.NoError(err)
+			mapping, err := st.GetCardDAVResourceContext(t.Context(), importBook.ID, resource.Href)
+			require.NoError(err)
+			require.NotNil(mapping.PersonID)
+			personID := *mapping.PersonID
+			_, err = st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{
+				NameKind: store.PersonNameStructured, GivenName: new("Agent"), FamilyName: new("Example"),
+				OriginalValue: "Agent Example", Envelope: store.ValueEnvelopeInput{Source: tc.source},
+			})
+			require.NoError(err)
+			appendInferenceReviewNote(t, st, personID, "Reviewed detail")
+			preview, err := service.PreviewPublication(t.Context(), personID)
+			require.NoError(err)
+			require.Contains(preview.VCard, "FN:Imported Example\r\n")
+			require.True(preview.ReviewRequired)
+			require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
+			before, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
+			require.NoError(err)
+			require.Equal(new(publicationBook.ID), before.Inference.ApprovedAddressBookID)
+			require.Equal(before.Inference.InferenceRevision, before.Inference.ApprovedRevision)
+
+			input.Username = "after"
+			_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
+			require.NoError(err)
+			preview, err = service.PreviewPublication(t.Context(), personID)
+			require.NoError(err)
+			assert.Contains(preview.VCard, "FN:Agent Example\r\n")
+			assert.NotContains(preview.VCard, "FN:Imported Example\r\n")
+			assert.Equal(tc.reviewRequired, preview.ReviewRequired)
+			after, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
+			require.NoError(err)
+			if tc.reviewRequired {
+				assert.Greater(after.Inference.InferenceRevision, before.Inference.InferenceRevision)
+				require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
+				fixture.mu.Lock()
+				assert.Equal(1, fixture.puts)
+				assert.Contains(string(fixture.body), "FN:Imported Example\r\n")
+				fixture.mu.Unlock()
+				require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
+			} else {
+				assert.Equal(before.Inference, after.Inference)
+				require.NoError(service.PublishPerson(t.Context(), personID))
+			}
+			fixture.mu.Lock()
+			assert.Equal(2, fixture.puts)
+			assert.Contains(string(fixture.body), "FN:Agent Example\r\n")
+			fixture.mu.Unlock()
+		})
+	}
+}
+
 func TestInferenceReviewTracksRenderedPhoneticFullNameFallback(t *testing.T) {
 	phoneticName := func(given string, ordinal int) store.PersonNameInput {
 		return store.PersonNameInput{
