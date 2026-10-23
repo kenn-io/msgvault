@@ -28,6 +28,13 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 	}
 
 	// An archive the retired pipeline wrote: one attachment with extracted text.
+	fixture := "testdata/retired_document_tables_sqlite.sql"
+	if f.Store.IsPostgreSQL() {
+		fixture = "testdata/retired_document_tables_postgres.sql"
+	}
+	schema, err := os.ReadFile(fixture)
+	requirements.NoError(err)
+	exec(string(schema))
 	messageID := f.CreateMessage("before-document-upgrade")
 	requirements.NoError(f.Store.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{Filename: "synthetic.pdf", SourceAttachmentID: "synthetic:attachment"}))
 	var attachmentID int64
@@ -37,7 +44,6 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 	exec(`INSERT INTO document_extractions (id,profile_id,canonical_blob_hash,extraction_input_key,state,local_bytes) VALUES ('extraction','profile',?,'original','ready',128)`, hash)
 	exec(`INSERT INTO document_chunks (extraction_id,chunk_key,ordinal,text,heading_path,first_unit_index,last_unit_index,checksum,char_count) VALUES ('extraction','chunk',0,'synthetic extracted text','[]',0,0,'checksum',24)`)
 	exec(`INSERT INTO document_occurrences (occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source) VALUES ('occurrence',?,?,?,?,'attachment','source')`, attachmentID, messageID, f.Source.ID, hash)
-	exec(`INSERT INTO document_provider_consents (profile_id,profile_fingerprint,retention_posture,training_posture) VALUES ('profile','fingerprint','standard','opted-out')`)
 	exec(`INSERT INTO document_vector_generations (fingerprint,target_extraction_profile_id,embedding_profile,model,dimension,state) VALUES ('vectors','profile','synthetic','synthetic',4,'active')`)
 	exec(`INSERT INTO persons (vcard_uid) VALUES ('document-upgrade')`)
 	var personID int64
@@ -51,9 +57,9 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 
 	// The previous release's person-sweep document hook and ledger.
 	if f.Store.IsPostgreSQL() {
-		schema, err := os.ReadFile("testdata/person_sweep_document_triggers_postgres.sql")
+		hook, err := os.ReadFile("testdata/person_sweep_document_triggers_postgres.sql")
 		requirements.NoError(err)
-		exec(string(schema))
+		exec(string(hook))
 	} else {
 		exec(`CREATE TRIGGER trg_person_sweep_documents_message_update AFTER UPDATE ON messages BEGIN SELECT 1; END`)
 	}
@@ -71,7 +77,7 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 	requirements.NoError(f.Store.InitSchemaContext(ctx))
 	checks.Contains(logs.String(), `"msg":"deleted retired document rows during schema migration","rows":6`)
 
-	_, err := f.Store.GetAttachmentChangeConsumer(ctx, "document-index/v1")
+	_, err = f.Store.GetAttachmentChangeConsumer(ctx, "document-index/v1")
 	requirements.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing)
 	exec(`UPDATE messages SET message_type='sms' WHERE id=?`, messageID)
 	exec(`DELETE FROM attachments WHERE message_id=?`, messageID)
@@ -108,11 +114,14 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 		requirements.NoError(f.Store.DB().QueryRowContext(ctx, query).Scan(&n))
 		return n
 	}
-	for _, table := range []string{"document_chunks", "document_extractions", "document_provider_consents", "document_extraction_profiles", "document_occurrences", "document_vector_generations"} {
-		checks.Zero(count(`SELECT COUNT(*) FROM `+table), "the upgrade empties %s and keeps the table", table)
+	retired := `SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'document%' OR name LIKE 'trg_document%' OR sql LIKE '%document_key%'`
+	if f.Store.IsPostgreSQL() {
+		retired = `SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name LIKE 'document%')
+			+ (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND column_name LIKE '%document_key')
+			+ (SELECT COUNT(*) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname LIKE '%document%')`
 	}
+	checks.Zero(count(retired), "the upgrade drops the retired tables, triggers, functions, and cursor columns")
 	if !f.Store.IsPostgreSQL() {
-		checks.Zero(count(`SELECT COUNT(*) FROM document_chunks_fts`), "the chunk delete clears full-text rows")
 		checks.Zero(disclosedChunks(t, f.Store), "a backup after the upgrade discloses no document text")
 	}
 	var lanes []string
