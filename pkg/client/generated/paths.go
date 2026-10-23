@@ -729,6 +729,16 @@ type ListPersonIdentitiesPath struct {
 	ID int64 `json:"id"`
 }
 
+type ListPersonInstructionsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type AddPersonInstructionPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type MergePersonsPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
@@ -788,6 +798,16 @@ type GetPersonTrackingPath struct {
 }
 
 type SetPersonTrackingPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type GetPersonInstructionPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type DecidePersonInstructionPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
 }

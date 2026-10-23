@@ -236,6 +236,27 @@ components:
         - schedule
         - enabled
       type: object
+    AddPersonInstructionRequest:
+      additionalProperties: false
+      properties:
+        contact_point_id:
+          format: int64
+          nullable: true
+          type: integer
+        kind:
+          type: string
+        text:
+          type: string
+        valid_until:
+          format: date-time
+          nullable: true
+          type: string
+        value:
+          type: string
+      required:
+        - kind
+        - text
+      type: object
     AddRequest:
       additionalProperties: false
       properties:
@@ -3350,6 +3371,22 @@ components:
           type: string
       required:
         - review_token
+      type: object
+    DecidePersonInstructionRequest:
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+        edit:
+          $ref: "#/components/schemas/PersonInstructionEdit"
+        expected_revision:
+          format: int64
+          type: integer
+        reason:
+          type: string
+      required:
+        - action
+        - expected_revision
       type: object
     DecidePersonMergeCandidateRequest:
       additionalProperties: false
@@ -12114,6 +12151,145 @@ components:
         - sent_count
         - latest_at
       type: object
+    PersonInstruction:
+      properties:
+        adopted:
+          type: boolean
+        confirmed_at:
+          format: date-time
+          nullable: true
+          type: string
+        confirmed_by:
+          nullable: true
+          type: string
+        contact_point_id:
+          format: int64
+          nullable: true
+          type: integer
+        content_trust:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        generation_id:
+          format: int64
+          nullable: true
+          type: integer
+        id:
+          format: int64
+          type: integer
+        instruction_key:
+          type: string
+        kind:
+          type: string
+        normalized_text:
+          type: string
+        origin:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        review_state:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        scope_key:
+          type: string
+        scope_missing:
+          type: boolean
+        source_observation_id:
+          format: int64
+          nullable: true
+          type: integer
+        stated_at:
+          format: date-time
+          nullable: true
+          type: string
+        status:
+          type: string
+        supersedes_id:
+          format: int64
+          nullable: true
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+        valid_from:
+          format: date-time
+          type: string
+        valid_until:
+          format: date-time
+          nullable: true
+          type: string
+        value_text:
+          type: string
+        visible_to_agents:
+          type: boolean
+      required:
+        - id
+        - person_id
+        - instruction_key
+        - kind
+        - scope_key
+        - normalized_text
+        - value_text
+        - origin
+        - status
+        - review_state
+        - adopted
+        - valid_from
+        - revision
+        - created_at
+        - updated_at
+        - content_trust
+        - visible_to_agents
+        - scope_missing
+      type: object
+    PersonInstructionDecisionResult:
+      properties:
+        follow_ons:
+          items:
+            $ref: "#/components/schemas/PersonInstructionFollowOn"
+          type: array
+        instruction:
+          $ref: "#/components/schemas/PersonInstruction"
+      required:
+        - instruction
+        - follow_ons
+      type: object
+    PersonInstructionEdit:
+      additionalProperties: false
+      properties:
+        kind:
+          nullable: true
+          type: string
+        text:
+          nullable: true
+          type: string
+        value:
+          nullable: true
+          type: string
+      type: object
+    PersonInstructionFollowOn:
+      properties:
+        kind:
+          type: string
+        value:
+          type: string
+      required:
+        - kind
+        - value
+      type: object
+    PersonInstructionsResponse:
+      properties:
+        instructions:
+          items:
+            $ref: "#/components/schemas/PersonInstruction"
+          type: array
+      required:
+        - instructions
+      type: object
     PersonMatchBatchError:
       properties:
         code:
@@ -16270,7 +16446,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.24.0
+  version: 3.25.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -28497,6 +28673,121 @@ paths:
       summary: List a durable person's archived identities
       tags:
         - API
+  /api/v1/people/{id}/instructions:
+    get:
+      operationId: listPersonInstructions
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Comma-separated lifecycle statuses
+          in: query
+          name: status
+          schema:
+            type: string
+        - description: Include expired instructions
+          in: query
+          name: include_expired
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonInstructionsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's standing instructions
+      tags:
+        - API
+    post:
+      operationId: addPersonInstruction
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPersonInstructionRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonInstruction"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Add an owner-entered standing instruction
+      tags:
+        - API
   /api/v1/people/{id}/merge:
     post:
       operationId: mergePersons
@@ -29293,6 +29584,152 @@ paths:
       security:
         - apiKey: []
       summary: List eligible automatic person fact targets
+      tags:
+        - API
+  /api/v1/person-instructions/review:
+    get:
+      operationId: listPersonInstructionReview
+      parameters:
+        - description: Maximum rows (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonInstructionsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List standing instructions needing owner review
+      tags:
+        - API
+  /api/v1/person-instructions/{id}:
+    get:
+      operationId: getPersonInstruction
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonInstruction"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read a standing instruction
+      tags:
+        - API
+  /api/v1/person-instructions/{id}/decisions:
+    post:
+      operationId: decidePersonInstruction
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecidePersonInstructionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonInstructionDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Record an owner instruction decision
       tags:
         - API
   /api/v1/person-merge-candidates/{candidate_id}/decision:

@@ -955,6 +955,14 @@ type ClientInterface interface {
 	ListPersonIdentities(ctx context.Context, options *ListPersonIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonIdentitiesResponse, error)
 	ListPersonIdentitiesWithResponse(ctx context.Context, options *ListPersonIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonIdentitiesResp, error)
 
+	// ListPersonInstructions List a person's standing instructions
+	ListPersonInstructions(ctx context.Context, options *ListPersonInstructionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonInstructionsResponse, error)
+	ListPersonInstructionsWithResponse(ctx context.Context, options *ListPersonInstructionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonInstructionsResp, error)
+
+	// AddPersonInstruction Add an owner-entered standing instruction
+	AddPersonInstruction(ctx context.Context, options *AddPersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddPersonInstructionResponse, error)
+	AddPersonInstructionWithResponse(ctx context.Context, options *AddPersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddPersonInstructionResp, error)
+
 	// MergePersons Merge one durable person profile into another
 	MergePersons(ctx context.Context, options *MergePersonsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergePersonsResponse, error)
 	MergePersonsWithResponse(ctx context.Context, options *MergePersonsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergePersonsResp, error)
@@ -1006,6 +1014,18 @@ type ClientInterface interface {
 	// ListPersonFactTargets List eligible automatic person fact targets
 	ListPersonFactTargets(ctx context.Context, options *ListPersonFactTargetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactTargetsResponse, error)
 	ListPersonFactTargetsWithResponse(ctx context.Context, options *ListPersonFactTargetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactTargetsResp, error)
+
+	// ListPersonInstructionReview List standing instructions needing owner review
+	ListPersonInstructionReview(ctx context.Context, options *ListPersonInstructionReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonInstructionReviewResponse, error)
+	ListPersonInstructionReviewWithResponse(ctx context.Context, options *ListPersonInstructionReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonInstructionReviewResp, error)
+
+	// GetPersonInstruction Read a standing instruction
+	GetPersonInstruction(ctx context.Context, options *GetPersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonInstructionResponse, error)
+	GetPersonInstructionWithResponse(ctx context.Context, options *GetPersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonInstructionResp, error)
+
+	// DecidePersonInstruction Record an owner instruction decision
+	DecidePersonInstruction(ctx context.Context, options *DecidePersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecidePersonInstructionResponse, error)
+	DecidePersonInstructionWithResponse(ctx context.Context, options *DecidePersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecidePersonInstructionResp, error)
 
 	// DecidePersonMergeCandidate Accept or reject a person merge attribute candidate
 	DecidePersonMergeCandidate(ctx context.Context, options *DecidePersonMergeCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecidePersonMergeCandidateResponse, error)
@@ -15489,6 +15509,133 @@ func (c *Client) ListPersonIdentities(ctx context.Context, options *ListPersonId
 	return responseParser(ctx, resp)
 }
 
+// ListPersonInstructions List a person's standing instructions
+func (c *Client) ListPersonInstructions(ctx context.Context, options *ListPersonInstructionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonInstructionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/instructions",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonInstructionsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonInstructionsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonInstructionsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonInstructionsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonInstructionsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/instructions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AddPersonInstruction Add an owner-entered standing instruction
+func (c *Client) AddPersonInstruction(ctx context.Context, options *AddPersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddPersonInstructionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}/instructions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*AddPersonInstructionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 201 {
+			target := new(AddPersonInstructionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "AddPersonInstructionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(AddPersonInstructionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "AddPersonInstructionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/instructions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // MergePersons Merge one durable person profile into another
 func (c *Client) MergePersons(ctx context.Context, options *MergePersonsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergePersonsResponse, error) {
 	var err error
@@ -16293,6 +16440,196 @@ func (c *Client) ListPersonFactTargets(ctx context.Context, options *ListPersonF
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/person-fact-targets")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonInstructionReview List standing instructions needing owner review
+func (c *Client) ListPersonInstructionReview(ctx context.Context, options *ListPersonInstructionReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonInstructionReviewResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/person-instructions/review",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonInstructionReviewResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonInstructionReviewErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonInstructionReviewErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonInstructionReviewResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonInstructionReviewResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/person-instructions/review")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonInstruction Read a standing instruction
+func (c *Client) GetPersonInstruction(ctx context.Context, options *GetPersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonInstructionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/person-instructions/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonInstructionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonInstructionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonInstructionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonInstructionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonInstructionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/person-instructions/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DecidePersonInstruction Record an owner instruction decision
+func (c *Client) DecidePersonInstruction(ctx context.Context, options *DecidePersonInstructionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecidePersonInstructionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/person-instructions/{id}/decisions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*DecidePersonInstructionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(DecidePersonInstructionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DecidePersonInstructionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(DecidePersonInstructionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "DecidePersonInstructionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/person-instructions/{id}/decisions")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
