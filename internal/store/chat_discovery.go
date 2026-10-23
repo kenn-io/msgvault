@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // ErrInvalidChatDiscoveryQuery wraps every chat discovery input rejection.
@@ -182,8 +183,11 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 	exactTokens := directoryTokens(q.Query)
 	top := make([]rankedChat, 0, q.Limit+2)
 	// The refreshed anchor is the newest instant. A write after the refresh
-	// can hide it or move it to another chat, so a stale anchor falls back to
-	// the indexed lookup, which orders SQLite timestamps as stored text.
+	// can hide it or move it to another chat, so the fallback must also order by instant.
+	sentKey := sqliteutil.TimestampKeyFunction + "(m.sent_at)"
+	if s.IsPostgreSQL() {
+		sentKey = "m.sent_at"
+	}
 	statement := `WITH eligible AS (
 		SELECT c.id, c.source_id, c.source_conversation_id, c.title,
 			c.conversation_type, anchor.id AS message_id, anchor.sent_at AS last_at
@@ -193,7 +197,7 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 			WHERE ca.conversation_id = c.id AND a.conversation_id = c.id AND ` + LiveMessagesWhere("a", false) + `
 		), (
 			SELECT m.id FROM messages m WHERE m.conversation_id = c.id AND ` + LiveMessagesWhere("m", false) + `
-			ORDER BY m.sent_at DESC NULLS LAST, m.id DESC LIMIT 1
+			ORDER BY ` + sentKey + ` DESC NULLS LAST, m.id DESC LIMIT 1
 		))
 		WHERE c.conversation_type IN ` + chatConversationTypesSQL
 	args := []any{}

@@ -212,17 +212,21 @@ func TestChatDiscoveryRejectsAnchorChangedAfterRefresh(t *testing.T) {
 	requirements.NoError(err)
 	other, err := st.EnsureConversationWithType(source.ID, "other-room", "direct_chat", "Elsewhere")
 	requirements.NoError(err)
-	insert := func(id string, seconds int64) int64 {
+	insert := func(id string, sent time.Time) int64 {
 		messageID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: id, ConversationID: chat,
-			MessageType: "beeper", SentAt: sql.NullTime{Time: time.Unix(seconds, 0), Valid: true}})
+			MessageType: "beeper", SentAt: sql.NullTime{Time: sent, Valid: true}})
 		requirements.NoError(err)
 		return messageID
 	}
-	middle, newest, oldest := insert("middle", 100), insert("newest", 200), insert("oldest", 50)
+	middle := insert("middle", time.Date(2026, 3, 1, 9, 30, 0, 0, time.UTC))
+	newest := insert("newest", time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC))
+	oldest := insert("oldest", time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC))
+	// 10:00+02:00 is 08:00 UTC: older than both surviving anchors and the competing chat.
+	insert("offset", time.Date(2026, 3, 1, 10, 0, 0, 0, time.FixedZone("plus-two", 2*60*60)))
 	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "undated", ConversationID: chat,
 		MessageType: "beeper"})
 	requirements.NoError(err)
-	seedDiscoveryChat(t, st, source.ID, "Stale Competitor", "direct_chat", time.Unix(25, 0))
+	seedDiscoveryChat(t, st, source.ID, "Stale Competitor", "direct_chat", time.Date(2026, 3, 1, 8, 30, 0, 0, time.UTC))
 	metadataAnchor := func() int64 {
 		t.Helper()
 		page, err := st.SearchChatsMetadataContext(t.Context(), store.ChatDiscoveryQuery{Query: "Stale", Limit: 1})
