@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 )
 
 const ResolverVersionV1 = "person-fact-resolver-v1"
+const ResolverVersionV2 = "person-fact-resolver-v2"
 
 type resolverCandidate struct {
 	claim             ResolvedClaim
@@ -62,6 +65,82 @@ func DefaultPolicyV1() Policy {
 			AuthorityAuthoritative: 300, AuthorityOrdinary: 100, AuthorityAggregator: 0,
 		},
 	}
+}
+
+func DefaultPolicyV2() Policy {
+	policy := DefaultPolicyV1()
+	policy.Version = ResolverVersionV2
+	policy.Stability = map[Stability]StabilityProfile{
+		StabilityFixed:    {Freshness: []FreshnessStep{{0, 100}}, ReplacementBonus: 100},
+		StabilityDurable:  {Freshness: []FreshnessStep{{30, 100}, {180, 60}, {730, 20}, {0, 0}}, StaleAfterDays: 730},
+		StabilityVolatile: {Freshness: []FreshnessStep{{30, 100}, {90, 40}, {180, 10}, {0, 0}}, MaxEvidenceAgeDays: 180, StaleAfterDays: 180},
+	}
+	return policy
+}
+
+func (p Policy) StaleAfter(stability Stability) (time.Duration, bool) {
+	if p.Version == ResolverVersionV1 {
+		return 0, false
+	}
+	days := p.Stability[effectiveStability(stability)].StaleAfterDays
+	return time.Duration(days) * 24 * time.Hour, days > 0
+}
+
+func effectiveStability(stability Stability) Stability {
+	if stability == "" {
+		return StabilityDurable
+	}
+	return stability
+}
+
+func (r Resolver) replacementMargin(input ResolutionInput) int {
+	margin := r.Policy.ReplacementMargin
+	if r.Policy.Version != ResolverVersionV1 {
+		margin += r.Policy.Stability[effectiveStability(input.Stability)].ReplacementBonus
+	}
+	return margin
+}
+
+func (r Resolver) applyStabilityWindow(input ResolutionInput, candidates []resolverCandidate) {
+	if r.Policy.Version == ResolverVersionV1 {
+		return
+	}
+	maxAgeDays := r.Policy.Stability[effectiveStability(input.Stability)].MaxEvidenceAgeDays
+	if maxAgeDays == 0 {
+		return
+	}
+	for i := range candidates {
+		candidate := &candidates[i]
+		if !candidate.eligible {
+			continue
+		}
+		var newest time.Time
+		for _, evidence := range candidate.supportedEvidence {
+			if evidence.Input.EventTime.After(newest) {
+				newest = evidence.Input.EventTime
+			}
+		}
+		if input.ResolvedAt.Sub(newest) > time.Duration(maxAgeDays)*24*time.Hour {
+			candidate.score.StabilityWindow = true
+			candidate.decision = resolverDecision(input.PersonID, *candidate, DecisionRetained, ReasonBelowThreshold, "")
+			candidate.eligible = false
+		}
+	}
+}
+
+func (r Resolver) freshness(stability Stability, resolvedAt, eventTime time.Time) int {
+	if r.Policy.Version == ResolverVersionV1 || r.Policy.Stability == nil {
+		return resolverFreshness(resolvedAt, eventTime)
+	}
+	if eventTime.After(resolvedAt) {
+		return 0
+	}
+	for _, step := range r.Policy.Stability[effectiveStability(stability)].Freshness {
+		if step.MaxAgeDays == 0 || resolvedAt.Sub(eventTime) <= time.Duration(step.MaxAgeDays)*24*time.Hour {
+			return step.Points
+		}
+	}
+	return 0
 }
 
 func NewResolver(policy Policy) (Resolver, error) {
@@ -119,6 +198,7 @@ func (r Resolver) Resolve(input ResolutionInput) (Resolution, error) {
 			}
 		}
 	} else {
+		r.applyStabilityWindow(input, candidates)
 		switch input.Target.Cardinality {
 		case CardinalitySingle:
 			r.resolveSingle(input, candidates)
@@ -269,19 +349,19 @@ func (r Resolver) prepareCandidate(
 		}
 		return candidate, nil
 	}
-	candidate.score = r.scoreClaim(input.ResolvedAt, claim, candidate.supportedEvidence)
+	candidate.score = r.scoreClaim(input.ResolvedAt, input.Stability, claim, candidate.supportedEvidence)
 	candidate.eligible = true
 	return candidate, nil
 }
 
 func (r Resolver) scoreClaim(
-	resolvedAt time.Time, claim ResolvedClaim, evidence []Evidence,
+	resolvedAt time.Time, stability Stability, claim ResolvedClaim, evidence []Evidence,
 ) ScoreBreakdown {
-	return r.scoreEvidence(resolvedAt, claim.Claim.Confidence.ReportedScore, evidence)
+	return r.scoreEvidence(resolvedAt, stability, claim.Claim.Confidence.ReportedScore, evidence)
 }
 
 func (r Resolver) scoreEvidence(
-	resolvedAt time.Time, reportedConfidence int, evidence []Evidence,
+	resolvedAt time.Time, stability Stability, reportedConfidence int, evidence []Evidence,
 ) ScoreBreakdown {
 	score := ScoreBreakdown{Confidence: reportedConfidence / 10}
 	independent := make(map[string]struct{}, len(evidence))
@@ -290,7 +370,7 @@ func (r Resolver) scoreEvidence(
 		score.SourceClass = max(score.SourceClass, r.Policy.SourceClassWeights[input.SourceClass])
 		score.Directness = max(score.Directness, r.Policy.DirectnessWeights[input.Directness])
 		score.Authority = max(score.Authority, r.Policy.AuthorityWeights[input.Authority])
-		score.Freshness = max(score.Freshness, resolverFreshness(resolvedAt, input.EventTime))
+		score.Freshness = max(score.Freshness, r.freshness(stability, resolvedAt, input.EventTime))
 		independent[resolverIndependentSource(input)] = struct{}{}
 	}
 	if len(independent) > 1 {
@@ -312,7 +392,7 @@ func (r Resolver) resolveSingle(input ResolutionInput, candidates []resolverCand
 		}
 		return
 	}
-	directions := r.singleValueDirections(input.ResolvedAt, candidates)
+	directions := r.singleValueDirections(input.ResolvedAt, input.Stability, candidates)
 	directions = r.scopeSingleValueNegativeDirections(input, candidates, directions)
 	if len(directions) == 0 {
 		return
@@ -350,7 +430,7 @@ func (r Resolver) resolveSingle(input ResolutionInput, candidates []resolverCand
 		}
 		return
 	}
-	if len(directions) > 1 && winner.score.Total-directions[1].score.Total < r.Policy.ReplacementMargin {
+	if len(directions) > 1 && winner.score.Total-directions[1].score.Total < r.replacementMargin(input) {
 		setDirectionDecision(input.PersonID, candidates, winner,
 			DecisionRetained, ReasonInsufficientMargin,
 			candidates[directions[1].representative].claim.ClaimKey)
@@ -362,7 +442,7 @@ func (r Resolver) resolveSingle(input ResolutionInput, candidates []resolverCand
 		return
 	}
 	if len(activeCurrent) == 1 && directionChangesCurrent(winner, activeCurrent[0]) {
-		required := r.Policy.ApplyThreshold + r.Policy.ReplacementMargin + r.Policy.HysteresisMargin
+		required := r.Policy.ApplyThreshold + r.replacementMargin(input) + r.Policy.HysteresisMargin
 		if winner.score.Total < required {
 			setDirectionDecision(input.PersonID, candidates, winner,
 				DecisionRetained, ReasonInsufficientMargin, "")
@@ -443,7 +523,7 @@ func (r Resolver) resolveAbsentSingleValueDirections(
 		}
 		return nil
 	}
-	if len(directions) > 1 && winner.score.Total-directions[1].score.Total < r.Policy.ReplacementMargin {
+	if len(directions) > 1 && winner.score.Total-directions[1].score.Total < r.replacementMargin(input) {
 		setMultiDirectionDecision(input.PersonID, candidates, winner,
 			DecisionRetained, ReasonInsufficientMargin,
 			candidates[directions[1].representative].claim.ClaimKey)
@@ -473,7 +553,7 @@ func (r Resolver) resolveAbsentSingleValueDirections(
 }
 
 func (r Resolver) singleValueDirections(
-	resolvedAt time.Time, candidates []resolverCandidate,
+	resolvedAt time.Time, stability Stability, candidates []resolverCandidate,
 ) []resolverDirection {
 	grouped := make(map[resolverDirectionKey][]int)
 	for index := range candidates {
@@ -511,7 +591,7 @@ func (r Resolver) singleValueDirections(
 				candidates[index].claim.Claim.Confidence.ReportedScore)
 			evidence = append(evidence, candidates[index].supportedEvidence...)
 		}
-		direction.score = r.scoreEvidence(resolvedAt, reportedConfidence, evidence)
+		direction.score = r.scoreEvidence(resolvedAt, stability, reportedConfidence, evidence)
 		for _, index := range direction.indexes {
 			candidates[index].score = direction.score
 		}
@@ -572,7 +652,7 @@ func negativeDecisionReason(relation ClaimRelation) DecisionReason {
 
 func (r Resolver) resolveMulti(input ResolutionInput, candidates []resolverCandidate) {
 	byFingerprint := make(map[string][]resolverDirection)
-	for _, direction := range r.singleValueDirections(input.ResolvedAt, candidates) {
+	for _, direction := range r.singleValueDirections(input.ResolvedAt, input.Stability, candidates) {
 		byFingerprint[direction.fingerprint] = append(byFingerprint[direction.fingerprint], direction)
 	}
 	for _, directions := range byFingerprint {
@@ -598,7 +678,7 @@ func (r Resolver) resolveMulti(input ResolutionInput, candidates []resolverCandi
 			}
 			continue
 		}
-		if len(directions) > 1 && winner.score.Total-directions[1].score.Total < r.Policy.ReplacementMargin {
+		if len(directions) > 1 && winner.score.Total-directions[1].score.Total < r.replacementMargin(input) {
 			setMultiDirectionDecision(input.PersonID, candidates, winner,
 				DecisionRetained, ReasonInsufficientMargin,
 				candidates[directions[1].representative].claim.ClaimKey)
@@ -867,11 +947,14 @@ func validateResolverPolicy(policy Policy) error {
 	if policy.Version == ResolverVersionV1 && !sameResolverPolicy(policy, DefaultPolicyV1()) {
 		return errors.New("resolver-v1 policy must match its frozen definition")
 	}
+	if policy.Version == ResolverVersionV2 && !sameResolverPolicy(policy, DefaultPolicyV2()) {
+		return errors.New("resolver-v2 policy must match its frozen definition")
+	}
 	return nil
 }
 
 func sameResolverPolicy(left, right Policy) bool {
-	return left.Version == right.Version &&
+	return reflect.DeepEqual(left.Stability, right.Stability) && left.Version == right.Version &&
 		left.ApplyThreshold == right.ApplyThreshold &&
 		left.ReplacementMargin == right.ReplacementMargin &&
 		left.HysteresisMargin == right.HysteresisMargin &&
@@ -927,6 +1010,11 @@ func validatePolicyMap[K comparable](weights map[K]int, allowed []K) error {
 }
 
 func validateResolutionInput(input ResolutionInput) error {
+	switch input.Stability {
+	case "", StabilityFixed, StabilityDurable, StabilityVolatile:
+	default:
+		return fmt.Errorf("unsupported resolution stability %q", input.Stability)
+	}
 	if input.PersonID <= 0 {
 		return errors.New("resolution person id must be positive")
 	}
@@ -983,6 +1071,13 @@ func copyResolverPolicy(policy Policy) Policy {
 	cloned.SourceClassWeights = copyPolicyMap(policy.SourceClassWeights)
 	cloned.DirectnessWeights = copyPolicyMap(policy.DirectnessWeights)
 	cloned.AuthorityWeights = copyPolicyMap(policy.AuthorityWeights)
+	if policy.Stability != nil {
+		cloned.Stability = make(map[Stability]StabilityProfile, len(policy.Stability))
+		for stability, profile := range policy.Stability {
+			profile.Freshness = slices.Clone(profile.Freshness)
+			cloned.Stability[stability] = profile
+		}
+	}
 	return cloned
 }
 
@@ -1092,7 +1187,12 @@ func resolverInputFingerprint(
 		return claims[i].sortKey < claims[j].sortKey
 	})
 
+	var stability Stability
+	if policy.Version != ResolverVersionV1 {
+		stability = effectiveStability(input.Stability)
+	}
 	encoded, err := json.Marshal(struct {
+		Stability                    Stability                    `json:"stability,omitzero"`
 		PersonID                     int64                        `json:"person_id"`
 		Target                       TargetDescriptor             `json:"target"`
 		ResolvedAt                   string                       `json:"resolved_at"`
@@ -1103,7 +1203,7 @@ func resolverInputFingerprint(
 		Claims                       []resolverFingerprintClaim   `json:"claims"`
 		Pin                          PinState                     `json:"pin"`
 	}{
-		PersonID: input.PersonID, Target: canonicalTarget(input.Target),
+		Stability: stability, PersonID: input.PersonID, Target: canonicalTarget(input.Target),
 		ResolvedAt: portableFactTime(input.ResolvedAt).Format(time.RFC3339Nano), Policy: policy,
 		PolicyContext: input.Policy, ProjectionContextFingerprint: input.ProjectionContextFingerprint,
 		Current: current, Claims: claims, Pin: input.Pin,

@@ -9,6 +9,7 @@ export interface PersonFactScoreBreakdown {
   directness: number;
   freshness: number;
   source_class: number;
+  stability_window?: boolean;
   total: number;
   [key: string]: unknown;
 }

@@ -397,7 +397,8 @@ import (
 // 3.41.0 adds body_text for a single message's stored plain-text body, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset.
 // Older servers omit body_text; body keeps its HTML fallback.
 // 3.42.0 adds attribute definition stability metadata and owner updates.
-const APISchemaVersion = "3.42.0"
+// 3.43.0 adds the stability-window diagnostic to person fact decision scores.
+const APISchemaVersion = "3.43.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
