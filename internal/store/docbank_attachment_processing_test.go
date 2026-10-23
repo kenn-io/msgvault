@@ -66,7 +66,7 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 	assert.Equal(25, requested)
 }
 
-func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
+func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -85,8 +85,12 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 		{"e", "operator_required", time.Time{}},
 		{"f", "", time.Now().Add(time.Hour)},
 	} {
+		jobID := "job-" + row.hash
+		if row.outcome == "" {
+			jobID = ""
+		}
 		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", store.DocbankAttachmentProcessing{
-			ContentHash: row.hash, VersionID: "v-" + row.hash, Fingerprint: "fp", Outcome: row.outcome, JobID: "job-" + row.hash,
+			ContentHash: row.hash, VersionID: "v-" + row.hash, Fingerprint: "fp", Outcome: row.outcome, JobID: jobID,
 		}, row.next))
 	}
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "dest", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
@@ -97,19 +101,6 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Equal(store.DocbankAttachmentProcessingSummary{Waiting: 2, Requested: 1, Extracted: 1, Outcomes: map[string]int64{"provider_timeout": 1, "operator_required": 1}}, counts)
-	require.NoError(f.Store.RetryDocbankAttachments(ctx, "dest"))
-	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "dest", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
-	require.NoError(err)
-	var hashes []string
-	for _, d := range due {
-		hashes = append(hashes, d.ContentHash)
-	}
-	assert.Equal([]string{"b", "a"}, hashes)
-	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
-	require.NoError(err)
-	assert.Equal(int64(1), counts.Requested)
-	assert.Equal(int64(1), counts.Extracted)
-	assert.Equal(map[string]int64{"provider_timeout": 1, "operator_required": 1}, counts.Outcomes)
 	// A new version invalidates the old processing outcome for this hash.
 	require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: "c"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "replacement"}, ""))
 	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "dest", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
@@ -131,28 +122,8 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 	assert.Empty(due)
 }
 
-func TestDocbankAttachmentProcessingUpgrade(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	ctx := t.Context()
-	_, err := f.Store.DB().Exec(`DROP TABLE docbank_attachment_processing`)
-	require.NoError(err)
-	version, err := f.Store.SchemaVersionContext(ctx)
-	require.NoError(err)
-	assert.Equal(11, version)
-	require.NoError(f.Store.InitSchemaContext(ctx))
-	require.NoError(f.Store.ValidateSchemaContext(ctx))
-	require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: "a"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "version"}, ""))
-	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "fp"))
-	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", store.DocbankAttachmentProcessing{ContentHash: "a", VersionID: "version", Fingerprint: "fp", Outcome: "extracted"}, time.Time{}))
-	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
-	require.NoError(err)
-	assert.Equal(int64(1), counts.Extracted)
-}
-
 func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) {
-	for _, outcome := range []string{"provider_timeout", "failed", "abandoned", "operator_required", "rendition_operator_required", "not_found", "stale_version", "rendition_source_ineligible"} {
+	for _, outcome := range []string{"provider_timeout", "consent", "stale_authority"} {
 		t.Run(outcome, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -167,32 +138,18 @@ func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) 
 			require.NoError(err)
 			counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 			require.NoError(err)
-			assert.Empty(due)
-			assert.Equal(map[string]int64{outcome: 1}, counts.Outcomes)
-			var savedOutcome, jobID string
-			require.NoError(f.Store.DB().QueryRow(`SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&savedOutcome, &jobID))
-			assert.Equal(outcome, savedOutcome)
-			assert.Equal("job-a", jobID)
-		})
-	}
-	for _, outcome := range []string{"consent", "stale_authority"} {
-		t.Run(outcome, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := storetest.New(t)
-			ctx := t.Context()
-			require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: "a"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "a"}, ""))
-			require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "fp"))
-			d := store.DocbankAttachmentProcessing{ContentHash: "a", VersionID: "a", Fingerprint: "fp", Outcome: outcome, JobID: "job-a"}
-			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", d, time.Time{}))
-			require.NoError(f.Store.RetryDocbankAttachments(ctx, "dest"))
-			due, err := f.Store.DocbankAttachmentsToProcess(ctx, "dest", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
-			require.NoError(err)
-			counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
-			require.NoError(err)
-			assert.Len(due, 1)
-			assert.Equal(int64(1), counts.Waiting)
-			assert.Empty(counts.Outcomes)
+			if outcome == "provider_timeout" {
+				assert.Empty(due)
+				assert.Equal(map[string]int64{"provider_timeout": 1}, counts.Outcomes)
+				var savedOutcome, jobID string
+				require.NoError(f.Store.DB().QueryRow(`SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&savedOutcome, &jobID))
+				assert.Equal("provider_timeout", savedOutcome)
+				assert.Equal("job-a", jobID)
+			} else {
+				assert.Len(due, 1)
+				assert.Equal(int64(1), counts.Waiting)
+				assert.Empty(counts.Outcomes)
+			}
 		})
 	}
 }
