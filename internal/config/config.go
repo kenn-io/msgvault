@@ -1082,10 +1082,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
 	cfg.People.Sweep.ApplyDefaults()
+	if metadata.IsDefined("attachments", "documents") {
+		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md")
+	}
 	for _, key := range metadata.Undecoded() {
-		if len(key) >= 2 && key[0] == "attachments" && key[1] == "documents" {
-			return nil, errors.New("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md")
-		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}

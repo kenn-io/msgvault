@@ -701,7 +701,7 @@ func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
 	key, err := personfacts.EvidenceKey(input)
 	require.NoError(err)
 	persistSweepEvidence(t, f.store, key, input)
-	ref := peoplesweep.EvidenceRef{SourceLane: "document_text", SourceID: f.sourceID, MessageID: id, AttachmentID: 7, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
+	ref := peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: id, AttachmentID: 7, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
 	payload, err := json.Marshal(ref, json.Deterministic(true))
 	require.NoError(err)
 	document := input
@@ -717,8 +717,28 @@ func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
 	require.ErrorIs(err, peoplesweep.ErrSourceTextUnavailable)
 	changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, []peoplesweep.ArchiveChange{
 		{PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceConversationText, SourceID: f.sourceID, MessageID: id, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited},
-		{PersonID: f.alicePersonID, SourceLane: "document_text", SourceID: f.sourceID, MessageID: id, AttachmentID: 7, OccurrenceKey: "occurrence", EvidenceEffect: peoplesweep.EvidenceEffectSourceDeleted},
 	})
 	require.NoError(err)
 	assert.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: key, SourceVersion: input.SourceVersion, Reason: personfacts.EvidenceStatusSourceEdited}}, changes)
+
+	after := latestPersonSweepSequence(t, f.store)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
+	require.NoError(err)
+	changes, err = f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, personSweepChangesAfter(t, f.store, f.alicePersonID, after))
+	require.NoError(err)
+	unsupported := personfacts.EvidenceStatusChange{EvidenceKey: documentKey, SourceVersion: document.SourceVersion, Reason: personfacts.EvidenceStatusSourceDeleted}
+	assert.Contains(changes, unsupported)
+
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE messages SET deleted_from_source_at = NULL WHERE id = ?`), id)
+	require.NoError(err)
+	changes, err = f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, personSweepChangesAfter(t, f.store, f.alicePersonID, after))
+	require.NoError(err)
+	assert.Contains(changes, unsupported)
+	for _, change := range changes {
+		if change.EvidenceKey == documentKey {
+			assert.False(change.Supported)
+		}
+	}
 }

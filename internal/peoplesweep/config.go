@@ -45,6 +45,7 @@ const (
 
 	SourceConversationText  SourceClass = "conversation_text"
 	SourceMeetingText       SourceClass = "meeting_text"
+	SourceDocumentText      SourceClass = "document_text"
 	SourceAttachmentCaption SourceClass = "attachment_caption"
 	SourceAttachmentOCR     SourceClass = "attachment_ocr"
 )
@@ -920,7 +921,7 @@ func validateSources(sources []SourceClass) error {
 	for _, source := range sources {
 		switch source {
 		case SourceConversationText, SourceMeetingText:
-		case "document_text":
+		case SourceDocumentText:
 			return errors.New("document_text was removed; drop it from allowed_sources")
 		case SourceAttachmentCaption, SourceAttachmentOCR:
 			return fmt.Errorf("[people.sweep.provider] allowed_sources %q is not yet supported", source)
