@@ -753,7 +753,7 @@ func TestIMAPQresyncEndToEndLegacyMessageIDBaseline(t *testing.T) {
 			assertions.Equal(3, memberships)
 			body, err := st.GetMessageBodyText(messageID)
 			requirements.NoError(err)
-			assertions.Equal("Archived body", body)
+			assertions.Equal("Archived body\r\n", body)
 			raw, err := st.GetMessageRaw(messageID)
 			requirements.NoError(err)
 			assertions.Equal(archivedRaw, raw)
