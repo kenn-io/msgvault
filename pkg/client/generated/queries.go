@@ -608,6 +608,18 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type ListLoopsQuery struct {
+	// PersonID Only loops with this person
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// Limit Maximum loops to return
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=200"`
+}
+
+func (l ListLoopsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type SearchMediaQuery struct {
 	// Q Spoken words to find in transcripts
 	Q string `json:"q" validate:"required"`

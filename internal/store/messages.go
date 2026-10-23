@@ -1205,6 +1205,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				); err != nil {
 					return fmt.Errorf("repoint legacy replies: %w", err)
 				}
+				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID); err != nil {
+					return fmt.Errorf("transfer legacy loop decision: %w", err)
+				}
 			}
 
 			_, err = tx.Exec(
@@ -1827,8 +1830,13 @@ func (s *Store) GetMessageBodyAndRawContext(ctx context.Context, messageID int64
 // GetMessageBodyText returns the archived plain-text body for one message.
 // A message without a body returns an empty string.
 func (s *Store) GetMessageBodyText(messageID int64) (string, error) {
+	return s.GetMessageBodyTextContext(context.Background(), messageID)
+}
+
+// GetMessageBodyTextContext is GetMessageBodyText with a context.
+func (s *Store) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
 	var body sql.NullString
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT body_text FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1868,6 +1876,21 @@ func (s *Store) GetMessageIsFromMe(messageID int64) (bool, error) {
 		WHERE id = ?
 	`, messageID).Scan(&isFromMe)
 	return isFromMe, err
+}
+
+// SetMessageSentState records a provider's send state after import.
+func (s *Store) SetMessageSentState(messageID int64, isSent bool) error {
+	return s.SetMessageSentStateContext(context.Background(), messageID, isSent)
+}
+
+// SetMessageSentStateContext records a provider's send state after import.
+func (s *Store) SetMessageSentStateContext(ctx context.Context, messageID int64, isSent bool) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		if _, err := q.Exec(`UPDATE messages SET is_sent = ? WHERE id = ?`, isSent, messageID); err != nil {
+			return fmt.Errorf("set message %d sent state: %w", messageID, err)
+		}
+		return nil
+	})
 }
 
 // ownerEmailMatch matches a nonblank email column to address case-insensitively.

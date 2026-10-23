@@ -365,8 +365,14 @@ type MessageConversationRef struct {
 // could not read, so the archived participant count becomes authoritative
 // before policy is evaluated again.
 func (s *Store) MessageConversation(messageID int64) (MessageConversationRef, error) {
+	return s.MessageConversationContext(context.Background(), messageID)
+}
+
+// MessageConversationContext is MessageConversation with a context. A message
+// that does not exist returns an error wrapping sql.ErrNoRows.
+func (s *Store) MessageConversationContext(ctx context.Context, messageID int64) (MessageConversationRef, error) {
 	var ref MessageConversationRef
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT c.id, COALESCE(c.source_conversation_id, ''), COALESCE(c.conversation_type, '')
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id

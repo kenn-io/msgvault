@@ -228,6 +228,14 @@ func CopySubsetWithOptions(
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
 	}
+	// The empty destination applied this before any source rows were copied.
+	// Re-run it after copy so transferred Synctech records from older archives
+	// receive the same send-state repair as rows already in the source.
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationSynctechUnsentMessages); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied Synctech send-state migration: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		_, _ = db.Exec("DETACH DATABASE src")
@@ -951,6 +959,13 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		WHERE message_id IN (SELECT id FROM selected_messages)
 		  AND label_id IN (SELECT id FROM labels)`); err != nil {
 		return nil, fmt.Errorf("copy message_labels: %w", err)
+	}
+	if present, err := sourceTableExists(tx, "loop_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if _, err := copyByName(tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy loop decisions: %w", err)
+		}
 	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside

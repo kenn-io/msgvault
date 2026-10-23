@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/synctechstate"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -63,7 +64,7 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 	_, err = imp.ImportPath(dir)
 	require.NoError(err, "ImportPath second")
 	assertMessageCount(t, f.Store, 3)
-	assertRawFormats(t, f.Store, RawFormat, 3)
+	assertRawFormats(t, f.Store, synctechstate.RawFormat, 3)
 }
 
 func TestImporterRejectsMissingOwnerPhone(t *testing.T) {
@@ -175,14 +176,15 @@ func TestImporterMarksDraftsAsFromMe(t *testing.T) {
 	_, err := imp.ImportPath(dir)
 	require.NoError(err, "ImportPath")
 
-	rows, err := f.Store.DB().Query(`SELECT source_message_id, is_from_me FROM messages WHERE message_type IN ('sms', 'mms')`)
+	rows, err := f.Store.DB().Query(`SELECT source_message_id, is_from_me, is_sent FROM messages WHERE message_type IN ('sms', 'mms')`)
 	require.NoError(err, "query messages")
 	defer func() { _ = rows.Close() }()
 	got := map[string]bool{}
 	for rows.Next() {
 		var srcID string
-		var fromMe bool
-		require.NoError(rows.Scan(&srcID, &fromMe), "scan")
+		var fromMe, isSent bool
+		require.NoError(rows.Scan(&srcID, &fromMe, &isSent), "scan")
+		assert.False(t, isSent, "%s is_sent = true, want false (draft)", srcID)
 		got[srcID] = fromMe
 	}
 	require.NoError(rows.Err(), "messages rows")
@@ -246,4 +248,49 @@ func assertMMSHasAttachmentMetadata(t *testing.T, st *store.Store, wantCount int
 	require.NoError(t, err, "read mms attachment metadata")
 	require.True(t, hasAttachments, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
 	require.Equal(t, wantCount, count, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
+}
+
+func TestImportedGroupMMSPreservesConversationMembership(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="3">
+  <mms date="1717214460000" msg_box="2" m_id="group-sent">
+    <parts><part seq="0" ct="text/plain" text="Can you review the draft?" /></parts>
+    <addrs><addr address="+15550000001" type="137" /><addr address="+15550000002" type="151" /><addr address="+15550000003" type="151" /></addrs>
+  </mms>
+  <mms date="1717214460000" msg_box="1" m_id="group-received">
+    <parts><part seq="0" ct="text/plain" text="Can you send the budget?" /></parts>
+    <addrs><addr address="+15550000004" type="137" /><addr address="+15550000001" type="151" /><addr address="+15550000005" type="151" /></addrs>
+  </mms>
+  <mms date="1717214460000" msg_box="1" m_id="direct-received">
+    <parts><part seq="0" ct="text/plain" text="Can you send the contract?" /></parts>
+    <addrs><addr address="+15550000006" type="137" /><addr address="+15550000001" type="151" /></addrs>
+  </mms>
+</smses>`)
+	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: "+15550000001", IncludeMMS: true})
+	_, err := imp.ImportPath(dir)
+	require.NoError(err)
+	rows, err := f.Store.DB().QueryContext(t.Context(), `
+		SELECT sender.phone_number, member.phone_number
+		FROM messages m
+		JOIN participants sender ON sender.id = m.sender_id
+		JOIN conversation_participants cp ON cp.conversation_id = m.conversation_id
+		JOIN participants member ON member.id = cp.participant_id
+		ORDER BY sender.phone_number, member.phone_number`)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	members := make(map[string][]string)
+	for rows.Next() {
+		var sender, member string
+		require.NoError(rows.Scan(&sender, &member))
+		members[sender] = append(members[sender], member)
+	}
+	require.NoError(rows.Err())
+	assert.Equal(map[string][]string{
+		"+15550000001": {"+15550000001", "+15550000002", "+15550000003"},
+		"+15550000004": {"+15550000001", "+15550000004", "+15550000005"},
+		"+15550000006": {"+15550000001", "+15550000006"},
+	}, members)
 }

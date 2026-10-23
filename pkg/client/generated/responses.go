@@ -1851,6 +1851,80 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type ListLoopsResponse = LoopListResponse
+
+type ListLoopsErrorResponse = ErrorResponse
+
+type ListLoopsErrorResponseJSON = ErrorResponse
+
+type ListLoopsErrorResponseJSON403 = ErrorResponse
+
+type ListLoopsErrorResponseJSON500 = ErrorResponse
+
+type ListLoopsErrorResponseJSON503 = ErrorResponse
+
+type ListLoopsErrorResponseJSONDefault = ErrorResponse
+
+type MarkLoopDoneResponse = LoopDecisionResponse
+
+type MarkLoopDoneErrorResponse = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON403 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON404 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON413 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON415 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON500 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON503 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSONDefault = ErrorResponse
+
+type ReopenLoopResponse = LoopDecisionResponse
+
+type ReopenLoopErrorResponse = ErrorResponse
+
+type ReopenLoopErrorResponseJSON = ErrorResponse
+
+type ReopenLoopErrorResponseJSON403 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON404 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON413 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON415 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON500 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON503 = ErrorResponse
+
+type ReopenLoopErrorResponseJSONDefault = ErrorResponse
+
+type SnoozeLoopResponse = LoopDecisionResponse
+
+type SnoozeLoopErrorResponse = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON403 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON404 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON413 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON415 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON500 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON503 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSONDefault = ErrorResponse
+
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
@@ -5669,6 +5743,82 @@ type TestTaskIntegrationResp struct {
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
 	JSONDefault  *TestTaskIntegrationErrorResponse
+}
+
+type ListLoopsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListLoopsResponse
+	JSON400      *ListLoopsErrorResponse
+	JSON401      *ListLoopsErrorResponseJSON
+	JSON403      *ListLoopsErrorResponseJSON403
+	JSON500      *ListLoopsErrorResponseJSON500
+	JSON503      *ListLoopsErrorResponseJSON503
+	JSONDefault  *ListLoopsErrorResponseJSONDefault
+}
+
+type MarkLoopDoneResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type MarkLoopDoneResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *MarkLoopDoneResponse
+	JSON400      *MarkLoopDoneErrorResponse
+	JSON401      *MarkLoopDoneErrorResponseJSON
+	JSON403      *MarkLoopDoneErrorResponseJSON403
+	JSON404      *MarkLoopDoneErrorResponseJSON404
+	JSON413      *MarkLoopDoneErrorResponseJSON413
+	JSON415      *MarkLoopDoneErrorResponseJSON415
+	JSON500      *MarkLoopDoneErrorResponseJSON500
+	JSON503      *MarkLoopDoneErrorResponseJSON503
+	Headers503   *MarkLoopDoneResp503Headers
+	JSONDefault  *MarkLoopDoneErrorResponseJSONDefault
+}
+
+type ReopenLoopResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type ReopenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ReopenLoopResponse
+	JSON400      *ReopenLoopErrorResponse
+	JSON401      *ReopenLoopErrorResponseJSON
+	JSON403      *ReopenLoopErrorResponseJSON403
+	JSON404      *ReopenLoopErrorResponseJSON404
+	JSON413      *ReopenLoopErrorResponseJSON413
+	JSON415      *ReopenLoopErrorResponseJSON415
+	JSON500      *ReopenLoopErrorResponseJSON500
+	JSON503      *ReopenLoopErrorResponseJSON503
+	Headers503   *ReopenLoopResp503Headers
+	JSONDefault  *ReopenLoopErrorResponseJSONDefault
+}
+
+type SnoozeLoopResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type SnoozeLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SnoozeLoopResponse
+	JSON400      *SnoozeLoopErrorResponse
+	JSON401      *SnoozeLoopErrorResponseJSON
+	JSON403      *SnoozeLoopErrorResponseJSON403
+	JSON404      *SnoozeLoopErrorResponseJSON404
+	JSON413      *SnoozeLoopErrorResponseJSON413
+	JSON415      *SnoozeLoopErrorResponseJSON415
+	JSON500      *SnoozeLoopErrorResponseJSON500
+	JSON503      *SnoozeLoopErrorResponseJSON503
+	Headers503   *SnoozeLoopResp503Headers
+	JSONDefault  *SnoozeLoopErrorResponseJSONDefault
 }
 
 type GetMCPCapabilitiesResp struct {

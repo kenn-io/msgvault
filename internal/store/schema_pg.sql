@@ -4227,3 +4227,42 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+CREATE TABLE IF NOT EXISTS loop_decisions (
+ message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ state TEXT NOT NULL CHECK (state IN ('done', 'snoozed')),
+ snoozed_until TIMESTAMPTZ,
+ CHECK ((state = 'snoozed') = (snoozed_until IS NOT NULL))
+);
+
+-- Retained message facts for bounded request-time loop detection.
+CREATE TABLE IF NOT EXISTS loop_message_evidence (
+ message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ rule_version INTEGER NOT NULL,
+ token TEXT NOT NULL,
+ facts TEXT
+);
+CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_raw() RETURNS TRIGGER AS $$
+BEGIN
+ IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.raw_data IS NOT DISTINCT FROM NEW.raw_data AND OLD.raw_format IS NOT DISTINCT FROM NEW.raw_format AND OLD.compression IS NOT DISTINCT FROM NEW.compression AND OLD.encryption_version IS NOT DISTINCT FROM NEW.encryption_version THEN
+ RETURN NULL;
+ END IF;
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
+ RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_loop_evidence_message_raw ON message_raw;
+CREATE TRIGGER trg_loop_evidence_message_raw AFTER INSERT OR UPDATE OR DELETE ON message_raw
+ FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_raw();
+CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_bodies() RETURNS TRIGGER AS $$
+BEGIN
+ IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.body_text IS NOT DISTINCT FROM NEW.body_text THEN
+ RETURN NULL;
+ END IF;
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
+ RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies;
+CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
+ FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies();
