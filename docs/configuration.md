@@ -1298,7 +1298,7 @@ Review the files and provider policy with `docbank processing plan`, then grant 
 
 Search with `msgvault media search "project proposal"`, `GET /api/v1/media/search`, MCP `search_media`, or the Web Everything panel. Add `--person <id>` and `--direction from_person` to the CLI search to scope results to a person.
 
-Remove `[attachments.documents]` from old configuration files. The loader warns and ignores that section with guidance to use `document_profile`. Existing local document text, chunks, and consent rows stay in the archive, unused, until a Docbank transfer or an explicit purge. Docbank processes the mirrored files again, which incurs OCR charges when using Mistral. Older snapshots retain local text; `msgvault backup list` marks them in the `DOCUMENT TEXT` column.
+Remove `[attachments.documents]` from old configuration files. The loader warns and ignores that section with guidance to use `document_profile`. The upgrade deletes local document text, chunks, and consent rows. Snapshots made before the upgrade keep them and still restore; `msgvault backup list` marks them in the `DOCUMENT TEXT` column. Docbank processes the mirrored files again, which incurs OCR charges when using Mistral.
 
 #### Send stored audio to Docbank
 
