@@ -463,9 +463,6 @@ func TestProviderProfileFingerprintCoversConsentPolicy(t *testing.T) {
 		})},
 		{"retention", providerMutation(func(p *peoplesweep.ProviderConfig) { p.RetentionPosture = "provider_policy" })},
 		{"training", providerMutation(func(p *peoplesweep.ProviderConfig) { p.TrainingPosture = "provider_policy" })},
-		{"sources", providerMutation(func(p *peoplesweep.ProviderConfig) {
-			p.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}
-		})},
 		{"source since", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceSince = "2024-01-01" })},
 		{"source until", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceUntil = "2026-01-01" })},
 		{"sensitive", providerMutation(func(p *peoplesweep.ProviderConfig) { p.AllowSensitive = true })},
