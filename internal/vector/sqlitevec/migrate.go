@@ -22,9 +22,6 @@ var schemaSQL string
 // PRAGMA foreign_keys is applied per-connection by the ConnectHook
 // registered in RegisterExtension; it is intentionally not run here.
 func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
-	if err := dropDocumentVectors(ctx, db); err != nil {
-		return err
-	}
 	// Migrate legacy embeddings + vec0 tables to the chunked layout
 	// BEFORE running the baseline schema. The baseline CREATE TABLE IF
 	// NOT EXISTS would skip the new columns on a legacy DB, and the
@@ -689,35 +686,4 @@ func EnsureVectorTable(ctx context.Context, db *sql.DB, dim int) error {
 // VectorTableName returns the dimension-specific vec0 table name.
 func VectorTableName(dim int) string {
 	return fmt.Sprintf("vectors_vec_d%d", dim)
-}
-
-func dropDocumentVectors(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'document_vectors_vec_d[0-9]*' AND sql LIKE '%USING vec0%'`)
-	if err != nil {
-		return fmt.Errorf("list document vector tables: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return err
-		}
-		names = append(names, name)
-	}
-	err = rows.Err()
-	closeErr := rows.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	names = append(names, "document_vector_embeddings")
-	for _, name := range names {
-		if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS "`+strings.ReplaceAll(name, `"`, `""`)+`"`); err != nil {
-			return fmt.Errorf("drop document vectors: %w", err)
-		}
-	}
-	return nil
 }
