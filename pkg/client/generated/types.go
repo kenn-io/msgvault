@@ -194,6 +194,54 @@ func (a AddAccountRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AddOwnerObservationRequest struct {
+	Categories []string                             `json:"categories,omitempty"`
+	Content    string                               `json:"content" validate:"required,max=500,min=1"`
+	Kind       *AddOwnerObservationRequestKind      `json:"kind,omitempty"`
+	OccursOn   *PartialDateValue                    `json:"occurs_on,omitempty"`
+	Stability  *AddOwnerObservationRequestStability `json:"stability,omitempty"`
+	SubjectRef *string                              `json:"subject_ref,omitzero" validate:"omitempty,max=64"`
+	ValidFrom  *time.Time                           `json:"valid_from,omitempty"`
+	ValidUntil *time.Time                           `json:"valid_until,omitempty"`
+}
+
+func (a AddOwnerObservationRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Content, "required,max=500,min=1"); err != nil {
+		errors = errors.Append("Content", err)
+	}
+	if a.Kind != nil {
+		if v, ok := any(a.Kind).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Kind", err)
+			}
+		}
+	}
+	if a.OccursOn != nil {
+		if v, ok := any(a.OccursOn).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OccursOn", err)
+			}
+		}
+	}
+	if a.Stability != nil {
+		if v, ok := any(a.Stability).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Stability", err)
+			}
+		}
+	}
+	if a.SubjectRef != nil {
+		if err := typesValidator.Var(a.SubjectRef, "omitempty,max=64"); err != nil {
+			errors = errors.Append("SubjectRef", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type AddRequest struct {
 	Account    *string `json:"account,omitzero"`
 	Identifier string  `json:"identifier" validate:"required"`
@@ -3256,6 +3304,36 @@ func (d DecidePersonMergeCandidateRequest) Validate() error {
 	if v, ok := any(d.Decision).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Decision", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DecidePersonObservationRequest struct {
+	Action            DecidePersonObservationRequestAction  `json:"action" validate:"required"`
+	EndAt             *time.Time                            `json:"end_at,omitempty"`
+	ExpectedUpdatedAt time.Time                             `json:"expected_updated_at" validate:"required"`
+	Reason            *DecidePersonObservationRequestReason `json:"reason,omitempty"`
+}
+
+func (d DecidePersonObservationRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(d.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if err := typesValidator.Var(d.ExpectedUpdatedAt, "required"); err != nil {
+		errors = errors.Append("ExpectedUpdatedAt", err)
+	}
+	if d.Reason != nil {
+		if v, ok := any(d.Reason).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Reason", err)
+			}
 		}
 	}
 	if len(errors) == 0 {
@@ -8446,6 +8524,28 @@ func (n NetworkNode) Validate() error {
 	return errors
 }
 
+type ObservationSuppressionsResponse struct {
+	Suppressions []PersonObservationSuppression `json:"suppressions" validate:"required"`
+}
+
+func (o ObservationSuppressionsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(o.Suppressions, "required"); err != nil {
+		errors = errors.Append("Suppressions", err)
+	}
+	for i, item := range o.Suppressions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Suppressions[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type OperationErrorResponse struct {
 	ErrorData string  `json:"error" validate:"required"`
 	Message   *string `json:"message,omitzero"`
@@ -9642,6 +9742,12 @@ type PartialDate struct {
 	Day   *int64 `json:"day,omitempty"`
 	Month *int64 `json:"month,omitempty"`
 	Year  *int64 `json:"year,omitempty"`
+}
+
+type PartialDateValue struct {
+	Day   *int64 `json:"day,omitempty"`
+	Month *int64 `json:"month,omitempty"`
+	Year  int64  `json:"year"`
 }
 
 type ParticipantCompletionHTTPRequest struct {
@@ -12734,6 +12840,445 @@ func (p PersonNetwork) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Nodes[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonObservation struct {
+	Categories         []string          `json:"categories" validate:"required"`
+	ConfidenceBp       int64             `json:"confidence_bp"`
+	Content            string            `json:"content" validate:"required"`
+	ContentKey         string            `json:"content_key" validate:"required"`
+	CreatedAt          time.Time         `json:"created_at" validate:"required"`
+	Directness         string            `json:"directness" validate:"required"`
+	FirstSeenAt        *time.Time        `json:"first_seen_at" validate:"required"`
+	GenerationID       *int64            `json:"generation_id,omitempty"`
+	ID                 int64             `json:"id"`
+	Kind               string            `json:"kind" validate:"required"`
+	LastSeenAt         *time.Time        `json:"last_seen_at" validate:"required"`
+	Level              string            `json:"level" validate:"required"`
+	MentionCount       int64             `json:"mention_count"`
+	OccursOn           *PartialDateValue `json:"occurs_on,omitempty"`
+	Origin             string            `json:"origin" validate:"required"`
+	OwnerState         *string           `json:"owner_state" validate:"required"`
+	PersonID           int64             `json:"person_id"`
+	Pinned             bool              `json:"pinned"`
+	PremiseChangedAt   *time.Time        `json:"premise_changed_at" validate:"required"`
+	ProgramFingerprint *string           `json:"program_fingerprint" validate:"required"`
+	Sensitive          bool              `json:"sensitive"`
+	Sequence           int64             `json:"sequence"`
+	Stability          string            `json:"stability" validate:"required"`
+	StabilitySource    string            `json:"stability_source" validate:"required"`
+	Status             string            `json:"status" validate:"required"`
+	StatusReason       *string           `json:"status_reason" validate:"required"`
+	SubjectPersonID    *int64            `json:"subject_person_id,omitempty"`
+	SubjectRef         *string           `json:"subject_ref" validate:"required"`
+	SupersededByID     *int64            `json:"superseded_by_id,omitempty"`
+	SupportFlag        *string           `json:"support_flag" validate:"required"`
+	SupportedCount     int64             `json:"supported_count"`
+	TargetKey          *string           `json:"target_key" validate:"required"`
+	TargetKind         *string           `json:"target_kind" validate:"required"`
+	UpdatedAt          time.Time         `json:"updated_at" validate:"required"`
+	ValidFrom          *time.Time        `json:"valid_from" validate:"required"`
+	ValidUntil         *time.Time        `json:"valid_until" validate:"required"`
+}
+
+func (p PersonObservation) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
+	}
+	if err := typesValidator.Var(p.Content, "required"); err != nil {
+		errors = errors.Append("Content", err)
+	}
+	if err := typesValidator.Var(p.ContentKey, "required"); err != nil {
+		errors = errors.Append("ContentKey", err)
+	}
+	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(p.Directness, "required"); err != nil {
+		errors = errors.Append("Directness", err)
+	}
+	if p.FirstSeenAt != nil {
+		if err := typesValidator.Var(p.FirstSeenAt, "required"); err != nil {
+			errors = errors.Append("FirstSeenAt", err)
+		}
+	}
+	if err := typesValidator.Var(p.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if p.LastSeenAt != nil {
+		if err := typesValidator.Var(p.LastSeenAt, "required"); err != nil {
+			errors = errors.Append("LastSeenAt", err)
+		}
+	}
+	if err := typesValidator.Var(p.Level, "required"); err != nil {
+		errors = errors.Append("Level", err)
+	}
+	if p.OccursOn != nil {
+		if v, ok := any(p.OccursOn).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OccursOn", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Origin, "required"); err != nil {
+		errors = errors.Append("Origin", err)
+	}
+	if p.OwnerState != nil {
+		if err := typesValidator.Var(p.OwnerState, "required"); err != nil {
+			errors = errors.Append("OwnerState", err)
+		}
+	}
+	if p.PremiseChangedAt != nil {
+		if err := typesValidator.Var(p.PremiseChangedAt, "required"); err != nil {
+			errors = errors.Append("PremiseChangedAt", err)
+		}
+	}
+	if p.ProgramFingerprint != nil {
+		if err := typesValidator.Var(p.ProgramFingerprint, "required"); err != nil {
+			errors = errors.Append("ProgramFingerprint", err)
+		}
+	}
+	if err := typesValidator.Var(p.Stability, "required"); err != nil {
+		errors = errors.Append("Stability", err)
+	}
+	if err := typesValidator.Var(p.StabilitySource, "required"); err != nil {
+		errors = errors.Append("StabilitySource", err)
+	}
+	if err := typesValidator.Var(p.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if p.StatusReason != nil {
+		if err := typesValidator.Var(p.StatusReason, "required"); err != nil {
+			errors = errors.Append("StatusReason", err)
+		}
+	}
+	if p.SubjectRef != nil {
+		if err := typesValidator.Var(p.SubjectRef, "required"); err != nil {
+			errors = errors.Append("SubjectRef", err)
+		}
+	}
+	if p.SupportFlag != nil {
+		if err := typesValidator.Var(p.SupportFlag, "required"); err != nil {
+			errors = errors.Append("SupportFlag", err)
+		}
+	}
+	if p.TargetKey != nil {
+		if err := typesValidator.Var(p.TargetKey, "required"); err != nil {
+			errors = errors.Append("TargetKey", err)
+		}
+	}
+	if p.TargetKind != nil {
+		if err := typesValidator.Var(p.TargetKind, "required"); err != nil {
+			errors = errors.Append("TargetKind", err)
+		}
+	}
+	if err := typesValidator.Var(p.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if p.ValidFrom != nil {
+		if err := typesValidator.Var(p.ValidFrom, "required"); err != nil {
+			errors = errors.Append("ValidFrom", err)
+		}
+	}
+	if p.ValidUntil != nil {
+		if err := typesValidator.Var(p.ValidUntil, "required"); err != nil {
+			errors = errors.Append("ValidUntil", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonObservationCitation struct {
+	EvidenceID  int64                 `json:"evidence_id"`
+	Exclusion   *string               `json:"exclusion" validate:"required"`
+	Leaf        PersonObservationLeaf `json:"leaf"`
+	QuoteEnd    int64                 `json:"quote_end"`
+	QuoteSha256 string                `json:"quote_sha256" validate:"required"`
+	QuoteStart  int64                 `json:"quote_start"`
+}
+
+func (p PersonObservationCitation) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Exclusion != nil {
+		if err := typesValidator.Var(p.Exclusion, "required"); err != nil {
+			errors = errors.Append("Exclusion", err)
+		}
+	}
+	if v, ok := any(p.Leaf).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Leaf", err)
+		}
+	}
+	if err := typesValidator.Var(p.QuoteSha256, "required"); err != nil {
+		errors = errors.Append("QuoteSha256", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonObservationDetail struct {
+	Categories         []string                    `json:"categories" validate:"required"`
+	ConfidenceBp       int64                       `json:"confidence_bp"`
+	Content            string                      `json:"content" validate:"required"`
+	ContentKey         string                      `json:"content_key" validate:"required"`
+	CreatedAt          time.Time                   `json:"created_at" validate:"required"`
+	Dependents         []int64                     `json:"dependents" validate:"required"`
+	Directness         string                      `json:"directness" validate:"required"`
+	Events             []PersonObservationEvent    `json:"events" validate:"required"`
+	Evidence           []PersonObservationCitation `json:"evidence" validate:"required"`
+	FirstSeenAt        *time.Time                  `json:"first_seen_at" validate:"required"`
+	GenerationID       *int64                      `json:"generation_id,omitempty"`
+	ID                 int64                       `json:"id"`
+	Kind               string                      `json:"kind" validate:"required"`
+	LastSeenAt         *time.Time                  `json:"last_seen_at" validate:"required"`
+	Level              string                      `json:"level" validate:"required"`
+	MentionCount       int64                       `json:"mention_count"`
+	OccursOn           *PartialDateValue           `json:"occurs_on,omitempty"`
+	Origin             string                      `json:"origin" validate:"required"`
+	OwnerState         *string                     `json:"owner_state" validate:"required"`
+	PersonID           int64                       `json:"person_id"`
+	Pinned             bool                        `json:"pinned"`
+	PremiseChangedAt   *time.Time                  `json:"premise_changed_at" validate:"required"`
+	Premises           []PersonObservationPremise  `json:"premises" validate:"required"`
+	ProgramFingerprint *string                     `json:"program_fingerprint" validate:"required"`
+	Sensitive          bool                        `json:"sensitive"`
+	Sequence           int64                       `json:"sequence"`
+	Stability          string                      `json:"stability" validate:"required"`
+	StabilitySource    string                      `json:"stability_source" validate:"required"`
+	Status             string                      `json:"status" validate:"required"`
+	StatusReason       *string                     `json:"status_reason" validate:"required"`
+	SubjectPersonID    *int64                      `json:"subject_person_id,omitempty"`
+	SubjectRef         *string                     `json:"subject_ref" validate:"required"`
+	SupersededByID     *int64                      `json:"superseded_by_id,omitempty"`
+	SupportFlag        *string                     `json:"support_flag" validate:"required"`
+	SupportedCount     int64                       `json:"supported_count"`
+	TargetKey          *string                     `json:"target_key" validate:"required"`
+	TargetKind         *string                     `json:"target_kind" validate:"required"`
+	UpdatedAt          time.Time                   `json:"updated_at" validate:"required"`
+	ValidFrom          *time.Time                  `json:"valid_from" validate:"required"`
+	ValidUntil         *time.Time                  `json:"valid_until" validate:"required"`
+}
+
+func (p PersonObservationDetail) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
+	}
+	if err := typesValidator.Var(p.Content, "required"); err != nil {
+		errors = errors.Append("Content", err)
+	}
+	if err := typesValidator.Var(p.ContentKey, "required"); err != nil {
+		errors = errors.Append("ContentKey", err)
+	}
+	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(p.Dependents, "required"); err != nil {
+		errors = errors.Append("Dependents", err)
+	}
+	if err := typesValidator.Var(p.Directness, "required"); err != nil {
+		errors = errors.Append("Directness", err)
+	}
+	if err := typesValidator.Var(p.Events, "required"); err != nil {
+		errors = errors.Append("Events", err)
+	}
+	for i, item := range p.Events {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Events[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
+	for i, item := range p.Evidence {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Evidence[%d]", i), err)
+			}
+		}
+	}
+	if p.FirstSeenAt != nil {
+		if err := typesValidator.Var(p.FirstSeenAt, "required"); err != nil {
+			errors = errors.Append("FirstSeenAt", err)
+		}
+	}
+	if err := typesValidator.Var(p.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if p.LastSeenAt != nil {
+		if err := typesValidator.Var(p.LastSeenAt, "required"); err != nil {
+			errors = errors.Append("LastSeenAt", err)
+		}
+	}
+	if err := typesValidator.Var(p.Level, "required"); err != nil {
+		errors = errors.Append("Level", err)
+	}
+	if p.OccursOn != nil {
+		if v, ok := any(p.OccursOn).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OccursOn", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Origin, "required"); err != nil {
+		errors = errors.Append("Origin", err)
+	}
+	if p.OwnerState != nil {
+		if err := typesValidator.Var(p.OwnerState, "required"); err != nil {
+			errors = errors.Append("OwnerState", err)
+		}
+	}
+	if p.PremiseChangedAt != nil {
+		if err := typesValidator.Var(p.PremiseChangedAt, "required"); err != nil {
+			errors = errors.Append("PremiseChangedAt", err)
+		}
+	}
+	if err := typesValidator.Var(p.Premises, "required"); err != nil {
+		errors = errors.Append("Premises", err)
+	}
+	for i, item := range p.Premises {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Premises[%d]", i), err)
+			}
+		}
+	}
+	if p.ProgramFingerprint != nil {
+		if err := typesValidator.Var(p.ProgramFingerprint, "required"); err != nil {
+			errors = errors.Append("ProgramFingerprint", err)
+		}
+	}
+	if err := typesValidator.Var(p.Stability, "required"); err != nil {
+		errors = errors.Append("Stability", err)
+	}
+	if err := typesValidator.Var(p.StabilitySource, "required"); err != nil {
+		errors = errors.Append("StabilitySource", err)
+	}
+	if err := typesValidator.Var(p.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if p.StatusReason != nil {
+		if err := typesValidator.Var(p.StatusReason, "required"); err != nil {
+			errors = errors.Append("StatusReason", err)
+		}
+	}
+	if p.SubjectRef != nil {
+		if err := typesValidator.Var(p.SubjectRef, "required"); err != nil {
+			errors = errors.Append("SubjectRef", err)
+		}
+	}
+	if p.SupportFlag != nil {
+		if err := typesValidator.Var(p.SupportFlag, "required"); err != nil {
+			errors = errors.Append("SupportFlag", err)
+		}
+	}
+	if p.TargetKey != nil {
+		if err := typesValidator.Var(p.TargetKey, "required"); err != nil {
+			errors = errors.Append("TargetKey", err)
+		}
+	}
+	if p.TargetKind != nil {
+		if err := typesValidator.Var(p.TargetKind, "required"); err != nil {
+			errors = errors.Append("TargetKind", err)
+		}
+	}
+	if err := typesValidator.Var(p.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if p.ValidFrom != nil {
+		if err := typesValidator.Var(p.ValidFrom, "required"); err != nil {
+			errors = errors.Append("ValidFrom", err)
+		}
+	}
+	if p.ValidUntil != nil {
+		if err := typesValidator.Var(p.ValidUntil, "required"); err != nil {
+			errors = errors.Append("ValidUntil", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonObservationEvent struct {
+	Actor         string    `json:"actor" validate:"required"`
+	CreatedAt     time.Time `json:"created_at" validate:"required"`
+	Detail        *string   `json:"detail" validate:"required"`
+	Event         string    `json:"event" validate:"required"`
+	ID            int64     `json:"id"`
+	ObservationID int64     `json:"observation_id"`
+}
+
+func (p PersonObservationEvent) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonObservationLeaf struct {
+	AuthorIsOwner    bool      `json:"author_is_owner"`
+	AuthoredByPerson bool      `json:"authored_by_person"`
+	ConversationID   int64     `json:"conversation_id"`
+	ConversationKind string    `json:"conversation_kind" validate:"required"`
+	EventTime        time.Time `json:"event_time" validate:"required"`
+	MessageID        int64     `json:"message_id"`
+}
+
+func (p PersonObservationLeaf) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonObservationPremise struct {
+	ID   int64  `json:"id"`
+	Role string `json:"role" validate:"required"`
+}
+
+func (p PersonObservationPremise) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonObservationSuppression struct {
+	Actor      string    `json:"actor" validate:"required"`
+	ContentKey string    `json:"content_key" validate:"required"`
+	CreatedAt  time.Time `json:"created_at" validate:"required"`
+	ID         int64     `json:"id"`
+	PersonID   int64     `json:"person_id"`
+	Reason     string    `json:"reason" validate:"required"`
+	RejectedAt time.Time `json:"rejected_at" validate:"required"`
+}
+
+func (p PersonObservationSuppression) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonObservationsResponse struct {
+	Observations []PersonObservation `json:"observations" validate:"required"`
+	Total        int64               `json:"total"`
+}
+
+func (p PersonObservationsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Observations, "required"); err != nil {
+		errors = errors.Append("Observations", err)
+	}
+	for i, item := range p.Observations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Observations[%d]", i), err)
 			}
 		}
 	}

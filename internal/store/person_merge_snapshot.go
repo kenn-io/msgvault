@@ -21,7 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
-const personMergeSnapshotVersion = 1
+const personMergeSnapshotVersion = 2
 
 const (
 	identityMatchCandidatesTableName       = "identity_match_candidates"
@@ -124,7 +124,10 @@ type personMergeReference struct {
 	KindValue  string
 }
 
+type personMergeChildOf struct{ ParentTable, ParentKeyColumn string }
+
 type personMergeTableSpec struct {
+	ChildOf          *personMergeChildOf
 	TableName        string
 	KeyColumn        string
 	KeyColumns       []string
@@ -267,6 +270,13 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	// Fact-ledger history remains scoped to the person whose identity produced
 	// it, so an absorbed person's ledger cascades with that root. Explicit pin
 	// events are profile state, however, and must survive an exact split.
+	"person_observations":             {TableName: "person_observations", KeyColumn: "id", Snapshot: true, PersonReferences: []personMergeReference{directPersonReference("person_id"), directPersonReference("subject_person_id")}},
+	"person_observation_events":       {TableName: "person_observation_events", KeyColumn: "id", Snapshot: true, ChildOf: &personMergeChildOf{"person_observations", "observation_id"}, PersonReferences: []personMergeReference{directPersonReference("person_id")}},
+	"person_observation_suppressions": {TableName: "person_observation_suppressions", KeyColumn: "id", Snapshot: true, PersonReferences: []personMergeReference{directPersonReference("person_id")}},
+	"person_observation_clocks":       {TableName: "person_observation_clocks", KeyColumn: "person_id", Snapshot: true, PersonReferences: []personMergeReference{directPersonReference("person_id")}},
+	"person_observation_evidence":     {TableName: "person_observation_evidence", KeyColumn: "observation_id", KeyColumns: []string{"observation_id", "evidence_id"}, Snapshot: true, ChildOf: &personMergeChildOf{"person_observations", "observation_id"}},
+	"person_observation_premises":     {TableName: "person_observation_premises", KeyColumn: "derived_id", KeyColumns: []string{"derived_id", "premise_id"}, Snapshot: true, ChildOf: &personMergeChildOf{"person_observations", "derived_id"}},
+	"person_observation_categories":   {TableName: "person_observation_categories", KeyColumn: "observation_id", KeyColumns: []string{"observation_id", "category"}, Snapshot: true, ChildOf: &personMergeChildOf{"person_observations", "observation_id"}},
 	"person_fact_generations": {
 		TableName: "person_fact_generations", KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
@@ -568,6 +578,9 @@ func (s *Store) capturePersonMergeTableTx(
 	spec personMergeTableSpec,
 	survivorID, absorbedID int64,
 ) ([]personMergeSnapshotRow, error) {
+	if spec.ChildOf != nil {
+		return s.captureObservationChildrenTx(ctx, tx, spec, survivorID, absorbedID)
+	}
 	predicates := make([]string, 0, len(spec.PersonReferences))
 	args := make([]any, 0, len(spec.PersonReferences)*3)
 	keyColumns := spec.keyColumns()
@@ -677,6 +690,20 @@ func (s *Store) capturePersonMergeQueryTx(
 func personMergeRowProvenance(
 	table string, values []any, indexes map[string]int, absorbedID int64,
 ) personMergeProvenanceKind {
+	if table == "person_observations" {
+		id, _ := personMergeSnapshotInt64(values[indexes["person_id"]])
+		if id != absorbedID {
+			return personMergeProvenanceInboundReference
+		}
+		origin := personMergeSnapshotTextValue(values[indexes["origin"]])
+		level := personMergeSnapshotTextValue(values[indexes["level"]])
+		pinned, _ := personMergeSnapshotBool(values[indexes["pinned"]])
+		owner := personMergeSnapshotTextValue(values[indexes["owner_state"]])
+		if origin == "owner" || (level == "explicit" && (pinned || owner == "confirmed")) {
+			return personMergeProvenanceAbsorbedProfile
+		}
+		return personMergeProvenanceDerived
+	}
 	if table == personAttributeValuesTableName {
 		if index, ok := indexes["person_id"]; ok {
 			if id, valid := personMergeSnapshotInt64(values[index]); valid && id == absorbedID {
@@ -1015,7 +1042,7 @@ func appendUniqueString(values []string, value string) []string {
 }
 
 func encodePersonMergeSnapshot(snapshot personMergeSnapshot) ([]byte, string, error) {
-	if snapshot.Version != personMergeSnapshotVersion {
+	if snapshot.Version != personMergeSnapshotVersion && snapshot.Version != 1 {
 		return nil, "", fmt.Errorf("%w: unsupported snapshot version %d",
 			ErrPersonMergeInvalid, snapshot.Version)
 	}
@@ -1067,7 +1094,7 @@ func decodePersonMergeSnapshot(compressed []byte, wantSHA256 string) (personMerg
 		return personMergeSnapshot{}, fmt.Errorf("%w: decode JSON: %w",
 			ErrPersonMergeSnapshotCorrupt, err)
 	}
-	if snapshot.Version != personMergeSnapshotVersion {
+	if snapshot.Version != personMergeSnapshotVersion && snapshot.Version != 1 {
 		return personMergeSnapshot{}, fmt.Errorf("%w: unsupported version %d",
 			ErrPersonMergeSnapshotCorrupt, snapshot.Version)
 	}

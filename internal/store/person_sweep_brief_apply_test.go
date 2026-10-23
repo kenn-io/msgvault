@@ -149,6 +149,12 @@ func TestApplyPersonSweepStoresBriefWithExtractionBatches(t *testing.T) {
 	checks.Equal("person-sweep/v1:brief-a", pointers[0].SourceRef,
 		"pointers are written in citation order")
 	checks.Equal("person-sweep/v1:brief-b", pointers[1].SourceRef)
+	var linked int
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
+		SELECT COUNT(*) FROM person_fact_evidence
+		WHERE person_id=? AND source_ref IN (?, ?) AND message_id IS NOT NULL`),
+		f.personID, pointers[0].SourceRef, pointers[1].SourceRef).Scan(&linked))
+	assert.Zero(t, linked, "opaque archive refs remain valid without an optional message link")
 	checks.True(pointers[0].Supported)
 	checks.Equal([]string{"person-sweep/v1:brief-a", "person-sweep/v1:brief-b"}, aligner.seen,
 		"brief evidence goes through the same aligner claim evidence uses")

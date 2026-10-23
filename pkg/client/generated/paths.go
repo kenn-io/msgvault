@@ -402,6 +402,16 @@ func (u UnlinkMessageTaskPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
 }
 
+type GetPersonObservationPath struct {
+	// ID Observation ID
+	ID int64 `json:"id"`
+}
+
+type DecidePersonObservationPath struct {
+	// ID Observation ID
+	ID int64 `json:"id"`
+}
+
 type GetOperationRunPath struct {
 	// ID Opaque archive-bound operation run ID
 	ID string `json:"id" validate:"required"`
@@ -745,6 +755,41 @@ type GetPersonNetworkPath struct {
 }
 
 type AppendPersonNotePath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ListObservationSuppressionsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ClearObservationSuppressionPath struct {
+	// ID Durable person ID
+	ID  int64  `json:"id"`
+	Key string `json:"key" validate:"required"`
+}
+
+func (c ClearObservationSuppressionPath) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Key, "required"); err != nil {
+		errors = errors.Append("Key", err)
+	}
+	if err := runtime.ValidatePattern(c.Key, `^[0-9a-f]{64}$`); err != nil {
+		errors = errors.Append("Key", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ListPersonObservationsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type AddOwnerObservationPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
 }

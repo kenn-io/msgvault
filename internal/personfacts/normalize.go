@@ -202,6 +202,12 @@ func normalizeHumanText(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
+// ValidatePartialDate checks the calendar rules for YYYY[-MM[-DD]] values.
+// A nil value represents an absent date.
+func ValidatePartialDate(value *PartialDateValue) error {
+	return validatePartialDate("date", value)
+}
+
 func validatePartialDate(name string, value *PartialDateValue) error {
 	if value == nil {
 		return nil
