@@ -1188,9 +1188,10 @@ func TestAttachmentMirrorProcessingMissingJobContinues(t *testing.T) {
 		name   string
 		status int
 		retry  bool
+		jobs   []string
 	}{
-		{"missing", http.StatusNotFound, false},
-		{"unavailable", http.StatusServiceUnavailable, true},
+		{"missing", http.StatusNotFound, false, []string{"a", "b", "a"}},
+		{"unavailable", http.StatusServiceUnavailable, true, []string{"a", "b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -1212,10 +1213,10 @@ func TestAttachmentMirrorProcessingMissingJobContinues(t *testing.T) {
 				assert.True(next.After(time.Now().Add(4 * time.Minute)))
 			} else {
 				require.NoError(err)
-				assert.Equal(map[string]int64{"not_found": 1}, r.processingCounts().Outcomes)
-				assert.Equal(int64(1), r.processingCounts().Requested)
+				assert.Empty(r.processingCounts().Outcomes)
+				assert.Equal(int64(2), r.processingCounts().Requested)
 			}
-			assert.Equal([]string{"a", "b"}, r.processing.Jobs)
+			assert.Equal(tc.jobs, r.processing.Jobs)
 			assert.Equal([]string{"job-a", "job-b"}, r.processing.Polls)
 			if tc.retry {
 				r.processingDue()
