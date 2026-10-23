@@ -23,6 +23,8 @@ type FTSDoc struct {
 	FromAddr  string
 	ToAddrs   string
 	CcAddrs   string
+	// backfill compares the character-capped archive document rather than sync input.
+	backfill bool
 }
 
 // ColumnMigration is a single ALTER TABLE ADD COLUMN statement used by

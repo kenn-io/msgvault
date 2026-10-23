@@ -482,14 +482,21 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 			setweight(to_tsvector('simple', LEFT(COALESCE($5, ''), ` + charCap + `)), 'C') ||
 			setweight(to_tsvector('simple', LEFT(COALESCE($6, ''), ` + charCap + `)), 'C') ||
 			setweight(to_tsvector('simple', LEFT(COALESCE($3, ''), ` + charCap + `)), 'D')`
-	return vector, []any{
-		doc.MessageID,
-		truncateBytesRuneSafe(doc.Subject),
-		truncateBytesRuneSafe(doc.Body),
-		truncateBytesRuneSafe(doc.FromAddr),
-		truncateBytesRuneSafe(doc.ToAddrs),
-		truncateBytesRuneSafe(doc.CcAddrs),
+	values := []string{
+		doc.Subject,
+		doc.Body,
+		doc.FromAddr,
+		doc.ToAddrs,
+		doc.CcAddrs,
 	}
+	args := []any{doc.MessageID}
+	for _, value := range values {
+		if !doc.backfill {
+			value = truncateBytesRuneSafe(value)
+		}
+		args = append(args, value)
+	}
+	return vector, args
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.

@@ -34,6 +34,8 @@ type Summary struct {
 	// left untouched.
 	Undecodable int64
 	Errors      int64
+	// unchanged is set only by passes that verify no derived writes committed.
+	unchanged bool
 }
 
 // Add accumulates other into s, except Duration, which the caller owns.
@@ -123,7 +125,7 @@ func runPass(ctx context.Context, s *store.Store, sourceType, identifier string,
 		// A pass can fail after earlier message transactions committed. Make
 		// those partial authoritative writes visible to cache maintenance even
 		// though the repair remains retryable.
-		if sum != nil && (sum.MessagesScanned > 0 || sum.Errors > 0) {
+		if sum != nil && !sum.unchanged && (sum.MessagesScanned > 0 || sum.Errors > 0) {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			return sum, errors.Join(err, s.AdvanceDerivedDataRevisionContext(cleanupCtx))
@@ -131,13 +133,15 @@ func runPass(ctx context.Context, s *store.Store, sourceType, identifier string,
 		return sum, err
 	}
 	if sum != nil && sum.Errors > 0 {
+		if sum.unchanged {
+			return sum, nil
+		}
 		return sum, s.AdvanceDerivedDataRevisionContext(ctx)
 	}
 	ledgerKey := LedgerKey(sourceType, identifier, pass.version)
-	if sum == nil || sum.MessagesScanned == 0 {
-		// New and empty sources have no existing derived rows to invalidate.
-		// Record the pass so sync does not repeat it, but keep a current cache
-		// valid after the source's first import.
+	if sum == nil || sum.MessagesScanned == 0 || sum.unchanged {
+		// Empty and unchanged passes have no derived rows to invalidate.
+		// Record completion without forcing a current cache to rebuild.
 		return sum, s.MarkMigrationAppliedContext(ctx, ledgerKey, 1)
 	}
 	if err := s.MarkMigrationAppliedWithDerivedDataRevisionContext(ctx, ledgerKey); err != nil {

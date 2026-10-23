@@ -33,7 +33,7 @@ func Heal(ctx context.Context, logger *slog.Logger, s *store.Store, src *store.S
 			logger.Warn("rebuild archived message text failed; retrying on the next sync", "source_id", src.ID, "summary", textSum, "error", textErr)
 		}
 	} else if ran && textSum != nil && textSum.MessagesScanned > 0 {
-		logger.Info("rebuilt archived message text", "source_id", src.ID, "messages", textSum.MessagesScanned,
+		logger.Info("checked archived message text", "source_id", src.ID, "messages", textSum.MessagesScanned,
 			"bodies", textSum.BodiesRewritten, "undecodable", textSum.Undecodable, "duration", textSum.Duration)
 	}
 

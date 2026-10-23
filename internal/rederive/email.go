@@ -18,7 +18,7 @@ const emailVersion = "email-v1"
 // Each attempt starts at the first row; completed writes survive interruption.
 func repairEmail(ctx context.Context, s *store.Store, sourceID int64, progress func(string)) (*Summary, error) {
 	start := time.Now()
-	sum := &Summary{}
+	sum := &Summary{unchanged: true}
 	defer func() { sum.Duration = time.Since(start) }()
 	var afterID int64
 	for {
@@ -32,37 +32,33 @@ func repairEmail(ctx context.Context, s *store.Store, sourceID int64, progress f
 		if len(batch) == 0 {
 			break
 		}
-		for _, item := range batch {
-			if err := ctx.Err(); err != nil {
-				return sum, err
+		item := batch[0]
+		afterID = item.MessageID
+		sum.MessagesScanned++
+		parsed, err := mime.Parse(item.RawData)
+		if err != nil {
+			sum.Undecodable++
+			continue
+		}
+		body := textutil.EnsureUTF8(parsed.GetBodyText())
+		html := textutil.EnsureUTF8(parsed.BodyHTML)
+		snippet := item.Snippet
+		if snippet != "" && snippet == textutil.SnippetFromBody(item.BodyText) {
+			snippet = textutil.SnippetFromBody(body)
+		}
+		changed, err := s.UpdateMessageDerivedEmailTextContext(ctx, item.MessageID,
+			sql.NullString{String: body, Valid: body != ""}, sql.NullString{String: html, Valid: html != ""},
+			sql.NullString{String: snippet, Valid: snippet != ""})
+		if err != nil {
+			if ctx.Err() != nil {
+				return sum, ctx.Err()
 			}
-			sum.MessagesScanned++
-			parsed, err := mime.Parse(item.RawData)
-			if err != nil {
-				sum.Undecodable++
-				afterID = item.MessageID
-				continue
-			}
-			body := textutil.EnsureUTF8(parsed.GetBodyText())
-			html := textutil.EnsureUTF8(parsed.BodyHTML)
-			snippet := item.Snippet
-			if snippet == textutil.SnippetFromBody(item.BodyText) {
-				snippet = textutil.SnippetFromBody(body)
-			}
-			if err := s.UpdateMessageDerivedEmailTextContext(ctx, item.MessageID,
-				sql.NullString{String: body, Valid: body != ""}, sql.NullString{String: html, Valid: html != ""},
-				sql.NullString{String: snippet, Valid: snippet != ""}); err != nil {
-				if ctx.Err() != nil {
-					return sum, ctx.Err()
-				}
-				sum.Errors++
-				afterID = item.MessageID
-				continue
-			}
-			if item.BodyText != body {
-				sum.BodiesRewritten++
-			}
-			afterID = item.MessageID
+			sum.Errors++
+			continue
+		}
+		sum.unchanged = sum.unchanged && !changed
+		if changed && item.BodyText != body {
+			sum.BodiesRewritten++
 		}
 		if progress != nil {
 			progress(fmt.Sprintf("%d scanned, %d bodies rewritten", sum.MessagesScanned, sum.BodiesRewritten))
