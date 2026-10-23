@@ -665,6 +665,21 @@ func TestMessage_GetBodyText(t *testing.T) {
 	// Empty
 	msg = &Message{}
 	assert.Empty(t, msg.GetBodyText())
+
+	for _, tc := range []struct {
+		name, html, text string
+	}{
+		{"hidden image link", `<a style="display:none"><img alt="Hidden alt"></a>`, "Hidden alt"},
+		{"hidden punctuation link", `<div hidden><a href="https://example.com/hidden">!</a></div>`, "https://example.com/hidden"},
+		{"hidden numeric alt", `<a style="color:transparent"><img alt="123"></a>`, "123"},
+		{"visible image link", `<a><img alt="Visible alt"></a>`, "Visible alt"},
+		{"visible punctuation link", `<a href="https://example.com/visible">!</a>`, "https://example.com/visible"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := parseEmail(t, emailOptions{ContentType: "text/html", Body: tc.html})
+			assert.Contains(t, msg.GetBodyText(), tc.text)
+		})
+	}
 }
 
 func TestMessage_GetFirstFrom(t *testing.T) {

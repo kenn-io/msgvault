@@ -747,10 +747,12 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	} else {
 		msgExtra = append(msgExtra, "NULL::TIMESTAMP AS deleted_at")
 	}
-	if e.hasCol(datasetMessages, "is_from_me") {
-		msgReplace = append(msgReplace, "COALESCE(TRY_CAST(is_from_me AS BOOLEAN), false) AS is_from_me")
-	} else {
-		msgExtra = append(msgExtra, "false AS is_from_me")
+	for _, col := range []string{"is_from_me", "hidden_text_present"} {
+		if e.hasCol(datasetMessages, col) {
+			msgReplace = append(msgReplace, "COALESCE(TRY_CAST("+col+" AS BOOLEAN), false) AS "+col)
+		} else {
+			msgExtra = append(msgExtra, "false AS "+col)
+		}
 	}
 	msgCTE := fmt.Sprintf("SELECT * REPLACE (\n\t\t\t\t%s\n\t\t\t)", strings.Join(msgReplace, ",\n\t\t\t\t"))
 	if len(msgExtra) > 0 {
@@ -2024,6 +2026,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			msg.sent_at,
 			COALESCE(msg.size_estimate, 0) as size_estimate,
 			COALESCE(msg.has_attachments, false) as has_attachments,
+			msg.hidden_text_present,
 			COALESCE(msg.attachment_count, 0) as attachment_count,
 			msg.deleted_from_source_at,
 			COALESCE(msg.message_type, '') as message_type,
@@ -2063,6 +2066,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			&sentAt,
 			&msg.SizeEstimate,
 			&msg.HasAttachments,
+			&msg.HiddenTextPresent,
 			&msg.AttachmentCount,
 			&deletedAt,
 			&msg.MessageType,
@@ -2418,6 +2422,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
+			m.hidden_text_present,
 			m.attachment_count,
 			m.deleted_from_source_at,
 			COALESCE(m.message_type, '')
@@ -2457,6 +2462,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			&sentAt,
 			&msg.SizeEstimate,
 			&msg.HasAttachments,
+			&msg.HiddenTextPresent,
 			&msg.AttachmentCount,
 			&deletedAt,
 			&msg.MessageType,
@@ -2730,6 +2736,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 			msg.sent_at,
 			COALESCE(msg.size_estimate, 0) as size_estimate,
 			COALESCE(msg.has_attachments, false) as has_attachments,
+			msg.hidden_text_present,
 			COALESCE(att.attachment_count, 0) as attachment_count,
 			CAST(COALESCE(to_json(mlbl.labels), '[]') AS VARCHAR) as labels,
 			msg.deleted_from_source_at,
@@ -2774,6 +2781,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 			&sentAt,
 			&msg.SizeEstimate,
 			&msg.HasAttachments,
+			&msg.HiddenTextPresent,
 			&msg.AttachmentCount,
 			&labelsJSON,
 			&deletedAt,
@@ -2924,6 +2932,7 @@ func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset in
 			sm.sent_at,
 			sm.size_estimate,
 			sm.has_attachments,
+			sm.hidden_text_present,
 			COALESCE(att.attachment_count, 0) as attachment_count,
 			CAST(COALESCE(to_json(mlbl.labels), '[]') AS VARCHAR) as labels,
 			sm.deleted_from_source_at,
@@ -2974,6 +2983,7 @@ func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset in
 			&sentAt,
 			&msg.SizeEstimate,
 			&msg.HasAttachments,
+			&msg.HiddenTextPresent,
 			&msg.AttachmentCount,
 			&labelsJSON,
 			&deletedAt,
@@ -3144,6 +3154,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 			msg.sent_at,
 			COALESCE(CAST(msg.size_estimate AS BIGINT), 0) as size_estimate,
 			COALESCE(msg.has_attachments, false) as has_attachments,
+			msg.hidden_text_present,
 			msg.deleted_from_source_at,
 			CAST(msg.source_id AS BIGINT) as source_id,
 			COALESCE(msg.message_type, '') as message_type
