@@ -189,9 +189,9 @@ func validSearchHit(hit SearchHit, vault string, ids map[string]bool) bool {
 	return hit.VaultUID == vault && ids[hit.ContentVersionID] && hit.NodeID > 0 && hit.Rank > 0 && len(hit.Excerpt) <= 2048
 }
 
-// ResolveSearchFence fences versions to Docbank's vault via an empty filtered
+// VaultFence fences versions to Docbank's vault via an empty filtered
 // fence, so stale versions don't fail it; search skips them on its own.
-func (c *Client) ResolveSearchFence(ctx context.Context, versions []string) (SearchFence, error) {
+func (c *Client) VaultFence(ctx context.Context, versions []string) (SearchFence, error) {
 	request := map[string]map[string]string{"filters": {"modified_before": "0001-01-01T00:00:00Z"}}
 	var response struct {
 		Fence SearchFence `json:"fence"`

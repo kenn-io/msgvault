@@ -922,163 +922,303 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 	return first, second
 }
 
-func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "rejected query without versions", "recording rejected query", "recording timeout", "recording failure", "no docbank hits", "both fail", "unlinked during search", "nil reader"} {
-		t.Run(scenario, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := newMediaSearchFixture(t)
-			recording := f.match(t, "audio")
-			server := f.server(false)
-			var first, second int64
-			if scenario == "rejected query without versions" {
-				server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
-			} else {
-				first, second = f.document(t, server)
-			}
-			query := "q=quartz"
-			switch scenario {
-			case "shared":
-				hash := strings.Repeat("b", 64)
-				f.staleDocumentVersion = "00000000-0000-4000-8000-000000000002"
-				require.NoError(f.f.Store.UpsertAttachmentRecord(t.Context(), first, store.AttachmentWrite{ContentHash: hash, Filename: "stale.pdf", StoragePath: "bb/" + hash, State: "stored"}))
-				require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 8, VersionID: f.staleDocumentVersion}, ""))
-			case "attachment scope limit":
-				participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
-				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?,?)`), participant, first, second, recording.messageID)
-				require.NoError(err)
-				query += "&participant_id=" + strconv.FormatInt(participant, 10)
-				tx, err := f.f.Store.DB().BeginTx(t.Context(), nil)
-				require.NoError(err)
-				defer func() { _ = tx.Rollback() }()
-				for i := 2; i <= 4097; i++ {
-					hash := fmt.Sprintf("%064x", i)
-					_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), first, hash, hash[:2]+"/"+hash)
-					require.NoError(err)
-					_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
-					require.NoError(err)
-				}
-				require.NoError(tx.Commit())
-			case "occurrence limit":
-				query += "&limit=1"
-			case "docbank limit":
-				f.documentReport.Truncated = true
-			case "attachment failure":
-				f.documentStatus = 503
-			case "rejected query":
-				f.documentStatus = http.StatusBadRequest
-			case "rejected query without versions":
-				f.validationStatus = http.StatusBadRequest
-			case "recording rejected query":
-				f.remoteStatus = http.StatusBadRequest
-			case "recording timeout":
-				f.waitForCancel = true
-			case "recording failure":
-				f.remoteStatus = 503
-			case "no docbank hits":
-				f.documentReport.Results = []docbankmedia.SearchHit{}
-			case "both fail":
-				f.remoteStatus, f.documentStatus = 503, 503
-			case "nil reader":
-				server.docbankAttachments = nil
-			case "unlinked during search":
-				participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
-				alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
-				_, err := f.f.Store.LinkParticipants(participant, alias)
-				require.NoError(err)
-				_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?)`), alias, first, second)
-				require.NoError(err)
-				query += "&participant_id=" + strconv.FormatInt(participant, 10)
-				f.duringDocumentSearch = func() {
-					_, err := f.f.Store.UnlinkParticipants(participant, alias)
-					require.NoError(err)
-				}
-			}
-			var status int
-			var response MediaSearchResponse
-			var raw string
-			if scenario == "recording timeout" {
-				ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
-				defer cancel()
-				request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search?"+query, nil).WithContext(ctx)
-				request.Header.Set("X-Api-Key", recordingsTestAPIKey)
-				recorder := httptest.NewRecorder()
-				server.Router().ServeHTTP(recorder, request)
-				status, raw = recorder.Code, recorder.Body.String()
-				require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
-			} else {
-				status, response, raw = searchMediaFor(t, server, query)
-			}
-			if scenario == "recording rejected query" {
-				assert.Equal(http.StatusBadRequest, status, raw)
-				assert.Contains(raw, `"error":"invalid_media_search"`)
-				return
-			}
-			if scenario == "both fail" {
-				assert.Equal(http.StatusServiceUnavailable, status, raw)
-				return
-			}
-			require.Equal(http.StatusOK, status, raw)
-			if scenario == "nil reader" {
-				assert.NotContains(raw, `"attachments"`)
-				return
-			}
-			require.NotNil(response.Attachments)
-			switch scenario {
-			case "recording failure", "recording timeout":
-				require.NotNil(response.RecordingsError)
-				assert.Empty(response.Results)
-				assert.True(response.Partial)
-			case "unlinked during search":
-				assert.Empty(response.Results)
-			default:
-				require.Len(response.Results, 1)
-				assert.Equal(recording.messageID, response.Results[0].MessageID)
-				assert.Equal("generated", response.Results[0].Origin)
-			}
-			if scenario == "attachment scope limit" {
-				require.NotNil(response.Attachments.Error)
-				assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
-				_, failure := mediaSearchFailure(errMediaSearchScope)
-				assert.Equal(failure.Message, response.Attachments.Error.Message)
-				assert.Empty(response.Attachments.Results)
-				assert.False(response.Attachments.Truncated)
-				assert.Empty(f.documentRequests)
-				return
-			}
-			if scenario == "attachment failure" || scenario == "rejected query" || scenario == "rejected query without versions" {
-				require.NotNil(response.Attachments.Error)
-				assert.Empty(response.Attachments.Results)
-				if scenario == "rejected query" || scenario == "rejected query without versions" {
-					assert.Equal("invalid_media_search", response.Attachments.Error.Error)
-				}
-				if scenario == "rejected query without versions" {
-					assert.Equal(1, f.validated)
-				}
-				return
-			}
-			assert.Equal(scenario == "occurrence limit" || scenario == "docbank limit", response.Attachments.Truncated)
-			want := 2
-			if scenario == "occurrence limit" {
-				want = 1
-			}
-			if scenario == "no docbank hits" {
-				assert.Nil(response.Attachments.Error)
-				want = 0
-			}
-			if scenario == "unlinked during search" {
-				want = 0
-			}
-			require.Len(response.Attachments.Results, want)
-			if scenario == "shared" {
-				require.Nil(response.Attachments.Error, raw)
-				assert.ElementsMatch([]int64{first, second}, []int64{response.Attachments.Results[0].MessageID, response.Attachments.Results[1].MessageID})
-			}
-			for _, hit := range response.Attachments.Results {
-				assert.Equal("quartz in the PDF", hit.Excerpt)
-			}
-		})
+func TestMediaSearchDocumentsShared(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	recording := f.match(t, "audio")
+	server := f.server(false)
+	first, second := f.document(t, server)
+	query := "q=quartz"
+	hash := strings.Repeat("b", 64)
+	f.staleDocumentVersion = "00000000-0000-4000-8000-000000000002"
+	require.NoError(f.f.Store.UpsertAttachmentRecord(t.Context(), first, store.AttachmentWrite{ContentHash: hash, Filename: "stale.pdf", StoragePath: "bb/" + hash, State: "stored"}))
+	require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 8, VersionID: f.staleDocumentVersion}, ""))
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Len(response.Results, 1)
+	assert.Equal(recording.messageID, response.Results[0].MessageID)
+	assert.Equal("generated", response.Results[0].Origin)
+	assert.False(response.Attachments.Truncated)
+	require.Nil(response.Attachments.Error, raw)
+	require.Len(response.Attachments.Results, 2)
+	assert.ElementsMatch([]int64{first, second}, []int64{response.Attachments.Results[0].MessageID, response.Attachments.Results[1].MessageID})
+	for _, hit := range response.Attachments.Results {
+		assert.Equal("quartz in the PDF", hit.Excerpt)
 	}
+}
+
+func TestMediaSearchDocumentsOccurrenceLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	recording := f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	query += "&limit=1"
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Len(response.Results, 1)
+	assert.Equal(recording.messageID, response.Results[0].MessageID)
+	assert.Equal("generated", response.Results[0].Origin)
+	assert.True(response.Attachments.Truncated)
+	require.Len(response.Attachments.Results, 1)
+	for _, hit := range response.Attachments.Results {
+		assert.Equal("quartz in the PDF", hit.Excerpt)
+	}
+}
+
+func TestMediaSearchDocumentsDocbankLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	recording := f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	f.documentReport.Truncated = true
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Len(response.Results, 1)
+	assert.Equal(recording.messageID, response.Results[0].MessageID)
+	assert.Equal("generated", response.Results[0].Origin)
+	assert.True(response.Attachments.Truncated)
+	require.Len(response.Attachments.Results, 2)
+	for _, hit := range response.Attachments.Results {
+		assert.Equal("quartz in the PDF", hit.Excerpt)
+	}
+}
+
+func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	recording := f.match(t, "audio")
+	server := f.server(false)
+	first, second := f.document(t, server)
+	query := "q=quartz"
+	participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
+	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?,?)`), participant, first, second, recording.messageID)
+	require.NoError(err)
+	query += "&participant_id=" + strconv.FormatInt(participant, 10)
+	tx, err := f.f.Store.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	for i := 2; i <= 4097; i++ {
+		hash := fmt.Sprintf("%064x", i)
+		_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), first, hash, hash[:2]+"/"+hash)
+		require.NoError(err)
+		_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
+		require.NoError(err)
+	}
+	require.NoError(tx.Commit())
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Len(response.Results, 1)
+	assert.Equal(recording.messageID, response.Results[0].MessageID)
+	assert.Equal("generated", response.Results[0].Origin)
+	require.NotNil(response.Attachments.Error)
+	assert.Empty(response.Attachments.Results)
+	assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
+	_, failure := mediaSearchFailure(errMediaSearchScope)
+	assert.Equal(failure.Message, response.Attachments.Error.Message)
+	assert.False(response.Attachments.Truncated)
+	assert.Empty(f.documentRequests)
+}
+
+func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	recording := f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	f.documentStatus = 503
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Len(response.Results, 1)
+	assert.Equal(recording.messageID, response.Results[0].MessageID)
+	assert.Equal("generated", response.Results[0].Origin)
+	require.NotNil(response.Attachments.Error)
+	assert.Empty(response.Attachments.Results)
+}
+
+func TestMediaSearchDocumentsRejectedQuery(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	recording := f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	f.documentStatus = http.StatusBadRequest
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Len(response.Results, 1)
+	assert.Equal(recording.messageID, response.Results[0].MessageID)
+	assert.Equal("generated", response.Results[0].Origin)
+	require.NotNil(response.Attachments.Error)
+	assert.Empty(response.Attachments.Results)
+	assert.Equal("invalid_media_search", response.Attachments.Error.Error)
+}
+
+func TestMediaSearchDocumentsEmptyScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
+	f.validationStatus = http.StatusBadRequest
+	query := "q=quartz"
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	assert.Nil(response.Attachments.Error)
+	assert.Empty(response.Attachments.Results)
+	assert.False(response.Attachments.Truncated)
+}
+
+func TestMediaSearchDocumentsRecordingRejectedQuery(t *testing.T) {
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	f.remoteStatus = http.StatusBadRequest
+	status, _, raw := searchMediaFor(t, server, query)
+	assert.Equal(t, http.StatusBadRequest, status, raw)
+	assert.Contains(t, raw, `"error":"invalid_media_search"`)
+}
+
+func TestMediaSearchDocumentsRecordingTimeout(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	f.waitForCancel = true
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search?"+query, nil).WithContext(ctx)
+	request.Header.Set("X-Api-Key", recordingsTestAPIKey)
+	recorder := httptest.NewRecorder()
+	server.Router().ServeHTTP(recorder, request)
+	status, raw := recorder.Code, recorder.Body.String()
+	var response MediaSearchResponse
+	require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.NotNil(response.RecordingsError)
+	assert.Empty(response.Results)
+	assert.True(response.Partial)
+	assert.False(response.Attachments.Truncated)
+	require.Len(response.Attachments.Results, 2)
+	for _, hit := range response.Attachments.Results {
+		assert.Equal("quartz in the PDF", hit.Excerpt)
+	}
+}
+
+func TestMediaSearchDocumentsRecordingFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	f.remoteStatus = 503
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.NotNil(response.RecordingsError)
+	assert.Empty(response.Results)
+	assert.True(response.Partial)
+	assert.False(response.Attachments.Truncated)
+	require.Len(response.Attachments.Results, 2)
+	for _, hit := range response.Attachments.Results {
+		assert.Equal("quartz in the PDF", hit.Excerpt)
+	}
+}
+
+func TestMediaSearchDocumentsNoDocbankHits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	recording := f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	f.documentReport.Results = []docbankmedia.SearchHit{}
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Len(response.Results, 1)
+	assert.Equal(recording.messageID, response.Results[0].MessageID)
+	assert.Equal("generated", response.Results[0].Origin)
+	assert.False(response.Attachments.Truncated)
+	require.Nil(response.Attachments.Error, raw)
+	require.Empty(response.Attachments.Results)
+}
+
+func TestMediaSearchDocumentsBothFail(t *testing.T) {
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	f.remoteStatus, f.documentStatus = 503, 503
+	status, _, raw := searchMediaFor(t, server, query)
+	assert.Equal(t, http.StatusServiceUnavailable, status, raw)
+}
+
+func TestMediaSearchDocumentsUnlinkedDuringSearch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	first, second := f.document(t, server)
+	query := "q=quartz"
+	participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
+	alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
+	_, err := f.f.Store.LinkParticipants(participant, alias)
+	require.NoError(err)
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?)`), alias, first, second)
+	require.NoError(err)
+	query += "&participant_id=" + strconv.FormatInt(participant, 10)
+	f.duringDocumentSearch = func() {
+		_, err := f.f.Store.UnlinkParticipants(participant, alias)
+		require.NoError(err)
+	}
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	assert.Empty(response.Results)
+	assert.False(response.Attachments.Truncated)
+	require.Empty(response.Attachments.Results)
+}
+
+func TestMediaSearchDocumentsNilReader(t *testing.T) {
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	f.document(t, server)
+	query := "q=quartz"
+	server.docbankAttachments = nil
+	status, _, raw := searchMediaFor(t, server, query)
+	require.Equal(t, http.StatusOK, status, raw)
+	assert.NotContains(t, raw, `"attachments"`)
 }
 
 // Local attribution can outlast the remote budget after a slow successful response.
