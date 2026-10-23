@@ -2,6 +2,12 @@ import { defineConfig } from '@playwright/test';
 
 const previewPort = process.env.MSGVAULT_PLAYWRIGHT_PORT ?? '4173';
 const previewURL = `http://127.0.0.1:${previewPort}`;
+// The web-e2e job owns these specs; the frontend job runs the rest.
+const e2eSpecs = [
+  '**/e2e/**/*.@(spec|test).?(c|m)[jt]s?(x)',
+  '**/conversation-content-frame.spec.ts',
+  '**/files-viewer.spec.ts'
+];
 
 export default defineConfig({
   testDir: './tests',
@@ -27,6 +33,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure'
   },
+  projects: [
+    { name: 'browser', testIgnore: e2eSpecs },
+    { name: 'e2e', testMatch: e2eSpecs }
+  ],
   webServer: {
     command: `bun run build && bunx vite preview --host 127.0.0.1 --port ${previewPort}`,
     url: previewURL,

@@ -47,34 +47,38 @@ if ! "$test_binary" '-test.list=^(Test|Example|Fuzz)' >"$names_file"; then
 	echo "Listing tests in $package failed" >&2
 	exit 1
 fi
+# Keep every part_count-th name while reading, and count them so an empty
+# part never expands the array: under set -u, Bash before 4.4 can treat an
+# empty array as unbound.
 test_names=()
+test_count=0
+ordinal=0
 while IFS= read -r name; do
-	test_names+=("$name")
+	if [ $((ordinal % part_count + 1)) -eq "$part_index" ]; then
+		test_names+=("$name")
+		test_count=$((test_count + 1))
+	fi
+	ordinal=$((ordinal + 1))
 done <"$names_file"
 if [ "$part_count" -gt 1 ]; then
-	part_names=()
-	for ((i = part_index - 1; i < ${#test_names[@]}; i += part_count)); do
-		part_names+=("${test_names[$i]}")
-	done
-	test_names=("${part_names[@]}")
 	echo "Running part $part_index of $part_count"
 fi
-if [ "${#test_names[@]}" -eq 0 ]; then
+if [ "$test_count" -eq 0 ]; then
 	echo "No tests found in $package"
 	exit 0
 fi
 
 active_shards=$shard_count
-if [ "${#test_names[@]}" -lt "$active_shards" ]; then
-	active_shards=${#test_names[@]}
+if [ "$test_count" -lt "$active_shards" ]; then
+	active_shards=$test_count
 fi
 
-echo "Running ${#test_names[@]} tests from $package in $active_shards shards"
+echo "Running $test_count tests from $package in $active_shards shards"
 
 for ((i = 0; i < active_shards; i++)); do
 	: >"$work/shard-$i.names"
 done
-for ((i = 0; i < ${#test_names[@]}; i++)); do
+for ((i = 0; i < test_count; i++)); do
 	printf '%s\n' "${test_names[$i]}" >>"$work/shard-$((i % active_shards)).names"
 done
 
