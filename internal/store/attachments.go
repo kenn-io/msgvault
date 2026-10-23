@@ -34,7 +34,7 @@ type DiscordAttachmentMessage = PendingAttachmentMessage
 
 func (s *Store) replaceMessageProviderAttachmentsContext(ctx context.Context, messageID int64, providerPrefix string, refs []AttachmentRef) error {
 	return s.replaceMessageAttachmentsWhereContext(ctx,
-		messageID, `source_attachment_id LIKE ?`, false, refs, providerPrefix+"%",
+		messageID, `source_attachment_id LIKE ?`, refs, providerPrefix+"%",
 	)
 }
 
@@ -161,6 +161,29 @@ func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
 		}
 	}
 	return items, rows.Err()
+}
+
+// ReplaceMessageInlineProviderAttachments replaces Inline-managed attachment occurrences.
+func (s *Store) ReplaceMessageInlineProviderAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.withTx(func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, `source_attachment_id LIKE ?`, refs, "inline:%"); err != nil {
+			return err
+		}
+		return recomputeMessageAttachmentStatsWith(tx, messageID)
+	})
+}
+
+// MessageInlineProviderAttachments returns Inline-managed rows keyed by stable source ID.
+func (s *Store) MessageInlineProviderAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachments(messageID, "inline:")
+}
+
+// ListInlineProviderRetryableAttachmentMessages returns unfinished Inline media under the current policy.
+func (s *Store) ListInlineProviderRetryableAttachmentMessages(sourceID int64, policy attachmentpolicy.Policy) ([]PendingAttachmentMessage, error) {
+	return s.listRetryableAttachmentMessages(sourceID, "inline:", policy)
 }
 
 // ListBeeperRetryableAttachmentMessages returns only unfinished Beeper media.
@@ -436,7 +459,7 @@ func attachmentPolicyParticipantCount(sourceType string, observed int, metadata 
 	switch strings.TrimSuffix(sourceType, ":") {
 	case sourceTypeDiscord:
 		return max(record.memberCount, observed)
-	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper:
+	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper, "inline":
 		return record.memberCount
 	default:
 		return observed

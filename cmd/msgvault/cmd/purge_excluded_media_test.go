@@ -36,17 +36,21 @@ func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 	cfg := &config.Config{
 		Data:   config.DataConfig{DataDir: dataDir},
 		Beeper: config.BeeperConfig{MediaScope: string(attachmentpolicy.ScopeDirect)},
+		Inline: config.InlineConfig{MediaScope: string(attachmentpolicy.ScopeDirect)},
 	}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
 	newMessage := func(sourceMessageID, conversationType string, participants int) int64 {
 		identifier, messageType := "signal", provider
-		if provider == chatwoot.SourceType {
+		switch provider {
+		case chatwoot.SourceType:
 			accountID := int64(9)
 			if sourceMessageID == "retained" {
 				accountID, messageType = 10, "meeting_transcript"
 			}
 			identifier = chatwoot.SourceIdentifier("https://chatwoot.example.com", accountID, 8)
+		case sourceTypeInline:
+			identifier = "api.inline.chat:user:42"
 		}
 		source, err := st.GetOrCreateSource(provider, identifier)
 		require.NoError(t, err)
@@ -68,8 +72,11 @@ func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 	hash := strings.Repeat("ab", 32)
 	path := hash[:2] + "/" + hash
 	replaceAttachments := st.ReplaceMessageBeeperAttachments
-	if provider == chatwoot.SourceType {
+	switch provider {
+	case chatwoot.SourceType:
 		replaceAttachments = st.ReplaceMessageChatwootAttachments
+	case sourceTypeInline:
+		replaceAttachments = st.ReplaceMessageInlineProviderAttachments
 	}
 	for messageID, sourceAttachmentID := range map[int64]string{
 		excludedMessageID: provider + ":excluded",
@@ -117,40 +124,45 @@ func (f purgeMediaFixture) state(t *testing.T, attachmentID int64) attachmentpol
 }
 
 func TestPurgeExcludedMediaDryRunAndApplyPreservesSharedBlob(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newPurgeMediaFixture(t, sourceTypeBeeper)
+	for _, sourceType := range []string{sourceTypeBeeper, sourceTypeInline} {
+		t.Run(sourceType, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newPurgeMediaFixture(t, sourceType)
 
-	dryRun := newPurgeExcludedMediaLocalCmd(f.deps())
-	var dryOutput bytes.Buffer
-	dryRun.SetOut(&dryOutput)
-	dryRun.SetErr(&dryOutput)
-	dryRun.SetArgs([]string{"--dry-run"})
-	require.NoError(dryRun.Execute())
-	assert.Contains(dryOutput.String(), "Would exclude 1 stored attachment occurrence(s)")
-	assert.Equal(attachmentpolicy.StateStored, f.state(t, f.excludedID))
-	assert.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
-	assert.FileExists(f.fullPath)
+			dryRun := newPurgeExcludedMediaLocalCmd(f.deps())
+			var dryOutput bytes.Buffer
+			dryRun.SetOut(&dryOutput)
+			dryRun.SetErr(&dryOutput)
+			dryRun.SetArgs([]string{"--dry-run"})
+			require.NoError(dryRun.Execute())
+			assert.Contains(dryOutput.String(), "Would exclude 1 stored attachment occurrence(s)")
+			assert.Equal(attachmentpolicy.StateStored, f.state(t, f.excludedID))
+			assert.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
+			assert.FileExists(f.fullPath)
 
-	apply := newPurgeExcludedMediaLocalCmd(f.deps())
-	var applyOutput bytes.Buffer
-	apply.SetOut(&applyOutput)
-	apply.SetErr(&applyOutput)
-	apply.SetArgs([]string{"--yes"})
-	require.NoError(apply.Execute())
-	assert.Contains(applyOutput.String(), "Excluded 1 stored attachment occurrence(s)")
-	assert.Equal(attachmentpolicy.StateSkipped, f.state(t, f.excludedID))
-	assert.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
-	assert.FileExists(f.fullPath, "shared blob must remain while one stored occurrence references it")
+			apply := newPurgeExcludedMediaLocalCmd(f.deps())
+			var applyOutput bytes.Buffer
+			apply.SetOut(&applyOutput)
+			apply.SetErr(&applyOutput)
+			apply.SetArgs([]string{"--yes"})
+			require.NoError(apply.Execute())
+			assert.Contains(applyOutput.String(), "Excluded 1 stored attachment occurrence(s)")
+			assert.Equal(attachmentpolicy.StateSkipped, f.state(t, f.excludedID))
+			assert.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
+			assert.FileExists(f.fullPath, "shared blob must remain while one stored occurrence references it")
 
-	f.config.Beeper.MediaScope = string(attachmentpolicy.ScopeNone)
-	removeLast := newPurgeExcludedMediaLocalCmd(f.deps())
-	removeLast.SetOut(&bytes.Buffer{})
-	removeLast.SetErr(&bytes.Buffer{})
-	removeLast.SetArgs([]string{"--yes"})
-	require.NoError(removeLast.Execute())
-	assert.Equal(attachmentpolicy.StateSkipped, f.state(t, f.retainedID))
-	assert.NoFileExists(f.fullPath)
+			f.config.Beeper.MediaScope = string(attachmentpolicy.ScopeNone)
+			f.config.Inline.MediaScope = string(attachmentpolicy.ScopeNone)
+			removeLast := newPurgeExcludedMediaLocalCmd(f.deps())
+			removeLast.SetOut(&bytes.Buffer{})
+			removeLast.SetErr(&bytes.Buffer{})
+			removeLast.SetArgs([]string{"--yes"})
+			require.NoError(removeLast.Execute())
+			assert.Equal(attachmentpolicy.StateSkipped, f.state(t, f.retainedID))
+			assert.NoFileExists(f.fullPath)
+		})
+	}
 }
 
 func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
