@@ -11647,13 +11647,14 @@ func (p PersonFactResolutionResult) Validate() error {
 }
 
 type PersonFactScoreBreakdown struct {
-	Authority     int64 `json:"authority"`
-	Confidence    int64 `json:"confidence"`
-	Corroboration int64 `json:"corroboration"`
-	Directness    int64 `json:"directness"`
-	Freshness     int64 `json:"freshness"`
-	SourceClass   int64 `json:"source_class"`
-	Total         int64 `json:"total"`
+	Authority       int64 `json:"authority"`
+	Confidence      int64 `json:"confidence"`
+	Corroboration   int64 `json:"corroboration"`
+	Directness      int64 `json:"directness"`
+	Freshness       int64 `json:"freshness"`
+	SourceClass     int64 `json:"source_class"`
+	StabilityWindow *bool `json:"stability_window,omitempty"`
+	Total           int64 `json:"total"`
 }
 
 type PersonFileProvenance struct {
