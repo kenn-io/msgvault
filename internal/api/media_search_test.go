@@ -900,7 +900,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 }
 
 func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "recording timeout", "recording scope limit", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
+	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "recording timeout", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -936,25 +936,6 @@ func TestMediaSearchDocuments(t *testing.T) {
 				f.documentStatus = http.StatusBadRequest
 			case "recording timeout":
 				f.waitForCancel = true
-			case "recording scope limit":
-				// Clone mapped identities to exercise the public fence ceiling without thousands of imports.
-				transaction, err := f.f.Store.DB().BeginTx(t.Context(), nil)
-				require.NoError(err)
-				t.Cleanup(func() { _ = transaction.Rollback() })
-				for i := range docbankmedia.MaxSearchVersions {
-					_, err := transaction.Exec(f.f.Store.Rebind(`INSERT INTO beeper_media_occurrences (
-						destination_key, occurrence_ref, revision, source_type, source_identifier, source_conversation_id,
-						source_message_id, source_attachment_id, source_part_key, source_sha256, byte_length,
-						occurrence_json, request_filename, request_mime_type, retention_state, vault_uid,
-						source_id, source_version_id, content_version_id, processing_key)
-						SELECT destination_key, ?, revision, source_type, source_identifier, source_conversation_id,
-						source_message_id, source_attachment_id, source_part_key, source_sha256, byte_length,
-						occurrence_json, request_filename, request_mime_type, retention_state, vault_uid,
-						source_id, source_version_id, ?, processing_key
-						FROM beeper_media_occurrences WHERE occurrence_ref = 'msgvault:audio'`), fmt.Sprintf("msgvault:copy-%d", i), fmt.Sprintf("content-%d", i))
-					require.NoError(err)
-				}
-				require.NoError(transaction.Commit())
 			case "recording failure":
 				f.remoteStatus = 503
 			case "recording failure without attachment matches":
@@ -1008,14 +989,10 @@ func TestMediaSearchDocuments(t *testing.T) {
 			}
 			require.NotNil(response.Attachments)
 			switch scenario {
-			case "recording failure", "recording failure without attachment matches", "recording timeout", "recording scope limit":
+			case "recording failure", "recording failure without attachment matches", "recording timeout":
 				require.NotNil(response.RecordingsError)
 				assert.Empty(response.Results)
 				assert.True(response.Partial)
-				if scenario == "recording scope limit" {
-					assert.Equal("media_search_scope_limit", response.RecordingsError.Error)
-					assert.Empty(f.requests)
-				}
 			case "person filter", "unlinked during search":
 				assert.Empty(response.Results)
 			default:

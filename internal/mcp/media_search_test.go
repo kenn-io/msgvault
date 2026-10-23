@@ -28,7 +28,7 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 		assert.Equal("7", r.URL.Query().Get("person_id"))
 		assert.Equal([]string{"from_person"}, r.URL.Query()["direction"])
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"coverage":{"binding_required":false,"scoped_documents":1,"complete_documents":1,"state":"complete"},"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,"partial":true,"truncated":false,"results":[{"message_id":11,"conversation_id":12,"attachment_id":13,"origin":"supplied","excerpt":"quarterly numbers"}],"attachments":{"results":[{"message_id":21,"conversation_id":12,"attachment_id":23,"filename":"report.pdf","containing_title":"Report","excerpt":"quartz"}],"truncated":true},"recordings_error":{"error":"media_search_unavailable","message":"Docbank transcript search is unavailable"}}`))
+		_, _ = w.Write([]byte(`{"coverage":{"binding_required":false,"scoped_documents":1,"complete_documents":1,"state":"complete"},"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,"partial":false,"truncated":false,"results":[{"message_id":11,"conversation_id":12,"attachment_id":13,"origin":"supplied","excerpt":"quarterly numbers"}],"attachments":{"results":[{"message_id":21,"conversation_id":12,"attachment_id":23,"filename":"report.pdf","containing_title":"Report","excerpt":"quartz"}]}}`))
 	}))
 	t.Cleanup(daemon.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true})

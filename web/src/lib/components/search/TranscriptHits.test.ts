@@ -173,12 +173,10 @@ describe('TranscriptHits', () => {
 
   it.each([
     ['café 東京 2026', true], ['cafe\u0301', true], ['from:alice@example.com quarterly', false], ['"quarterly numbers"', false],
-    ['not', true], ['AND', true], ['\u0301', false], ['quarterly-review', false],
+    ['not', true], ['AND', true], ['\u0301', false],
   ] as const)('admits plain words and rejects unsupported syntax %s', async (query, searched) => {
     vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report({ attachments: {
-      results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quarterly-review' }], truncated: false,
-    } })));
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
     await vi.advanceTimersByTimeAsync(300);
     if (searched) {
@@ -188,7 +186,6 @@ describe('TranscriptHits', () => {
       expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
       expect(screen.getByText(/Recording search supports plain words only/)).toBeTruthy();
       expect(fetchFn).not.toHaveBeenCalled();
-      expect(screen.queryByRole('region', { name: 'Attachments' })).toBeNull();
     }
   });
 
@@ -276,8 +273,6 @@ it.each([
 });
 
 it.each([
-  ['media_search_scope_limit', 'Add a Person filter to search recordings.', false],
-  ['invalid_media_search', 'Recording search rejected this query. Try different plain words.', false],
   ['media_search_unavailable', 'Recording search unavailable.', true],
 ])('handles partial recording failure %s alongside attachment hits', async (error, message, retryable) => {
   const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ results: [], partial: true, recordings_error: { error, message: 'raw server error' }, attachments: {

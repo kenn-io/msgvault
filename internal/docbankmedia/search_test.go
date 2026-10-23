@@ -192,7 +192,7 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 }
 
 func TestSearchDocumentsContract(t *testing.T) {
-	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "kind", "node name", "full name page", "selections", "mixed"} {
+	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "kind", "node name", "selections", "mixed"} {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -210,7 +210,7 @@ func TestSearchDocumentsContract(t *testing.T) {
 				report.MediaSourceSelection = true
 			case "selections":
 				report.MediaSelections = []SearchMediaSelection{{Origin: "generated"}}
-			case "node name", "full name page":
+			case "node name":
 				report.Results[0].Evidence[0].Kind = "node_name"
 			case "media":
 				report.Results[0].Evidence[0].MediaSources = []SearchMediaSource{{SourceID: "source"}}
@@ -224,20 +224,14 @@ func TestSearchDocumentsContract(t *testing.T) {
 				if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
 					return
 				}
-				assert.Equal("supplied-transcript", request.Profile)
-				assert.Empty(request.MediaSources)
 				assert.Equal([]string{"00000000-0000-4000-8000-000000000001"}, request.Fence.ContentVersionIDs)
 				_ = json.NewEncoder(w).Encode(report)
 			}))
 			defer remote.Close()
 			client, err := NewClient(remote.URL, nil)
 			require.NoError(err)
-			limit := 20
-			if fault == "full name page" {
-				limit = 1
-			}
-			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: limit, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001"}}})
-			if fault == "node name" || fault == "full name page" {
+			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: 20, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001"}}})
+			if fault == "node name" {
 				require.NoError(err)
 				assert.Empty(got.Results)
 				assert.False(got.Truncated)

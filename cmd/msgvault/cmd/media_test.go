@@ -23,8 +23,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		want   string
 	}{
 		{"table", []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, 200, "generated"},
-		{"scope limit", []string{"search", "quartz"}, 200, "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"},
-		{"result limit", []string{"search", "quartz"}, 200, "More may match"},
+		{"scope limit", []string{"search", "quartz"}, 200, "Narrow the attachment search scope."},
 		{"terminal", []string{"search", "quarterly numbers"}, 200, "Coverage complete"},
 		{"json", []string{"search", "quarterly numbers", "--json"}, 200, `"message_id":11`},
 		{"mode delegated", []string{"search", "words", "--mode", "hybrid"}, 503, "media_search_mode_unavailable"},
@@ -92,13 +91,17 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 			assert.Contains(output.String(), "quarterly numbers")
 			assert.NotContains(output.String(), "\x1b")
 			assert.NotContains(output.String(), "\a")
+			if test.name == "table" {
+				assert.Contains(output.String(), "Docbank transcript search is unavailable")
+				assert.Contains(output.String(), "Attachment search is unavailable.")
+			}
 			if test.name == "scope limit" {
 				assert.NotContains(output.String(), "More may match")
 			} else {
 				assert.Contains(output.String(), "report.pdf")
-			}
-			if test.name == "result limit" {
-				assert.NotContains(output.String(), "4096")
+				if test.name != "json" {
+					assert.Contains(output.String(), "More may match")
+				}
 			}
 		})
 	}
