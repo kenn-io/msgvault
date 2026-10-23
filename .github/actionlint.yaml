@@ -1,0 +1,5 @@
+# actionlint 1.7.12 predates the GitHub-hosted ubuntu-26.04 runner image.
+# Remove this entry once the pinned actionlint release lists ubuntu-26.04.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

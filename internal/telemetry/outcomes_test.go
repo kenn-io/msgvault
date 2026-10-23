@@ -102,8 +102,7 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 }
 
 func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "")
+	enableTelemetryEnv(t)
 	stub := newWireStub(t)
 	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, stub.server.URL, slog.Default())
 	defer func() { require.NoError(t, reporter.Close()) }()
