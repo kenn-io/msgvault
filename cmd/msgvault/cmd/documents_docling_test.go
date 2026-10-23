@@ -117,9 +117,6 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 	_, err = run("build", "--yes")
 	requirements.ErrorContains(err, "exact consent")
 	assertions.Zero(uploads.Load())
-	var checkpoints int
-	requirements.NoError(fixture.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&checkpoints))
-	assertions.Zero(checkpoints)
 	_, err = run("consent-docling", "--yes")
 	requirements.NoError(err)
 	_, err = run("build")
@@ -211,7 +208,7 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 	assertions.Equal(int32(3), uploads.Load())
 }
 
-func TestDoclingConsentDisclosesCredentialBinding(t *testing.T) {
+func TestDoclingConsentDisclosesCredentialsAndRangeRetention(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 

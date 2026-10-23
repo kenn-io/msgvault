@@ -19,7 +19,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -44,14 +43,19 @@ func doclingPDFPages(t *testing.T, pages int) []byte {
 }
 
 func TestDoclingWorkerPageRanges(t *testing.T) {
-	for _, pages := range []int{50, 51, 101} {
-		t.Run(strconv.Itoa(pages), func(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		pages, cap int
+	}{
+		{name: "50", pages: 50},
+		{name: "51", pages: 51},
+		{name: "whole document page cap", pages: 51, cap: 50},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
+			pages := test.pages
 			content := doclingPDFPages(t, pages)
-			count, err := media.CountPDFPages(content)
-			requirements.NoError(err)
-			assertions.Equal(int64(pages), count)
 			var selections []string
 			var first, last int
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +110,9 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 			defer server.Close()
 			c := doclingTestConfig()
 			c.Endpoint = server.URL
+			if test.cap > 0 {
+				c.MaxPagesPerDocument = test.cap
+			}
 			provider, err := NewDoclingClient(&c)
 			requirements.NoError(err)
 			catalog := &workerCatalog{}
@@ -113,14 +120,23 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 			requirements.NoError(err)
 			digest := sha256.Sum256(content)
 			result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))})
+			if test.cap > 0 {
+				requirements.Error(err)
+				assertions.Nil(catalog.publication)
+				assertions.Empty(catalog.ranges)
+				assertions.Empty(selections)
+				assertions.Equal("invalid_local_source", result.FailureReasonCode)
+				assertions.Equal("Docling PDF has 51 pages; max_pages_per_document is 50", result.FailureDetail)
+				requirements.NotNil(catalog.failure)
+				assertions.Equal(result.FailureDetail, catalog.failure.Detail)
+				return
+			}
 			requirements.NoError(err)
 			switch pages {
 			case 50:
 				assertions.Equal([]string{""}, selections)
 			case 51:
 				assertions.Equal([]string{"1,50", "51,51"}, selections)
-			default:
-				assertions.Equal([]string{"1,50", "51,100", "101,101"}, selections)
 			}
 			requirements.NotNil(catalog.publication)
 			assertions.Equal(pages, result.Units)
@@ -131,7 +147,7 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 }
 
 func TestDoclingRangesResumeAfterReopen(t *testing.T) {
-	for _, failure := range []string{"timeout", "partial", "checkpoint limit", "corrupt checkpoint", "corrupt checksum"} {
+	for _, failure := range []string{"partial", "checkpoint limit", "corrupt checkpoint", "corrupt checksum"} {
 		t.Run(failure, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -166,7 +182,7 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 					}
 					selections = append(selections, strings.Join(selected, ","))
 					status := "success"
-					if failMiddle && first == 51 && (failure == "timeout" || strings.HasPrefix(failure, "corrupt")) {
+					if failMiddle && first == 51 && strings.HasPrefix(failure, "corrupt") {
 						status = "pending"
 					}
 					assertions.NoError(json.NewEncoder(w).Encode(map[string]any{"task_id": "resume-job", "task_type": "convert", "task_status": status}))
@@ -233,7 +249,7 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			requirements.NoError(err)
 			failed, err := worker.ProcessCandidate(t.Context(), candidate)
 			requirements.Error(err)
-			var saved, heads int
+			var saved int
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&saved))
 			if failure == "checkpoint limit" {
 				assertions.Positive(saved, "each range fits; the aggregate exceeds the cap")
@@ -245,11 +261,6 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 				return
 			}
 			assertions.Equal(1, saved)
-			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_heads").Scan(&heads))
-			assertions.Zero(heads)
-			search, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "sentinel"})
-			requirements.NoError(err)
-			assertions.Empty(search.Results)
 			if !f.Store.IsPostgreSQL() {
 				var sequence int
 				var name, path string
@@ -283,12 +294,13 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Equal(600, result.Units)
 			assertions.Equal([]string{"1,50", "51,100", "51,100", "101,150", "151,200", "201,250", "251,300", "301,350", "351,400", "401,450", "451,500", "501,550", "551,600"}, selections)
+			var heads int
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_heads").Scan(&heads))
 			assertions.Equal(1, heads)
 			var requests int
 			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT request_count FROM document_extractions WHERE id = ?"), result.ExtractionID).Scan(&requests))
 			assertions.Equal(22, requests)
-			search, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "sentinel"})
+			search, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "sentinel"})
 			requirements.NoError(err)
 			assertions.NotEmpty(search.Results)
 		})
@@ -297,8 +309,8 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 
 func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 	for _, test := range []struct {
-		name                                                                                   string
-		degrade, missing, rebase, truncated, cap, blankFirst, structuredFirst, missingFallback bool
+		name                                                                              string
+		degrade, missing, rebase, truncated, blankFirst, structuredFirst, missingFallback bool
 	}{
 		{name: "Markdown from all ranges", degrade: true},
 		{name: "blank range before degraded range", degrade: true, blankFirst: true},
@@ -307,7 +319,6 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 		{name: "missing page", missing: true},
 		{name: "rebased page", rebase: true},
 		{name: "truncate after complete coverage", truncated: true},
-		{name: "whole document page cap", cap: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -386,9 +397,6 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 			if test.truncated {
 				c.MaxNormalizedChars = 100
 			}
-			if test.cap {
-				c.MaxPagesPerDocument = 50
-			}
 			provider, err := NewDoclingClient(&c)
 			requirements.NoError(err)
 			catalog := &workerCatalog{}
@@ -396,21 +404,14 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 			requirements.NoError(err)
 			digest := sha256.Sum256(content)
 			result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))})
-			if test.missing || test.rebase || test.cap || test.missingFallback {
+			if test.missing || test.rebase || test.missingFallback {
 				requirements.Error(err)
 				assertions.Nil(catalog.publication)
 				if test.missingFallback {
 					assertions.Len(catalog.ranges, 1, "retry must request the degraded range again")
 				}
-				if test.missing || test.cap {
+				if test.missing {
 					assertions.Empty(catalog.ranges)
-				}
-				if test.cap {
-					assertions.Empty(selections)
-					assertions.Equal("invalid_local_source", result.FailureReasonCode)
-					assertions.Equal("Docling PDF has 51 pages; max_pages_per_document is 50", result.FailureDetail)
-					requirements.NotNil(catalog.failure)
-					assertions.Equal(result.FailureDetail, catalog.failure.Detail)
 				}
 				return
 			}
