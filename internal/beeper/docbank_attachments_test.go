@@ -1229,6 +1229,21 @@ func TestAttachmentMirrorProcessingMissingJobContinues(t *testing.T) {
 	}
 }
 
+func TestAttachmentMirrorProcessingDeletedJobReplans(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	delete(r.processing.States, "job-a")
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "a"}, r.processing.Plans)
+	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+	assert.Empty(r.processingCounts().Outcomes)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+}
+
 func TestAttachmentMirrorProcessingVisitsDueJobsOnce(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
