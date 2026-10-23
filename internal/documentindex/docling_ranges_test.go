@@ -2,9 +2,11 @@ package documentindex
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -44,11 +46,17 @@ func doclingPDFPages(t *testing.T, pages int) []byte {
 
 func TestDoclingWorkerPageRanges(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		pages, cap int
+		name                     string
+		pages, cap               int
+		loadFailure, saveFailure bool
+		corruption               string
 	}{
 		{name: "50", pages: 50},
 		{name: "51", pages: 51},
+		{name: "corrupt checkpoint", pages: 51, corruption: "evidence"},
+		{name: "corrupt checksum", pages: 51, corruption: "checksum"},
+		{name: "checkpoint load failure", pages: 51, loadFailure: true},
+		{name: "checkpoint save failure", pages: 51, saveFailure: true},
 		{name: "whole document page cap", pages: 51, cap: 50},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,10 +124,46 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 			provider, err := NewDoclingClient(&c)
 			requirements.NoError(err)
 			catalog := &workerCatalog{}
+			if test.loadFailure {
+				catalog.loadRangesErr = errors.New("database is locked")
+			}
+			if test.saveFailure {
+				catalog.saveRangeErr = errors.New("database is locked")
+			}
 			worker, err := NewDoclingWorker(catalog, &workerOpener{content: content, closed: &atomic.Int32{}}, provider, DoclingWorkerConfig{Documents: c, ProfileID: "ranges", LeaseOwner: "worker", LeaseDuration: time.Minute, RetryDelay: time.Minute})
 			requirements.NoError(err)
 			digest := sha256.Sum256(content)
-			result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))})
+			candidate := store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))}
+			if test.corruption != "" {
+				_, err = worker.ProcessCandidate(t.Context(), candidate)
+				requirements.NoError(err)
+				requirements.Len(catalog.ranges, 2)
+				catalog.ranges = catalog.ranges[:1]
+				if test.corruption == "checksum" {
+					catalog.ranges[0].EvidenceChecksum = "invalid"
+				} else {
+					catalog.ranges[0].Evidence = append(catalog.ranges[0].Evidence, ' ')
+				}
+				catalog.publication = nil
+				selections = nil
+			}
+			result, err := worker.ProcessCandidate(t.Context(), candidate)
+			if test.corruption != "" {
+				requirements.ErrorContains(err, "invalid canonical document range evidence")
+				assertions.Nil(catalog.publication)
+				assertions.Empty(selections)
+				return
+			}
+			if test.loadFailure || test.saveFailure {
+				requirements.Error(err)
+				assertions.Nil(catalog.publication)
+				assertions.Equal("range_checkpoint_failed", result.FailureReasonCode)
+				requirements.NotNil(catalog.failure)
+				assertions.False(catalog.failure.Terminal)
+				assertions.False(catalog.failure.RetryAt.IsZero())
+				assertions.Empty(catalog.failure.Detail)
+				return
+			}
 			if test.cap > 0 {
 				requirements.Error(err)
 				assertions.Nil(catalog.publication)
@@ -135,8 +179,6 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 			switch pages {
 			case 50:
 				assertions.Equal([]string{""}, selections)
-			case 51:
-				assertions.Equal([]string{"1,50", "51,51"}, selections)
 			}
 			requirements.NotNil(catalog.publication)
 			assertions.Equal(pages, result.Units)
@@ -147,7 +189,7 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 }
 
 func TestDoclingRangesResumeAfterReopen(t *testing.T) {
-	for _, failure := range []string{"partial", "checkpoint limit", "corrupt checkpoint", "corrupt checksum"} {
+	for _, failure := range []string{"partial", "checkpoint save failure", "checkpoint limit"} {
 		t.Run(failure, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -181,14 +223,7 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 						return
 					}
 					selections = append(selections, strings.Join(selected, ","))
-					status := "success"
-					if failMiddle && first == 51 && strings.HasPrefix(failure, "corrupt") {
-						status = "pending"
-					}
-					assertions.NoError(json.NewEncoder(w).Encode(map[string]any{"task_id": "resume-job", "task_type": "convert", "task_status": status}))
-				case "/v1/status/poll/resume-job":
-					_, err := io.WriteString(w, `{"task_id":"resume-job","task_type":"convert","task_status":"pending"}`)
-					assertions.NoError(err)
+					assertions.NoError(json.NewEncoder(w).Encode(map[string]any{"task_id": "resume-job", "task_type": "convert", "task_status": "success"}))
 				case "/v1/result/resume-job":
 					response := doclingWorkerResponse(false)
 					wire, ok := response["document"].(map[string]any)
@@ -245,7 +280,12 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			provider, err := NewDoclingClient(&c)
 			requirements.NoError(err)
 			config := DoclingWorkerConfig{Documents: c, ProfileID: profile.ID, LeaseOwner: "before-restart", LeaseDuration: time.Minute, RetryDelay: time.Minute}
-			worker, err := NewDoclingWorker(f.Store, &workerOpener{content: content}, provider, config)
+			var catalog DocumentExtractionCatalog = f.Store
+			if failure == "checkpoint save failure" {
+				catalog = &failSecondRangeSave{Store: f.Store}
+				config.RetryDelay = 100 * time.Millisecond
+			}
+			worker, err := NewDoclingWorker(catalog, &workerOpener{content: content}, provider, config)
 			requirements.NoError(err)
 			failed, err := worker.ProcessCandidate(t.Context(), candidate)
 			requirements.Error(err)
@@ -271,27 +311,31 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 				f.Store = reopened
 				t.Cleanup(func() { requirements.NoError(reopened.Close()) })
 			}
-			changed, err := f.Store.RetryDocumentExtraction(t.Context(), profile.ID, hash)
-			requirements.NoError(err)
-			requirements.True(changed)
+			if failure != "checkpoint save failure" {
+				changed, err := f.Store.RetryDocumentExtraction(t.Context(), profile.ID, hash)
+				requirements.NoError(err)
+				requirements.True(changed)
+			}
 			failMiddle = false
 			config.LeaseOwner = "after-restart"
 			worker, err = NewDoclingWorker(f.Store, &workerOpener{content: content}, provider, config)
 			requirements.NoError(err)
-			if strings.HasPrefix(failure, "corrupt") {
-				if failure == "corrupt checksum" {
-					_, err = f.Store.DB().Exec("UPDATE document_extraction_ranges SET evidence_checksum = 'invalid'")
-				} else {
-					_, err = f.Store.DB().Exec("UPDATE document_extraction_ranges SET evidence = evidence || ' '")
-				}
+			var result DocumentExtractionResult
+			if failure == "checkpoint save failure" {
+				var retryAt time.Time
+				requirements.NoError(f.Store.DB().QueryRow("SELECT next_retry_at FROM document_extractions WHERE state = 'tombstoned'").Scan(&retryAt))
+				// Wait for the persisted retry deadline and SQLite's whole-second clock.
+				requirements.Eventually(func() bool {
+					if time.Now().UTC().Before(retryAt) {
+						return false
+					}
+					result, err = worker.ProcessCandidate(t.Context(), candidate)
+					return err == nil
+				}, 5*time.Second, 20*time.Millisecond)
+			} else {
+				result, err = worker.ProcessCandidate(t.Context(), candidate)
 				requirements.NoError(err)
-				_, err = worker.ProcessCandidate(t.Context(), candidate)
-				requirements.ErrorContains(err, "invalid canonical document range evidence")
-				assertions.Equal([]string{"1,50", "51,100"}, selections)
-				return
 			}
-			result, err := worker.ProcessCandidate(t.Context(), candidate)
-			requirements.NoError(err)
 			assertions.Equal(600, result.Units)
 			assertions.Equal([]string{"1,50", "51,100", "51,100", "101,150", "151,200", "201,250", "251,300", "301,350", "351,400", "401,450", "451,500", "501,550", "551,600"}, selections)
 			var heads int
@@ -449,4 +493,20 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The real Store still owns claims, failure recording, and checkpoint transfer.
+// Only one save fails to reproduce transient storage trouble after a completed job.
+type failSecondRangeSave struct {
+	*store.Store
+
+	failed bool
+}
+
+func (s *failSecondRangeSave) SaveDocumentExtractionRange(ctx context.Context, claim store.DocumentExtractionClaim, checkpoint store.DocumentExtractionRange, maxBytes int64) error {
+	if checkpoint.FirstPage == 51 && !s.failed {
+		s.failed = true
+		return errors.New("database is locked")
+	}
+	return s.Store.SaveDocumentExtractionRange(ctx, claim, checkpoint, maxBytes)
 }

@@ -22,7 +22,7 @@ const doclingPDFRangePages = 50
 func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, candidate store.DocumentExtractionCandidate, format mistral.CandidateFormat, claim store.DocumentExtractionClaim, pages int, accounting *documentPublicationAccounting) (document.SourceDocument, error) {
 	checkpoints, err := w.catalog.LoadDocumentExtractionRanges(ctx, claim, w.config.Documents.MaxResponseBytes)
 	if err != nil {
-		return document.SourceDocument{}, err
+		return document.SourceDocument{}, fmt.Errorf("%w: %w", errDocumentRangeCheckpoint, err)
 	}
 	saved := make(map[int]store.DocumentExtractionRange, len(checkpoints))
 	for _, r := range checkpoints {
@@ -93,7 +93,7 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 				checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
 			}
 			if err := w.catalog.SaveDocumentExtractionRange(ctx, claim, checkpoint, w.config.Documents.MaxResponseBytes); err != nil {
-				return document.SourceDocument{}, err
+				return document.SourceDocument{}, fmt.Errorf("%w: %w", errDocumentRangeCheckpoint, err)
 			}
 		} else {
 			units, fallback, err = doclingRangeUnits(checkpoint)

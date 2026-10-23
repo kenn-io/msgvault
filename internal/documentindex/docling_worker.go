@@ -473,6 +473,9 @@ func classifyDoclingFailure(err error) (bool, string) {
 	if errors.Is(err, store.ErrDocumentRangeBytes) {
 		return true, "response_too_large"
 	}
+	if errors.Is(err, errDocumentRangeCheckpoint) {
+		return false, "range_checkpoint_failed"
+	}
 	if errors.Is(err, errDoclingJobTimeout) {
 		return true, "provider_timeout"
 	}

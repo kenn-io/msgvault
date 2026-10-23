@@ -23,12 +23,13 @@ const originalDocumentInputKey = "original"
 const documentFailureCleanupTimeout = 5 * time.Second
 
 var (
-	errDocumentPreparation    = errors.New("document extraction preparation failed")
-	errDocumentLeaseRenewal   = errors.New("document extraction lease renewal failed")
-	errDocumentPublication    = errors.New("document extraction publication failed")
-	errDocumentSizeBounds     = errors.New("document candidate size is outside configured bounds")
-	errDocumentSizeMismatch   = errors.New("document attachment size no longer matches reconciled metadata")
-	errDocumentAttachmentOpen = errors.New("open document attachment failed")
+	errDocumentRangeCheckpoint = errors.New("document range checkpoint storage failed")
+	errDocumentPreparation     = errors.New("document extraction preparation failed")
+	errDocumentLeaseRenewal    = errors.New("document extraction lease renewal failed")
+	errDocumentPublication     = errors.New("document extraction publication failed")
+	errDocumentSizeBounds      = errors.New("document candidate size is outside configured bounds")
+	errDocumentSizeMismatch    = errors.New("document attachment size no longer matches reconciled metadata")
+	errDocumentAttachmentOpen  = errors.New("open document attachment failed")
 )
 
 type DocumentExtractionCatalog interface {
