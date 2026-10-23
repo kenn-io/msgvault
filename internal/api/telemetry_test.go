@@ -33,7 +33,7 @@ func (h *countingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func newTelemetryTestServer(t *testing.T, apiKey string) (*Server, *countingHandler) {
 	t.Helper()
-	// TestMain opts out: allowlisted events answer "disabled" and nothing is sent.
+	// Test builds have no PostHog key: allowlisted events answer "disabled" and nothing is sent.
 	reporter := telemetry.NewReporterOrDisabled(telemetry.Options{DataDir: t.TempDir()}, testLogger())
 	capture := &countingHandler{next: telemetry.CaptureHandler(reporter, t.TempDir())}
 	srv := NewServerWithOptions(ServerOptions{

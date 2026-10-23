@@ -104,7 +104,7 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
 	enableTelemetryEnv(t)
 	stub := newWireStub(t)
-	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, stub.server.URL, slog.Default())
+	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, testAPIKey, stub.server.URL, slog.Default())
 	defer func() { require.NoError(t, reporter.Close()) }()
 	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType} {
 		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
