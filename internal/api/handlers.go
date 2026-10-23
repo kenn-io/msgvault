@@ -142,18 +142,26 @@ type SourceStatus struct {
 
 // SyncRunStatus represents the API-visible details for a sync run.
 type SyncRunStatus struct {
-	ID                int64               `json:"id"`
-	SourceID          int64               `json:"source_id"`
-	StartedAt         string              `json:"started_at"`
-	CompletedAt       *string             `json:"completed_at"`
-	Status            string              `json:"status"`
-	MessagesProcessed int64               `json:"messages_processed"`
-	MessagesAdded     int64               `json:"messages_added"`
-	MessagesUpdated   int64               `json:"messages_updated"`
-	ErrorsCount       int64               `json:"errors_count"`
-	ErrorMessage      *string             `json:"error_message"`
-	SkippedCount      int64               `json:"skipped_count,omitzero"`
-	ItemErrors        []SyncRunItemStatus `json:"item_errors,omitempty"`
+	ID                int64   `json:"id"`
+	SourceID          int64   `json:"source_id"`
+	StartedAt         string  `json:"started_at"`
+	CompletedAt       *string `json:"completed_at"`
+	Status            string  `json:"status"`
+	MessagesProcessed int64   `json:"messages_processed"`
+	MessagesAdded     int64   `json:"messages_added"`
+	MessagesUpdated   int64   `json:"messages_updated"`
+	ErrorsCount       int64   `json:"errors_count"`
+	ErrorMessage      *string `json:"error_message"`
+	SkippedCount      int64   `json:"skipped_count,omitzero"`
+	// Outcome is completed, unmeasured, or failed. An unmeasured run did not
+	// prove it read a live source, so its zero new messages are not a zero.
+	Outcome       string  `json:"outcome,omitempty"`
+	Reason        string  `json:"reason,omitempty"`
+	ReadStartedAt *string `json:"read_started_at,omitempty"`
+	// SourceMtime is the newest mtime of the source database and its WAL.
+	SourceMtime *string             `json:"source_mtime,omitempty"`
+	WriterAlive *bool               `json:"writer_alive,omitempty"`
+	ItemErrors  []SyncRunItemStatus `json:"item_errors,omitempty"`
 }
 
 // SyncRunItemStatus represents one recent per-item sync error.
@@ -1603,7 +1611,10 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
-	scheduling := classifySourceScheduling(source.SourceType, source.Identifier)
+	scheduling, err := s.sourceScheduling(ctx, source.SourceType, source.Identifier)
+	if err != nil {
+		return SourceStatus{}, fmt.Errorf("select source scheduling: %w", err)
+	}
 	schedulerRunning := false
 	if s.scheduler != nil {
 		switch scheduling.kind {
@@ -1702,12 +1713,42 @@ func (s *Server) hydrateSyncRunStatus(ctx context.Context, statusStore SourceSta
 	}
 	status.SkippedCount = skippedCount
 
+	measurement, err := statusStore.GetSyncMeasurement(ctx, status.ID)
+	if err != nil && !errors.Is(err, store.ErrSyncMeasurementNotFound) {
+		return fmt.Errorf("get sync measurement: %w", err)
+	}
+	applySyncMeasurement(status, measurement)
+
 	items, err := statusStore.ListSyncRunItemsContext(ctx, status.ID, store.SyncRunItemStatusError, sourceStatusItemErrorLimit)
 	if err != nil {
 		return fmt.Errorf("list sync item errors: %w", err)
 	}
 	status.ItemErrors = syncRunItemStatuses(items)
 	return nil
+}
+
+// applySyncMeasurement fills the outcome fields. Runs without a stored
+// measurement report their terminal status as the outcome.
+func applySyncMeasurement(status *SyncRunStatus, m *store.SyncMeasurement) {
+	switch {
+	case m != nil:
+		status.Outcome = m.Outcome
+		status.Reason = m.Reason
+		status.ReadStartedAt = nullableTimePtrOrNil(m.ReadStartedAt)
+		status.SourceMtime = nullableTimePtrOrNil(m.SourceMtime)
+		status.WriterAlive = m.WriterAlive
+	case status.Status == store.SyncStatusCompleted:
+		status.Outcome = store.SyncOutcomeCompleted
+	case status.Status == store.SyncStatusFailed:
+		status.Outcome = store.SyncOutcomeFailed
+	}
+}
+
+func nullableTimePtrOrNil(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	return nullableTimePtr(*t)
 }
 
 func syncRunStatus(run *store.SyncRun) *SyncRunStatus {
@@ -1767,7 +1808,11 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	security, _ := securityFromRequest(r)
 	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
-	scheduling := classifySourceScheduling(sourceType, account)
+	scheduling, err := s.sourceScheduling(r.Context(), sourceType, account)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "store_error", "Unable to select source scheduling")
+		return
+	}
 	switch scheduling.kind {
 	case sourceScheduleNonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)

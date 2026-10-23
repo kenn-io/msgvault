@@ -1494,6 +1494,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 					'2026-07-12 10:00:00', 500, 'meeting_transcript'
 				);
 				CREATE TABLE sync_runs (
+					error_message TEXT,
 					id INTEGER PRIMARY KEY,
 					source_id INTEGER,
 					started_at DATETIME,
@@ -1609,6 +1610,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			require.NoError(err)
 			_, err = db.Exec(`
 				CREATE TABLE sync_runs (
+					error_message TEXT,
 					id INTEGER PRIMARY KEY,
 					source_id INTEGER,
 					started_at DATETIME,
@@ -1669,6 +1671,7 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	require.NoError(err)
 	_, err = db.Exec(`
 		CREATE TABLE sync_runs (
+			error_message TEXT,
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -1719,6 +1722,7 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	require.NoError(err)
 	_, err = db.Exec(`
 		CREATE TABLE sync_runs (
+			error_message TEXT,
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -1783,6 +1787,7 @@ func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 	defer func() { require.NoError(db.Close()) }()
 	_, err = db.Exec(`
 		CREATE TABLE sync_runs (
+			error_message TEXT,
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4128,6 +4133,7 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 
 	_, err = db.Exec(`
 		CREATE TABLE sync_runs (
+			error_message TEXT,
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4175,6 +4181,7 @@ func TestCacheNeedsBuild_CalendarUpdateRebuildsModalityNeutralCache(t *testing.T
 	_, err = db.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gcal', 'user@example.com/primary');
 		CREATE TABLE sync_runs (
+			error_message TEXT,
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4243,6 +4250,7 @@ func TestCacheNeedsBuild_UpdatedSyncCompletionOrderAndFailure(t *testing.T) {
 			defer func() { _ = db.Close() }()
 			_, err = db.Exec(`
 				CREATE TABLE sync_runs (
+					error_message TEXT,
 					id INTEGER PRIMARY KEY,
 					source_id INTEGER,
 					started_at DATETIME,
@@ -4291,6 +4299,7 @@ func TestCacheNeedsBuild_UpdateCounterDecreaseRequiresRebuild(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	_, err = db.Exec(`
 		CREATE TABLE sync_runs (
+			error_message TEXT,
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4342,6 +4351,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 
 	_, err = db.Exec(`
 		CREATE TABLE sync_runs (
+			error_message TEXT,
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4483,6 +4493,7 @@ func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 
 	_, err = db.Exec(`
 		CREATE TABLE sync_runs (
+			error_message TEXT,
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
