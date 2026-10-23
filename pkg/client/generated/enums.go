@@ -2146,6 +2146,24 @@ func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
 	}
 }
 
+// PersonCreateInputSource Provenance of every created value; defaults to user
+type PersonCreateInputSource string
+
+const (
+	PersonCreateInputSourceEnrichment PersonCreateInputSource = "enrichment"
+	PersonCreateInputSourceUser       PersonCreateInputSource = "user"
+)
+
+// Validate checks if the PersonCreateInputSource value is valid
+func (p PersonCreateInputSource) Validate() error {
+	switch p {
+	case PersonCreateInputSourceEnrichment, PersonCreateInputSourceUser:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonCreateInputSource value, got: %v", p))
+	}
+}
+
 type PersonEnrichmentProviderSettingKind string
 
 const (

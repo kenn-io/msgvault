@@ -1467,6 +1467,11 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		if clearLocalFullName {
 			acceptedDisplayName = ""
 		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE persons SET display_name_source_name_id = NULL WHERE id = ?`, personID,
+		); err != nil {
+			return false, fmt.Errorf("clear local display name source during CardDAV rebase: %w", err)
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULLIF(?, '')
 			WHERE id = ? AND display_name IS DISTINCT FROM NULLIF(?, '')`,
 			acceptedDisplayName, personID, acceptedDisplayName)
@@ -1626,8 +1631,12 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 	bookID, personID, href := resource.AddressBookID, *resource.PersonID, resource.Href
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
 	remoteOwnsDisplay := resource.OwnsDisplayName
+	inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, personID)
+	if err != nil {
+		return err
+	}
 
-	for _, table := range []string{"person_names", "person_contact_points"} {
+	for _, table := range []string{personNamesTableName, personContactPointsTableName} {
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET
 			superseded_at = `+s.dialect.Now()+`, updated_at = `+s.dialect.Now()+`
 			WHERE person_id = ? AND source = ? AND source_ref = ? AND source_resource_uid = ?
@@ -1637,7 +1646,8 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 		}
 	}
 	if remoteOwnsDisplay {
-		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULL
+		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULL,
+			display_name_source_name_id = NULL
 			WHERE id = ?`, personID)
 		if err != nil {
 			return fmt.Errorf("clear retired CardDAV display label: %w", err)
@@ -1663,7 +1673,7 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 			return err
 		}
 	}
-	return nil
+	return s.invalidateInferenceFullNameExposureChangesTx(ctx, tx, inferenceBefore)
 }
 
 // refreshCardDAVImportedPersonBindBaselineTx records the revision produced by

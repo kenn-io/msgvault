@@ -30,6 +30,148 @@ func TestLegacyPendingCreateRequiresExactApproval(t *testing.T) {
 	assert.Equal(store.CardDAVMutationCreate, pending.PendingOperation)
 }
 
+func TestInferenceMigrationV2RequiresReviewBeforeRetryingPendingCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		source     store.Provenance
+		kind       store.ContactAddressKind
+		value      string
+		superseded bool
+		wantReview bool
+	}{
+		{"inferred", store.ProvenanceEnrichment, store.ContactAddressEmail, "alex@example.com", false, true},
+		{"superseded", store.ProvenanceEnrichment, store.ContactAddressEmail, "alex@example.com", true, true},
+		{"declared", store.ProvenanceUser, store.ContactAddressEmail, "alex@example.com", false, false},
+		{"nonrendering", store.ProvenanceEnrichment, store.ContactAddressUsername, "@alice", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture := &mutationFixture{putFailures: 1}
+			service, st, personID, _ := seededMutationService(t, fixture)
+			contact, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+				AddressKind: tc.kind, OriginalValue: tc.value,
+				Envelope: store.ValueEnvelopeInput{Source: tc.source},
+			})
+			require.NoError(err)
+			// v1 did not track inferred contacts, so a failed create captured an
+			// automatic approval even though the contact had never been reviewed.
+			_, err = st.DB().Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
+			require.NoError(err)
+			require.Error(service.PublishPerson(t.Context(), personID))
+			require.Equal(1, fixture.puts)
+			pending, err := st.GetCardDAVPublicationContext(t.Context(), personID)
+			require.NoError(err)
+			require.True(pending.HasExactBodyApproval())
+			if tc.kind == store.ContactAddressEmail {
+				require.Contains(string(pending.OutgoingBody), tc.value)
+			}
+			if tc.superseded {
+				require.NoError(st.SupersedePersonContactPointContext(t.Context(), personID, contact.Envelope.ID, nil))
+			}
+			_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name='carddav_inference_export_state_v2'`)
+			require.NoError(err)
+			require.NoError(st.InitSchema())
+
+			if tc.wantReview {
+				require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
+				assert.Equal(1, fixture.puts)
+				preview, err := service.PreviewPublication(t.Context(), personID)
+				require.NoError(err)
+				assert.Equal(PublicationReviewPending, preview.Kind)
+				assert.True(preview.ReviewRequired)
+				assert.Equal(string(pending.OutgoingBody), preview.VCard)
+				require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
+			} else {
+				require.NoError(service.PublishPerson(t.Context(), personID))
+			}
+			assert.Equal(2, fixture.puts)
+			assert.Equal(pending.OutgoingBody, fixture.body)
+		})
+	}
+}
+
+func TestEquivalentRenderedInferredProfileEditsKeepPublicationApproval(t *testing.T) {
+	for _, kind := range []string{"phone formatting", "unused name original", "unused postal original"} {
+		t.Run(kind, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture := &mutationFixture{}
+			service, st, personID, _ := seededMutationService(t, fixture)
+
+			var originalID int64
+			var want string
+			var patch store.PersonProfilePatch
+			switch kind {
+			case "phone formatting":
+				want = "TEL:+12025550123\r\n"
+				original, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+					AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550123",
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
+				})
+				require.NoError(err)
+				originalID = original.Envelope.ID
+				patch.ContactPoints = &store.PersonContactPointPatch{
+					Supersede: []int64{originalID},
+					Add: []store.PersonContactPointInput{{
+						AddressKind: store.ContactAddressPhone, OriginalValue: "+1 (202) 555-0123",
+						Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
+					}},
+				}
+			case "unused name original":
+				want = "FN:Alice Example\r\n"
+				original, err := st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{
+					NameKind: store.PersonNameFormatted, Formatted: new("Alice Example"), OriginalValue: "source form one",
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
+				})
+				require.NoError(err)
+				originalID = original.Envelope.ID
+				patch.Names = &store.PersonNamePatch{
+					Supersede: []int64{originalID},
+					Add: []store.PersonNameInput{{
+						NameKind: store.PersonNameFormatted, Formatted: new("Alice Example"), OriginalValue: "source form two",
+						Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
+					}},
+				}
+			case "unused postal original":
+				want = "ADR:;;1 Example Street;;;;\r\n"
+				original, err := st.AddPersonAddressContext(t.Context(), personID, store.PersonAddressInput{
+					AddressKind: store.PersonAddressPostal, StreetAddress: new("1 Example Street"), OriginalValue: "source form one",
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
+				})
+				require.NoError(err)
+				originalID = original.Envelope.ID
+				patch.Addresses = &store.PersonAddressPatch{
+					Supersede: []int64{originalID},
+					Add: []store.PersonAddressInput{{
+						AddressKind: store.PersonAddressPostal, StreetAddress: new("1 Example Street"), OriginalValue: "source form two",
+						Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
+					}},
+				}
+			}
+
+			before, err := service.PreviewPublication(t.Context(), personID)
+			require.NoError(err)
+			require.True(before.ReviewRequired)
+			require.NoError(service.PublishReviewedPerson(t.Context(), personID, before.ApprovalToken))
+
+			person, err := st.GetPersonContext(t.Context(), personID)
+			require.NoError(err)
+			_, err = st.ApplyPersonProfilePatchContext(t.Context(), personID, person.Revision, patch)
+			require.NoError(err)
+
+			after, err := service.PreviewPublication(t.Context(), personID)
+			require.NoError(err)
+			assert.Contains(after.VCard, want)
+			assert.False(after.ReviewRequired)
+			require.NoError(service.PublishPerson(t.Context(), personID))
+			view, err := service.PublicationView(t.Context(), personID)
+			require.NoError(err)
+			assert.False(view.InferenceReviewRequired)
+		})
+	}
+}
+
 func TestUnpublishCancelsAbsentPendingCreate(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -381,7 +523,7 @@ func TestConflictKeepRemoteDoesNotGrantArtifactInferenceApproval(t *testing.T) {
 	service, st, personID, _ := seededMutationServiceForServer(t, server)
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	addProjectedEmail(t, st, personID)
-	fixture.body = conflictCard("person", "Remote Person")
+	fixture.body = bytes.Replace(fixture.body, []byte("END:VCARD"), []byte("X-REMOTE:changed\r\nEND:VCARD"), 1)
 	fixture.etag = `"changed"`
 	fixture.force412 = true
 	var conflictErr *ConflictError

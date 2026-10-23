@@ -3099,8 +3099,8 @@ for classifications, Fastmail inventory, and import formats.
 ## person
 
 Manage durable person profiles and their typed, historized attributes. A
-profile can be created by explicitly promoting an observed participant's
-identity cluster or by importing contacts from a subscribed CardDAV address book.
+profile can be created directly, by promoting an observed participant's
+identity cluster, or by importing a subscribed CardDAV contact.
 A participant is one address or handle seen in messages; a person groups
 participants into a profile with notes, attributes, relationships, and briefs.
 
@@ -3113,14 +3113,15 @@ msgvault query "SELECT id, email_address, display_name FROM participants WHERE e
 Use the returned participant `id` with `person promote`. `person list --json`
 returns `id`, `participant_ids`, `revision`, `vcard_uid`, `created_at`,
 `updated_at`, and `display_name` when one is known. Promotion takes the name
-from the first named participant; CardDAV import takes the contact's name.
-The list is empty until a participant is promoted or a CardDAV contact is
-imported. Addresses are in `person identities <person-id>`; use `person get`
+from the first named participant; CardDAV import takes the contact's name, and
+`create` takes `--name`. The list is empty until a person is created, a
+participant is promoted, or a CardDAV contact is imported. Addresses are in `person identities <person-id>`; use `person get`
 for the saved profile.
 `person search` ranks semantic matches; `msgvault setup status` explains how
 to enable its lane.
 
 ```bash
+msgvault person create --name <name> [flags]
 msgvault person promote <participant-id>
 msgvault person list [--json]
 msgvault person directory [flags]
@@ -3140,6 +3141,15 @@ msgvault person attributes list <person-id> [--slug <slug>] [--history] [--json]
 msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-json <json|@path|->) [flags]
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
+
+`create` is available on `main` after the latest release. It creates a profile
+with a new vCard UID and no participants. Optional flags are repeatable
+`--email <value[:type]>`, repeatable `--phone <value[:type]>`, `--org`, `--title`,
+`--address`, `--note`, `--json`, and `--publish`. `--title` requires `--org`.
+It refuses existing current contact points and observed identities, identifying
+the matched person or participant. Without `--publish`, all data stays local.
+Publication uses the existing CardDAV path; a failure keeps the new person and
+reports its ID for retry or review. See [Create a person](usage/people.md#create-a-person).
 
 `promote` seeds a new profile with the first nonblank observed name in its
 linked cluster, ordered by participant ID. It leaves the name empty when no

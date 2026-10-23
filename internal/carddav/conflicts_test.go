@@ -1478,7 +1478,8 @@ func TestConditionalDelete412KeepRemoteRevalidatesCanonicalCard(t *testing.T) {
 			service, st, personID, book := seededMutationServiceForServer(t, server)
 			require.NoError(service.PublishPerson(t.Context(), personID))
 			fixture.mu.Lock()
-			fixture.body = conflictCard("person", "Alice Remote")
+			// Change residue without displacing the locally owned name.
+			fixture.body = bytes.Replace(fixture.body, []byte("END:VCARD"), []byte("X-REMOTE:first\r\nEND:VCARD"), 1)
 			if invalid {
 				fixture.body = bytes.Replace(fixture.body, []byte("END:VCARD"), []byte("EMAIL;PREF=0:invalid@example.test\r\nEND:VCARD"), 1)
 			}
@@ -1496,7 +1497,7 @@ func TestConditionalDelete412KeepRemoteRevalidatesCanonicalCard(t *testing.T) {
 			assert.Equal(fixture.body, conflict.RemoteBody)
 			fixture.mu.Lock()
 			requestsBefore := fixture.puts + fixture.gets + fixture.deletes
-			fixture.body = conflictCard("person", "Alice Newer Remote")
+			fixture.body = bytes.Replace(conflict.RemoteBody, []byte("X-REMOTE:first"), []byte("X-REMOTE:second"), 1)
 			fixture.etag = `"remote-3"`
 			fixture.mu.Unlock()
 
@@ -1556,7 +1557,7 @@ func TestPullRefreshPreservesUnpublishTombstoneUntilKeepRemoteCancelsIt(t *testi
 	service, st, personID, _ := seededMutationServiceForServer(t, server)
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	fixture.mu.Lock()
-	fixture.body = conflictCard("person", "Alice Remote")
+	fixture.body = bytes.Replace(fixture.body, []byte("END:VCARD"), []byte("X-REMOTE:first\r\nEND:VCARD"), 1)
 	fixture.etag = `"remote-2"`
 	fixture.delete412 = true
 	fixture.mu.Unlock()
@@ -1567,8 +1568,8 @@ func TestPullRefreshPreservesUnpublishTombstoneUntilKeepRemoteCancelsIt(t *testi
 	require.NoError(err)
 	_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local After Unpublish"))
 	require.NoError(err)
-	latest := conflictCard("person", "Alice Remote Refreshed")
 	fixture.mu.Lock()
+	latest := bytes.Replace(fixture.body, []byte("X-REMOTE:first"), []byte("X-REMOTE:second"), 1)
 	fixture.body = latest
 	fixture.etag = `"remote-3"`
 	fixture.mu.Unlock()
@@ -2149,6 +2150,9 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 					person, err = st.GetPersonContext(t.Context(), personID)
 					require.NoError(err)
 					assert.Equal(new("Alice"), person.DisplayName)
+					conflicts, err := service.ListConflicts(t.Context())
+					require.NoError(err)
+					assert.Empty(conflicts)
 				default:
 					assert.Equal(new("Alice Remote"), person.DisplayName)
 				}

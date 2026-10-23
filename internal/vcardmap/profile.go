@@ -260,15 +260,16 @@ func personNameOwner(kind store.PersonNameKind) (ownerField, bool) {
 }
 
 func projectPersonName(name store.PersonName) (projectedProperty, bool, error) {
-	owner, propertyName, rawValue, ok := personNameValue(name)
-	if !ok {
+	owner, known := personNameOwner(name.NameKind)
+	projection, renders := name.VCardProjection()
+	if !known || !renders {
 		return projectedProperty{}, false, nil
 	}
-	property, err := newOwnedProperty(propertyName, rawValue, name.Envelope)
+	property, err := newOwnedProperty(projection.Property, projection.Value, name.Envelope)
 	if err != nil {
 		return projectedProperty{}, false, err
 	}
-	if err := appendNameParameters(&property, name); err != nil {
+	if err := appendNameParameters(&property, projection); err != nil {
 		return projectedProperty{}, false, err
 	}
 	projected := ownedProjection(owner, name.Envelope, nameOwnedParameters, property)
@@ -278,78 +279,23 @@ func projectPersonName(name store.PersonName) (projectedProperty, bool, error) {
 	return projected, true, nil
 }
 
-// personNameValue picks the property, owner field, and raw value one name row
-// renders.
-func personNameValue(name store.PersonName) (ownerField, string, string, bool) {
-	owner, known := personNameOwner(name.NameKind)
-	if !known {
-		return ownerField{}, "", "", false
-	}
-	switch name.NameKind {
-	case store.PersonNameFormatted:
-		if isBlank(name.Formatted) {
-			return ownerField{}, "", "", false
-		}
-		return owner, "FN", vcard.EscapeText(*name.Formatted), true
-	case store.PersonNameStructured, store.PersonNamePhonetic:
-		components := structuredNameComponents(name)
-		if allBlank(components) {
-			return ownerField{}, "", "", false
-		}
-		return owner, "N", vcard.JoinStructuredText(components), true
-	default:
-		value := nicknameValue(name)
-		if strings.TrimSpace(value) == "" {
-			return ownerField{}, "", "", false
-		}
-		return owner, "NICKNAME", vcard.EscapeText(value), true
-	}
-}
-
-// nicknameValue is the row's formatted nickname, else its original value. A
-// NICKNAME row is one nickname: the text is escaped as a single list value,
-// so a comma inside it is a literal comma. An import mapper that splits a
-// comma-separated NICKNAME must store one row per value.
-func nicknameValue(name store.PersonName) string {
-	if !isBlank(name.Formatted) {
-		return *name.Formatted
-	}
-	return name.OriginalValue
-}
-
-func structuredNameComponents(name store.PersonName) []string {
-	return []string{
-		deref(name.FamilyName), deref(name.GivenName), deref(name.AdditionalNames),
-		deref(name.HonorificPrefixes), deref(name.HonorificSuffixes),
-		deref(name.SecondarySurname), deref(name.Generation),
-	}
-}
-
 // appendNameParameters renders the name's typed parameters. A phonetic N
 // carries one SCRIPT: the phonetic script when recorded, else the name script.
-func appendNameParameters(property *vcard.Property, name store.PersonName) error {
-	script := name.Script
-	if name.NameKind == store.PersonNamePhonetic && !isBlank(name.PhoneticScript) {
-		script = name.PhoneticScript
-	}
+func appendNameParameters(property *vcard.Property, projection store.PersonNameVCardProjection) error {
 	for _, parameter := range []struct {
 		name  string
 		value *string
 	}{
-		{"LANGUAGE", name.Language}, {"SCRIPT", script}, {"PHONETIC", name.PhoneticSystem},
+		{"LANGUAGE", projection.Language}, {"SCRIPT", projection.Script}, {"PHONETIC", projection.PhoneticSystem},
 	} {
 		if err := appendOptionalParameter(property, parameter.name, parameter.value); err != nil {
 			return err
 		}
 	}
-	if isBlank(name.SortAs) {
+	if len(projection.SortAs) == 0 {
 		return nil
 	}
-	values := strings.Split(*name.SortAs, ",")
-	for index := range values {
-		values[index] = strings.TrimSpace(values[index])
-	}
-	parameter, err := vcard.NewParameter("SORT-AS", values...)
+	parameter, err := vcard.NewParameter("SORT-AS", projection.SortAs...)
 	if err != nil {
 		return err
 	}
@@ -365,28 +311,15 @@ func appendNameParameters(property *vcard.Property, name store.PersonName) error
 // orders the five vCard 3 components (prefix, given, additional, family,
 // suffix), with the RFC 9554 secondary surname and generation after family.
 func derivedFullName(profile store.PersonProfile) (projectedProperty, bool, error) {
-	for _, name := range profile.Names {
-		if name.NameKind != store.PersonNameStructured {
-			continue
-		}
-		parts := []string{
-			deref(name.HonorificPrefixes), deref(name.GivenName),
-			deref(name.AdditionalNames), deref(name.FamilyName),
-			deref(name.SecondarySurname), deref(name.Generation),
-			deref(name.HonorificSuffixes),
-		}
-		value := strings.Join(nonBlank(parts), " ")
-		if value == "" {
-			continue
-		}
-		return derivedFullNameProperty(ownerNameDerivedFN.row(name.Envelope.ID), value)
-	}
-	if isBlank(profile.Person.DisplayName) {
+	value, sourceNameID, _, ok := profile.DerivedVCardFullName()
+	if !ok {
 		return projectedProperty{}, false, nil
 	}
-	return derivedFullNameProperty(
-		ownerDisplayName.row(profile.Person.ID), *profile.Person.DisplayName,
-	)
+	owner := ownerDisplayName.row(profile.Person.ID)
+	if sourceNameID != 0 {
+		owner = ownerNameDerivedFN.row(sourceNameID)
+	}
+	return derivedFullNameProperty(owner, value)
 }
 
 func derivedFullNameProperty(owner projectedOwner, value string) (projectedProperty, bool, error) {
@@ -400,45 +333,6 @@ func derivedFullNameProperty(owner projectedOwner, value string) (projectedPrope
 	}
 	property.Parameters = append(property.Parameters, derived)
 	return projectedProperty{Owner: owner, FullNameFallback: true, Property: property}, true, nil
-}
-
-// contactForm says which vCard value forms a contact-point property accepts.
-type contactForm int
-
-const (
-	// contactText is a text-only property (RFC 6350 EMAIL, LANG): the value
-	// is always escaped text and never carries a VALUE parameter.
-	contactText contactForm = iota
-	// contactURI is a URI-only property: a value that is not an absolute URI
-	// cannot be rendered and the existing occurrence is kept as residue.
-	contactURI
-	// contactURIOrText renders an absolute URI as such and anything else as
-	// text labelled VALUE=text; the projection therefore owns VALUE.
-	contactURIOrText
-	// contactTelephone synthesizes a tel: URI from the normalized number when
-	// the value is not already a URI.
-	contactTelephone
-)
-
-type contactProjection struct {
-	property    string
-	form        contactForm
-	serviceType bool
-}
-
-var contactProjections = map[store.ContactAddressKind]contactProjection{
-	store.ContactAddressEmail:    {property: propertyEmail, form: contactText},
-	store.ContactAddressPhone:    {property: "TEL", form: contactTelephone},
-	store.ContactAddressUsername: {property: "IMPP", form: contactURI},
-	store.ContactAddressIMPP:     {property: "IMPP", form: contactURI},
-	store.ContactAddressURL:      {property: "URL", form: contactURI},
-	store.ContactAddressSocial: {
-		property: "SOCIALPROFILE", form: contactURIOrText, serviceType: true,
-	},
-	store.ContactAddressCalendar:     {property: "CALURI", form: contactURI},
-	store.ContactAddressContactURI:   {property: "CONTACT-URI", form: contactURI},
-	store.ContactAddressOrgDirectory: {property: "ORG-DIRECTORY", form: contactURI},
-	store.ContactAddressLanguage:     {property: "LANG", form: contactText},
 }
 
 func projectContactPoints(
@@ -463,19 +357,18 @@ func projectContactPoints(
 }
 
 func projectContactPoint(point store.PersonContactPoint) (projectedProperty, bool, error) {
-	spec, ok := contactProjections[point.AddressKind]
+	projection, ok := point.VCardProjection()
 	if !ok {
 		return projectedProperty{}, false, nil
 	}
-	value, textValue, ok := contactPointValue(point, spec.form)
-	if !ok {
-		return projectedProperty{}, false, nil
-	}
-	property, err := newOwnedProperty(spec.property, value, point.Envelope)
+	property, err := newOwnedProperty(projection.Property, projection.Value, point.Envelope)
 	if err != nil {
 		return projectedProperty{}, false, err
 	}
-	if err := appendContactParameters(&property, spec, point, textValue); err != nil {
+	if err := appendOptionalParameter(&property, "SERVICE-TYPE", projection.ServiceType); err != nil {
+		return projectedProperty{}, false, err
+	}
+	if err := appendOptionalParameter(&property, "VALUE", projection.ValueType); err != nil {
 		return projectedProperty{}, false, err
 	}
 	projected := ownedProjection(ownerContactPoint, point.Envelope, valueOwnedParameters, property)
@@ -483,59 +376,6 @@ func projectContactPoint(point store.PersonContactPoint) (projectedProperty, boo
 		projected.CarriedParameters = []string{"TYPE", "PREF"}
 	}
 	return projected, true, nil
-}
-
-// contactPointValue returns the wire value of a contact point, whether it is
-// rendered in the text form, and whether there is anything to render at all.
-func contactPointValue(point store.PersonContactPoint, form contactForm) (string, bool, bool) {
-	value := rawContactValue(point, form)
-	if value == "" {
-		return "", false, false
-	}
-	isURI := vcard.IsURIValue(value)
-	if form == contactURI && !isURI {
-		return "", false, false
-	}
-	if form == contactText || (form == contactURIOrText && !isURI) {
-		return vcard.EscapeText(value), true, true
-	}
-	return value, false, true
-}
-
-// rawContactValue prefers the row's URI over its original text and, for a
-// telephone that is not already a URI, synthesizes tel: from the normalized
-// number.
-func rawContactValue(point store.PersonContactPoint, form contactForm) string {
-	value := strings.TrimSpace(point.OriginalValue)
-	if !isBlank(point.URI) {
-		value = strings.TrimSpace(*point.URI)
-	}
-	if form != contactTelephone || value == "" || vcard.IsURIValue(value) {
-		return value
-	}
-	phone := strings.TrimSpace(point.NormalizedValue)
-	if phone == "" {
-		phone = strings.ReplaceAll(value, " ", "")
-	}
-	return "tel:" + phone
-}
-
-// appendContactParameters sets SERVICE-TYPE when the service is known (an
-// unknown service leaves an imported SERVICE-TYPE alone so it survives) and
-// labels the text form of a URI-or-text property with VALUE=text.
-func appendContactParameters(
-	property *vcard.Property, spec contactProjection, point store.PersonContactPoint,
-	textValue bool,
-) error {
-	if spec.serviceType {
-		if err := appendOptionalParameter(property, "SERVICE-TYPE", point.ServiceSlug); err != nil {
-			return err
-		}
-	}
-	if spec.form != contactURIOrText || !textValue {
-		return nil
-	}
-	return appendOptionalParameter(property, "VALUE", new("text"))
 }
 
 func projectAddresses(
@@ -560,57 +400,36 @@ func projectAddresses(
 }
 
 func projectAddress(address store.PersonAddress) (projectedProperty, bool, error) {
-	if address.AddressKind == store.PersonAddressPostal {
-		return projectPostalAddress(address)
-	}
-	propertyName := map[store.PersonAddressKind]string{
-		store.PersonAddressBirthPlace: "BIRTHPLACE", store.PersonAddressDeathPlace: "DEATHPLACE",
-	}[address.AddressKind]
-	if propertyName == "" {
-		return projectedProperty{}, false, nil
-	}
-	raw, placeURI := addressPlaceValue(address)
-	if strings.TrimSpace(raw) == "" {
-		return projectedProperty{}, false, nil
-	}
-	property, err := newOwnedProperty(propertyName, raw, address.Envelope)
+	projection, ok, err := address.VCardProjection()
 	if err != nil {
 		return projectedProperty{}, false, err
 	}
-	valueType := "text"
-	if placeURI {
-		valueType = "uri"
-	}
-	if err := appendOptionalParameter(&property, "VALUE", &valueType); err != nil {
-		return projectedProperty{}, false, err
-	}
-	return ownedProjection(ownerAddress, address.Envelope, valueOwnedParameters, property), true, nil
-}
-
-func projectPostalAddress(address store.PersonAddress) (projectedProperty, bool, error) {
-	raw, label, err := postalAddressValue(address)
-	if err != nil {
-		return projectedProperty{}, false, err
-	}
-	if strings.TrimSpace(raw) == "" {
+	if !ok {
 		return projectedProperty{}, false, nil
 	}
-	property, err := newOwnedProperty("ADR", raw, address.Envelope)
+	property, err := newOwnedProperty(projection.Property, projection.Value, address.Envelope)
 	if err != nil {
+		return projectedProperty{}, false, err
+	}
+	if err := appendOptionalParameter(&property, "VALUE", projection.ValueType); err != nil {
 		return projectedProperty{}, false, err
 	}
 	for _, parameter := range []struct {
 		name  string
 		value *string
 	}{
-		{"LABEL", label}, {"GEO", address.GeoURI}, {"TZ", address.Timezone},
-		{"CC", address.CountryCode},
+		{"LABEL", projection.Label}, {"GEO", projection.GeoURI},
+		{"TZ", projection.Timezone}, {"CC", projection.CountryCode},
 	} {
 		if err := appendOptionalParameter(&property, parameter.name, parameter.value); err != nil {
 			return projectedProperty{}, false, err
 		}
 	}
-	return ownedProjection(ownerAddress, address.Envelope, addressOwnedParameters, property), true, nil
+	ownedParameters := valueOwnedParameters
+	if projection.Property == "ADR" {
+		ownedParameters = addressOwnedParameters
+	}
+	return ownedProjection(ownerAddress, address.Envelope, ownedParameters, property), true, nil
 }
 
 // postalAddressValue returns the ADR structured value and the LABEL text for
@@ -622,73 +441,12 @@ func projectPostalAddress(address store.PersonAddress) (projectedProperty, bool,
 // LABEL over empty components (RFC 6350 section 6.3.1). An empty raw value
 // means the row has nothing to render and its existing occurrence, if any, is
 // left as residue.
-func postalAddressValue(address store.PersonAddress) (string, *string, error) {
-	components, err := postalComponents(address)
-	if err != nil {
-		return "", nil, err
-	}
-	if !allBlank(components) {
-		return vcard.JoinStructuredText(components), address.Label, nil
-	}
-	// SplitStructuredText decodes each component, so re-joining escapes
-	// each exactly once and a wire-form original re-renders unchanged.
-	original := strings.TrimSpace(address.OriginalValue)
-	parsed, err := vcard.SplitStructuredText(original)
-	if err == nil && len(parsed) > 1 && !allBlank(parsed) {
-		return vcard.JoinStructuredText(parsed), address.Label, nil
-	}
-	for _, text := range []*string{address.Label, address.FreeText, &original} {
-		if !isBlank(text) {
-			return vcard.JoinStructuredText(components), text, nil
-		}
-	}
-	return "", nil, nil
-}
-
 // postalComponents renders the seven typed ADR fields followed by any
 // components past them that ExtendedComponents carries.
-func postalComponents(address store.PersonAddress) ([]string, error) {
-	components := []string{
-		deref(address.PostOfficeBox), deref(address.ExtendedAddress),
-		deref(address.StreetAddress), deref(address.Locality), deref(address.Region),
-		deref(address.PostalCode), deref(address.CountryName),
-	}
-	if isBlank(address.ExtendedComponents) {
-		return components, nil
-	}
-	parsed, err := vcard.SplitStructuredText(*address.ExtendedComponents)
-	if err != nil {
-		return nil, fmt.Errorf("decode extended ADR components: %w", err)
-	}
-	if len(parsed) > len(components) {
-		components = append(components, parsed[len(components):]...)
-	}
-	return components, nil
-}
-
 // addressPlaceValue picks the BIRTHPLACE/DEATHPLACE value and reports whether
 // it is a URI. A place URI that is not an absolute URI cannot carry VALUE=uri,
 // so it falls back to the text form: the free text or label when present,
 // otherwise the string itself as text.
-func addressPlaceValue(address store.PersonAddress) (string, bool) {
-	placeURI := ""
-	if address.PlaceURI != nil {
-		placeURI = strings.TrimSpace(*address.PlaceURI)
-	}
-	if placeURI != "" && vcard.IsURIValue(placeURI) {
-		return placeURI, true
-	}
-	for _, value := range []*string{address.FreeText, address.Label} {
-		if !isBlank(value) {
-			return vcard.EscapeText(*value), false
-		}
-	}
-	if placeURI != "" {
-		return vcard.EscapeText(placeURI), false
-	}
-	return vcard.EscapeText(address.OriginalValue), false
-}
-
 func projectDates(
 	snapshot store.PersonVCardSnapshot,
 ) ([]projectedProperty, []retainedOwner, error) {
@@ -1195,18 +953,4 @@ func deref(value *string) string {
 
 func isBlank(value *string) bool {
 	return value == nil || strings.TrimSpace(*value) == ""
-}
-
-func allBlank(values []string) bool {
-	return len(nonBlank(values)) == 0
-}
-
-func nonBlank(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			result = append(result, strings.TrimSpace(value))
-		}
-	}
-	return result
 }

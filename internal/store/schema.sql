@@ -412,6 +412,7 @@ CREATE TABLE IF NOT EXISTS persons (
     id                        INTEGER PRIMARY KEY AUTOINCREMENT,
     vcard_uid                 TEXT NOT NULL UNIQUE,
     display_name              TEXT,
+    display_name_source_name_id INTEGER,
     revision                  INTEGER NOT NULL DEFAULT 1,
     vcard_projection_revision INTEGER NOT NULL DEFAULT 1,
     created_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
