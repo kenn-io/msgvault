@@ -1540,6 +1540,9 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	if err := enqueueActivityProjectionMessage(q, d, id); err != nil {
 		return 0, err
 	}
+	if err := enqueueChatMembers(q, msg.ConversationID); err != nil {
+		return 0, err
+	}
 	if journalCandidate && !prior.found && d.DriverName() != postgresDriverName {
 		if err := appendPersonSweepMessageInsert(q, d, id); err != nil {
 			return 0, err
@@ -2532,6 +2535,12 @@ func ensureParticipantWith(
 	domain string,
 	onInsert func() error,
 ) (int64, error) {
+	// Keep the resolved parent alive until message persistence commits,
+	// without blocking the foreign-key checks of a concurrent chat refresh.
+	lockClause := ""
+	if dialect.DriverName() == postgresDriverName {
+		lockClause = " FOR KEY SHARE"
+	}
 	// ON CONFLICT must mirror the partial unique index on
 	// participants(email_address) WHERE email_address IS NOT NULL — both
 	// PG and SQLite require the WHERE clause on the conflict target to
@@ -2558,7 +2567,7 @@ func ensureParticipantWith(
 		}
 		var id int64
 		err = q.QueryRow(
-			`SELECT id FROM participants WHERE email_address = ?`+dialect.SelectForUpdate(),
+			`SELECT id FROM participants WHERE email_address = ?`+lockClause,
 			email,
 		).Scan(&id)
 		if err == nil {
@@ -2692,6 +2701,9 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 
 	if len(rs.ParticipantIDs) == 0 {
 		return nil
+	}
+	if err := enqueueChatMembersForMessage(tx, messageID); err != nil {
+		return err
 	}
 
 	recipients := normalizedMessageRecipients(rs)

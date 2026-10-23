@@ -2158,6 +2158,50 @@ func (c ChangesResponse) Validate() error {
 	return errors
 }
 
+type ChatDiscoveryPage struct {
+	HasMore bool                  `json:"has_more"`
+	Results []ChatDiscoveryResult `json:"results" validate:"required"`
+}
+
+func (c ChatDiscoveryPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
+	for i, item := range c.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ChatDiscoveryResult struct {
+	ConversationID       int64    `json:"conversation_id"`
+	ConversationType     string   `json:"conversation_type" validate:"required"`
+	EvidenceTruncated    bool     `json:"evidence_truncated"`
+	MatchKind            string   `json:"match_kind" validate:"required"`
+	MatchedNames         []string `json:"matched_names" validate:"required"`
+	MatchedTokens        []string `json:"matched_tokens" validate:"required"`
+	MessageID            int64    `json:"message_id"`
+	Network              string   `json:"network" validate:"required"`
+	SourceConversationID *string  `json:"source_conversation_id" validate:"required"`
+	SourceDisplayName    *string  `json:"source_display_name" validate:"required"`
+	SourceID             int64    `json:"source_id"`
+	SourceIdentifier     *string  `json:"source_identifier" validate:"required"`
+	SourceType           string   `json:"source_type" validate:"required"`
+	Title                *string  `json:"title" validate:"required"`
+}
+
+func (c ChatDiscoveryResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type ChoiceDescriptor struct {
 	Label string `json:"label" validate:"required"`
 	Value string `json:"value" validate:"required"`

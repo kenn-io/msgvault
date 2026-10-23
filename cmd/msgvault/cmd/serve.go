@@ -1957,6 +1957,14 @@ func (a *storeAPIAdapter) ConversationExistsContext(ctx context.Context, convers
 	return a.store.ConversationExistsContext(ctx, conversationID)
 }
 
+func (a *storeAPIAdapter) RefreshChatMembersContext(ctx context.Context) error {
+	return a.store.RefreshChatMembersContext(ctx)
+}
+
+func (a *storeAPIAdapter) SearchChatsMetadataContext(ctx context.Context, q store.ChatDiscoveryQuery) (*store.ChatDiscoveryPage, error) {
+	return a.store.SearchChatsMetadataContext(ctx, q)
+}
+
 func (a *storeAPIAdapter) GetConversationWindowContext(
 	ctx context.Context,
 	conversationID, anchorID int64,

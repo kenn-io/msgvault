@@ -56,6 +56,7 @@ const (
 	toolArgOffset        = "offset"
 	toolArgLength        = "length"
 	toolArgSourceMsgID   = "source_message_id"
+	toolArgSourceID      = "source_id"
 	toolArgThreadID      = "thread_id"
 	toolArgMinScore      = "min_score"
 	toolArgMaxChars      = "max_chars"
@@ -158,6 +159,7 @@ type handlers struct {
 	identityScoring      IdentityScoringBackend
 	drafts               DraftRunner
 	contactRoutesBackend ContactRoutesBackend
+	chatDiscoveryBackend ChatDiscoveryBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
