@@ -7,6 +7,8 @@ export interface PatchAttributeDefinitionRequest {
   /** @nullable */
   description?: string | null;
   display_order?: number;
+  /** @nullable */
+  inference_eligible?: boolean | null;
   is_active?: boolean;
   is_sensitive?: boolean;
   label?: string;

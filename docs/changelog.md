@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Automatic profile maintenance](usage/people-automation.md) excludes personality and desired contact frequency by default. Owners can change a definition's `inference_eligible` setting through the API. This requires archive schema 13 and HTTP API schema 3.28.0; embedded readers must use a matching archive schema.
+
 - Owners can inspect current fact verification dates with [`person facts stale`](usage/people-automation.md#review-stale-facts) or the owner-only API report. Reports use attribute stability and surviving supporting evidence without changing saved values. HTTP API schema 3.27.0 adds the report.
 
 - [Attribute definitions](usage/people.md#create-a-portable-field-definition) carry fixed, durable, or volatile stability metadata. Owners can edit the class through the API or `attribute-definition set-stability`. Subset exports preserve these choices. This requires archive schema 12 and HTTP API schema 3.25.0; embedded readers must use a matching archive schema.

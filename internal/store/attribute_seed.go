@@ -201,6 +201,9 @@ func SeededAttributeDefinitions() []AttributeDefinitionInput {
 		howWeMetDefinition(),
 	)
 	for i := range definitions {
+		if definitions[i].UniversalID == AttributeUniversalIDPersonality || definitions[i].UniversalID == AttributeUniversalIDContactFrequency {
+			definitions[i].InferenceEligible = new(false)
+		}
 		switch definitions[i].UniversalID {
 		case AttributeUniversalIDBirthplace, AttributeUniversalIDHowWeMet, AttributeUniversalIDInterestsFunGrowingUp:
 			definitions[i].Stability = AttributeStabilityFixed
@@ -508,7 +511,7 @@ func (s *Store) reconcileSeededDefinitionWith(
 }
 
 // seededDefinitionDiffers preserves owner edits to label, description,
-// display_order, and stability during seed reconciliation.
+// display_order, stability, and inference eligibility during seed reconciliation.
 func seededDefinitionDiffers(
 	existing *AttributeDefinition, seed AttributeDefinitionInput,
 ) bool {

@@ -11,6 +11,8 @@ export interface CreateAttributeDefinitionRequest {
   description?: string;
   display_order?: number;
   field_type: string;
+  /** @nullable */
+  inference_eligible?: boolean | null;
   is_audited?: boolean;
   is_required?: boolean;
   is_searchable?: boolean;

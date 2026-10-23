@@ -378,7 +378,8 @@ import (
 // 3.25.0 adds attribute definition stability metadata and owner updates.
 // 3.26.0 adds the stability-window diagnostic to person fact decision scores.
 // 3.27.0 adds the owner-only current person fact staleness report.
-const APISchemaVersion = "3.27.0"
+// 3.28.0 adds owner-configurable attribute inference eligibility.
+const APISchemaVersion = "3.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

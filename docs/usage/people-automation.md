@@ -211,6 +211,20 @@ non-derived, with a supported value type and a description of 1–280 characters
 Attributes that link to another record are excluded. Inspect the current set
 with `msgvault person facts catalog --include-sensitive`.
 
+On `main` after the latest release, the sweep excludes `personality` and
+`contact_frequency` from automatic extraction by default. Personality traits
+should not be inferred from a single description, and contact frequency is
+the owner's preferred cadence. Owner-written values and pins still work.
+Machine-written values retire the next time an excluded field is touched;
+owner-written values stay current.
+
+To allow automatic inference for one field, PATCH
+`/api/v1/attribute-definitions/{id}` with `{"inference_eligible":true}` and the
+definition's current ETag in `If-Match`. Setting it to `false` excludes the
+field again. The fact catalog still lists supported fields whose automatic
+inference is disabled. This setting keeps existing sweep cursor identities,
+so changing it does not restart a sweep from the beginning.
+
 `allow_sensitive = true` permits both private archive evidence and sensitive
 targets, including religion, politics, and Notes. There is no separate switch
 for those two permissions. A claim that passes the evidence and resolution

@@ -38,6 +38,7 @@ function definition(overrides: Partial<AttributeDefinition> = {}): AttributeDefi
     api_mutable: true,
     is_searchable: false,
     stability: 'durable',
+    inference_eligible: true,
     is_sensitive: true,
     is_audited: false,
     is_deletable: true,

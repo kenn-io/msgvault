@@ -569,35 +569,36 @@ func (a AttributeChoice) Validate() error {
 }
 
 type AttributeDefinition struct {
-	APIMutable    bool                         `json:"api_mutable"`
-	Cardinality   string                       `json:"cardinality" validate:"required"`
-	CreatedAt     time.Time                    `json:"created_at" validate:"required"`
-	DerivedSource *string                      `json:"derived_source,omitzero"`
-	Description   *string                      `json:"description,omitzero"`
-	DisplayOrder  int64                        `json:"display_order"`
-	FieldType     string                       `json:"field_type" validate:"required"`
-	HistoryExempt bool                         `json:"history_exempt"`
-	ID            int64                        `json:"id"`
-	IsActive      bool                         `json:"is_active"`
-	IsAudited     bool                         `json:"is_audited"`
-	IsDeletable   bool                         `json:"is_deletable"`
-	IsRequired    bool                         `json:"is_required"`
-	IsSearchable  bool                         `json:"is_searchable"`
-	IsSensitive   bool                         `json:"is_sensitive"`
-	Label         string                       `json:"label" validate:"required"`
-	ObjectType    string                       `json:"object_type" validate:"required"`
-	Options       *AttributeOptions            `json:"options,omitempty"`
-	Ownership     string                       `json:"ownership" validate:"required"`
-	RecordTarget  *string                      `json:"record_target,omitzero"`
-	Revision      int64                        `json:"revision"`
-	Slug          string                       `json:"slug" validate:"required"`
-	Stability     AttributeDefinitionStability `json:"stability" validate:"required"`
-	UICreatable   bool                         `json:"ui_creatable"`
-	UIEditable    bool                         `json:"ui_editable"`
-	UniversalID   string                       `json:"universal_id" validate:"required"`
-	UpdatedAt     time.Time                    `json:"updated_at" validate:"required"`
-	ValueType     string                       `json:"value_type" validate:"required"`
-	VcardProperty *string                      `json:"vcard_property,omitzero"`
+	APIMutable        bool                         `json:"api_mutable"`
+	Cardinality       string                       `json:"cardinality" validate:"required"`
+	CreatedAt         time.Time                    `json:"created_at" validate:"required"`
+	DerivedSource     *string                      `json:"derived_source,omitzero"`
+	Description       *string                      `json:"description,omitzero"`
+	DisplayOrder      int64                        `json:"display_order"`
+	FieldType         string                       `json:"field_type" validate:"required"`
+	HistoryExempt     bool                         `json:"history_exempt"`
+	ID                int64                        `json:"id"`
+	InferenceEligible bool                         `json:"inference_eligible"`
+	IsActive          bool                         `json:"is_active"`
+	IsAudited         bool                         `json:"is_audited"`
+	IsDeletable       bool                         `json:"is_deletable"`
+	IsRequired        bool                         `json:"is_required"`
+	IsSearchable      bool                         `json:"is_searchable"`
+	IsSensitive       bool                         `json:"is_sensitive"`
+	Label             string                       `json:"label" validate:"required"`
+	ObjectType        string                       `json:"object_type" validate:"required"`
+	Options           *AttributeOptions            `json:"options,omitempty"`
+	Ownership         string                       `json:"ownership" validate:"required"`
+	RecordTarget      *string                      `json:"record_target,omitzero"`
+	Revision          int64                        `json:"revision"`
+	Slug              string                       `json:"slug" validate:"required"`
+	Stability         AttributeDefinitionStability `json:"stability" validate:"required"`
+	UICreatable       bool                         `json:"ui_creatable"`
+	UIEditable        bool                         `json:"ui_editable"`
+	UniversalID       string                       `json:"universal_id" validate:"required"`
+	UpdatedAt         time.Time                    `json:"updated_at" validate:"required"`
+	ValueType         string                       `json:"value_type" validate:"required"`
+	VcardProperty     *string                      `json:"vcard_property,omitzero"`
 }
 
 func (a AttributeDefinition) Validate() error {
@@ -2954,22 +2955,23 @@ func (c ConversationResponse) Validate() error {
 }
 
 type CreateAttributeDefinitionRequest struct {
-	Cardinality   *CreateAttributeDefinitionRequestCardinality `json:"cardinality,omitempty"`
-	Description   *string                                      `json:"description,omitzero"`
-	DisplayOrder  *int64                                       `json:"display_order,omitempty"`
-	FieldType     string                                       `json:"field_type" validate:"required"`
-	IsAudited     *bool                                        `json:"is_audited,omitempty"`
-	IsRequired    *bool                                        `json:"is_required,omitempty"`
-	IsSearchable  *bool                                        `json:"is_searchable,omitempty"`
-	IsSensitive   *bool                                        `json:"is_sensitive,omitempty"`
-	Label         string                                       `json:"label" validate:"required"`
-	ObjectType    CreateAttributeDefinitionRequestObjectType   `json:"object_type" validate:"required"`
-	Options       *AttributeOptions                            `json:"options,omitempty"`
-	RecordTarget  *string                                      `json:"record_target,omitzero"`
-	Slug          *string                                      `json:"slug,omitzero"`
-	Stability     *CreateAttributeDefinitionRequestStability   `json:"stability,omitempty"`
-	ValueType     string                                       `json:"value_type" validate:"required"`
-	VcardProperty *string                                      `json:"vcard_property,omitzero"`
+	Cardinality       *CreateAttributeDefinitionRequestCardinality `json:"cardinality,omitempty"`
+	Description       *string                                      `json:"description,omitzero"`
+	DisplayOrder      *int64                                       `json:"display_order,omitempty"`
+	FieldType         string                                       `json:"field_type" validate:"required"`
+	InferenceEligible *bool                                        `json:"inference_eligible,omitempty"`
+	IsAudited         *bool                                        `json:"is_audited,omitempty"`
+	IsRequired        *bool                                        `json:"is_required,omitempty"`
+	IsSearchable      *bool                                        `json:"is_searchable,omitempty"`
+	IsSensitive       *bool                                        `json:"is_sensitive,omitempty"`
+	Label             string                                       `json:"label" validate:"required"`
+	ObjectType        CreateAttributeDefinitionRequestObjectType   `json:"object_type" validate:"required"`
+	Options           *AttributeOptions                            `json:"options,omitempty"`
+	RecordTarget      *string                                      `json:"record_target,omitzero"`
+	Slug              *string                                      `json:"slug,omitzero"`
+	Stability         *CreateAttributeDefinitionRequestStability   `json:"stability,omitempty"`
+	ValueType         string                                       `json:"value_type" validate:"required"`
+	VcardProperty     *string                                      `json:"vcard_property,omitzero"`
 }
 
 func (c CreateAttributeDefinitionRequest) Validate() error {
@@ -9828,12 +9830,13 @@ func (p ParticipantSearchHTTPResponse) Validate() error {
 }
 
 type PatchAttributeDefinitionRequest struct {
-	Description  *string                                   `json:"description,omitzero"`
-	DisplayOrder *int64                                    `json:"display_order,omitempty"`
-	IsActive     *bool                                     `json:"is_active,omitempty"`
-	IsSensitive  *bool                                     `json:"is_sensitive,omitempty"`
-	Label        *string                                   `json:"label,omitzero"`
-	Stability    *PatchAttributeDefinitionRequestStability `json:"stability,omitempty"`
+	Description       *string                                   `json:"description,omitzero"`
+	DisplayOrder      *int64                                    `json:"display_order,omitempty"`
+	InferenceEligible *bool                                     `json:"inference_eligible,omitempty"`
+	IsActive          *bool                                     `json:"is_active,omitempty"`
+	IsSensitive       *bool                                     `json:"is_sensitive,omitempty"`
+	Label             *string                                   `json:"label,omitzero"`
+	Stability         *PatchAttributeDefinitionRequestStability `json:"stability,omitempty"`
 }
 
 func (p PatchAttributeDefinitionRequest) Validate() error {
