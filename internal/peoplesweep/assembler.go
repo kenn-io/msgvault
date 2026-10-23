@@ -338,7 +338,7 @@ func mergeContextPriority(perTarget [][]EvidenceItem) []string {
 	}
 	var priority []string
 	seen := make(map[string]struct{})
-	for rank := 0; rank < maxItems; rank++ {
+	for rank := range maxItems {
 		for _, items := range perTarget {
 			if rank >= len(items) {
 				continue
