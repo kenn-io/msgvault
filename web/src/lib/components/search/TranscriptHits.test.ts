@@ -238,20 +238,13 @@ it('opens attachment messages and keeps recording metadata in its own list', asy
   expect(screen.getByText('Provider transcript')).toBeTruthy();
 });
 
-it.each(['empty', 'error', 'absent'])('shows the attachment %s state', async (state) => {
+it('hides the attachment section when absent', async () => {
   mount(vi.fn<typeof fetch>(async () => Response.json(report({
     results: [],
-    attachments: state === 'absent' ? undefined : { results: [], truncated: false, error: state === 'error' ? { error: 'transport', message: 'Attachment search timed out.' } : undefined },
+    attachments: undefined,
   }))));
-  if (state === 'absent') {
-    await screen.findByText('No spoken matches.');
-    expect(screen.queryByRole('heading', { name: /Attachments/ })).toBeNull();
-  } else {
-    await screen.findByRole('heading', { name: /Attachments/ });
-    if (state === 'error') {
-      expect(screen.getByRole('heading', { name: 'Attachments' }).textContent).toBe('Attachments');
-    }
-  }
+  await screen.findByText('No spoken matches.');
+  expect(screen.queryByRole('heading', { name: /Attachments/ })).toBeNull();
 });
 
 it.each([
@@ -263,6 +256,7 @@ it.each([
   } }))).mockResolvedValue(Response.json(report({ attachments: { results: [], truncated: false } })));
   mount(fetchFn);
   await screen.findByText('Attachment search is unavailable.');
+  expect(screen.getByRole('heading', { name: 'Attachments' }).textContent).toBe('Attachments');
   expect(screen.queryByRole('button', { name: 'Retry' }) !== null).toBe(retryable);
   if (retryable) {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

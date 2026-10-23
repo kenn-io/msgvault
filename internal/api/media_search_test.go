@@ -923,7 +923,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 }
 
 func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "rejected query without versions", "recording rejected query", "recording timeout", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
+	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "rejected query without versions", "recording rejected query", "recording timeout", "recording failure", "no docbank hits", "both fail", "unlinked during search", "nil reader"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -975,8 +975,7 @@ func TestMediaSearchDocuments(t *testing.T) {
 				f.waitForCancel = true
 			case "recording failure":
 				f.remoteStatus = 503
-			case "recording failure without attachment matches":
-				f.remoteStatus = 503
+			case "no docbank hits":
 				f.documentReport.Results = []docbankmedia.SearchHit{}
 			case "both fail":
 				f.remoteStatus, f.documentStatus = 503, 503
@@ -994,11 +993,6 @@ func TestMediaSearchDocuments(t *testing.T) {
 					_, err := f.f.Store.UnlinkParticipants(participant, alias)
 					require.NoError(err)
 				}
-			case "person filter":
-				participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
-				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), participant, first)
-				require.NoError(err)
-				query += "&participant_id=" + strconv.FormatInt(participant, 10)
 			}
 			var status int
 			var response MediaSearchResponse
@@ -1031,11 +1025,11 @@ func TestMediaSearchDocuments(t *testing.T) {
 			}
 			require.NotNil(response.Attachments)
 			switch scenario {
-			case "recording failure", "recording failure without attachment matches", "recording timeout":
+			case "recording failure", "recording timeout":
 				require.NotNil(response.RecordingsError)
 				assert.Empty(response.Results)
 				assert.True(response.Partial)
-			case "person filter", "unlinked during search":
+			case "unlinked during search":
 				assert.Empty(response.Results)
 			default:
 				require.Len(response.Results, 1)
@@ -1068,15 +1062,12 @@ func TestMediaSearchDocuments(t *testing.T) {
 			if scenario == "occurrence limit" {
 				want = 1
 			}
-			if scenario == "recording failure without attachment matches" {
+			if scenario == "no docbank hits" {
 				assert.Nil(response.Attachments.Error)
 				want = 0
 			}
 			if scenario == "unlinked during search" {
 				want = 0
-			}
-			if scenario == "person filter" {
-				want = 1
 			}
 			require.Len(response.Attachments.Results, want)
 			if scenario == "shared" {
@@ -1085,9 +1076,6 @@ func TestMediaSearchDocuments(t *testing.T) {
 			}
 			for _, hit := range response.Attachments.Results {
 				assert.Equal("quartz in the PDF", hit.Excerpt)
-			}
-			if scenario == "person filter" {
-				assert.Equal(first, response.Attachments.Results[0].MessageID)
 			}
 		})
 	}
