@@ -517,10 +517,12 @@ func TestMigrateDropsAttachmentDocumentVectors(t *testing.T) {
 	_, err := db.Exec(`CREATE TABLE document_vector_embeddings (document_vector_id INTEGER PRIMARY KEY, token TEXT);
  INSERT INTO document_vector_embeddings VALUES (1,'synthetic-token');
  CREATE VIRTUAL TABLE document_vectors_vec_d4 USING vec0(generation_id INTEGER PARTITION KEY, document_vector_id INTEGER PRIMARY KEY, embedding FLOAT[4] distance_metric=cosine);
- INSERT INTO document_vectors_vec_d4 (generation_id,document_vector_id,embedding) VALUES (1,1,'[1,0,0,0]')`)
+ INSERT INTO document_vectors_vec_d4 (generation_id,document_vector_id,embedding) VALUES (1,1,'[1,0,0,0]');
+ CREATE VIRTUAL TABLE document_vectors_vec_d8 USING vec0(generation_id INTEGER PARTITION KEY, document_vector_id INTEGER PRIMARY KEY, embedding FLOAT[8] distance_metric=cosine);
+ INSERT INTO document_vectors_vec_d8 (generation_id,document_vector_id,embedding) VALUES (1,1,'[1,0,0,0,0,0,0,0]')`)
 	require.NoError(t, err)
 	require.NoError(t, Migrate(t.Context(), db, 4))
-	for _, table := range []string{"document_vector_embeddings", "document_vectors_vec_d4"} {
+	for _, table := range []string{"document_vector_embeddings", "document_vectors_vec_d4", "document_vectors_vec_d8"} {
 		exists, err := tableExists(t.Context(), db, table)
 		require.NoError(t, err)
 		assert.False(t, exists)

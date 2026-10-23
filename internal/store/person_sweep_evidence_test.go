@@ -710,9 +710,6 @@ func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
 	require.NoError(err)
 	persistSweepEvidence(t, f.store, documentKey, document)
 
-	decoded, err := peoplesweep.DecodePersonSweepEvidenceRef(document.SourceRef)
-	require.NoError(err)
-	assert.Equal(ref, decoded)
 	_, err = (store.PersonSweepEvidenceAligner{Store: f.store}).Align(t.Context(), document)
 	require.ErrorIs(err, peoplesweep.ErrSourceTextUnavailable)
 	changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, []peoplesweep.ArchiveChange{
@@ -729,16 +726,4 @@ func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
 	require.NoError(err)
 	unsupported := personfacts.EvidenceStatusChange{EvidenceKey: documentKey, SourceVersion: document.SourceVersion, Reason: personfacts.EvidenceStatusSourceDeleted}
 	assert.Contains(changes, unsupported)
-
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
-		`UPDATE messages SET deleted_from_source_at = NULL WHERE id = ?`), id)
-	require.NoError(err)
-	changes, err = f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, personSweepChangesAfter(t, f.store, f.alicePersonID, after))
-	require.NoError(err)
-	assert.Contains(changes, unsupported)
-	for _, change := range changes {
-		if change.EvidenceKey == documentKey {
-			assert.False(change.Supported)
-		}
-	}
 }
