@@ -2543,6 +2543,8 @@ trusted_imap_sent_mailboxes = { "imaps://alice@example.com@imap.example.com:993"
 func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
+	warnedRemovedDocuments.Store(false)
+	t.Cleanup(func() { warnedRemovedDocuments.Store(false) })
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -2552,6 +2554,11 @@ func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
 	cfg, err := Load(path, "")
 	require.NoError(err)
 	require.NotNil(cfg)
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+	reloaded, err := cfg.ReloadConfigFile(snapshot)
+	require.NoError(err)
+	require.NotNil(reloaded)
 	assert.Contains(logs.String(), "level=WARN")
 	assert.Contains(logs.String(), "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
 	assert.Equal(1, strings.Count(logs.String(), "[attachments.documents]"))
