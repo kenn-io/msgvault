@@ -65,17 +65,30 @@ func (s *Store) advanceDerivedRevisionWithEmailReceiptContext(ctx context.Contex
 // email writes before recording a pass whose current rows are unchanged.
 func (s *Store) MarkMigrationAppliedWithPendingDerivedRevisionContext(ctx context.Context, name string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		pending, err := readArchiveMetadataRevisionContext(ctx, tx, pendingDerivedEmailRevisionKey, "pending email")
-		if err != nil {
+		if err := s.publishPendingDerivedEmailRevisionContext(ctx, tx); err != nil {
 			return err
-		}
-		if pending > 0 {
-			if err := s.advanceDerivedRevisionWithEmailReceiptContext(ctx, tx); err != nil {
-				return err
-			}
 		}
 		return s.markMigrationAppliedContext(ctx, tx, name, 1)
 	})
+}
+
+// PublishPendingDerivedEmailRevisionContext publishes committed email repairs
+// while leaving a pass with unresolved row errors eligible for retry.
+func (s *Store) PublishPendingDerivedEmailRevisionContext(ctx context.Context) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return s.publishPendingDerivedEmailRevisionContext(ctx, tx)
+	})
+}
+
+func (s *Store) publishPendingDerivedEmailRevisionContext(ctx context.Context, tx *loggedTx) error {
+	pending, err := readArchiveMetadataRevisionContext(ctx, tx, pendingDerivedEmailRevisionKey, "pending email")
+	if err != nil {
+		return err
+	}
+	if pending > 0 {
+		return s.advanceDerivedRevisionWithEmailReceiptContext(ctx, tx)
+	}
+	return nil
 }
 
 // RelatedDerivedRevisionsOnly verifies that every derived revision after the

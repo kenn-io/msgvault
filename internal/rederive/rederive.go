@@ -134,7 +134,7 @@ func runPass(ctx context.Context, s *store.Store, sourceType, identifier string,
 	}
 	if sum != nil && sum.Errors > 0 {
 		if sum.unchanged {
-			return sum, nil
+			return sum, s.PublishPendingDerivedEmailRevisionContext(ctx)
 		}
 		return sum, s.AdvanceDerivedDataRevisionContext(ctx)
 	}

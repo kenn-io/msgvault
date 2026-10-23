@@ -236,3 +236,43 @@ func TestEmailCorruptCompressionDoesNotStopLaterRows(t *testing.T) {
 		})
 	}
 }
+
+func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) {
+	require := require.New(t)
+	st, src, repaired := archiveEmailSource(t, "outlook", "stale")
+	failed := archiveEmail(t, st, src, "failed", "stale")
+	revisionFault := `CREATE TRIGGER fail_pending_revision BEFORE INSERT ON archive_metadata WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT, 'revision failure'); END`
+	rowFault := fmt.Sprintf(`CREATE TRIGGER fail_pending_row BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'snippet failure'); END`, failed)
+	dropRevision := `DROP TRIGGER fail_pending_revision`
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(`CREATE FUNCTION fail_pending_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
+		require.NoError(err)
+		_, err = st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION fail_pending_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'snippet failure'; END IF; RETURN NEW; END $$`, failed))
+		require.NoError(err)
+		revisionFault = `CREATE TRIGGER fail_pending_revision BEFORE INSERT ON archive_metadata FOR EACH ROW EXECUTE FUNCTION fail_pending_revision()`
+		rowFault = `CREATE TRIGGER fail_pending_row BEFORE UPDATE OF snippet ON messages FOR EACH ROW EXECUTE FUNCTION fail_pending_row()`
+		dropRevision += ` ON archive_metadata`
+	}
+	_, err := st.DB().Exec(revisionFault)
+	require.NoError(err)
+	_, err = st.DB().Exec(rowFault)
+	require.NoError(err)
+	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.ErrorContains(err, "revision failure")
+	require.Equal(int64(1), sum.Errors)
+	body, err := st.GetMessageBodyText(repaired)
+	require.NoError(err)
+	require.Equal("Heizkörper", body)
+	require.Zero(derivedDataRevision(t, st))
+	_, err = st.DB().Exec(dropRevision)
+	require.NoError(err)
+	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	require.True(ran)
+	require.Equal(int64(1), sum.Errors, "the row failure remains active")
+	require.Zero(sum.BodiesRewritten, "the retry commits no new text")
+	assert.Positive(t, derivedDataRevision(t, st), "the earlier committed repair must reach analytics caches")
+	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion))
+	require.NoError(err)
+	assert.False(t, applied, "unresolved row failures keep the pass retryable")
+}
