@@ -40,7 +40,7 @@ Each snapshot is a complete, self-consistent picture of the archive at one insta
 
 - **Database.** The SQLite file is captured at 4 KB page granularity. The first snapshot stores every page; later snapshots store only pages whose content hash changed, typically a small fraction of the file. The database is briefly frozen (see below) so the captured pages are a transactionally consistent image, then verified snapshots materialize to a byte-identical copy of the original file.
 - **Attachments.** Every attachment is identified by its content SHA-256, re-hashed from disk during capture (a corrupted file fails the backup loudly rather than being stored wrong), and stored once regardless of how many messages or snapshots reference it. Unchanged attachments cost nothing in later snapshots.
-- **Extras (optional).** `--include-config` captures `config.toml` verbatim; the `deletions/` audit directory is captured automatically when present; `--include-tokens` captures OAuth token files. Because config and tokens contain live credentials, capturing either into an unencrypted repository requires the explicit `--allow-plaintext-secrets` flag — the backup fails otherwise rather than quietly leaking secrets.
+- **Extras (optional).** `--include-config` captures `config.toml` verbatim; the `deletions/` audit directory is captured automatically when present; `--include-tokens` captures OAuth token files, client secret files, and the MCP Events key (`mcp-events.key`). Because config and tokens contain live credentials, capturing either into an unencrypted repository requires the explicit `--allow-plaintext-secrets` flag — the backup fails otherwise rather than quietly leaking secrets.
 
 Attachment and page data is compressed with zstd (level 3 by default, configurable via `zstd_level`); content that does not compress — most images, video, and other already-compressed media — is detected and stored raw instead of wasting CPU.
 
@@ -58,7 +58,7 @@ Takes a snapshot. Flags:
 |------|--------|
 | `--repo DIR` | Repository path (overrides `[backup] repo`) |
 | `--include-config` | Capture `config.toml` verbatim (may contain API keys) |
-| `--include-tokens` | Capture OAuth token files |
+| `--include-tokens` | Capture OAuth token files, client secrets, and the MCP Events key |
 | `--allow-plaintext-secrets` | Permit config/tokens in an unencrypted repository |
 | `--tag STR` | Free-form label shown by `backup list` |
 | `--force-unlock` | Override a fresh repository lock (see Locking) |

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -933,4 +934,45 @@ func TestResolveBackupRepoNilConfig(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/flag/repo", repo)
+}
+
+func TestBackupIncludeTokensRestoresMCPEventsKey(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	dbPath := filepath.Join(dataDir, "msgvault.db")
+	st, err := store.OpenForTest(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	require.NoError(st.Close())
+	key := bytes.Repeat([]byte{0x5a}, 32)
+	require.NoError(os.WriteFile(filepath.Join(dataDir, mcpEventsKeyFile), key, 0o600))
+
+	savedTokens, savedPlaintext := backupCreateIncludeTokens, backupCreateAllowPlaintextSecrets
+	t.Cleanup(func() { backupCreateIncludeTokens, backupCreateAllowPlaintextSecrets = savedTokens, savedPlaintext })
+	backupCreateIncludeTokens, backupCreateAllowPlaintextSecrets = true, true
+	extras, err := backupExtrasSpec(&config.Config{Data: config.DataConfig{DataDir: dataDir}})
+	require.NoError(err)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err)
+	attachmentsDir := filepath.Join(dataDir, "attachments")
+	_, err = backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: dataDir, Extras: extras,
+		IncludeTokens: true, AllowPlaintextSecrets: true,
+	})
+	require.NoError(err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backup.Restore(t.Context(), repo, backupapp.New("test"), backup.RestoreOptions{TargetDir: target, Jobs: 1})
+	require.NoError(err)
+
+	restored := filepath.Join(target, mcpEventsKeyFile)
+	got, err := os.ReadFile(restored)
+	require.NoError(err, "the Events key rides along with the token extras")
+	assert.Equal(key, got)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(restored)
+		require.NoError(err)
+		assert.Equal(os.FileMode(0o600), info.Mode().Perm())
+	}
 }
