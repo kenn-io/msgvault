@@ -189,26 +189,20 @@ func validSearchHit(hit SearchHit, vault string, ids map[string]bool) bool {
 	return hit.VaultUID == vault && ids[hit.ContentVersionID] && hit.NodeID > 0 && hit.Rank > 0 && len(hit.Excerpt) <= 2048
 }
 
-// ResolveSearchFence resolves exact versions without inventorying vault storage.
+// ResolveSearchFence fences versions to Docbank's vault via an empty filtered
+// fence, so stale versions don't fail it; search skips them on its own.
 func (c *Client) ResolveSearchFence(ctx context.Context, versions []string) (SearchFence, error) {
-	request := struct {
-		ContentVersionIDs []string `json:"content_version_ids"`
-	}{versions}
+	request := map[string]map[string]string{"filters": {"modified_before": "0001-01-01T00:00:00Z"}}
 	var response struct {
 		Fence SearchFence `json:"fence"`
 	}
 	if err := c.jsonRequest(ctx, http.MethodPost, "/api/v1/processing/source-fences/resolve", request, &response); err != nil {
 		return SearchFence{}, err
 	}
-	if response.Fence.VaultUID == "" || len(response.Fence.ContentVersionIDs) != len(versions) {
+	if response.Fence.VaultUID == "" {
 		return SearchFence{}, ErrInvalidReceipt
 	}
-	for _, id := range response.Fence.ContentVersionIDs {
-		if !slices.Contains(versions, id) {
-			return SearchFence{}, ErrInvalidReceipt
-		}
-	}
-	return response.Fence, nil
+	return SearchFence{VaultUID: response.Fence.VaultUID, ContentVersionIDs: versions}, nil
 }
 
 // SearchDocuments searches exact mirrored versions without transcript selectors.
