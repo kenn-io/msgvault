@@ -138,6 +138,7 @@ type ImportSummary struct {
 	ChatsProcessed    int64
 	MessagesProcessed int64
 	MessagesAdded     int64
+	MessagesUpdated   int64
 	MessagesSkipped   int64
 	ReactionsAdded    int64
 	AttachmentsFound  int64
