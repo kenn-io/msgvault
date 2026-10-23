@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -6628,6 +6629,8 @@ type ArchivedRawMessage struct {
 	Snippet  string
 	// stored is the stored text and search envelope read with the payload.
 	stored derivedEmailText
+	// rawFingerprint binds a scanned repair to its retained encoded MIME.
+	rawFingerprint *[sha256.Size]byte
 }
 
 // decompressArchivedRaw inflates a zlib-compressed archived payload.
@@ -6671,8 +6674,14 @@ func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID,
 	}
 	item.stored.fts.MessageID = item.MessageID
 	item.BodyText, item.Snippet = item.stored.body, item.stored.snippet
-	item.RawData, item.RawDecodeError = decodeMessageRaw(raw, compression)
+	item.decodeArchivedEmail(raw, compression)
 	return item, nil
+}
+
+func (item *ArchivedRawMessage) decodeArchivedEmail(raw []byte, compression sql.NullString) {
+	fingerprint := rawMIMEFingerprint(raw, compression)
+	item.rawFingerprint = &fingerprint
+	item.RawData, item.RawDecodeError = decodeMessageRaw(raw, compression)
 }
 
 // ScanArchivedRawMessages returns up to limit archived messages for a source
@@ -6763,35 +6772,23 @@ func (s *Store) UpdateMessageDerivedText(
 	})
 }
 
-// UpdateMessageDerivedEmailTextContext rebuilds a retained email's body and
-// snippet, then refreshes search from the stored subject and addresses. Earlier
-// envelope repairs therefore survive MIME re-derivation. All writes commit together.
-// The result reports whether derived text or search data changed.
-func (s *Store) UpdateMessageDerivedEmailTextContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
-	row, err := s.loadDerivedEmailText(boundQuerier{ctx: ctx, q: s.db}, messageID)
-	if err != nil {
-		return false, fmt.Errorf("compare derived email text: %w", err)
-	}
-	return s.UpdateArchivedEmailTextContext(ctx, &ArchivedRawMessage{MessageID: messageID, stored: row}, bodyText, bodyHTML, snippet)
-}
-
-// UpdateArchivedEmailTextContext is UpdateMessageDerivedEmailTextContext for a
-// row from ScanArchivedEmailContext, compared against the text read with it.
+// UpdateArchivedEmailTextContext atomically repairs body, snippet, and search
+// for a row from ScanArchivedEmailContext while preserving its current envelope.
 func (s *Store) UpdateArchivedEmailTextContext(ctx context.Context, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
-	matches, err := s.derivedEmailTextMatchesContext(ctx, item.stored, bodyText, bodyHTML, snippet)
+	matches, err := s.archivedEmailTextMatchesContext(ctx, item, bodyText, bodyHTML, snippet)
 	if err != nil || matches {
 		return false, err
 	}
 	var changed bool
 	err = s.withTxContext(ctx, func(tx *loggedTx) (err error) {
-		changed, err = s.writeDerivedEmailTextPendingRevision(ctx, tx, item.MessageID, bodyText, bodyHTML, snippet)
+		changed, err = s.writeDerivedEmailTextPendingRevision(ctx, tx, item, bodyText, bodyHTML, snippet)
 		return err
 	})
 	return changed, err
 }
 
-func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *loggedTx, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
-	changed, err := s.writeDerivedEmailText(ctx, tx, messageID, bodyText, bodyHTML, snippet)
+func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *loggedTx, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	changed, err := s.writeDerivedEmailText(ctx, tx, item, bodyText, bodyHTML, snippet)
 	if err != nil || !changed {
 		return changed, err
 	}
@@ -6833,6 +6830,13 @@ func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailTe
 	return row, err
 }
 
+func (s *Store) archivedEmailTextMatchesContext(ctx context.Context, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	if item.rawFingerprint == nil {
+		return false, errors.New("email repair requires a scanned MIME fingerprint")
+	}
+	return s.derivedEmailTextMatchesContext(ctx, item.stored, bodyText, bodyHTML, snippet)
+}
+
 func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, row derivedEmailText, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
 	if !row.matches(bodyText, bodyHTML, snippet) {
 		return false, nil
@@ -6852,12 +6856,12 @@ func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, row derivedE
 // writeDerivedEmailText indexes the new body with the envelope read under the
 // message lock. Current text is not rewritten, and an overflow that is already
 // terminal reports no change.
-func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
-	if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	if err := s.lockArchivedEmailTextContext(ctx, tx, item); err != nil {
 		return false, fmt.Errorf("lock derived email write: %w", err)
 	}
 	q := boundQuerier{ctx: ctx, q: tx}
-	row, err := s.loadDerivedEmailText(q, messageID)
+	row, err := s.loadDerivedEmailText(q, item.MessageID)
 	if err != nil {
 		return false, fmt.Errorf("load derived email envelope: %w", err)
 	}
@@ -6866,7 +6870,26 @@ func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, message
 		return s.upsertFTSOrUnsearchable(q, row.fts)
 	}
 	upsert := func(q querier, doc FTSDoc) error { _, err := s.upsertFTSOrUnsearchable(q, doc); return err }
-	return true, s.updateMessageDerivedText(q, messageID, bodyText, bodyHTML, snippet, row.fts, upsert)
+	return true, s.updateMessageDerivedText(q, item.MessageID, bodyText, bodyHTML, snippet, row.fts, upsert)
+}
+
+// lockArchivedEmailTextContext orders writes with sync and rejects stale MIME
+// before any body, snippet, or search correction can replace the sync snapshot.
+func (s *Store) lockArchivedEmailTextContext(ctx context.Context, tx *loggedTx, item *ArchivedRawMessage) error {
+	if err := s.lockMeetingEvidenceWith(ctx, tx, item.MessageID); err != nil {
+		return err
+	}
+	var raw []byte
+	var compression sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw
+		WHERE message_id = ? AND raw_format = 'mime'`+s.dialect.SelectForUpdate(), item.MessageID).Scan(&raw, &compression)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if errors.Is(err, sql.ErrNoRows) || rawMIMEFingerprint(raw, compression) != *item.rawFingerprint {
+		return fmt.Errorf("message %d MIME changed after email repair scan", item.MessageID)
+	}
+	return nil
 }
 
 func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc, upsertFTS func(querier, FTSDoc) error) error {

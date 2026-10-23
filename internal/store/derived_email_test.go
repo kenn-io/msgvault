@@ -26,6 +26,50 @@ func archivedEmailFixture(t *testing.T) (*storetest.Fixture, int64) {
 func TestUpdateArchivedEmailText(t *testing.T) {
 	body := sql.NullString{String: "Heizkörper", Valid: true}
 	html := sql.NullString{String: "<p>Heizkörper</p>", Valid: true}
+	t.Run("missing scan fingerprint rejects the repair", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f, id := archivedEmailFixture(t)
+		unscanned := sql.NullString{String: "Unscanned", Valid: true}
+		changed, err := f.Store.UpdateArchivedEmailTextContext(t.Context(), &store.ArchivedRawMessage{MessageID: id}, unscanned, html, unscanned)
+		require.Error(err)
+		assert.False(changed)
+		got, err := f.Store.GetMessageBodyText(id)
+		require.NoError(err)
+		assert.Equal(body.String, got)
+	})
+	t.Run("replaced MIME preserves the sync snapshot", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f, id := archivedEmailFixture(t)
+		require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "stale", Valid: true}, html))
+		item, err := f.Store.ScanArchivedEmailContext(t.Context(), f.Source.ID, id-1, id)
+		require.NoError(err)
+		current := sql.NullString{String: "Replacement", Valid: true}
+		currentHTML := sql.NullString{String: "<p>Replacement</p>", Valid: true}
+		synced, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message: &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "archived", MessageType: "email", Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: current},
+			BodyText: current, BodyHTML: currentHTML,
+			RawMIME: []byte("Content-Type: text/html; charset=UTF-8\r\n\r\n<p>Replacement</p>"),
+			FTS:     &store.FTSDoc{Subject: "Stored subject", Body: current.String},
+		})
+		require.NoError(err)
+		require.Equal(id, synced)
+		changed, err := f.Store.UpdateArchivedEmailTextContext(t.Context(), item, body, html, body)
+		require.Error(err, "a superseded payload must remain retryable")
+		assert.False(changed)
+		var gotBody, gotHTML, gotSnippet string
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT b.body_text, b.body_html, m.snippet FROM messages m JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`), id).Scan(&gotBody, &gotHTML, &gotSnippet))
+		assert.Equal(current.String, gotBody)
+		assert.Equal(currentHTML.String, gotHTML)
+		assert.Equal(current.String, gotSnippet)
+		_, found, err := f.Store.SearchMessages("Replacement", 0, 10)
+		require.NoError(err)
+		assert.Equal(int64(1), found)
+		_, found, err = f.Store.SearchMessages("Heizkörper", 0, 10)
+		require.NoError(err)
+		assert.Zero(found)
+	})
 	t.Run("current text leaves the row unchanged", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
