@@ -6715,40 +6715,36 @@ func (s *Store) UpdateMessageDerivedText(
 	messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc,
 ) error {
 	fts.MessageID = messageID
-	return s.withTx(func(tx *loggedTx) error {
-		if err := upsertMessageBody(tx, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML); err != nil {
-			return fmt.Errorf("update derived message body: %w", err)
-		}
-		if _, err := tx.Exec(`UPDATE messages SET snippet = ? WHERE id = ?`, snippet, messageID); err != nil {
-			return fmt.Errorf("update derived message snippet: %w", err)
-		}
-		if s.fts5Available {
-			if err := s.dialect.FTSUpsert(tx, fts); err != nil {
-				return fmt.Errorf("update derived message FTS: %w", err)
-			}
-		}
-		return nil
-	})
+	return s.updateMessageDerivedTextContext(context.Background(), messageID, bodyText, bodyHTML, snippet, &fts)
 }
 
 // UpdateMessageDerivedEmailTextContext rebuilds a retained email's body and
 // preview, then refreshes search from the stored subject and addresses. Earlier
 // envelope repairs therefore survive MIME re-derivation. All writes commit together.
 func (s *Store) UpdateMessageDerivedEmailTextContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString) error {
+	return s.updateMessageDerivedTextContext(ctx, messageID, bodyText, bodyHTML, snippet, nil)
+}
+
+// A nil FTS document rebuilds search from the stored envelope.
+func (s *Store) updateMessageDerivedTextContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts *FTSDoc) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
-			return fmt.Errorf("lock derived email write: %w", err)
+			return fmt.Errorf("lock derived text write: %w", err)
 		}
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := upsertMessageBody(q, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML); err != nil {
-			return fmt.Errorf("update derived email body: %w", err)
+			return fmt.Errorf("update derived message body: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET snippet = ? WHERE id = ?`, snippet, messageID); err != nil {
-			return fmt.Errorf("update derived email snippet: %w", err)
+		if _, err := q.Exec(`UPDATE messages SET snippet = ? WHERE id = ?`, snippet, messageID); err != nil {
+			return fmt.Errorf("update derived message snippet: %w", err)
 		}
 		if s.fts5Available {
-			if _, err := tx.ExecContext(ctx, s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1); err != nil {
-				return fmt.Errorf("update derived email FTS: %w", err)
+			if fts != nil {
+				if err := s.dialect.FTSUpsert(q, *fts); err != nil {
+					return fmt.Errorf("update derived message FTS: %w", err)
+				}
+			} else if _, err := q.Exec(s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1); err != nil {
+				return fmt.Errorf("rebuild derived message FTS: %w", err)
 			}
 		}
 		return nil

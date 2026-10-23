@@ -3,10 +3,8 @@ package rederive
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -92,40 +90,39 @@ func TestEmailRepairsCurrentBodyAndChatAndSkipsUndecodable(t *testing.T) {
 	assert.Equal("keep me", body)
 }
 
-func TestEmailResumeAfterInterruption(t *testing.T) {
+func TestEmailRetryIncludesMergedOlderHistory(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
+	older, err := st.GetOrCreateSource("imap", "older@example.net")
+	require.NoError(err)
+	oldID := archiveEmail(t, st, older, "older", "email", "stale", emailRaw)
 	src, err := st.GetOrCreateSource("imap", "resume@example.net")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID, `{"provider_cursor":"keep"}`))
-	var last int64
-	for i := range 501 {
-		last = archiveEmail(t, st, src, strconv.Itoa(i), "email", "stale", emailRaw)
-	}
+	first := archiveEmail(t, st, src, "first", "email", "stale", emailRaw)
+	last := archiveEmail(t, st, src, "last", "email", "stale", emailRaw)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	sum, err := Run(ctx, st, src.SourceType, src.Identifier, src.ID, func(string) { cancel() })
 	require.ErrorIs(err, context.Canceled)
-	assert.Equal(int64(500), sum.MessagesScanned)
+	assert.Equal(int64(1), sum.MessagesScanned)
 	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "v1"))
 	require.NoError(err)
 	assert.False(applied)
-	src, err = st.GetSourceByID(src.ID)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: older.ID, IntoSourceID: src.ID})
 	require.NoError(err)
-	var config map[string]any
-	require.NoError(json.Unmarshal([]byte(src.SyncConfig.String), &config))
-	assert.Equal("keep", config["provider_cursor"])
-	sum, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
-	assert.Equal(int64(1), sum.MessagesScanned)
-	body, err := st.GetMessageBodyText(last)
+	assert.True(ran)
+	assert.Equal(int64(3), sum.MessagesScanned)
+	for _, id := range []int64{oldID, first, last} {
+		body, err := st.GetMessageBodyText(id)
+		require.NoError(err)
+		assert.Equal("Heizkörper", body)
+	}
+	applied, err = st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "v1"))
 	require.NoError(err)
-	assert.Equal("Heizkörper", body)
-	// A completed explicit repair can start again from the beginning.
-	sum, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	require.NoError(err)
-	assert.Equal(int64(501), sum.MessagesScanned)
+	assert.True(applied)
 }
 
 func TestHealRunsEmailPassOnce(t *testing.T) {
@@ -158,9 +155,12 @@ func TestEmailFailedRowRollsBackAndResumes(t *testing.T) {
 	failed := archiveEmail(t, st, src, "failed", "email", "stale", emailRaw)
 	_, err = st.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_email_preview BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'preview failure'); END`, failed))
 	require.NoError(err)
-	sum, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.ErrorContains(err, "preview failure")
 	assert.Equal(int64(1), sum.Errors)
+	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "v1"))
+	require.NoError(err)
+	assert.False(applied)
 	body, err := st.GetMessageBodyText(first)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
@@ -169,10 +169,38 @@ func TestEmailFailedRowRollsBackAndResumes(t *testing.T) {
 	assert.Equal("stale", body, "failed preview must roll back the preceding body write")
 	_, err = st.DB().Exec("DROP TRIGGER fail_email_preview")
 	require.NoError(err)
-	sum, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
-	assert.Equal(int64(1), sum.MessagesScanned, "retry must start at the failed row within the page")
+	assert.Equal(int64(2), sum.MessagesScanned, "retry replays committed rows before the failed row")
 	body, err = st.GetMessageBodyText(failed)
+	require.NoError(err)
+	assert.Equal("Heizkörper", body)
+}
+
+func TestEmailCorruptRawPreservesEarlierWrites(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "corrupt@example.net")
+	require.NoError(err)
+	first := archiveEmail(t, st, src, "first", "email", "stale", emailRaw)
+	corrupt := archiveEmail(t, st, src, "corrupt", "email", "stale", emailRaw)
+	_, err = st.DB().Exec(st.Rebind("UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?"), []byte("corrupt"), corrupt)
+	require.NoError(err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.Error(err)
+	body, err := st.GetMessageBodyText(first)
+	require.NoError(err)
+	assert.Equal("Heizkörper", body)
+	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "v1"))
+	require.NoError(err)
+	assert.False(applied)
+	require.NoError(st.UpsertMessageRaw(corrupt, []byte(emailRaw)))
+	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	assert.True(ran)
+	assert.Equal(int64(2), sum.MessagesScanned)
+	body, err = st.GetMessageBodyText(corrupt)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
 }

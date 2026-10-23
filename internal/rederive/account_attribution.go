@@ -13,11 +13,11 @@ import (
 const healProgressInterval = 10 * time.Second
 
 // Heal rebuilds stale derived text, then attributes pending email and calendar
-// rows to their account before a sync or import adds more mail. Rows archived by older
-// versions start pending, and an identity change returns the rows it affects
+// rows to their account before a sync or import adds more mail. Older rows
+// start pending, and an identity change returns the rows it affects
 // to pending. A source with nothing pending costs one indexed lookup, so every
 // sync runs it. A failure is logged instead of returned: committed pages stay
-// derived and the next sync resumes the rest.
+// derived, and the next sync retries unfinished work.
 func Heal(ctx context.Context, logger *slog.Logger, s *store.Store, src *store.Source) {
 	lastTextReport := time.Now()
 	textProgress := func(message string) {
