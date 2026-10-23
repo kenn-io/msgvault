@@ -367,3 +367,9 @@ var (
 	OwnerIdentifierMatch = ownerIdentifierMatch
 	SenderOwnerFallback  = senderOwnerFallback
 )
+
+// SetPersonSweepDeriveAccountingHookForTest injects a migration interruption.
+func (s *Store) SetPersonSweepDeriveAccountingHookForTest(fn func(stage string) error) func() {
+	s.personSweepDeriveAccountingHook = fn
+	return func() { s.personSweepDeriveAccountingHook = nil }
+}

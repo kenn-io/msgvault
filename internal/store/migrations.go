@@ -95,6 +95,7 @@ const (
 	// The fact ledger records a claim the person brief proposed with its own
 	// origin, and an attempt records why a brief call produced no version.
 	migrationPersonFactClaimOriginBrief     = "person_fact_claim_origin_brief_v1"
+	migrationPersonSweepDeriveAccountingV1  = "person_sweep_derive_accounting_v1"
 	migrationPersonSweepAttemptBriefFailure = "person_sweep_attempt_brief_failure_v1"
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
