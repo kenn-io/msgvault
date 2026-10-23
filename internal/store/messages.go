@@ -6728,7 +6728,14 @@ func (s *Store) UpdateMessageDerivedEmailTextContext(ctx context.Context, messag
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 			return fmt.Errorf("lock derived email write: %w", err)
 		}
-		return s.updateMessageDerivedText(boundQuerier{ctx: ctx, q: tx}, messageID, bodyText, bodyHTML, snippet, nil)
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.updateMessageDerivedText(q, messageID, bodyText, bodyHTML, snippet, nil); err != nil {
+			return err
+		}
+		_, err := q.Exec(fmt.Sprintf(`UPDATE conversations SET last_message_preview = %s
+			WHERE id = (SELECT conversation_id FROM messages WHERE id = ?)
+			AND last_message_preview IS NOT NULL`, latestConversationPreviewSubquery), messageID)
+		return err
 	})
 }
 

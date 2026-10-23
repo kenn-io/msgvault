@@ -49,7 +49,7 @@ func TestRepairDerivedSourceRebuildsEmail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("imap", "repair@example.net")
+	src, err := st.GetOrCreateSource("outlook", "repair@example.net")
 	require.NoError(err)
 	conv, err := st.EnsureConversation(src.ID, "old", "Archive")
 	require.NoError(err)

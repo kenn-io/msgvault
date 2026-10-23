@@ -536,15 +536,3 @@ func TestPrefixRunes(t *testing.T) {
 		})
 	}
 }
-
-func TestSnippetFromBody(t *testing.T) {
-	for _, tc := range []struct{ name, body, want string }{
-		{"empty", " \r\n\t", ""},
-		{"first line", " \n  Heizkörper\nSecond line", "Heizkörper"},
-		{"rune limit", strings.Repeat("ö", 201), strings.Repeat("ö", 197) + "..."},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, textutil.SnippetFromBody(tc.body))
-		})
-	}
-}

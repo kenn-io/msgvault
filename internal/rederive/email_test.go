@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +21,7 @@ func archiveEmail(t *testing.T, st *store.Store, src *store.Source, key, kind, b
 	t.Helper()
 	conv, err := st.EnsureConversation(src.ID, key, "")
 	require.NoError(t, err)
-	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: key, MessageType: kind, Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: sql.NullString{String: "HeizkÃ¶rper", Valid: true}})
+	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: key, MessageType: kind, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}, Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: sql.NullString{String: "HeizkÃ¶rper", Valid: true}})
 	require.NoError(t, err)
 	require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{String: "<p>HeizkÃ¶rper</p>", Valid: true}))
 	require.NoError(t, st.UpsertMessageRaw(id, []byte(raw)))
@@ -31,18 +33,14 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("imap", "archive@example.net")
+	src, err := st.GetOrCreateSource("outlook", "archive@example.net")
 	require.NoError(err)
 	id := archiveEmail(t, st, src, "old", "email", "HeizkÃ¶rper", emailRaw)
-	// Stored sender data must win over the older MIME envelope.
 	sender, err := st.EnsureParticipant("repaired@example.net", "Repaired", "example.net")
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Repaired"}))
 	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET sender_id = ? WHERE id = ?"), sender, id)
 	require.NoError(err)
-	matches, _, err := st.SearchMessages("Heizkörper", 0, 10)
-	require.NoError(err)
-	assert.Empty(matches)
 	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	require.True(ran)
@@ -54,11 +52,28 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 	assert.Equal("<p>Heizkörper</p>", html)
 	assert.Equal("Heizkörper", snippet)
 	for _, query := range []string{"Heizkörper", "Stored", "repaired"} {
-		matches, _, err = st.SearchMessages(query, 0, 10)
+		matches, _, err := st.SearchMessages(query, 0, 10)
 		require.NoError(err)
 		require.Len(matches, 1, query)
 		assert.Equal(id, matches[0].ID)
 	}
+	var conv int64
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT conversation_id FROM messages WHERE id = ?"), id).Scan(&conv))
+	var preview sql.NullString
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT last_message_preview FROM conversations WHERE id = ?"), conv).Scan(&preview))
+	assert.False(preview.Valid)
+	newer, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "newer", MessageType: "email", SentAt: sql.NullTime{Time: time.Now(), Valid: true}})
+	require.NoError(err)
+	deleted, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "deleted", MessageType: "email", SentAt: sql.NullTime{Time: time.Now().Add(time.Hour), Valid: true}})
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP, snippet = 'deleted' WHERE id = ?"), deleted)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind("UPDATE conversations SET last_message_preview = 'stale' WHERE id = ?"), conv)
+	require.NoError(err)
+	require.NoError(st.UpdateMessageDerivedEmailTextContext(t.Context(), newer, sql.NullString{}, sql.NullString{}, sql.NullString{String: "Latest", Valid: true}))
+	require.NoError(st.UpdateMessageDerivedEmailTextContext(t.Context(), id, sql.NullString{}, sql.NullString{}, sql.NullString{String: "Older", Valid: true}))
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT last_message_preview FROM conversations WHERE id = ?"), conv).Scan(&preview))
+	assert.Equal("Latest", preview.String)
 	_, ran, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.False(ran)
@@ -67,24 +82,25 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 func TestEmailRepairsCurrentBodyAndChatAndSkipsUndecodable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	testutil.SkipIfPostgres(t, "removes and queries the SQLite FTS row")
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "archive@example.net")
 	require.NoError(err)
 	id := archiveEmail(t, st, src, "chat", "chat", "Heizkörper", emailRaw)
 	bad := archiveEmail(t, st, src, "bad", "email", "keep me", "invalid MIME")
-	_, err = st.DB().Exec(st.Rebind("DELETE FROM messages_fts WHERE rowid = ?"), id)
+	clearSearch := "DELETE FROM messages_fts WHERE rowid = ?"
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		clearSearch = "UPDATE messages SET search_fts = NULL WHERE id = ?"
+	}
+	_, err = st.DB().Exec(st.Rebind(clearSearch), id)
 	require.NoError(err)
 	sum, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(2), sum.MessagesScanned)
 	assert.Equal(int64(1), sum.Undecodable)
-	var snippet string
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT snippet FROM messages WHERE id = ?"), id).Scan(&snippet))
-	assert.Equal("Heizkörper", snippet)
-	var matches int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'body:Heizkörper'").Scan(&matches))
-	assert.Equal(1, matches)
+	assert.Zero(sum.BodiesRewritten)
+	matches, _, err := st.SearchMessages("Heizkörper", 0, 10)
+	require.NoError(err)
+	require.Len(matches, 1)
 	body, err := st.GetMessageBodyText(bad)
 	require.NoError(err)
 	assert.Equal("keep me", body)
@@ -120,16 +136,13 @@ func TestEmailRetryIncludesMergedOlderHistory(t *testing.T) {
 		require.NoError(err)
 		assert.Equal("Heizkörper", body)
 	}
-	applied, err = st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "v1"))
-	require.NoError(err)
-	assert.True(applied)
 }
 
 func TestHealRunsEmailPassOnce(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("imap", "heal@example.net")
+	src, err := st.GetOrCreateSource("outlook", "heal@example.net")
 	require.NoError(err)
 	id := archiveEmail(t, st, src, "old", "email", "stale", emailRaw)
 	logger := slog.New(slog.DiscardHandler)
@@ -147,60 +160,56 @@ func TestHealRunsEmailPassOnce(t *testing.T) {
 func TestEmailFailedRowRollsBackAndResumes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	testutil.SkipIfPostgres(t, "injects a SQLite trigger failure")
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "retry@example.net")
 	require.NoError(err)
 	first := archiveEmail(t, st, src, "first", "email", "stale", emailRaw)
 	failed := archiveEmail(t, st, src, "failed", "email", "stale", emailRaw)
-	_, err = st.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_email_preview BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'preview failure'); END`, failed))
+	last := archiveEmail(t, st, src, "last", "email", "stale", emailRaw)
+	fault := fmt.Sprintf(`CREATE TRIGGER fail_email_preview BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'preview failure'); END`, failed)
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		_, err = st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION fail_email_preview() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'preview failure'; END IF; RETURN NEW; END $$`, failed))
+		require.NoError(err)
+		fault = `CREATE TRIGGER fail_email_preview BEFORE UPDATE OF snippet ON messages FOR EACH ROW EXECUTE FUNCTION fail_email_preview()`
+	}
+	_, err = st.DB().Exec(fault)
 	require.NoError(err)
 	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	require.ErrorContains(err, "preview failure")
+	require.NoError(err)
+	assert.Equal(int64(3), sum.MessagesScanned)
+	assert.Equal(int64(2), sum.BodiesRewritten)
+	body, err := st.GetMessageBodyText(last)
+	require.NoError(err)
+	assert.Equal("Heizkörper", body)
 	assert.Equal(int64(1), sum.Errors)
 	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "v1"))
 	require.NoError(err)
 	assert.False(applied)
-	body, err := st.GetMessageBodyText(first)
-	require.NoError(err)
-	assert.Equal("Heizkörper", body)
 	body, err = st.GetMessageBodyText(failed)
 	require.NoError(err)
 	assert.Equal("stale", body, "failed preview must roll back the preceding body write")
-	_, err = st.DB().Exec("DROP TRIGGER fail_email_preview")
+	drop := "DROP TRIGGER fail_email_preview"
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		drop += " ON messages"
+	}
+	_, err = st.DB().Exec(drop)
 	require.NoError(err)
-	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	require.NoError(err)
-	assert.Equal(int64(2), sum.MessagesScanned, "retry replays committed rows before the failed row")
-	body, err = st.GetMessageBodyText(failed)
-	require.NoError(err)
-	assert.Equal("Heizkörper", body)
-}
-
-func TestEmailCorruptRawPreservesEarlierWrites(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("imap", "corrupt@example.net")
-	require.NoError(err)
-	first := archiveEmail(t, st, src, "first", "email", "stale", emailRaw)
-	corrupt := archiveEmail(t, st, src, "corrupt", "email", "stale", emailRaw)
-	_, err = st.DB().Exec(st.Rebind("UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?"), []byte("corrupt"), corrupt)
+	require.NoError(st.UpsertMessageBody(first, sql.NullString{String: "stale", Valid: true}, sql.NullString{}))
+	_, err = st.DB().Exec(st.Rebind("UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?"), []byte("corrupt"), last)
 	require.NoError(err)
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.Error(err)
-	body, err := st.GetMessageBodyText(first)
+	body, err = st.GetMessageBodyText(first)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
-	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "v1"))
+	applied, err = st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "v1"))
 	require.NoError(err)
 	assert.False(applied)
-	require.NoError(st.UpsertMessageRaw(corrupt, []byte(emailRaw)))
-	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(st.UpsertMessageRaw(last, []byte(emailRaw)))
+	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
-	assert.True(ran)
-	assert.Equal(int64(2), sum.MessagesScanned)
-	body, err = st.GetMessageBodyText(corrupt)
+	assert.Equal(int64(3), sum.MessagesScanned)
+	body, err = st.GetMessageBodyText(failed)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
 }

@@ -14,12 +14,6 @@ import (
 // Bump the version when parsing the same retained MIME produces different text.
 const emailVersion = "v1"
 
-func init() {
-	for _, sourceType := range []string{"gmail", "imap", "msmail", "o365", "mbox", "hey", "google-groups", "apple-mail", "pst", "eml", "maildir"} {
-		Register(sourceType, emailVersion, repairEmail)
-	}
-}
-
 // repairEmail rebuilds text from retained MIME, including Gmail Chat messages.
 // Each attempt starts at the first row; completed writes survive interruption.
 func repairEmail(ctx context.Context, s *store.Store, sourceID int64, progress func(string)) (*Summary, error) {
@@ -55,8 +49,12 @@ func repairEmail(ctx context.Context, s *store.Store, sourceID int64, progress f
 			if err := s.UpdateMessageDerivedEmailTextContext(ctx, item.MessageID,
 				sql.NullString{String: body, Valid: body != ""}, sql.NullString{String: html, Valid: html != ""},
 				sql.NullString{String: snippet, Valid: snippet != ""}); err != nil {
+				if ctx.Err() != nil {
+					return sum, ctx.Err()
+				}
 				sum.Errors++
-				return sum, fmt.Errorf("rebuild email %d: %w", item.MessageID, err)
+				afterID = item.MessageID
+				continue
 			}
 			if item.BodyText != body {
 				sum.BodiesRewritten++

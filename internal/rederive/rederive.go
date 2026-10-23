@@ -78,6 +78,13 @@ func Lookup(sourceType string) (Func, string, bool) {
 	return e.fn, e.version, ok
 }
 
+func resolve(sourceType string) (Func, string) {
+	if fn, version, ok := Lookup(sourceType); ok {
+		return fn, version
+	}
+	return repairEmail, emailVersion
+}
+
 // SourceTypes lists every registered source type, sorted for stable output.
 func SourceTypes() []string {
 	out := make([]string, 0, len(registry))
@@ -105,10 +112,7 @@ func LedgerKey(sourceType, identifier, version string) string {
 func Run(
 	ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string),
 ) (*Summary, error) {
-	fn, version, ok := Lookup(sourceType)
-	if !ok {
-		return nil, fmt.Errorf("no re-derivation pass registered for source type %q", sourceType)
-	}
+	fn, version := resolve(sourceType)
 	sum, err := fn(ctx, s, sourceID, progress)
 	if err != nil {
 		// A pass can fail after earlier message transactions committed. Make
@@ -137,17 +141,13 @@ func Run(
 	return sum, nil
 }
 
-// RunIfStale runs the registered pass for a source unless the ledger already
-// records it at the current version. ran reports whether the pass actually
-// executed: a source type with no registered pass, or one already recorded, is
-// a no-op. This is the upgrade path, called from a sync.
+// RunIfStale runs a source's pass unless the ledger already records its current
+// version. Sources without a registered pass rebuild retained MIME. ran reports
+// whether the pass executed. This is the upgrade path, called from a sync.
 func RunIfStale(
 	ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string),
 ) (sum *Summary, ran bool, err error) {
-	_, version, ok := Lookup(sourceType)
-	if !ok {
-		return nil, false, nil
-	}
+	_, version := resolve(sourceType)
 	applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, version), 1)
 	if err != nil || applied {
 		return nil, false, err

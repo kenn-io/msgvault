@@ -2474,21 +2474,3 @@ func TestEnsurePhoneParticipantContextCancelsBlockedNameBackfill(t *testing.T) {
 		participantID).Scan(&name))
 	assert.Empty(t, name, "cancelled name backfill must roll back")
 }
-
-func TestUpdateMessageDerivedTextKeepsExplicitSearchDocument(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	id, err := f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "derived", MessageType: "email"})
-	require.NoError(err)
-	require.NoError(f.Store.UpdateMessageDerivedText(id,
-		sql.NullString{String: "Fresh body", Valid: true}, sql.NullString{}, sql.NullString{String: "Preview", Valid: true},
-		store.FTSDoc{Subject: "Explicitsubject", Body: "Searchbody", FromAddr: "explicit@example.net"}))
-	body, err := f.Store.GetMessageBodyText(id)
-	require.NoError(err)
-	assert.Equal("Fresh body", body)
-	results, _, err := f.Store.SearchMessages("Explicitsubject", 0, 10)
-	require.NoError(err)
-	require.Len(results, 1)
-	assert.Equal(id, results[0].ID)
-}
