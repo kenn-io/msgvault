@@ -78,8 +78,13 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	bundleTimezone := cfg.Activity.Timezone
+	if activityTimezone != "" {
+		bundleTimezone = activityTimezone
+	}
+
 	// Step 3: Optionally configure remote NAS
-	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg)
+	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg, bundleTimezone)
 	if err != nil {
 		return err
 	}
@@ -128,7 +133,8 @@ func setupActivityTimezone(reader *bufio.Reader, cfg *config.Config) (string, er
 	fmt.Println("Step 2: Activity timezone")
 	fmt.Println("--------------------------")
 	fmt.Println("Activity day views use this IANA timezone instead of UTC to group events.")
-	fmt.Println("Changing it re-dates existing activity rows automatically.")
+	fmt.Println("Restart a running daemon after changing this setting.")
+	fmt.Println("Later projection passes re-date existing activity rows automatically.")
 
 	current := cfg.Activity.Timezone
 	if current == "" {
@@ -137,11 +143,7 @@ func setupActivityTimezone(reader *bufio.Reader, cfg *config.Config) (string, er
 
 	if detected, err := resolveLocalTimezone(); err == nil {
 		fmt.Printf("Detected host timezone: %s\n", detected)
-		if detected == current {
-			fmt.Printf("Activity timezone is already %s.\n", current)
-			return "", nil
-		}
-		if promptYesNo(reader, fmt.Sprintf("Use %s for activity day boundaries?", detected)) {
+		if detected != current && promptYesNo(reader, fmt.Sprintf("Use %s for activity day boundaries?", detected)) {
 			if err := validateSetupActivityTimezone(detected); err != nil {
 				return "", err
 			}
@@ -306,7 +308,7 @@ func setupOAuthSecrets(reader *bufio.Reader, cfg *config.Config) (string, error)
 	return path, nil
 }
 
-func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *config.Config) (string, string, error) {
+func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *config.Config, activityTimezone string) (string, string, error) {
 	fmt.Println()
 	fmt.Println("Step 3: Remote NAS Server (Optional)")
 	fmt.Println("-------------------------------------")
@@ -375,7 +377,7 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *confi
 		fmt.Println("Configure the credential commands and secret store separately on the NAS; the bundle does not contain command-backed credentials.")
 	}
 	bundleDir := filepath.Join(cfg.HomeDir, "nas-bundle")
-	if err := createNASBundle(bundleDir, apiKey, effectiveSecrets, port); err != nil {
+	if err := createNASBundle(bundleDir, apiKey, effectiveSecrets, port, activityTimezone); err != nil {
 		fmt.Printf("Warning: Could not create NAS bundle: %v\n", err)
 	} else {
 		fmt.Printf("\nNAS deployment files created in: %s\n", bundleDir)
@@ -402,7 +404,7 @@ func generateAPIKey() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func createNASBundle(bundleDir, apiKey, oauthSecretsPath string, port int) error {
+func createNASBundle(bundleDir, apiKey, oauthSecretsPath string, port int, activityTimezone string) error {
 	// Create bundle directory
 	if err := os.MkdirAll(bundleDir, 0700); err != nil {
 		return fmt.Errorf("create bundle dir: %w", err)
@@ -413,12 +415,15 @@ func createNASBundle(bundleDir, apiKey, oauthSecretsPath string, port int) error
 	if oauthSecretsPath != "" {
 		oauthBlock = "[oauth]\nclient_secrets = \"/data/client_secret.json\"\n\n"
 	}
+	activityConfig := config.ActivityConfig{Timezone: activityTimezone}
+	activityConfig.ApplyDefaults()
+	activityBlock := fmt.Sprintf("[activity]\ntimezone = %q\n\n", activityConfig.Timezone)
 	nasConfig := fmt.Sprintf(`[server]
 bind_addr = "0.0.0.0"
 api_port = 8080
 api_key = %q
 
-%s[sync]
+%s%s[sync]
 rate_limit_qps = 5
 
 # Accounts will be added automatically when you export tokens.
@@ -427,7 +432,7 @@ rate_limit_qps = 5
 # email = "you@example.com"
 # schedule = "0 2 * * *"
 # enabled = true
-`, apiKey, oauthBlock)
+`, apiKey, oauthBlock, activityBlock)
 
 	configPath := filepath.Join(bundleDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte(nasConfig), 0600); err != nil {

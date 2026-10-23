@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,7 +30,7 @@ func TestCreateNASBundle(t *testing.T) {
 	secretsContent := `{"installed":{"client_id":"test"}}`
 	require.NoError(os.WriteFile(secretsPath, []byte(secretsContent), 0600), "write secrets")
 
-	err := createNASBundle(bundleDir, apiKey, secretsPath, port)
+	err := createNASBundle(bundleDir, apiKey, secretsPath, port, "America/Vancouver")
 	require.NoError(err, "createNASBundle")
 
 	// Verify config.toml exists and contains API key
@@ -39,6 +40,7 @@ func TestCreateNASBundle(t *testing.T) {
 	configStr := string(configData)
 	assert.Contains(configStr, apiKey, "config.toml should contain the API key")
 	assert.Contains(configStr, "0.0.0.0", "config.toml should bind to 0.0.0.0")
+	assert.Contains(configStr, "[activity]\ntimezone = \"America/Vancouver\"")
 
 	// Verify config.toml has secure permissions
 	// Windows doesn't support Unix file permissions.
@@ -74,7 +76,7 @@ func TestCreateNASBundle_NoSecrets(t *testing.T) {
 	assert := assert.New(t)
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
 
-	err := createNASBundle(bundleDir, "key", "", 8080)
+	err := createNASBundle(bundleDir, "key", "", 8080, "")
 	require.NoError(
 		err, "createNASBundle")
 
@@ -95,12 +97,18 @@ func TestCreateNASBundle_NoSecrets(t *testing.T) {
 	cfgData, err := os.ReadFile(filepath.Join(bundleDir, "config.toml"))
 	require.NoError(err, "read config.toml")
 	assert.NotContains(string(cfgData), "[oauth]")
+	assert.Contains(string(cfgData), "[activity]\ntimezone = \"UTC\"")
 }
 
 // runSetupForTest runs the wizard against a fresh home directory with
 // the given answers on stdin and returns the home directory and output.
-func runSetupForTest(t *testing.T, answers string) (string, string) {
+func runSetupForTest(t *testing.T, answers string, timezoneResolver ...func() (string, error)) (string, string) {
 	t.Helper()
+	resolver := unavailableSetupTimezone
+	if len(timezoneResolver) > 0 {
+		resolver = timezoneResolver[0]
+	}
+	setSetupTimezone(t, resolver)
 	home := t.TempDir()
 	c := config.NewDefaultConfig()
 	c.HomeDir = home
@@ -117,6 +125,17 @@ func runSetupForTest(t *testing.T, answers string) (string, string) {
 	return home, out.String()
 }
 
+func unavailableSetupTimezone() (string, error) {
+	return "", errors.New("test timezone unavailable")
+}
+
+func setSetupTimezone(t *testing.T, resolver func() (string, error)) {
+	t.Helper()
+	previous := resolveLocalTimezone
+	resolveLocalTimezone = resolver
+	t.Cleanup(func() { resolveLocalTimezone = previous })
+}
+
 func TestSetupWithoutGoogleCredentials(t *testing.T) {
 	// Enter at the credential prompt, then "n" for the remote server.
 	home, out := runSetupForTest(t, "\n\nn\n")
@@ -128,20 +147,19 @@ func TestSetupWithoutGoogleCredentials(t *testing.T) {
 }
 
 func TestSetupPersistsDetectedActivityTimezone(t *testing.T) {
-	previous := resolveLocalTimezone
-	resolveLocalTimezone = func() (string, error) { return "America/Vancouver", nil }
-	t.Cleanup(func() { resolveLocalTimezone = previous })
-
-	home, _ := runSetupForTest(t, "\n\nn\n")
+	assert := assert.New(t)
+	require := require.New(t)
+	home, _ := runSetupForTest(t, "\ny\ny\nnas\n\n", func() (string, error) { return "America/Vancouver", nil })
 	persisted, err := config.Load(filepath.Join(home, "config.toml"), home)
-	require.NoError(t, err)
-	assert.Equal(t, "America/Vancouver", persisted.Activity.Timezone)
+	require.NoError(err)
+	assert.Equal("America/Vancouver", persisted.Activity.Timezone)
+	bundleConfig, err := os.ReadFile(filepath.Join(home, "nas-bundle", "config.toml"))
+	require.NoError(err)
+	assert.Contains(string(bundleConfig), "[activity]\ntimezone = \"America/Vancouver\"")
 }
 
 func TestSetupActivityTimezoneRejectsLocal(t *testing.T) {
-	previous := resolveLocalTimezone
-	resolveLocalTimezone = func() (string, error) { return "", assert.AnError }
-	t.Cleanup(func() { resolveLocalTimezone = previous })
+	setSetupTimezone(t, unavailableSetupTimezone)
 
 	cfg := config.NewDefaultConfig()
 	_, err := setupActivityTimezone(bufio.NewReader(strings.NewReader("Local\n")), cfg)
@@ -149,7 +167,18 @@ func TestSetupActivityTimezoneRejectsLocal(t *testing.T) {
 	assert.ErrorContains(t, err, "host-dependent")
 }
 
+func TestSetupActivityTimezoneAllowsOverrideWhenDetectedMatchesCurrent(t *testing.T) {
+	setSetupTimezone(t, func() (string, error) { return "UTC", nil })
+	cfg := config.NewDefaultConfig()
+	cfg.Activity.Timezone = "UTC"
+
+	got, err := setupActivityTimezone(bufio.NewReader(strings.NewReader("America/Denver\n")), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "America/Denver", got)
+}
+
 func TestSetupDoesNotPersistHTTPForRuntimeRemoteURL(t *testing.T) { //nolint:paralleltest // process environment
+	setSetupTimezone(t, unavailableSetupTimezone)
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
@@ -177,6 +206,7 @@ func TestSetupDoesNotPersistHTTPForRuntimeRemoteURL(t *testing.T) { //nolint:par
 }
 
 func TestSetupPersistsExplicitRemoteMatchingEnvironment(t *testing.T) { //nolint:paralleltest // process environment
+	setSetupTimezone(t, unavailableSetupTimezone)
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
@@ -222,7 +252,7 @@ func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
 	require.NoError(os.WriteFile(secretsPath, []byte(`{"installed":{}}`), 0600), "write secrets")
 
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
-	err := createNASBundle(bundleDir, "key", secretsPath, 8080)
+	err := createNASBundle(bundleDir, "key", secretsPath, 8080, "UTC")
 	require.NoError(err, "createNASBundle")
 
 	// client_secret.json should be copied with correct content
@@ -240,7 +270,7 @@ func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
 func TestCreateNASBundle_InvalidSecretPath(t *testing.T) {
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
 
-	err := createNASBundle(bundleDir, "key", "/nonexistent/secret.json", 8080)
+	err := createNASBundle(bundleDir, "key", "/nonexistent/secret.json", 8080, "UTC")
 	require.Error(t, err, "createNASBundle should fail with nonexistent secrets path")
 }
 
@@ -334,8 +364,8 @@ func TestCreateNASBundle_RebuildWithoutSecretsRemovesOldCopy(t *testing.T) {
 	require.NoError(os.WriteFile(secretsPath, []byte(`{"installed":{}}`), 0600))
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
 
-	require.NoError(createNASBundle(bundleDir, "key", secretsPath, 8080))
-	require.NoError(createNASBundle(bundleDir, "key", "", 8080))
+	require.NoError(createNASBundle(bundleDir, "key", secretsPath, 8080, "UTC"))
+	require.NoError(createNASBundle(bundleDir, "key", "", 8080, "UTC"))
 
 	_, err := os.Stat(filepath.Join(bundleDir, "client_secret.json"))
 	assert.True(t, os.IsNotExist(err), "rebuild without secrets should remove the old copy")
@@ -351,6 +381,7 @@ func TestPrintSetupNextStepsOmitsLocalImportForRemote(t *testing.T) {
 }
 
 func TestSetupReplacesClientCommandWithFile(t *testing.T) {
+	setSetupTimezone(t, unavailableSetupTimezone)
 	assert := assert.New(t)
 	require := require.New(t)
 	home := t.TempDir()
