@@ -50,8 +50,6 @@ type CursorAdvance struct {
 	NextSequence             int64
 	ExpectedReconcileKey     string
 	NextReconcileKey         string
-	ExpectedDocumentKey      string
-	NextDocumentKey          string
 	ExpectedBackstopUpperKey string
 	CapturedBackstopUpperKey string
 	ReconciliationDone       bool
@@ -106,15 +104,13 @@ type ApplyResult struct {
 }
 
 type sequenceCursorCoordinate struct {
-	Bound       string `json:"bound"`
-	Sequence    int64  `json:"sequence"`
-	DocumentKey string `json:"document_key,omitempty"`
+	Bound    string `json:"bound"`
+	Sequence int64  `json:"sequence"`
 }
 
 type sourceKeyCursorCoordinate struct {
-	Bound       string `json:"bound"`
-	SourceKey   string `json:"source_key"`
-	DocumentKey string `json:"document_key,omitempty"`
+	Bound     string `json:"bound"`
+	SourceKey string `json:"source_key"`
 }
 
 type encodedGenerationCursor struct {
@@ -168,50 +164,38 @@ func encodePersonFactSourceCursor(cursor GenerationCursor) (personfacts.SourceCu
 	var err error
 	switch cursor.Mode {
 	case GenerationCursorOptimistic:
-		if cursor.CursorFrom < 0 || !sweepSequenceCoordinateAdvanced(cursor.CursorFrom,
-			cursor.DocumentFromKey, cursor.CursorThrough, cursor.DocumentToKey) ||
+		if cursor.CursorFrom < 0 || cursor.CursorThrough <= cursor.CursorFrom ||
 			cursor.ReconcileFromKey != "" || cursor.ReconcileToKey != "" || cursor.BackstopUpperKey != "" {
 			return personfacts.SourceCursor{}, errors.New("person sweep optimistic cursor has an invalid range")
 		}
-		start, err = json.Marshal(sequenceCursorCoordinate{Bound: "exclusive", Sequence: cursor.CursorFrom,
-			DocumentKey: cursor.DocumentFromKey}, json.Deterministic(true))
+		start, err = json.Marshal(sequenceCursorCoordinate{Bound: "exclusive", Sequence: cursor.CursorFrom}, json.Deterministic(true))
 		if err == nil {
-			end, err = json.Marshal(sequenceCursorCoordinate{Bound: "inclusive", Sequence: cursor.CursorThrough,
-				DocumentKey: cursor.DocumentToKey}, json.Deterministic(true))
+			end, err = json.Marshal(sequenceCursorCoordinate{Bound: "inclusive", Sequence: cursor.CursorThrough}, json.Deterministic(true))
 		}
 	case GenerationCursorReconciliation:
 		if cursor.CursorFrom != 0 || cursor.CursorThrough != 0 ||
-			!sweepCursorCoordinateAdvanced(cursor.ReconcileFromKey, cursor.DocumentFromKey,
-				cursor.ReconcileToKey, cursor.DocumentToKey) || cursor.BackstopUpperKey != "" {
+			cursor.ReconcileToKey <= cursor.ReconcileFromKey || cursor.BackstopUpperKey != "" {
 			return personfacts.SourceCursor{}, errors.New("person sweep source-key cursor has an invalid range")
 		}
-		start, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "exclusive", SourceKey: cursor.ReconcileFromKey,
-			DocumentKey: cursor.DocumentFromKey}, json.Deterministic(true))
+		start, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "exclusive", SourceKey: cursor.ReconcileFromKey}, json.Deterministic(true))
 		if err == nil {
-			end, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "inclusive", SourceKey: cursor.ReconcileToKey,
-				DocumentKey: cursor.DocumentToKey}, json.Deterministic(true))
+			end, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "inclusive", SourceKey: cursor.ReconcileToKey}, json.Deterministic(true))
 		}
 	case GenerationCursorBackstop:
 		if cursor.CursorFrom != 0 || cursor.CursorThrough != 0 ||
-			!sweepCursorCoordinateAdvanced(cursor.ReconcileFromKey, cursor.DocumentFromKey,
-				cursor.ReconcileToKey, cursor.DocumentToKey) || cursor.BackstopUpperKey == "" ||
+			cursor.ReconcileToKey <= cursor.ReconcileFromKey || cursor.BackstopUpperKey == "" ||
 			cursor.ReconcileToKey > cursor.BackstopUpperKey {
 			return personfacts.SourceCursor{}, errors.New("person sweep backstop cursor has an invalid bounded range")
 		}
-		start, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "exclusive", SourceKey: cursor.ReconcileFromKey,
-			DocumentKey: cursor.DocumentFromKey}, json.Deterministic(true))
+		start, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "exclusive", SourceKey: cursor.ReconcileFromKey}, json.Deterministic(true))
 		if err == nil {
-			end, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "inclusive", SourceKey: cursor.ReconcileToKey,
-				DocumentKey: cursor.DocumentToKey}, json.Deterministic(true))
+			end, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "inclusive", SourceKey: cursor.ReconcileToKey}, json.Deterministic(true))
 		}
 	default:
 		return personfacts.SourceCursor{}, fmt.Errorf("person sweep cursor has unknown mode %q", cursor.Mode)
 	}
 	if err != nil {
 		return personfacts.SourceCursor{}, fmt.Errorf("encode person sweep cursor range: %w", err)
-	}
-	if cursor.DocumentFromKey != "" || cursor.DocumentToKey != "" {
-		return personfacts.SourceCursor{}, errors.New("person sweep document continuation requires document text")
 	}
 	return personfacts.SourceCursor{Lane: lane, Start: string(start), End: string(end)}, nil
 }
@@ -246,35 +230,19 @@ func rejectOverlappingPersonFactCursors(cursors []encodedGenerationCursor) error
 				if ranges[i].CursorFrom != ranges[j].CursorFrom {
 					return ranges[i].CursorFrom < ranges[j].CursorFrom
 				}
-				if ranges[i].DocumentFromKey != ranges[j].DocumentFromKey {
-					return ranges[i].DocumentFromKey < ranges[j].DocumentFromKey
-				}
-				if ranges[i].CursorThrough != ranges[j].CursorThrough {
-					return ranges[i].CursorThrough < ranges[j].CursorThrough
-				}
-				return ranges[i].DocumentToKey < ranges[j].DocumentToKey
+				return ranges[i].CursorThrough < ranges[j].CursorThrough
 			}
 			if ranges[i].ReconcileFromKey != ranges[j].ReconcileFromKey {
 				return ranges[i].ReconcileFromKey < ranges[j].ReconcileFromKey
 			}
-			if ranges[i].DocumentFromKey != ranges[j].DocumentFromKey {
-				return ranges[i].DocumentFromKey < ranges[j].DocumentFromKey
-			}
-			if ranges[i].ReconcileToKey != ranges[j].ReconcileToKey {
-				return ranges[i].ReconcileToKey < ranges[j].ReconcileToKey
-			}
-			return ranges[i].DocumentToKey < ranges[j].DocumentToKey
+			return ranges[i].ReconcileToKey < ranges[j].ReconcileToKey
 		})
 		for i := 1; i < len(ranges); i++ {
 			if ranges[i].Mode == GenerationCursorOptimistic {
-				if ranges[i].CursorFrom < ranges[i-1].CursorThrough ||
-					(ranges[i].CursorFrom == ranges[i-1].CursorThrough &&
-						ranges[i].DocumentFromKey < ranges[i-1].DocumentToKey) {
+				if ranges[i].CursorFrom < ranges[i-1].CursorThrough {
 					return errors.New("person sweep cursor ranges overlap or duplicate")
 				}
-			} else if ranges[i].ReconcileFromKey < ranges[i-1].ReconcileToKey ||
-				(ranges[i].ReconcileFromKey == ranges[i-1].ReconcileToKey &&
-					ranges[i].DocumentFromKey < ranges[i-1].DocumentToKey) {
+			} else if ranges[i].ReconcileFromKey < ranges[i-1].ReconcileToKey {
 				return errors.New("person sweep cursor ranges overlap or duplicate")
 			}
 		}
@@ -327,26 +295,20 @@ func advanceMatchesCursor(advance CursorAdvance, cursor GenerationCursor) bool {
 	case GenerationCursorOptimistic:
 		return advance.ExpectedSequence == cursor.CursorFrom &&
 			advance.NextSequence == cursor.CursorThrough &&
-			advance.ExpectedDocumentKey == cursor.DocumentFromKey &&
-			advance.NextDocumentKey == cursor.DocumentToKey &&
 			advance.ExpectedReconcileKey == "" && advance.NextReconcileKey == "" &&
 			!advance.ReconciliationDone && !advance.BackstopComplete
 	case GenerationCursorReconciliation:
 		return advance.ExpectedSequence == advance.NextSequence &&
 			advance.ExpectedReconcileKey == cursor.ReconcileFromKey &&
 			advance.NextReconcileKey == cursor.ReconcileToKey &&
-			advance.ExpectedDocumentKey == cursor.DocumentFromKey &&
-			advance.NextDocumentKey == cursor.DocumentToKey && !advance.BackstopComplete
+			!advance.BackstopComplete
 	case GenerationCursorBackstop:
 		return advance.ExpectedSequence == advance.NextSequence &&
 			advance.ExpectedReconcileKey == cursor.ReconcileFromKey &&
 			advance.NextReconcileKey == cursor.ReconcileToKey &&
-			advance.ExpectedDocumentKey == cursor.DocumentFromKey &&
-			advance.NextDocumentKey == cursor.DocumentToKey &&
 			advance.CapturedBackstopUpperKey == cursor.BackstopUpperKey &&
 			!advance.ReconciliationDone &&
-			advance.BackstopComplete == (cursor.ReconcileToKey == cursor.BackstopUpperKey &&
-				cursor.DocumentToKey == "")
+			advance.BackstopComplete == (cursor.ReconcileToKey == cursor.BackstopUpperKey)
 	default:
 		return false
 	}
@@ -1092,19 +1054,16 @@ func cursorAdvances(envelope []GenerationCursor, cursors []Cursor, hash string) 
 		switch item.Mode {
 		case GenerationCursorOptimistic:
 			advance.ExpectedSequence, advance.NextSequence = item.CursorFrom, item.CursorThrough
-			advance.ExpectedDocumentKey, advance.NextDocumentKey = item.DocumentFromKey, item.DocumentToKey
 		case GenerationCursorReconciliation:
 			advance.ExpectedSequence, advance.NextSequence = current.OptimisticSequence, current.OptimisticSequence
 			advance.ExpectedReconcileKey, advance.NextReconcileKey = item.ReconcileFromKey, item.ReconcileToKey
-			advance.ExpectedDocumentKey, advance.NextDocumentKey = item.DocumentFromKey, item.DocumentToKey
-			advance.ReconciliationDone = item.ReconcileToKey >= current.ReconcileUpperKey && item.DocumentToKey == ""
+			advance.ReconciliationDone = item.ReconcileToKey >= current.ReconcileUpperKey
 		case GenerationCursorBackstop:
 			advance.ExpectedSequence, advance.NextSequence = current.OptimisticSequence, current.OptimisticSequence
 			advance.ExpectedReconcileKey, advance.NextReconcileKey = item.ReconcileFromKey, item.ReconcileToKey
-			advance.ExpectedDocumentKey, advance.NextDocumentKey = item.DocumentFromKey, item.DocumentToKey
 			advance.ExpectedBackstopUpperKey = current.BackstopUpperKey
 			advance.CapturedBackstopUpperKey = item.BackstopUpperKey
-			advance.BackstopComplete = item.ReconcileToKey == item.BackstopUpperKey && item.DocumentToKey == ""
+			advance.BackstopComplete = item.ReconcileToKey == item.BackstopUpperKey
 		default:
 			return nil, errors.New("person sweep generation cursor has unknown mode")
 		}

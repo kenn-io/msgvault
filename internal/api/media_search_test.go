@@ -43,10 +43,10 @@ func TestMediaSearchStatus(t *testing.T) {
 			require := require.New(t)
 			f := newMediaSearchFixture(t)
 			server := f.server(false)
-			server.documentSearchRateLimiter.Close()
-			server.documentSearchRateLimiter = NewRateLimiter(1, 1)
-			t.Cleanup(server.documentSearchRateLimiter.Close)
-			require.True(server.documentSearchRateLimiter.Allow("127.0.0.1"))
+			server.mediaSearchRateLimiter.Close()
+			server.mediaSearchRateLimiter = NewRateLimiter(1, 1)
+			t.Cleanup(server.mediaSearchRateLimiter.Close)
+			require.True(server.mediaSearchRateLimiter.Allow("127.0.0.1"))
 			gate := &recordingOperationGate{allow: false}
 			server.operationGate = gate
 			switch state {

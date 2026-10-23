@@ -52,11 +52,11 @@ func newPersonDirectoryCommand() *cobra.Command {
 }
 
 func personDirectoryQuery(cmd *cobra.Command, after, before, sort, cursor string) (*generated.ListDirectoryPeopleQuery, error) {
-	lower, err := parseDocumentSearchDate(after)
+	lower, err := parsePersonSearchDate(after)
 	if err != nil {
 		return nil, usageErr(cmd, fmt.Errorf("--last-contact-after: %w", err))
 	}
-	upper, err := parseDocumentSearchDate(before)
+	upper, err := parsePersonSearchDate(before)
 	if err != nil {
 		return nil, usageErr(cmd, fmt.Errorf("--last-contact-before: %w", err))
 	}
@@ -104,7 +104,7 @@ func personDirectoryLastContact(value *time.Time) string {
 	return value.UTC().Format(time.RFC3339)
 }
 
-func parseDocumentSearchDate(value string) (*time.Time, error) {
+func parsePersonSearchDate(value string) (*time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, nil //nolint:nilnil // An omitted optional date has no value and no error.

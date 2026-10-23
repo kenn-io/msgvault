@@ -37,8 +37,8 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 		limit = maxPersonSweepEvidenceRows
 	}
 	window := peoplesweep.PersonWindow{NextSequence: request.AfterSequence,
-		NextReconcileKey: request.ReconcileAfter, NextDocumentKey: request.DocumentAfter,
-		ReconciliationDone: request.ReconcileAfter == request.ReconcileUpper && request.DocumentAfter == ""}
+		NextReconcileKey:   request.ReconcileAfter,
+		ReconciliationDone: request.ReconcileAfter == request.ReconcileUpper}
 	if request.Mode == peoplesweep.GenerationCursorBackstop {
 		upper := request.BackstopUpper
 		if upper == "" {
@@ -60,7 +60,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 		window.NextSequence = 0
 		window.NextReconcileKey = request.ReconcileAfter
 		window.CapturedUpperKey = upper
-		window.ReconciliationDone = request.ReconcileAfter == upper && request.DocumentAfter == ""
+		window.ReconciliationDone = request.ReconcileAfter == upper
 	} else if request.BackstopUpper != "" {
 		return window, errors.New("load person sweep window: captured backstop upper requires backstop mode")
 	}

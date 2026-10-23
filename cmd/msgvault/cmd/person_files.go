@@ -124,11 +124,11 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 			if err != nil {
 				return usageErr(command, err)
 			}
-			after, err := parseDocumentSearchDate(afterValue)
+			after, err := parsePersonSearchDate(afterValue)
 			if err != nil {
 				return usageErr(command, fmt.Errorf("invalid --after: %w", err))
 			}
-			before, err := parseDocumentSearchDate(beforeValue)
+			before, err := parsePersonSearchDate(beforeValue)
 			if err != nil {
 				return usageErr(command, fmt.Errorf("invalid --before: %w", err))
 			}
