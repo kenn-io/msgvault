@@ -136,6 +136,9 @@ func (s *Store) StartPersonSweepAttempt(
 		!validPersonSweepRunMode(input.Mode) || len(input.CursorEnvelope) == 0 {
 		return errors.New("start person sweep attempt: complete valid input is required")
 	}
+	if err := validatePersonSweepSelections(input.Selections); err != nil {
+		return fmt.Errorf("start person sweep attempt: %w", err)
+	}
 	envelope, err := json.Marshal(input.CursorEnvelope, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("start person sweep attempt: encode cursor envelope: %w", err)
@@ -184,6 +187,9 @@ func (s *Store) StartPersonSweepAttempt(
 			s.dialect.TimestampParam(input.StartedAt))
 		if insertErr != nil {
 			return fmt.Errorf("insert person sweep attempt: %w", insertErr)
+		}
+		if err := s.insertPersonSweepSelectionsTx(ctx, tx, input.ID, input.Selections); err != nil {
+			return err
 		}
 		_, updateErr := tx.ExecContext(ctx, `
 			UPDATE person_sweep_runs SET attempt_count = attempt_count + 1 WHERE id = ?`, input.RunID)

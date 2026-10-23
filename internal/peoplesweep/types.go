@@ -228,6 +228,7 @@ type StartAttempt struct {
 	LeaseFence     int64
 	Mode           RunMode
 	CursorEnvelope []GenerationCursor
+	Selections     []SelectionRecord
 	EnvelopeHash   string
 	StartedAt      time.Time
 }
