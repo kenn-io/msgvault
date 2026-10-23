@@ -324,6 +324,53 @@ func TestBuildRequestUsesOnlyExactProfileTargetScope(t *testing.T) {
 	assert.Equal(t, []personfacts.TargetDescriptor{bio}, request.Targets)
 }
 
+func TestBuildRequestFiltersInferenceIneligibleTargetsFromExistingProfiles(t *testing.T) {
+	eligible := requestTarget("attribute:bio", false)
+	ineligible := requestTarget("attribute:personality", false)
+	tests := []struct {
+		name        string
+		profile     []personfacts.TargetDescriptor
+		wantTargets []personfacts.TargetDescriptor
+		wantErr     bool
+	}{
+		{
+			name:        "filters a target disabled after profile creation",
+			profile:     []personfacts.TargetDescriptor{ineligible, eligible},
+			wantTargets: []personfacts.TargetDescriptor{eligible},
+		},
+		{
+			name:    "rejects a profile with no eligible targets",
+			profile: []personfacts.TargetDescriptor{ineligible},
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			input := personenrichment.RequestInput{
+				PersonID: 1,
+				Names:    []personenrichment.IdentityCandidate{{StableID: 1, Value: "Synthetic Person"}},
+				Catalog: personfacts.Catalog{
+					Targets:             []personfacts.TargetDescriptor{eligible, ineligible},
+					InferenceIneligible: []string{ineligible.Key},
+				},
+				Trigger: personenrichment.Trigger{Kind: personenrichment.TriggerTracked, Generation: "tracked:1"},
+			}
+			request, _, err := personenrichment.BuildRequest(input, personenrichment.ProviderProfile{
+				Fingerprint: "profile", AllowedIdentifiers: []personenrichment.IdentifierClass{personenrichment.IdentifierName},
+				Targets: test.profile,
+			})
+			if test.wantErr {
+				requirements.ErrorContains(err, "no inference-eligible target")
+				return
+			}
+			requirements.NoError(err)
+			checks.Equal(test.wantTargets, request.Targets)
+		})
+	}
+}
+
 func TestPayloadHashAndRequestHashAreCanonicalAndTriggerScoped(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

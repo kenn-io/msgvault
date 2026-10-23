@@ -216,6 +216,10 @@ func requestTargets(catalog personfacts.Catalog, profile ProviderProfile) ([]per
 	if len(profile.Targets) == 0 {
 		return nil, errors.New("provider profile has no target descriptors")
 	}
+	inferenceIneligible := make(map[string]struct{}, len(catalog.InferenceIneligible))
+	for _, targetKey := range catalog.InferenceIneligible {
+		inferenceIneligible[targetKey] = struct{}{}
+	}
 	targets := make([]personfacts.TargetDescriptor, 0, len(profile.Targets))
 	seen := make(map[string]struct{}, len(profile.Targets))
 	for _, requested := range profile.Targets {
@@ -232,7 +236,15 @@ func requestTargets(catalog personfacts.Catalog, profile ProviderProfile) ([]per
 		if !ok || !reflect.DeepEqual(requested, catalogTarget) {
 			return nil, fmt.Errorf("target %q descriptor does not match the current catalog", requested.Key)
 		}
+		if requested.Kind == personfacts.TargetAttribute {
+			if _, excluded := inferenceIneligible[requested.Key]; excluded {
+				continue
+			}
+		}
 		targets = append(targets, requested)
+	}
+	if len(targets) == 0 {
+		return nil, errors.New("provider profile has no inference-eligible target descriptors")
 	}
 	sortTargets(targets)
 	return targets, nil
