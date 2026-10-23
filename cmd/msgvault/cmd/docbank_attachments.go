@@ -64,6 +64,11 @@ func newDocbankCmd(open func(context.Context) (*daemonclient.Client, func(), err
 					return fmt.Errorf("write status: %w", err)
 				}
 			}
+			if p.Outcomes["consent"] > 0 || p.Outcomes["stale_authority"] > 0 {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "After restoring consent or authority in Docbank, run msgvault docbank attachments backfill to retry processing."); err != nil {
+					return fmt.Errorf("write status: %w", err)
+				}
+			}
 		}
 		return nil
 	}}
