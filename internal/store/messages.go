@@ -6861,7 +6861,7 @@ func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, item *A
 		return false, fmt.Errorf("lock derived email write: %w", err)
 	}
 	q := boundQuerier{ctx: ctx, q: tx}
-	row, err := s.loadDerivedEmailText(q, item.MessageID)
+	row, err := s.loadArchivedEmailTextForWrite(q, item)
 	if err != nil {
 		return false, fmt.Errorf("load derived email envelope: %w", err)
 	}
@@ -6871,6 +6871,22 @@ func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, item *A
 	}
 	upsert := func(q querier, doc FTSDoc) error { _, err := s.upsertFTSOrUnsearchable(q, doc); return err }
 	return true, s.updateMessageDerivedText(q, item.MessageID, bodyText, bodyHTML, snippet, row.fts, upsert)
+}
+
+// ErrArchivedEmailSnippetChanged requires a fresh scan before retrying a repair.
+var ErrArchivedEmailSnippetChanged = errors.New("archived email snippet changed")
+
+// loadArchivedEmailTextForWrite preserves provider snippets changed since the
+// scan. The caller holds the message lock through this check and the writes.
+func (s *Store) loadArchivedEmailTextForWrite(q querier, item *ArchivedRawMessage) (derivedEmailText, error) {
+	row, err := s.loadDerivedEmailText(q, item.MessageID)
+	if err != nil {
+		return row, err
+	}
+	if row.snippet != item.stored.snippet {
+		return row, fmt.Errorf("%w after repair scan: message %d", ErrArchivedEmailSnippetChanged, item.MessageID)
+	}
+	return row, nil
 }
 
 // lockArchivedEmailTextContext orders writes with sync and rejects stale MIME

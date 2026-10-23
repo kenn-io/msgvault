@@ -26,6 +26,28 @@ func archivedEmailFixture(t *testing.T) (*storetest.Fixture, int64) {
 func TestUpdateArchivedEmailText(t *testing.T) {
 	body := sql.NullString{String: "Heizkörper", Valid: true}
 	html := sql.NullString{String: "<p>Heizkörper</p>", Valid: true}
+	t.Run("updated provider snippet preserves the sync snapshot", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f, id := archivedEmailFixture(t)
+		stale := sql.NullString{String: "stale", Valid: true}
+		require.NoError(f.Store.UpsertMessageBody(id, stale, html))
+		item, err := f.Store.ScanArchivedEmailContext(t.Context(), f.Source.ID, id-1, id)
+		require.NoError(err)
+		providerSnippet := sql.NullString{String: "Provider preview", Valid: true}
+		synced, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message: &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "archived", MessageType: "email", Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: providerSnippet},
+			BodyText: stale, BodyHTML: html,
+		})
+		require.NoError(err)
+		require.Equal(id, synced)
+		changed, repairErr := f.Store.UpdateArchivedEmailTextContext(t.Context(), item, body, html, body)
+		var snippet string
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT snippet FROM messages WHERE id = ?`), id).Scan(&snippet))
+		assert.Equal(providerSnippet.String, snippet)
+		assert.False(changed)
+		require.ErrorIs(repairErr, store.ErrArchivedEmailSnippetChanged, "a changed snippet must make the stale repair retryable")
+	})
 	t.Run("missing scan fingerprint rejects the repair", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
