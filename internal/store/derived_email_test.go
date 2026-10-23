@@ -70,7 +70,7 @@ func TestUpdateArchivedEmailText(t *testing.T) {
 		current := sql.NullString{String: "Replacement", Valid: true}
 		currentHTML := sql.NullString{String: "<p>Replacement</p>", Valid: true}
 		synced, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-			Message: &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "archived", MessageType: "email", Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: current},
+			Message: &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "archived", MessageType: "email", Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: body},
 			BodyText: current, BodyHTML: currentHTML,
 			RawMIME: []byte("Content-Type: text/html; charset=UTF-8\r\n\r\n<p>Replacement</p>"),
 			FTS:     &store.FTSDoc{Subject: "Stored subject", Body: current.String},
@@ -84,7 +84,7 @@ func TestUpdateArchivedEmailText(t *testing.T) {
 		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT b.body_text, b.body_html, m.snippet FROM messages m JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`), id).Scan(&gotBody, &gotHTML, &gotSnippet))
 		assert.Equal(current.String, gotBody)
 		assert.Equal(currentHTML.String, gotHTML)
-		assert.Equal(current.String, gotSnippet)
+		assert.Equal(body.String, gotSnippet)
 		_, found, err := f.Store.SearchMessages("Replacement", 0, 10)
 		require.NoError(err)
 		assert.Equal(int64(1), found)
