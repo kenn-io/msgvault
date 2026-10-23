@@ -25,6 +25,8 @@ const (
 	wireStubEnv      = "MSGVAULT_TELEMETRY_WIRE_STUB"
 	wireDirEnv       = "MSGVAULT_TELEMETRY_WIRE_DIR"
 	wireConfigOffEnv = "MSGVAULT_TELEMETRY_WIRE_CONFIG_OFF"
+	// testAPIKey stands in for the key release builds set at link time.
+	testAPIKey = "phc_test"
 )
 
 // enableTelemetryEnv opts this test in and clears ambient opt-outs. An opted-out
@@ -61,7 +63,7 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 	}
 	opts := Options{DataDir: os.Getenv(wireDirEnv), Version: "v1.2.3", Commit: "test-commit", ConfigEnabled: os.Getenv(wireConfigOffEnv) == ""}
 	require := require.New(t)
-	reporter := newReporterOrDisabled(opts, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	reporter := newReporterOrDisabled(opts, testAPIKey, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
 	if os.Getenv("MSGVAULT_OUTCOMES_TEST") != "" {
 		exerciseOutcomes(t, CaptureHandler(reporter, opts.DataDir), reporter)

@@ -57,8 +57,6 @@ const (
 	propertySurface = "surface"
 	application     = "msgvault"
 	envPrefix       = "MSGVAULT"
-	// PostHog project API keys are public ingest identifiers, not credentials.
-	postHogAPIKey = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf" // #nosec G101
 )
 
 // Core actions require every listed property, using the same values as the allowlist.
@@ -84,12 +82,13 @@ type Options struct {
 // how to turn it off. When it can't build one it logs why and returns kit's
 // disabled reporter so startup continues.
 func NewReporterOrDisabled(opts Options, logger *slog.Logger) *posthog.Reporter {
-	return newReporterOrDisabled(opts, "", logger)
+	return newReporterOrDisabled(opts, "", "", logger)
 }
 
-// newReporterOrDisabled takes the endpoint so the helper-process test can point the enabled path at a stub; production passes "".
-func newReporterOrDisabled(opts Options, endpoint string, logger *slog.Logger) *posthog.Reporter {
-	reporter, err := buildReporter(opts, endpoint, logger)
+// newReporterOrDisabled takes the API key and endpoint so the helper-process test can point the
+// enabled path at a stub. Production passes "", so kit uses the key release builds set at link time.
+func newReporterOrDisabled(opts Options, apiKey, endpoint string, logger *slog.Logger) *posthog.Reporter {
+	reporter, err := buildReporter(opts, apiKey, endpoint, logger)
 	if err != nil {
 		logger.Warn("telemetry disabled", "error", err)
 		return posthog.DisabledReporter()
@@ -110,7 +109,7 @@ func Enabled(configEnabled bool) bool {
 	return posthog.EnabledFromEnv(envPrefix) && (strings.TrimSpace(os.Getenv(EnabledEnv)) != "" || configEnabled)
 }
 
-func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {
+func buildReporter(opts Options, apiKey, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {
 	allowed := []posthog.Option{
 		posthog.WithAllowedEvent(posthog.EventDaemonActive),
 		posthog.WithAllowedEvent(EventAppOpened, posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web"))),
@@ -137,7 +136,7 @@ func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog
 		posthog.DisableProcess()
 	}
 	options := posthog.Options{
-		APIKey: postHogAPIKey, Endpoint: endpoint, Application: application, EnvPrefix: envPrefix,
+		APIKey: apiKey, Endpoint: endpoint, Application: application, EnvPrefix: envPrefix,
 		Version: opts.Version, Commit: opts.Commit, Source: "daemon", Logger: logger,
 	}
 	if posthog.EnabledFromEnv(envPrefix) {
