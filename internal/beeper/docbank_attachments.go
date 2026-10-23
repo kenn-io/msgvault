@@ -595,14 +595,21 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 	}
 }
 
-// askProcessing polls a saved job, or plans and starts one.
+// askProcessing polls a saved job, or plans and starts one when there is none
+// or Docbank lost it, as restoring an older backup does.
 func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (docbankmedia.JobStatus, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
 	defer cancel()
 	if d.JobID != "" {
-		job, err := w.client.JobStatus(ctx, d.JobID)
-		return job, d.JobID, err
+		if job, err := w.client.JobStatus(ctx, d.JobID); !docbankmedia.IsNotFound(err) {
+			return job, d.JobID, err
+		}
 	}
+	return w.startProcessing(ctx, d)
+}
+
+// startProcessing plans the file's processing and starts a job.
+func (w *AttachmentMirror) startProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (docbankmedia.JobStatus, string, error) {
 	selector := docbankmedia.ProcessingSelector{NodeID: d.NodeID, ContentVersionID: d.VersionID, Profile: w.options.DocumentProfile}
 	plan, err := w.client.PlanProcessing(ctx, selector)
 	if err != nil || plan.RenditionIneligibleReason != "" {
