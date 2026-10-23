@@ -377,6 +377,10 @@ func (s *Store) writeObservationCitationsTx(ctx context.Context, tx *loggedTx, p
 			return fmt.Errorf("write observation citation: %w", err)
 		}
 	}
+	return s.refreshObservationMentionsTx(ctx, tx, id)
+}
+
+func (s *Store) refreshObservationMentionsTx(ctx context.Context, tx *loggedTx, id int64) error {
 	_, err := tx.ExecContext(ctx, `UPDATE person_observations SET
   mention_count=(SELECT COUNT(*) FROM (SELECT message_id FROM person_observation_evidence WHERE observation_id=? AND exclusion_reason='' GROUP BY message_id) mentions),
   first_seen_at=(SELECT MIN(event_time) FROM person_observation_evidence WHERE observation_id=? AND exclusion_reason=''),
@@ -528,9 +532,4 @@ func (s *Store) ensureObservationSuppressionLiftEventTx(ctx context.Context, tx 
 		return nil
 	}
 	return s.appendObservationEventTx(ctx, tx, personID, observationID, "suppression-lifted", "system", detail, nil)
-}
-
-// Support propagation replaces this hook in the next store layer.
-func (s *Store) notifyObservationSupportChangedTx(_ context.Context, _ *loggedTx, _ int64, _ []int64, _ string) error {
-	return nil
 }
