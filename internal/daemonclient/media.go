@@ -21,7 +21,7 @@ func (c *Client) SearchMedia(ctx context.Context, request MediaSearchOptions) (g
 	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchMediaResp, error) {
 		return client.SearchMediaWithResponse(ctx, &generated.SearchMediaRequestOptions{Query: &generated.SearchMediaQuery{
 			Q: request.Query, Mode: optionalString(request.Mode), PersonID: optionalPositiveInt64Value(request.PersonID),
-			Direction: documentDirectionStrings(request.Directions), Limit: optionalPositiveInt64(request.Limit),
+			Direction: mediaDirectionStrings(request.Directions), Limit: optionalPositiveInt64(request.Limit),
 		}})
 	})
 	if err != nil {
@@ -40,7 +40,7 @@ func optionalPositiveInt64Value(value int64) *int64 {
 	return &value
 }
 
-func documentDirectionStrings(directions []personscope.Direction) []string {
+func mediaDirectionStrings(directions []personscope.Direction) []string {
 	if len(directions) == 0 {
 		return nil
 	}

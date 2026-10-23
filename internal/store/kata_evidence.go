@@ -31,7 +31,7 @@ func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector
 	result.Reference = kataevidence.Reference{Version: kataevidence.Version, Kind: selector.Kind, ArchiveUID: uid, MessageID: selector.MessageID}
 	ref := &result.Reference
 	// A message cites its stored body text or the raw MIME fallback.
-	if err := s.kataMessageSource(ctx, ref, &result.Display, false); err != nil {
+	if err := s.kataMessageSource(ctx, ref, &result.Display); err != nil {
 		return result, err
 	}
 	switch selector.Kind {
@@ -68,7 +68,7 @@ func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID 
 	}
 	ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "message", ArchiveUID: uid, MessageID: messageID}
 	var display kataevidence.Display
-	if err := s.kataMessageSource(ctx, &ref, &display, false); err != nil {
+	if err := s.kataMessageSource(ctx, &ref, &display); err != nil {
 		return nil, err
 	}
 	if attachmentID == 0 {
@@ -146,14 +146,14 @@ func (s *Store) KataDocbankBinding(ctx context.Context, destination string, atta
 }
 
 // kataMessageSource fills ref's source tuple and display from its message.
-func (s *Store) kataMessageSource(ctx context.Context, ref *kataevidence.Reference, display *kataevidence.Display, hideDeletedFromSource bool) error {
+func (s *Store) kataMessageSource(ctx context.Context, ref *kataevidence.Reference, display *kataevidence.Display) error {
 	var occurred nullableTimestamp
 	var sourceMessageID sql.NullString
 	err := s.db.QueryRowContext(ctx, s.Rebind(`
 		SELECT src.source_type, src.identifier, m.source_message_id,
 		       COALESCE(m.subject,''), COALESCE(m.sent_at,m.received_at,m.internal_date)
 		FROM messages m JOIN sources src ON src.id=m.source_id
-		WHERE m.id=? AND `+LiveMessagesWhere("m", hideDeletedFromSource)), ref.MessageID).Scan(
+		WHERE m.id=? AND `+LiveMessagesWhere("m", false)), ref.MessageID).Scan(
 		&ref.SourceType, &ref.SourceIdentifier, &sourceMessageID, &display.ContainingTitle, &occurred)
 	if errors.Is(err, sql.ErrNoRows) {
 		return kataevidence.ErrUnavailable
@@ -188,9 +188,6 @@ func (s *Store) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Ref
 		return empty, kataevidence.ErrUnavailable
 	}
 	selector := kataevidence.Selector{Kind: ref.Kind, MessageID: ref.MessageID, AttachmentID: ref.AttachmentID}
-	if ref.DocumentChunk != nil {
-		selector.ExtractionID, selector.ChunkKey = ref.DocumentChunk.ExtractionID, ref.DocumentChunk.ChunkKey
-	}
 	record, err := s.loadKataEvidenceSource(ctx, uid, selector)
 	if err != nil {
 		return empty, err

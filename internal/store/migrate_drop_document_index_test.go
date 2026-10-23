@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
+func TestDropDocumentIndexUpgrade(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := storetest.New(t)
@@ -63,7 +63,7 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 	} else {
 		exec(`CREATE TRIGGER trg_person_sweep_documents_message_update AFTER UPDATE ON messages BEGIN SELECT 1; END`)
 	}
-	exec(`DELETE FROM applied_migrations WHERE name IN ('drop_document_message_triggers_v1','person_sweep_change_triggers_v6')`)
+	exec(`DELETE FROM applied_migrations WHERE name IN ('drop_document_index_v1','person_sweep_change_triggers_v6')`)
 	for _, key := range []string{"document-index/v1", "visual-index/v1"} {
 		consumer, _, err := f.Store.RegisterAttachmentChangeConsumer(ctx, key)
 		requirements.NoError(err)

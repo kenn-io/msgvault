@@ -1878,7 +1878,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	// Replace callers before dropping the document helper they used. Each
 	// committed migration boundary must leave message writes usable.
-	if err := s.runOnceMigration(ctx, "drop_document_message_triggers_v1", 1, false, s.dropDocumentMessageTriggers); err != nil {
+	if err := s.runOnceMigration(ctx, "drop_document_index_v1", 1, false, s.dropDocumentIndex); err != nil {
 		return err
 	}
 	if err := s.runOnceMigration(

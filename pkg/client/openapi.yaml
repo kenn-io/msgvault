@@ -13922,14 +13922,10 @@ components:
         attachment_id:
           format: int64
           type: integer
-        chunk_key:
-          type: string
         end_rune:
           format: int64
           nullable: true
           type: integer
-        extraction_id:
-          type: string
         kind:
           enum:
             - message

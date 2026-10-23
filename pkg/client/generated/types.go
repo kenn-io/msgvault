@@ -14151,9 +14151,7 @@ func (s SecretSettingUpdate) Validate() error {
 
 type Selector struct {
 	AttachmentID *int64       `json:"attachment_id,omitempty"`
-	ChunkKey     *string      `json:"chunk_key,omitzero"`
 	EndRune      *int64       `json:"end_rune,omitempty"`
-	ExtractionID *string      `json:"extraction_id,omitzero"`
 	Kind         SelectorKind `json:"kind" validate:"required"`
 	MaxChars     *int64       `json:"max_chars,omitempty"`
 	MessageID    int64        `json:"message_id"`

@@ -122,7 +122,7 @@ func TestReferencesLongerThanMaxCharsAreRejected(t *testing.T) {
 	svc := kataevidence.New(storetest.New(t).Store)
 	for _, selectors := range [][]kataevidence.Selector{
 		nil,
-		{{Kind: "document_chunk", MessageID: 42, AttachmentID: 7, ExtractionID: "extraction", ChunkKey: "chunk", MaxChars: new(12)}},
+		{{Kind: "document_chunk", MessageID: 42, AttachmentID: 7, MaxChars: new(12)}},
 		make([]kataevidence.Selector, kataevidence.MaxReferences+1),
 		{{Kind: "message", MessageID: 1, MaxChars: new(kataevidence.MaxChars + 1)}},
 		{{Kind: "message", MessageID: 1, StartRune: new(5), EndRune: new(kataevidence.MaxChars + 6)}},
