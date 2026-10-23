@@ -38,8 +38,8 @@ below explain each provider’s consent and build workflow.
 The provider receives complete original bytes for each directly authorized format.
 Msgvault keeps the containing-message links, normalized text, text chunks,
 indexes, consent records, and backups locally. Raw provider JSON remains
-transient. Successful Docling PDF ranges retain bounded Markdown and canonical
-evidence in local checkpoints, including after a later range fails. Publication,
+transient. Successful Docling PDF ranges retain canonical evidence and Markdown
+needed for fallback in local checkpoints, including after a later range fails. Publication,
 source or derived-data purge, or seven-day cleanup after superseding work removes
 these checkpoints.
 
@@ -242,7 +242,7 @@ The existing whole-document page cap still applies. A 600-page PDF needs
 to lower peak memory; memory scaling with page count is an inference, not a
 measured guarantee.
 
-Successful ranges save bounded Markdown and canonical evidence in the local
+Successful ranges save canonical evidence and Markdown needed for fallback in the local
 archive database. These checkpoints survive failures and daemon restarts.
 The latest failed attempt keeps them while its source remains live. Publication,
 source or derived-data purge removes them; superseded attempts become eligible

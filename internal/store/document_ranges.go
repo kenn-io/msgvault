@@ -21,6 +21,10 @@ type DocumentExtractionRange struct {
 	CharCount        int
 }
 
+var ErrDocumentRangeBytes = errors.New("document range checkpoints exceed max_response_bytes")
+
+// LoadDocumentExtractionRanges bounds stored bytes; the worker validates
+// canonical evidence and its checksum before use.
 func (s *Store) LoadDocumentExtractionRanges(ctx context.Context, claim DocumentExtractionClaim, maxBytes int64) ([]DocumentExtractionRange, error) {
 	if maxBytes <= 0 {
 		return nil, errors.New("invalid document range byte bound")
@@ -39,11 +43,7 @@ func (s *Store) LoadDocumentExtractionRanges(ctx context.Context, claim Document
 		}
 		size += int64(len(r.Evidence) + len(r.Markdown))
 		if size > maxBytes {
-			return nil, errors.New("document range checkpoints exceed response byte bound")
-		}
-		digest := sha256.Sum256(r.Evidence)
-		if hex.EncodeToString(digest[:]) != r.EvidenceChecksum {
-			return nil, errors.New("document range evidence checksum mismatch")
+			return nil, ErrDocumentRangeBytes
 		}
 		ranges = append(ranges, r)
 	}
@@ -75,7 +75,7 @@ func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentE
 		}
 		payloadBytes := int64(len(r.Evidence) + len(r.Markdown))
 		if size+payloadBytes > maxBytes {
-			return errors.New("document range checkpoints exceed response byte bound")
+			return ErrDocumentRangeBytes
 		}
 		_, err = q.Exec(`INSERT INTO document_extraction_ranges (extraction_id,first_page,last_page,total_pages,evidence,evidence_checksum,markdown,char_count,payload_bytes) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (extraction_id,first_page) DO NOTHING`, claim.ExtractionID, r.FirstPage, r.LastPage, r.TotalPages, string(r.Evidence), r.EvidenceChecksum, r.Markdown, r.CharCount, payloadBytes)
 		return err

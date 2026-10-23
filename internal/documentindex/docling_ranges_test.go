@@ -131,7 +131,7 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 }
 
 func TestDoclingRangesResumeAfterReopen(t *testing.T) {
-	for _, failure := range []string{"timeout", "partial"} {
+	for _, failure := range []string{"timeout", "partial", "checkpoint limit", "corrupt checkpoint", "corrupt checksum"} {
 		t.Run(failure, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -166,7 +166,7 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 					}
 					selections = append(selections, strings.Join(selected, ","))
 					status := "success"
-					if failMiddle && first == 51 && failure == "timeout" {
+					if failMiddle && first == 51 && (failure == "timeout" || strings.HasPrefix(failure, "corrupt")) {
 						status = "pending"
 					}
 					assertions.NoError(json.NewEncoder(w).Encode(map[string]any{"task_id": "resume-job", "task_type": "convert", "task_status": status}))
@@ -205,6 +205,9 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			c.MaxPollAttempts = 1
 			c.PollInterval = time.Millisecond
 			c.MaxPagesPerDocument = 600
+			if failure == "checkpoint limit" {
+				c.MaxResponseBytes = 64 << 10
+			}
 			descriptor, err := c.DoclingDescriptor()
 			requirements.NoError(err)
 			input, err := c.doclingInputPolicy()
@@ -228,10 +231,19 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			config := DoclingWorkerConfig{Documents: c, ProfileID: profile.ID, LeaseOwner: "before-restart", LeaseDuration: time.Minute, RetryDelay: time.Minute}
 			worker, err := NewDoclingWorker(f.Store, &workerOpener{content: content}, provider, config)
 			requirements.NoError(err)
-			_, err = worker.ProcessCandidate(t.Context(), candidate)
+			failed, err := worker.ProcessCandidate(t.Context(), candidate)
 			requirements.Error(err)
 			var saved, heads int
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&saved))
+			if failure == "checkpoint limit" {
+				assertions.Positive(saved, "each range fits; the aggregate exceeds the cap")
+				assertions.Equal("response_too_large", failed.FailureReasonCode)
+				assertions.Equal("Docling range checkpoints exceed max_response_bytes (65536 bytes)", failed.FailureDetail)
+				var detail string
+				requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT failure_detail FROM document_extractions WHERE profile_id = ? AND canonical_blob_hash = ?"), profile.ID, hash).Scan(&detail))
+				assertions.Equal(failed.FailureDetail, detail)
+				return
+			}
 			assertions.Equal(1, saved)
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_heads").Scan(&heads))
 			assertions.Zero(heads)
@@ -255,6 +267,18 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			config.LeaseOwner = "after-restart"
 			worker, err = NewDoclingWorker(f.Store, &workerOpener{content: content}, provider, config)
 			requirements.NoError(err)
+			if strings.HasPrefix(failure, "corrupt") {
+				if failure == "corrupt checksum" {
+					_, err = f.Store.DB().Exec("UPDATE document_extraction_ranges SET evidence_checksum = 'invalid'")
+				} else {
+					_, err = f.Store.DB().Exec("UPDATE document_extraction_ranges SET evidence = evidence || ' '")
+				}
+				requirements.NoError(err)
+				_, err = worker.ProcessCandidate(t.Context(), candidate)
+				requirements.ErrorContains(err, "invalid canonical document range evidence")
+				assertions.Equal([]string{"1,50", "51,100"}, selections)
+				return
+			}
 			result, err := worker.ProcessCandidate(t.Context(), candidate)
 			requirements.NoError(err)
 			assertions.Equal(600, result.Units)
@@ -383,23 +407,39 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 				}
 				if test.cap {
 					assertions.Empty(selections)
+					assertions.Equal("invalid_local_source", result.FailureReasonCode)
+					assertions.Equal("Docling PDF has 51 pages; max_pages_per_document is 50", result.FailureDetail)
+					requirements.NotNil(catalog.failure)
+					assertions.Equal(result.FailureDetail, catalog.failure.Detail)
 				}
 				return
 			}
 			requirements.NoError(err)
 			requirements.NotNil(catalog.publication)
 			assertions.Equal([]string{"1,50", "51,51"}, selections)
+			requirements.Len(catalog.ranges, 2)
+			assertions.Empty(catalog.ranges[0].Markdown)
+			if test.blankFirst {
+				assertions.Zero(catalog.ranges[0].CharCount)
+			} else {
+				assertions.Equal(2641, catalog.ranges[0].CharCount)
+			}
+			if test.degrade {
+				assertions.Equal("range 51..51 Markdown sentinel", catalog.ranges[1].Markdown)
+				assertions.Equal(83, catalog.ranges[1].CharCount)
+			} else {
+				assertions.Empty(catalog.ranges[1].Markdown)
+				assertions.Equal(53, catalog.ranges[1].CharCount)
+			}
 			if test.degrade {
 				assertions.Equal("document", catalog.publication.UnitKind)
 				requirements.Len(catalog.publication.Units, 1)
 				if test.blankFirst {
 					assertions.Equal("range 51..51 Markdown sentinel", catalog.publication.Units[0].Text)
-				} else if test.structuredFirst {
+				} else {
 					assertions.Contains(catalog.publication.Units[0].Text, "page 1 sentinel")
 					assertions.Contains(catalog.publication.Units[0].Text, "page 50 sentinel")
 					assertions.Contains(catalog.publication.Units[0].Text, "range 51..51 Markdown sentinel")
-				} else {
-					assertions.Equal("range 1..50 Markdown sentinel\nrange 51..51 Markdown sentinel", catalog.publication.Units[0].Text)
 				}
 			}
 			if test.truncated {

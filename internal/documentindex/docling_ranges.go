@@ -78,16 +78,19 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 				return document.SourceDocument{}, fmt.Errorf("encode range evidence: %w", err)
 			}
 			checkpoint = store.DocumentExtractionRange{FirstPage: first, LastPage: last, TotalPages: pages, Evidence: encoded, EvidenceChecksum: checksum, Markdown: string(rendered.ProviderMarkdown)}
-			checkpoint.CharCount = utf8.RuneCountInString(checkpoint.Markdown)
-			for _, unit := range evidence.Units {
-				checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
-			}
 			// Validate before saving so an incomplete selection can be retried.
 			units, fallback, err = doclingEvidenceRangeUnits(evidence, checkpoint)
 			if err != nil {
 				return document.SourceDocument{}, err
 			} else if fallback && strings.TrimSpace(checkpoint.Markdown) == "" {
 				return document.SourceDocument{}, errors.New("docling range has no bounded Markdown fallback")
+			}
+			if !fallback {
+				checkpoint.Markdown = ""
+			}
+			checkpoint.CharCount = utf8.RuneCountInString(checkpoint.Markdown)
+			for _, unit := range evidence.Units {
+				checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
 			}
 			if err := w.catalog.SaveDocumentExtractionRange(ctx, claim, checkpoint, w.config.Documents.MaxResponseBytes); err != nil {
 				return document.SourceDocument{}, err

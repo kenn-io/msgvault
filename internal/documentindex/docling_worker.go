@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/ocr"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -235,6 +236,9 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		if renewErr := readRenewalError(renewalErr); renewErr != nil {
 			cause = errors.Join(cause, renewErr)
 		}
+		if errors.Is(cause, store.ErrDocumentRangeBytes) {
+			cause = fmt.Errorf("%w: %w", errDocumentPreparation, ocr.NewPreparationError(fmt.Sprintf("Docling range checkpoints exceed max_response_bytes (%d bytes)", w.config.Documents.MaxResponseBytes), cause))
+		}
 		terminal, reason := classifyDoclingFailure(cause)
 		failure := store.DocumentExtractionFailure{Claim: claim, ReasonCode: reason, Detail: documentFailureDetail(cause), Terminal: terminal,
 			RequestCount: accounting.Requests, RetryCount: accounting.Retries, ProviderLatencyMS: requestLatencyMillis(accounting.Latency)}
@@ -257,7 +261,7 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, inspectErr))
 		}
 		if pages > int64(w.config.Documents.MaxPagesPerDocument) {
-			return result, fail(errors.New("docling PDF exceeds the configured page bound"))
+			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, ocr.NewPreparationError(fmt.Sprintf("Docling PDF has %d pages; max_pages_per_document is %d", pages, w.config.Documents.MaxPagesPerDocument), nil)))
 		}
 		if pages > doclingPDFRangePages {
 			ranged = true
@@ -466,6 +470,9 @@ func doclingJobOutlastedLimits(err error) bool {
 }
 
 func classifyDoclingFailure(err error) (bool, string) {
+	if errors.Is(err, store.ErrDocumentRangeBytes) {
+		return true, "response_too_large"
+	}
 	if errors.Is(err, errDoclingJobTimeout) {
 		return true, "provider_timeout"
 	}
