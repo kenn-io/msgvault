@@ -816,6 +816,11 @@ type GetMessageTagsQuery struct {
 	Mailbox *string `json:"mailbox,omitempty"`
 }
 
+type GetPersonObservationQuery struct {
+	// IncludeSensitive Include sensitive statements
+	IncludeSensitive *bool `json:"include_sensitive,omitempty"`
+}
+
 type ListOperationRunsQuery struct {
 	// Kind Exact operation kind
 	Kind *ListOperationRunsQueryKind `json:"kind,omitempty"`
@@ -1171,6 +1176,29 @@ func (g GetPersonNetworkQuery) Validate() error {
 type AppendPersonNoteQuery struct {
 	// DryRun Validate and preview without writing
 	DryRun *bool `json:"dry_run,omitempty"`
+}
+
+type ListPersonObservationsQuery struct {
+	// Level Filter observations by level
+	Level *string `json:"level,omitempty"`
+
+	// Status Filter observations by status
+	Status *string `json:"status,omitempty"`
+
+	// Kind Filter observations by kind
+	Kind *string `json:"kind,omitempty"`
+
+	// AsOf Filter observations by as_of
+	AsOf *string `json:"as_of,omitempty"`
+
+	// IncludeSensitive Include sensitive statements
+	IncludeSensitive *bool `json:"include_sensitive,omitempty"`
+
+	// Limit Maximum rows, default 100, maximum 500
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based offset
+	Offset *int64 `json:"offset,omitempty"`
 }
 
 type ListPersonRelationshipsQuery struct {

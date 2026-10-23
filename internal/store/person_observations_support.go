@@ -325,7 +325,11 @@ func (s *Store) refreshOneObservationTx(ctx context.Context, tx *loggedTx, perso
 		}
 		switch o.Level {
 		case personobs.LevelDeductive:
-			valid = support > 0 && support == supported
+			var missing bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_observation_events e WHERE e.observation_id=? AND e.event='premise-changed' AND e.detail='support-premise-forgotten' AND NOT EXISTS(SELECT 1 FROM person_observations p WHERE p.id=e.related_observation_id))`, id).Scan(&missing); err != nil {
+				return err
+			}
+			valid = support > 0 && support == supported && !missing
 		case personobs.LevelInductive:
 			valid = supported >= 2
 		case personobs.LevelContradiction:

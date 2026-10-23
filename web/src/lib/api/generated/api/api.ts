@@ -4,6 +4,8 @@
 import type {
   AccountListResponse,
   AddAccountRequest,
+  AddOwnerObservationPathParameters,
+  AddOwnerObservationRequest,
   AgentTokenIssueRequest,
   AgentTokenIssueResponse,
   AgentTokenListResponse,
@@ -63,6 +65,7 @@ import type {
   Catalog,
   ChangesResponse,
   CheckSettingsPeopleInferenceProviderPathParameters,
+  ClearObservationSuppressionPathParameters,
   ClearOrganizationAttributeParams,
   ClearOrganizationAttributePathParameters,
   ClearPersonAttributeParams,
@@ -98,6 +101,8 @@ import type {
   DecideIdentityMatchReviewedRequest,
   DecidePersonMergeCandidatePathParameters,
   DecidePersonMergeCandidateRequest,
+  DecidePersonObservationPathParameters,
+  DecidePersonObservationRequest,
   DeepSearchParams,
   DeepSearchResponse,
   DeleteAttributeDefinitionPathParameters,
@@ -188,6 +193,8 @@ import type {
   GetPersonMessagingRoutesParams,
   GetPersonNetworkParams,
   GetPersonNetworkPathParameters,
+  GetPersonObservationParams,
+  GetPersonObservationPathParameters,
   GetPersonProfileHistoryPathParameters,
   GetPersonProfileMediaContentPathParameters,
   GetPersonProfilePathParameters,
@@ -237,6 +244,7 @@ import type {
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
+  ListObservationSuppressionsPathParameters,
   ListOperationRunsParams,
   ListOrganizationAttributesParams,
   ListOrganizationAttributesPathParameters,
@@ -267,6 +275,8 @@ import type {
   ListPersonMatchJudgmentsParams,
   ListPersonMergesParams,
   ListPersonMergesPathParameters,
+  ListPersonObservationsParams,
+  ListPersonObservationsPathParameters,
   ListPersonRelationshipReviewsParams,
   ListPersonRelationshipsParams,
   ListPersonRelationshipsPathParameters,
@@ -292,6 +302,7 @@ import type {
   MessageTagResult,
   MuesliRemoteRequest,
   MuesliRemoteResult,
+  ObservationSuppressionsResponse,
   OperationRunDetail,
   OperationRunsResponse,
   OperationStatusResponse,
@@ -366,6 +377,9 @@ import type {
   PersonMergesResponse,
   PersonMessagingRoutesPage,
   PersonNetwork,
+  PersonObservation,
+  PersonObservationDetail,
+  PersonObservationsResponse,
   PersonProfileHistory,
   PersonProfilePatchRequest,
   PersonRelationship,
@@ -2462,6 +2476,41 @@ export const getVisualAttachmentStatus = (
   );
 };
 /**
+ * @summary Get an observation with support and history
+ */
+export const getPersonObservation = (
+  { id }: GetPersonObservationPathParameters,
+  params?: GetPersonObservationParams,
+  options?: SecondParameter<typeof orvalFetch<PersonObservationDetail>>,
+) => {
+  return orvalFetch<PersonObservationDetail>(
+    {
+      url: `/api/v1/observations/${encodeURIComponent(String(id))}`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Curate a person observation
+ */
+export const decidePersonObservation = (
+  { id }: DecidePersonObservationPathParameters,
+  decidePersonObservationRequest: DecidePersonObservationRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonObservation>>,
+) => {
+  return orvalFetch<PersonObservation>(
+    {
+      url: `/api/v1/observations/${encodeURIComponent(String(id))}/decisions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: decidePersonObservationRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary List normalized operation history
  */
 export const listOperationRuns = (
@@ -3398,6 +3447,71 @@ export const appendPersonNote = (
       headers: { "Content-Type": "application/json" },
       data: appendPersonNoteRequest,
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary List active hash-only observation suppressions
+ */
+export const listObservationSuppressions = (
+  { id }: ListObservationSuppressionsPathParameters,
+  options?: SecondParameter<typeof orvalFetch<ObservationSuppressionsResponse>>,
+) => {
+  return orvalFetch<ObservationSuppressionsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/observation-suppressions`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Clear an observation suppression
+ */
+export const clearObservationSuppression = (
+  { id, key }: ClearObservationSuppressionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/observation-suppressions/${encodeURIComponent(String(key))}`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary List person observations
+ */
+export const listPersonObservations = (
+  { id }: ListPersonObservationsPathParameters,
+  params?: ListPersonObservationsParams,
+  options?: SecondParameter<typeof orvalFetch<PersonObservationsResponse>>,
+) => {
+  return orvalFetch<PersonObservationsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/observations`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Record an owner-authored person observation
+ */
+export const addOwnerObservation = (
+  { id }: AddOwnerObservationPathParameters,
+  addOwnerObservationRequest: AddOwnerObservationRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonObservation>>,
+) => {
+  return orvalFetch<PersonObservation>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/observations`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: addOwnerObservationRequest,
     },
     options,
   );

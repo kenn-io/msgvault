@@ -8,6 +8,47 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+type AddOwnerObservationRequestKind string
+
+const (
+	AddOwnerObservationRequestKindEvent        AddOwnerObservationRequestKind = "event"
+	AddOwnerObservationRequestKindOther        AddOwnerObservationRequestKind = "other"
+	AddOwnerObservationRequestKindPattern      AddOwnerObservationRequestKind = "pattern"
+	AddOwnerObservationRequestKindPlan         AddOwnerObservationRequestKind = "plan"
+	AddOwnerObservationRequestKindPreference   AddOwnerObservationRequestKind = "preference"
+	AddOwnerObservationRequestKindRelationship AddOwnerObservationRequestKind = "relationship"
+	AddOwnerObservationRequestKindState        AddOwnerObservationRequestKind = "state"
+)
+
+// Validate checks if the AddOwnerObservationRequestKind value is valid
+func (a AddOwnerObservationRequestKind) Validate() error {
+	switch a {
+	case AddOwnerObservationRequestKindEvent, AddOwnerObservationRequestKindOther, AddOwnerObservationRequestKindPattern, AddOwnerObservationRequestKindPlan, AddOwnerObservationRequestKindPreference, AddOwnerObservationRequestKindRelationship, AddOwnerObservationRequestKindState:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid AddOwnerObservationRequestKind value, got: %v", a))
+	}
+}
+
+type AddOwnerObservationRequestStability string
+
+const (
+	AddOwnerObservationRequestStabilityDurable  AddOwnerObservationRequestStability = "durable"
+	AddOwnerObservationRequestStabilityEpisodic AddOwnerObservationRequestStability = "episodic"
+	AddOwnerObservationRequestStabilityFixed    AddOwnerObservationRequestStability = "fixed"
+	AddOwnerObservationRequestStabilityVolatile AddOwnerObservationRequestStability = "volatile"
+)
+
+// Validate checks if the AddOwnerObservationRequestStability value is valid
+func (a AddOwnerObservationRequestStability) Validate() error {
+	switch a {
+	case AddOwnerObservationRequestStabilityDurable, AddOwnerObservationRequestStabilityEpisodic, AddOwnerObservationRequestStabilityFixed, AddOwnerObservationRequestStabilityVolatile:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid AddOwnerObservationRequestStability value, got: %v", a))
+	}
+}
+
 type AddResultCacheState string
 
 const (
@@ -627,6 +668,48 @@ func (d DecidePersonMergeCandidateRequestDecision) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DecidePersonMergeCandidateRequestDecision value, got: %v", d))
+	}
+}
+
+type DecidePersonObservationRequestAction string
+
+const (
+	DecidePersonObservationRequestActionClear   DecidePersonObservationRequestAction = "clear"
+	DecidePersonObservationRequestActionConfirm DecidePersonObservationRequestAction = "confirm"
+	DecidePersonObservationRequestActionEnd     DecidePersonObservationRequestAction = "end"
+	DecidePersonObservationRequestActionForget  DecidePersonObservationRequestAction = "forget"
+	DecidePersonObservationRequestActionPin     DecidePersonObservationRequestAction = "pin"
+	DecidePersonObservationRequestActionReject  DecidePersonObservationRequestAction = "reject"
+	DecidePersonObservationRequestActionUnpin   DecidePersonObservationRequestAction = "unpin"
+	DecidePersonObservationRequestActionUnsure  DecidePersonObservationRequestAction = "unsure"
+)
+
+// Validate checks if the DecidePersonObservationRequestAction value is valid
+func (d DecidePersonObservationRequestAction) Validate() error {
+	switch d {
+	case DecidePersonObservationRequestActionClear, DecidePersonObservationRequestActionConfirm, DecidePersonObservationRequestActionEnd, DecidePersonObservationRequestActionForget, DecidePersonObservationRequestActionPin, DecidePersonObservationRequestActionReject, DecidePersonObservationRequestActionUnpin, DecidePersonObservationRequestActionUnsure:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DecidePersonObservationRequestAction value, got: %v", d))
+	}
+}
+
+type DecidePersonObservationRequestReason string
+
+const (
+	DecidePersonObservationRequestReasonNotUseful     DecidePersonObservationRequestReason = "not_useful"
+	DecidePersonObservationRequestReasonOutdated      DecidePersonObservationRequestReason = "outdated"
+	DecidePersonObservationRequestReasonOwnerRejected DecidePersonObservationRequestReason = "owner-rejected"
+	DecidePersonObservationRequestReasonWrong         DecidePersonObservationRequestReason = "wrong"
+)
+
+// Validate checks if the DecidePersonObservationRequestReason value is valid
+func (d DecidePersonObservationRequestReason) Validate() error {
+	switch d {
+	case DecidePersonObservationRequestReasonNotUseful, DecidePersonObservationRequestReasonOutdated, DecidePersonObservationRequestReasonOwnerRejected, DecidePersonObservationRequestReasonWrong:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DecidePersonObservationRequestReason value, got: %v", d))
 	}
 }
 

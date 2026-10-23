@@ -333,6 +333,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerAttributeDefinitionRoutes(apiV1)
 	s.registerPersonAttributeRoutes(apiV1)
 	s.registerPersonFactRoutes(apiV1)
+	s.registerPersonObservationRoutes(apiV1)
 	s.registerParticipantRoutes(apiV1)
 	s.registerRelationshipRoutes(apiV1)
 	s.registerPersonRelationshipRoutes(apiV1)

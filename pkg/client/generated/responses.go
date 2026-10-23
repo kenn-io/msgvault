@@ -2059,6 +2059,24 @@ type GetVisualAttachmentStatusResponse = Status
 
 type GetVisualAttachmentStatusErrorResponse = ErrorResponse
 
+type GetPersonObservationResponse = PersonObservationDetail
+
+type GetPersonObservationErrorResponse = ErrorResponse
+
+type GetPersonObservationErrorResponseJSON = ErrorResponse
+
+type GetPersonObservationErrorResponseJSONDefault = ErrorResponse
+
+type DecidePersonObservationResponse = PersonObservation
+
+type DecidePersonObservationErrorResponse = ErrorResponse
+
+type DecidePersonObservationErrorResponseJSON = ErrorResponse
+
+type DecidePersonObservationErrorResponseJSON503 = ErrorResponse
+
+type DecidePersonObservationErrorResponseJSONDefault = ErrorResponse
+
 type ListOperationRunsResponse = OperationRunsResponse
 
 type ListOperationRunsErrorResponse = OperationErrorResponse
@@ -3046,6 +3064,34 @@ type AppendPersonNoteErrorResponseJSON409 = ErrorResponse
 type AppendPersonNoteErrorResponseJSON503 = ErrorResponse
 
 type AppendPersonNoteErrorResponseJSONDefault = ErrorResponse
+
+type ListObservationSuppressionsResponse = ObservationSuppressionsResponse
+
+type ListObservationSuppressionsErrorResponse = ErrorResponse
+
+type ListObservationSuppressionsErrorResponseJSON = ErrorResponse
+
+type ListObservationSuppressionsErrorResponseJSONDefault = ErrorResponse
+
+type ClearObservationSuppressionErrorResponse = ErrorResponse
+
+type ClearObservationSuppressionErrorResponseJSON = ErrorResponse
+
+type ListPersonObservationsResponse = PersonObservationsResponse
+
+type ListPersonObservationsErrorResponse = ErrorResponse
+
+type ListPersonObservationsErrorResponseJSON = ErrorResponse
+
+type ListPersonObservationsErrorResponseJSONDefault = ErrorResponse
+
+type AddOwnerObservationResponse = PersonObservation
+
+type AddOwnerObservationErrorResponse = ErrorResponse
+
+type AddOwnerObservationErrorResponseJSON = ErrorResponse
+
+type AddOwnerObservationErrorResponseJSONDefault = ErrorResponse
 
 type GetPersonStructuredProfileResponse = StructuredPersonProfile
 
@@ -5912,6 +5958,27 @@ type GetVisualAttachmentStatusResp struct {
 	JSONDefault  *GetVisualAttachmentStatusErrorResponse
 }
 
+type GetPersonObservationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonObservationResponse
+	JSON404      *GetPersonObservationErrorResponse
+	JSON503      *GetPersonObservationErrorResponseJSON
+	JSONDefault  *GetPersonObservationErrorResponseJSONDefault
+}
+
+type DecidePersonObservationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DecidePersonObservationResponse
+	JSON404      *DecidePersonObservationErrorResponse
+	JSON409      *DecidePersonObservationErrorResponseJSON
+	JSON503      *DecidePersonObservationErrorResponseJSON503
+	JSONDefault  *DecidePersonObservationErrorResponseJSONDefault
+}
+
 type ListOperationRunsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6713,6 +6780,44 @@ type AppendPersonNoteResp struct {
 	JSON409      *AppendPersonNoteErrorResponseJSON409
 	JSON503      *AppendPersonNoteErrorResponseJSON503
 	JSONDefault  *AppendPersonNoteErrorResponseJSONDefault
+}
+
+type ListObservationSuppressionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListObservationSuppressionsResponse
+	JSON404      *ListObservationSuppressionsErrorResponse
+	JSON503      *ListObservationSuppressionsErrorResponseJSON
+	JSONDefault  *ListObservationSuppressionsErrorResponseJSONDefault
+}
+
+type ClearObservationSuppressionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON404      *ClearObservationSuppressionErrorResponse
+	JSON503      *ClearObservationSuppressionErrorResponseJSON
+}
+
+type ListPersonObservationsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonObservationsResponse
+	JSON404      *ListPersonObservationsErrorResponse
+	JSON503      *ListPersonObservationsErrorResponseJSON
+	JSONDefault  *ListPersonObservationsErrorResponseJSONDefault
+}
+
+type AddOwnerObservationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *AddOwnerObservationResponse
+	JSON404      *AddOwnerObservationErrorResponse
+	JSON503      *AddOwnerObservationErrorResponseJSON
+	JSONDefault  *AddOwnerObservationErrorResponseJSONDefault
 }
 
 type GetPersonStructuredProfileResp200Headers struct {
