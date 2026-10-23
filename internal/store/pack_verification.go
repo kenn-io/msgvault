@@ -121,3 +121,24 @@ func (s *Store) FinishPackVerification(ctx context.Context, pass *PackVerificati
 	}
 	return pass.more, nil
 }
+
+// looseEnumerationKey marks a context whose Pack pass must not enumerate loose
+// pack candidates.
+type looseEnumerationKey struct{}
+
+// SkipLooseEnumeration marks ctx so the Pack pass it drives reports no loose
+// candidates. Enumerating them scans every attachment row, while a pass that
+// only advances the verification window has no new loose blob to find. Loose
+// blobs stay loose until a pass that enumerates them runs, which every sync
+// that writes one and every scheduled trigger requests. Only Pack's own
+// candidate list is suppressed: reference inventory, orphan reconciliation,
+// and loose sweeping read their own queries and stay authoritative.
+func SkipLooseEnumeration(ctx context.Context) context.Context {
+	return context.WithValue(ctx, looseEnumerationKey{}, true)
+}
+
+// looseEnumerationSkipped reports whether ctx suppresses loose enumeration.
+func looseEnumerationSkipped(ctx context.Context) bool {
+	skip, _ := ctx.Value(looseEnumerationKey{}).(bool)
+	return skip
+}

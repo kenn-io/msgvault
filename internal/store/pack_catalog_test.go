@@ -346,3 +346,48 @@ func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
 	require.NoError(err)
 	assert.False(more)
 }
+
+// TestSkipLooseEnumerationDefersPackingWithoutDeletingBlobs proves the two
+// properties the verification follow-up path depends on: a suppressed pass
+// reports no loose candidates and packs nothing, and it leaves the loose blob
+// on disk for a later pass instead of treating absence as an orphan.
+func TestSkipLooseEnumerationDefersPackingWithoutDeletingBlobs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+	root := t.TempDir()
+	content := []byte("loose blob awaiting a pass that enumerates candidates")
+	hash := pack.ComputeBlobID(content).String()
+	loosePath := filepath.Join(root, hash[:2], hash)
+	require.NoError(os.MkdirAll(filepath.Dir(loosePath), 0o700))
+	require.NoError(os.WriteFile(loosePath, content, 0o600))
+	fx.addAttachment(hash, hash[:2]+"/"+hash, len(content))
+
+	catalog := store.NewMaintenancePackCatalog(st, root)
+	candidates, err := catalog.ListUnpacked(context.Background())
+	require.NoError(err)
+	require.Len(candidates, 1, "the loose blob is a candidate without the flag")
+
+	skipped, err := catalog.ListUnpacked(store.SkipLooseEnumeration(context.Background()))
+	require.NoError(err)
+	assert.Empty(skipped, "a suppressed pass reports no loose candidates")
+
+	layout, err := packstore.NewLayout(root, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(err)
+	maintainer, err := packstore.NewMaintainer(catalog, layout, packstore.MaintainerOptions{})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(maintainer.Close()) })
+
+	stats, err := maintainer.Pack(store.SkipLooseEnumeration(context.Background()), packstore.PackOptions{})
+	require.NoError(err)
+	assert.Equal(0, stats.BlobsPacked, "nothing is packed while enumeration is suppressed")
+	assert.FileExists(loosePath, "the deferred blob survives the suppressed pass")
+
+	stats, err = maintainer.Pack(context.Background(), packstore.PackOptions{})
+	require.NoError(err)
+	assert.Equal(1, stats.BlobsPacked, "the next enumerating pass packs the deferred blob")
+	entry, err := st.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	assert.NotNil(entry)
+}

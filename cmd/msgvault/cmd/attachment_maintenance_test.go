@@ -717,7 +717,7 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 func TestCompletedPackVerificationRecordsNoProgress(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	ctx := jobctx.WithProgress(t.Context())
-	require.NoError(t, f.maintenance.runScheduledPack(ctx))
+	require.NoError(t, f.maintenance.runScheduledPack(ctx, true))
 	assert.False(t, jobctx.HasProgress(ctx), "an empty completed scan provides no resume point for a cancelled repack")
 }
 
@@ -767,4 +767,27 @@ func TestRemovingRedundantOrphanPackCountsAsProgress(t *testing.T) {
 	require.NoError(f.maintenance.runAutomaticPack(ctx, nil))
 	assert.NoFileExists(t, orphan)
 	assert.True(t, jobctx.HasProgress(ctx), "a removed pack is committed progress a timed-out pass can resume after")
+}
+
+// TestVerificationFollowupSkipsLooseEnumeration pins the behaviour that makes
+// the follow-up loop affordable: a pass queued only to walk the next
+// verification slice must not re-enumerate loose candidates, while the next
+// pass that a sync requests still packs them.
+func TestVerificationFollowupSkipsLooseEnumeration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	hash := f.addLoose([]byte("loose blob must wait for an enumerating pass"))
+
+	// A verification follow-up: the window has more slices, no sync wrote
+	// loose blobs since the last pack.
+	f.maintenance.verifyPending.Store(true)
+	f.maintenance.packPending.Store(false)
+	require.NoError(f.maintenance.runPendingPack(t.Context()))
+	assert.Nil(f.packedEntry(hash), "a verification follow-up packs no loose blob")
+
+	// A sync that wrote loose blobs requests a full pass, which packs it.
+	f.maintenance.markPackPending()
+	require.NoError(f.maintenance.runPendingPack(t.Context()))
+	assert.NotNil(f.packedEntry(hash), "the next requested pass packs the deferred blob")
 }
