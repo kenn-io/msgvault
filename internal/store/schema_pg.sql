@@ -898,7 +898,7 @@ CREATE TABLE IF NOT EXISTS person_sweep_attempts (
     run_id                      TEXT NOT NULL REFERENCES person_sweep_runs(id) ON DELETE CASCADE,
     person_id                   BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     lease_fence                 BIGINT NOT NULL CHECK (lease_fence >= 0),
-    mode                        TEXT NOT NULL CHECK (mode IN ('incremental', 'backstop')),
+    mode                        TEXT NOT NULL CHECK (mode IN ('incremental', 'backstop', 'derive')),
     status                      TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'cancelled')),
     failure_class               TEXT NOT NULL DEFAULT '' CHECK (failure_class IN (
         '', 'policy', 'budget', 'lease_lost', 'rate_limited', 'timeout',
@@ -908,6 +908,15 @@ CREATE TABLE IF NOT EXISTS person_sweep_attempts (
         '', 'policy', 'budget', 'lease_lost', 'rate_limited', 'timeout',
         'provider_http', 'invalid_output', 'archive_gap', 'internal'
     )),
+    derive_failure_class        TEXT NOT NULL DEFAULT '' CHECK (derive_failure_class IN (
+        '', 'policy', 'budget', 'lease_lost', 'rate_limited', 'timeout',
+        'provider_http', 'invalid_output', 'archive_gap', 'internal'
+    )),
+    memory_epoch                TEXT NOT NULL DEFAULT '',
+    memory_sha256               TEXT NOT NULL DEFAULT '',
+    work_list_through           BIGINT NOT NULL DEFAULT 0 CHECK (work_list_through >= 0),
+    notes_applied               INTEGER NOT NULL DEFAULT 0 CHECK (notes_applied >= 0),
+    notes_rejected              INTEGER NOT NULL DEFAULT 0 CHECK (notes_rejected >= 0),
     cursor_envelope_json        TEXT NOT NULL,
     envelope_hash               TEXT NOT NULL,
     program_fingerprint         TEXT NOT NULL,
@@ -972,8 +981,8 @@ CREATE TABLE IF NOT EXISTS person_sweep_batches (
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at                TIMESTAMPTZ,
     CONSTRAINT person_sweep_batches_call_coordinate_check CHECK (
-        (call_ordinal = 0 AND purpose IN ('primary', 'brief')) OR
-        (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair'))
+        (call_ordinal = 0 AND purpose IN ('primary', 'brief', 'observation', 'derive_deductive', 'derive_inductive')) OR
+        (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair', 'observation_repair', 'derive_repair'))
     ),
     PRIMARY KEY (attempt_id, batch_ordinal, call_ordinal)
 );

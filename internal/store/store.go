@@ -95,6 +95,7 @@ type Store struct {
 	// on another Store's work. As package-level variables
 	// they were also a data race between a test that installs one and any
 	// concurrent migration that reads it.
+	personSweepDeriveAccountingHook       func(stage string) error
 	initSchemaWindowHook                  func()
 	beforeLargeIndexBuildHook             func()
 	attributeSeedReadHook                 func(slug string)
@@ -1519,6 +1520,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		s.migratePersonSweepAttemptBriefFailure,
 	); err != nil {
 		return fmt.Errorf("migrate person sweep attempt brief failure class: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationPersonSweepDeriveAccountingV1, 1, false,
+		s.migratePersonSweepDeriveAccountingV1,
+	); err != nil {
+		return fmt.Errorf("migrate person sweep derive accounting: %w", err)
 	}
 	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
 		return err
