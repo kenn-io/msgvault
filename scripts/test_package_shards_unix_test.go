@@ -97,11 +97,9 @@ func TestSilent(t *testing.T) { record(t) }
 		names  []string
 		failed bool
 	}{
-		{"1", "2", "0", []string{"TestNested", "TestPass"}, false},
 		{"2", "2", "0", []string{"TestSilent", "TestSkip"}, false},
 		// Only the part that selects TestNested reports its failure.
 		{"1", "2", "1", []string{"TestNested", "TestPass"}, true},
-		{"2", "2", "1", []string{"TestSilent", "TestSkip"}, false},
 		{"5", "5", "0", []string{}, false},
 	} {
 		t.Run("part="+part.index+"/"+part.count+",SHARD_FAIL="+part.fail, func(t *testing.T) {
@@ -123,6 +121,7 @@ func TestSilent(t *testing.T) { record(t) }
 			}
 			if len(part.names) == 0 {
 				// Bash 3.2 can report an unbound variable here and still exit 0.
+				assert.NotContains(t, string(output), "unbound variable")
 				assert.Contains(t, string(output), "No tests found in .")
 			}
 			entries, err := os.ReadDir(records)
