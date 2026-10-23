@@ -14490,7 +14490,7 @@ func (c *Client) GetMCPCapabilitiesWithResponse(ctx context.Context, reqEditors 
 	}
 }
 
-// SearchMedia Search recordings and attachments as visible messages
+// SearchMedia Search recording transcripts and mirrored attachment text as visible messages
 func (c *Client) SearchMediaWithResponse(ctx context.Context, options *SearchMediaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMediaResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

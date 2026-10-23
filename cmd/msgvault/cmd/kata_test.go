@@ -18,9 +18,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/kataevidence"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/katatest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -214,4 +217,148 @@ func TestKataContextLabelsPassagesWithoutDisplay(t *testing.T) {
 		{State: "unavailable", Evidence: generated.Evidence{Reference: generated.Reference{MessageID: 4}}},
 	}}))
 	assert.Equal(t, "\t\t\n\navailable\tmessage 4\n  [é界🙂 send the revised budget]\n\navailable\tattachment 9 of message 4: voice.wav\n\nunreachable\tDocbank unreachable; retry later\n\nchanged\tattachment 9 of message 4\n  saved quote: Send the budget\n\nchanged\tmessage 4: Budget\n\nunavailable\tattachment in this or another archive\n\nunavailable\tmessage in this or another archive\n", out.String())
+}
+
+func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, _ := storedBeeperVoiceNote(t)
+	var messageID, attachmentID int64
+	var hash string
+	require.NoError(st.DB().QueryRow(`SELECT message_id, id, content_hash FROM attachments`).Scan(&messageID, &attachmentID, &hash))
+	const vault, version = "22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"
+	transcript := []rune(strings.Repeat("é", kataevidence.MaxChars) + "Send the revised budget by Friday.")
+	var revoked atomic.Bool
+	docbank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/versions/" + version:
+			_, _ = fmt.Fprintf(w, `{"id":%q,"node_id":7,"blob_hash":%q}`, version, hash)
+		case "/api/v1/nodes/7":
+			_, _ = fmt.Fprintf(w, `{"id":7,"revision":1,"current_version_id":%q}`, version)
+		case "/api/v1/renditions/text":
+			assert.NoError(json.MarshalWrite(w, map[string]any{"state": "ready", "source": map[string]any{"node_id": 7, "revision": 1,
+				"version_id": version, "blob_hash": hash, "size": 0}, "profile": map[string]any{"name": "audio-transcript"},
+				"attachment_id": strings.Repeat("b", 64), "build_id": strings.Repeat("c", 64), "artifact": map[string]any{"sha256": strings.Repeat("d", 64)}}))
+		case "/api/v1/media/sources/source":
+			if revoked.Load() {
+				http.NotFound(w, r)
+				return
+			}
+			assert.NoError(json.MarshalWrite(w, docbankmedia.Receipt{VaultUID: vault, SourceID: "source", SourceVersionID: "source-version", ContentVersionID: version, OperationState: "succeeded"}))
+
+		case "/api/v1/media/sources/source/versions/source-version/transcript":
+			assert.NoError(json.MarshalWrite(w, docbankmedia.MediaTranscript{VaultUID: vault, SourceID: "source", SourceVersionID: "source-version", ContentVersionID: version,
+				EvidenceState: "ready", CoverageState: "transcribed", OperationState: "succeeded", Transcript: &docbankmedia.MediaTranscriptEvidence{
+					BuildID: strings.Repeat("c", 64), Origin: "generated", Completeness: "complete", Units: []docbankmedia.MediaTranscriptUnit{{Text: string(transcript)}},
+				}}))
+		case "/api/v1/evidence/windows":
+			var request docbankmedia.EvidenceWindowRequest
+			if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
+				http.Error(w, "invalid", http.StatusBadRequest)
+				return
+			}
+			if request.Offset > len(transcript) {
+				http.Error(w, "offset past end", http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			text := transcript[request.Offset:min(len(transcript), request.Offset+request.MaxChars)]
+			window := docbankmedia.EvidenceWindow{VaultUID: request.VaultUID, NodeID: request.NodeID, ContentVersionID: request.ContentVersionID, ContentSHA256: request.ContentSHA256,
+				RenditionAttachmentID: request.RenditionAttachmentID, BuildID: request.BuildID, RenditionSHA256: request.RenditionSHA256,
+				Text: string(text), ActualStart: request.Offset, ActualEnd: request.Offset + len(text), EOF: request.Offset+len(text) == len(transcript)}
+			assert.NoError(json.MarshalWrite(w, window))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(docbank.Close)
+	archiveUID, err := st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	revision, err := beeper.MediaRevision(t.Context(), st, attachmentID)
+	require.NoError(err)
+	mapping := store.BeeperMediaMapping{DestinationKey: docbankmedia.DestinationKey(docbank.URL, archiveUID), OccurrenceRef: "msgvault:voice1", Revision: revision,
+		SourceType: "beeper", SourceIdentifier: "signal", SourceConversationID: "default-thread", SourceMessageID: "voice1",
+		SourceAttachmentID: "beeper:mxc://beeper.local/voice1", SourcePartKey: "beeper:mxc://beeper.local/voice1", MessageID: messageID, AttachmentID: attachmentID,
+		SourceSHA256: hash, ByteLength: 1, RawHash: strings.Repeat("e", 64), OccurrenceJSON: `{}`, Filename: "voice.wav", MIMEType: "audio/wav",
+		ProcessingKey: "processing", ProcessingProvider: "beeper", ProcessingProfile: "audio-transcript"}
+	require.NoError(st.ReconcileBeeperMediaMapping(t.Context(), mapping))
+	prepared, err := st.PrepareBeeperMediaOperation(t.Context(), store.BeeperMediaOperation{Kind: store.BeeperMediaOperationRetain, DestinationKey: mapping.DestinationKey, OccurrenceRef: mapping.OccurrenceRef, Revision: mapping.Revision})
+	require.NoError(err)
+	applied, err := st.FinishBeeperMediaOperation(t.Context(), prepared, store.BeeperMediaResult{VaultUID: vault, DocbankSourceID: "source", SourceVersionID: "source-version",
+		ContentVersionID: version, DocbankOccurrenceID: "occurrence", CoverageState: "transcribed"})
+	require.NoError(err)
+	require.True(applied)
+
+	kataHandler := katatest.New(t).Service.Handler()
+	var metadataScans atomic.Int32
+	kataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/issues" {
+			metadataScans.Add(1)
+		}
+		kataHandler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(kataServer.Close)
+	cfg := &config.Config{}
+	cfg.Integrations.Kata = config.TaskIntegrationConfig{Enabled: true, Endpoint: kataServer.URL, APIKey: katatest.Token, DefaultProject: "example"}
+	cfg.Integrations.Docbank = config.DocbankIntegrationConfig{Enabled: true, URL: docbank.URL, APIKey: "synthetic-key"}
+	daemon := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st}, nil, slog.New(slog.DiscardHandler)).Router())
+	t.Cleanup(daemon.Close)
+	ctx := configureRemoteDaemonForTest(t, daemon.URL)
+
+	selector := fmt.Sprintf(`{"selectors":[{"kind":"docbank_rendition","message_id":%d,"attachment_id":%d,"start_rune":%d,"max_chars":1000}]}`, messageID, attachmentID, kataevidence.MaxChars)
+	var window generated.KataEvidencePrepareResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, selector, "evidence", "prepare"), &window))
+	require.Len(window.Evidence, 1)
+	assert.Equal("Send the revised budget by Friday.", window.Evidence[0].Excerpt)
+	assert.Nil(window.Evidence[0].NextRune, "the transcript ends with this window")
+
+	request, err := json.Marshal(generated.KataIssueCreateRequest{Title: "Send the revised budget", Evidence: []generated.Reference{window.Evidence[0].Reference}})
+	require.NoError(err)
+	var created generated.KataIssueResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, string(request), "create", "--idempotency-key", "docbank-key", "--json"), &created))
+	metadataScans.Store(0)
+	var citing generated.KataIssueListResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "issues", "--message", strconv.FormatInt(messageID, 10), "--attachment", strconv.FormatInt(attachmentID, 10), "--json"), &citing))
+	assert.Equal(int32(1), metadataScans.Load())
+	require.Len(citing.Issues, 1, "the file lookup finds an issue citing only its Docbank transcript")
+	assert.Equal(created.Issue.UID, citing.Issues[0].UID)
+	assert.Contains(string(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef)), "[Send the revised budget by Friday.]\n")
+
+	revoked.Store(true)
+	create := newKataCmd()
+	create.SetArgs([]string{"create", "--idempotency-key", "revoked"})
+	create.SetIn(strings.NewReader(string(request)))
+	create.SetOut(io.Discard)
+	create.SetErr(io.Discard)
+	require.ErrorContains(create.ExecuteContext(ctx), "The cited source is unavailable")
+	var unavailable generated.KataIssueContextResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &unavailable))
+	require.Len(unavailable.Passages, 1)
+	assert.Equal("unavailable", unavailable.Passages[0].State)
+	revoked.Store(false)
+
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), []byte("invalid zlib"), messageID)
+	require.NoError(err)
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &unavailable))
+	require.Len(unavailable.Passages, 1)
+	assert.Equal("unavailable", unavailable.Passages[0].State)
+	assert.Equal("Send the revised budget by Friday.", *unavailable.Passages[0].SavedQuote)
+
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"id":"voice1","attachments":[]}`), "beeper_json"))
+	var changed generated.KataIssueContextResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &changed))
+	require.Len(changed.Passages, 1)
+	assert.Equal("changed", changed.Passages[0].State)
+	assert.Equal("Send the revised budget by Friday.", *changed.Passages[0].SavedQuote)
+
+	cfg.Integrations.Docbank.URL = "invalid"
+	invalidDaemon := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st}, nil, slog.New(slog.DiscardHandler)).Router())
+	t.Cleanup(invalidDaemon.Close)
+	invalidContext := configureRemoteDaemonForTest(t, invalidDaemon.URL)
+	command := newKataCmd()
+	command.SetArgs([]string{"evidence", "prepare"})
+	command.SetIn(strings.NewReader(selector))
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	require.ErrorContains(command.ExecuteContext(invalidContext), "invalid URL")
 }

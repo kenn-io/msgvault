@@ -80,6 +80,10 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply pgvector schema: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS document_vector_embeddings;
+		DROP TABLE IF EXISTS document_vector_backend_generations`); err != nil {
+		return fmt.Errorf("drop retired document vectors: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		ALTER TABLE embedding_document_progress
 		ADD COLUMN IF NOT EXISTS journal_cursor TEXT NOT NULL DEFAULT ''`); err != nil {

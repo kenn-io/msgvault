@@ -1,8 +1,11 @@
 package store_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,7 +64,12 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 		requirements.NoError(f.Store.CompleteAttachmentChangeReconciliation(ctx, key, consumer.BaselineSequence))
 	}
 
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	requirements.NoError(f.Store.InitSchemaContext(ctx))
+	checks.Contains(logs.String(), `"msg":"deleted retired document rows during schema migration","rows":6`)
 
 	_, err := f.Store.GetAttachmentChangeConsumer(ctx, "document-index/v1")
 	requirements.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing)
@@ -84,6 +92,7 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 
 	// The next open re-applies the schema; the dropped hook must stay dropped.
 	requirements.NoError(f.Store.InitSchemaContext(ctx))
+	checks.Equal(1, strings.Count(logs.String(), "deleted retired document rows during schema migration"))
 	hookQuery := `SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='trg_person_sweep_documents_message_update'`
 	if f.Store.IsPostgreSQL() {
 		hookQuery = `SELECT COUNT(*) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='msgvault_append_person_sweep_document_changes'`

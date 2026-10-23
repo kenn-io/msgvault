@@ -392,6 +392,26 @@ func TestStoredProviderProfilePreservesHistoricalProgramPolicy(t *testing.T) {
 	}
 }
 
+func TestStoredProviderProfilePreservesDocumentTextPolicy(t *testing.T) {
+	for _, sources := range []string{`"conversation_text","document_text"`, `"document_text"`} {
+		t.Run(sources, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			profile, err := validConfig().Profile()
+			require.NoError(err)
+			policy := bytes.Replace(profile.PolicyJSON, []byte(`"conversation_text"`), []byte(sources), 1)
+			require.NoError(json.Unmarshal(policy, &profile))
+			digest := sha256.Sum256(policy)
+			profile.Fingerprint = hex.EncodeToString(digest[:])
+			profile.PolicyJSON = policy
+
+			stored, err := peoplesweep.CanonicalStoredProviderProfile(profile)
+			require.NoError(err)
+			assert.Equal(profile, stored)
+		})
+	}
+}
+
 func TestProviderConfigTOMLValuesUseTaggedOptionalFields(t *testing.T) {
 	assert := assert.New(t)
 	provider := validConfig().Providers["default"]
