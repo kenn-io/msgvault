@@ -51,7 +51,6 @@ func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector
 		}
 		digest := sha256.Sum256([]byte(result.Text))
 		ref.Message = &kataevidence.MessageReference{BodySHA256: hex.EncodeToString(digest[:])}
-
 	default:
 		return result, kataevidence.ErrUnsupported
 	}

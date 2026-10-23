@@ -932,7 +932,8 @@ func validateSources(sources []SourceClass) error {
 	seen := make(map[SourceClass]struct{}, len(sources))
 	for _, source := range sources {
 		switch source {
-		case SourceConversationText, SourceMeetingText:
+		case SourceConversationText, SourceMeetingText, SourceDocumentText:
+			// Stored policies retain document_text; ApplyDefaults removes it from active config.
 		case SourceAttachmentCaption, SourceAttachmentOCR:
 			return fmt.Errorf("[people.sweep.provider] allowed_sources %q is not yet supported", source)
 		default:

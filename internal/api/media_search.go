@@ -25,7 +25,7 @@ type MediaSearchResult struct {
 	ConversationID  int64      `json:"conversation_id"`
 	AttachmentID    int64      `json:"attachment_id"`
 	Origin          string     `json:"origin" enum:"supplied,generated"`
-	Excerpt         string     `json:"excerpt" doc:"Plain transcript excerpt without search highlight markers"`
+	Excerpt         string     `json:"excerpt" doc:"Plain text excerpt without search highlight markers"`
 	StartMS         *int64     `json:"start_ms,omitempty"`
 	EndMS           *int64     `json:"end_ms,omitempty"`
 }

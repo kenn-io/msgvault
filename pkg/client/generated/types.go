@@ -6950,7 +6950,7 @@ type MediaSearchResult struct {
 	ConversationID  int64   `json:"conversation_id"`
 	EndMs           *int64  `json:"end_ms,omitempty"`
 
-	// Excerpt Plain transcript excerpt without search highlight markers
+	// Excerpt Plain text excerpt without search highlight markers
 	Excerpt    string                  `json:"excerpt" validate:"required"`
 	Filename   *string                 `json:"filename,omitzero"`
 	MessageID  int64                   `json:"message_id"`

@@ -110,7 +110,6 @@ func (c InvocationCounters) Validate(kind Kind) error {
 		if c.Skipped != 0 || c.Requested != 0 || c.Started != 0 || c.Suppressed != 0 || c.IdentityRejected != 0 {
 			return fmt.Errorf("operation kind %q has counters outside its allowlist", kind)
 		}
-
 	case KindVisualEmbedding:
 		if c.Truncated != 0 || c.Requested != 0 || c.Started != 0 || c.Suppressed != 0 || c.IdentityRejected != 0 {
 			return fmt.Errorf("operation kind %q has counters outside its allowlist", kind)
@@ -271,7 +270,6 @@ func invocationCounterUnit(kind Kind) CounterUnit {
 		return CounterUnitMessages
 	case KindPersonEmbedding, KindPersonEnrichment:
 		return CounterUnitPeople
-
 	case KindVisualEmbedding:
 		return CounterUnitAttachments
 	default:

@@ -6996,7 +6996,7 @@ components:
           format: int64
           type: integer
         excerpt:
-          description: Plain transcript excerpt without search highlight markers
+          description: Plain text excerpt without search highlight markers
           type: string
         filename:
           type: string
@@ -22907,7 +22907,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Search recordings and attachments as visible messages
+      summary: Search recording transcripts and mirrored attachment text as visible messages
       tags:
         - API
   /api/v1/media/search/status:

@@ -88,9 +88,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 		window.Changes = append(window.Changes, change)
 
 		window.NextSequence = change.Sequence
-		// An attachment change withdraws document evidence only; the
-		// message text it would seed is unchanged.
-		if _, ok := seen[change.MessageID]; !ok && change.MessageID > 0 && change.AttachmentID == 0 {
+		if _, ok := seen[change.MessageID]; !ok && change.MessageID > 0 {
 			seen[change.MessageID] = struct{}{}
 			messageIDs = append(messageIDs, change.MessageID)
 		}
@@ -898,13 +896,9 @@ func personSweepChangeMatchesRef(personID int64, change peoplesweep.ArchiveChang
 		return false
 	}
 	if ref.SourceLane == peoplesweep.SourceDocumentText {
-		if change.SourceLane != peoplesweep.SourceConversationText && change.SourceLane != peoplesweep.SourceMeetingText {
-			return false
-		}
-		if change.AttachmentID != 0 {
-			return change.AttachmentID == ref.AttachmentID
-		}
-		return change.OccurrenceKey == "" && change.EvidenceEffect != peoplesweep.EvidenceEffectSourceEdited
+		return (change.SourceLane == peoplesweep.SourceConversationText || change.SourceLane == peoplesweep.SourceMeetingText) &&
+			change.AttachmentID == 0 && change.OccurrenceKey == "" &&
+			change.EvidenceEffect != peoplesweep.EvidenceEffectSourceEdited
 	}
 	if change.SourceLane != ref.SourceLane {
 		return false
