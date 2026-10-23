@@ -15,6 +15,7 @@ type DocbankAttachmentProcessing struct {
 	Fingerprint string
 	Outcome     string
 	JobID       string
+	saved       bool // the pass read an existing request, so a save after backfill deleted it is skipped
 }
 
 // DocbankAttachmentProcessingSummary reports the current profile's local job outcomes.
@@ -45,7 +46,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 		if len(result) >= n || unasked && cursor.unaskedDone {
 			break
 		}
-		query := `SELECT d.content_hash, d.node_id, d.version_id, '', '', ''
+		query := `SELECT d.content_hash, d.node_id, d.version_id, '', '', '', FALSE
  FROM docbank_attachment_deliveries d
  WHERE d.destination_key = ? AND d.state = 'delivered' AND d.version_id <> '' AND d.content_hash > ?
  AND NOT EXISTS (SELECT 1 FROM docbank_attachment_processing p
@@ -54,7 +55,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  ORDER BY d.content_hash LIMIT ?`
 		args := []any{dest, cursor.afterHash, fingerprint, n - len(result)}
 		if !unasked {
-			query = `SELECT d.content_hash, d.node_id, d.version_id, p.fingerprint, p.outcome, p.job_id
+			query = `SELECT d.content_hash, d.node_id, d.version_id, p.fingerprint, p.outcome, p.job_id, TRUE
  FROM docbank_attachment_processing p JOIN docbank_attachment_deliveries d
  ON d.destination_key = p.destination_key AND d.content_hash = p.content_hash
  WHERE p.destination_key = ? AND p.fingerprint = ? AND p.next_action_at <= ?
@@ -68,7 +69,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 		}
 		for rows.Next() {
 			var d DocbankAttachmentProcessing
-			if err := rows.Scan(&d.ContentHash, &d.NodeID, &d.VersionID, &d.Fingerprint, &d.Outcome, &d.JobID); err != nil {
+			if err := rows.Scan(&d.ContentHash, &d.NodeID, &d.VersionID, &d.Fingerprint, &d.Outcome, &d.JobID, &d.saved); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
@@ -94,10 +95,10 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 		next = s.timestampValue(nextActionAt)
 	}
 	_, err := s.db.ExecContext(ctx, s.Rebind(`INSERT INTO docbank_attachment_processing
- (destination_key, content_hash, fingerprint, outcome, job_id, next_action_at) VALUES (?, ?, ?, ?, ?, ?)
- ON CONFLICT (destination_key, content_hash) DO UPDATE SET
+ (destination_key, content_hash, fingerprint, outcome, job_id, next_action_at) SELECT ?, ?, ?, ?, ?, ?
+ WHERE NOT ? OR EXISTS (SELECT 1 FROM docbank_attachment_processing WHERE destination_key = ? AND content_hash = ?) ON CONFLICT (destination_key, content_hash) DO UPDATE SET
  fingerprint = excluded.fingerprint, outcome = excluded.outcome, job_id = excluded.job_id, next_action_at = excluded.next_action_at`),
-		dest, d.ContentHash, d.Fingerprint, d.Outcome, d.JobID, next)
+		dest, d.ContentHash, d.Fingerprint, d.Outcome, d.JobID, next, d.saved, dest, d.ContentHash)
 	return err
 }
 
