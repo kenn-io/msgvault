@@ -4777,7 +4777,8 @@ msgvault repair-derived --source-type beeper
 Repeat `--source-type` or `--identifier` to narrow the source set. A requested
 type that has no re-derivation pass and no source in the archive is an error.
 Sources with retained MIME, including custom email labels such as `outlook`,
-rebuild body text, HTML, previews, and search.
+rebuild body text, HTML, body-derived snippets, and search. Provider snippets
+are kept.
 Source types with a re-derivation pass (`beeper`, `discord`) recompute their
 derived text and metadata. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find

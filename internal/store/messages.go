@@ -6612,6 +6612,7 @@ type ArchivedRawMessage struct {
 	// BodyText is the currently stored plain-text body, so a caller
 	// re-deriving it can skip rows that would not change.
 	BodyText string
+	Snippet  string
 }
 
 // ScanArchivedRawMessages returns up to limit archived messages for a source
@@ -6625,7 +6626,7 @@ func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID i
 // ScanArchivedRawMessagesContext honors cancellation during ScanArchivedRawMessages.
 func (s *Store) ScanArchivedRawMessagesContext(ctx context.Context, sourceID int64, format string, afterID int64, limit int) ([]ArchivedRawMessage, error) {
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`
-		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, '')
+		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, ''), COALESCE(m.snippet, '')
 		FROM messages m
 		JOIN message_raw r ON r.message_id = m.id
 		LEFT JOIN message_bodies b ON b.message_id = m.id
@@ -6642,7 +6643,7 @@ func (s *Store) ScanArchivedRawMessagesContext(ctx context.Context, sourceID int
 		var item ArchivedRawMessage
 		var raw []byte
 		var compression sql.NullString
-		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText); err != nil {
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText, &item.Snippet); err != nil {
 			return nil, err
 		}
 		if compression.Valid && compression.String == "zlib" {
@@ -6721,21 +6722,14 @@ func (s *Store) UpdateMessageDerivedText(
 }
 
 // UpdateMessageDerivedEmailTextContext rebuilds a retained email's body and
-// preview, then refreshes search from the stored subject and addresses. Earlier
+// snippet, then refreshes search from the stored subject and addresses. Earlier
 // envelope repairs therefore survive MIME re-derivation. All writes commit together.
 func (s *Store) UpdateMessageDerivedEmailTextContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 			return fmt.Errorf("lock derived email write: %w", err)
 		}
-		q := boundQuerier{ctx: ctx, q: tx}
-		if err := s.updateMessageDerivedText(q, messageID, bodyText, bodyHTML, snippet, nil); err != nil {
-			return err
-		}
-		_, err := q.Exec(fmt.Sprintf(`UPDATE conversations SET last_message_preview = %s
-			WHERE id = (SELECT conversation_id FROM messages WHERE id = ?)
-			AND last_message_preview IS NOT NULL`, latestConversationPreviewSubquery), messageID)
-		return err
+		return s.updateMessageDerivedText(boundQuerier{ctx: ctx, q: tx}, messageID, bodyText, bodyHTML, snippet, nil)
 	})
 }
 

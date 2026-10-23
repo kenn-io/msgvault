@@ -78,12 +78,9 @@ func Lookup(sourceType string) (Func, string, bool) {
 	return e.fn, e.version, ok
 }
 
-func resolve(sourceType string) []entry {
+func passes(sourceType string) []entry {
 	email := entry{fn: repairEmail, version: emailVersion}
 	if fn, version, ok := Lookup(sourceType); ok {
-		// Provider versions already have ledger entries, including v1. Track
-		// MIME separately so those entries cannot suppress its first repair.
-		email.version = "mime:" + email.version
 		return []entry{{fn: fn, version: version}, email}
 	}
 	return []entry{email}
@@ -158,7 +155,7 @@ func RunIfStale(
 }
 
 func run(ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string), onlyStale bool) (sum *Summary, ran bool, err error) {
-	for _, pass := range resolve(sourceType) {
+	for _, pass := range passes(sourceType) {
 		if onlyStale {
 			applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, pass.version), 1)
 			if err != nil {

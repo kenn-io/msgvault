@@ -12,7 +12,7 @@ import (
 )
 
 // Bump the version when parsing the same retained MIME produces different text.
-const emailVersion = "v1"
+const emailVersion = "email-v1"
 
 // repairEmail rebuilds text from retained MIME, including Gmail Chat messages.
 // Each attempt starts at the first row; completed writes survive interruption.
@@ -45,7 +45,10 @@ func repairEmail(ctx context.Context, s *store.Store, sourceID int64, progress f
 			}
 			body := textutil.EnsureUTF8(parsed.GetBodyText())
 			html := textutil.EnsureUTF8(parsed.BodyHTML)
-			snippet := textutil.SnippetFromBody(body)
+			snippet := item.Snippet
+			if snippet == textutil.SnippetFromBody(item.BodyText) {
+				snippet = textutil.SnippetFromBody(body)
+			}
 			if err := s.UpdateMessageDerivedEmailTextContext(ctx, item.MessageID,
 				sql.NullString{String: body, Valid: body != ""}, sql.NullString{String: html, Valid: html != ""},
 				sql.NullString{String: snippet, Valid: snippet != ""}); err != nil {
