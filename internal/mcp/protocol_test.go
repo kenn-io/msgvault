@@ -397,8 +397,8 @@ func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
 		AllowPersonMerges: true, AllowCardDAVWrites: true, AllowIdentityScoring: true,
 		Calendar: calendar, AllowCalendarWrites: true,
 		Operations:             operationalTestBackend{},
-		OperationCapabilities:  []string{"get_source_scheduler_status", "sync_source", "update_slack_sync_policy", "set_person_display_name"},
-		OperationWriteFamilies: []OperationFamily{OperationFamilySources, OperationFamilyRecords},
+		OperationCapabilities:  []string{"get_source_scheduler_status", "sync_source", "update_slack_sync_policy", "set_person_display_name", "list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop"},
+		OperationWriteFamilies: []OperationFamily{OperationFamilySources, OperationFamilyRecords, OperationFamilyLoops},
 		PeopleBackend:          &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{}}, AllowProfileWrites: true,
 	}
 	handler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler
@@ -430,6 +430,7 @@ func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
 			assert.Contains(names, ToolGetIdentityMatch)
 			assert.Contains(names, "calendar_freebusy")
 			assert.Contains(names, "get_source_scheduler_status")
+			assert.Contains(names, "list_open_loops")
 			assert.Contains(names, ToolPromotePerson)
 			tools, ok := listed.Result["tools"].([]any)
 			require.True(t, ok)
@@ -445,7 +446,7 @@ func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
 					}
 				}
 			}
-			for _, name := range []string{ToolAcceptIdentityMatch, ToolRejectIdentityMatch, ToolScoreIdentityMatches, ToolMergePerson, ToolApproveCardDAVPublication, ToolSyncCardDAV, "calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "sync_source", "update_slack_sync_policy", "set_person_display_name"} {
+			for _, name := range []string{ToolAcceptIdentityMatch, ToolRejectIdentityMatch, ToolScoreIdentityMatches, ToolMergePerson, ToolApproveCardDAVPublication, ToolSyncCardDAV, "calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "sync_source", "update_slack_sync_policy", "set_person_display_name", "close_open_loop", "snooze_open_loop", "reopen_open_loop"} {
 				if version == task3ModernProtocolVersion {
 					assert.Contains(names, name)
 				} else {

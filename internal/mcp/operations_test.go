@@ -107,3 +107,31 @@ func TestOperationalWriteConfirmsCurrentDisclosureBeforeExecution(t *testing.T) 
 	assertions.True(call(fresh.RequestState, true).IsError)
 	assertions.Equal(int32(1), backend.calls.Load())
 }
+
+func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	names := []string{"list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop"}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: append(names, "sync_source")}
+	requirements.Len(operationalCatalog(opts, true), 1)
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyLoops}
+	first := operationalCatalog(opts, true)
+	requirements.Len(first, 4)
+	second := operationalCatalog(opts, true)
+	for i, definition := range first {
+		assertions.Equal(names[i], definition.definition.name)
+		assertions.Same(definition.definition.inputSchema, second[i].definition.inputSchema)
+		assertions.Same(definition.definition.outputSchema, second[i].definition.outputSchema)
+		requirements.NotNil(definition.definition.annotations.OpenWorldHint)
+		assertions.False(*definition.definition.annotations.OpenWorldHint)
+	}
+	requirements.Len(operationalCatalog(opts, false), 1)
+	opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, OperationFamilySources)
+	for _, definition := range operationalCatalog(opts, true) {
+		if definition.definition.name == "sync_source" {
+			assertions.True(*definition.definition.annotations.OpenWorldHint)
+		}
+	}
+	opts.DelegatedOnly = true
+	assertions.Empty(operationalCatalog(opts, true))
+}

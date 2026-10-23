@@ -1434,6 +1434,7 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 			size_estimate INTEGER,
 			has_attachments BOOLEAN,
 			is_from_me BOOLEAN,
+			is_sent BOOLEAN DEFAULT TRUE,
 			archived_at DATETIME,
 			rfc822_message_id TEXT,
 			sender_id INTEGER,

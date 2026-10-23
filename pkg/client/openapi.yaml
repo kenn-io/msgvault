@@ -7246,6 +7246,108 @@ components:
       required:
         - manifests
       type: object
+    LoopCounterparty:
+      properties:
+        address:
+          type: string
+        display_name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - display_name
+        - address
+      type: object
+    LoopDecisionResponse:
+      properties:
+        anchor_message_id:
+          format: int64
+          type: integer
+        snoozed_until:
+          format: date-time
+          type: string
+        state:
+          enum:
+            - open
+            - done
+            - snoozed
+          type: string
+      required:
+        - anchor_message_id
+        - state
+      type: object
+    LoopItem:
+      properties:
+        anchor_message_id:
+          description: The message that started the wait. Done and snooze use it as the loop ID.
+          format: int64
+          type: integer
+        channel:
+          enum:
+            - email
+            - chat
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        counterparty:
+          $ref: "#/components/schemas/LoopCounterparty"
+        kind:
+          description: reply_owed waits on you; awaiting_reply waits on them
+          enum:
+            - reply_owed
+            - awaiting_reply
+          type: string
+        last_activity_at:
+          format: date-time
+          type: string
+        owed_since_at:
+          format: date-time
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        summary:
+          description: The email subject, or the chat message text
+          type: string
+      required:
+        - kind
+        - anchor_message_id
+        - conversation_id
+        - source_id
+        - channel
+        - counterparty
+        - summary
+        - owed_since_at
+        - last_activity_at
+      type: object
+    LoopListResponse:
+      properties:
+        coverage_incomplete:
+          description: True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/LoopItem"
+          type: array
+        skipped_unparseable:
+          description: Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop
+          format: int64
+          type: integer
+        truncated:
+          description: True when more loops are open than limit returned
+          type: boolean
+      required:
+        - items
+        - truncated
+        - coverage_incomplete
+        - skipped_unparseable
+      type: object
     MCPCapabilities:
       properties:
         routes:
@@ -14731,6 +14833,15 @@ components:
         - generation
         - messages
       type: object
+    SnoozeLoopRequest:
+      additionalProperties: false
+      properties:
+        until:
+          format: date-time
+          type: string
+      required:
+        - until
+      type: object
     Source:
       additionalProperties: false
       properties:
@@ -16270,7 +16381,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.24.0
+  version: 3.25.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -23468,6 +23579,328 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/loops:
+    get:
+      operationId: listLoops
+      parameters:
+        - description: Only loops with this person
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum loops to return
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List conversations waiting on a reply
+      tags:
+        - API
+  /api/v1/loops/{message_id}/done:
+    post:
+      operationId: markLoopDone
+      parameters:
+        - description: ID of the message that anchors the loop
+          in: path
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopDecisionResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Open loops unavailable, or loop_scan_incomplete: retry to continue checking retained evidence"
+          headers:
+            Retry-After:
+              description: Seconds before retrying an incomplete evidence scan
+              schema:
+                type: string
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Mark a loop done
+      tags:
+        - API
+  /api/v1/loops/{message_id}/reopen:
+    post:
+      operationId: reopenLoop
+      parameters:
+        - description: ID of the message that anchors the loop
+          in: path
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopDecisionResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Open loops unavailable, or loop_scan_incomplete: retry to continue checking retained evidence"
+          headers:
+            Retry-After:
+              description: Seconds before retrying an incomplete evidence scan
+              schema:
+                type: string
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Clear a loop decision
+      tags:
+        - API
+  /api/v1/loops/{message_id}/snooze:
+    post:
+      operationId: snoozeLoop
+      parameters:
+        - description: ID of the message that anchors the loop
+          in: path
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnoozeLoopRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopDecisionResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Open loops unavailable, or loop_scan_incomplete: retry to continue checking retained evidence"
+          headers:
+            Retry-After:
+              description: Seconds before retrying an incomplete evidence scan
+              schema:
+                type: string
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Hide a loop until a later time
       tags:
         - API
   /api/v1/mcp/capabilities:

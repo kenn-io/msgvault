@@ -1634,6 +1634,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.runOnceMigration(ctx, migrationSynctechUnsentMessages, 1, false, s.migrateSynctechUnsentMessages); err != nil {
+		return fmt.Errorf("migrate Synctech unsent messages: %w", err)
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
