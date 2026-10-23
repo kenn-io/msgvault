@@ -232,6 +232,161 @@ func (s *Store) observationBatchReinforcementTargetIDTx(
 	return candidateID, nil
 }
 
+type observationPremiseSupportState struct {
+	supported      bool
+	sourcesMissing bool
+}
+
+type observationPremiseSupportEdge struct {
+	premiseID int64
+	role      personobs.PremiseRole
+}
+
+// observationPremiseSupportStatesTx rechecks the evidence-backed premise DAG
+// without treating every historical leaf as mandatory. The stored status of a
+// derived observation is governed by its premise roles and level-specific
+// threshold, so a counter or an excess inductive premise may be unsupported
+// while the derived observation remains supported.
+func (s *Store) observationPremiseSupportStatesTx(
+	ctx context.Context,
+	tx *loggedTx,
+	personID int64,
+	ancestorIDs []int64,
+) (map[int64]observationPremiseSupportState, error) {
+	observations := make(map[int64]personobs.Observation, len(ancestorIDs))
+	edges := make(map[int64][]observationPremiseSupportEdge, len(ancestorIDs))
+	for _, id := range ancestorIDs {
+		observation, err := s.loadObservationTx(ctx, tx, id)
+		if err != nil {
+			return nil, fmt.Errorf("load observation premise %d: %w", id, err)
+		}
+		if observation.PersonID != personID {
+			return nil, errors.New("observation premise belongs to another person")
+		}
+		observations[id] = observation
+		rows, err := tx.QueryContext(ctx, `SELECT premise_id,role FROM person_observation_premises WHERE derived_id=? ORDER BY ordinal`, id)
+		if err != nil {
+			return nil, fmt.Errorf("read observation premise edges for %d: %w", id, err)
+		}
+		for rows.Next() {
+			var edge observationPremiseSupportEdge
+			if err := rows.Scan(&edge.premiseID, &edge.role); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan observation premise edge for %d: %w", id, err)
+			}
+			edges[id] = append(edges[id], edge)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("read observation premise edges for %d: %w", id, err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, fmt.Errorf("close observation premise edges for %d: %w", id, err)
+		}
+	}
+
+	states := make(map[int64]observationPremiseSupportState, len(ancestorIDs))
+	visiting := make(map[int64]bool, len(ancestorIDs))
+	var evaluate func(int64) (observationPremiseSupportState, error)
+	evaluate = func(id int64) (observationPremiseSupportState, error) {
+		if state, ok := states[id]; ok {
+			return state, nil
+		}
+		observation, ok := observations[id]
+		if !ok {
+			return observationPremiseSupportState{}, fmt.Errorf("observation premise %d is outside the locked graph", id)
+		}
+		if visiting[id] {
+			return observationPremiseSupportState{}, errors.New("observation premise graph contains a cycle")
+		}
+		visiting[id] = true
+		state := observationPremiseSupportState{}
+		terminal := observation.Status == personobs.StatusRejected || observation.Status == personobs.StatusSuperseded
+		if !terminal && observation.SupportFlag != personobs.SupportFlagContested {
+			if observation.Level == personobs.LevelExplicit {
+				if observation.Origin == personobs.OriginOwner {
+					state.supported = personobs.PremiseSupported(observation)
+				} else {
+					aligned, sourcesMissing, err := s.observationAlignedSupportedCitationsTx(ctx, tx, personID, id)
+					if err != nil {
+						return observationPremiseSupportState{}, fmt.Errorf("revalidate observation premise evidence: %w", err)
+					}
+					state.supported = len(aligned) > 0
+					state.sourcesMissing = !state.supported && sourcesMissing
+				}
+			} else {
+				supportCount, supportedCount, totalSupported := 0, 0, 0
+				supportSourcesMissing, anySourcesMissing := false, false
+				for _, edge := range edges[id] {
+					premise, err := evaluate(edge.premiseID)
+					if err != nil {
+						return observationPremiseSupportState{}, err
+					}
+					if premise.supported {
+						totalSupported++
+					} else if premise.sourcesMissing {
+						anySourcesMissing = true
+					}
+					if edge.role != personobs.PremiseRoleSupport {
+						continue
+					}
+					supportCount++
+					if premise.supported {
+						supportedCount++
+					} else if premise.sourcesMissing {
+						supportSourcesMissing = true
+					}
+				}
+				switch observation.Level {
+				case personobs.LevelDeductive:
+					var forgottenSupport bool
+					if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_observation_events e
+						WHERE e.observation_id=? AND e.event='premise-changed' AND e.detail='support-premise-forgotten'
+						AND NOT EXISTS(SELECT 1 FROM person_observations p WHERE p.id=e.related_observation_id))`, id).Scan(&forgottenSupport); err != nil {
+						return observationPremiseSupportState{}, fmt.Errorf("check forgotten observation support premise: %w", err)
+					}
+					state.supported = supportCount > 0 && supportCount == supportedCount && !forgottenSupport
+					state.sourcesMissing = !state.supported && supportSourcesMissing
+				case personobs.LevelInductive:
+					state.supported = supportedCount >= 2
+					state.sourcesMissing = !state.supported && supportSourcesMissing
+				case personobs.LevelContradiction:
+					state.supported = totalSupported >= 2
+					state.sourcesMissing = !state.supported && anySourcesMissing
+				}
+			}
+		}
+		delete(visiting, id)
+		states[id] = state
+		return state, nil
+	}
+	for _, id := range ancestorIDs {
+		if _, err := evaluate(id); err != nil {
+			return nil, err
+		}
+	}
+	return states, nil
+}
+
+func observationWithPremiseSupportState(
+	observation personobs.Observation,
+	state observationPremiseSupportState,
+) personobs.Observation {
+	if observation.Status == personobs.StatusRejected || observation.Status == personobs.StatusSuperseded {
+		return observation
+	}
+	if state.supported {
+		observation.Status = personobs.StatusActive
+		observation.SupportFlag = ""
+		if observation.Level == personobs.LevelExplicit && observation.Origin != personobs.OriginOwner && observation.SupportedCount == 0 {
+			observation.SupportedCount = 1
+		}
+	} else {
+		observation.Status = personobs.StatusUnsupported
+	}
+	return observation
+}
+
 func (s *Store) nextObservationSequenceTx(ctx context.Context, tx *loggedTx, personID int64) (int64, error) {
 	var sequence int64
 	err := tx.QueryRowContext(ctx, `INSERT INTO person_observation_clocks(person_id,last_sequence) VALUES(?,1)
@@ -665,27 +820,28 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			}
 		}
 		if out.Failure == nil {
-			for _, ancestorID := range premiseAncestors {
-				ancestor, err := s.loadObservationTx(ctx, tx, ancestorID)
-				if err != nil {
-					return result, err
-				}
-				if ancestor.Level != personobs.LevelExplicit || ancestor.Origin == personobs.OriginOwner {
+			premiseSupport, err := s.observationPremiseSupportStatesTx(ctx, tx, b.PersonID, premiseAncestors)
+			if err != nil {
+				return result, fmt.Errorf("revalidate observation premise graph: %w", err)
+			}
+			for _, edge := range item.Proposal.Premises {
+				premise, ok := premises[edge.ID]
+				if !ok {
 					continue
 				}
-				aligned, sourcesMissing, err := s.observationAlignedSupportedCitationsTx(ctx, tx, b.PersonID, ancestorID)
-				if err != nil {
-					return result, fmt.Errorf("revalidate observation premise evidence: %w", err)
-				}
-				if len(aligned) > 0 {
+				state, ok := premiseSupport[edge.ID]
+				if !ok {
 					continue
 				}
-				reason := "premise-not-supported"
-				if sourcesMissing {
-					reason = "citation-source-missing"
+				if edge.Role == personobs.PremiseRoleSupport && !state.supported {
+					reason := "premise-not-supported"
+					if state.sourcesMissing {
+						reason = "citation-source-missing"
+					}
+					out.Failure = &personobs.ValidationError{Field: "support", Reason: reason}
+					break
 				}
-				out.Failure = &personobs.ValidationError{Field: "support", Reason: reason}
-				break
+				premises[edge.ID] = observationWithPremiseSupportState(premise, state)
 			}
 		}
 		if out.Failure == nil {

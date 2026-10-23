@@ -907,6 +907,102 @@ func TestApplyObservationBatchRevalidatesContradictionAfterPremiseExclusionClear
 	assert.Equal(1, counterDetail.SupportedCount)
 }
 
+func TestApplyObservationBatchReinforcesWithFreshEvidenceAfterOldEvidenceWithdrawn(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+
+	observationStatusGeneration(t, f.store, in.PersonID, id, false, 1)
+	assert.Equal(personobs.StatusUnsupported, observationGet(t, f.store, id).Status)
+
+	freshSupport, _ := observationSupportForMessage(t, f, "fresh-reinforcement", "I run every morning", "I run", time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))
+	proposal := in.Proposals[0]
+	proposal.Support = []personobs.SupportInput{freshSupport}
+	proposal.ReinforcesID = &id
+	in.Proposals = []personobs.ProposedObservation{proposal}
+
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+	require.NoError(err)
+	require.Nil(batch.Items[0].Failure)
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "extractor")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal("reinforced", result.Items[0].Outcome)
+	assert.Nil(result.Items[0].Failure)
+	assert.Equal(id, result.Items[0].ObservationID)
+	assert.Equal(personobs.StatusActive, observationGet(t, f.store, id).Status)
+}
+
+func TestAddOwnerObservationAdoptsExistingMachineRowAfterEvidenceWithdrawn(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+
+	observationStatusGeneration(t, f.store, in.PersonID, id, false, 1)
+	assert.Equal(personobs.StatusUnsupported, observationGet(t, f.store, id).Status)
+
+	row, err := f.store.AddOwnerObservation(t.Context(), personobs.OwnerInput{
+		PersonID: in.PersonID, Content: in.Proposals[0].Content, Actor: "owner",
+	})
+	require.NoError(err)
+	assert.Equal(id, row.ID)
+	assert.Equal(personobs.OriginOwner, row.Origin)
+	assert.Equal(personobs.StatusActive, row.Status)
+}
+
+func TestApplyObservationBatchRevalidatesDerivedAncestorsByThreshold(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	supportID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+
+	makeExplicit := func(key, body, quote, content string, at time.Time) int64 {
+		support, _ := observationSupportForMessage(t, f, key, body, quote, at)
+		proposal := in.Proposals[0]
+		proposal.Content = content
+		proposal.Support = []personobs.SupportInput{support}
+		proposal.ReinforcesID = nil
+		input := in
+		input.Proposals = []personobs.ProposedObservation{proposal}
+		result := applyObservationInput(t, f.store, input, generation)
+		require.Len(result.Items, 1)
+		require.Positive(result.Items[0].ObservationID)
+		return result.Items[0].ObservationID
+	}
+	secondSupportID := makeExplicit("inductive-support-two", "I swim every weekend", "I swim", "[PERSON] swims", time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC))
+	thirdSupportID := makeExplicit("inductive-support-three", "I bike on Fridays", "I bike", "[PERSON] bikes", time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+	counterID := makeExplicit("optional-counter", "I do not run", "I do not run", "[PERSON] does not run", time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC))
+	inductiveID := observationDerived(t, f.store, in, generation, personobs.LevelInductive, "[PERSON] often exercises", supportID, secondSupportID, thirdSupportID)
+
+	observationStatusGeneration(t, f.store, in.PersonID, thirdSupportID, false, 1)
+	observationStatusGeneration(t, f.store, in.PersonID, counterID, false, 2)
+	assert.Equal(personobs.StatusUnsupported, observationGet(t, f.store, thirdSupportID).Status)
+	assert.Equal(personobs.StatusUnsupported, observationGet(t, f.store, counterID).Status)
+	assert.Equal(personobs.StatusActive, observationGet(t, f.store, inductiveID).Status)
+
+	proposal := personobs.ProposedObservation{
+		PersonID: in.PersonID, Level: personobs.LevelContradiction, Origin: personobs.OriginReasoning,
+		Kind: personobs.KindOther, Content: "[PERSON] has conflicting running reports", ConfidenceBP: 800,
+		Premises: []personobs.PremiseInput{
+			{ID: inductiveID, Role: personobs.PremiseRoleSupport},
+			{ID: supportID, Role: personobs.PremiseRoleSupport},
+			{ID: counterID, Role: personobs.PremiseRoleCounter},
+		},
+	}
+	in.Proposals = []personobs.ProposedObservation{proposal}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+	require.NoError(err)
+	require.Nil(batch.Items[0].Failure)
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "reasoner")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal("created", result.Items[0].Outcome)
+	assert.Nil(result.Items[0].Failure)
+	assert.Positive(result.Items[0].ObservationID)
+}
+
 func TestApplyObservationBatchDoesNotSupersedeWithExcludedReplacementEvidence(t *testing.T) {
 	for _, exclusion := range []string{"list", "draft"} {
 		t.Run(exclusion, func(t *testing.T) {

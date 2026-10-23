@@ -53,6 +53,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 
 - [People and Profiles](https://msgvault.io/docs/usage/people.md): the people layer
 - [Conversation Briefs](https://msgvault.io/docs/usage/people-briefs.md): saved summaries, citations, and input limits
+- [Person Observations](https://msgvault.io/docs/usage/people-observations.md): owner statements, decisions, support, and suppression
 - [Profile Automation](https://msgvault.io/docs/usage/people-automation.md): tracking, fact resolution, and provider consent
 - [External Enrichment](https://msgvault.io/docs/usage/people-enrichment.md): provider policies and suppression
 - [CardDAV Contacts](https://msgvault.io/docs/usage/people-carddav.md): address-book import, publication, and conflicts

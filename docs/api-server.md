@@ -360,6 +360,34 @@ retired UID that still aliases a person, or the UID of a CardDAV card mapped to
 that person. If the same CardDAV UID is mapped to different people, the API
 returns `409 person_uid_ambiguous`.
 
+### Person observations
+
+API schema 3.25.0 adds owner-only statements about saved people. Observations
+never update profile fields. Delegated tokens receive `401 unauthorized` on
+all observation and suppression routes.
+
+| Method and path | Contract |
+|---|---|
+| `GET /api/v1/people/{id}/observations` | List observations and a total count |
+| `GET /api/v1/observations/{id}` | Read the statement, citations, premises, dependents, and events |
+| `POST /api/v1/people/{id}/observations` | Add an owner statement; returns `201` |
+| `POST /api/v1/observations/{id}/decisions` | Apply an owner decision at `expected_updated_at` |
+| `GET /api/v1/people/{id}/observation-suppressions` | List active hash-only suppressions |
+| `DELETE /api/v1/people/{id}/observation-suppressions/{key}` | Clear a suppression; returns `204` |
+
+Lists accept comma-separated `level`, `status`, and `kind`, an RFC3339 `as_of`,
+`limit` (1–500, default 100), and `offset` (default 0). List and detail reads
+hide sensitive statements unless `include_sensitive=true`; a hidden detail
+returns `404`. Responses use `Cache-Control: no-store`.
+
+Add requires `content` with `[PERSON]` and 1–500 characters. Optional fields
+are `subject_ref`, `kind`, `categories`, `stability`, `valid_from`, `valid_until`,
+and `occurs_on`. Decisions require `action` and `expected_updated_at`; optional
+`reason` and `end_at` refine rejection or ending. Invalid input returns `400`,
+a stale revision returns `409 observation_conflict`, and absent records return
+`404`. See [person observations](usage/people-observations.md) for action and
+suppression semantics; OpenAPI owns the complete field shapes.
+
 ### Native email tags
 
 Read or update one archived message's live Gmail labels, IMAP keywords, or

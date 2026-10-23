@@ -154,6 +154,8 @@ type RetireVisualAttachmentGenerationBody = VisualRetireRequest
 
 type RetryVisualAttachmentOwnerBody = VisualRetryRequest
 
+type DecidePersonObservationBody = DecidePersonObservationRequest
+
 type CreateOrganizationBody = OrganizationCreateBody
 
 type PatchOrganizationBody = OrganizationBody
@@ -197,6 +199,8 @@ type SuggestPersonFilesBody = PersonFileSuggestionHTTPRequest
 type MergePersonsBody = MergePersonRequest
 
 type AppendPersonNoteBody = AppendPersonNoteRequest
+
+type AddOwnerObservationBody = AddOwnerObservationRequest
 
 type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
 
