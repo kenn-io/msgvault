@@ -747,3 +747,23 @@ func persistPersonFactLedgerGeneration(
 	require.NoError(t, err)
 	return stored
 }
+
+func TestPersonFactGenerationReplayWithSelectionFingerprint(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, personID := newPersonFactLedgerStore(t)
+	input := personFactLedgerGenerationInput(personID, "selection", nil, nil)
+	input.SelectionFingerprint = strings.Repeat("c", 64)
+	prepared, err := personfacts.PreparePersonFactGeneration(t.Context(), input, nil)
+	require.NoError(err)
+	first := persistPersonFactLedgerGeneration(t, st, prepared, nil)
+	second := persistPersonFactLedgerGeneration(t, st, prepared, nil)
+	assert.Equal(first.Generation.ID, second.Generation.ID)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_fact_generations`).Scan(&count))
+	assert.Equal(1, count)
+	input.SelectionFingerprint = ""
+	legacy, err := personfacts.PreparePersonFactGeneration(t.Context(), input, nil)
+	require.NoError(err)
+	assert.NotEqual(legacy.GenerationKey(), prepared.GenerationKey())
+}

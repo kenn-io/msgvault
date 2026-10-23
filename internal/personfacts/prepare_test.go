@@ -250,6 +250,7 @@ func TestDeterministicKeysIncludeEveryIdentityField(t *testing.T) {
 		name   string
 		change func(*GenerationInput)
 	}{
+		{name: "selection fingerprint", change: func(v *GenerationInput) { v.SelectionFingerprint = strings.Repeat("c", 64) }},
 		{name: "person", change: func(v *GenerationInput) {
 			v.PersonID++
 			v.Claims[0].Evidence[0].PersonID++
@@ -795,4 +796,23 @@ func clonePreparedClaim(input PreparedClaim) PreparedClaim {
 		cloned.Failure = &value
 	}
 	return cloned
+}
+
+func TestGenerationKeyPreservesLegacyEncoding(t *testing.T) {
+	input := validGenerationInput()
+	input.Claims = []ProposedClaim{validClaim(validArchiveEvidence())}
+	prepared := mustPrepare(t, input)
+	assert.Equal(t, `{"person_id":7,"source_cursors":[{"lane":"optimistic","start":"100","end":"200"}],"program_id":"people-extraction","program_version":"v1","program_fingerprint":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","catalog_fingerprint":"catalog-v1","provider":"fixture-provider","provider_version":"2026-08-22","model":"fixture-model","model_version":"model-v1","policy":{"allow_sensitive":false,"provider_policy_fingerprint":"policy-v1"},"claims":[{"target":{"kind":"attribute","key":"attribute-id","revision":"sha256:0c45d003731d1e977463638932186a2073ef227c7035a0268ddc8796411a1ace"},"relation":"support","submitted_fingerprint":"sha256:c59477326e21e4186034a62bdea227688abcc12ddb198d5b9232e74eb860ef30","submitted_evidence_fingerprints":["sha256:df9343465c0f6494475f13982c1a829314f23d47e27e91b63dc607c60799ded7"],"normalized":{"json":"Example value","fingerprint":"sha256:c59477326e21e4186034a62bdea227688abcc12ddb198d5b9232e74eb860ef30"},"evidence_keys":["sha256:df9343465c0f6494475f13982c1a829314f23d47e27e91b63dc607c60799ded7"],"valid_from":"2020-01-01T00:00:00Z","valid_until":null,"origin":"extraction","confidence":{"reported_score":800},"failure":null}],"evidence_status_changes":[]}`, string(prepared.CanonicalJSON()))
+	assert.Equal(t, "sha256:dee524250463292c63bb443263220275754f1c989eab36a7bfebb022e03ac846", prepared.GenerationKey())
+}
+
+func TestGenerationInputRejectsMalformedSelectionFingerprint(t *testing.T) {
+	for _, fingerprint := range []string{"abc", strings.Repeat("C", 64)} {
+		t.Run(fingerprint, func(t *testing.T) {
+			input := validGenerationInput()
+			input.SelectionFingerprint = fingerprint
+			_, err := PreparePersonFactGeneration(t.Context(), input, nil)
+			assert.ErrorContains(t, err, "selection fingerprint")
+		})
+	}
 }
