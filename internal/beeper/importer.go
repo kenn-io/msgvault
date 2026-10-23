@@ -529,9 +529,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			sum.Stopped = true
 		}
 	}
+	optionalWorkStopped := false
+	if !sum.Stopped && sum.FetchErrors == 0 {
+		optionalWorkStopped, err = imp.repairQuietRosters(ctx, syncID, src.ID, opts, state, chats)
+		if err != nil {
+			return sum, err
+		}
+	}
 
 	finalizeCtx := ctx
-	if sum.Stopped {
+	if sum.Stopped || optionalWorkStopped {
 		var cancel context.CancelFunc
 		finalizeCtx, cancel = opts.finalizeContext(ctx)
 		defer cancel()
@@ -808,6 +815,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		statsCtx, cancel := opts.conversationStatsContext(ctx)
 		defer cancel()
 		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, convID)
+		statsRefreshed := statsErr == nil
 		statsErr = opts.budgetError(ctx, statsErr)
 		if opts.stopRequested() {
 			sum.Stopped = true
@@ -818,9 +826,25 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				statsErr = nil
 			}
 		}
+		if statsRefreshed && ctx.Err() == nil {
+			pendingCtx := ctx
+			var cancelPending context.CancelFunc
+			if opts.stopRequested() {
+				pendingCtx, cancelPending = opts.finalizeContext(ctx)
+			}
+			if cancelPending != nil {
+				defer cancelPending()
+			}
+			if clearErr := imp.store.SetConversationRosterRepairPendingContext(pendingCtx, convID, false); clearErr != nil {
+				statsErr = fmt.Errorf("clear roster repair pending marker after active sync: %w", clearErr)
+			}
+		}
 		err = errors.Join(err, statsErr)
 	}()
 	cs := state.EnsureChat(ch.ID)
+	if membership.known {
+		cs.RosterRetryAfter = ""
+	}
 	cc := &chatScope{
 		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
 		opts: opts, cs: cs, membershipComplete: membershipComplete,
