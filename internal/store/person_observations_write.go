@@ -860,8 +860,3 @@ func (s *Store) ensureObservationSuppressionLiftEventTx(ctx context.Context, tx 
 	}
 	return s.appendObservationEventTx(ctx, tx, personID, observationID, "suppression-lifted", "system", detail, nil)
 }
-
-// Support propagation replaces this hook in the next store layer.
-func (s *Store) notifyObservationSupportChangedTx(_ context.Context, _ *loggedTx, _ int64, _ []int64, _ string) error {
-	return nil
-}
