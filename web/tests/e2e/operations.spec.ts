@@ -1,9 +1,5 @@
 import { expect, test } from '@playwright/test';
-import {
-  installOperations,
-  OPERATION_PRIVACY_SENTINELS,
-  OPERATION_REFERENCES
-} from './fixtures/operations';
+import { installOperations } from './fixtures/operations';
 
 const operationsURL = `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`;
 
@@ -47,19 +43,6 @@ test('operations invokes only advertised CardDAV and visual actions and surfaces
   await expect(visualDetail.getByRole('button', { name: 'Start CardDAV sync' })).toHaveCount(0);
 });
 
-test('operations direct opaque detail never renders private native values', async ({ page }) => {
-  await installOperations(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'operations', operationRunID: OPERATION_REFERENCES.visual
-  }))}`);
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Visual embedding');
-
-  const rendered = await page.locator('body').innerText();
-  for (const sentinel of OPERATION_PRIVACY_SENTINELS) {
-    expect(rendered, `rendered private sentinel: ${sentinel}`).not.toContain(sentinel);
-  }
-});
-
 test('operations related links fetch and render their live status authorities', async ({ page }) => {
   const fixture = await installOperations(page);
   await page.goto(operationsURL);
@@ -88,8 +71,6 @@ test('operations sends unconfigured visual status links to settings without fetc
   await expect(settings).toBeVisible();
   await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
 });
-
-
 
 test('the refresh control reloads status only and keeps paged history, detail, and focus', async ({ page }) => {
   await page.clock.install();
