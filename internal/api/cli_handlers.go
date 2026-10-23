@@ -1744,6 +1744,11 @@ func cliRunCommandAllowed(args []string) bool {
 			case "run", "status", "history":
 				return true
 			}
+		case "tiers":
+			switch args[2] {
+			case "preview", "explain":
+				return true
+			}
 		}
 		return false
 	}
