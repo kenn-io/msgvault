@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -203,25 +202,6 @@ func TestPG_FTSUpsert_MultibyteOversizedBody(t *testing.T) {
 		"probe search_fts")
 	assert.False(t, isNull,
 		"search_fts must be non-NULL after byte-truncated multibyte upsert")
-}
-
-func TestPG_RederivePreservesMultibyteEmailSearch(t *testing.T) {
-	require := require.New(t)
-	skipUnlessPostgres(t)
-	f := storetest.New(t)
-	body := strings.TrimSpace(multibyteOversizedBody())
-	id := f.NewMessage().WithSubject("apricot").Create(t, f.Store)
-	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
-	require.NoError(f.Store.UpsertMessageRaw(id, []byte("Content-Type: text/plain; charset=UTF-8\r\n\r\n"+body)))
-	require.NoError(f.Store.UpsertFTS(id, "apricot", body, "", "", ""))
-	_, before, err := f.Store.SearchMessages("apricot", 0, 10)
-	require.NoError(err)
-	require.Equal(int64(1), before)
-	_, err = rederive.Run(t.Context(), f.Store, f.Source.SourceType, f.Source.Identifier, f.Source.ID, nil)
-	require.NoError(err)
-	_, after, err := f.Store.SearchMessages("apricot", 0, 10)
-	require.NoError(err)
-	require.Equal(int64(1), after, "repair must preserve the searchable subject of retained mail")
 }
 
 // TestPG_FTSUpsert_OversizedSubjectAndRecipients (finding C2/D1) verifies that

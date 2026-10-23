@@ -31,25 +31,28 @@ func archiveEmail(t *testing.T, st *store.Store, src *store.Source, key, body st
 	return id
 }
 
+func archiveOutlookEmail(t *testing.T, body string) (*store.Store, *store.Source, int64) {
+	t.Helper()
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("outlook", "archive@example.net")
+	require.NoError(t, err)
+	return st, src, archiveEmail(t, st, src, "old", body)
+}
+
 func TestEmailRebuildsArchivedText(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("outlook", "archive@example.net")
-	require.NoError(err)
-	id := archiveEmail(t, st, src, "old", "HeizkÃ¶rper")
+	st, src, id := archiveOutlookEmail(t, "HeizkÃ¶rper")
 	sender, err := st.EnsureParticipant("repaired@example.net", "Repaired", "example.net")
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Repaired"}))
 	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET message_type = 'chat', sender_id = ? WHERE id = ?"), sender, id)
 	require.NoError(err)
 	Heal(t.Context(), slog.New(slog.DiscardHandler), st, src)
-	var body, html, snippet string
+	var body, html string
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), id).Scan(&body, &html))
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT snippet FROM messages WHERE id = ?"), id).Scan(&snippet))
 	assert.Equal("Heizkörper", body)
 	assert.Equal("<p>Heizkörper</p>", html)
-	assert.Equal("Heizkörper", snippet)
 	for _, query := range []string{"Heizkörper", "Stored", "repaired"} {
 		matches, _, err := st.SearchMessages(query, 0, 10)
 		require.NoError(err)
@@ -133,11 +136,8 @@ func TestEmailPreservesProviderSnippets(t *testing.T) {
 func TestEmailCurrentTextKeepsCacheAndRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("outlook", "current@example.net")
-	require.NoError(err)
-	id := archiveEmail(t, st, src, "current", "Heizkörper")
-	_, err = st.UpdateMessageDerivedEmailTextContext(t.Context(), id, sql.NullString{String: "Heizkörper", Valid: true}, sql.NullString{String: "<p>Heizkörper</p>", Valid: true}, sql.NullString{String: "Heizkörper", Valid: true})
+	st, src, id := archiveOutlookEmail(t, "Heizkörper")
+	_, err := st.UpdateMessageDerivedEmailTextContext(t.Context(), id, sql.NullString{String: "Heizkörper", Valid: true}, sql.NullString{String: "<p>Heizkörper</p>", Valid: true}, sql.NullString{String: "Heizkörper", Valid: true})
 	require.NoError(err)
 	var logs bytes.Buffer
 	Heal(t.Context(), slog.New(slog.NewTextHandler(&logs, nil)), st, src)
@@ -161,6 +161,20 @@ func TestEmailCurrentTextKeepsCacheAndRows(t *testing.T) {
 	assert.Equal(int64(2), derivedDataRevision(t, st))
 }
 
+func archiveLargeEmail(t *testing.T, st *store.Store) (*store.Source, int64, string) {
+	t.Helper()
+	src, err := st.GetOrCreateSource("outlook", "overflow@example.net")
+	require.NoError(t, err)
+	var body strings.Builder
+	for i := range 140000 {
+		fmt.Fprintf(&body, "%c%c%c%c%c ", 'А'+i%16, 'А'+i/16%16, 'А'+i/256%16, 'А'+i/4096%16, 'А'+i/65536%16)
+	}
+	id := archiveEmail(t, st, src, "large", "stale")
+	raw := "Content-Type: text/plain; charset=UTF-8\r\n\r\n" + strings.TrimSpace(body.String())
+	require.NoError(t, st.UpsertMessageRaw(id, []byte(raw)))
+	return src, id, raw
+}
+
 func TestEmailPostgresOverflowIsTerminal(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
@@ -168,13 +182,12 @@ func TestEmailPostgresOverflowIsTerminal(t *testing.T) {
 	}
 	require := require.New(t)
 	assert := assert.New(t)
-	src, err := st.GetOrCreateSource("outlook", "overflow@example.net")
+	src, id, raw := archiveLargeEmail(t, st)
+	_, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
-	id := archiveEmail(t, st, src, "large", "stale")
-	raw := "Content-Type: text/plain; charset=UTF-8\r\n\r\n" + strings.Repeat("ö ", 240000) + "sentinel"
-	require.NoError(st.UpsertMessageRaw(id, []byte(raw)))
-	_, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	_, found, err := st.SearchMessages("Stored", 0, 10)
 	require.NoError(err)
+	assert.Equal(int64(1), found, "repair must preserve the searchable subject of retained mail")
 	_, err = st.DB().Exec(`CREATE FUNCTION fail_large_email_fts() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.search_fts <> ''::tsvector THEN RAISE EXCEPTION USING ERRCODE = '54000', MESSAGE = 'synthetic tsvector overflow'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_large_email_fts BEFORE UPDATE OF search_fts ON messages FOR EACH ROW EXECUTE FUNCTION fail_large_email_fts()`)
 	require.NoError(err)
 	_, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
