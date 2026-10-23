@@ -262,6 +262,8 @@ import type {
   ListPersonFactEvidenceStatusEventsParams,
   ListPersonFactEvidenceStatusEventsPathParameters,
   ListPersonFactPinsPathParameters,
+  ListPersonFactStalenessParams,
+  ListPersonFactStalenessPathParameters,
   ListPersonFactTargetsParams,
   ListPersonIdentitiesPathParameters,
   ListPersonMatchJudgmentsParams,
@@ -351,6 +353,7 @@ import type {
   PersonFactEvidenceStatusEventsResponse,
   PersonFactPinWrite,
   PersonFactPinsResponse,
+  PersonFactStalenessResponse,
   PersonIdentitiesResponse,
   PersonInboxResponse,
   PersonMatchConsentDecisionRequest,
@@ -3309,6 +3312,23 @@ export const setPersonFactPin = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonFactPinRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Report current person fact staleness
+ */
+export const listPersonFactStaleness = (
+  { id }: ListPersonFactStalenessPathParameters,
+  params?: ListPersonFactStalenessParams,
+  options?: SecondParameter<typeof orvalFetch<PersonFactStalenessResponse>>,
+) => {
+  return orvalFetch<PersonFactStalenessResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-staleness`,
+      method: "GET",
+      params,
     },
     options,
   );
