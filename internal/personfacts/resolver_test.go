@@ -688,6 +688,17 @@ func TestResolverV1RejectsInvalidIdentityAndSensitiveClaims(t *testing.T) {
 			},
 			action: DecisionInvalid, reason: ReasonMalformedValue,
 		},
+		{
+			name: "persisted unaligned archive evidence rejection remains durable",
+			mutate: func(input *ResolutionInput) {
+				input.Claims[0].Normalized = nil
+				input.Claims[0].Failure = &ValidationFailure{
+					Action: DecisionInvalid, Reason: ReasonUnalignedEvidence,
+					Detail: "archive source changed after packet assembly",
+				}
+			},
+			action: DecisionInvalid, reason: ReasonUnalignedEvidence,
+		},
 	}
 
 	for _, test := range tests {

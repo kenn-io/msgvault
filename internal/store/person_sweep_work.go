@@ -36,6 +36,11 @@ func (s *Store) ClaimPersonSweep(
 	if request.PersonID < 0 {
 		return nil, errors.New("claim person sweep: person ID must not be negative")
 	}
+	for _, personID := range request.ExcludePersonIDs {
+		if personID <= 0 || personID == request.PersonID {
+			return nil, errors.New("claim person sweep: excluded person IDs must be positive and differ from the requested person")
+		}
+	}
 
 	now := s.dialect.Now()
 	leaseUntil, leaseDurationArg := personSweepLeaseExpiration(
@@ -43,6 +48,11 @@ func (s *Store) ClaimPersonSweep(
 	candidateSuffix := ""
 	if s.IsPostgreSQL() {
 		candidateSuffix = " FOR UPDATE OF w SKIP LOCKED"
+	}
+	excludeClause := ""
+	if len(request.ExcludePersonIDs) > 0 {
+		excludeClause = " AND w.person_id NOT IN (" +
+			strings.TrimSuffix(strings.Repeat("?,", len(request.ExcludePersonIDs)), ",") + ")"
 	}
 	query := fmt.Sprintf(`
 		UPDATE person_sweep_work
@@ -54,19 +64,22 @@ func (s *Store) ClaimPersonSweep(
 			JOIN person_tracking pt ON pt.person_id = w.person_id
 			WHERE available_at <= %s
 			  AND (w.lease_until IS NULL OR w.lease_until <= %s)
-			  AND (? = 0 OR w.person_id = ?)
+			  AND (? = 0 OR w.person_id = ?)%s
 			ORDER BY w.available_at, w.person_id
 			LIMIT 1%s
 		)
 		RETURNING person_id, lease_owner, lease_fence, lease_until, attempt_count`,
-		leaseUntil, now, now, now, candidateSuffix)
+		leaseUntil, now, now, now, excludeClause, candidateSuffix)
+	args := []any{request.WorkerID, leaseDurationArg, request.PersonID, request.PersonID}
+	for _, personID := range request.ExcludePersonIDs {
+		args = append(args, personID)
+	}
 	var (
 		lease     peoplesweep.Lease
 		expiresAt requiredTimestamp
 	)
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		err := tx.QueryRowContext(ctx, query, request.WorkerID,
-			leaseDurationArg, request.PersonID, request.PersonID).Scan(
+		err := tx.QueryRowContext(ctx, query, args...).Scan(
 			&lease.PersonID, &lease.WorkerID, &lease.Fence, &expiresAt, &lease.AttemptCount)
 		if err != nil {
 			return err

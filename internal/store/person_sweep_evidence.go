@@ -1025,7 +1025,11 @@ type PersonSweepEvidenceAligner struct{ Store *Store }
 
 func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts.EvidenceInput) (personfacts.AlignmentResult, error) {
 	reject := func(reason personfacts.DecisionReason, detail string) personfacts.AlignmentResult {
-		return personfacts.AlignmentResult{Failure: &personfacts.ValidationFailure{Action: personfacts.DecisionIdentityRejected, Reason: reason, Detail: detail}}
+		action := personfacts.DecisionIdentityRejected
+		if reason == personfacts.ReasonUnalignedEvidence {
+			action = personfacts.DecisionInvalid
+		}
+		return personfacts.AlignmentResult{Failure: &personfacts.ValidationFailure{Action: action, Reason: reason, Detail: detail}}
 	}
 	if input.SourceClass != personfacts.EvidenceArchive {
 		return reject(personfacts.ReasonUnalignedEvidence, "person sweep evidence must use archive class"), nil
@@ -1066,7 +1070,7 @@ func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts
 		return reject(personfacts.ReasonIdentityMismatch, "evidence subject does not match canonical person"), nil
 	}
 	start, end := int64(current.Highlight.Start), int64(current.Highlight.End)
-	if input.SourceVersion != current.SourceVersion || input.ContentSHA256 != current.ContentSHA256 || input.Excerpt != current.Excerpt || input.SpanStart == nil || input.SpanEnd == nil || *input.SpanStart != start || *input.SpanEnd != end || !input.EventTime.Equal(current.EventTime) || !input.RecordedTime.Equal(current.RecordedTime) || input.IdentityScore != current.IdentityBasisPoints || input.Directness != current.Directness || input.Authority != current.Authority {
+	if input.SourceVersion != current.SourceVersion || input.ContentSHA256 != current.ContentSHA256 || input.Excerpt != current.Excerpt || input.SpanStart == nil || input.SpanEnd == nil || *input.SpanStart != start || *input.SpanEnd != end || !personFactPortableTime(input.EventTime).Equal(personFactPortableTime(current.EventTime)) || !personFactPortableTime(input.RecordedTime).Equal(personFactPortableTime(current.RecordedTime)) || input.IdentityScore != current.IdentityBasisPoints || input.Directness != current.Directness || input.Authority != current.Authority {
 		return reject(personfacts.ReasonUnalignedEvidence, "person sweep evidence no longer aligns"), nil
 	}
 	return personfacts.AlignmentResult{Accepted: true, SourceVersion: current.SourceVersion, ContentSHA256: current.ContentSHA256}, nil
