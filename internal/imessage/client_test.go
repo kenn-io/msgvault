@@ -5,39 +5,16 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"math"
-	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-func newChatDB(t *testing.T) (string, *sql.DB) {
-	t.Helper()
-	require := require.New(t)
-	path := filepath.Join(t.TempDir(), "chat.db")
-	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL")
-	require.NoError(err)
-	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`
- CREATE TABLE message (
-  guid TEXT NOT NULL DEFAULT 'synthetic-message', text TEXT, attributedBody BLOB,
-  date INTEGER NOT NULL, is_from_me INTEGER NOT NULL DEFAULT 0,
-  service TEXT DEFAULT 'SMS', cache_has_attachments INTEGER NOT NULL DEFAULT 0,
-  handle_id INTEGER DEFAULT 1
- );
- CREATE TABLE handle (id TEXT);
- CREATE TABLE chat (guid TEXT, display_name TEXT, chat_identifier TEXT);
- CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
- CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
- INSERT INTO handle (id) VALUES ('peer@example.test');
- `)
-	require.NoError(err)
-	return path, db
-}
 
 func TestImportInvalidDatesRetainsMessages(t *testing.T) {
 	cases := []struct {
@@ -61,7 +38,7 @@ func TestImportInvalidDatesRetainsMessages(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			ctx := context.Background()
-			path, db := newChatDB(t)
+			path, db := testutil.NewIMessageChatDB(t)
 			_, err := db.Exec(`INSERT INTO message (date,text,attributedBody,cache_has_attachments) VALUES (?,?,?,?)`, tt.date, tt.text, tt.attributed, tt.attachments)
 			require.NoError(err)
 			c, err := NewClient(path)
@@ -131,7 +108,7 @@ func TestImportDateFiltersIgnoreSentinelsInFormatDetection(t *testing.T) {
 		t.Run(strconv.FormatBool(useNano), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			ctx := context.Background()
-			path, db := newChatDB(t)
+			path, db := testutil.NewIMessageChatDB(t)
 			dates := []int64{725760000, 757382400, math.MinInt64, math.MaxInt64}
 			if useNano {
 				dates[0], dates[1] = 725760000000000000, 757382400000000000
@@ -168,7 +145,7 @@ func TestImportDateFiltersIgnoreSentinelsInFormatDetection(t *testing.T) {
 func TestTimestampDetectionWithoutRealPositiveDates(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	for _, dates := range [][]int64{nil, {0, math.MinInt64, math.MaxInt64}} {
-		path, db := newChatDB(t)
+		path, db := testutil.NewIMessageChatDB(t)
 		for _, date := range dates {
 			_, err := db.Exec(`INSERT INTO message (date) VALUES (?)`, date)
 			require.NoError(err)
@@ -178,4 +155,15 @@ func TestTimestampDetectionWithoutRealPositiveDates(t *testing.T) {
 		assert.False(c.useNanoseconds)
 		require.NoError(c.Close())
 	}
+}
+
+func TestNewClientDoesNotRequireHomeWhenAttachmentCaptureIsDisabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows resolves the home directory from USERPROFILE")
+	}
+	path, _ := testutil.NewIMessageChatDB(t)
+	t.Setenv("HOME", "")
+	client, err := NewClient(path, WithAttachments("", "", attachmentpolicy.Policy{}))
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
 }

@@ -130,6 +130,7 @@ func TestGetSettingsIsSelfDescribingAndIncludesSafeCatalog(t *testing.T) {
 		"slack.media", "slack.media_scope", "slack.media_max_participants", "slack.max_media_mb",
 		"discord.media", "discord.media_scope", "discord.media_max_participants", "discord.max_media_mb",
 		"teams.media", "teams.media_scope", "teams.media_max_participants", "teams.max_media_mb",
+		"imessage.media_max_participants", "imessage.max_media_mb",
 		"vector.embeddings.timeout", "vector.preprocess.strip_quotes", "vector.preprocess.strip_signatures",
 		"vector.preprocess.strip_html", "vector.preprocess.strip_base64",
 		"vector.preprocess.strip_url_tracking", "vector.preprocess.collapse_whitespace",
@@ -388,6 +389,8 @@ func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 		{"key": "teams.media_scope", "value": map[string]any{"string": "direct"}},
 		{"key": "teams.media_max_participants", "value": map[string]any{"integer": 6}},
 		{"key": "teams.max_media_mb", "value": map[string]any{"integer": 60}},
+		{"key": "imessage.media_max_participants", "value": map[string]any{"integer": 7}},
+		{"key": "imessage.max_media_mb", "value": map[string]any{"integer": 65}},
 		{"key": "vector.embeddings.timeout", "value": map[string]any{"string": "45s"}},
 		{"key": "vector.preprocess.strip_quotes", "value": map[string]any{"boolean": false}},
 		{"key": "vector.search.max_page_size_hybrid", "value": map[string]any{"integer": 0}},
@@ -420,6 +423,8 @@ func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 	assertions.Equal(90, loaded.Slack.MaxMediaMB)
 	assertions.Equal(10, loaded.Discord.MediaMaxParticipants)
 	assertions.Equal(60, loaded.Teams.MaxMediaMB)
+	assertions.Equal(7, loaded.IMessage.MediaMaxParticipants)
+	assertions.Equal(65, loaded.IMessage.MaxMediaMB)
 	assertions.False(loaded.Vector.Preprocess.StripQuotesEnabled())
 	assertions.Equal(0, loaded.Vector.Search.MaxPageSizeHybridClamp())
 }
@@ -427,10 +432,14 @@ func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 func TestPatchSettingsRejectsInvalidAttachmentPolicy(t *testing.T) {
 	t.Parallel()
 	srv, _ := newSettingsTestServer(t, "")
-	resp := patchSettings(t, srv,
-		`{"updates":[{"key":"teams.media_max_participants","value":{"integer":-1}}]}`)
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.Code, resp.Body.String())
-	assert.NotContains(t, resp.Body.String(), "provider-credentials")
+	for _, body := range []string{
+		`{"updates":[{"key":"teams.media_max_participants","value":{"integer":-1}}]}`,
+		`{"updates":[{"key":"imessage.max_media_mb","value":{"integer":-1}}]}`,
+	} {
+		resp := patchSettings(t, srv, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.Code, resp.Body.String())
+		assert.NotContains(t, resp.Body.String(), "provider-credentials")
+	}
 }
 
 func TestPatchSettingsRejectsHostAndAuthSettings(t *testing.T) {

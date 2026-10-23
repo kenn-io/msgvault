@@ -236,6 +236,8 @@ func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (at
 			}
 		}
 		return attachmentpolicy.Policy{}, false
+	case sourceTypeAppleMessages:
+		return imessageMediaPolicy(0, cfg), true
 	case twilio.SourceType:
 		source := cfg.GetTwilioSource(identifier)
 		if source == nil {
