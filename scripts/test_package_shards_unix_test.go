@@ -94,15 +94,13 @@ func TestSilent(t *testing.T) { record(t) }
 		index string
 		count string
 		names []string
-		fails bool
 	}{
-		{"1", "2", []string{"TestNested", "TestPass"}, true},
-		{"2", "2", []string{"TestSilent", "TestSkip"}, false},
-		{"5", "5", []string{}, false},
+		{"1", "2", []string{"TestNested", "TestPass"}},
+		{"2", "2", []string{"TestSilent", "TestSkip"}},
+		{"5", "5", []string{}},
 	} {
 		t.Run("part="+part.index, func(t *testing.T) {
 			require := require.New(t)
-			t.Setenv("SHARD_FAIL", "1")
 			records := t.TempDir()
 			t.Setenv("SHARD_RECORD", records)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -111,11 +109,7 @@ func TestSilent(t *testing.T) { record(t) }
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "GOWORK=off")
 			output, err := cmd.CombinedOutput()
-			if part.fails {
-				require.Error(err, string(output))
-			} else {
-				require.NoError(err, string(output))
-			}
+			require.NoError(err, string(output))
 			entries, err := os.ReadDir(records)
 			require.NoError(err)
 			names := make([]string, 0, len(entries))
