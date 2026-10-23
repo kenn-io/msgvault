@@ -27,18 +27,19 @@ func (s *Store) buildPersonFactCatalogContext(
 	mapped := make([]personfacts.Definition, 0, len(definitions))
 	for _, definition := range definitions {
 		mapped = append(mapped, personfacts.Definition{
-			UniversalID:  definition.UniversalID,
-			Slug:         definition.Slug,
-			Description:  personFactStringValue(definition.Description),
-			ValueType:    personfacts.ValueType(definition.ValueType),
-			Cardinality:  personfacts.Cardinality(definition.Cardinality),
-			RecordTarget: personFactStringValue(definition.RecordTarget),
-			MaxLength:    personFactMaxLength(definition.Options),
-			Choices:      personFactChoices(definition.Options),
-			Sensitive:    definition.IsSensitive,
-			Active:       definition.IsActive,
-			APIMutable:   definition.APIMutable,
-			Derived:      definition.DerivedSource != nil,
+			InferenceIneligible: !definition.InferenceEligible,
+			UniversalID:         definition.UniversalID,
+			Slug:                definition.Slug,
+			Description:         personFactStringValue(definition.Description),
+			ValueType:           personfacts.ValueType(definition.ValueType),
+			Cardinality:         personfacts.Cardinality(definition.Cardinality),
+			RecordTarget:        personFactStringValue(definition.RecordTarget),
+			MaxLength:           personFactMaxLength(definition.Options),
+			Choices:             personFactChoices(definition.Options),
+			Sensitive:           definition.IsSensitive,
+			Active:              definition.IsActive,
+			APIMutable:          definition.APIMutable,
+			Derived:             definition.DerivedSource != nil,
 		})
 	}
 	return personfacts.BuildCatalog(mapped, personfacts.CatalogOptions{

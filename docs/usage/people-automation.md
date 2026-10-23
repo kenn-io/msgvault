@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-10-22"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
 ---
@@ -211,6 +211,20 @@ non-derived, with a supported value type and a description of 1–280 characters
 Attributes that link to another record are excluded. Inspect the current set
 with `msgvault person facts catalog --include-sensitive`.
 
+On `main` after the latest release, the sweep excludes `personality` and
+`contact_frequency` from automatic extraction by default. Personality traits
+should not be inferred from a single description, and contact frequency is
+the owner's preferred cadence. Owner-written values and pins still work.
+Machine-written values retire the next time an excluded field is touched;
+owner-written values stay current.
+
+To allow automatic inference for one field, PATCH
+`/api/v1/attribute-definitions/{id}` with `{"inference_eligible":true}` and the
+definition's current ETag in `If-Match`. Setting it to `false` excludes the
+field again. The fact catalog still lists supported fields whose automatic
+inference is disabled. This setting keeps existing sweep cursor identities,
+so changing it does not restart a sweep from the beginning.
+
 `allow_sensitive = true` permits both private archive evidence and sensitive
 targets, including religion, politics, and Notes. There is no separate switch
 for those two permissions. A claim that passes the evidence and resolution
@@ -258,3 +272,37 @@ it. A deleted, edited, or reassigned source can invalidate earlier support.
 The ledger keeps that history while the resolver updates eligible automatic
 values. Corrections belong in the current profile field; the history explains
 how it reached that state.
+
+### Review stale facts
+
+The staleness report and stability-aware resolver V2 are available on `main`
+after the latest release.
+
+Use the staleness report to find current values that need verification:
+
+```bash
+msgvault person facts stale 7
+msgvault person facts stale 7 --all --include-sensitive --json
+```
+
+The default shows stale values. `--all` includes every current value, and
+`--include-sensitive` includes sensitive fields. The report shows each value's
+stability, newest support time, and verification date. Reading it does not
+change or retire values and makes no provider request.
+
+| Stability | Verification horizon | Resolver V2 behavior |
+|---|---|---|
+| `fixed` | Never marked stale | Evidence keeps its freshness score; replacement needs a larger margin |
+| `durable` | 730 days | Evidence loses freshness points as it ages |
+| `volatile` | 180 days | Claims whose newest supported evidence is older than 180 days are retained below threshold and cannot apply a change |
+
+A value becomes stale only after its verification date. Automatic values use
+the newest evidence that is still supported, following source deletion and
+restoration history. With no supported evidence, the report uses the value's
+start date. User-declared values always use their start date. Pins take
+precedence over the resolver's evidence-age ceiling. Aging alone keeps the
+current value in place; the report asks the owner to verify it.
+
+Definition stability can be changed with
+[`attribute-definition set-stability`](/docs/cli-reference/#attribute-definition).
+The resolver uses the new class the next time that field is touched.

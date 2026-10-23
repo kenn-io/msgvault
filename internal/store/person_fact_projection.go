@@ -57,6 +57,8 @@ type personFactTouchedTarget struct {
 }
 
 type personFactTargetEligibility struct {
+	InferenceEligible      bool
+	Stability              personfacts.Stability
 	Supported              bool
 	SensitivePolicyBlocked bool
 }
@@ -210,7 +212,12 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 		if loadErr != nil {
 			return nil, personFactApplyMetadata{}, loadErr
 		}
-		if failure == nil && !eligibility.Supported {
+		if failure == nil && !eligibility.InferenceEligible && claims[index].Origin != personfacts.OriginSystem {
+			failure = &personfacts.ValidationFailure{
+				Action: personfacts.DecisionInvalid, Reason: personfacts.ReasonUnsupportedTarget,
+				Detail: "target is not eligible for automatic inference",
+			}
+		} else if failure == nil && !eligibility.Supported {
 			failure = &personfacts.ValidationFailure{
 				Action: personfacts.DecisionInvalid, Reason: personfacts.ReasonUnsupportedTarget,
 				Detail: "target is no longer eligible for automatic projection",
@@ -620,6 +627,16 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 	if err != nil {
 		return false, err
 	}
+	if !eligibility.InferenceEligible {
+		for index := range resolvedClaims {
+			if resolvedClaims[index].Failure == nil && resolvedClaims[index].Claim.Origin != personfacts.OriginSystem {
+				resolvedClaims[index].Failure = &personfacts.ValidationFailure{
+					Action: personfacts.DecisionInvalid, Reason: personfacts.ReasonUnsupportedTarget,
+					Detail: "target is not eligible for automatic inference",
+				}
+			}
+		}
+	}
 	var projector personFactTargetProjector
 	var current []personfacts.CurrentProjection
 	var pin personfacts.PinState
@@ -671,7 +688,7 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 			return false, err
 		}
 	}
-	resolver, err := personfacts.NewResolver(personfacts.DefaultPolicyV1())
+	resolver, err := personfacts.NewResolver(personfacts.DefaultPolicyV2())
 	if err != nil {
 		return false, err
 	}
@@ -682,7 +699,7 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 	}
 	resolverClaims, ambiguousClaims := personFactResolverClaims(resolverInputClaims)
 	resolution, err := resolver.Resolve(personfacts.ResolutionInput{
-		PersonID: generation.PersonID, Target: descriptor, ResolvedAt: resolvedAt,
+		PersonID: generation.PersonID, Target: descriptor, ResolvedAt: resolvedAt, Stability: eligibility.Stability,
 		Policy: policyContext, ProjectionContextFingerprint: projectionContext,
 		Current: current, Claims: resolverClaims, Pin: pin,
 	})
@@ -1616,7 +1633,7 @@ func reconcilePersonFactEmploymentCompetition(
 		}
 		return nil
 	}
-	policy := personfacts.DefaultPolicyV1()
+	policy := personfacts.DefaultPolicyV2()
 	for _, directions := range byIdentity {
 		if len(directions) < 2 {
 			continue
@@ -2499,6 +2516,17 @@ func (s *Store) loadPersonFactTargetDescriptorSnapshotTx(
 	return s.loadPersonFactTargetDescriptor(ctx, tx, kind, key, fallback, allowSensitive, false)
 }
 
+func personFactStability(stability AttributeStability) personfacts.Stability {
+	switch stability {
+	case AttributeStabilityFixed:
+		return personfacts.StabilityFixed
+	case AttributeStabilityVolatile:
+		return personfacts.StabilityVolatile
+	default:
+		return personfacts.StabilityDurable
+	}
+}
+
 func (s *Store) loadPersonFactTargetDescriptor(
 	ctx context.Context, tx *loggedTx, kind personfacts.TargetKind, key string,
 	fallback *personfacts.TargetDescriptor, allowSensitive, lock bool,
@@ -2508,14 +2536,14 @@ func (s *Store) loadPersonFactTargetDescriptor(
 		definition, err := s.getAttributeDefinitionByUniversalID(ctx, tx, key, lock)
 		if errors.Is(err, ErrAttributeDefinitionNotFound) {
 			if fallback != nil {
-				return *fallback, personFactTargetEligibility{}, nil
+				return *fallback, personFactTargetEligibility{InferenceEligible: true, Stability: personfacts.StabilityDurable}, nil
 			}
 			return personfacts.TargetDescriptor{
 				Kind: personfacts.TargetAttribute, Key: key, UniversalID: key,
 				Slug: key, Description: "Unavailable attribute target",
 				ValueType: personfacts.ValueText, Cardinality: personfacts.CardinalitySingle,
 				Revision: "unavailable",
-			}, personFactTargetEligibility{}, nil
+			}, personFactTargetEligibility{InferenceEligible: true, Stability: personfacts.StabilityDurable}, nil
 		}
 		if err != nil {
 			return personfacts.TargetDescriptor{}, personFactTargetEligibility{}, err
@@ -2526,7 +2554,9 @@ func (s *Store) loadPersonFactTargetDescriptor(
 		}
 		eligibleWithSensitive := personFactAttributeEligible(*definition, true)
 		return descriptor, personFactTargetEligibility{
-			Supported: personFactAttributeEligible(*definition, allowSensitive),
+			InferenceEligible: definition.InferenceEligible,
+			Stability:         personFactStability(definition.Stability),
+			Supported:         personFactAttributeEligible(*definition, allowSensitive),
 			SensitivePolicyBlocked: eligibleWithSensitive && definition.IsSensitive &&
 				!allowSensitive,
 		}, nil
@@ -2537,12 +2567,12 @@ func (s *Store) loadPersonFactTargetDescriptor(
 		}
 		for _, descriptor := range catalog.Targets {
 			if descriptor.Kind == kind && descriptor.Key == key {
-				return descriptor, personFactTargetEligibility{Supported: true}, nil
+				return descriptor, personFactTargetEligibility{InferenceEligible: true, Supported: true, Stability: personfacts.StabilityDurable}, nil
 			}
 		}
 	}
 	if fallback != nil {
-		return *fallback, personFactTargetEligibility{}, nil
+		return *fallback, personFactTargetEligibility{InferenceEligible: true, Stability: personfacts.StabilityDurable}, nil
 	}
 	return personfacts.TargetDescriptor{}, personFactTargetEligibility{},
 		fmt.Errorf("unknown person fact target %s/%s", kind, key)

@@ -51,21 +51,23 @@ type AttributeDefinitionsResponse struct {
 
 // CreateAttributeDefinitionRequest is the user-creatable definition subset.
 type CreateAttributeDefinitionRequest struct {
-	ObjectType    string                  `json:"object_type" enum:"person,organization"`
-	Slug          string                  `json:"slug,omitempty"`
-	Label         string                  `json:"label"`
-	Description   *string                 `json:"description,omitzero" nullable:"false"`
-	ValueType     string                  `json:"value_type"`
-	FieldType     string                  `json:"field_type"`
-	RecordTarget  *string                 `json:"record_target,omitzero" nullable:"false"`
-	Cardinality   string                  `json:"cardinality,omitempty" enum:"single,multi"`
-	DisplayOrder  int64                   `json:"display_order,omitzero"`
-	IsRequired    bool                    `json:"is_required,omitzero"`
-	IsSearchable  bool                    `json:"is_searchable,omitzero"`
-	IsSensitive   bool                    `json:"is_sensitive,omitzero"`
-	IsAudited     bool                    `json:"is_audited,omitzero"`
-	Options       *store.AttributeOptions `json:"options,omitzero" nullable:"false"`
-	VCardProperty *string                 `json:"vcard_property,omitzero" nullable:"false"`
+	ObjectType        string                  `json:"object_type" enum:"person,organization"`
+	Slug              string                  `json:"slug,omitempty"`
+	Label             string                  `json:"label"`
+	Description       *string                 `json:"description,omitzero" nullable:"false"`
+	ValueType         string                  `json:"value_type"`
+	FieldType         string                  `json:"field_type"`
+	RecordTarget      *string                 `json:"record_target,omitzero" nullable:"false"`
+	Cardinality       string                  `json:"cardinality,omitempty" enum:"single,multi"`
+	DisplayOrder      int64                   `json:"display_order,omitzero"`
+	IsRequired        bool                    `json:"is_required,omitzero"`
+	IsSearchable      bool                    `json:"is_searchable,omitzero"`
+	IsSensitive       bool                    `json:"is_sensitive,omitzero"`
+	Stability         *string                 `json:"stability,omitzero" enum:"fixed,durable,volatile" nullable:"false"`
+	InferenceEligible *bool                   `json:"inference_eligible,omitzero"`
+	IsAudited         bool                    `json:"is_audited,omitzero"`
+	Options           *store.AttributeOptions `json:"options,omitzero" nullable:"false"`
+	VCardProperty     *string                 `json:"vcard_property,omitzero" nullable:"false"`
 }
 
 // StoreInput maps the request onto the store's input shape, fixing the
@@ -74,8 +76,13 @@ type CreateAttributeDefinitionRequest struct {
 func (r CreateAttributeDefinitionRequest) StoreInput(
 	universalID string,
 ) store.AttributeDefinitionInput {
+	var stability store.AttributeStability
+	if r.Stability != nil {
+		stability = store.AttributeStability(*r.Stability)
+	}
 	return store.AttributeDefinitionInput{
-		UniversalID: universalID, ObjectType: store.AttributeObjectType(r.ObjectType),
+		InferenceEligible: r.InferenceEligible,
+		Stability:         stability, UniversalID: universalID, ObjectType: store.AttributeObjectType(r.ObjectType),
 		Slug: r.Slug, Label: r.Label, Description: r.Description,
 		ValueType:    store.AttributeValueType(r.ValueType),
 		FieldType:    store.AttributeFieldType(r.FieldType),
@@ -90,11 +97,13 @@ func (r CreateAttributeDefinitionRequest) StoreInput(
 
 // PatchAttributeDefinitionRequest carries mutable definition fields.
 type PatchAttributeDefinitionRequest struct {
-	Label        *string `json:"label,omitzero" nullable:"false"`
-	Description  *string `json:"description,omitzero" nullable:"true"`
-	DisplayOrder *int64  `json:"display_order,omitzero" nullable:"false"`
-	IsSensitive  *bool   `json:"is_sensitive,omitzero" nullable:"false"`
-	IsActive     *bool   `json:"is_active,omitzero" nullable:"false"`
+	Label             *string `json:"label,omitzero" nullable:"false"`
+	Description       *string `json:"description,omitzero" nullable:"true"`
+	DisplayOrder      *int64  `json:"display_order,omitzero" nullable:"false"`
+	IsSensitive       *bool   `json:"is_sensitive,omitzero" nullable:"false"`
+	Stability         *string `json:"stability,omitzero" enum:"fixed,durable,volatile" nullable:"false"`
+	InferenceEligible *bool   `json:"inference_eligible,omitzero"`
+	IsActive          *bool   `json:"is_active,omitzero" nullable:"false"`
 }
 
 func (s *Server) registerAttributeDefinitionRoutes(api huma.API) {
@@ -237,9 +246,15 @@ func (s *Server) handlePatchAttributeDefinition(w http.ResponseWriter, r *http.R
 		return
 	}
 	update := store.AttributeDefinitionUpdate{
-		Label: request.Label, DisplayOrder: request.DisplayOrder,
+		InferenceEligible: request.InferenceEligible,
+		Label:             request.Label, DisplayOrder: request.DisplayOrder,
 		IsSensitive: request.IsSensitive, IsActive: request.IsActive,
 	}
+	if request.Stability != nil {
+		stability := store.AttributeStability(*request.Stability)
+		update.Stability = &stability
+	}
+
 	if raw, present := fields["description"]; present {
 		description := request.Description
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {

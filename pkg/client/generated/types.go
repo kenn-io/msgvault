@@ -569,34 +569,36 @@ func (a AttributeChoice) Validate() error {
 }
 
 type AttributeDefinition struct {
-	APIMutable    bool              `json:"api_mutable"`
-	Cardinality   string            `json:"cardinality" validate:"required"`
-	CreatedAt     time.Time         `json:"created_at" validate:"required"`
-	DerivedSource *string           `json:"derived_source,omitzero"`
-	Description   *string           `json:"description,omitzero"`
-	DisplayOrder  int64             `json:"display_order"`
-	FieldType     string            `json:"field_type" validate:"required"`
-	HistoryExempt bool              `json:"history_exempt"`
-	ID            int64             `json:"id"`
-	IsActive      bool              `json:"is_active"`
-	IsAudited     bool              `json:"is_audited"`
-	IsDeletable   bool              `json:"is_deletable"`
-	IsRequired    bool              `json:"is_required"`
-	IsSearchable  bool              `json:"is_searchable"`
-	IsSensitive   bool              `json:"is_sensitive"`
-	Label         string            `json:"label" validate:"required"`
-	ObjectType    string            `json:"object_type" validate:"required"`
-	Options       *AttributeOptions `json:"options,omitempty"`
-	Ownership     string            `json:"ownership" validate:"required"`
-	RecordTarget  *string           `json:"record_target,omitzero"`
-	Revision      int64             `json:"revision"`
-	Slug          string            `json:"slug" validate:"required"`
-	UICreatable   bool              `json:"ui_creatable"`
-	UIEditable    bool              `json:"ui_editable"`
-	UniversalID   string            `json:"universal_id" validate:"required"`
-	UpdatedAt     time.Time         `json:"updated_at" validate:"required"`
-	ValueType     string            `json:"value_type" validate:"required"`
-	VcardProperty *string           `json:"vcard_property,omitzero"`
+	APIMutable        bool                         `json:"api_mutable"`
+	Cardinality       string                       `json:"cardinality" validate:"required"`
+	CreatedAt         time.Time                    `json:"created_at" validate:"required"`
+	DerivedSource     *string                      `json:"derived_source,omitzero"`
+	Description       *string                      `json:"description,omitzero"`
+	DisplayOrder      int64                        `json:"display_order"`
+	FieldType         string                       `json:"field_type" validate:"required"`
+	HistoryExempt     bool                         `json:"history_exempt"`
+	ID                int64                        `json:"id"`
+	InferenceEligible bool                         `json:"inference_eligible"`
+	IsActive          bool                         `json:"is_active"`
+	IsAudited         bool                         `json:"is_audited"`
+	IsDeletable       bool                         `json:"is_deletable"`
+	IsRequired        bool                         `json:"is_required"`
+	IsSearchable      bool                         `json:"is_searchable"`
+	IsSensitive       bool                         `json:"is_sensitive"`
+	Label             string                       `json:"label" validate:"required"`
+	ObjectType        string                       `json:"object_type" validate:"required"`
+	Options           *AttributeOptions            `json:"options,omitempty"`
+	Ownership         string                       `json:"ownership" validate:"required"`
+	RecordTarget      *string                      `json:"record_target,omitzero"`
+	Revision          int64                        `json:"revision"`
+	Slug              string                       `json:"slug" validate:"required"`
+	Stability         AttributeDefinitionStability `json:"stability" validate:"required"`
+	UICreatable       bool                         `json:"ui_creatable"`
+	UIEditable        bool                         `json:"ui_editable"`
+	UniversalID       string                       `json:"universal_id" validate:"required"`
+	UpdatedAt         time.Time                    `json:"updated_at" validate:"required"`
+	ValueType         string                       `json:"value_type" validate:"required"`
+	VcardProperty     *string                      `json:"vcard_property,omitzero"`
 }
 
 func (a AttributeDefinition) Validate() error {
@@ -628,6 +630,11 @@ func (a AttributeDefinition) Validate() error {
 	}
 	if err := typesValidator.Var(a.Slug, "required"); err != nil {
 		errors = errors.Append("Slug", err)
+	}
+	if v, ok := any(a.Stability).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Stability", err)
+		}
 	}
 	if err := typesValidator.Var(a.UniversalID, "required"); err != nil {
 		errors = errors.Append("UniversalID", err)
@@ -2948,21 +2955,23 @@ func (c ConversationResponse) Validate() error {
 }
 
 type CreateAttributeDefinitionRequest struct {
-	Cardinality   *CreateAttributeDefinitionRequestCardinality `json:"cardinality,omitempty"`
-	Description   *string                                      `json:"description,omitzero"`
-	DisplayOrder  *int64                                       `json:"display_order,omitempty"`
-	FieldType     string                                       `json:"field_type" validate:"required"`
-	IsAudited     *bool                                        `json:"is_audited,omitempty"`
-	IsRequired    *bool                                        `json:"is_required,omitempty"`
-	IsSearchable  *bool                                        `json:"is_searchable,omitempty"`
-	IsSensitive   *bool                                        `json:"is_sensitive,omitempty"`
-	Label         string                                       `json:"label" validate:"required"`
-	ObjectType    CreateAttributeDefinitionRequestObjectType   `json:"object_type" validate:"required"`
-	Options       *AttributeOptions                            `json:"options,omitempty"`
-	RecordTarget  *string                                      `json:"record_target,omitzero"`
-	Slug          *string                                      `json:"slug,omitzero"`
-	ValueType     string                                       `json:"value_type" validate:"required"`
-	VcardProperty *string                                      `json:"vcard_property,omitzero"`
+	Cardinality       *CreateAttributeDefinitionRequestCardinality `json:"cardinality,omitempty"`
+	Description       *string                                      `json:"description,omitzero"`
+	DisplayOrder      *int64                                       `json:"display_order,omitempty"`
+	FieldType         string                                       `json:"field_type" validate:"required"`
+	InferenceEligible *bool                                        `json:"inference_eligible,omitempty"`
+	IsAudited         *bool                                        `json:"is_audited,omitempty"`
+	IsRequired        *bool                                        `json:"is_required,omitempty"`
+	IsSearchable      *bool                                        `json:"is_searchable,omitempty"`
+	IsSensitive       *bool                                        `json:"is_sensitive,omitempty"`
+	Label             string                                       `json:"label" validate:"required"`
+	ObjectType        CreateAttributeDefinitionRequestObjectType   `json:"object_type" validate:"required"`
+	Options           *AttributeOptions                            `json:"options,omitempty"`
+	RecordTarget      *string                                      `json:"record_target,omitzero"`
+	Slug              *string                                      `json:"slug,omitzero"`
+	Stability         *CreateAttributeDefinitionRequestStability   `json:"stability,omitempty"`
+	ValueType         string                                       `json:"value_type" validate:"required"`
+	VcardProperty     *string                                      `json:"vcard_property,omitzero"`
 }
 
 func (c CreateAttributeDefinitionRequest) Validate() error {
@@ -2989,6 +2998,13 @@ func (c CreateAttributeDefinitionRequest) Validate() error {
 		if v, ok := any(c.Options).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Options", err)
+			}
+		}
+	}
+	if c.Stability != nil {
+		if v, ok := any(c.Stability).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Stability", err)
 			}
 		}
 	}
@@ -9814,11 +9830,28 @@ func (p ParticipantSearchHTTPResponse) Validate() error {
 }
 
 type PatchAttributeDefinitionRequest struct {
-	Description  *string `json:"description,omitzero"`
-	DisplayOrder *int64  `json:"display_order,omitempty"`
-	IsActive     *bool   `json:"is_active,omitempty"`
-	IsSensitive  *bool   `json:"is_sensitive,omitempty"`
-	Label        *string `json:"label,omitzero"`
+	Description       *string                                   `json:"description,omitzero"`
+	DisplayOrder      *int64                                    `json:"display_order,omitempty"`
+	InferenceEligible *bool                                     `json:"inference_eligible,omitempty"`
+	IsActive          *bool                                     `json:"is_active,omitempty"`
+	IsSensitive       *bool                                     `json:"is_sensitive,omitempty"`
+	Label             *string                                   `json:"label,omitzero"`
+	Stability         *PatchAttributeDefinitionRequestStability `json:"stability,omitempty"`
+}
+
+func (p PatchAttributeDefinitionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Stability != nil {
+		if v, ok := any(p.Stability).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Stability", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PatchPersonRelationshipRequest struct {
@@ -11617,13 +11650,84 @@ func (p PersonFactResolutionResult) Validate() error {
 }
 
 type PersonFactScoreBreakdown struct {
-	Authority     int64 `json:"authority"`
-	Confidence    int64 `json:"confidence"`
-	Corroboration int64 `json:"corroboration"`
-	Directness    int64 `json:"directness"`
-	Freshness     int64 `json:"freshness"`
-	SourceClass   int64 `json:"source_class"`
-	Total         int64 `json:"total"`
+	Authority       int64 `json:"authority"`
+	Confidence      int64 `json:"confidence"`
+	Corroboration   int64 `json:"corroboration"`
+	Directness      int64 `json:"directness"`
+	Freshness       int64 `json:"freshness"`
+	SourceClass     int64 `json:"source_class"`
+	StabilityWindow *bool `json:"stability_window,omitempty"`
+	Total           int64 `json:"total"`
+}
+
+type PersonFactStaleness struct {
+	Declared      bool           `json:"declared"`
+	NewestSupport time.Time      `json:"newest_support" validate:"required"`
+	Projection    ProjectionRef  `json:"projection"`
+	Slug          string         `json:"slug" validate:"required"`
+	Stability     string         `json:"stability" validate:"required"`
+	Stale         bool           `json:"stale"`
+	Target        TargetRef      `json:"target"`
+	Value         jsontext.Value `json:"value"`
+	VerifyBy      *time.Time     `json:"verify_by,omitempty"`
+}
+
+func (p PersonFactStaleness) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.NewestSupport, "required"); err != nil {
+		errors = errors.Append("NewestSupport", err)
+	}
+	if v, ok := any(p.Projection).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Projection", err)
+		}
+	}
+	if err := typesValidator.Var(p.Slug, "required"); err != nil {
+		errors = errors.Append("Slug", err)
+	}
+	if err := typesValidator.Var(p.Stability, "required"); err != nil {
+		errors = errors.Append("Stability", err)
+	}
+	if v, ok := any(p.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if v, ok := any(p.Value).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Value", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFactStalenessResponse struct {
+	AsOf  time.Time             `json:"as_of" validate:"required"`
+	Items []PersonFactStaleness `json:"items" validate:"required"`
+}
+
+func (p PersonFactStalenessResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AsOf, "required"); err != nil {
+		errors = errors.Append("AsOf", err)
+	}
+	if err := typesValidator.Var(p.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range p.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonFileProvenance struct {

@@ -2032,6 +2032,8 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE embedding_changes ADD COLUMN new_message_type TEXT`, "embedding_changes.new_message_type"},
 		{`ALTER TABLE embedding_change_clock ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},
 		{`ALTER TABLE attribute_definitions ADD COLUMN is_sensitive BOOLEAN NOT NULL DEFAULT FALSE`, "attribute_definitions.is_sensitive"},
+		{`ALTER TABLE attribute_definitions ADD COLUMN stability TEXT NOT NULL DEFAULT 'durable' CHECK (stability IN ('fixed', 'durable', 'volatile'))`, "attribute_definitions.stability"},
+		{`ALTER TABLE attribute_definitions ADD COLUMN inference_eligible BOOLEAN NOT NULL DEFAULT TRUE`, "attribute_definitions.inference_eligible"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and

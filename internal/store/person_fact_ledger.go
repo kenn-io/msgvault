@@ -674,6 +674,54 @@ func (s *Store) hydratePersonFactEvidenceStatusTx(
 	return nil
 }
 
+// latestEvidenceSupportedTx reports, for each evidence row, whether its latest
+// status event under the generation chronology above marks it supported.
+// Evidence without a status event is supported.
+func (s *Store) latestEvidenceSupportedTx(
+	ctx context.Context, q contextRowsQuerier, evidenceIDs []int64,
+) (map[int64]bool, error) {
+	supported := make(map[int64]bool, len(evidenceIDs))
+	for start := 0; start < len(evidenceIDs); start += 500 {
+		ids := evidenceIDs[start:min(start+500, len(evidenceIDs))]
+		args := make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+		rows, err := q.QueryContext(ctx, `
+			SELECT e.id, COALESCE((
+				SELECT latest.supported
+				FROM person_fact_evidence_status_events latest
+				JOIN person_fact_generations generation ON generation.id = latest.generation_id
+				WHERE latest.person_id = e.person_id AND latest.evidence_key = e.evidence_key
+				  AND latest.source_version = e.source_version
+				ORDER BY generation.resolved_at DESC, latest.id DESC
+				LIMIT 1
+			), TRUE)
+			FROM person_fact_evidence e
+			WHERE e.id IN (`+placeholders(len(ids))+`)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("load latest person fact evidence support: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var value bool
+			if err := rows.Scan(&id, &value); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan latest person fact evidence support: %w", err)
+			}
+			supported[id] = value
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("iterate latest person fact evidence support: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, fmt.Errorf("close latest person fact evidence support: %w", err)
+		}
+	}
+	return supported, nil
+}
+
 func (s *Store) listPersonFactStatusEventsTx(
 	ctx context.Context,
 	tx *loggedTx,

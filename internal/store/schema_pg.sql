@@ -2572,6 +2572,8 @@ CREATE TABLE IF NOT EXISTS attribute_definitions (
     is_audited     BOOLEAN NOT NULL DEFAULT TRUE,
     is_deletable   BOOLEAN NOT NULL DEFAULT TRUE,
     history_exempt BOOLEAN NOT NULL DEFAULT FALSE,
+    stability      TEXT NOT NULL DEFAULT 'durable' CHECK (stability IN ('fixed', 'durable', 'volatile')),
+    inference_eligible BOOLEAN NOT NULL DEFAULT TRUE,
     derived_source TEXT,
     options        JSONB,
     vcard_property TEXT,

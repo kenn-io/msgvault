@@ -4,12 +4,15 @@
 import type { AttributeOptions } from "./attributeOptions";
 import type { CreateAttributeDefinitionRequestCardinality } from "./createAttributeDefinitionRequestCardinality";
 import type { CreateAttributeDefinitionRequestObjectType } from "./createAttributeDefinitionRequestObjectType";
+import type { CreateAttributeDefinitionRequestStability } from "./createAttributeDefinitionRequestStability";
 
 export interface CreateAttributeDefinitionRequest {
   cardinality?: CreateAttributeDefinitionRequestCardinality;
   description?: string;
   display_order?: number;
   field_type: string;
+  /** @nullable */
+  inference_eligible?: boolean | null;
   is_audited?: boolean;
   is_required?: boolean;
   is_searchable?: boolean;
@@ -19,6 +22,7 @@ export interface CreateAttributeDefinitionRequest {
   options?: AttributeOptions;
   record_target?: string;
   slug?: string;
+  stability?: CreateAttributeDefinitionRequestStability;
   value_type: string;
   vcard_property?: string;
 }

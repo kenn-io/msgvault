@@ -375,7 +375,11 @@ import (
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds authenticated streamed Muesli recording imports.
-const APISchemaVersion = "3.24.0"
+// 3.25.0 adds attribute definition stability metadata and owner updates.
+// 3.26.0 adds the stability-window diagnostic to person fact decision scores.
+// 3.27.0 adds the owner-only current person fact staleness report.
+// 3.28.0 adds owner-configurable attribute inference eligibility.
+const APISchemaVersion = "3.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1136,6 +1140,15 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	nullableSchemaProperty(schemas["PersonTracking"], "tracked_at")
+	// A normalized fact value can be any JSON type, including a scalar.
+	if staleness := schemas["PersonFactStaleness"]; staleness != nil {
+		if value := staleness.Properties["value"]; value != nil {
+			value.Extensions = map[string]any{
+				"x-go-type":        "jsontext.Value",
+				"x-go-type-import": map[string]any{pathKey: "encoding/json/jsontext"},
+			}
+		}
+	}
 	// The brief's structure and input boundary are raw JSON documents the
 	// client hands back untouched; without this the generator emits struct{}.
 	if brief := schemas["PersonBrief"]; brief != nil {
