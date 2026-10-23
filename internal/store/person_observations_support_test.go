@@ -1,0 +1,290 @@
+package store_test
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personfacts"
+	"go.kenn.io/msgvault/internal/personobs"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+func observationStatusGeneration(t *testing.T, st *store.Store, personID, id int64, supported bool, sequence int) {
+	t.Helper()
+	observationStatusGenerationContext(t, t.Context(), st, personID, id, supported, sequence)
+}
+func observationStatusGenerationContext(t *testing.T, ctx context.Context, st *store.Store, personID, id int64, supported bool, sequence int) {
+	t.Helper()
+	_, err := st.ApplyPersonFactGenerationContext(ctx, observationStatusInput(t, st, personID, id, supported, sequence), nil)
+	require.NoError(t, err)
+}
+func observationStatusInput(t *testing.T, st *store.Store, personID, id int64, supported bool, sequence int) personfacts.GenerationInput {
+	t.Helper()
+	detail, err := st.GetPersonObservation(t.Context(), id)
+	require.NoError(t, err)
+	require.NotEmpty(t, detail.Evidence)
+	var key, version string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT evidence_key,source_version FROM person_fact_evidence WHERE id=?`), detail.Evidence[0].EvidenceID).Scan(&key, &version))
+	reason := personfacts.EvidenceStatusSourceDeleted
+	if supported {
+		reason = personfacts.EvidenceStatusSourceReimported
+	}
+	return personfacts.GenerationInput{
+		PersonID: personID, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: fmt.Sprint(sequence), End: fmt.Sprintf("%d-end", sequence)}},
+		ProgramID: "observation-status", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "catalog", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: time.Date(2026, 10, 10, 0, 0, sequence, 0, time.UTC), Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "policy"},
+		EvidenceStatusChanges: []personfacts.EvidenceStatusChange{{EvidenceKey: key, SourceVersion: version, Supported: supported, Reason: reason}},
+	}
+}
+func observationDerived(t *testing.T, st *store.Store, in personobs.BatchInput, generation int64, level personobs.Level, content string, premises ...int64) int64 {
+	t.Helper()
+	kind := personobs.KindState
+	if level == personobs.LevelInductive {
+		kind = personobs.KindPattern
+	}
+	proposal := personobs.ProposedObservation{PersonID: in.PersonID, Level: level, Origin: personobs.OriginReasoning, Kind: kind, Content: content, ConfidenceBP: 800}
+	for _, id := range premises {
+		proposal.Premises = append(proposal.Premises, personobs.PremiseInput{ID: id, Role: personobs.PremiseRoleSupport})
+	}
+	in.Proposals = []personobs.ProposedObservation{proposal}
+	result := applyObservationInput(t, st, in, generation)
+	require.Len(t, result.Items, 1)
+	require.Positive(t, result.Items[0].ObservationID)
+	return result.Items[0].ObservationID
+}
+func observationGet(t *testing.T, st *store.Store, id int64) personobs.Detail {
+	t.Helper()
+	detail, err := st.GetPersonObservation(t.Context(), id)
+	require.NoError(t, err)
+	return detail
+}
+func TestObservationHealingUnsupportsOnSourceDeleted(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	observationStatusGeneration(t, f.store, in.PersonID, id, false, 1)
+	detail := observationGet(t, f.store, id)
+	assert.Equal(t, personobs.StatusUnsupported, detail.Status)
+	assert.Equal(t, personobs.StatusReasonEvidenceUnsupported, detail.StatusReason)
+	assert.Zero(t, detail.SupportedCount)
+}
+func TestObservationHealingRestoresOnReimport(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	observationStatusGeneration(t, f.store, in.PersonID, id, false, 1)
+	observationStatusGeneration(t, f.store, in.PersonID, id, true, 2)
+	detail := observationGet(t, f.store, id)
+	assert.Equal(t, personobs.StatusActive, detail.Status)
+	assert.Empty(t, detail.StatusReason)
+	assert.Equal(t, 1, detail.SupportedCount)
+}
+func TestObservationHealingPinnedRowFlagsAndNotifies(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	derived := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, "[PERSON] exercises", id)
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_observations SET pinned=TRUE WHERE id=?`), id)
+	require.NoError(t, err)
+	observationStatusGeneration(t, f.store, in.PersonID, id, false, 1)
+	root := observationGet(t, f.store, id)
+	assert.Equal(t, personobs.StatusActive, root.Status)
+	assert.Equal(t, personobs.SupportFlagLapsed, root.SupportFlag)
+	child := observationGet(t, f.store, derived)
+	assert.Equal(t, personobs.StatusUnsupported, child.Status)
+	assert.NotNil(t, child.PremiseChangedAt)
+	observationStatusGeneration(t, f.store, in.PersonID, id, true, 2)
+	assert.Empty(t, observationGet(t, f.store, id).SupportFlag)
+	assert.Equal(t, personobs.StatusActive, observationGet(t, f.store, derived).Status)
+}
+func TestObservationDeductiveConjunctiveWithdrawal(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	first := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	owner := personobs.BatchInput{PersonID: in.PersonID, Proposals: []personobs.ProposedObservation{{Level: personobs.LevelExplicit, Origin: personobs.OriginOwner, Kind: personobs.KindState, Content: "[PERSON] swims", ConfidenceBP: 1000}}}
+	second := applyObservationInput(t, f.store, owner, 0).Items[0].ObservationID
+	child := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, "[PERSON] does both", first, second)
+	observationStatusGeneration(t, f.store, in.PersonID, first, false, 1)
+	assert.Equal(t, personobs.StatusUnsupported, observationGet(t, f.store, child).Status)
+	observationStatusGeneration(t, f.store, in.PersonID, first, true, 2)
+	assert.Equal(t, personobs.StatusActive, observationGet(t, f.store, child).Status)
+}
+func TestObservationOwnerPremiseSupportsDeduction(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	owner := personobs.BatchInput{PersonID: in.PersonID, Proposals: []personobs.ProposedObservation{{Level: personobs.LevelExplicit, Origin: personobs.OriginOwner, Kind: personobs.KindState, Content: "[PERSON] swims", ConfidenceBP: 1000}}}
+	id := applyObservationInput(t, f.store, owner, 0).Items[0].ObservationID
+	child := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, "[PERSON] exercises", id)
+	assert.Equal(t, personobs.StatusActive, observationGet(t, f.store, child).Status)
+}
+func TestObservationTraversalDeeperThanTwo(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	chain := []int64{id}
+	for i := range 5 {
+		chain = append(chain, observationDerived(t, f.store, in, generation, personobs.LevelDeductive, fmt.Sprintf("[PERSON] has consequence %d", i), chain[len(chain)-1]))
+	}
+	observationStatusGeneration(t, f.store, in.PersonID, id, false, 1)
+	for _, child := range chain[1:] {
+		assert.Equal(t, personobs.StatusUnsupported, observationGet(t, f.store, child).Status)
+	}
+	observationStatusGeneration(t, f.store, in.PersonID, id, true, 2)
+	for _, child := range chain[1:] {
+		assert.Equal(t, personobs.StatusActive, observationGet(t, f.store, child).Status)
+	}
+}
+func TestObservationLaterExclusionUnsupports(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	root := observationGet(t, f.store, id)
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET list_id='list.example.test' WHERE id=?`), root.Evidence[0].Leaf.MessageID)
+	require.NoError(t, err)
+	observationStatusGeneration(t, f.store, in.PersonID, id, true, 1)
+	root = observationGet(t, f.store, id)
+	assert.Zero(t, root.SupportedCount)
+	assert.Equal(t, personobs.StatusUnsupported, root.Status)
+	assert.Equal(t, personobs.ExclusionReasonList, root.Evidence[0].Exclusion)
+	assert.Zero(t, root.MentionCount)
+	assert.Nil(t, root.FirstSeenAt)
+	assert.Nil(t, root.LastSeenAt)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET list_id='' WHERE id=?`), root.Evidence[0].Leaf.MessageID)
+	require.NoError(t, err)
+	observationStatusGeneration(t, f.store, in.PersonID, id, true, 2)
+	root = observationGet(t, f.store, id)
+	assert.Equal(t, 1, root.MentionCount)
+	require.NotNil(t, root.FirstSeenAt)
+	require.NotNil(t, root.LastSeenAt)
+	assert.Equal(t, root.Evidence[0].Leaf.EventTime, *root.FirstSeenAt)
+	assert.Equal(t, root.Evidence[0].Leaf.EventTime, *root.LastSeenAt)
+}
+func TestObservationReinforcementAddsCategoryAndPropagates(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	first := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	second := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, "[PERSON] exercises", first)
+	third := observationDerived(t, f.store, in, generation, personobs.LevelInductive, "[PERSON] often exercises", first, second)
+	in.Proposals[0].ModelCategories = []personobs.Category{personobs.CategoryHealth}
+	applyObservationInput(t, f.store, in, generation)
+	for _, id := range []int64{first, second, third} {
+		detail := observationGet(t, f.store, id)
+		assert.Contains(t, detail.Categories, personobs.CategoryHealth)
+		assert.True(t, detail.Sensitive)
+	}
+	var events int
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_observation_events WHERE observation_id=? AND event='sensitivity-changed'`), first).Scan(&events))
+	assert.Equal(t, 1, events)
+}
+
+func observationNewSupport(t *testing.T, f personSweepJournalFixture, name, text string) personobs.SupportInput {
+	t.Helper()
+	id := f.insertMessage(t, name, "email", f.aliceID, time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC))
+	addSweepBody(t, f, id, text)
+	item := sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id)
+	evidence := sweepEvidenceInput(t, item)
+	offset := strings.Index(evidence.Excerpt, text)
+	require.NotEqual(t, -1, offset)
+	return personobs.SupportInput{Evidence: evidence, Quote: text, QuoteStart: len([]rune(evidence.Excerpt[:offset]))}
+}
+func TestObservationHealingPartialLossNotifiesTrait(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	first := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	in.Proposals[0].Support = []personobs.SupportInput{observationNewSupport(t, f, "partial-extra", "I still run")}
+	applyObservationInput(t, f.store, in, generation)
+	in.Proposals[0].Content = "[PERSON] swims"
+	second := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	child := observationDerived(t, f.store, in, generation, personobs.LevelInductive, "[PERSON] enjoys exercise", first, second)
+	observationStatusGeneration(t, f.store, in.PersonID, first, false, 1)
+	root := observationGet(t, f.store, first)
+	assert.Equal(t, 1, root.SupportedCount)
+	assert.Equal(t, personobs.StatusActive, root.Status)
+	detail := observationGet(t, f.store, child)
+	assert.Equal(t, personobs.StatusActive, detail.Status)
+	assert.NotNil(t, detail.PremiseChangedAt)
+}
+func TestObservationReinforcementRestoresUnsupported(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	observationStatusGeneration(t, f.store, in.PersonID, id, false, 1)
+	in.Proposals[0].Support = []personobs.SupportInput{observationNewSupport(t, f, "reimport-extra", "I run again")}
+	result := applyObservationInput(t, f.store, in, generation)
+	assert.Equal(t, id, result.Items[0].ObservationID)
+	assert.Equal(t, personobs.StatusActive, observationGet(t, f.store, id).Status)
+}
+
+func TestObservationTraversalWorkBoundLeavesContinuation(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	chain := []int64{id}
+	for i := range 6 {
+		chain = append(chain, observationDerived(t, f.store, in, generation, personobs.LevelDeductive, fmt.Sprintf("[PERSON] has bounded consequence %d", i), chain[len(chain)-1]))
+	}
+	// Bound a real refresh to three rows, without making speed a requirement.
+	observationStatusGenerationContext(t, f.store.ObservationTraversalContextForTest(t.Context(), 3), f.store, in.PersonID, id, false, 1)
+	assert.Equal(t, personobs.StatusUnsupported, observationGet(t, f.store, chain[2]).Status)
+	frontier := observationGet(t, f.store, chain[3])
+	assert.Equal(t, personobs.StatusActive, frontier.Status)
+	assert.NotNil(t, frontier.PremiseChangedAt)
+	pending, err := f.store.ListObservationsNeedingRecheck(t.Context(), in.PersonID, personobs.LevelDeductive, 100)
+	require.NoError(t, err)
+	var found bool
+	for _, item := range pending {
+		found = found || item.ID == chain[3]
+	}
+	assert.True(t, found)
+	require.NoError(t, f.store.RefreshObservationForTest(t.Context(), in.PersonID, chain[3]))
+	for _, child := range chain[1:] {
+		assert.Equal(t, personobs.StatusUnsupported, observationGet(t, f.store, child).Status)
+	}
+}
+
+func TestObservationHealingEventsUseStatusGeneration(t *testing.T) {
+	f, in, creationGeneration := observationBatchFixture(t, "I run")
+	root := applyObservationInput(t, f.store, in, creationGeneration).Items[0].ObservationID
+	child := observationDerived(t, f.store, in, creationGeneration, personobs.LevelDeductive, "[PERSON] exercises", root)
+	statusGeneration, err := f.store.ApplyPersonFactGenerationContext(t.Context(), observationStatusInput(t, f.store, in.PersonID, root, false, 1), nil)
+	require.NoError(t, err)
+	for _, id := range []int64{root, child} {
+		var generation *int64
+		require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT generation_id FROM person_observation_events WHERE observation_id=? AND event='unsupported' ORDER BY id DESC LIMIT 1`), id).Scan(&generation))
+		assert.Equal(t, &statusGeneration.GenerationID, generation)
+	}
+}
+
+func TestObservationExclusionRefreshesSeenRange(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	id := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	first := observationGet(t, f.store, id).Evidence[0].Leaf
+	in.Proposals[0].Support = []personobs.SupportInput{observationNewSupport(t, f, "seen-range", "I still run")}
+	applyObservationInput(t, f.store, in, generation)
+	detail := observationGet(t, f.store, id)
+	require.Len(t, detail.Evidence, 2)
+	last := detail.Evidence[1].Leaf
+	require.True(t, last.EventTime.After(first.EventTime))
+	for index, step := range []struct {
+		name       string
+		excludedID int64
+		listID     string
+		want       time.Time
+	}{
+		{"exclude-earliest", first.MessageID, "list.example.test", last.EventTime},
+		{"restore-earliest", first.MessageID, "", first.EventTime},
+		{"exclude-latest", last.MessageID, "list.example.test", first.EventTime},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET list_id=? WHERE id=?`), step.listID, step.excludedID)
+			require.NoError(t, err)
+			observationStatusGeneration(t, f.store, in.PersonID, id, true, index+1)
+			got := observationGet(t, f.store, id)
+			require.NotNil(t, got.FirstSeenAt)
+			require.NotNil(t, got.LastSeenAt)
+			if step.listID == "" {
+				assert.Equal(t, 2, got.MentionCount)
+				assert.Equal(t, first.EventTime, *got.FirstSeenAt)
+				assert.Equal(t, last.EventTime, *got.LastSeenAt)
+			} else {
+				assert.Equal(t, 1, got.MentionCount)
+				assert.Equal(t, step.want, *got.FirstSeenAt)
+				assert.Equal(t, step.want, *got.LastSeenAt)
+			}
+		})
+	}
+}
