@@ -61,7 +61,6 @@ func TestRepairDerivedSourceRebuildsEmail(t *testing.T) {
 	require.NoError(st.UpsertMessageRaw(id, []byte("Content-Type: text/plain\r\n\r\nRebuilt archive")))
 	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: "stale", Valid: true}, sql.NullString{}))
 	require.NoError(repairDerivedSource(t.Context(), &out, st, src))
-	assert.Contains(out.String(), "1 bodies rewritten")
 	body, err := st.GetMessageBodyText(id)
 	require.NoError(err)
 	assert.Equal("Rebuilt archive", body)

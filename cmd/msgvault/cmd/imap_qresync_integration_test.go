@@ -718,7 +718,6 @@ func TestIMAPQresyncEndToEndLegacyMessageIDBaseline(t *testing.T) {
 				RFC822MessageID: sql.NullString{String: test.stored, Valid: true}, MessageType: "email",
 			})
 			requirements.NoError(err)
-			requirements.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: "Archived body", Valid: true}, sql.NullString{}))
 			requirements.NoError(st.UpsertMessageRaw(messageID, archivedRaw))
 			states, err := st.GetIMAPFolderStates(source.ID)
 			requirements.NoError(err)
