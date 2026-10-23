@@ -727,3 +727,70 @@ func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
 	unsupported := personfacts.EvidenceStatusChange{EvidenceKey: documentKey, SourceVersion: document.SourceVersion, Reason: personfacts.EvidenceStatusSourceDeleted}
 	assert.Contains(changes, unsupported)
 }
+
+func TestPersonSweepAttachmentChangesWithdrawStoredDocumentEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	ctx := t.Context()
+	exec := func(statement string, args ...any) {
+		t.Helper()
+		_, err := f.store.DB().ExecContext(ctx, f.store.Rebind(statement), args...)
+		require.NoError(err)
+	}
+	documentEvidence := func(messageID int64, filename string) (string, personfacts.EvidenceInput) {
+		t.Helper()
+		require.NoError(f.store.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+			Filename: filename, SourceAttachmentID: filename,
+			ContentHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}))
+		var attachmentID int64
+		require.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(
+			`SELECT id FROM attachments WHERE message_id = ? AND filename = ?`), messageID, filename).Scan(&attachmentID))
+		addSweepBody(t, f, messageID, "Conversation evidence")
+		input := sweepEvidenceInput(t, sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, messageID))
+		ref := peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: messageID, AttachmentID: attachmentID, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
+		payload, err := json.Marshal(ref, json.Deterministic(true))
+		require.NoError(err)
+		input.SourceRef = "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString(payload)
+		key, err := personfacts.EvidenceKey(input)
+		require.NoError(err)
+		persistSweepEvidence(t, f.store, key, input)
+		return key, input
+	}
+	replacedKey, replaced := documentEvidence(f.insertMessage(t, "replaced-document", "email", f.aliceID, time.Now().UTC()), "replaced.pdf")
+	deletedMessage := f.insertMessage(t, "deleted-document", "email", f.aliceID, time.Now().UTC())
+	deletedKey, deleted := documentEvidence(deletedMessage, "deleted.pdf")
+
+	// The upgrade starts journaling attachment changes for stored document evidence.
+	exec(`DELETE FROM applied_migrations WHERE name = 'drop_document_message_triggers_v1'`)
+	require.NoError(f.store.InitSchemaContext(ctx))
+
+	after := latestPersonSweepSequence(t, f.store)
+	exec(`UPDATE attachments SET content_hash = ? WHERE filename = 'replaced.pdf'`,
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	exec(`DELETE FROM attachments WHERE filename = 'deleted.pdf'`)
+	syncID, err := f.store.StartSync(f.sourceID, "full")
+	require.NoError(err)
+	require.NoError(f.store.CompleteSync(syncID, "after-attachment-changes"))
+
+	window := loadSweepWindow(t, f, peoplesweep.SourceConversationText, after)
+	assert.Len(window.Changes, 2)
+	assert.Empty(window.Seeds, "an attachment change does not send its message back to the model")
+	changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(ctx, f.alicePersonID, personSweepChangesAfter(t, f.store, f.alicePersonID, after))
+	require.NoError(err)
+	assert.ElementsMatch([]personfacts.EvidenceStatusChange{
+		{EvidenceKey: replacedKey, SourceVersion: replaced.SourceVersion, Reason: personfacts.EvidenceStatusSourceEdited},
+		{EvidenceKey: deletedKey, SourceVersion: deleted.SourceVersion, Reason: personfacts.EvidenceStatusSourceDeleted},
+	}, changes)
+	var queued int
+	require.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(
+		`SELECT COUNT(*) FROM person_sweep_work WHERE person_id = ?`), f.alicePersonID).Scan(&queued))
+	assert.Equal(1, queued, "the withdrawal queues the person for a sweep")
+	var pending int
+	require.NoError(f.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM attachment_change_log`).Scan(&pending))
+	assert.Zero(pending, "published attachment changes are acknowledged")
+	var message int
+	require.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), deletedMessage).Scan(&message))
+	assert.Equal(1, message)
+}
