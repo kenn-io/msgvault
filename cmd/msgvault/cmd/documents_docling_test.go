@@ -195,7 +195,7 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 	assertions.Equal(int32(3), uploads.Load())
 }
 
-func TestDoclingConsentDisclosesCredentialBinding(t *testing.T) {
+func TestDoclingConsentDisclosesCredentialsAndRangeRetention(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -214,6 +214,12 @@ func TestDoclingConsentDisclosesCredentialBinding(t *testing.T) {
 	requirements.ErrorContains(command.ExecuteContext(withTestConfig(t, cfg)), "requires --yes")
 	assertions.Contains(output.String(), c.APIKeyEnv)
 	assertions.Contains(output.String(), "X-Api-Key")
+	assertions.Contains(output.String(), "PDFs over 50 pages")
+	assertions.Contains(output.String(), "Each job uploads the original PDF again")
+	assertions.Contains(output.String(), "unpublished plaintext")
+	assertions.Contains(output.String(), "daemon restarts")
+	assertions.Contains(output.String(), "documents purge-derived")
+	assertions.Contains(output.String(), "seven days")
 	assertions.NotContains(output.String(), "synthetic-secret-value")
 }
 

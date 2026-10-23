@@ -127,9 +127,10 @@ func printDoclingConsentDisclosure(w io.Writer, c *documentindex.DocumentsConfig
 	_, _ = fmt.Fprintf(w, "- The exact policy allows %d format(s), at most %s and %d returned unit(s) per document; requests time out after %s, jobs after %s.\n", len(input.AllowedMediaTypes), formatSize(c.MaxFileBytes), c.MaxPagesPerDocument, c.RequestTimeout, c.TotalTimeout)
 	_, _ = fmt.Fprintln(w, "- Source preparation uses bounded memory. Docling processing does not use the Mistral private disk spool.")
 	_, _ = fmt.Fprintln(w, "- Complete PDF page evidence retains page locators. Incomplete structured mappings use whole-document Markdown without page claims to preserve tables and text.")
-	_, _ = fmt.Fprintln(w, "- Interrupted jobs are uploaded again on a later build or resume, which can run the same document twice on your server. Jobs that outlast total_timeout or max_poll_attempts, and partial results, need a manual retry.")
+	_, _ = fmt.Fprintln(w, "- PDFs over 50 pages use consecutive 50-page jobs. Each job uploads the original PDF again and gets its own time and polling limits. The page cap still applies to the whole PDF.")
 	_, _ = fmt.Fprintln(w, "- Normalized plaintext units and chunks are stored in the local archive database and may be included in disclosed full backups.")
-	_, _ = fmt.Fprintln(w, "- Raw provider JSON and full provider Markdown are transient. This consent does not enable document text embeddings; their provider and consents are separate.")
+	_, _ = fmt.Fprintln(w, "- Successful PDF ranges keep canonical evidence, and Markdown needed for fallback, in the local archive after a failure so retry and resume reuse them across daemon restarts. Publication removes them, and \"msgvault documents purge-derived --hash <sha256> --yes\" removes them immediately. Otherwise, once no live message contains the PDF or a newer attempt replaces them, the weekly \"msgvault serve\" cleanup deletes them after seven days without changes; without \"serve\" they stay until publication or purge. A full rebuild starts fresh; partial results are retried explicitly.")
+	_, _ = fmt.Fprintln(w, "- Range checkpoints contain unpublished plaintext and may be included in disclosed full backups, which can retain it after archive cleanup. Raw provider JSON remains transient. Document text embeddings require separate consent.")
 }
 
 func documentConsentCommand(provider string) string {
