@@ -1052,6 +1052,7 @@ func (s *Store) CompleteSyncContext(ctx context.Context, syncID int64, finalHist
 	})
 	if err == nil {
 		completionStore.optimizeAfterSync(ctx)
+		completionStore.publishPersonSweepDocumentEvidenceChangesBestEffort(ctx)
 	}
 	return completionStore.finalizeSyncExecution(syncID, err)
 }
@@ -1155,6 +1156,7 @@ func (s *Store) completeSyncAndUpdateSourceContext(
 	})
 	if err == nil {
 		completionStore.optimizeAfterSync(ctx)
+		completionStore.publishPersonSweepDocumentEvidenceChangesBestEffort(ctx)
 	}
 	return completionStore.finalizeSyncExecution(syncID, err)
 }

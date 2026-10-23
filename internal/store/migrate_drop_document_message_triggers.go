@@ -28,7 +28,7 @@ var retiredDocumentTables = []string{
 }
 
 func (s *Store) dropDocumentMessageTriggers(ctx context.Context) error {
-	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		statement := "DROP TRIGGER IF EXISTS trg_person_sweep_documents_message_update"
 		if s.IsPostgreSQL() {
 			statement = "DROP FUNCTION IF EXISTS msgvault_append_person_sweep_document_changes(BIGINT, BIGINT, BIGINT, TEXT, TEXT)"
@@ -48,4 +48,8 @@ func (s *Store) dropDocumentMessageTriggers(ctx context.Context) error {
 		}
 		return pruneAttachmentChanges(boundQuerier{ctx: ctx, q: tx})
 	})
+	if err != nil {
+		return err
+	}
+	return s.registerPersonSweepDocumentEvidenceConsumer(ctx)
 }
