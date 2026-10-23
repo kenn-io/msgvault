@@ -375,7 +375,8 @@ import (
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds authenticated streamed Muesli recording imports.
-const APISchemaVersion = "3.24.0"
+// 3.25.0 adds owner-curated person observations and suppressions.
+const APISchemaVersion = "3.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1226,6 +1227,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schema.Extensions = map[string]any{}
 		}
 		schema.Extensions["x-enum-names"] = enumNames
+	}
+	if request := schemas["AddOwnerObservationRequest"]; request != nil {
+		setEnumNames(request.Properties["kind"], qualifiedEnumNames("AddOwnerObservationRequestKind", []string{"state", "event", "plan", "preference", "relationship", "pattern", "other"}))
+		setEnumNames(request.Properties["stability"], qualifiedEnumNames("AddOwnerObservationRequestStability", []string{"fixed", "durable", "volatile", "episodic"}))
+	}
+	if request := schemas["DecidePersonObservationRequest"]; request != nil {
+		setEnumNames(request.Properties["action"], qualifiedEnumNames("DecidePersonObservationRequestAction", []string{"confirm", "unsure", "clear", "reject", "pin", "unpin", "end", "forget"}))
+		setEnumNames(request.Properties["reason"], qualifiedEnumNames("DecidePersonObservationRequestReason", []string{"wrong", "not_useful", "outdated", "owner_rejected"}))
 	}
 	for _, name := range []string{"FileSuggestionRow", "PersonFileSuggestionRow"} {
 		schema := schemas[name]
