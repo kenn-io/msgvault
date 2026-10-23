@@ -11657,6 +11657,76 @@ type PersonFactScoreBreakdown struct {
 	Total           int64 `json:"total"`
 }
 
+type PersonFactStaleness struct {
+	Declared      bool           `json:"declared"`
+	NewestSupport time.Time      `json:"newest_support" validate:"required"`
+	Projection    ProjectionRef  `json:"projection"`
+	Slug          string         `json:"slug" validate:"required"`
+	Stability     string         `json:"stability" validate:"required"`
+	Stale         bool           `json:"stale"`
+	Target        TargetRef      `json:"target"`
+	Value         jsontext.Value `json:"value"`
+	VerifyBy      *time.Time     `json:"verify_by,omitempty"`
+}
+
+func (p PersonFactStaleness) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.NewestSupport, "required"); err != nil {
+		errors = errors.Append("NewestSupport", err)
+	}
+	if v, ok := any(p.Projection).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Projection", err)
+		}
+	}
+	if err := typesValidator.Var(p.Slug, "required"); err != nil {
+		errors = errors.Append("Slug", err)
+	}
+	if err := typesValidator.Var(p.Stability, "required"); err != nil {
+		errors = errors.Append("Stability", err)
+	}
+	if v, ok := any(p.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if v, ok := any(p.Value).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Value", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFactStalenessResponse struct {
+	AsOf  time.Time             `json:"as_of" validate:"required"`
+	Items []PersonFactStaleness `json:"items" validate:"required"`
+}
+
+func (p PersonFactStalenessResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AsOf, "required"); err != nil {
+		errors = errors.Append("AsOf", err)
+	}
+	if err := typesValidator.Var(p.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range p.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonFileProvenance struct {
 	Directions     []PersonFileProvenanceDirections `json:"directions" validate:"required"`
 	ParticipantIds []int64                          `json:"participant_ids" validate:"required"`

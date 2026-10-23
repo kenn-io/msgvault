@@ -1148,6 +1148,11 @@ type ListPersonFactEvidenceStatusEventsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonFactStalenessQuery struct {
+	// IncludeSensitive Include sensitive facts
+	IncludeSensitive *bool `json:"include_sensitive,omitempty"`
+}
+
 type ListPersonMergesQuery struct {
 	// Limit Maximum results
 	Limit *int64 `json:"limit,omitempty"`
