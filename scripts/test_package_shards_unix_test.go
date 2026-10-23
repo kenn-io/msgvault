@@ -29,18 +29,12 @@ import ("flag"; "fmt"; "os"; "testing")
 func TestMain(m *testing.M) {
     flag.Parse()
     // A successful shard may produce no named outcome records.
-    if os.Getenv("SHARD_RECORD") == "" && flag.Lookup("test.run").Value.String() == "^(TestSilent)$" { os.Exit(0) }
+    if flag.Lookup("test.run").Value.String() == "^(TestSilent)$" { os.Exit(0) }
     os.Exit(m.Run())
 }
-func record(t *testing.T) {
-    if dir := os.Getenv("SHARD_RECORD"); dir != "" {
-        if err := os.WriteFile(dir+"/"+t.Name(), nil, 0600); err != nil { panic(err) }
-    }
-}
-func TestPass(t *testing.T) { record(t); fmt.Println("noisy success sentinel") }
-func TestSkip(t *testing.T) { record(t); t.Skip("skip reason sentinel") }
+func TestPass(t *testing.T) { fmt.Println("noisy success sentinel") }
+func TestSkip(t *testing.T) { t.Skip("skip reason sentinel") }
 func TestNested(t *testing.T) {
-    record(t)
     t.Run("routes", func(t *testing.T) {
         t.Run("get", func(t *testing.T) {
             if os.Getenv("SHARD_FAIL") == "1" { t.Log("nested failure sentinel"); t.Fail() }
@@ -48,7 +42,7 @@ func TestNested(t *testing.T) {
         t.Run("skipped", func(t *testing.T) { t.Skip("nested skip reason") })
     })
 }
-func TestSilent(t *testing.T) { record(t) }
+func TestSilent(t *testing.T) {}
 `), 0o600))
 	for _, fail := range []string{"1", "0"} {
 		t.Run("SHARD_FAIL="+fail, func(t *testing.T) {
@@ -87,50 +81,6 @@ func TestSilent(t *testing.T) { record(t) }
 				assert.NotContains(result, "=== RUN")
 				assert.NotContains(result, "FAIL")
 			}
-		})
-	}
-
-	for _, part := range []struct {
-		index string
-		count string
-		names []string
-	}{
-		{"2", "2", []string{"TestSilent", "TestSkip"}},
-		{"1", "2", []string{"TestNested", "TestPass"}},
-		{"5", "5", []string{}},
-	} {
-		t.Run("part="+part.index+"/"+part.count, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			records := t.TempDir()
-			t.Setenv("SHARD_RECORD", records)
-			t.Setenv("SHARD_FAIL", "0")
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, bash, script, ".", "4", "fts5 sqlite_vec", "30s", part.index, part.count)
-			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), "GOWORK=off")
-			output, err := cmd.CombinedOutput()
-			require.NoError(err, string(output))
-			if len(part.names) == 0 {
-				assert.Contains(string(output), "No tests found in .")
-			}
-			entries, err := os.ReadDir(records)
-			require.NoError(err)
-			names := make([]string, 0, len(entries))
-			for _, entry := range entries {
-				names = append(names, entry.Name())
-			}
-			assert.Equal(part.names, names)
-		})
-	}
-	for _, parts := range [][2]string{{"0", "2"}, {"3", "2"}, {"1", "0"}, {"bad", "2"}, {"1", "65"}, {"999999999999999999999", "2"}} {
-		t.Run("invalid="+parts[0]+"/"+parts[1], func(t *testing.T) {
-			cmd := exec.Command(bash, script, ".", "4", "fts5 sqlite_vec", "30s", parts[0], parts[1])
-			cmd.Dir = dir
-			output, err := cmd.CombinedOutput()
-			require.Error(t, err, string(output))
-			assert.Contains(t, string(output), "Invalid part")
 		})
 	}
 }

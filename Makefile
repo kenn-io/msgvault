@@ -35,9 +35,8 @@ PG_TEST_PARALLEL ?= 4
 # at a time inside one binary, so left whole it sets the wall clock of the
 # whole lane. The *-unsharded targets run everything else and exist for CI;
 # `make test` and `make test-pg-shipped` still run every package.
-# CI's PostgreSQL remainder target passes a longer SHARDED_TEST_PKGS list
-# adding ./internal/beeper and ./internal/query.
 SHARDED_TEST_PKGS := ./cmd/msgvault/cmd ./internal/store ./internal/api
+PG_SHARDED_TEST_PKGS := $(SHARDED_TEST_PKGS) ./internal/beeper ./internal/query
 TEST_SHARDS ?= 4
 TEST_PROFILE ?= auto
 # Only the automatic SQLite profile adds query and overlaps package jobs.
@@ -220,12 +219,12 @@ test-pg-nocgo: require-test-db
 # configured PostgreSQL server; CI gives each package its own job and server.
 test-pg-shipped: require-test-db
 	$(MAKE) test-pg-shipped-unsharded
-	$(MAKE) test-shards
+	$(MAKE) test-shards SHARDED_TEST_PKGS="$(PG_SHARDED_TEST_PKGS)"
 
-# test-pg-shipped minus SHARDED_TEST_PKGS, for CI's test-postgres lane; the
+# test-pg-shipped minus PG_SHARDED_TEST_PKGS, for CI's test-postgres lane; the
 # test-postgres-sharded jobs cover the rest against their own servers.
 test-pg-shipped-unsharded: require-test-db
-	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
+	@excluded=$$(go list $(PG_SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
 	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
 
 # Both PostgreSQL lanes' coverage in one pass.

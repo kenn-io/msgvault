@@ -703,6 +703,7 @@ jobs:
         run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/...
 
       - name: Test CLI in isolated shards (pgvector-tagged)
+        # CLI's serial tests set the lane's wall clock; shards of one package keep connections within the lane's -p 4 budget.
         if: ${{ !cancelled() }}
         run: scripts/test-package-shards.sh ./cmd/msgvault/cmd 4 "fts5 sqlite_vec pgvector" 60m
 
@@ -755,8 +756,7 @@ jobs:
       # The largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
-        # Keep this override in step with the test-postgres-sharded matrix below.
-        run: make test-pg-shipped-unsharded SHARDED_TEST_PKGS="./cmd/msgvault/cmd ./internal/store ./internal/api ./internal/beeper ./internal/query"
+        run: make test-pg-shipped-unsharded
 
       - name: Save Go caches
         uses: ./.github/actions/go-cache-save
@@ -820,7 +820,13 @@ jobs:
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
         id: postgres-shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m "${{ matrix.part || 1 }}" "${{ matrix.parts || 1 }}"
+        if: ${{ !matrix.parts }}
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
+
+      - name: Test package part in isolated shards (PostgreSQL)
+        if: ${{ matrix.parts }}
+        shell: pwsh
+        run: ./scripts/test-package-shards.ps1 -Package "${{ matrix.package }}" -ShardCount 4 -Tags "fts5 sqlite_vec" -Timeout 60m -PartIndex ${{ matrix.part }} -PartCount ${{ matrix.parts }}
 
       - name: Test PostgreSQL library without CGO
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
