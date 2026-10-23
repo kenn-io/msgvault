@@ -4,15 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 const testAttributeDefinitionJSON = `{
@@ -222,4 +228,29 @@ func TestAttributeDefinitionClearDescriptionSendsEmptyString(t *testing.T) {
 		"3", "--clear-description")
 	require.NoError(err)
 	assert.Equal(`""`, string(description))
+}
+
+func TestAttributeDefinitionSetStabilityThroughDaemon(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	d, err := st.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, "birthplace")
+	require.NoError(t, err)
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler), Store: &storeAPIAdapter{store: st}})
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		srv.Router().ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_, err = runAttributeCommand(ctx, t, attributeDefinitionSetStabilityCmd, strconv.FormatInt(d.ID, 10), "durable")
+	require.NoError(t, err)
+	got, err := st.GetAttributeDefinitionContext(t.Context(), d.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.AttributeStabilityDurable, got.Stability)
+	assert.Equal(t, d.Revision+1, got.Revision)
+	before := requests.Load()
+	output, err := runAttributeCommand(ctx, t, attributeDefinitionSetStabilityCmd, strconv.FormatInt(d.ID, 10), "episodic")
+	require.EqualError(t, err, "stability must be fixed, durable, or volatile")
+	assert.Contains(t, output, "Usage:")
+	assert.Equal(t, before, requests.Load())
 }

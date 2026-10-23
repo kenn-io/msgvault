@@ -63,6 +63,7 @@ type CreateAttributeDefinitionRequest struct {
 	IsRequired    bool                    `json:"is_required,omitzero"`
 	IsSearchable  bool                    `json:"is_searchable,omitzero"`
 	IsSensitive   bool                    `json:"is_sensitive,omitzero"`
+	Stability     *string                 `json:"stability,omitzero" enum:"fixed,durable,volatile" nullable:"false"`
 	IsAudited     bool                    `json:"is_audited,omitzero"`
 	Options       *store.AttributeOptions `json:"options,omitzero" nullable:"false"`
 	VCardProperty *string                 `json:"vcard_property,omitzero" nullable:"false"`
@@ -74,8 +75,12 @@ type CreateAttributeDefinitionRequest struct {
 func (r CreateAttributeDefinitionRequest) StoreInput(
 	universalID string,
 ) store.AttributeDefinitionInput {
+	var stability store.AttributeStability
+	if r.Stability != nil {
+		stability = store.AttributeStability(*r.Stability)
+	}
 	return store.AttributeDefinitionInput{
-		UniversalID: universalID, ObjectType: store.AttributeObjectType(r.ObjectType),
+		Stability: stability, UniversalID: universalID, ObjectType: store.AttributeObjectType(r.ObjectType),
 		Slug: r.Slug, Label: r.Label, Description: r.Description,
 		ValueType:    store.AttributeValueType(r.ValueType),
 		FieldType:    store.AttributeFieldType(r.FieldType),
@@ -94,6 +99,7 @@ type PatchAttributeDefinitionRequest struct {
 	Description  *string `json:"description,omitzero" nullable:"true"`
 	DisplayOrder *int64  `json:"display_order,omitzero" nullable:"false"`
 	IsSensitive  *bool   `json:"is_sensitive,omitzero" nullable:"false"`
+	Stability    *string `json:"stability,omitzero" enum:"fixed,durable,volatile" nullable:"false"`
 	IsActive     *bool   `json:"is_active,omitzero" nullable:"false"`
 }
 
@@ -240,6 +246,11 @@ func (s *Server) handlePatchAttributeDefinition(w http.ResponseWriter, r *http.R
 		Label: request.Label, DisplayOrder: request.DisplayOrder,
 		IsSensitive: request.IsSensitive, IsActive: request.IsActive,
 	}
+	if request.Stability != nil {
+		stability := store.AttributeStability(*request.Stability)
+		update.Stability = &stability
+	}
+
 	if raw, present := fields["description"]; present {
 		description := request.Description
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {

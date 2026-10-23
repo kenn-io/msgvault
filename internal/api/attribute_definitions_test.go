@@ -250,3 +250,23 @@ func TestAttributeDefinitionsHTTPProtectsSeedAndRejectsUnknownFields(t *testing.
 		}`), "")
 	assert.Equal(http.StatusBadRequest, unknown.Code)
 }
+
+func TestAttributeDefinitionsHTTPPatchStability(t *testing.T) {
+	srv, st := newIdentityLinkTestServer(t)
+	d, err := st.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, "location")
+	require.NoError(t, err)
+	path := fmt.Sprintf("/api/v1/attribute-definitions/%d", d.ID)
+	etag := fmt.Sprintf(`"attribute-definition-%d-r%d"`, d.ID, d.Revision)
+	response := attributeRequest(t, srv, http.MethodPatch, path, []byte(`{"stability":"fixed"}`), etag)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var got store.AttributeDefinition
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &got))
+	assert.Equal(t, store.AttributeStabilityFixed, got.Stability)
+	assert.Equal(t, d.Revision+1, got.Revision)
+	assert.Equal(t, fmt.Sprintf(`"attribute-definition-%d-r%d"`, d.ID, d.Revision+1), response.Header().Get("ETag"))
+	etag = response.Header().Get("ETag")
+	for _, body := range []string{`{"stability":"episodic"}`, `{"unknown_field":true}`} {
+		response = attributeRequest(t, srv, http.MethodPatch, path, []byte(body), etag)
+		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	}
+}

@@ -448,6 +448,22 @@ msgvault attribute-definition create --definition @favorite-project.json
 stored references. Deletion is limited to user-created definitions that still
 have no stored values; shipped and non-deletable definitions are protected.
 
+Definitions also classify how quickly a fact can change. `fixed` covers
+birthplace, how you met, and interests growing up. `volatile` covers current
+interests, “ask me about”, and last contacted. Other shipped fields and new
+custom definitions default to `durable`. The owner can change any definition's
+class, including a shipped definition:
+
+```bash
+msgvault attribute-definition set-stability 7 fixed
+```
+
+The list command shows each definition's stability. API clients can supply
+`stability` when creating a definition or PATCH it by numeric ID with its current
+`If-Match` ETag. Changes survive restarts and never invalidate retained claims or
+change catalog fingerprints. This metadata is available on main after the latest
+release; this change alone does not alter fact resolution.
+
 For automation, run `msgvault openapi` or read `/openapi.json` from the daemon.
 The contract includes source identities, person profiles, attribute
 definitions, and historized person-attribute routes, and the generated Go

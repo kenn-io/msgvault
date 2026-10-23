@@ -47,6 +47,24 @@ func (a AppendPersonNoteRequestSource) Validate() error {
 	}
 }
 
+type AttributeDefinitionStability string
+
+const (
+	Durable  AttributeDefinitionStability = "durable"
+	Fixed    AttributeDefinitionStability = "fixed"
+	Volatile AttributeDefinitionStability = "volatile"
+)
+
+// Validate checks if the AttributeDefinitionStability value is valid
+func (a AttributeDefinitionStability) Validate() error {
+	switch a {
+	case Durable, Fixed, Volatile:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid AttributeDefinitionStability value, got: %v", a))
+	}
+}
+
 type CLIDeduplicatePlanRequestPlanProtocol string
 
 const (
@@ -571,6 +589,24 @@ func (c CreateAttributeDefinitionRequestObjectType) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CreateAttributeDefinitionRequestObjectType value, got: %v", c))
+	}
+}
+
+type CreateAttributeDefinitionRequestStability string
+
+const (
+	CreateAttributeDefinitionRequestStabilityDurable  CreateAttributeDefinitionRequestStability = "durable"
+	CreateAttributeDefinitionRequestStabilityFixed    CreateAttributeDefinitionRequestStability = "fixed"
+	CreateAttributeDefinitionRequestStabilityVolatile CreateAttributeDefinitionRequestStability = "volatile"
+)
+
+// Validate checks if the CreateAttributeDefinitionRequestStability value is valid
+func (c CreateAttributeDefinitionRequestStability) Validate() error {
+	switch c {
+	case CreateAttributeDefinitionRequestStabilityDurable, CreateAttributeDefinitionRequestStabilityFixed, CreateAttributeDefinitionRequestStabilityVolatile:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CreateAttributeDefinitionRequestStability value, got: %v", c))
 	}
 }
 
@@ -2125,6 +2161,24 @@ func (p ParticipantCompletionHTTPRowKind) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ParticipantCompletionHTTPRowKind value, got: %v", p))
+	}
+}
+
+type PatchAttributeDefinitionRequestStability string
+
+const (
+	PatchAttributeDefinitionRequestStabilityDurable  PatchAttributeDefinitionRequestStability = "durable"
+	PatchAttributeDefinitionRequestStabilityFixed    PatchAttributeDefinitionRequestStability = "fixed"
+	PatchAttributeDefinitionRequestStabilityVolatile PatchAttributeDefinitionRequestStability = "volatile"
+)
+
+// Validate checks if the PatchAttributeDefinitionRequestStability value is valid
+func (p PatchAttributeDefinitionRequestStability) Validate() error {
+	switch p {
+	case PatchAttributeDefinitionRequestStabilityDurable, PatchAttributeDefinitionRequestStabilityFixed, PatchAttributeDefinitionRequestStabilityVolatile:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PatchAttributeDefinitionRequestStability value, got: %v", p))
 	}
 }
 
