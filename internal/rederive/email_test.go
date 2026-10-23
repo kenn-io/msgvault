@@ -67,7 +67,16 @@ func TestEmailRetriesFailedRowsAndResumesAfterCancellation(t *testing.T) {
 	require.NoError(st.UpsertMessageRaw(bad, []byte("invalid MIME")))
 	failed := archiveEmail(t, st, src, "failed", "stale")
 	last := archiveEmail(t, st, src, "last", "stale")
-	unblock := blockEmailSnippet(t, st, failed)
+	query := fmt.Sprintf(`CREATE TRIGGER fail_retry_snippet BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'snippet failure'); END`, failed)
+	drop := "DROP TRIGGER fail_retry_snippet"
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION fail_retry_snippet() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'snippet failure'; END IF; RETURN NEW; END $$`, failed))
+		require.NoError(err)
+		query = `CREATE TRIGGER fail_retry_snippet BEFORE UPDATE OF snippet ON messages FOR EACH ROW EXECUTE FUNCTION fail_retry_snippet()`
+		drop += " ON messages"
+	}
+	_, err := st.DB().Exec(query)
+	require.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	sum, err := Run(ctx, st, src.SourceType, src.Identifier, src.ID, func(string) { cancel() })
@@ -88,7 +97,8 @@ func TestEmailRetriesFailedRowsAndResumesAfterCancellation(t *testing.T) {
 	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MessagesScanned, "a sync retries only unresolved MIME rows")
-	unblock()
+	_, err = st.DB().Exec(drop)
+	require.NoError(err)
 	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MessagesScanned)
@@ -134,24 +144,6 @@ func TestEmailFirstSyncBoundsReadQueries(t *testing.T) {
 	// Each row needs its MIME/envelope scan and FTS comparison. The three
 	// fixed reads check completion, check the retry phase, and finish the scan.
 	require.LessOrEqual(reads, 2*32+3, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
-}
-
-func blockEmailSnippet(t *testing.T, st *store.Store, id int64) func() {
-	t.Helper()
-	query := fmt.Sprintf(`CREATE TRIGGER fail_retry_snippet BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'snippet failure'); END`, id)
-	drop := "DROP TRIGGER fail_retry_snippet"
-	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION fail_retry_snippet() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'snippet failure'; END IF; RETURN NEW; END $$`, id))
-		require.NoError(t, err)
-		query = `CREATE TRIGGER fail_retry_snippet BEFORE UPDATE OF snippet ON messages FOR EACH ROW EXECUTE FUNCTION fail_retry_snippet()`
-		drop += " ON messages"
-	}
-	_, err := st.DB().Exec(query)
-	require.NoError(t, err)
-	return func() {
-		_, err := st.DB().Exec(drop)
-		require.NoError(t, err)
-	}
 }
 
 func TestEmailPreservesProviderSnippets(t *testing.T) {
