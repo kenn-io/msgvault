@@ -175,7 +175,7 @@ func SeededAttributeDefinitions() []AttributeDefinitionInput {
 			Options: &AttributeOptions{MaxLength: 280},
 		}
 	}
-	return append(definitions,
+	definitions = append(definitions,
 		profileText(AttributeUniversalIDLocation, AttributeSlugLocation, "Location",
 			"Where this person lives or is based", 50, AttributeCardinalitySingle, false, true),
 		profileText(AttributeUniversalIDBirthplace, AttributeSlugBirthplace, "Born in",
@@ -200,6 +200,17 @@ func SeededAttributeDefinitions() []AttributeDefinitionInput {
 			"Places this person especially likes", 150, AttributeCardinalityMulti, false, true),
 		howWeMetDefinition(),
 	)
+	for i := range definitions {
+		switch definitions[i].UniversalID {
+		case AttributeUniversalIDBirthplace, AttributeUniversalIDHowWeMet, AttributeUniversalIDInterestsFunGrowingUp:
+			definitions[i].Stability = AttributeStabilityFixed
+		case AttributeUniversalIDInterestsFunNow, AttributeUniversalIDAskMeAbout, AttributeUniversalIDLastContacted:
+			definitions[i].Stability = AttributeStabilityVolatile
+		default:
+			definitions[i].Stability = AttributeStabilityDurable
+		}
+	}
+	return definitions
 }
 
 // howWeMetDefinition is the one relationship-scoped seed: it describes how the
@@ -496,8 +507,8 @@ func (s *Store) reconcileSeededDefinitionWith(
 	return requireOneSeededDefinitionRow(result, seed.Slug, "reconcile")
 }
 
-// seededDefinitionDiffers ignores label, description, and display_order:
-// those are user-adjustable presentation fields that reseeding must preserve.
+// seededDefinitionDiffers preserves owner edits to label, description,
+// display_order, and stability during seed reconciliation.
 func seededDefinitionDiffers(
 	existing *AttributeDefinition, seed AttributeDefinitionInput,
 ) bool {

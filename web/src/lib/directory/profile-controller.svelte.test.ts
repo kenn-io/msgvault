@@ -268,7 +268,8 @@ describe('DirectoryProfileController', () => {
     const closed = { ...current, active_until: '2026-08-02T00:00:00Z', superseded_at: '2026-08-02T00:00:00Z' };
     const primaryDefinition = {
       id: 1, universal_id: 'primary-channel-id', object_type: 'person' as const, slug: 'primary_channel', label: 'Primary channel',
-      value_type: 'text' as const, field_type: 'select', cardinality: 'single' as const, display_order: 0,
+      value_type: 'text' as const, field_type: 'select', cardinality: 'single' as const,
+      display_order: 0, stability: 'durable' as const, inference_eligible: false,
       is_required: false, ownership: 'system' as const, ui_creatable: true, ui_editable: true, api_mutable: true,
       is_searchable: false, is_sensitive: false, is_audited: true, is_deletable: false, history_exempt: false,
       options: { choices: [{ value: 'chat', label: 'Chat' }] }, is_active: true, revision: 1,
@@ -300,7 +301,9 @@ describe('DirectoryProfileController', () => {
     const createdDefinition = {
       id: 71, universal_id: `created-${cardinality}`, object_type: 'person' as const, slug: `created_${cardinality}`,
       label: `Created ${cardinality}`, value_type: 'text' as const, field_type: 'text', cardinality,
-      display_order: 71, is_required: false, ownership: 'user' as const, ui_creatable: true, ui_editable: true,
+      display_order: 71, stability: 'durable' as const, inference_eligible: true,
+      is_required: false, ownership: 'user' as const,
+      ui_creatable: true, ui_editable: true,
       api_mutable: true, is_searchable: false, is_sensitive: false, is_audited: true, is_deletable: true,
       history_exempt: false, is_active: true, revision: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
     };
