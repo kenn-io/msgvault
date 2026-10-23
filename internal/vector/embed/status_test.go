@@ -363,7 +363,9 @@ func TestDiagnosticTimingMeasuresElapsedTime(t *testing.T) {
 }
 
 func TestWorkerDiagnosticsCountCommittedCoverage(t *testing.T) {
-	for _, mode := range []string{"covered", "skipped then covered", "missing skip"} {
+	// A failed coverage stamp rolls back its whole batch, so only skip stamps
+	// committed before it count as completed.
+	for mode, wantStamped := range map[string]int{"covered": 0, "skipped then covered": 1, "missing skip": 1} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -401,10 +403,10 @@ func TestWorkerDiagnosticsCountCommittedCoverage(t *testing.T) {
 			d.finish(err)
 			_, stamped, _, _, err := f.store.CoverageCounts(t.Context(), int64(f.gen))
 			require.NoError(err)
-			assert.Equal(int64(1), stamped)
+			assert.Equal(int64(wantStamped), stamped)
 			got := capture.read(t)
 			require.Len(got.RecentBatches, 1)
-			assert.Equal(1, got.RecentBatches[0].Completed)
+			assert.Equal(wantStamped, got.RecentBatches[0].Completed)
 		})
 	}
 }
