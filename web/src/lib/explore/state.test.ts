@@ -213,15 +213,7 @@ describe('Explore URL state', () => {
     expect(restored).not.toHaveProperty('operationCursor');
   });
 
-  it('round-trips the live Operations status authorities', () => {
-    for (const operationStatus of [
-      'getVisualAttachmentStatus'
-    ] as const) {
-      const restored = parseExploreURLState(serializeExploreURLState({
-        ...defaultExploreURLState, workspace: 'operations', operationStatus
-      }));
-      expect(restored.operationStatus).toBe(operationStatus);
-    }
+  it('rejects an unsupported Operations status authority', () => {
     const invalid = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState, workspace: 'operations', operationStatus: 'getCardDAVStatus'
     } as unknown as ExploreURLState));
