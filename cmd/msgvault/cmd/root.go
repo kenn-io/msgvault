@@ -29,14 +29,12 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `msgvault archives email, chat, and meetings for offline search.
-Commands start or reuse a local daemon, or use [remote].url from config.toml.
---local forces the local daemon.
+		Long: `Archive email, chats, and meetings offline. Use the daemon
+or config.toml's [remote].url; --local forces local.
 
 Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
-  # "id" feeds the commands below
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
@@ -46,10 +44,10 @@ Start here:
   msgvault daemon status
   msgvault setup status --json
 
-Output and exit status:
-  --json prints JSON on stdout (export-messages prints JSON Lines). Progress and
-  logs go to stderr; --log-level=warn quiets routine logs. Exit 0 success, 1 error,
-  130 interrupted. 'msgvault quickstart' has a longer agent guide.`,
+Output:
+  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
+  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
+  More: msgvault quickstart.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {

@@ -71,6 +71,10 @@ func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 		scopeKind       string
 		scopeValue      string
 	}{
+		{"inline", "api.inline.chat:user:42", "inline", "server", "api.inline.chat"},
+		{"inline", "42", "", "", ""},
+		{"inline", "api.inline.chat:user:042", "", "", ""},
+		{"inline", "example.com:user:42", "", "", ""},
 		{"matrix", "@alice:matrix.example:8448", "matrix", "server", "matrix.example:8448"},
 		{"matrix", "alice-without-server", "", "", ""},
 		{"slack", "user-without-workspace", "", "", ""},
