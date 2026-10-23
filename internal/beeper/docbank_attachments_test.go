@@ -1043,6 +1043,22 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Requested)
 }
 
+func TestAttachmentMirrorProcessingMissingJobReplans(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	delete(r.processing.States, "job-a")
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"job-a"}, r.processing.Polls)
+	assert.Equal([]string{"a", "a"}, r.processing.Plans)
+	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Empty(r.processingCounts().Outcomes)
+}
+
 func TestAttachmentMirrorProcessingRefusalBackfill(t *testing.T) {
 	for _, stage := range []string{"plan", "start", "poll"} {
 		t.Run(stage, func(t *testing.T) {
