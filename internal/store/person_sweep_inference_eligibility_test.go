@@ -12,20 +12,24 @@ import (
 )
 
 func TestPersonSweepProviderPacketOmitsIneligibleTargets(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newProductionPersonSweepParityFixture(t)
 	result := parityRunWholeWorker(t, f, peoplesweep.RunIncremental)
-	require.Equal(t, 1, result.PeopleSucceeded)
-	require.NotEmpty(t, f.provider.packets)
+	requirements.Equal(1, result.PeopleSucceeded)
+	requirements.NotEmpty(f.provider.packets)
 	for _, packet := range f.provider.packets {
-		require.NotEmpty(t, packet.Catalog.Targets)
+		requirements.NotEmpty(packet.Catalog.Targets)
 		for _, target := range packet.Catalog.Targets {
-			assert.NotEqual(t, store.AttributeSlugContactFrequency, target.Slug)
-			assert.NotEqual(t, store.AttributeSlugPersonality, target.Slug)
+			assertions.NotEqual(store.AttributeSlugContactFrequency, target.Slug)
+			assertions.NotEqual(store.AttributeSlugPersonality, target.Slug)
 		}
 	}
 }
 
 func TestPersonSweepCursorKeyUnchangedByInferenceEligibility(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderSelection{Name: "default"}, Providers: map[string]peoplesweep.ProviderConfig{"default": {
 		Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://api.example.test/v1", Model: "gpt-test", Auth: peoplesweep.AuthBearer,
@@ -35,9 +39,9 @@ func TestPersonSweepCursorKeyUnchangedByInferenceEligibility(t *testing.T) {
 	}}}
 	config.ApplyDefaults()
 	profile, err := config.Profile()
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = f.store.EnsurePersonInferenceProfile(t.Context(), profile)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	runner := &noProviderSweepRunner{}
 	nextID := 0
 	worker := peoplesweep.Worker{Config: config, Store: f.store, Source: f.store, Context: peoplesweep.NewContextRetriever(f.store), Sink: f.store, Runner: runner, Catalog: f.store,
@@ -45,29 +49,29 @@ func TestPersonSweepCursorKeyUnchangedByInferenceEligibility(t *testing.T) {
 	var initial []string
 	for i, eligible := range []bool{false, true, false} {
 		definition, err := f.store.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, store.AttributeSlugContactFrequency)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		_, err = f.store.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{InferenceEligible: &eligible})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		f.insertMessage(t, fmt.Sprintf("inference-filtered-%d", i), "email", f.aliceID, time.Date(2026, 8, 23, 12, i, 0, 0, time.UTC))
 		result, err := worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental, PersonID: f.alicePersonID, Limit: 1})
-		require.NoError(t, err)
-		require.Equal(t, 1, result.PeopleSucceeded)
+		requirements.NoError(err)
+		requirements.Equal(1, result.PeopleSucceeded)
 		rows, err := f.store.DB().QueryContext(t.Context(), f.store.Rebind(`SELECT source_lane,program_fingerprint,catalog_fingerprint FROM person_sweep_cursors WHERE person_id = ? ORDER BY source_lane,program_fingerprint,catalog_fingerprint`), f.alicePersonID)
-		require.NoError(t, err)
+		requirements.NoError(err)
+		defer rows.Close()
 		keys := make([]string, 0)
 		for rows.Next() {
 			var lane, program, catalog string
-			require.NoError(t, rows.Scan(&lane, &program, &catalog))
+			requirements.NoError(rows.Scan(&lane, &program, &catalog))
 			keys = append(keys, lane+":"+program+":"+catalog)
 		}
-		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
-		require.NotEmpty(t, keys)
+		requirements.NoError(rows.Err())
+		requirements.NotEmpty(keys)
 		if i == 0 {
 			initial = keys
 		} else {
-			assert.Equal(t, initial, keys)
+			assertions.Equal(initial, keys)
 		}
 	}
-	assert.Zero(t, runner.calls)
+	assertions.Zero(runner.calls)
 }

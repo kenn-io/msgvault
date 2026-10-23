@@ -17,36 +17,38 @@ func TestCopySubsetPreservesInferenceEligibility(t *testing.T) {
 			name = "legacy"
 		}
 		t.Run(name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			srcDB := createTestSourceDB(t, t.TempDir(), 3)
 			source, err := Open(srcDB)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			contact, err := source.GetAttributeDefinitionBySlugContext(t.Context(), AttributeObjectPerson, AttributeSlugContactFrequency)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			_, err = source.UpdateAttributeDefinitionContext(t.Context(), contact.ID, contact.Revision,
 				AttributeDefinitionUpdate{InferenceEligible: new(true)})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			location, err := source.GetAttributeDefinitionBySlugContext(t.Context(), AttributeObjectPerson, AttributeSlugLocation)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			_, err = source.UpdateAttributeDefinitionContext(t.Context(), location.ID, location.Revision,
 				AttributeDefinitionUpdate{InferenceEligible: new(false)})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			input := subsetPersonDefinition("private_fact")
 			input.InferenceEligible = new(false)
 			_, err = source.CreateAttributeDefinitionContext(t.Context(), input)
-			require.NoError(t, err)
-			require.NoError(t, source.Close())
+			requirements.NoError(err)
+			requirements.NoError(source.Close())
 			if legacy {
 				db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
-				require.NoError(t, err)
+				requirements.NoError(err)
 				_, err = db.Exec(`ALTER TABLE attribute_definitions DROP COLUMN inference_eligible`)
-				require.NoError(t, err)
-				require.NoError(t, db.Close())
+				requirements.NoError(err)
+				requirements.NoError(db.Close())
 			}
 			dstDir := filepath.Join(t.TempDir(), "subset")
 			_, err = CopySubsetWithOptions(srcDB, dstDir, 3, CopySubsetOptions{IncludeAttributes: true})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
-			require.NoError(t, err)
+			requirements.NoError(err)
 			t.Cleanup(func() { require.NoError(t, destination.Close()) })
 			for _, tc := range []struct {
 				slug string
@@ -58,14 +60,14 @@ func TestCopySubsetPreservesInferenceEligibility(t *testing.T) {
 				{"private_fact", legacy},
 			} {
 				got, err := destination.GetAttributeDefinitionBySlugContext(t.Context(), AttributeObjectPerson, tc.slug)
-				require.NoError(t, err)
-				assert.Equal(t, tc.want, got.InferenceEligible, tc.slug)
+				requirements.NoError(err)
+				assertions.Equal(tc.want, got.InferenceEligible, tc.slug)
 			}
 			// Normal setup must keep copied owner choices and legacy backfill intact.
-			require.NoError(t, destination.InitSchemaContext(t.Context()))
+			requirements.NoError(destination.InitSchemaContext(t.Context()))
 			got, err := destination.GetAttributeDefinitionBySlugContext(t.Context(), AttributeObjectPerson, AttributeSlugContactFrequency)
-			require.NoError(t, err)
-			assert.Equal(t, !legacy, got.InferenceEligible)
+			requirements.NoError(err)
+			assertions.Equal(!legacy, got.InferenceEligible)
 		})
 	}
 }

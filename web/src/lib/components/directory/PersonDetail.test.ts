@@ -151,7 +151,8 @@ describe('PersonDetail', () => {
       },
       attributes: { person_id: 7, attributes: [{ definition: {
         id: 1, slug: 'private-note', label: 'Private note', value_type: 'text', field_type: 'text',
-        api_mutable: true, cardinality: 'single', display_order: 0, history_exempt: false,
+        api_mutable: true, cardinality: 'single', display_order: 0, history_exempt: false, stability: 'durable',
+        inference_eligible: true,
         is_sensitive: true, is_active: true, is_audited: true, is_deletable: true, is_required: false,
         is_searchable: false, object_type: 'person', ownership: 'user', revision: 1,
         ui_creatable: true, ui_editable: true, universal_id: 'synthetic-private-note',
