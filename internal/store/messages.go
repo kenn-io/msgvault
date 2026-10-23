@@ -6606,6 +6606,14 @@ func markFTSMessageUnsearchable(q querier, messageID int64) error {
 	return err
 }
 
+// ftsMessageUnsearchable reports whether the PostgreSQL overflow policy
+// already marked messageID.
+func ftsMessageUnsearchable(q querier, messageID int64) (bool, error) {
+	var terminal bool
+	err := q.QueryRow(`SELECT COALESCE(search_fts = ''::tsvector AND indexing_version = ?, FALSE) FROM messages WHERE id = ?`, CurrentFTSIndexingVersion, messageID).Scan(&terminal)
+	return terminal, err
+}
+
 // ArchivedRawMessage is one archived message paired with the verbatim provider
 // payload stored for it, decompressed.
 type ArchivedRawMessage struct {
@@ -6720,7 +6728,7 @@ func (s *Store) UpdateMessageDerivedText(
 ) error {
 	fts.MessageID = messageID
 	return s.withTx(func(tx *loggedTx) error {
-		return s.updateMessageDerivedText(tx, messageID, bodyText, bodyHTML, snippet, &fts)
+		return s.updateMessageDerivedText(tx, messageID, bodyText, bodyHTML, snippet, fts, s.dialect.FTSUpsert)
 	})
 }
 
@@ -6733,56 +6741,81 @@ func (s *Store) UpdateMessageDerivedEmailTextContext(ctx context.Context, messag
 	if err != nil || matches {
 		return false, err
 	}
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
-			return fmt.Errorf("lock derived email write: %w", err)
-		}
-		return s.updateMessageDerivedText(boundQuerier{ctx: ctx, q: tx}, messageID, bodyText, bodyHTML, snippet, nil)
+	var changed bool
+	err = s.withTxContext(ctx, func(tx *loggedTx) (err error) {
+		changed, err = s.writeDerivedEmailText(ctx, tx, messageID, bodyText, bodyHTML, snippet)
+		return err
 	})
-	return err == nil, err
+	return changed, err
 }
 
-func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+// derivedEmailText is a retained email's stored text and the search document
+// FTSUpsert would write for its stored envelope.
+type derivedEmailText struct {
+	body, html, snippet string
+	fts                 FTSDoc
+}
+
+func (row derivedEmailText) matches(bodyText, bodyHTML, snippet sql.NullString) bool {
+	return row.body == bodyText.String && row.html == bodyHTML.String && row.snippet == snippet.String
+}
+
+func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailText, error) {
 	aggregate := "GROUP_CONCAT"
 	if s.IsPostgreSQL() {
 		aggregate = "STRING_AGG"
 	}
-	var text, html, preview string
-	doc := FTSDoc{MessageID: messageID, Body: bodyText.String, backfill: true}
-	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`SELECT
-		COALESCE(b.body_text, ''), COALESCE(b.body_html, ''), COALESCE(m.snippet, ''), COALESCE(m.subject, ''),
-		COALESCE(CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-			THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id) END,
-			(SELECT %[1]s(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'), ''),
-		COALESCE((SELECT %[1]s(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''),
-		COALESCE((SELECT %[1]s(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), '')
-		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, aggregate), messageID).
-		Scan(&text, &html, &preview, &doc.Subject, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs)
+	envelope := storedFTSEnvelopeSQL(aggregate)
+	row := derivedEmailText{fts: FTSDoc{MessageID: messageID}}
+	err := q.QueryRow(`SELECT
+		COALESCE(b.body_text, ''), COALESCE(b.body_html, ''), COALESCE(m.snippet, ''), `+
+		envelope.subject+`, `+envelope.fromAddr+`, `+envelope.toAddrs+`, `+envelope.ccAddrs+`
+		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, messageID).
+		Scan(&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs)
+	return row, err
+}
+
+func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	q := boundQuerier{ctx: ctx, q: s.db}
+	row, err := s.loadDerivedEmailText(q, messageID)
 	if err != nil {
 		return false, fmt.Errorf("compare derived email text: %w", err)
 	}
-	if text != bodyText.String || html != bodyHTML.String || preview != snippet.String {
+	if !row.matches(bodyText, bodyHTML, snippet) {
 		return false, nil
 	}
 	if !s.fts5Available {
 		return true, nil
 	}
-	if s.IsPostgreSQL() {
-		var terminal bool
-		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(search_fts = ''::tsvector AND indexing_version = ?, FALSE) FROM messages WHERE id = ?`, CurrentFTSIndexingVersion, messageID).Scan(&terminal)
-		if err != nil || terminal {
-			return terminal, err
-		}
-	}
-	matches, err := s.dialect.FTSMatches(boundQuerier{ctx: ctx, q: s.db}, doc)
+	row.fts.Body = bodyText.String
+	matches, err := s.dialect.FTSMatches(q, row.fts)
 	if s.dialect.IsFTSValueTooLargeError(err) {
-		return false, nil
+		return ftsMessageUnsearchable(q, messageID)
 	}
 	return matches, err
 }
 
-// A nil FTS document rebuilds search from the stored envelope.
-func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts *FTSDoc) error {
+// writeDerivedEmailText indexes the new body with the envelope read under the
+// message lock. Current text is not rewritten, and an overflow that is already
+// terminal reports no change.
+func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+		return false, fmt.Errorf("lock derived email write: %w", err)
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	row, err := s.loadDerivedEmailText(q, messageID)
+	if err != nil {
+		return false, fmt.Errorf("load derived email envelope: %w", err)
+	}
+	row.fts.Body = bodyText.String
+	if row.matches(bodyText, bodyHTML, snippet) {
+		return s.upsertFTSOrUnsearchable(q, row.fts)
+	}
+	upsert := func(q querier, doc FTSDoc) error { _, err := s.upsertFTSOrUnsearchable(q, doc); return err }
+	return true, s.updateMessageDerivedText(q, messageID, bodyText, bodyHTML, snippet, row.fts, upsert)
+}
+
+func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc, upsertFTS func(querier, FTSDoc) error) error {
 	if err := upsertMessageBody(q, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML); err != nil {
 		return fmt.Errorf("update derived message body: %w", err)
 	}
@@ -6790,32 +6823,41 @@ func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, b
 		return fmt.Errorf("update derived message snippet: %w", err)
 	}
 	if s.fts5Available {
-		if fts != nil {
-			if err := s.dialect.FTSUpsert(q, *fts); err != nil {
-				return fmt.Errorf("update derived message FTS: %w", err)
-			}
-		} else {
-			if _, err := q.Exec("SAVEPOINT derived_email_fts"); err != nil {
-				return err
-			}
-			if _, err := q.Exec(s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1); err != nil {
-				if !s.dialect.IsFTSValueTooLargeError(err) {
-					return fmt.Errorf("rebuild derived message FTS: %w", err)
-				}
-				if _, err := q.Exec("ROLLBACK TO SAVEPOINT derived_email_fts"); err != nil {
-					return err
-				}
-				if err := markFTSMessageUnsearchable(q, messageID); err != nil {
-					return err
-				}
-				slog.Warn("skipping message in FTS backfill", "message_id", messageID, "error", err)
-			}
-			if _, err := q.Exec("RELEASE SAVEPOINT derived_email_fts"); err != nil {
-				return err
-			}
+		if err := upsertFTS(q, fts); err != nil {
+			return fmt.Errorf("update derived message FTS: %w", err)
 		}
 	}
 	return nil
+}
+
+// upsertFTSOrUnsearchable applies the backfill's terminal policy when
+// PostgreSQL rejects the bounded search vector, keeping the caller's other
+// writes. It reports false when the row was already terminal.
+func (s *Store) upsertFTSOrUnsearchable(q querier, doc FTSDoc) (bool, error) {
+	if _, err := q.Exec("SAVEPOINT derived_fts"); err != nil {
+		return false, err
+	}
+	changed, err := true, s.dialect.FTSUpsert(q, doc)
+	if s.dialect.IsFTSValueTooLargeError(err) {
+		slog.Warn("marking message unsearchable after FTS overflow", "message_id", doc.MessageID, "error", err)
+		changed, err = markFTSOverflowUnsearchable(q, doc.MessageID)
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = q.Exec("RELEASE SAVEPOINT derived_fts")
+	return changed, err
+}
+
+func markFTSOverflowUnsearchable(q querier, messageID int64) (bool, error) {
+	if _, err := q.Exec("ROLLBACK TO SAVEPOINT derived_fts"); err != nil {
+		return false, err
+	}
+	terminal, err := ftsMessageUnsearchable(q, messageID)
+	if err != nil || terminal {
+		return false, err
+	}
+	return true, markFTSMessageUnsearchable(q, messageID)
 }
 
 // ArchivedSourceMessageIDs returns the subset of sourceMessageIDs already

@@ -4778,9 +4778,9 @@ Repeat `--source-type` or `--identifier` to narrow the source set. A requested
 type that has no re-derivation pass and no source in the archive is an error.
 Sources with retained MIME, including custom email labels such as `outlook`,
 rebuild body text, HTML, body-derived snippets, and search. Provider snippets
-are kept.
-Source types with a re-derivation pass (`beeper`, `discord`) recompute their
-derived text and metadata. Every source also derives account attribution for
+are kept. Beeper and Discord sources also recompute their provider-derived
+text and metadata, and email retained under those labels is repaired from its
+MIME like any other source. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
 them. Source syncs and imports run the same work first, so use this command
 for on-demand repair, file imports you will not run again, or retrying an

@@ -482,21 +482,14 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 			setweight(to_tsvector('simple', LEFT(COALESCE($5, ''), ` + charCap + `)), 'C') ||
 			setweight(to_tsvector('simple', LEFT(COALESCE($6, ''), ` + charCap + `)), 'C') ||
 			setweight(to_tsvector('simple', LEFT(COALESCE($3, ''), ` + charCap + `)), 'D')`
-	values := []string{
-		doc.Subject,
-		doc.Body,
-		doc.FromAddr,
-		doc.ToAddrs,
-		doc.CcAddrs,
+	return vector, []any{
+		doc.MessageID,
+		truncateBytesRuneSafe(doc.Subject),
+		truncateBytesRuneSafe(doc.Body),
+		truncateBytesRuneSafe(doc.FromAddr),
+		truncateBytesRuneSafe(doc.ToAddrs),
+		truncateBytesRuneSafe(doc.CcAddrs),
 	}
-	args := []any{doc.MessageID}
-	for _, value := range values {
-		if !doc.backfill {
-			value = truncateBytesRuneSafe(value)
-		}
-		args = append(args, value)
-	}
-	return vector, args
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.
@@ -530,18 +523,13 @@ func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) 
 // Parameters: $1=fromID, $2=toID. Uses LEFT JOIN on message_bodies via a subquery
 // so messages without a body row are still indexed (subject + participants).
 func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
+	envelope := storedFTSEnvelopeSQL("STRING_AGG")
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	return `UPDATE messages m SET search_fts =
-		setweight(to_tsvector('simple', LEFT(COALESCE(m.subject, ''), ` + charCap + `)), 'A') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE(
-			CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-			     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
-			END,
-			(SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
-			''
-		), ` + charCap + `)), 'B') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''), ` + charCap + `)), 'C') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''), ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.subject + `, ` + charCap + `)), 'A') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.fromAddr + `, ` + charCap + `)), 'B') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.toAddrs + `, ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.ccAddrs + `, ` + charCap + `)), 'C') ||
 		setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)), 'D'),
 		indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + `
 	FROM (
