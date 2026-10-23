@@ -151,9 +151,9 @@ jobs:
       - name: Save Go caches
         uses: ./.github/actions/go-cache-save
 
-  # The packages in SHARDED_TEST_PKGS (Makefile) each hold thousands of tests
-  # that run one at a time inside one binary, so whole they set the wall clock
-  # of the test lane. Each runs here as four concurrent processes of the same
+  # The packages in SHARDED_TEST_PKGS (Makefile) have large or slow suites
+  # that run one test at a time inside one binary, setting the test lane's
+  # wall clock. Each runs here as four concurrent processes of the same
   # binary — scripts/test-package-shards.sh, the Linux twin of the Windows
   # lane's script — on its own runner.
   test-sharded:
@@ -166,6 +166,10 @@ jobs:
             package: ./cmd/msgvault/cmd
           - name: store
             package: ./internal/store
+          - name: beeper
+            package: ./internal/beeper
+          - name: query
+            package: ./internal/query
           - name: api
             package: ./internal/api
     runs-on: ubuntu-26.04
@@ -270,7 +274,7 @@ jobs:
         run: go test -tags "fts5 sqlite_vec" -run '^$' -count=1 ./internal/query
 
       - name: Run deterministic browser and visual tests
-        run: make web-test-browser
+        run: make web-test-browser PLAYWRIGHT_ARGS="--test-list-invert tests/e2e-gates.txt"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
@@ -438,6 +442,8 @@ jobs:
           $separatePackages = @(
             "go.kenn.io/msgvault/cmd/msgvault/cmd"
             "go.kenn.io/msgvault/internal/api"
+            "go.kenn.io/msgvault/internal/beeper"
+            "go.kenn.io/msgvault/internal/query"
             "go.kenn.io/msgvault/internal/importer"
             "go.kenn.io/msgvault/internal/store"
             "go.kenn.io/msgvault/internal/sync"
@@ -545,10 +551,13 @@ jobs:
       matrix:
         include:
           # A 4-core runner is already saturated by one package's shards, so the
-          # two slowest packages each split across 3 runners.
-          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 60m }
-          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 60m }
-          - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 60m }
+          # slowest packages split across several runners.
+          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 4, timeout: 60m }
+          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 4, timeout: 60m }
+          - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 4, timeout: 60m }
+          - { name: cli-4, package: ./cmd/msgvault/cmd, part: 4, parts: 4, timeout: 60m }
+          - { name: beeper, package: ./internal/beeper, timeout: 60m }
+          - { name: query, package: ./internal/query, timeout: 60m }
           - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 60m }
           - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 60m }
           - { name: store-3, package: ./internal/store, part: 3, parts: 3, timeout: 60m }
@@ -694,7 +703,10 @@ jobs:
       # binaries open connections to the one service container at once. See
       # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/...
+
+      - name: Test CLI in isolated shards (pgvector-tagged)
+        run: scripts/test-package-shards.sh ./cmd/msgvault/cmd 4 "fts5 sqlite_vec pgvector" 60m
 
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
@@ -742,7 +754,7 @@ jobs:
       # The target carries the same 60m timeout as `make test`:
       # the heavy DuckDB packages can exceed go test's 10m per-package default
       # on a contended runner.
-      # The three largest packages run in test-postgres-sharded below, each
+      # The largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded
@@ -761,8 +773,12 @@ jobs:
         include:
           - name: cli
             package: ./cmd/msgvault/cmd
-          - name: store
-            package: ./internal/store
+          - { name: store-1, package: ./internal/store, part: 1, parts: 2 }
+          - { name: store-2, package: ./internal/store, part: 2, parts: 2 }
+          - name: beeper
+            package: ./internal/beeper
+          - name: query
+            package: ./internal/query
           - name: api
             package: ./internal/api
             followups: true
@@ -804,7 +820,7 @@ jobs:
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
         id: postgres-shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m "${{ matrix.part || 1 }}" "${{ matrix.parts || 1 }}"
 
       - name: Test PostgreSQL library without CGO
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}

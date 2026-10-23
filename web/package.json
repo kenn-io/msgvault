@@ -13,7 +13,7 @@
     "generate": "bun scripts/generate-api-client.mjs",
     "test": "vitest run",
     "test:browser": "playwright test",
-    "test:e2e": "playwright test e2e conversation-content-frame.spec.ts files-viewer.spec.ts"
+    "test:e2e": "playwright test --test-list tests/e2e-gates.txt"
   },
   "dependencies": {
     "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/1bd3bb05ac0fbb0dba8b6372ba53106380e64632.tar.gz",

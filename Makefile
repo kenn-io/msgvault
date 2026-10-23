@@ -31,15 +31,15 @@ TEST_TIMEOUT := 60m
 PG_TEST_PARALLEL ?= 4
 
 # Packages whose tests CI runs as shards in their own jobs
-# (scripts/test-package-shards.sh): each is a few thousand tests that run one
-# at a time inside one binary, so left whole it sets the wall clock of the
-# whole lane. The *-unsharded targets run everything else and exist for CI;
+# (scripts/test-package-shards.sh): large or slow suites run one test at a
+# time inside one binary, so left whole they set the wall clock of the lane.
+# The *-unsharded targets run everything else and exist for CI;
 # `make test` and `make test-pg-shipped` still run every package.
-SHARDED_TEST_PKGS := ./cmd/msgvault/cmd ./internal/store ./internal/api
+SHARDED_TEST_PKGS := ./cmd/msgvault/cmd ./internal/store ./internal/api ./internal/beeper ./internal/query
 TEST_SHARDS ?= 4
 TEST_PROFILE ?= auto
-# Only the automatic SQLite profile adds query and overlaps package jobs.
-SQLITE_SHARDED_TEST_PKGS := $(sort $(SHARDED_TEST_PKGS) ./internal/query)
+# The automatic SQLite profile overlaps package jobs.
+SQLITE_SHARDED_TEST_PKGS := $(sort $(SHARDED_TEST_PKGS))
 SQLITE_SHARD_TARGETS := $(addprefix test-sqlite-shard/,$(SQLITE_SHARDED_TEST_PKGS))
 GOLANGCI_LINT_VERSION ?= v2.14.0
 GOVULNCHECK_VERSION ?= v1.7.0
@@ -349,7 +349,7 @@ web-browser-install: web-install
 # whose fixtures spawn the repo-root msgvault daemon, so the binary must
 # exist before Playwright starts. Same invariant as web-e2e below.
 web-test-browser: build web-browser-install
-	cd web && bun run test:browser
+	cd web && bun run test:browser $(PLAYWRIGHT_ARGS)
 
 # Browser gates use the same digest-pinned Playwright environment as CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.

@@ -8,7 +8,7 @@
 # with -test.run pinned to exactly its names. The tests, their order within a
 # shard, and the binary are unchanged; only the process boundary is new.
 #
-# Usage: scripts/test-package-shards.sh <package> [shards=4] [tags] [timeout=60m]
+# Usage: scripts/test-package-shards.sh <package> [shards=4] [tags] [timeout=60m] [part=1] [parts=1]
 # Mirrors scripts/test-package-shards.ps1, which the Windows lanes use.
 set -euo pipefail
 
@@ -16,6 +16,14 @@ package=${1:?package (e.g. ./internal/store)}
 shard_count=${2:-4}
 tags=${3:-}
 timeout=${4:-60m}
+part_index=${5:-1}
+part_count=${6:-1}
+
+if ! [[ "$part_index" =~ ^[1-9][0-9]?$ && "$part_count" =~ ^[1-9][0-9]?$ ]] ||
+	[ "$part_index" -gt 64 ] || [ "$part_count" -gt 64 ] || [ "$part_index" -gt "$part_count" ]; then
+	echo "Invalid part: $part_index of $part_count (expected 1 <= part <= parts <= 64)" >&2
+	exit 1
+fi
 
 package_info=$(go list ${tags:+-tags "$tags"} -f '{{.Dir}}{{"\t"}}{{.ImportPath}}' "$package")
 IFS=$'\t' read -r package_dir import_path <<<"$package_info"
@@ -43,6 +51,14 @@ test_names=()
 while IFS= read -r name; do
 	test_names+=("$name")
 done <"$names_file"
+if [ "$part_count" -gt 1 ]; then
+	part_names=()
+	for ((i = part_index - 1; i < ${#test_names[@]}; i += part_count)); do
+		part_names+=("${test_names[$i]}")
+	done
+	test_names=("${part_names[@]}")
+	echo "Running part $part_index of $part_count"
+fi
 if [ "${#test_names[@]}" -eq 0 ]; then
 	echo "No tests found in $package"
 	exit 0
