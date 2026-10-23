@@ -1832,6 +1832,7 @@ var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
+var _ api.PersonInstructionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 var _ api.MuesliImporter = (*storeAPIAdapter)(nil)
@@ -3196,6 +3197,26 @@ func (a *storeAPIAdapter) SetPersonBriefEnrollmentContext(
 	ctx context.Context, personID int64, enabled bool, actor string, track bool,
 ) (*store.PersonBriefEnrollment, error) {
 	return a.store.SetPersonBriefEnrollmentContext(ctx, personID, enabled, actor, track)
+}
+
+func (a *storeAPIAdapter) AddPersonInstructionContext(ctx context.Context, input store.PersonInstructionInput) (*store.PersonInstruction, error) {
+	return a.store.AddPersonInstructionContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) GetPersonInstructionContext(ctx context.Context, id int64) (*store.PersonInstruction, error) {
+	return a.store.GetPersonInstructionContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) ListPersonInstructionsContext(ctx context.Context, personID int64, filter store.PersonInstructionFilter) ([]store.PersonInstruction, error) {
+	return a.store.ListPersonInstructionsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonInstructionReviewContext(ctx context.Context, limit int) ([]store.PersonInstruction, error) {
+	return a.store.ListPersonInstructionReviewContext(ctx, limit)
+}
+
+func (a *storeAPIAdapter) DecidePersonInstructionContext(ctx context.Context, decision store.PersonInstructionDecision) (*store.PersonInstructionDecisionResult, error) {
+	return a.store.DecidePersonInstructionContext(ctx, decision)
 }
 
 func (a *storeAPIAdapter) BuildPersonFactCatalogContext(

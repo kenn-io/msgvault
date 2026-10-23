@@ -4,6 +4,8 @@
 import type {
   AccountListResponse,
   AddAccountRequest,
+  AddPersonInstructionPathParameters,
+  AddPersonInstructionRequest,
   AgentTokenIssueRequest,
   AgentTokenIssueResponse,
   AgentTokenListResponse,
@@ -97,6 +99,8 @@ import type {
   DailyNoteEntry,
   DayPage,
   DecideIdentityMatchReviewedRequest,
+  DecidePersonInstructionPathParameters,
+  DecidePersonInstructionRequest,
   DecidePersonMergeCandidatePathParameters,
   DecidePersonMergeCandidateRequest,
   DeepSearchParams,
@@ -184,6 +188,7 @@ import type {
   GetPersonBriefPathParameters,
   GetPersonByUIDParams,
   GetPersonContactStatePathParameters,
+  GetPersonInstructionPathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
   GetPersonMessagingRoutesParams,
@@ -265,6 +270,9 @@ import type {
   ListPersonFactPinsPathParameters,
   ListPersonFactTargetsParams,
   ListPersonIdentitiesPathParameters,
+  ListPersonInstructionReviewParams,
+  ListPersonInstructionsParams,
+  ListPersonInstructionsPathParameters,
   ListPersonMatchJudgmentsParams,
   ListPersonMergesParams,
   ListPersonMergesPathParameters,
@@ -354,6 +362,9 @@ import type {
   PersonFactPinsResponse,
   PersonIdentitiesResponse,
   PersonInboxResponse,
+  PersonInstruction,
+  PersonInstructionDecisionResult,
+  PersonInstructionsResponse,
   PersonMatchConsentDecisionRequest,
   PersonMatchConsentDecisionResponse,
   PersonMatchJudgmentHistoryResponse,
@@ -3344,6 +3355,41 @@ export const listPersonIdentities = (
   );
 };
 /**
+ * @summary List a person's standing instructions
+ */
+export const listPersonInstructions = (
+  { id }: ListPersonInstructionsPathParameters,
+  params?: ListPersonInstructionsParams,
+  options?: SecondParameter<typeof orvalFetch<PersonInstructionsResponse>>,
+) => {
+  return orvalFetch<PersonInstructionsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/instructions`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Add an owner-entered standing instruction
+ */
+export const addPersonInstruction = (
+  { id }: AddPersonInstructionPathParameters,
+  addPersonInstructionRequest: AddPersonInstructionRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonInstruction>>,
+) => {
+  return orvalFetch<PersonInstruction>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/instructions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: addPersonInstructionRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Merge one durable person profile into another
  */
 export const mergePersons = (
@@ -3561,6 +3607,51 @@ export const listPersonFactTargets = (
 ) => {
   return orvalFetch<Catalog>(
     { url: `/api/v1/person-fact-targets`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary List standing instructions needing owner review
+ */
+export const listPersonInstructionReview = (
+  params?: ListPersonInstructionReviewParams,
+  options?: SecondParameter<typeof orvalFetch<PersonInstructionsResponse>>,
+) => {
+  return orvalFetch<PersonInstructionsResponse>(
+    { url: `/api/v1/person-instructions/review`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Read a standing instruction
+ */
+export const getPersonInstruction = (
+  { id }: GetPersonInstructionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonInstruction>>,
+) => {
+  return orvalFetch<PersonInstruction>(
+    {
+      url: `/api/v1/person-instructions/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Record an owner instruction decision
+ */
+export const decidePersonInstruction = (
+  { id }: DecidePersonInstructionPathParameters,
+  decidePersonInstructionRequest: DecidePersonInstructionRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonInstructionDecisionResult>>,
+) => {
+  return orvalFetch<PersonInstructionDecisionResult>(
+    {
+      url: `/api/v1/person-instructions/${encodeURIComponent(String(id))}/decisions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: decidePersonInstructionRequest,
+    },
     options,
   );
 };

@@ -194,6 +194,18 @@ func (a AddAccountRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AddPersonInstructionRequest struct {
+	ContactPointID *int64     `json:"contact_point_id,omitempty"`
+	Kind           string     `json:"kind" validate:"required"`
+	Text           string     `json:"text" validate:"required"`
+	ValidUntil     *time.Time `json:"valid_until,omitempty"`
+	Value          *string    `json:"value,omitzero"`
+}
+
+func (a AddPersonInstructionRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AddRequest struct {
 	Account    *string `json:"account,omitzero"`
 	Identifier string  `json:"identifier" validate:"required"`
@@ -3288,6 +3300,31 @@ type DecideIdentityMatchReviewedRequest struct {
 
 func (d DecideIdentityMatchReviewedRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DecidePersonInstructionRequest struct {
+	Action           string                 `json:"action" validate:"required"`
+	Edit             *PersonInstructionEdit `json:"edit,omitempty"`
+	ExpectedRevision int64                  `json:"expected_revision"`
+	Reason           *string                `json:"reason,omitzero"`
+}
+
+func (d DecidePersonInstructionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Action, "required"); err != nil {
+		errors = errors.Append("Action", err)
+	}
+	if d.Edit != nil {
+		if v, ok := any(d.Edit).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Edit", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type DecidePersonMergeCandidateRequest struct {
@@ -12096,6 +12133,104 @@ type PersonInboxRow struct {
 
 func (p PersonInboxRow) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonInstruction struct {
+	Adopted             bool       `json:"adopted"`
+	ConfirmedAt         *time.Time `json:"confirmed_at,omitempty"`
+	ConfirmedBy         *string    `json:"confirmed_by,omitzero"`
+	ContactPointID      *int64     `json:"contact_point_id,omitempty"`
+	ContentTrust        string     `json:"content_trust" validate:"required"`
+	CreatedAt           time.Time  `json:"created_at" validate:"required"`
+	GenerationID        *int64     `json:"generation_id,omitempty"`
+	ID                  int64      `json:"id"`
+	InstructionKey      string     `json:"instruction_key" validate:"required"`
+	Kind                string     `json:"kind" validate:"required"`
+	NormalizedText      string     `json:"normalized_text" validate:"required"`
+	Origin              string     `json:"origin" validate:"required"`
+	PersonID            int64      `json:"person_id"`
+	ReviewState         string     `json:"review_state" validate:"required"`
+	Revision            int64      `json:"revision"`
+	ScopeKey            string     `json:"scope_key" validate:"required"`
+	ScopeMissing        bool       `json:"scope_missing"`
+	SourceObservationID *int64     `json:"source_observation_id,omitempty"`
+	StatedAt            *time.Time `json:"stated_at,omitempty"`
+	Status              string     `json:"status" validate:"required"`
+	SupersedesID        *int64     `json:"supersedes_id,omitempty"`
+	UpdatedAt           time.Time  `json:"updated_at" validate:"required"`
+	ValidFrom           time.Time  `json:"valid_from" validate:"required"`
+	ValidUntil          *time.Time `json:"valid_until,omitempty"`
+	ValueText           string     `json:"value_text" validate:"required"`
+	VisibleToAgents     bool       `json:"visible_to_agents"`
+}
+
+func (p PersonInstruction) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonInstructionDecisionResult struct {
+	FollowOns   []PersonInstructionFollowOn `json:"follow_ons" validate:"required"`
+	Instruction PersonInstruction           `json:"instruction"`
+}
+
+func (p PersonInstructionDecisionResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.FollowOns, "required"); err != nil {
+		errors = errors.Append("FollowOns", err)
+	}
+	for i, item := range p.FollowOns {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("FollowOns[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.Instruction).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Instruction", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonInstructionEdit struct {
+	Kind  *string `json:"kind,omitzero"`
+	Text  *string `json:"text,omitzero"`
+	Value *string `json:"value,omitzero"`
+}
+
+type PersonInstructionFollowOn struct {
+	Kind  string `json:"kind" validate:"required"`
+	Value string `json:"value" validate:"required"`
+}
+
+func (p PersonInstructionFollowOn) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonInstructionsResponse struct {
+	Instructions []PersonInstruction `json:"instructions" validate:"required"`
+}
+
+func (p PersonInstructionsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Instructions, "required"); err != nil {
+		errors = errors.Append("Instructions", err)
+	}
+	for i, item := range p.Instructions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Instructions[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonMatchBatchError struct {

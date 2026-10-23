@@ -47,6 +47,7 @@ nav = [
   {"People and Accounts" = [
     {"People and Profiles" = "usage/people.md"},
     {"Conversation Briefs" = "usage/people-briefs.md"},
+    {"Standing Instructions" = "usage/people-instructions.md"},
     {"Profile Automation" = "usage/people-automation.md"},
     {"External Enrichment" = "usage/people-enrichment.md"},
     {"CardDAV Contacts" = "usage/people-carddav.md"},
