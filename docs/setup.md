@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-10-23"
 title: Setup Guide
 description: Install msgvault, choose a source, and explore your first archived messages.
 ---
@@ -216,6 +217,13 @@ msgvault add-account you@gmail.com
 This opens your browser for OAuth consent. For headless servers, see the [copy-token workflow](/docs/guides/oauth-setup/#headless-server-setup).
 
 If you plan to deploy to a remote host (NAS, cloud VM, etc.), run `msgvault setup` after this step to generate a ready-to-run deployment bundle with Docker Compose and remote configuration. See the [Remote Deployment](/docs/guides/remote-deployment/) guide.
+
+During setup, choose the detected host IANA timezone for activity day
+boundaries, or enter another IANA zone. Setup writes the effective zone to
+`[activity].timezone` in the local config and to any NAS bundle it creates. If
+the daemon is running, restart it to load the new zone; later projection passes
+then re-date existing activity rows automatically. `Local` is not accepted
+because it depends on the host at runtime.
 
 ## Add an IMAP Account
 
