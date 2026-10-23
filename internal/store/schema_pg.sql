@@ -4236,11 +4236,10 @@ CREATE TABLE IF NOT EXISTS conversation_policy (
  last_activity_at TIMESTAMPTZ
 );
 
--- Processing requests belong to the mirrored version and Docbank profile fingerprint.
+-- Processing requests belong to the mirrored file and Docbank profile fingerprint.
 CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
  destination_key TEXT NOT NULL,
  content_hash TEXT NOT NULL,
- version_id TEXT NOT NULL,
  fingerprint TEXT NOT NULL,
  outcome TEXT NOT NULL,
  job_id TEXT NOT NULL,
