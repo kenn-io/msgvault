@@ -39,9 +39,9 @@ The provider receives complete original bytes for each directly authorized forma
 Msgvault keeps the containing-message links, normalized text, text chunks,
 indexes, consent records, and backups locally. Raw provider JSON remains
 transient. Successful Docling PDF ranges retain canonical evidence and Markdown
-needed for fallback in local checkpoints, including after a later range fails. Publication,
-source or derived-data purge, or seven-day cleanup after superseding work removes
-these checkpoints.
+needed for fallback in local checkpoints, including after a later range fails.
+Publication or `documents purge-derived` removes these checkpoints; otherwise
+weekly cleanup does, as described under Docling retries.
 
 For Mistral, eligible CSV attachments use a local conversion step when enabled.
 Msgvault retains the CSV source hash and `text/csv` occurrence identity, then sends only
@@ -244,9 +244,13 @@ measured guarantee.
 
 Successful ranges save canonical evidence and Markdown needed for fallback in the local
 archive database. These checkpoints survive failures and daemon restarts.
-The latest failed attempt keeps them while its source remains live. Publication,
-source or derived-data purge removes them; superseded attempts become eligible
-for the existing seven-day recovery cleanup. Backups made before removal can
+The latest failed attempt keeps them while its source remains live. Publication
+removes them. `msgvault documents purge-derived --hash <sha256> --yes`
+removes them immediately. Removing the source or message leaves them for cleanup:
+after no live message contains the PDF, or a newer attempt replaces the
+checkpoints, the weekly `msgvault serve` cleanup deletes them once they have gone
+seven days without changes. Without `serve`, they stay until publication or purge.
+Backups made before removal can
 still contain that plaintext. Existing Docling users must review the updated
 disclosure and run `msgvault documents consent-docling --yes` again before building.
 Retry and resume submit only missing ranges. A full rebuild starts fresh.

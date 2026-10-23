@@ -446,9 +446,9 @@ For Docling, PDFs over 50 pages run in consecutive 50-page jobs. Each job upload
 the original PDF and gets its own `total_timeout` and `max_poll_attempts`.
 `max_pages_per_document` still limits the whole file, so a 600-page PDF requires
 a cap of at least 600. Successful ranges remain in the archive after failure;
-retry and resume reuse them across daemon restarts. Publication, source
-or derived-data purge, or seven-day cleanup after superseding work removes
-checkpoints from the archive. Earlier backups can retain them. Full rebuilds
+retry and resume reuse them across daemon restarts. Publication or
+`documents purge-derived` removes checkpoints; source removal leaves them for the
+weekly seven-day `serve` cleanup. Earlier backups can retain them. Full rebuilds
 start fresh. Existing Docling users must record
 consent again for checkpoint Markdown retention.
 See [Docling extraction](usage/document-indexing.md#use-a-self-hosted-docling-service) for

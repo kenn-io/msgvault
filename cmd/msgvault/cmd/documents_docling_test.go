@@ -17,7 +17,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/store"
@@ -102,18 +101,6 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 	assertions.Contains(disclosure, server.URL)
 	assertions.Contains(disclosure, "operator-controlled")
 	assertions.NotContains(disclosure, "Hosted document extraction")
-	_, legacyProfile, err := documentProfileForConfig(&cfg.Attachments.Documents, mistral.CapabilityManifest{})
-	requirements.NoError(err)
-	legacyProfile.PolicyJSON = bytes.ReplaceAll(legacyProfile.PolicyJSON, []byte(`"adapter_version":"docbank-docling-documents-v2"`), []byte(`"adapter_version":"docbank-docling-documents-v1"`))
-	legacyDigest := sha256.Sum256(legacyProfile.PolicyJSON)
-	legacyProfile.Fingerprint = hex.EncodeToString(legacyDigest[:])
-	legacyProfile.ID = "documents-v1:" + legacyProfile.Fingerprint
-	_, err = fixture.Store.EnsureDocumentExtractionProfile(ctx, legacyProfile)
-	requirements.NoError(err)
-	requirements.NoError(fixture.Store.RecordDocumentProviderConsent(ctx, store.DocumentProviderConsent{
-		ProfileID: legacyProfile.ID, ProfileFingerprint: legacyProfile.Fingerprint,
-		RetentionPosture: legacyProfile.RetentionPosture, TrainingPosture: legacyProfile.TrainingPosture,
-	}))
 	_, err = run("build", "--yes")
 	requirements.ErrorContains(err, "exact consent")
 	assertions.Zero(uploads.Load())
@@ -231,6 +218,8 @@ func TestDoclingConsentDisclosesCredentialsAndRangeRetention(t *testing.T) {
 	assertions.Contains(output.String(), "Each job uploads the original PDF again")
 	assertions.Contains(output.String(), "unpublished plaintext")
 	assertions.Contains(output.String(), "daemon restarts")
+	assertions.Contains(output.String(), "documents purge-derived")
+	assertions.Contains(output.String(), "seven days")
 	assertions.NotContains(output.String(), "synthetic-secret-value")
 }
 
