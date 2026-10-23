@@ -11876,6 +11876,8 @@ components:
         source_class:
           format: int64
           type: integer
+        stability_window:
+          type: boolean
         total:
           format: int64
           type: integer
@@ -16544,7 +16546,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.25.0
+  version: 3.26.0
 openapi: 3.1.0
 paths:
   /api/ping:
