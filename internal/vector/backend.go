@@ -441,6 +441,18 @@ type CoverageSnapshotBackend interface {
 	EmbeddedMessageCountForSnapshot(ctx context.Context, gen GenerationID, stampedMessageIDs []int64) (int64, error)
 }
 
+// MessageVectorReader reads raw stored chunk vectors for selection. It is
+// read-only and never embeds. Implementations reject more than
+// MaxFilterMessageIDs input IDs, deduplicate IDs, and page reads at
+// FilteredCoverageBatchSize. Chunks have 0 <= chunk_index < maxChunks and are
+// returned in chunk_index order without normalization. Missing messages are
+// absent from the result. Empty IDs return an empty map; nonempty requests
+// require positive maxChunks and gen.Dimension.
+// gen must come from the backend's own generation lookup.
+type MessageVectorReader interface {
+	MessageVectors(ctx context.Context, gen Generation, messageIDs []int64, maxChunks int) (map[int64][][]float32, error)
+}
+
 // EmbeddingCoverage partitions the in-scope live messages for one generation:
 // Stamped messages carry the generation's embed_gen, and Embedded counts the
 // stamped messages that also have at least one vector.
