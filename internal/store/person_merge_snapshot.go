@@ -267,6 +267,10 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	// Fact-ledger history remains scoped to the person whose identity produced
 	// it, so an absorbed person's ledger cascades with that root. Explicit pin
 	// events are profile state, however, and must survive an exact split.
+	"person_observations":             {TableName: "person_observations", KeyColumn: "id", Snapshot: false, PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn), directPersonReference("subject_person_id")}},
+	"person_observation_events":       {TableName: "person_observation_events", KeyColumn: "id", Snapshot: false, PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)}},
+	"person_observation_suppressions": {TableName: "person_observation_suppressions", KeyColumn: "id", Snapshot: false, PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)}},
+	"person_observation_clocks":       {TableName: "person_observation_clocks", KeyColumn: personMergePersonIDColumn, Snapshot: false, PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)}},
 	"person_fact_generations": {
 		TableName: "person_fact_generations", KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},

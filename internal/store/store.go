@@ -1641,6 +1641,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("backfill document upload counts: %w", err)
 		}
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactEvidenceMessageIDV1, 1, false, s.migratePersonFactEvidenceMessageIDV1); err != nil {
+		return fmt.Errorf("migrate person fact evidence message links: %w", err)
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
