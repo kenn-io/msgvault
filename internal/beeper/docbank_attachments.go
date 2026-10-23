@@ -572,7 +572,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 				return false, ctx.Err()
 			}
 			answer := processingAnswer(job, err)
-			if answer.blocked && answer.outcome == "" {
+			if answer.blocked {
 				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(err))
 			}
 			if !answer.retry {
@@ -587,9 +587,6 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 				return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)
 			}); saveErr != nil {
 				return false, errors.Join(failures.reported, failures.streak, err, endMediaPass(saveErr))
-			}
-			if answer.blocked {
-				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(errors.New(answer.outcome)))
 			}
 			if answer.retry && isDestinationFault(err) {
 				if stopErr := failures.retry(err); stopErr != nil {
@@ -608,9 +605,7 @@ func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAtt
 	defer cancel()
 	if d.Outcome == "requested" || d.Outcome == "operator_required" {
 		job, err := w.client.JobStatus(ctx, d.JobID)
-		if !docbankmedia.IsNotFound(err) {
-			return job, d.JobID, err
-		}
+		return job, d.JobID, err
 	}
 	selector := docbankmedia.ProcessingSelector{NodeID: d.NodeID, ContentVersionID: d.VersionID, Profile: w.options.DocumentProfile}
 	plan, err := w.client.PlanProcessing(ctx, selector)
@@ -625,7 +620,7 @@ func (w *AttachmentMirror) processingBlocked(err error) error {
 	if httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err); ok && httpErr.Reason != "" {
 		err = fmt.Errorf("%s: %w", httpErr.Reason, err)
 	}
-	return fmt.Errorf("document_profile %q: check the profile and grant consent in Docbank: %w; after restoring consent or authority, run msgvault docbank attachments backfill", w.options.DocumentProfile, err)
+	return fmt.Errorf("document_profile %q: check the profile and grant consent in Docbank: %w", w.options.DocumentProfile, err)
 }
 
 type documentProcessingAnswer struct {
@@ -645,8 +640,6 @@ func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingA
 			answer.delay = store.BeeperMediaPollDelay
 		case "operator_required":
 			answer.delay = store.BeeperMediaRetryDelay
-		case "consent":
-			answer.blocked = true
 		}
 		return answer
 	}
