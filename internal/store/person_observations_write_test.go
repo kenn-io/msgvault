@@ -634,6 +634,53 @@ func TestApplyObservationBatchOwnerAssertionPromotesUnsupportedExtraction(t *tes
 	assert.Contains(detail.Events[len(detail.Events)-1].Detail, "owner_assertion")
 }
 
+func TestApplyObservationBatchReinforcesWithFreshEvidenceAfterOldEvidenceWithdrawn(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	created := applyObservationInput(t, f.store, in, generation)
+	require.Len(created.Items, 1)
+	observationID := created.Items[0].ObservationID
+
+	oldRef, err := peoplesweep.DecodePersonSweepEvidenceRef(in.Proposals[0].Support[0].Evidence.SourceRef)
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE messages SET list_id=? WHERE id=?`), "list.example.test", oldRef.MessageID)
+	require.NoError(err)
+
+	freshSupport, freshMessageID := observationSupportForMessage(
+		t, f, "fresh-observation-reinforcement", "I run every morning", "I run",
+		time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC),
+	)
+	reinforcement := in
+	reinforcement.Proposals = []personobs.ProposedObservation{in.Proposals[0]}
+	reinforcement.Proposals[0].Support = []personobs.SupportInput{freshSupport}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), reinforcement)
+	require.NoError(err)
+	require.Nil(batch.Items[0].Failure)
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "extractor")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal("reinforced", result.Items[0].Outcome)
+	assert.Equal(observationID, result.Items[0].ObservationID)
+
+	detail, err := f.store.GetPersonObservation(t.Context(), observationID)
+	require.NoError(err)
+	assert.Equal(personobs.StatusActive, detail.Status)
+	assert.Equal(1, detail.SupportedCount)
+	oldEvidenceExcluded, freshEvidenceIncluded := false, false
+	for _, citation := range detail.Evidence {
+		switch citation.Leaf.MessageID {
+		case oldRef.MessageID:
+			oldEvidenceExcluded = citation.Exclusion == personobs.ExclusionReasonList
+		case freshMessageID:
+			freshEvidenceIncluded = citation.Exclusion == personobs.ExclusionReasonNone
+		}
+	}
+	assert.True(oldEvidenceExcluded)
+	assert.True(freshEvidenceIncluded)
+}
+
 func TestApplyObservationBatchRejectsOwnerPromotionKeyCollisionWithoutAbortingSiblings(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -725,6 +772,62 @@ func TestApplyObservationBatchRetainsEarlierValidityEndOnSupersede(t *testing.T)
 	require.NoError(err)
 	require.NotNil(oldDetail.ValidUntil)
 	assert.Equal(existingEnd, *oldDetail.ValidUntil)
+}
+
+func TestApplyObservationBatchDoesNotSupersedeFromStaleRetainedSupport(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+
+	targetInput := in
+	targetInput.Proposals = append([]personobs.ProposedObservation(nil), in.Proposals...)
+	targetInput.Proposals[0].Content = "[PERSON] ran last week"
+	targetID := applyObservationInput(t, f.store, targetInput, generation).Items[0].ObservationID
+
+	oldPremiseInput := in
+	oldPremiseInput.Proposals = append([]personobs.ProposedObservation(nil), in.Proposals...)
+	oldPremiseInput.Proposals[0].Content = "[PERSON] ran yesterday"
+	oldPremiseID := applyObservationInput(t, f.store, oldPremiseInput, generation).Items[0].ObservationID
+	replacementContent := "[PERSON] has a running habit"
+	replacementID := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, replacementContent, oldPremiseID)
+
+	newSupport, _ := observationSupportForMessage(t, f, "current-replacement-support", "I exercise", "I exercise",
+		time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+	newPremiseInput := in
+	newPremiseInput.Proposals = []personobs.ProposedObservation{{
+		PersonID: in.PersonID, Level: personobs.LevelExplicit, Origin: personobs.OriginExtraction,
+		Kind: personobs.KindState, Content: "[PERSON] exercises", Attribution: personobs.AttributionSelf,
+		ConfidenceBP: 800, Support: []personobs.SupportInput{newSupport},
+	}}
+	newPremiseID := applyObservationInput(t, f.store, newPremiseInput, generation).Items[0].ObservationID
+
+	oldRef, err := peoplesweep.DecodePersonSweepEvidenceRef(in.Proposals[0].Support[0].Evidence.SourceRef)
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE message_bodies SET body_text=? WHERE message_id=?`), "I used to run", oldRef.MessageID)
+	require.NoError(err)
+
+	reinforcement := personobs.ProposedObservation{
+		PersonID: in.PersonID, Level: personobs.LevelDeductive, Origin: personobs.OriginReasoning,
+		Kind: personobs.KindOther, Content: replacementContent, ConfidenceBP: 800,
+		Premises:      []personobs.PremiseInput{{ID: newPremiseID, Role: personobs.PremiseRoleSupport}},
+		SupersedesIDs: []int64{targetID},
+	}
+	input := in
+	input.Proposals = []personobs.ProposedObservation{reinforcement}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), input)
+	require.NoError(err)
+	require.Nil(batch.Items[0].Failure)
+
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "reasoner")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal("reinforced", result.Items[0].Outcome)
+	assert.Equal(replacementID, result.Items[0].ObservationID)
+	target, err := f.store.GetPersonObservation(t.Context(), targetID)
+	require.NoError(err)
+	assert.NotEqual(personobs.StatusSuperseded, target.Status)
+	assert.Nil(target.SupersededByID)
 }
 
 func TestApplyObservationBatchUsesPersistedValidFromWhenReinforcingReplacement(t *testing.T) {
@@ -1358,6 +1461,117 @@ func TestApplyObservationBatchUsesRemainingValidAncestorCitation(t *testing.T) {
 	assert.Equal("created", result.Items[0].Outcome)
 	assert.Nil(result.Items[0].Failure)
 	assert.Equal(personobs.StatusActive, observationGet(t, f.store, rootID).Status)
+}
+
+func TestApplyObservationBatchRevalidatesDerivedPremiseThresholds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		level personobs.Level
+		kind  personobs.Kind
+		roles []personobs.PremiseRole
+	}{
+		{name: "inductive keeps two supported roots", level: personobs.LevelInductive, kind: personobs.KindPattern, roles: []personobs.PremiseRole{personobs.PremiseRoleSupport, personobs.PremiseRoleSupport, personobs.PremiseRoleSupport}},
+		{name: "contradiction keeps two supported roles", level: personobs.LevelContradiction, kind: personobs.KindOther, roles: []personobs.PremiseRole{personobs.PremiseRoleSupport, personobs.PremiseRoleSupport, personobs.PremiseRoleCounter}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f, in, generation := observationBatchFixture(t, "I run")
+			roots := make([]int64, 0, len(tc.roles))
+			messageIDs := make([]int64, 0, len(tc.roles))
+			for index := range tc.roles {
+				support := in.Proposals[0].Support[0]
+				messageID, err := peoplesweep.DecodePersonSweepEvidenceRef(support.Evidence.SourceRef)
+				require.NoError(err)
+				if index > 0 {
+					body := "I run twice a week"
+					support, _ = observationSupportForMessage(t, f, "derived-threshold-"+strconv.Itoa(index), body, "I run", time.Date(2026, 10, 2+index, 0, 0, 0, 0, time.UTC))
+					messageID, err = peoplesweep.DecodePersonSweepEvidenceRef(support.Evidence.SourceRef)
+					require.NoError(err)
+				}
+				rootInput := in
+				rootInput.Proposals = []personobs.ProposedObservation{in.Proposals[0]}
+				rootInput.Proposals[0].Content = []string{"[PERSON] runs every morning", "[PERSON] runs twice weekly", "[PERSON] runs after work"}[index]
+				rootInput.Proposals[0].Support = []personobs.SupportInput{support}
+				created := applyObservationInput(t, f.store, rootInput, generation)
+				require.Len(created.Items, 1)
+				assert.Equal("created", created.Items[0].Outcome)
+				roots = append(roots, created.Items[0].ObservationID)
+				messageIDs = append(messageIDs, messageID.MessageID)
+			}
+
+			premises := make([]personobs.PremiseInput, 0, len(roots))
+			for index, rootID := range roots {
+				premises = append(premises, personobs.PremiseInput{ID: rootID, Role: tc.roles[index]})
+			}
+			derivedID := int64(0)
+			if tc.level == personobs.LevelInductive {
+				derivedInput := in
+				derivedInput.Proposals = []personobs.ProposedObservation{{
+					PersonID: in.PersonID, Level: tc.level, Origin: personobs.OriginReasoning,
+					Kind: tc.kind, Content: "[PERSON] follows a steady routine", ConfidenceBP: 800,
+					Premises: premises,
+				}}
+				derived := applyObservationInput(t, f.store, derivedInput, generation)
+				require.Len(derived.Items, 1)
+				assert.Equal("created", derived.Items[0].Outcome)
+				derivedID = derived.Items[0].ObservationID
+			}
+
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET list_id=? WHERE id=?`), "list.example.test", messageIDs[2])
+			require.NoError(err)
+			candidate := in
+			candidatePremises := premises
+			if tc.level == personobs.LevelInductive {
+				candidatePremises = []personobs.PremiseInput{
+					{ID: derivedID, Role: personobs.PremiseRoleSupport},
+					{ID: roots[1], Role: personobs.PremiseRoleCounter},
+				}
+			}
+			candidate.Proposals = []personobs.ProposedObservation{{
+				PersonID: in.PersonID, Level: personobs.LevelContradiction, Origin: personobs.OriginReasoning,
+				Kind: personobs.KindOther, Content: "[PERSON] has enough current support", ConfidenceBP: 800,
+				Premises: candidatePremises,
+			}}
+			result := applyObservationInput(t, f.store, candidate, generation)
+			require.Len(result.Items, 1)
+			assert.Equal("created", result.Items[0].Outcome)
+			assert.Nil(result.Items[0].Failure)
+			unsupported := observationGet(t, f.store, roots[2])
+			require.Len(unsupported.Evidence, 1)
+			assert.Equal(personobs.ExclusionReasonList, unsupported.Evidence[0].Exclusion)
+			if derivedID != 0 {
+				assert.Equal(personobs.StatusActive, observationGet(t, f.store, derivedID).Status)
+			}
+		})
+	}
+}
+
+func TestApplyObservationBatchReusesSubMicrosecondEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	at := time.Date(2026, 10, 2, 12, 30, 45, 123456789, time.UTC)
+	support, _ := observationSupportForMessage(t, f, "submicrosecond-observation-evidence", "I run every morning", "I run", at)
+	assert.Equal(at.Nanosecond(), support.Evidence.EventTime.Nanosecond())
+	in.Proposals[0].Support = []personobs.SupportInput{support}
+	created := applyObservationInput(t, f.store, in, generation)
+	require.Len(created.Items, 1)
+	assert.Equal("created", created.Items[0].Outcome)
+	rootID := created.Items[0].ObservationID
+	root := observationGet(t, f.store, rootID)
+	require.Len(root.Evidence, 1)
+	assert.Equal(at.Truncate(time.Microsecond), root.Evidence[0].Leaf.EventTime)
+
+	in.Proposals = []personobs.ProposedObservation{{
+		PersonID: in.PersonID, Level: personobs.LevelDeductive, Origin: personobs.OriginReasoning,
+		Kind: personobs.KindOther, Content: "[PERSON] keeps a morning routine", ConfidenceBP: 800,
+		Premises: []personobs.PremiseInput{{ID: rootID, Role: personobs.PremiseRoleSupport}},
+	}}
+	derived := applyObservationInput(t, f.store, in, generation)
+	require.Len(derived.Items, 1)
+	assert.Equal("created", derived.Items[0].Outcome)
+	assert.Nil(derived.Items[0].Failure)
 }
 
 func TestApplyObservationBatchRejectsChangedTransitivePremiseEvidence(t *testing.T) {

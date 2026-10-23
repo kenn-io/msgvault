@@ -72,7 +72,7 @@ func TestMergePersons_RootsAndBindings(t *testing.T) {
 	assert.Equal(survivor.ID, result.Merge.SurvivorPersonID)
 	assert.Equal(absorbed.ID, result.Merge.AbsorbedPersonID)
 	assert.Equal(absorbedUID, result.Merge.AbsorbedVCardUID)
-	assert.Equal(1, result.Merge.SnapshotVersion)
+	assert.Equal(2, result.Merge.SnapshotVersion)
 	assert.Len(result.Merge.SnapshotSHA256, 64)
 
 	_, err = f.Store.GetPersonContext(context.Background(), absorbed.ID)

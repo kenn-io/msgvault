@@ -99,6 +99,9 @@ func (s *Store) splitPersonMergeOnce(
 			return nil
 		}
 
+		if err := s.lockObservationPeopleTx(ctx, tx, request.SourcePersonID); err != nil {
+			return err
+		}
 		var sourceRevision int64
 		var sourceUID string
 		err = tx.QueryRowContext(ctx, `SELECT revision, vcard_uid FROM persons WHERE id = ?`+
@@ -270,6 +273,13 @@ func (s *Store) splitPersonMergeOnce(
 			} else if changed != 1 {
 				return fmt.Errorf("%w: ancestor absorbed UID alias is not owned by source",
 					ErrPersonSplitParticipants)
+			}
+		}
+		if selection.restoresAbsorbed || len(ancestorRestorations) > 0 {
+			if err := s.reconcileSplitObservationReferencesTx(
+				ctx, tx, request.SourcePersonID, newPersonID,
+			); err != nil {
+				return err
 			}
 		}
 		var ownershipQuery strings.Builder
@@ -704,6 +714,48 @@ func absorbedPersonMergeSnapshotRoot(
 	return snapshot.Persons[1], nil
 }
 
+func (s *Store) postMergeOwnerAssertionObservationIDsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID int64,
+	snapshot personMergeSnapshot,
+) (map[int64]struct{}, error) {
+	snapshotEvents := make(map[int64]struct{})
+	for _, row := range snapshot.Rows {
+		if row.TableName == "person_observation_events" {
+			snapshotEvents[row.RowID] = struct{}{}
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,observation_id,event,detail FROM person_observation_events
+		WHERE person_id=? AND event IN ('owner-assertion-confirmed','reinforced') ORDER BY id`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("read post-merge owner assertion events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	observations := make(map[int64]struct{})
+	for rows.Next() {
+		var eventID, observationID int64
+		var event, detail string
+		if err := rows.Scan(&eventID, &observationID, &event, &detail); err != nil {
+			return nil, fmt.Errorf("scan post-merge owner assertion event: %w", err)
+		}
+		if _, existedAtMerge := snapshotEvents[eventID]; existedAtMerge {
+			continue
+		}
+		if event == "owner-assertion-confirmed" {
+			observations[observationID] = struct{}{}
+			continue
+		}
+		if assertion, ok := decodeObservationReinforcementEventDetail(detail); ok && assertion.OwnerAssertion {
+			observations[observationID] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read post-merge owner assertion events: %w", err)
+	}
+	return observations, nil
+}
+
 func (s *Store) deletePersonSplitCrossingLinksTx(
 	ctx context.Context, tx *loggedTx, selected []int64,
 ) error {
@@ -738,13 +790,26 @@ func (s *Store) restorePersonSplitRowsTx(
 	if err != nil {
 		return nil, err
 	}
+	postMergeOwnerAssertions, err := s.postMergeOwnerAssertionObservationIDsTx(ctx, tx, sourceID, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	postMergeObservationSuppressions := []personMergeObservationSuppressionDecision{}
+	if selection.restoresAbsorbed {
+		postMergeObservationSuppressions, err = s.capturePostMergeObservationSuppressionsTx(
+			ctx, tx, sourceID, survivorSnapshotID, absorbedSnapshotID, journal, snapshot,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 	selectedSet := make(map[int64]struct{}, len(selected))
 	for _, participantID := range selected {
 		selectedSet[participantID] = struct{}{}
 	}
 	rowsByPath := make(map[string]personMergeSnapshotRow, len(snapshot.Rows))
 	for index, row := range snapshot.Rows {
-		rowsByPath["rows/"+strconv.Itoa(index)] = row
+		rowsByPath["rows/"+strconv.Itoa(index)] = observationSplitSnapshotRow(row)
 	}
 
 	move := make([]personSplitJournalRow, 0, len(journal))
@@ -810,6 +875,15 @@ func (s *Store) restorePersonSplitRowsTx(
 		if !ok {
 			return nil, fmt.Errorf("%w: missing split snapshot path %q",
 				ErrPersonMergeSnapshotCorrupt, row.snapshotPath)
+		}
+		if row.tableName == "person_observation_evidence" {
+			observationID := personSplitSnapshotRowInteger(snapshotRow, personObservationIDColumn)
+			if _, confirmedAfterMerge := postMergeOwnerAssertions[observationID]; confirmedAfterMerge {
+				if err := markPersonSplitJournalRowTx(ctx, tx, mergeID, splitID, row); err != nil {
+					return nil, err
+				}
+				continue
+			}
 		}
 		if personSplitSnapshotHasUnsupportedCandidate(
 			snapshotRow, unsupportedCandidates, unsupportedEvidence,
@@ -944,9 +1018,11 @@ func (s *Store) restorePersonSplitRowsTx(
 			}
 			continue
 		}
+		_, preserveOwnerAssertion := postMergeOwnerAssertions[snapshotRow.RowID]
 		if err := s.restoreExistingPersonSplitRowTx(
 			ctx, tx, row, snapshotRow, sourceID, newPersonID,
 			survivorSnapshotID, absorbedSnapshotID, sourceUID, newUID,
+			preserveOwnerAssertion,
 		); err != nil {
 			return nil, err
 		}
@@ -960,7 +1036,194 @@ func (s *Store) restorePersonSplitRowsTx(
 			return nil, err
 		}
 	}
+	if selection.restoresAbsorbed {
+		if err := s.restoreObservationCopiesTx(ctx, tx, mergeID, sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID, snapshot); err != nil {
+			return nil, err
+		}
+	}
+	if selection.restoresAbsorbed {
+		if err := s.restorePostMergeObservationSuppressionsTx(ctx, tx, sourceID, newPersonID, postMergeObservationSuppressions); err != nil {
+			return nil, err
+		}
+	}
+	if selection.exact {
+		if err := s.restoreMergeAddedObservationCategoriesTx(ctx, tx, journal, snapshot); err != nil {
+			return nil, err
+		}
+		if err := s.restoreMergeAddedObservationSensitivityTx(ctx, tx, journal, snapshot); err != nil {
+			return nil, err
+		}
+	}
 	return ambiguous, nil
+}
+
+func (s *Store) reconcileSplitObservationReferencesTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourcePersonID, restoredPersonID int64,
+) error {
+	if err := s.lockObservationPeopleTx(ctx, tx, sourcePersonID, restoredPersonID); err != nil {
+		return fmt.Errorf("lock split observation owners: %w", err)
+	}
+	roots := make(map[int64]map[int64]struct{})
+	premiseChangedRoots := make(map[int64]map[int64]struct{})
+	missingDeductiveConjuncts := make(map[int64]map[int64]struct{})
+	addRoot := func(personID, observationID int64) {
+		if roots[personID] == nil {
+			roots[personID] = make(map[int64]struct{})
+		}
+		roots[personID][observationID] = struct{}{}
+	}
+	readRoots := func(changedPremise bool, query string, args ...any) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var personID, observationID int64
+			if err := rows.Scan(&personID, &observationID); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			addRoot(personID, observationID)
+			if changedPremise {
+				if premiseChangedRoots[personID] == nil {
+					premiseChangedRoots[personID] = make(map[int64]struct{})
+				}
+				premiseChangedRoots[personID][observationID] = struct{}{}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		return rows.Close()
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT derived.person_id, derived.id
+		FROM person_observation_premises edge
+		JOIN person_observations derived ON derived.id=edge.derived_id
+		JOIN person_observations premise ON premise.id=edge.premise_id
+		WHERE edge.role='support' AND derived.level='deductive'
+		  AND derived.status IN ('active','unsupported')
+		  AND derived.person_id<>premise.person_id
+		  AND derived.person_id IN (?,?) AND premise.person_id IN (?,?)`,
+		sourcePersonID, restoredPersonID, sourcePersonID, restoredPersonID,
+	)
+	if err != nil {
+		return fmt.Errorf("find split-damaged deductive observations: %w", err)
+	}
+	for rows.Next() {
+		var personID, observationID int64
+		if err := rows.Scan(&personID, &observationID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if missingDeductiveConjuncts[personID] == nil {
+			missingDeductiveConjuncts[personID] = make(map[int64]struct{})
+		}
+		missingDeductiveConjuncts[personID][observationID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := readRoots(true, `SELECT derived.person_id, derived.id
+		FROM person_observation_premises edge
+		JOIN person_observations derived ON derived.id=edge.derived_id
+		JOIN person_observations premise ON premise.id=edge.premise_id
+		WHERE derived.person_id<>premise.person_id
+		  AND derived.person_id IN (?,?) AND premise.person_id IN (?,?)`,
+		sourcePersonID, restoredPersonID, sourcePersonID, restoredPersonID,
+	); err != nil {
+		return fmt.Errorf("find split-crossing observation premises: %w", err)
+	}
+	if err := readRoots(false, `SELECT observation.person_id, observation.id
+		FROM person_observation_evidence citation
+		JOIN person_observations observation ON observation.id=citation.observation_id
+		JOIN person_fact_evidence evidence ON evidence.id=citation.evidence_id
+		LEFT JOIN person_fact_generations generation ON generation.id=citation.generation_id
+		WHERE observation.person_id IN (?,?)
+		  AND (evidence.person_id<>observation.person_id OR
+		       (citation.generation_id IS NOT NULL AND
+		        (generation.id IS NULL OR generation.person_id<>observation.person_id)))`,
+		sourcePersonID, restoredPersonID,
+	); err != nil {
+		return fmt.Errorf("find split-crossing observation citations: %w", err)
+	}
+	if err := readRoots(false, `SELECT observation.person_id, observation.id
+		FROM person_observations observation
+		WHERE observation.person_id IN (?,?)
+		  AND EXISTS (
+			SELECT 1 FROM person_observation_events event
+			WHERE event.observation_id=observation.id
+			  AND event.event='merge-moved' AND event.detail LIKE 'merge:%;owner-collision'
+		  )`, sourcePersonID, restoredPersonID,
+	); err != nil {
+		return fmt.Errorf("find split-collided observations to refresh: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM person_observation_premises
+		WHERE EXISTS (
+			SELECT 1 FROM person_observations derived
+			JOIN person_observations premise ON premise.id=person_observation_premises.premise_id
+			WHERE derived.id=person_observation_premises.derived_id
+			  AND derived.person_id<>premise.person_id
+			  AND derived.person_id IN (?,?) AND premise.person_id IN (?,?)
+		)`, sourcePersonID, restoredPersonID, sourcePersonID, restoredPersonID); err != nil {
+		return fmt.Errorf("remove split-crossing observation premises: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM person_observation_evidence
+		WHERE EXISTS (
+			SELECT 1 FROM person_observations observation
+			JOIN person_fact_evidence evidence ON evidence.id=person_observation_evidence.evidence_id
+			LEFT JOIN person_fact_generations generation ON generation.id=person_observation_evidence.generation_id
+			WHERE observation.id=person_observation_evidence.observation_id
+			  AND observation.person_id IN (?,?)
+			  AND (evidence.person_id<>observation.person_id OR
+			       (person_observation_evidence.generation_id IS NOT NULL AND
+			        (generation.id IS NULL OR generation.person_id<>observation.person_id)))
+		)`, sourcePersonID, restoredPersonID); err != nil {
+		return fmt.Errorf("remove split-crossing observation citations: %w", err)
+	}
+	personIDs := make([]int64, 0, len(roots))
+	for personID := range roots {
+		personIDs = append(personIDs, personID)
+	}
+	slices.Sort(personIDs)
+	for _, personID := range personIDs {
+		observationIDs := make([]int64, 0, len(roots[personID]))
+		for observationID := range roots[personID] {
+			observationIDs = append(observationIDs, observationID)
+		}
+		slices.Sort(observationIDs)
+		for _, observationID := range observationIDs {
+			if _, changedPremise := premiseChangedRoots[personID][observationID]; changedPremise {
+				if err := s.markObservationPremiseChangedTx(ctx, tx, personID, observationID, "person-split"); err != nil {
+					return fmt.Errorf("mark split observation premise change: %w", err)
+				}
+			}
+			if _, missingConjunct := missingDeductiveConjuncts[personID][observationID]; missingConjunct {
+				// A deduction is conjunctive. Once a split removes one required
+				// support premise, the remaining edge set cannot represent a valid
+				// argument, so require the owner or a later generation to rebuild it.
+				if _, err := tx.ExecContext(ctx, `DELETE FROM person_observation_premises
+					WHERE derived_id=? AND role='support'`, observationID); err != nil {
+					return fmt.Errorf("withdraw split-incomplete deductive premises: %w", err)
+				}
+			}
+			if err := s.recomputeObservationCitationSummaryTx(ctx, tx, observationID); err != nil {
+				return fmt.Errorf("refresh split observation citations: %w", err)
+			}
+		}
+		if err := s.notifyObservationSupportChangedTx(
+			ctx, tx, personID, observationIDs, "person-split",
+		); err != nil {
+			return fmt.Errorf("refresh split observation support: %w", err)
+		}
+	}
+	return nil
 }
 
 func appendPersonSplitUnrestoredRow(
@@ -990,6 +1253,9 @@ func (s *Store) personSplitUnsupportedGeneratedCandidatesTx(
 	candidates := make(map[int64]personMergeSnapshotRow)
 	supportSources := make(map[int64][]int64)
 	for _, item := range journal {
+		if item.provenance == personMergeProvenanceDerived || item.action == "recomputed" {
+			continue
+		}
 		row, ok := rowsByPath[item.snapshotPath]
 		if !ok {
 			return nil, fmt.Errorf("%w: missing split snapshot path %q",
@@ -1051,6 +1317,9 @@ func (s *Store) personSplitUnsupportedGeneratedEvidenceTx(
 	evidenceRows := make(map[int64]personMergeSnapshotRow)
 	supportSources := make(map[int64][]int64)
 	for _, item := range journal {
+		if item.provenance == personMergeProvenanceDerived || item.action == "recomputed" {
+			continue
+		}
 		row, ok := rowsByPath[item.snapshotPath]
 		if !ok {
 			return nil, fmt.Errorf("%w: missing split snapshot path %q",
@@ -1137,6 +1406,10 @@ type personSplitSnapshotDependency struct {
 var errPersonSplitReferenceMissing = errors.New("person split reference target is missing")
 
 var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency{
+	"person_observation_evidence": {
+		{column: "observation_id", table: personObservationsTableName, key: "id"},
+		{column: "evidence_id", table: "person_fact_evidence", key: "id"},
+	},
 	personRelationshipsTableName: {
 		{column: "relationship_type_id", table: "relationship_types", key: "id"},
 	},
@@ -1149,6 +1422,8 @@ var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency
 }
 
 var personSplitSnapshotColumnDependencies = map[string]map[string]personSplitSnapshotDependency{
+	"person_observation_events": {"generation_id": {column: "generation_id", table: "person_fact_generations", key: "id"}, "evidence_id": {column: "evidence_id", table: "person_fact_evidence", key: "id"}},
+	personObservationsTableName: {"generation_id": {column: "generation_id", table: "person_fact_generations", key: "id"}, "superseded_by_id": {column: "superseded_by_id", table: personObservationsTableName, key: "id"}},
 	personRelationshipReviewsTableName: {
 		"accepted_relationship_id": {
 			column: "accepted_relationship_id", table: personRelationshipsTableName, key: "id",
@@ -1271,7 +1546,8 @@ func (s *Store) personSplitSnapshotRecordTargetPresentTx(
 }
 
 func personSplitNullablePersonReference(table, column string) bool {
-	return (table == personRelationshipReviewsTableName && column == "matched_person_id") ||
+	return (table == personObservationsTableName && column == "subject_person_id") ||
+		(table == personRelationshipReviewsTableName && column == "matched_person_id") ||
 		(table == "person_uid_aliases" && column == "surviving_person_id") ||
 		(table == "person_merges" && column == "current_person_id")
 }
@@ -1443,6 +1719,10 @@ func personSplitJournalRef(row personSplitJournalRow) PersonMergeRowRef {
 
 func personSplitRestorePriority(table string) int {
 	switch table {
+	case personObservationsTableName:
+		return 5
+	case "person_observation_evidence", "person_observation_premises", "person_observation_categories", "person_observation_events":
+		return 35
 	case identityMatchCandidatesTableName, personRelationshipsTableName, personAttributeValuesTableName:
 		return 10
 	case "identity_match_candidate_redirects", identityMatchCandidateSourcesTableName,
@@ -1463,6 +1743,7 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	row personMergeSnapshotRow,
 	sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID int64,
 	sourceUID, newUID string,
+	preserveOwnerAssertion bool,
 ) error {
 	spec, ok := personMergeTableRegistry[row.TableName]
 	if !ok {
@@ -1502,6 +1783,17 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 		}
 		postByName = personSplitSnapshotColumnsByName(post.Columns)
 	}
+	preserveObservationLifecycle := false
+	if row.TableName == personObservationsTableName && journal.postMergeJSON.Valid {
+		for _, column := range []string{"status", "status_reason", "valid_from", "valid_until", "superseded_by_id"} {
+			postValue, hasPost := postByName[column]
+			currentValue, hasCurrent := currentByName[column]
+			if hasPost && hasCurrent && !reflect.DeepEqual(currentValue, postValue) {
+				preserveObservationLifecycle = true
+				break
+			}
+		}
+	}
 	keyColumns := make(map[string]struct{}, len(spec.keyColumns()))
 	for _, name := range spec.keyColumns() {
 		keyColumns[name] = struct{}{}
@@ -1509,6 +1801,18 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	assignments := make([]string, 0, len(row.Columns))
 	args := make([]any, 0, len(row.Columns)+3)
 	for _, column := range row.Columns {
+		if preserveOwnerAssertion && row.TableName == personObservationsTableName &&
+			!slices.Contains([]string{"id", "person_id", "sequence", "subject_person_id"}, column.Name) {
+			continue
+		}
+		if preserveObservationLifecycle && slices.Contains(
+			[]string{"status", "status_reason", "valid_from", "valid_until", "superseded_by_id"}, column.Name,
+		) {
+			continue
+		}
+		if row.TableName == "person_observation_clocks" && row.OriginSide == personMergeOriginSurvivor && column.Name == "last_sequence" {
+			continue
+		}
 		if !recordTargetPresent &&
 			(column.Name == "active_until" || column.Name == "superseded_at") {
 			continue
@@ -1753,6 +2057,27 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 			value = revision + 1
 		}
 		args = append(args, value)
+	}
+	if row.TableName == "person_observation_clocks" {
+		var personID, lastSequence any
+		for index, column := range row.Columns {
+			switch column.Name {
+			case "person_id":
+				personID = args[index]
+			case "last_sequence":
+				lastSequence = args[index]
+			}
+		}
+		if personID == nil || lastSequence == nil {
+			return fmt.Errorf("%w: invalid split observation clock", ErrPersonMergeSnapshotCorrupt)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO person_observation_clocks(person_id,last_sequence) VALUES(?,?)
+			ON CONFLICT(person_id) DO UPDATE SET last_sequence=CASE
+				WHEN person_observation_clocks.last_sequence < excluded.last_sequence THEN excluded.last_sequence
+				ELSE person_observation_clocks.last_sequence END`, personID, lastSequence); err != nil {
+			return fmt.Errorf("restore split observation clock: %w", err)
+		}
+		return nil
 	}
 	table := personSplitIdentifier(row.TableName)
 	insert := `INSERT INTO ` + table

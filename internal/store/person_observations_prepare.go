@@ -17,12 +17,13 @@ import (
 )
 
 type PreparedObservation struct {
-	Proposal   personobs.ProposedObservation
-	ContentKey string
-	Citations  []personobs.Citation
-	Categories []personobs.Category
-	Stability  personobs.Stability
-	Failure    *personobs.ValidationError
+	Proposal           personobs.ProposedObservation
+	ContentKey         string
+	Citations          []personobs.Citation
+	Categories         []personobs.Category
+	Stability          personobs.Stability
+	SensitiveAssertion bool
+	Failure            *personobs.ValidationError
 }
 type PreparedObservationBatch struct {
 	PersonID           int64
@@ -30,6 +31,21 @@ type PreparedObservationBatch struct {
 	ProgramFingerprint string
 	Items              []PreparedObservation
 	Digest             string
+}
+
+type observationReinforcementEventDetail struct {
+	Quotes             []string             `json:"quotes"`
+	OwnerAssertion     bool                 `json:"owner_assertion,omitempty"`
+	SensitiveAssertion bool                 `json:"sensitive_assertion,omitempty"`
+	AssertedCategories []personobs.Category `json:"asserted_categories,omitempty"`
+}
+
+func decodeObservationReinforcementEventDetail(detail string) (observationReinforcementEventDetail, bool) {
+	var decoded observationReinforcementEventDetail
+	if err := json.Unmarshal([]byte(detail), &decoded); err != nil {
+		return observationReinforcementEventDetail{}, false
+	}
+	return decoded, true
 }
 
 func observationBatchDigest(b PreparedObservationBatch) (string, error) {
@@ -85,7 +101,10 @@ func (s *Store) PreparePersonObservationBatch(ctx context.Context, in personobs.
 		}
 		proposal.PersonID = input.PersonID
 		proposal.Content = personobs.CanonicalizePlaceholders(proposal.Content)
-		item := PreparedObservation{Proposal: proposal, ContentKey: personobs.ContentKey(proposal.Level, proposal.SubjectRef, proposal.Content)}
+		item := PreparedObservation{
+			Proposal: proposal, ContentKey: personobs.ContentKey(proposal.Level, proposal.SubjectRef, proposal.Content),
+			SensitiveAssertion: proposal.Sensitive,
+		}
 		item.Proposal.ValidFrom = personFactPortableTimePointer(item.Proposal.ValidFrom)
 		item.Proposal.ValidUntil = personFactPortableTimePointer(item.Proposal.ValidUntil)
 		premises := make(map[int64]personobs.Observation, len(proposal.Premises))

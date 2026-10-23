@@ -431,18 +431,19 @@ func (s *Store) hydratePersonSweepMessageSet(
 
 func (s *Store) hydratePersonSweepMessageSetTx(
 	ctx context.Context, tx *loggedTx, personID int64, lane peoplesweep.SourceClass, ids []int64,
-) ([]peoplesweep.EvidenceItem, map[int64]bool, error) {
+) ([]peoplesweep.EvidenceItem, error) {
 	person, err := s.getPersonTx(ctx, tx, personID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve durable person %d: %w", personID, err)
+		return nil, fmt.Errorf("resolve durable person %d: %w", personID, err)
 	}
 	resolution, err := personSweepScopeForPerson(person)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return s.hydratePersonSweepMessageSetWithScope(
+	items, _, err := s.hydratePersonSweepMessageSetWithScope(
 		ctx, tx, personID, lane, ids, 0, resolution,
 	)
+	return items, err
 }
 
 func (s *Store) hydratePersonSweepMessageSetWithScope(
@@ -1074,7 +1075,7 @@ func (a PersonSweepEvidenceAligner) alignTx(ctx context.Context, tx *loggedTx, i
 		if ref.SourceLane == peoplesweep.SourceDocumentText {
 			return a.Store.alignDocumentItemTx(ctx, tx, input.PersonID, ref, input.Excerpt)
 		}
-		items, _, err := a.Store.hydratePersonSweepMessageSetTx(ctx, tx, input.PersonID, ref.SourceLane, []int64{ref.MessageID})
+		items, err := a.Store.hydratePersonSweepMessageSetTx(ctx, tx, input.PersonID, ref.SourceLane, []int64{ref.MessageID})
 		if err != nil {
 			return peoplesweep.EvidenceItem{}, err
 		}
@@ -1120,7 +1121,7 @@ func (a PersonSweepEvidenceAligner) align(
 		return reject(personfacts.ReasonIdentityMismatch, "evidence subject does not match canonical person"), nil
 	}
 	start, end := int64(current.Highlight.Start), int64(current.Highlight.End)
-	if input.SourceVersion != current.SourceVersion || input.ContentSHA256 != current.ContentSHA256 || input.Excerpt != current.Excerpt || input.SpanStart == nil || input.SpanEnd == nil || *input.SpanStart != start || *input.SpanEnd != end || !input.EventTime.Equal(current.EventTime) || !input.RecordedTime.Equal(current.RecordedTime) || input.IdentityScore != current.IdentityBasisPoints || input.Directness != current.Directness || input.Authority != current.Authority {
+	if input.SourceVersion != current.SourceVersion || input.ContentSHA256 != current.ContentSHA256 || input.Excerpt != current.Excerpt || input.SpanStart == nil || input.SpanEnd == nil || *input.SpanStart != start || *input.SpanEnd != end || !personFactPortableTime(input.EventTime).Equal(personFactPortableTime(current.EventTime)) || !personFactPortableTime(input.RecordedTime).Equal(personFactPortableTime(current.RecordedTime)) || input.IdentityScore != current.IdentityBasisPoints || input.Directness != current.Directness || input.Authority != current.Authority {
 		return reject(personfacts.ReasonUnalignedEvidence, "person sweep evidence no longer aligns"), nil
 	}
 	return personfacts.AlignmentResult{Accepted: true, SourceVersion: current.SourceVersion, ContentSHA256: current.ContentSHA256}, nil

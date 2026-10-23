@@ -303,6 +303,9 @@ func (s *Store) mergePersonsOnce(
 			result = replayed
 			return nil
 		}
+		if err := s.lockObservationPeopleTx(ctx, tx, request.SurvivorID, request.AbsorbedID); err != nil {
+			return err
+		}
 		if err := s.lockMergePeopleTx(ctx, tx, request.SurvivorID, request.AbsorbedID); err != nil {
 			return err
 		}
@@ -357,6 +360,9 @@ func (s *Store) mergePersonsOnce(
 		if err := s.moveCorePersonProfileTx(
 			ctx, tx, mergeID, survivor.ID, absorbed.ID, survivor.VCardUID,
 		); err != nil {
+			return err
+		}
+		if err := s.movePersonObservationsTx(ctx, tx, mergeID, survivor.ID, absorbed.ID, snapshot); err != nil {
 			return err
 		}
 		projectionIDs := []int64{}
@@ -2108,13 +2114,13 @@ func (s *Store) reconcilePersonDailyNotesTx(
 	}
 	for _, entryID := range entryIDs {
 		originalKey, err := personMergeIntegerRowKey(
-			[]string{"entry_id", "person_id"}, entryID, absorbedID,
+			[]string{"entry_id", personMergePersonIDColumn}, entryID, absorbedID,
 		)
 		if err != nil {
 			return err
 		}
 		currentKey, err := personMergeIntegerRowKey(
-			[]string{"entry_id", "person_id"}, entryID, survivorID,
+			[]string{"entry_id", personMergePersonIDColumn}, entryID, survivorID,
 		)
 		if err != nil {
 			return err

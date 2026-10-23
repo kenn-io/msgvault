@@ -20,6 +20,13 @@ type SuppressionCandidate struct {
 	Origin                      personobs.Origin
 	PostRejectionSupport, Floor int
 }
+
+type observationCurrentSupport struct {
+	supported      bool
+	supportedCount int
+	sourcesMissing bool
+}
+
 type SuppressionVerdict string
 
 const (
@@ -664,32 +671,43 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 				premises[edge.ID] = premise
 			}
 		}
+		currentSupport := make(map[int64]observationCurrentSupport)
+		visitingSupport := make(map[int64]bool)
 		if out.Failure == nil {
-			for _, ancestorID := range premiseAncestors {
-				ancestor, err := s.loadObservationTx(ctx, tx, ancestorID)
+			for _, edge := range item.Proposal.Premises {
+				premise := premises[edge.ID]
+				support, err := s.observationCurrentSupportTx(ctx, tx, b.PersonID, premise.ID, currentSupport, visitingSupport)
 				if err != nil {
-					return result, err
+					return result, fmt.Errorf("revalidate observation premise support: %w", err)
 				}
-				if ancestor.Level != personobs.LevelExplicit || ancestor.Origin == personobs.OriginOwner {
+				if premise.Status == personobs.StatusRejected || premise.Status == personobs.StatusSuperseded {
 					continue
 				}
-				aligned, sourcesMissing, err := s.observationAlignedSupportedCitationsTx(ctx, tx, b.PersonID, ancestorID)
-				if err != nil {
-					return result, fmt.Errorf("revalidate observation premise evidence: %w", err)
+				if support.supported {
+					premise.Status = personobs.StatusActive
+					premise.SupportFlag = personobs.SupportFlagNone
+					if premise.Level == personobs.LevelExplicit && premise.Origin != personobs.OriginOwner {
+						premise.SupportedCount = support.supportedCount
+					}
+				} else {
+					premise.Status = personobs.StatusUnsupported
 				}
-				if len(aligned) > 0 {
-					continue
-				}
-				reason := "premise-not-supported"
-				if sourcesMissing {
-					reason = "citation-source-missing"
-				}
-				out.Failure = &personobs.ValidationError{Field: "support", Reason: reason}
-				break
+				premises[edge.ID] = premise
 			}
 		}
 		if out.Failure == nil {
 			out.Failure = personobs.ValidateProposal(item.Proposal, premises)
+			if out.Failure != nil && (out.Failure.Reason == "premise-count" || out.Failure.Reason == "premise-not-supported") {
+				for _, edge := range item.Proposal.Premises {
+					support := currentSupport[edge.ID]
+					if (edge.Role == personobs.PremiseRoleSupport ||
+						(out.Failure.Reason == "premise-count" && item.Proposal.Level == personobs.LevelContradiction)) &&
+						!support.supported && support.sourcesMissing {
+						out.Failure = &personobs.ValidationError{Field: "support", Reason: "citation-source-missing"}
+						break
+					}
+				}
+			}
 		}
 		if out.Failure == nil {
 			for _, targetID := range item.Proposal.SupersedesIDs {
@@ -753,7 +771,7 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		if err != nil {
 			return result, err
 		}
-		verdict, err := s.DecideSuppressionTx(ctx, tx, b.PersonID, item.ContentKey, candidate)
+		verdict, liftedSuppressionID, err := s.DecideSuppressionTx(ctx, tx, b.PersonID, item.ContentKey, candidate)
 		if err != nil {
 			return result, err
 		}
@@ -768,8 +786,9 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			continue
 		}
 		id := existing.ID
-		ownerAssertion := id != 0 && item.Proposal.Origin == personobs.OriginOwner && existing.Origin != personobs.OriginOwner
-		if ownerAssertion {
+		ownerAssertion := id != 0 && item.Proposal.Origin == personobs.OriginOwner
+		promoteToOwner := ownerAssertion && existing.Origin != personobs.OriginOwner
+		if promoteToOwner {
 			matches, err := s.queryObservationRows(ctx, tx, `person_id=? AND content_key=? AND id<>? AND status IN ('active','unsupported')`, `id LIMIT 1`, b.PersonID, item.ContentKey, id)
 			if err != nil {
 				return result, err
@@ -834,10 +853,14 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			for _, support := range item.Proposal.Support {
 				quotes = append(quotes, support.Quote)
 			}
-			detail, err := json.Marshal(struct {
-				Quotes         []string `json:"quotes"`
-				OwnerAssertion bool     `json:"owner_assertion,omitempty"`
-			}{quotes, ownerAssertion})
+			assertedCategories := append([]personobs.Category(nil), item.Proposal.ModelCategories...)
+			assertedCategories = append(assertedCategories, personobs.DetectCategories(item.Proposal.Content)...)
+			slices.Sort(assertedCategories)
+			assertedCategories = slices.Compact(assertedCategories)
+			detail, err := json.Marshal(observationReinforcementEventDetail{
+				Quotes: quotes, OwnerAssertion: ownerAssertion,
+				SensitiveAssertion: item.SensitiveAssertion, AssertedCategories: assertedCategories,
+			})
 			if err != nil {
 				return result, err
 			}
@@ -846,7 +869,7 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			}
 		}
 		if verdict == SuppressionLifted {
-			if err := s.ensureObservationSuppressionLiftEventTx(ctx, tx, b.PersonID, item.ContentKey, id); err != nil {
+			if err := s.ensureObservationSuppressionLiftEventTx(ctx, tx, b.PersonID, liftedSuppressionID, id); err != nil {
 				return result, err
 			}
 		}
@@ -860,7 +883,14 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		}
 		canSupersede := item.Proposal.Origin == personobs.OriginOwner
 		if !canSupersede {
-			canSupersede = personobs.PremiseSupported(replacement)
+			currentSupport, err := s.observationCurrentSupportTx(
+				ctx, tx, b.PersonID, id,
+				make(map[int64]observationCurrentSupport), make(map[int64]bool),
+			)
+			if err != nil {
+				return result, fmt.Errorf("revalidate replacement observation support before supersession: %w", err)
+			}
+			canSupersede = currentSupport.supported
 		}
 		if canSupersede {
 			for _, targetID := range item.Proposal.SupersedesIDs {
@@ -977,7 +1007,8 @@ func (s *Store) observationAlignedSupportedCitationsTx(
 			return nil, false, fmt.Errorf("load observation premise evidence %d: %w", citation.EvidenceID, err)
 		}
 		ref, err := peoplesweep.DecodePersonSweepEvidenceRef(evidence.Input.SourceRef)
-		if err != nil || ref.MessageID != citation.Leaf.MessageID || !citation.Leaf.EventTime.Equal(evidence.Input.EventTime) {
+		if err != nil || ref.MessageID != citation.Leaf.MessageID ||
+			!personFactPortableTime(citation.Leaf.EventTime).Equal(personFactPortableTime(evidence.Input.EventTime)) {
 			continue
 		}
 		alignment, err := (PersonSweepEvidenceAligner{Store: s}).alignTx(ctx, tx, evidence.Input)
@@ -1003,6 +1034,108 @@ func (s *Store) observationAlignedSupportedCitationsTx(
 	return aligned, allSourcesMissing, nil
 }
 
+func (s *Store) observationCurrentSupportTx(
+	ctx context.Context,
+	tx *loggedTx,
+	personID, observationID int64,
+	memo map[int64]observationCurrentSupport,
+	visiting map[int64]bool,
+) (observationCurrentSupport, error) {
+	if support, ok := memo[observationID]; ok {
+		return support, nil
+	}
+	if visiting[observationID] {
+		return observationCurrentSupport{}, errors.New("observation premise graph contains a cycle")
+	}
+	visiting[observationID] = true
+	defer delete(visiting, observationID)
+
+	observation, err := s.loadObservationTx(ctx, tx, observationID)
+	if err != nil {
+		return observationCurrentSupport{}, err
+	}
+	if observation.PersonID != personID || observation.Status == personobs.StatusRejected || observation.Status == personobs.StatusSuperseded {
+		memo[observationID] = observationCurrentSupport{}
+		return memo[observationID], nil
+	}
+	if observation.Level == personobs.LevelExplicit {
+		if observation.Origin == personobs.OriginOwner {
+			support := observationCurrentSupport{supported: observation.Status == personobs.StatusActive}
+			memo[observationID] = support
+			return support, nil
+		}
+		aligned, sourcesMissing, err := s.observationAlignedSupportedCitationsTx(ctx, tx, personID, observationID)
+		if err != nil {
+			return observationCurrentSupport{}, err
+		}
+		support := observationCurrentSupport{supported: len(aligned) > 0, supportedCount: len(aligned), sourcesMissing: len(aligned) == 0 && sourcesMissing}
+		memo[observationID] = support
+		return support, nil
+	}
+
+	type edge struct {
+		premiseID int64
+		role      personobs.PremiseRole
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT premise_id,role FROM person_observation_premises WHERE derived_id=? ORDER BY ordinal`, observationID)
+	if err != nil {
+		return observationCurrentSupport{}, fmt.Errorf("read observation premises: %w", err)
+	}
+	edges := make([]edge, 0)
+	for rows.Next() {
+		var current edge
+		if err := rows.Scan(&current.premiseID, &current.role); err != nil {
+			_ = rows.Close()
+			return observationCurrentSupport{}, fmt.Errorf("scan observation premise: %w", err)
+		}
+		edges = append(edges, current)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return observationCurrentSupport{}, fmt.Errorf("read observation premises: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return observationCurrentSupport{}, fmt.Errorf("close observation premises: %w", err)
+	}
+
+	supportEdges, supportedSupportEdges, supportedEdges := 0, 0, 0
+	missingRequiredSource := false
+	for _, edge := range edges {
+		premiseSupport, err := s.observationCurrentSupportTx(ctx, tx, personID, edge.premiseID, memo, visiting)
+		if err != nil {
+			return observationCurrentSupport{}, err
+		}
+		if premiseSupport.supported {
+			supportedEdges++
+		}
+		if edge.role == personobs.PremiseRoleSupport {
+			supportEdges++
+			if premiseSupport.supported {
+				supportedSupportEdges++
+			}
+		}
+		requiredForSupport := edge.role == personobs.PremiseRoleSupport || observation.Level == personobs.LevelContradiction
+		if requiredForSupport && !premiseSupport.supported && premiseSupport.sourcesMissing {
+			missingRequiredSource = true
+		}
+	}
+
+	supported := false
+	switch observation.Level {
+	case personobs.LevelExplicit:
+		supported = false
+	case personobs.LevelDeductive:
+		supported = supportEdges > 0 && supportEdges == supportedSupportEdges
+	case personobs.LevelInductive:
+		supported = supportedSupportEdges >= 2
+	case personobs.LevelContradiction:
+		supported = supportedEdges >= 2
+	}
+	result := observationCurrentSupport{supported: supported, sourcesMissing: !supported && missingRequiredSource}
+	memo[observationID] = result
+	return result, nil
+}
+
 func (s *Store) currentPersonSweepEvidenceItemTx(
 	ctx context.Context,
 	tx *loggedTx,
@@ -1015,7 +1148,7 @@ func (s *Store) currentPersonSweepEvidenceItemTx(
 	if ref.SourceLane == peoplesweep.SourceDocumentText {
 		return s.alignDocumentItemTx(ctx, tx, evidence.PersonID, ref, evidence.Excerpt)
 	}
-	items, _, err := s.hydratePersonSweepMessageSetTx(ctx, tx, evidence.PersonID, ref.SourceLane, []int64{ref.MessageID})
+	items, err := s.hydratePersonSweepMessageSetTx(ctx, tx, evidence.PersonID, ref.SourceLane, []int64{ref.MessageID})
 	if err != nil {
 		return peoplesweep.EvidenceItem{}, err
 	}
@@ -1419,45 +1552,31 @@ func (s *Store) observationLatestSupportedEvidenceTimeTx(ctx context.Context, tx
 	}
 	return latest, nil
 }
-func (s *Store) DecideSuppressionTx(ctx context.Context, tx *loggedTx, personID int64, contentKey string, c SuppressionCandidate) (SuppressionVerdict, error) {
+func (s *Store) DecideSuppressionTx(ctx context.Context, tx *loggedTx, personID int64, contentKey string, c SuppressionCandidate) (SuppressionVerdict, int64, error) {
 	if c.Origin == personobs.OriginOwner {
-		return SuppressionAllow, nil
+		return SuppressionAllow, 0, nil
 	}
 	var id int64
 	var reason string
 	err := tx.QueryRowContext(ctx, `SELECT id,reason FROM person_observation_suppressions WHERE person_id=? AND content_key=? AND cleared_at IS NULL`, personID, contentKey).Scan(&id, &reason)
 	if errors.Is(err, sql.ErrNoRows) {
-		return SuppressionAllow, nil
+		return SuppressionAllow, 0, nil
 	}
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if reason != "outdated" || c.PostRejectionSupport < max(1, c.Floor) {
-		return SuppressionSuppressed, nil
+		return SuppressionSuppressed, 0, nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE person_observation_suppressions SET cleared_at=? WHERE id=?`, time.Now().UTC(), id); err != nil {
-		return "", err
+		return "", 0, err
 	}
-	var observationID int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM person_observations WHERE person_id=? AND content_key=? ORDER BY id DESC LIMIT 1`, personID, contentKey).Scan(&observationID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
-	if observationID != 0 {
-		if err := s.ensureObservationSuppressionLiftEventTx(ctx, tx, personID, contentKey, observationID); err != nil {
-			return "", err
-		}
-	}
-	return SuppressionLifted, nil
+	return SuppressionLifted, id, nil
 }
-func (s *Store) ensureObservationSuppressionLiftEventTx(ctx context.Context, tx *loggedTx, personID int64, key string, observationID int64) error {
-	var suppressionID int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM person_observation_suppressions WHERE person_id=? AND content_key=? AND cleared_at IS NOT NULL ORDER BY id DESC LIMIT 1`, personID, key).Scan(&suppressionID); err != nil {
-		return err
-	}
+func (s *Store) ensureObservationSuppressionLiftEventTx(ctx context.Context, tx *loggedTx, personID, suppressionID, observationID int64) error {
 	detail := fmt.Sprintf("outdated-new-support:suppression:%d", suppressionID)
 	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_observation_events WHERE person_id=? AND event='suppression-lifted' AND detail=?`, personID, detail).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_observation_events WHERE person_id=? AND observation_id=? AND event='suppression-lifted' AND detail=?`, personID, observationID, detail).Scan(&count); err != nil {
 		return err
 	}
 	if count != 0 {
