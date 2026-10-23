@@ -11890,6 +11890,54 @@ components:
         - corroboration
         - total
       type: object
+    PersonFactStaleness:
+      additionalProperties: true
+      properties:
+        declared:
+          type: boolean
+        newest_support:
+          format: date-time
+          type: string
+        projection:
+          $ref: "#/components/schemas/ProjectionRef"
+        slug:
+          type: string
+        stability:
+          type: string
+        stale:
+          type: boolean
+        target:
+          $ref: "#/components/schemas/TargetRef"
+        value: {}
+        verify_by:
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - target
+        - slug
+        - projection
+        - value
+        - stability
+        - declared
+        - newest_support
+        - stale
+      type: object
+    PersonFactStalenessResponse:
+      additionalProperties: true
+      properties:
+        as_of:
+          format: date-time
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PersonFactStaleness"
+          type: array
+      required:
+        - as_of
+        - items
+      type: object
     PersonFileProvenance:
       additionalProperties: true
       properties:
@@ -16546,7 +16594,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.26.0
+  version: 3.27.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -28575,6 +28623,58 @@ paths:
       security:
         - apiKey: []
       summary: Replace an effective person fact pin
+      tags:
+        - API
+  /api/v1/people/{id}/fact-staleness:
+    get:
+      operationId: listPersonFactStaleness
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Include sensitive facts
+          in: query
+          name: include_sensitive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactStalenessResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Report current person fact staleness
       tags:
         - API
   /api/v1/people/{id}/files/search:

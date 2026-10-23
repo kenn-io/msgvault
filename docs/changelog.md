@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Owners can inspect current fact verification dates with [`person facts stale`](usage/people-automation.md#review-stale-facts) or the owner-only API report. Reports use attribute stability and surviving supporting evidence without changing saved values. HTTP API schema 3.27.0 adds the report.
+
 - [Attribute definitions](usage/people.md#create-a-portable-field-definition) carry fixed, durable, or volatile stability metadata. Owners can edit the class through the API or `attribute-definition set-stability`. Subset exports preserve these choices. This requires archive schema 12 and HTTP API schema 3.25.0; embedded readers must use a matching archive schema.
 
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
@@ -477,7 +479,7 @@ an existing installation.
   `person provider reverify NAME --yes` runs a synthetic check and records
   consent for the current program. Historical profiles remain available to
   `status --all` and `revoke --all`. See
-  [profile automation](usage/people-automation.md).
+  [profile automation](usage/people-automation.md#review-stale-facts).
 - **Review chat media settings.** Rooms with more than 20 participants skip
   media by default. Beeper, Slack, and Teams default to 250 MiB per attachment;
   Discord remains 50 MiB. Explicit size settings stay unchanged. See

@@ -313,10 +313,11 @@ func newPersonFactsCommand() *cobra.Command {
 		},
 	}
 
+	stale := newPersonFactsStaleCommand(options)
 	pin := newPersonFactPinCommand(options, true)
 	unpin := newPersonFactPinCommand(options, false)
 
-	for _, command := range []*cobra.Command{catalog, evidence, status, claims, decisions, pins, pin, unpin} {
+	for _, command := range []*cobra.Command{catalog, evidence, status, claims, decisions, stale, pins, pin, unpin} {
 		command.Flags().BoolVar(&options.jsonOutput, flagJSON, false, "Output as JSON")
 	}
 	for _, command := range []*cobra.Command{evidence, claims, decisions} {
@@ -325,7 +326,7 @@ func newPersonFactsCommand() *cobra.Command {
 		addPersonFactCLIPageFlags(command, options)
 	}
 	addPersonFactCLIPageFlags(status, options)
-	facts.AddCommand(catalog, evidence, status, claims, decisions, pins, pin, unpin)
+	facts.AddCommand(catalog, evidence, status, claims, decisions, stale, pins, pin, unpin)
 	return facts
 }
 
@@ -497,4 +498,64 @@ func writePersonFactCLIRawJSON(cmd *cobra.Command, body []byte) error {
 		return err
 	}
 	return nil
+}
+
+func newPersonFactsStaleCommand(options *personFactsCLIOptions) *cobra.Command {
+	var all bool
+	command := &cobra.Command{
+		Use: "stale <person-id>", Short: "Review current person facts that need verification", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			personID, err := positivePersonCLIArg(cmd, args[0], personValue)
+			if err != nil {
+				return err
+			}
+			client, _, err := OpenHTTPStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = client.Close() }()
+			query := &generated.ListPersonFactStalenessQuery{}
+			if options.includeSensitive {
+				includeSensitive := true
+				query.IncludeSensitive = &includeSensitive
+			}
+			response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ListPersonFactStalenessResp, error) {
+				return api.ListPersonFactStalenessWithResponse(cmd.Context(), &generated.ListPersonFactStalenessRequestOptions{
+					PathParams: &generated.ListPersonFactStalenessPath{ID: personID}, Query: query,
+				})
+			})
+			if err != nil {
+				return err
+			}
+			if response.JSON200 == nil {
+				return errors.New("person fact staleness response was empty")
+			}
+			items := response.JSON200.Items
+			if !all {
+				filtered := items[:0]
+				for _, item := range items {
+					if item.Stale {
+						filtered = append(filtered, item)
+					}
+				}
+				items = filtered
+			}
+			if options.jsonOutput {
+				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), items, json.Deterministic(true))
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintln(writer, "TARGET\tVALUE\tSTABILITY\tNEWEST SUPPORT\tVERIFY BY\tSTALE")
+			for _, item := range items {
+				verifyBy := "-"
+				if item.VerifyBy != nil {
+					verifyBy = item.VerifyBy.Format(time.RFC3339)
+				}
+				_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%t\n", item.Slug, string(item.Value), item.Stability, item.NewestSupport.Format(time.RFC3339), verifyBy, item.Stale)
+			}
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&all, "all", false, "Include current facts that are not stale")
+	command.Flags().BoolVar(&options.includeSensitive, "include-sensitive", false, "Include sensitive facts")
+	return command
 }

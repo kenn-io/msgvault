@@ -2927,6 +2927,16 @@ type SetPersonFactPinErrorResponseJSON503 = ErrorResponse
 
 type SetPersonFactPinErrorResponseJSONDefault = ErrorResponse
 
+type ListPersonFactStalenessResponse = PersonFactStalenessResponse
+
+type ListPersonFactStalenessErrorResponse = ErrorResponse
+
+type ListPersonFactStalenessErrorResponseJSON = ErrorResponse
+
+type ListPersonFactStalenessErrorResponseJSON503 = ErrorResponse
+
+type ListPersonFactStalenessErrorResponseJSONDefault = ErrorResponse
+
 type SearchPersonFilesResponse = PersonFileSearchHTTPResponse
 
 type SearchPersonFilesErrorResponse = ErrorResponse
@@ -6624,6 +6634,17 @@ type SetPersonFactPinResp struct {
 	JSON409      *SetPersonFactPinErrorResponseJSON409
 	JSON503      *SetPersonFactPinErrorResponseJSON503
 	JSONDefault  *SetPersonFactPinErrorResponseJSONDefault
+}
+
+type ListPersonFactStalenessResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonFactStalenessResponse
+	JSON400      *ListPersonFactStalenessErrorResponse
+	JSON404      *ListPersonFactStalenessErrorResponseJSON
+	JSON503      *ListPersonFactStalenessErrorResponseJSON503
+	JSONDefault  *ListPersonFactStalenessErrorResponseJSONDefault
 }
 
 type SearchPersonFilesResp struct {

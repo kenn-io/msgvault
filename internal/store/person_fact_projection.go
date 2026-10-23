@@ -2602,12 +2602,16 @@ func personFactAttributeDescriptor(definition AttributeDefinition) (personfacts.
 }
 
 func personFactAttributeEligible(definition AttributeDefinition, allowSensitive bool) bool {
-	if !definition.IsActive || !definition.APIMutable || definition.DerivedSource != nil ||
-		definition.RecordTarget != nil || (definition.IsSensitive && !allowSensitive) {
+	if !personFactAttributeScalarEligible(definition, allowSensitive) {
 		return false
 	}
 	description := strings.TrimSpace(personFactStringValue(definition.Description))
-	if description == "" || len([]rune(description)) > 280 {
+	return description != "" && len([]rune(description)) <= 280
+}
+
+func personFactAttributeScalarEligible(definition AttributeDefinition, allowSensitive bool) bool {
+	if !definition.IsActive || !definition.APIMutable || definition.DerivedSource != nil ||
+		definition.RecordTarget != nil || (definition.IsSensitive && !allowSensitive) {
 		return false
 	}
 	switch definition.ValueType {
