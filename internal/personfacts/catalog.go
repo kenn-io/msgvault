@@ -16,10 +16,14 @@ const catalogVersion = "1"
 // definitions and fixed structured targets.
 func BuildCatalog(definitions []Definition, opts CatalogOptions) (Catalog, error) {
 	targets := []TargetDescriptor{employmentDescriptor()}
+	var ineligible []string
 	for _, definition := range definitions {
 		description, ok := inferenceDescription(definition.Description)
 		if !ok || !eligibleDefinition(definition, opts) {
 			continue
+		}
+		if definition.InferenceIneligible {
+			ineligible = append(ineligible, definition.UniversalID)
 		}
 		targets = append(targets, TargetDescriptor{
 			Kind:         TargetAttribute,
@@ -48,7 +52,8 @@ func BuildCatalog(definitions []Definition, opts CatalogOptions) (Catalog, error
 	if err != nil {
 		return Catalog{}, err
 	}
-	return Catalog{Version: catalogVersion, Fingerprint: fingerprint, Targets: targets}, nil
+	sort.Strings(ineligible)
+	return Catalog{Version: catalogVersion, Fingerprint: fingerprint, Targets: targets, InferenceIneligible: ineligible}, nil
 }
 
 // DescriptorRevision hashes the inference-relevant content of one target.

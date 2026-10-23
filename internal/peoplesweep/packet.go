@@ -209,8 +209,35 @@ func extractionStructuredRequest(packet EvidencePacket, packetJSON []byte) Struc
 	}
 }
 
+// ExtractionCatalog selects automatic-extraction targets without changing the
+// full catalog used by sweep runs and cursor identities.
+func ExtractionCatalog(catalog personfacts.Catalog) (personfacts.Catalog, error) {
+	ineligible := make(map[string]struct{}, len(catalog.InferenceIneligible))
+	for _, key := range catalog.InferenceIneligible {
+		ineligible[key] = struct{}{}
+	}
+	targets := make([]personfacts.TargetDescriptor, 0, len(catalog.Targets))
+	for _, target := range catalog.Targets {
+		if _, excluded := ineligible[target.Key]; !excluded {
+			targets = append(targets, target)
+		}
+	}
+	fingerprint, err := personfacts.CatalogFingerprint(targets)
+	if err != nil {
+		return personfacts.Catalog{}, fmt.Errorf("fingerprint extraction person fact catalog: %w", err)
+	}
+	catalog.Targets = targets
+	catalog.Fingerprint = fingerprint
+	catalog.InferenceIneligible = nil
+	return catalog, nil
+}
+
 func packetForProfile(packet EvidencePacket, profile ProviderProfile) (EvidencePacket, error) {
 	canonical, err := canonicalPacket(packet)
+	if err != nil {
+		return EvidencePacket{}, err
+	}
+	canonical.Catalog, err = ExtractionCatalog(canonical.Catalog)
 	if err != nil {
 		return EvidencePacket{}, err
 	}

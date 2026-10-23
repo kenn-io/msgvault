@@ -44,6 +44,10 @@ func (s *Store) LoadPersonFactState(
 		if err != nil {
 			return fmt.Errorf("build current person sweep fact-state catalog: %w", err)
 		}
+		expectedCatalog, err = peoplesweep.ExtractionCatalog(expectedCatalog)
+		if err != nil {
+			return fmt.Errorf("filter current person sweep fact-state catalog: %w", err)
+		}
 		if !reflect.DeepEqual(catalog, expectedCatalog) {
 			return errors.New("person sweep fact-state catalog is not the exact current catalog")
 		}

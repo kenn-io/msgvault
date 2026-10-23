@@ -14,6 +14,7 @@ export interface AttributeDefinition {
   field_type: string;
   history_exempt: boolean;
   id: number;
+  inference_eligible: boolean;
   is_active: boolean;
   is_audited: boolean;
   is_deletable: boolean;

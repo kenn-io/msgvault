@@ -159,73 +159,76 @@ func (s AttributeStability) Valid() bool {
 
 // AttributeDefinition is portable metadata for one typed field.
 type AttributeDefinition struct {
-	ID            int64                `json:"id"`
-	UniversalID   string               `json:"universal_id"`
-	ObjectType    AttributeObjectType  `json:"object_type"`
-	Slug          string               `json:"slug"`
-	Label         string               `json:"label"`
-	Description   *string              `json:"description,omitzero" nullable:"false"`
-	ValueType     AttributeValueType   `json:"value_type"`
-	FieldType     AttributeFieldType   `json:"field_type"`
-	RecordTarget  *string              `json:"record_target,omitzero" nullable:"false"`
-	Cardinality   AttributeCardinality `json:"cardinality"`
-	DisplayOrder  int64                `json:"display_order"`
-	IsRequired    bool                 `json:"is_required"`
-	Ownership     AttributeOwnership   `json:"ownership"`
-	UICreatable   bool                 `json:"ui_creatable"`
-	UIEditable    bool                 `json:"ui_editable"`
-	APIMutable    bool                 `json:"api_mutable"`
-	IsSearchable  bool                 `json:"is_searchable"`
-	IsSensitive   bool                 `json:"is_sensitive"`
-	Stability     AttributeStability   `json:"stability" enum:"fixed,durable,volatile"`
-	IsAudited     bool                 `json:"is_audited"`
-	IsDeletable   bool                 `json:"is_deletable"`
-	HistoryExempt bool                 `json:"history_exempt"`
-	DerivedSource *string              `json:"derived_source,omitzero" nullable:"false"`
-	Options       *AttributeOptions    `json:"options,omitzero" nullable:"false"`
-	VCardProperty *string              `json:"vcard_property,omitzero" nullable:"false"`
-	IsActive      bool                 `json:"is_active"`
-	Revision      int64                `json:"revision"`
-	CreatedAt     time.Time            `json:"created_at"`
-	UpdatedAt     time.Time            `json:"updated_at"`
+	ID                int64                `json:"id"`
+	UniversalID       string               `json:"universal_id"`
+	ObjectType        AttributeObjectType  `json:"object_type"`
+	Slug              string               `json:"slug"`
+	Label             string               `json:"label"`
+	Description       *string              `json:"description,omitzero" nullable:"false"`
+	ValueType         AttributeValueType   `json:"value_type"`
+	FieldType         AttributeFieldType   `json:"field_type"`
+	RecordTarget      *string              `json:"record_target,omitzero" nullable:"false"`
+	Cardinality       AttributeCardinality `json:"cardinality"`
+	DisplayOrder      int64                `json:"display_order"`
+	IsRequired        bool                 `json:"is_required"`
+	Ownership         AttributeOwnership   `json:"ownership"`
+	UICreatable       bool                 `json:"ui_creatable"`
+	UIEditable        bool                 `json:"ui_editable"`
+	APIMutable        bool                 `json:"api_mutable"`
+	IsSearchable      bool                 `json:"is_searchable"`
+	IsSensitive       bool                 `json:"is_sensitive"`
+	Stability         AttributeStability   `json:"stability" enum:"fixed,durable,volatile"`
+	InferenceEligible bool                 `json:"inference_eligible"`
+	IsAudited         bool                 `json:"is_audited"`
+	IsDeletable       bool                 `json:"is_deletable"`
+	HistoryExempt     bool                 `json:"history_exempt"`
+	DerivedSource     *string              `json:"derived_source,omitzero" nullable:"false"`
+	Options           *AttributeOptions    `json:"options,omitzero" nullable:"false"`
+	VCardProperty     *string              `json:"vcard_property,omitzero" nullable:"false"`
+	IsActive          bool                 `json:"is_active"`
+	Revision          int64                `json:"revision"`
+	CreatedAt         time.Time            `json:"created_at"`
+	UpdatedAt         time.Time            `json:"updated_at"`
 }
 
 // AttributeDefinitionInput is a complete new definition.
 type AttributeDefinitionInput struct {
-	UniversalID   string
-	ObjectType    AttributeObjectType
-	Slug          string
-	Label         string
-	Description   *string
-	ValueType     AttributeValueType
-	FieldType     AttributeFieldType
-	RecordTarget  *string
-	Cardinality   AttributeCardinality
-	DisplayOrder  int64
-	IsRequired    bool
-	Ownership     AttributeOwnership
-	UICreatable   bool
-	UIEditable    bool
-	APIMutable    bool
-	IsSearchable  bool
-	IsSensitive   bool
-	Stability     AttributeStability
-	IsAudited     bool
-	IsDeletable   bool
-	HistoryExempt bool
-	DerivedSource *string
-	Options       *AttributeOptions
-	VCardProperty *string
+	UniversalID       string
+	ObjectType        AttributeObjectType
+	Slug              string
+	Label             string
+	Description       *string
+	ValueType         AttributeValueType
+	FieldType         AttributeFieldType
+	RecordTarget      *string
+	Cardinality       AttributeCardinality
+	DisplayOrder      int64
+	IsRequired        bool
+	Ownership         AttributeOwnership
+	UICreatable       bool
+	UIEditable        bool
+	APIMutable        bool
+	IsSearchable      bool
+	IsSensitive       bool
+	Stability         AttributeStability
+	InferenceEligible *bool
+	IsAudited         bool
+	IsDeletable       bool
+	HistoryExempt     bool
+	DerivedSource     *string
+	Options           *AttributeOptions
+	VCardProperty     *string
 }
 
 // AttributeDefinitionUpdate carries only mutable definition fields.
 type AttributeDefinitionUpdate struct {
-	Label        *string
-	Description  **string
-	DisplayOrder *int64
-	IsSensitive  *bool
-	Stability    *AttributeStability
-	IsActive     *bool
+	Label             *string
+	Description       **string
+	DisplayOrder      *int64
+	IsSensitive       *bool
+	Stability         *AttributeStability
+	InferenceEligible *bool
+	IsActive          *bool
 }
 
 // AttributeDefinitionFilter narrows a definition listing.
@@ -596,7 +599,7 @@ const attributeDefinitionColumns = `
 	value_type, field_type, record_target, cardinality, display_order,
 	is_required, ownership, ui_creatable, ui_editable, api_mutable,
 	is_searchable, is_sensitive, is_audited, is_deletable, history_exempt, derived_source,
-	options, vcard_property, is_active, revision, created_at, updated_at, stability
+	options, vcard_property, is_active, revision, created_at, updated_at, stability, inference_eligible
 `
 
 // CreateAttributeDefinitionContext validates and inserts a definition row.
@@ -635,6 +638,10 @@ func (s *Store) CreateAttributeDefinitionContext(
 func (s *Store) createAttributeDefinitionTx(
 	ctx context.Context, tx *loggedTx, input AttributeDefinitionInput,
 ) (*AttributeDefinition, error) {
+	inferenceEligible := true
+	if input.InferenceEligible != nil {
+		inferenceEligible = *input.InferenceEligible
+	}
 	options, err := marshalAttributeOptions(input.Options)
 	if err != nil {
 		return nil, err
@@ -645,8 +652,8 @@ func (s *Store) createAttributeDefinitionTx(
 			    value_type, field_type, record_target, cardinality, display_order,
 			    is_required, ownership, ui_creatable, ui_editable, api_mutable,
 			    is_searchable, is_sensitive, is_audited, is_deletable, history_exempt,
-			    derived_source, options, vcard_property, stability
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?)
+			    derived_source, options, vcard_property, stability, inference_eligible
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?)
 			ON CONFLICT DO NOTHING
 			RETURNING %s
 		`, s.dialect.JSONBindExpr(), attributeDefinitionColumns)
@@ -658,7 +665,7 @@ func (s *Store) createAttributeDefinitionTx(
 		input.IsRequired, string(input.Ownership), input.UICreatable,
 		input.UIEditable, input.APIMutable, input.IsSearchable,
 		input.IsSensitive, input.IsAudited, input.IsDeletable, input.HistoryExempt,
-		input.DerivedSource, options, input.VCardProperty, input.Stability)
+		input.DerivedSource, options, input.VCardProperty, input.Stability, inferenceEligible)
 	created, scanErr := scanAttributeDefinition(row)
 	if scanErr != nil {
 		return nil, s.attributeDefinitionWriteError(ctx, tx, input, scanErr)
@@ -816,6 +823,10 @@ func (s *Store) updateAttributeDefinitionOnce(
 ) (*AttributeDefinition, error) {
 	assignments := make([]string, 0, 5)
 	args := make([]any, 0, 6)
+	if update.InferenceEligible != nil {
+		assignments = append(assignments, "inference_eligible = ?")
+		args = append(args, *update.InferenceEligible)
+	}
 	if update.Stability != nil {
 		if !update.Stability.Valid() {
 			return nil, fmt.Errorf("%w: stability %q is not supported", ErrAttributeDefinitionInvalid, *update.Stability)
@@ -907,9 +918,9 @@ func (s *Store) updateAttributeDefinitionOnce(
 			return fmt.Errorf("update attribute definition %d: %w", id, scanErr)
 		}
 		definition = updated
-		// Label, description, display order, and stability do not change
-		// projected values; toggling is_active adds or removes the definition
-		// from every snapshot that lists it.
+		// Label, description, display order, stability, and inference eligibility
+		// do not directly change projected values. Toggling is_active adds or
+		// removes the definition from every snapshot that lists it.
 		if update.IsActive == nil {
 			return nil
 		}
@@ -1003,7 +1014,7 @@ func scanAttributeDefinition(row scanner) (*AttributeDefinition, error) {
 		&definition.IsSearchable, &definition.IsSensitive, &definition.IsAudited, &definition.IsDeletable,
 		&definition.HistoryExempt, &derivedSource, &options, &vcardProperty,
 		&definition.IsActive, &definition.Revision, &definition.CreatedAt,
-		&definition.UpdatedAt, &definition.Stability,
+		&definition.UpdatedAt, &definition.Stability, &definition.InferenceEligible,
 	); err != nil {
 		return nil, err
 	}

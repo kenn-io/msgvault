@@ -609,6 +609,20 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 				return nil, fmt.Errorf("reset copied attribute stability migration: %w", err)
 			}
 		}
+		hasInferenceEligibility, err := sourceColumnExists(tx, "attribute_definitions", "inference_eligible")
+		if err != nil {
+			return nil, fmt.Errorf("inspect source attribute inference eligibility: %w", err)
+		}
+		inferenceEligibilityExpression := "TRUE"
+		if hasInferenceEligibility {
+			inferenceEligibilityExpression = "source.inference_eligible"
+		} else {
+			// The destination initialized before the copy. Legacy source
+			// definitions need the seeded exclusions backfilled afterward.
+			if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationAttributeDefinitionInferenceEligibleV1); err != nil {
+				return nil, fmt.Errorf("reset copied attribute inference eligibility migration: %w", err)
+			}
+		}
 		sensitiveExpression := "FALSE"
 		if hasSensitive {
 			sensitiveExpression = "is_sensitive"
@@ -633,7 +647,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    id, universal_id, object_type, slug, label, description,
 		    value_type, field_type, record_target, cardinality, display_order,
 		    is_required, ownership, ui_creatable, ui_editable, api_mutable,
-		    is_searchable, is_sensitive, stability, is_audited, is_deletable, history_exempt,
+		    is_searchable, is_sensitive, stability, inference_eligible, is_audited, is_deletable, history_exempt,
 		    derived_source, options, vcard_property, is_active, revision,
 		    created_at, updated_at
 		)
@@ -643,7 +657,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    source.description,
 		    value_type, field_type, record_target, cardinality, display_order,
 		    is_required, ownership, ui_creatable, ui_editable, api_mutable,
-		    is_searchable, %s AS is_sensitive, %s AS stability, is_audited, is_deletable, history_exempt,
+		    is_searchable, %s AS is_sensitive, %s AS stability, %s AS inference_eligible, is_audited, is_deletable, history_exempt,
 		    derived_source, options, vcard_property, is_active, revision,
 		    created_at, updated_at
 		FROM src.attribute_definitions source
@@ -668,6 +682,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    is_searchable = excluded.is_searchable,
 		    is_sensitive = excluded.is_sensitive,
 		    stability = excluded.stability,
+		    inference_eligible = excluded.inference_eligible,
 		    is_audited = excluded.is_audited,
 		    is_deletable = excluded.is_deletable,
 		    history_exempt = excluded.history_exempt,
@@ -677,7 +692,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    is_active = excluded.is_active,
 		    revision = excluded.revision,
 		    created_at = excluded.created_at,
-		    updated_at = excluded.updated_at`, sensitiveExpression, stabilityExpression)); err != nil {
+		    updated_at = excluded.updated_at`, sensitiveExpression, stabilityExpression, inferenceEligibilityExpression)); err != nil {
 			return nil, fmt.Errorf("copy person attribute definitions: %w", err)
 		}
 

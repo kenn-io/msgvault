@@ -637,6 +637,8 @@ components:
         id:
           format: int64
           type: integer
+        inference_eligible:
+          type: boolean
         is_active:
           type: boolean
         is_audited:
@@ -701,6 +703,7 @@ components:
         - is_searchable
         - is_sensitive
         - stability
+        - inference_eligible
         - is_audited
         - is_deletable
         - history_exempt
@@ -3085,6 +3088,10 @@ components:
           type: integer
         field_type:
           type: string
+        inference_eligible:
+          type:
+            - boolean
+            - "null"
         is_audited:
           type: boolean
         is_required:
@@ -10224,6 +10231,10 @@ components:
         display_order:
           format: int64
           type: integer
+        inference_eligible:
+          type:
+            - boolean
+            - "null"
         is_active:
           type: boolean
         is_sensitive:
@@ -16594,7 +16605,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.27.0
+  version: 3.28.0
 openapi: 3.1.0
 paths:
   /api/ping:

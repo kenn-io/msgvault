@@ -17,12 +17,13 @@ import (
 // last_modified backfill alone is a full messages-table scan — seconds of
 // startup on a large archive).
 const (
-	migrationAttributeDefinitionStabilityV1 = "attribute_definition_stability_v1"
-	migrationMeetingProjectionV1            = "meeting_projection_v1"
-	migrationAttachmentsContentHashUnique   = "attachments_content_hash_unique_index"
-	migrationAttachmentOccurrenceUnique     = "attachment_occurrence_unique_indexes_v1"
-	migrationMessagesLastModifiedBackfill   = "messages_last_modified_backfill"
-	migrationMessagesLastModifiedNullRepair = "messages_last_modified_null_repair"
+	migrationAttributeDefinitionInferenceEligibleV1 = "attribute_definition_inference_eligible_v1"
+	migrationAttributeDefinitionStabilityV1         = "attribute_definition_stability_v1"
+	migrationMeetingProjectionV1                    = "meeting_projection_v1"
+	migrationAttachmentsContentHashUnique           = "attachments_content_hash_unique_index"
+	migrationAttachmentOccurrenceUnique             = "attachment_occurrence_unique_indexes_v1"
+	migrationMessagesLastModifiedBackfill           = "messages_last_modified_backfill"
+	migrationMessagesLastModifiedNullRepair         = "messages_last_modified_null_repair"
 	// v3: messageIdentityAttributionMatch became envelope-authoritative and
 	// gated email identifier matches on the sender lacking a primary email.
 	// Archives that ran v2 reconciled under the old predicate, so the rename

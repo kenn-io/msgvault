@@ -56,26 +56,28 @@ type TargetDescriptor struct {
 }
 
 type Catalog struct {
-	Version     string             `json:"version"`
-	Fingerprint string             `json:"fingerprint"`
-	Targets     []TargetDescriptor `json:"targets"`
+	InferenceIneligible []string           `json:"-"`
+	Version             string             `json:"version"`
+	Fingerprint         string             `json:"fingerprint"`
+	Targets             []TargetDescriptor `json:"targets"`
 }
 
 type CatalogOptions struct{ IncludeSensitive bool }
 
 type Definition struct {
-	UniversalID  string
-	Slug         string
-	Description  string
-	ValueType    ValueType
-	Cardinality  Cardinality
-	RecordTarget string
-	MaxLength    int
-	Choices      []ChoiceDescriptor
-	Sensitive    bool
-	Active       bool
-	APIMutable   bool
-	Derived      bool
+	InferenceIneligible bool
+	UniversalID         string
+	Slug                string
+	Description         string
+	ValueType           ValueType
+	Cardinality         Cardinality
+	RecordTarget        string
+	MaxLength           int
+	Choices             []ChoiceDescriptor
+	Sensitive           bool
+	Active              bool
+	APIMutable          bool
+	Derived             bool
 }
 
 type TargetRef struct {
