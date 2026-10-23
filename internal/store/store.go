@@ -2315,6 +2315,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure seeded attribute definitions: %w", err)
 	}
 
+	if err := s.runOnceMigration(ctx, migrationAttributeDefinitionStabilityV1, 1, false, s.migrateAttributeDefinitionStability); err != nil {
+		return fmt.Errorf("backfill attribute definition stability: %w", err)
+	}
+
 	// The CardDAV inference export backfill projects every person's vCard
 	// attributes, so it must run after LegacyColumnMigrations has added the
 	// attribute_definitions columns it selects and after seeding has installed

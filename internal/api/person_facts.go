@@ -108,13 +108,14 @@ type PersonFactDecision struct {
 }
 
 type PersonFactScoreBreakdown struct {
-	SourceClass   int `json:"source_class"`
-	Directness    int `json:"directness"`
-	Authority     int `json:"authority"`
-	Confidence    int `json:"confidence"`
-	Freshness     int `json:"freshness"`
-	Corroboration int `json:"corroboration"`
-	Total         int `json:"total"`
+	StabilityWindow bool `json:"stability_window,omitzero"`
+	SourceClass     int  `json:"source_class"`
+	Directness      int  `json:"directness"`
+	Authority       int  `json:"authority"`
+	Confidence      int  `json:"confidence"`
+	Freshness       int  `json:"freshness"`
+	Corroboration   int  `json:"corroboration"`
+	Total           int  `json:"total"`
 }
 
 type PersonFactResolutionResult struct {
@@ -619,7 +620,7 @@ func personFactDecisionDTO(decision personfacts.Decision) PersonFactDecision {
 			SourceClass: decision.Score.SourceClass, Directness: decision.Score.Directness,
 			Authority: decision.Score.Authority, Confidence: decision.Score.Confidence,
 			Freshness: decision.Score.Freshness, Corroboration: decision.Score.Corroboration,
-			Total: decision.Score.Total,
+			Total: decision.Score.Total, StabilityWindow: decision.Score.StabilityWindow,
 		},
 		CompetingClaimKey: decision.CompetingClaimKey, Projection: decision.Projection,
 		CreatedAt: decision.CreatedAt,
