@@ -1195,6 +1195,62 @@ CREATE INDEX IF NOT EXISTS idx_person_briefs_person_version
 CREATE INDEX IF NOT EXISTS idx_person_brief_evidence_evidence
     ON person_brief_evidence(evidence_id, brief_id);
 
+CREATE TABLE IF NOT EXISTS person_instructions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    instruction_key TEXT NOT NULL CHECK (length(instruction_key) = 64),
+    kind TEXT NOT NULL CHECK (kind IN ('address_as','prefer_channel','avoid_channel','avoid_address','timing','format','topic','other')),
+    scope_key TEXT NOT NULL DEFAULT '',
+    contact_point_id INTEGER REFERENCES person_contact_points(id) ON DELETE SET NULL,
+    original_text TEXT NOT NULL DEFAULT '',
+    normalized_text TEXT NOT NULL CHECK (length(normalized_text) BETWEEN 1 AND 280),
+    value_text TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL CHECK (origin IN ('extraction','owner')),
+    status TEXT NOT NULL CHECK (status IN ('proposed','active','suspended','superseded','expired','revoked','rejected')),
+    review_state TEXT NOT NULL DEFAULT 'none' CHECK (review_state IN ('none','unsure','conflict','evidence_lost','merged','split')),
+    adopted BOOLEAN NOT NULL DEFAULT FALSE,
+    stated_at DATETIME,
+    valid_from DATETIME NOT NULL,
+    valid_until DATETIME,
+    supersedes_id INTEGER REFERENCES person_instructions(id) ON DELETE SET NULL,
+    source_observation_id INTEGER,
+    generation_id INTEGER,
+    confirmed_at DATETIME,
+    confirmed_by TEXT,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (valid_until IS NULL OR valid_until > valid_from),
+    CHECK (origin = 'owner' OR stated_at IS NOT NULL),
+    CHECK (status <> 'active' OR origin = 'owner' OR confirmed_at IS NOT NULL),
+    CHECK ((confirmed_at IS NULL) = (confirmed_by IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_instructions_live_key
+    ON person_instructions(person_id, instruction_key) WHERE status IN ('proposed','active','suspended');
+CREATE INDEX IF NOT EXISTS idx_person_instructions_visible
+    ON person_instructions(person_id, kind, scope_key) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_person_instructions_review
+    ON person_instructions(updated_at, id) WHERE status IN ('proposed','suspended') OR review_state <> 'none';
+CREATE INDEX IF NOT EXISTS idx_person_instructions_supersedes
+    ON person_instructions(supersedes_id) WHERE supersedes_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_instructions_contact
+    ON person_instructions(contact_point_id) WHERE contact_point_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS person_instruction_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    instruction_id INTEGER REFERENCES person_instructions(id) ON DELETE SET NULL,
+    instruction_key TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('propose','confirm','reject','unsure','adopt','edit','revoke','expire','suspend','restore','supersede','merge_moved','split_moved','policy_linked')),
+    actor TEXT NOT NULL CHECK (length(actor) > 0),
+    detail_json JSON NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_person_instruction_events_rejected
+    ON person_instruction_events(person_id, instruction_key) WHERE action = 'reject';
+CREATE INDEX IF NOT EXISTS idx_person_instruction_events_instruction
+    ON person_instruction_events(instruction_id, id);
+
 CREATE INDEX IF NOT EXISTS idx_person_fact_generations_person
     ON person_fact_generations(person_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_person_fact_evidence_person
