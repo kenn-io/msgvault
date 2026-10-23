@@ -195,3 +195,23 @@ func TestPersonAttributesClearForwardsOrdinalAndExpectedValueID(t *testing.T) {
 		"a prior test's --dry-run must not leak into this run")
 	assert.Contains(output, "Superseded")
 }
+
+func TestPersonAttributesListPreset(t *testing.T) {
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/api/v1/people/7/attributes/contact_frequency", r.URL.Path)
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"dry_run":true}`))
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_, err := runAttributeCommand(ctx, t, personAttributesSetCmd, "7", "contact_frequency", "--list", "b", "--dry-run", "--json")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"type": "integer", "integer": float64(60)}, received["value"])
+	for _, args := range [][]string{{"7", "notes", "--list", "A"}, {"7", "contact_frequency", "--list", "Z"}, {"7", "contact_frequency", "--list", "A", "--value", "21"}} {
+		_, err := runAttributeCommand(ctx, t, personAttributesSetCmd, args...)
+		require.Error(t, err)
+	}
+}

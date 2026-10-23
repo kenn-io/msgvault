@@ -63,7 +63,7 @@ type SetPersonAttributeRequest struct {
 	Actor           *string              `json:"actor,omitzero" nullable:"false"`
 	ActiveFrom      *time.Time           `json:"active_from,omitempty"`
 	ActiveUntil     *time.Time           `json:"active_until,omitempty"`
-	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"false"`
+	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"false" doc:"Positive ID compares the current value; zero requires no current value"`
 }
 
 // AppendPersonNoteRequest carries one note fragment and its provenance.
@@ -267,9 +267,9 @@ func (s *Server) handleSetPersonAttribute(w http.ResponseWriter, r *http.Request
 	if !decodeAttributeRequest(w, r, &request) {
 		return
 	}
-	if request.ExpectedValueID != nil && *request.ExpectedValueID < 1 {
+	if request.ExpectedValueID != nil && *request.ExpectedValueID < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_expected_value_id",
-			"expected_value_id must be a positive integer")
+			"expected_value_id must be zero (expect no current value) or a positive integer")
 		return
 	}
 	source := store.Provenance(strings.TrimSpace(request.Source))

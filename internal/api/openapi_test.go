@@ -1441,7 +1441,7 @@ func TestOpenAPIDirectoryLastContactParametersAreTyped(t *testing.T) {
 	requirements.Contains(parameters, "sort")
 	assertions.Equal("date-time", parameters["last_contact_after"].Schema.Format)
 	assertions.Equal("date-time", parameters["last_contact_before"].Schema.Format)
-	assertions.ElementsMatch([]any{"name", "last_contact_desc", "last_contact_asc"}, parameters["sort"].Schema.Enum)
+	assertions.ElementsMatch([]any{"name", "last_contact_desc", "last_contact_asc", "most_overdue", "next_due"}, parameters["sort"].Schema.Enum)
 }
 
 func TestOpenAPICardDAVConflictArraysAreRequiredAndNonNull(t *testing.T) {

@@ -274,6 +274,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		syncCardDAVDefinition(),
 		rejectIdentityMatchDefinition(),
 		updatePersonNotesDefinition(nil),
+		setPersonContactListDefinition(nil),
 		updateSavedViewDefinition(nil),
 	}
 	definitions = append(definitions, kataDefinitions(capabilities.kataDocbank)...)

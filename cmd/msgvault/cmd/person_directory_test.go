@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -249,9 +250,9 @@ func TestPersonDirectoryCommandHumanOutputShowsRecentContactFields(t *testing.T)
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	require.Len(lines, 4)
 	columns := regexp.MustCompile(` {2,}`)
-	assert.Equal([]string{"ID", "DISPLAY NAME", "LAST CONTACT"}, columns.Split(lines[0], -1))
-	assert.Equal([]string{"9007199254740993", "Zulu Example", "2026-06-01T10:34:56Z"}, columns.Split(lines[1], -1))
-	assert.Equal([]string{"7", "-", "-"}, columns.Split(lines[2], -1))
+	assert.Equal([]string{"ID", "DISPLAY NAME", "LIST", "LAST CONTACT", "DUE", "STATUS"}, columns.Split(lines[0], -1))
+	assert.Equal([]string{"9007199254740993", "Zulu Example", "-", "2026-06-01T10:34:56Z", "-", "unknown"}, columns.Split(lines[1], -1))
+	assert.Equal([]string{"7", "-", "-", "-", "-", "unknown"}, columns.Split(lines[2], -1))
 	assert.Equal("Next cursor: opaque+/=&% cursor", lines[3])
 }
 
@@ -413,7 +414,7 @@ func TestPersonDirectoryCommandRejectsInvalidSortBeforeRequest(t *testing.T) {
 	assert := assert.New(t)
 	requests, testCtx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
 	output, err := runPersonDirectoryCommand(testCtx, t, "--sort", "oldest", "--json")
-	require.ErrorContains(t, err, "--sort: must be name, last_contact_desc, or last_contact_asc")
+	require.ErrorContains(t, err, "--sort: must be name, last_contact_desc, last_contact_asc, most_overdue, or next_due")
 	assert.Empty(requests)
 	assert.Empty(output)
 
@@ -486,4 +487,41 @@ func TestPersonDirectoryCommandReturnsResponseErrors(t *testing.T) {
 			assert.Len(t, requests, 1)
 		})
 	}
+}
+
+func TestPersonDirectoryCadence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"status":"ok","api_schema_version":%q}`, daemonclient.DirectoryCadenceMinAPISchemaVersion))
+			return
+		}
+		assert.Equal("due", r.URL.Query().Get("cadence"))
+		assert.Equal("7", r.URL.Query().Get("due_within_days"))
+		assert.Equal("most_overdue", r.URL.Query().Get("sort"))
+		_, _ = io.WriteString(w, `{"people":[]}`)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_, err := runPersonDirectoryCommand(ctx, t, "--cadence", "due", "--due-within-days", "7", "--sort", "most_overdue")
+	require.NoError(err)
+	for _, args := range [][]string{{"--due-within-days", "7"}, {"--cadence", "due", "--due-within-days", "-1"}, {"--cadence", "bad"}} {
+		_, err := runPersonDirectoryCommand(ctx, t, args...)
+		require.Error(err)
+	}
+}
+
+func TestPersonDirectoryCadenceHumanColumns(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	_, ctx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[{"id":7,"display_name":"Cadence Example","cadence":{"list":"A","frequency_days":21,"status":"overdue","stale":false,"due_at":"2026-08-01T00:00:00Z"}}]}`)
+	output, err := runPersonDirectoryCommand(ctx, t)
+	require.NoError(err)
+	assert.Contains(output, "LIST")
+	assert.Contains(output, "DUE")
+	assert.Contains(output, "STATUS")
+	assert.Contains(output, "overdue")
+	assert.Regexp(`Cadence Example\s+A\s+`, output)
 }

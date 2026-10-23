@@ -995,7 +995,13 @@ type ListDirectoryPeopleQuery struct {
 	// LastContactBefore Return people contacted at or before this RFC3339 timestamp
 	LastContactBefore *time.Time `json:"last_contact_before,omitempty"`
 
-	// Sort Directory order: name, last_contact_desc, or last_contact_asc
+	// Cadence Cadence filter: overdue, due (includes overdue), no_list, or unknown
+	Cadence *string `json:"cadence,omitempty"`
+
+	// DueWithinDays UTC days ahead for cadence=due, 0..3660 (default 0)
+	DueWithinDays *int64 `json:"due_within_days,omitempty"`
+
+	// Sort Directory order: name, last_contact_desc, last_contact_asc, most_overdue, or next_due
 	Sort *ListDirectoryPeopleQuerySort `json:"sort,omitempty"`
 }
 

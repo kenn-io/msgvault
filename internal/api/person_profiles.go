@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/contactcadence"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/personsearch"
@@ -69,8 +70,10 @@ type PeopleResponse struct {
 // DirectoryPeopleResponse is the non-sensitive, paginated Directory view of
 // durable person roots.
 type DirectoryPeopleResponse struct {
-	People     []store.DirectoryPersonSummary `json:"people"`
-	NextCursor string                         `json:"next_cursor,omitempty"`
+	CadencePresets  []contactcadence.Preset         `json:"cadence_presets,omitempty" nullable:"false"`
+	CadenceCoverage *store.DirectoryCadenceCoverage `json:"cadence_coverage,omitempty"`
+	People          []store.DirectoryPersonSummary  `json:"people"`
+	NextCursor      string                          `json:"next_cursor,omitempty"`
 }
 
 // PersonSearchEngine is the semantic people service consumed by the HTTP
@@ -371,7 +374,7 @@ func (s *Server) handleDirectoryPeople(w http.ResponseWriter, r *http.Request) {
 		s.writeDirectoryPeopleError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DirectoryPeopleResponse{People: page.People, NextCursor: page.NextCursor})
+	writeJSON(w, http.StatusOK, DirectoryPeopleResponse{People: page.People, NextCursor: page.NextCursor, CadencePresets: page.CadencePresets, CadenceCoverage: page.CadenceCoverage})
 }
 
 // directoryPeopleQuery reads each Directory query parameter once so the route
@@ -386,6 +389,14 @@ func directoryPeopleQuery(values url.Values) (store.DirectoryPeopleQuery, error)
 		Organization:   values.Get("organization"),
 		PrimaryChannel: values.Get("primary_channel"),
 		Sort:           values.Get("sort"),
+		Cadence:        values.Get("cadence"),
+	}
+	if values.Has("due_within_days") {
+		days, err := strconv.Atoi(strings.TrimSpace(values.Get("due_within_days")))
+		if err != nil {
+			return store.DirectoryPeopleQuery{}, fmt.Errorf("%w: due_within_days must be an integer", store.ErrInvalidDirectoryQuery)
+		}
+		query.DueWithinDays = &days
 	}
 	for _, field := range []struct {
 		name   string
@@ -544,11 +555,12 @@ func addDirectoryPeopleParameters(operation *huma.Operation) {
 	lastContactAfter.Schema.Format = "date-time"
 	lastContactBefore := queryStringParam("last_contact_before", "Return people contacted at or before this RFC3339 timestamp", false)
 	lastContactBefore.Schema.Format = "date-time"
-	sortParam := queryStringParam("sort", "Directory order: name, last_contact_desc, or last_contact_asc", false)
+	sortParam := queryStringParam("sort", "Directory order: name, last_contact_desc, last_contact_asc, most_overdue, or next_due", false)
 	sortParam.Schema.Enum = []any{
 		store.DirectoryPeopleSortName,
 		store.DirectoryPeopleSortLastContactDesc,
 		store.DirectoryPeopleSortLastContactAsc,
+		store.DirectoryPeopleSortMostOverdue, store.DirectoryPeopleSortNextDue,
 	}
 	operation.Parameters = append(operation.Parameters,
 		queryStringParam("q", "Lexical query over person names, contact points, and organizations", false),
@@ -561,6 +573,8 @@ func addDirectoryPeopleParameters(operation *huma.Operation) {
 		queryStringParam("primary_channel", "Primary communication channel", false),
 		lastContactAfter,
 		lastContactBefore,
+		queryStringParam("cadence", "Cadence filter: overdue, due (includes overdue), no_list, or unknown", false),
+		queryIntegerParam("due_within_days", "UTC days ahead for cadence=due, 0..3660 (default 0)"),
 		sortParam,
 	)
 }
