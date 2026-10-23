@@ -84,7 +84,7 @@ reported separately so clients can reconcile a partial failure.
 | Ingestion | Source authorization, provider mapping, imports, checkpoints, and retry behavior | Provider packages in `internal/`, `internal/importer`, `internal/meetingarchive` |
 | Store | Archive schema, transactions, messages, provenance, profiles, and durable job state | `internal/store`, `internal/sqldialect` |
 | Attachment storage | Shared bytes, streaming reads, media policies, and packed/loose layouts | `internal/attachmentstore`, `internal/attachmentpolicy`, shared pack engine |
-| Search and analytics | Search parsing, query engines, caches, vector generations, and document indexes | `internal/search`, `internal/query`, `internal/vector`, `internal/documentindex` |
+| Search and analytics | Search parsing, query engines, caches, vector generations, and Docbank document search | `internal/search`, `internal/query`, `internal/vector`, `internal/docbankmedia` |
 | People | Observed identity links, curated facts, profiles, activity, consented maintenance, and contact sync | `internal/identityindex`, `internal/personfacts`, `internal/activity`, `internal/peoplesweep`, `internal/personenrichment`, `internal/carddav` |
 | Preservation and removal | Backups, duplicate handling, deletion manifests, and explicit execution | `internal/backupapp`, `internal/dedup`, `internal/deletion` |
 

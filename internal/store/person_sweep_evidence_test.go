@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/csv"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -687,4 +689,36 @@ func TestPersonSweepRetrievalHonorsTheJournalSequenceBound(t *testing.T) {
 		[]int64{late}, 0)
 	requirements.NoError(err)
 	checks.Equal([]int64{late}, sweepMessageIDs(hydratedLate))
+}
+
+func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	id := f.insertMessage(t, "historical-document", "email", f.aliceID, time.Now().UTC())
+	addSweepBody(t, f, id, "Conversation evidence")
+	input := sweepEvidenceInput(t, sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id))
+	key, err := personfacts.EvidenceKey(input)
+	require.NoError(err)
+	persistSweepEvidence(t, f.store, key, input)
+	ref := peoplesweep.EvidenceRef{SourceLane: "document_text", SourceID: f.sourceID, MessageID: id, AttachmentID: 7, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
+	payload, err := json.Marshal(ref, json.Deterministic(true))
+	require.NoError(err)
+	document := input
+	document.SourceRef = "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString(payload)
+	documentKey, err := personfacts.EvidenceKey(document)
+	require.NoError(err)
+	persistSweepEvidence(t, f.store, documentKey, document)
+
+	decoded, err := peoplesweep.DecodePersonSweepEvidenceRef(document.SourceRef)
+	require.NoError(err)
+	assert.Equal(ref, decoded)
+	_, err = (store.PersonSweepEvidenceAligner{Store: f.store}).Align(t.Context(), document)
+	require.ErrorIs(err, peoplesweep.ErrSourceTextUnavailable)
+	changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, []peoplesweep.ArchiveChange{
+		{PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceConversationText, SourceID: f.sourceID, MessageID: id, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited},
+		{PersonID: f.alicePersonID, SourceLane: "document_text", SourceID: f.sourceID, MessageID: id, AttachmentID: 7, OccurrenceKey: "occurrence", EvidenceEffect: peoplesweep.EvidenceEffectSourceDeleted},
+	})
+	require.NoError(err)
+	assert.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: key, SourceVersion: input.SourceVersion, Reason: personfacts.EvidenceStatusSourceEdited}}, changes)
 }

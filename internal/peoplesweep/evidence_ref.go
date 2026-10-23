@@ -75,6 +75,11 @@ func validateEvidenceRef(ref EvidenceRef) error {
 			return errors.New("message evidence ref has document coordinates")
 		}
 
+	// Historical refs remain in the fact ledger after local text is deleted.
+	case "document_text":
+		if ref.AttachmentID <= 0 || strings.TrimSpace(ref.OccurrenceKey) == "" || strings.TrimSpace(ref.ChunkKey) == "" {
+			return errors.New("document evidence ref has invalid coordinates")
+		}
 	case SourceAttachmentCaption, SourceAttachmentOCR:
 		if ref.AttachmentID <= 0 || ref.OccurrenceKey != "" || ref.ChunkKey != "" {
 			return errors.New("attachment evidence ref has invalid coordinates")

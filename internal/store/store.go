@@ -1860,9 +1860,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("ensure embedding change journal triggers: %w", err)
 	}
-	if err := s.runOnceMigration(ctx, "drop_document_index_v1", 1, false, s.dropDocumentIndex); err != nil {
-		return err
-	}
 	if err := s.runOnceMigration(
 		ctx, migrationPersonSweepChangeTriggers, 1, false,
 		func(ctx context.Context) error {
@@ -1878,6 +1875,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return fmt.Errorf("ensure person sweep change triggers: %w", err)
+	}
+	// Replace callers before dropping the document helper they used. Each
+	// committed migration boundary must leave message writes usable.
+	if err := s.runOnceMigration(ctx, "drop_document_index_v1", 1, false, s.dropDocumentIndex); err != nil {
+		return err
 	}
 	if err := s.runOnceMigration(
 		ctx, migrationActivityProjectionTriggers, 1, false,

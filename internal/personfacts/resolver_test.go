@@ -2,7 +2,9 @@ package personfacts
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1231,4 +1233,30 @@ func resolverTestDecision(
 	}
 	require.FailNow(t, "decision not found", "claim=%s action=%s decisions=%+v", claimKey, action, resolution.Decisions)
 	return Decision{}
+}
+
+func TestResolverV1StoredDocumentChunksCountOncePerOccurrence(t *testing.T) {
+	for _, differentDocument := range []bool{false, true} {
+		t.Run(strconv.FormatBool(differentDocument), func(t *testing.T) {
+			first := resolverTestEvidence("chunk-one", EvidenceArchive, DirectSelf, AuthorityOrdinary, 0)
+			second := resolverTestEvidence("chunk-two", EvidenceArchive, DirectSelf, AuthorityOrdinary, 0)
+			ref := func(chunk, occurrence string) string {
+				return "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString([]byte(`{"source_lane":"document_text","source_id":1,"message_id":2,"attachment_id":3,"occurrence_key":"`+occurrence+`","chunk_key":"`+chunk+`"}`))
+			}
+			first.Input.SourceRef = ref("one", "document-one")
+			occurrence := "document-one"
+			if differentDocument {
+				occurrence = "document-two"
+			}
+			second.Input.SourceRef = ref("two", occurrence)
+			input := resolverTestInput(resolverTestMultiTarget())
+			input.Claims = []ResolvedClaim{resolverTestClaim("claim", "value", 1000, first, second)}
+			decision := resolverTestDecision(t, resolverTestResolve(t, input), "claim", DecisionApplied)
+			want := 0
+			if differentDocument {
+				want = 50
+			}
+			assert.Equal(t, want, decision.Score.Corroboration)
+		})
+	}
 }

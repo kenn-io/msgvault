@@ -150,66 +150,75 @@ func TestBackupRestoreTargetCoordinatorDefersMissingCaseVariantMatch(t *testing.
 }
 
 func TestRunBackupRestoreIntoNonexistentConfiguredDataDir(t *testing.T) {
-	cfg := testConfigValue()
+	for _, historicalDocuments := range []bool{false, true} {
+		t.Run(strconv.FormatBool(historicalDocuments), func(t *testing.T) {
+			cfg := testConfigValue()
 
-	require := require.New(t)
-	assert := assert.New(t)
-	ctx := context.Background()
-	sourceDir := t.TempDir()
-	dbPath := filepath.Join(sourceDir, "msgvault.db")
-	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	require.NoError(st.Close(), "close source store")
-	attachmentsDir := filepath.Join(sourceDir, "attachments")
-	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := context.Background()
+			sourceDir := t.TempDir()
+			dbPath := filepath.Join(sourceDir, "msgvault.db")
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+			require.NoError(st.Close(), "close source store")
+			attachmentsDir := filepath.Join(sourceDir, "attachments")
+			require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
 
-	repoPath := filepath.Join(t.TempDir(), "repo")
-	repo, err := backup.Init(repoPath)
-	require.NoError(err, "initialize backup repository")
-	_, err = backup.Create(ctx, repo, backupapp.New("test"), backup.CreateOptions{
-		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: sourceDir,
-	})
-	require.NoError(err, "create source snapshot")
+			repoPath := filepath.Join(t.TempDir(), "repo")
+			repo, err := backup.Init(repoPath)
+			require.NoError(err, "initialize backup repository")
+			var app backup.App = backupapp.New("test")
+			if historicalDocuments {
+				app = historicalDocumentBackupApp{backupapp.New("test")}
+			}
+			snapshot, err := backup.Create(ctx, repo, app, backup.CreateOptions{
+				DBPath: dbPath, ContentDir: attachmentsDir, DataDir: sourceDir,
+			})
+			require.NoError(err, "create source snapshot")
+			assert.Equal(historicalDocuments, backupapp.ManifestContainsDocumentPlaintext(snapshot))
 
-	savedCfg := cfg
-	savedRepo := backupRestoreRepo
-	savedTarget := backupRestoreTarget
-	savedOverwrite := backupRestoreOverwrite
-	savedForceUnlock := backupRestoreForceUnlock
-	savedJobs := backupRestoreJobs
-	savedLoose := backupRestoreLooseAttachments
-	savedIntegrityCheck := backupRestoreIntegrityCheck
-	t.Cleanup(func() {
-		cfg = savedCfg
-		backupRestoreRepo = savedRepo
-		backupRestoreTarget = savedTarget
-		backupRestoreOverwrite = savedOverwrite
-		backupRestoreForceUnlock = savedForceUnlock
-		backupRestoreJobs = savedJobs
-		backupRestoreLooseAttachments = savedLoose
-		backupRestoreIntegrityCheck = savedIntegrityCheck
-	})
-	target := filepath.Join(t.TempDir(), "fresh-archive")
-	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-	backupRestoreRepo = repoPath
-	backupRestoreTarget = target
-	backupRestoreOverwrite = false
-	backupRestoreForceUnlock = false
-	backupRestoreJobs = 1
-	backupRestoreLooseAttachments = false
-	backupRestoreIntegrityCheck = false
-	assert.NoDirExists(target, "restore target starts absent")
+			savedCfg := cfg
+			savedRepo := backupRestoreRepo
+			savedTarget := backupRestoreTarget
+			savedOverwrite := backupRestoreOverwrite
+			savedForceUnlock := backupRestoreForceUnlock
+			savedJobs := backupRestoreJobs
+			savedLoose := backupRestoreLooseAttachments
+			savedIntegrityCheck := backupRestoreIntegrityCheck
+			t.Cleanup(func() {
+				cfg = savedCfg
+				backupRestoreRepo = savedRepo
+				backupRestoreTarget = savedTarget
+				backupRestoreOverwrite = savedOverwrite
+				backupRestoreForceUnlock = savedForceUnlock
+				backupRestoreJobs = savedJobs
+				backupRestoreLooseAttachments = savedLoose
+				backupRestoreIntegrityCheck = savedIntegrityCheck
+			})
+			target := filepath.Join(t.TempDir(), "fresh-archive")
+			cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			_ = testCtx
+			backupRestoreRepo = repoPath
+			backupRestoreTarget = target
+			backupRestoreOverwrite = false
+			backupRestoreForceUnlock = false
+			backupRestoreJobs = 1
+			backupRestoreLooseAttachments = false
+			backupRestoreIntegrityCheck = false
+			assert.NoDirExists(target, "restore target starts absent")
 
-	cmd := &cobra.Command{Use: "restore"}
-	cmd.SetContext(testCtx)
-	cmd.SetOut(io.Discard)
-	require.NoError(runBackupRestore(cmd, nil), "restore into fresh configured archive home")
-	assert.FileExists(filepath.Join(target, "msgvault.db"), "restored database")
-	assert.FileExists(daemonOwnerLockPath(target), "restore exclusion lock artifact is preserved")
-	held, probeErr := daemonOwnerLockHeld(target)
-	require.NoError(probeErr, "probe released restore exclusion")
-	assert.False(held, "restore releases daemon exclusion after all cleanup")
+			cmd := &cobra.Command{Use: "restore"}
+			cmd.SetContext(testCtx)
+			cmd.SetOut(io.Discard)
+			require.NoError(runBackupRestore(cmd, nil), "restore into fresh configured archive home")
+			assert.FileExists(filepath.Join(target, "msgvault.db"), "restored database")
+			assert.FileExists(daemonOwnerLockPath(target), "restore exclusion lock artifact is preserved")
+			held, probeErr := daemonOwnerLockHeld(target)
+			require.NoError(probeErr, "probe released restore exclusion")
+			assert.False(held, "restore releases daemon exclusion after all cleanup")
+		})
+	}
 }
 
 func TestRunBackupRestoreRejectsDaemonClaimAfterPreflight(t *testing.T) {
@@ -741,4 +750,23 @@ func TestResolveBackupRepoNilConfig(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/flag/repo", repo)
+}
+
+// Contribute the artifact through Kit's real snapshot path, as older writers did.
+type historicalDocumentBackupApp struct{ *backupapp.App }
+
+func (a historicalDocumentBackupApp) FrozenView(session *backup.FrozenSession) backup.FrozenView {
+	return historicalDocumentBackupView{a.App.FrozenView(session)}
+}
+
+type historicalDocumentBackupView struct{ backup.FrozenView }
+
+func (historicalDocumentBackupView) AuxiliaryArtifacts(context.Context) ([]backup.AuxiliaryArtifact, error) {
+	return []backup.AuxiliaryArtifact{{
+		Name: "document-derivatives", Format: "application/vnd.msgvault.document-derivatives+json; contains-normalized-plaintext=true",
+		Open: func(context.Context) (io.ReadCloser, int64, error) {
+			const data = `{"schema_version":1,"contains_normalized_attachment_plaintext":true,"chunks":1,"characters":24}`
+			return io.NopCloser(strings.NewReader(data)), int64(len(data)), nil
+		},
+	}}, nil
 }
