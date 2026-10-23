@@ -1100,6 +1100,7 @@ func TestAttachmentMirrorProcessingRevokedConsentBlocks(t *testing.T) {
 	r.processingDue()
 	err := r.runBatch(t.Context())
 	require.ErrorContains(err, "document_profile \"documents\": check the profile and grant consent in Docbank: consent")
+	assert.Contains(err.Error(), "after restoring consent or authority, run msgvault docbank attachments backfill")
 	var outcome, jobID string
 	var next *time.Time
 	require.NoError(r.f.Store.DB().QueryRow(`SELECT outcome, job_id, next_action_at FROM docbank_attachment_processing WHERE content_hash = 'a'`).Scan(&outcome, &jobID, &next))
