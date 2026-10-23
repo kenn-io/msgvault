@@ -1062,6 +1062,35 @@ func TestAttachmentMirrorProcessingRevokedConsentWaitsForBackfill(t *testing.T) 
 	assert.Empty(r.processingCounts().Outcomes)
 }
 
+func TestAttachmentMirrorProcessingRefusalBackfill(t *testing.T) {
+	for _, stage := range []string{"plan", "start"} {
+		t.Run(stage, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			r := newMirrorRig(t)
+			r.delivered("a")
+			faults := r.processing.Faults
+			if stage == "start" {
+				faults = r.processing.JobFaults
+			}
+			faults["a"] = http.StatusNotFound
+			r.processing.Reasons["a"] = "not_found"
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal(map[string]int64{"not_found": 1}, r.processingCounts().Outcomes)
+			delete(faults, "a")
+			require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal(int64(1), r.processingCounts().Requested)
+			assert.Empty(r.processingCounts().Outcomes)
+			r.processing.States["job-a"] = [3]string{"completed", "rendition", ""}
+			r.processingDue()
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal(int64(1), r.processingCounts().Extracted)
+			assert.Equal([]string{"job-a"}, r.processing.Polls)
+		})
+	}
+}
+
 func TestAttachmentMirrorProcessingOperatorRepair(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
