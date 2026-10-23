@@ -30,7 +30,8 @@ Message bodies, snippets, the search index, and attachment metadata are computed
 from a provider's payload when a message is imported, so improving how they are
 derived leaves already-archived rows stale. This command recomputes them from
 the verbatim payload stored alongside every message, for source types with a
-re-derivation pass. For every source it also derives account attribution (the
+re-derivation pass. Email sources rebuild bodies, HTML, previews, and search
+from retained MIME. For every source it also derives account attribution (the
 address searched by account: and received:) for email and calendar rows still
 waiting for it.
 
@@ -45,6 +46,7 @@ idempotent.
 
 Examples:
   msgvault repair-derived
+  msgvault repair-derived --source-type imap
   msgvault repair-derived --source-type beeper
   msgvault repair-derived --source-type beeper --identifier instagramgo`,
 		Args: cobra.NoArgs,

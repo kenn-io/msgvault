@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -8,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/rederive"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -40,4 +43,24 @@ func TestRepairDerivedTargetsRejectsUnknownSourceType(t *testing.T) {
 	targets, err := repairDerivedTargets(st)
 	require.NoError(err)
 	require.Len(targets, 1)
+}
+
+func TestRepairDerivedSourceRebuildsEmail(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "repair@example.net")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(src.ID, "old", "Archive")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "old", MessageType: "email"})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: "stale", Valid: true}, sql.NullString{}))
+	require.NoError(st.UpsertMessageRaw(id, []byte("From: sender@example.net\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nRebuilt archive")))
+	var out bytes.Buffer
+	require.NoError(repairDerivedSource(t.Context(), &out, st, src))
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Equal("Rebuilt archive", body)
+	assert.Contains(out.String(), "1 bodies rewritten")
 }

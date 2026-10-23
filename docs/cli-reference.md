@@ -4770,13 +4770,17 @@ it leaves raw payloads, downloaded media, and sync cursors in place.
 
 ```bash
 msgvault repair-derived
+msgvault repair-derived --source-type imap
 msgvault repair-derived --source-type beeper
 ```
 
 Repeat `--source-type` or `--identifier` to narrow the source set. A requested
 type that has no re-derivation pass and no source in the archive is an error.
-Source types with a re-derivation pass (`beeper`, `discord`) recompute their
-derived text and metadata. Every source also derives account attribution for
+Email sources (`gmail`, `imap`, `msmail`, `o365`, `mbox`, `hey`,
+`google-groups`, `apple-mail`, `pst`, `eml`, and `maildir`) rebuild body text,
+HTML, previews, and search from retained MIME. Beeper and Discord sources
+recompute their derived text and metadata. Custom email source types have no
+MIME re-derivation pass. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
 them. Source syncs and imports run the same work first, so use this command
 for on-demand repair, file imports you will not run again, or retrying an

@@ -6731,6 +6731,30 @@ func (s *Store) UpdateMessageDerivedText(
 	})
 }
 
+// UpdateMessageDerivedEmailTextContext rebuilds a retained email's body and
+// preview, then refreshes search from the stored subject and addresses. Earlier
+// envelope repairs therefore survive MIME re-derivation. All writes commit together.
+func (s *Store) UpdateMessageDerivedEmailTextContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+			return fmt.Errorf("lock derived email write: %w", err)
+		}
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := upsertMessageBody(q, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML); err != nil {
+			return fmt.Errorf("update derived email body: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET snippet = ? WHERE id = ?`, snippet, messageID); err != nil {
+			return fmt.Errorf("update derived email snippet: %w", err)
+		}
+		if s.fts5Available {
+			if _, err := tx.ExecContext(ctx, s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1); err != nil {
+				return fmt.Errorf("update derived email FTS: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
 // ArchivedSourceMessageIDs returns the subset of sourceMessageIDs already
 // archived for a source. Used to decide whether a page fetched from the
 // provider contains anything new without re-persisting it first.
