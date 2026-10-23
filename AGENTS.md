@@ -27,6 +27,7 @@ provide different ways to use the same archive.
   from the task, including formatting and generated output.
 - Pull requests must have a user-facing benefit or improve the developer
   experience, and the body must say which one.
+- Write issues and pull requests in English.
 - Keep PR descriptions focused on the problem, resulting behavior, and review
   boundaries. Do not add `Validation`, `Test plan`, or equivalent command-run
   sections; CI carries routine check results.

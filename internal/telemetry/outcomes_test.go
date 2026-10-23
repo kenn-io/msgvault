@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
@@ -103,12 +102,7 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 }
 
 func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "")
-	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
-		t.Setenv(name, os.Getenv(name))
-		require.NoError(t, os.Unsetenv(name))
-	}
+	enableTelemetryEnv(t)
 	stub := newWireStub(t)
 	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, stub.server.URL, slog.Default())
 	defer func() { require.NoError(t, reporter.Close()) }()
