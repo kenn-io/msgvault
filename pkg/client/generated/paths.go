@@ -714,6 +714,11 @@ func (s SetPersonFactPinPath) Validate() error {
 	return errors
 }
 
+type ListPersonFactStalenessPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type SearchPersonFilesPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`

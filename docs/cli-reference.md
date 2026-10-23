@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-23"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2913,9 +2913,12 @@ grant consent to a provider or enroll a person in briefs.
 | `person facts evidence-status <person-id>` | Inspect changes to evidence support |
 | `person facts claims <person-id>` | Inspect proposed values |
 | `person facts decisions <person-id>` | Inspect resolver decisions |
+| `person facts stale <person-id> [--all] [--include-sensitive]` | Review current facts that need verification; `--all` includes fresh facts |
 | `person facts pins <person-id>` | List fields protected from automatic replacement |
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
+
+The `person facts stale` command is available on `main` after the latest release.
 
 These commands accept `--json`. Use catalog keys, not slugs, for fact pins.
 Evidence, claims, and decisions accept an exact `--target`; fact-history
@@ -3476,6 +3479,7 @@ msgvault attribute-definition list [--object-type person|organization] [--includ
 msgvault attribute-definition get <definition-id> [--json]
 msgvault attribute-definition create --definition <json|@path|-> [--dry-run] [--json]
 msgvault attribute-definition rename <definition-id> [--label <text>] [--description <text> | --clear-description] [--json]
+msgvault attribute-definition set-stability <definition-id> <fixed|durable|volatile> [--json]
 msgvault attribute-definition delete <definition-id>
 ```
 
@@ -3483,6 +3487,13 @@ msgvault attribute-definition delete <definition-id>
 conflict with definitions already stored by the daemon. `rename` does not
 change the immutable slug or universal ID. Deletion is limited to user-created,
 deletable definitions that have no stored values.
+
+`set-stability` changes the definition's stability class with revision protection.
+It accepts only `fixed`, `durable`, or `volatile`; `list` displays the class.
+See [attribute stability](usage/people.md#create-a-portable-field-definition) for
+the shipped defaults and API behavior.
+
+New on `main`; not available in v0.21.0.
 
 ---
 

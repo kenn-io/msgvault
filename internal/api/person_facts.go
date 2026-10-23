@@ -108,13 +108,14 @@ type PersonFactDecision struct {
 }
 
 type PersonFactScoreBreakdown struct {
-	SourceClass   int `json:"source_class"`
-	Directness    int `json:"directness"`
-	Authority     int `json:"authority"`
-	Confidence    int `json:"confidence"`
-	Freshness     int `json:"freshness"`
-	Corroboration int `json:"corroboration"`
-	Total         int `json:"total"`
+	StabilityWindow bool `json:"stability_window,omitzero"`
+	SourceClass     int  `json:"source_class"`
+	Directness      int  `json:"directness"`
+	Authority       int  `json:"authority"`
+	Confidence      int  `json:"confidence"`
+	Freshness       int  `json:"freshness"`
+	Corroboration   int  `json:"corroboration"`
+	Total           int  `json:"total"`
 }
 
 type PersonFactResolutionResult struct {
@@ -157,7 +158,52 @@ type SetPersonFactPinRequest struct {
 	Pinned bool `json:"pinned"`
 }
 
+// PersonFactStalenessStore is the read-only current-value freshness capability.
+type PersonFactStalenessStore interface {
+	PersonFactStalenessContext(ctx context.Context, personID int64, asOf time.Time, includeSensitive bool) ([]store.PersonFactStaleness, error)
+}
+
+var _ PersonFactStalenessStore = (*store.Store)(nil)
+
+type PersonFactStalenessResponse struct {
+	AsOf  time.Time                   `json:"as_of"`
+	Items []store.PersonFactStaleness `json:"items"`
+}
+
+func (s *Server) handleListPersonFactStaleness(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	facts, ok := s.store.(PersonFactStalenessStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "person_facts_unavailable", "Person fact staleness is unavailable")
+		return
+	}
+	personID, ok := personProfileID(w, r)
+	if !ok {
+		return
+	}
+	includeSensitive, _, err := queryBool(r, "include_sensitive")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	asOf := time.Now().UTC()
+	items, err := facts.PersonFactStalenessContext(r.Context(), personID, asOf, includeSensitive)
+	if err != nil {
+		s.writePersonFactError(w, err)
+		return
+	}
+	writePersonFactDiagnostic(w, PersonFactStalenessResponse{AsOf: asOf, Items: items})
+}
+
 func (s *Server) registerPersonFactRoutes(api huma.API) {
+	staleness := rawAPIV1Operation("listPersonFactStaleness", http.MethodGet,
+		"/people/{id}/fact-staleness", "Report current person fact staleness")
+	addPersonIDParameter(&staleness)
+	staleness.Parameters = append(staleness.Parameters, queryBooleanParam("include_sensitive", "Include sensitive facts"))
+	staleness.Responses = jsonResponsesFor[PersonFactStalenessResponse](api)
+	addErrorResponses(api, staleness.Responses, http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, staleness, s.handleListPersonFactStaleness)
+
 	catalog := rawAPIV1Operation("listPersonFactTargets", http.MethodGet,
 		"/person-fact-targets", "List eligible automatic person fact targets")
 	catalog.Parameters = append(catalog.Parameters,
@@ -619,7 +665,7 @@ func personFactDecisionDTO(decision personfacts.Decision) PersonFactDecision {
 			SourceClass: decision.Score.SourceClass, Directness: decision.Score.Directness,
 			Authority: decision.Score.Authority, Confidence: decision.Score.Confidence,
 			Freshness: decision.Score.Freshness, Corroboration: decision.Score.Corroboration,
-			Total: decision.Score.Total,
+			Total: decision.Score.Total, StabilityWindow: decision.Score.StabilityWindow,
 		},
 		CompetingClaimKey: decision.CompetingClaimKey, Projection: decision.Projection,
 		CreatedAt: decision.CreatedAt,

@@ -1832,6 +1832,7 @@ var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
+var _ api.PersonFactStalenessStore = (*storeAPIAdapter)(nil)
 var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 var _ api.MuesliImporter = (*storeAPIAdapter)(nil)
@@ -3218,6 +3219,12 @@ func (a *storeAPIAdapter) ListPersonFactDecisionsContext(
 	ctx context.Context, personID int64, filter personfacts.DecisionFilter,
 ) ([]personfacts.Decision, error) {
 	return a.store.ListPersonFactDecisionsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) PersonFactStalenessContext(
+	ctx context.Context, personID int64, asOf time.Time, includeSensitive bool,
+) ([]store.PersonFactStaleness, error) {
+	return a.store.PersonFactStalenessContext(ctx, personID, asOf, includeSensitive)
 }
 
 func (a *storeAPIAdapter) ListPersonFactPinsContext(

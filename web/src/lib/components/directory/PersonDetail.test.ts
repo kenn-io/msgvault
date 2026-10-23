@@ -11,13 +11,26 @@ import PersonDetail from './PersonDetail.svelte';
 
 const when = '2026-01-01T00:00:00Z';
 
-function nicknameDefinition(): GeneratedAttributeDefinition {
+function nicknameDefinition(): GeneratedAttributeDefinition & { inference_eligible: boolean } {
   return {
     id: 1, slug: 'nickname', label: 'Nickname', value_type: 'text', field_type: 'text',
     api_mutable: true, cardinality: 'single', display_order: 0, history_exempt: false,
+    stability: 'durable', inference_eligible: true,
     is_sensitive: false, is_active: true, is_audited: true, is_deletable: true, is_required: false,
     is_searchable: false, object_type: 'person', ownership: 'user', revision: 1,
     ui_creatable: true, ui_editable: true, universal_id: 'synthetic-nickname',
+    created_at: when, updated_at: when
+  };
+}
+
+function privateNoteDefinition(): GeneratedAttributeDefinition & { inference_eligible: boolean } {
+  return {
+    id: 1, slug: 'private-note', label: 'Private note', value_type: 'text', field_type: 'text',
+    api_mutable: true, cardinality: 'single', display_order: 0, history_exempt: false,
+    stability: 'durable', inference_eligible: false,
+    is_sensitive: true, is_active: true, is_audited: true, is_deletable: true, is_required: false,
+    is_searchable: false, object_type: 'person', ownership: 'user', revision: 1,
+    ui_creatable: true, ui_editable: true, universal_id: 'synthetic-private-note',
     created_at: when, updated_at: when
   };
 }
@@ -148,14 +161,7 @@ describe('PersonDetail', () => {
         contact_points: [{ person_id: 7, address_kind: 'email', original_value: 'person@example.test', normalized_value: 'person@example.test', normalization: 'email', normalization_version: 1, service_slug: 'email', envelope: { id: 2, ordinal: 0, source: 'archive_observation', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', vcard: {} } }],
         addresses: [], dates: [], categories: [], media: []
       },
-      attributes: { person_id: 7, attributes: [{ definition: {
-        id: 1, slug: 'private-note', label: 'Private note', value_type: 'text', field_type: 'text',
-        api_mutable: true, cardinality: 'single', display_order: 0, history_exempt: false,
-        is_sensitive: true, is_active: true, is_audited: true, is_deletable: true, is_required: false,
-        is_searchable: false, object_type: 'person', ownership: 'user', revision: 1,
-        ui_creatable: true, ui_editable: true, universal_id: 'synthetic-private-note',
-        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z'
-      }, current: [{ id: 1, person_id: 7, definition_id: 1, definition_slug: 'private-note', ordinal: 0, source: 'user', active_from: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z', value: { type: 'text', text: 'Synthetic value' } }] }] },
+      attributes: { person_id: 7, attributes: [{ definition: privateNoteDefinition(), current: [{ id: 1, person_id: 7, definition_id: 1, definition_slug: 'private-note', ordinal: 0, source: 'user', active_from: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z', value: { type: 'text', text: 'Synthetic value' } }] }] },
       contactState: { person_id: 7, cadence_status: 'active', computed_at: '2026-01-01T00:00:00Z', interaction_count: 4, stale: false },
       activity: { person_id: 7, total_count: 1, days: [{ local_date: '2026-01-01', entry_count: 1, event_count: 0, direct_count: 1 }] },
       etags: {}, errors: {}

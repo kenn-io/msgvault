@@ -997,57 +997,53 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 	const (
 		targetKey      = "59e9a7d3-4904-4d0e-97d1-d0680e1e9e55"
 		targetRevision = "sha256:99794c3a2a04a5e39a49ee51f24d5a1790e3d787ff98d57f00ff1c6d80741787"
-		resolver       = "person-fact-resolver-v1"
+		resolver       = "person-fact-resolver-v2"
 		providerPolicy = "b4cd8faea9a6903d08c6df206eb542032028c6c83f974b81eff3dd4128dfda7a"
 		resolvedAt     = "2026-08-22T12:00:00Z"
 		zeroScore      = `{"authority":0,"confidence":0,"corroboration":0,"directness":0,"freshness":0,"source_class":0,"total":0}`
 		appliedScore   = `{"authority":100,"confidence":100,"corroboration":0,"directness":400,"freshness":0,"source_class":300,"total":900}`
 		originalClaim  = "sha256:627d55ad9939c88f5ee37bd7335c045da79bf929cc4aface008dbbee29e67b39"
 		editedClaim    = "sha256:f2cd63039d82421ec4e6865b8a630a0c5588dca2ed694046c201b621edf641b1"
-		editInput      = "sha256:51da0168f3ef11982ca50fbe0fd520e7e36b82c8fc99b0afc3bd8724b81461c6"
+		editInput      = "sha256:aa8ecfca12ebb5c9807fda8cf329bb4e23669f9f6731530fe54e902ca12a78b5"
 	)
 	wantResolutions := []parityResolutionSnapshot{
 		{RunID: "run-parity-deleted", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
-			InputFingerprint:          "sha256:2ef17b9bd7f05e9e6bef2f414bfc95b436897cf13a45fee239ca61a84d455107",
+			InputFingerprint:          "sha256:763101cb4f09a6c4521f04426cf5a5c003305615987e1741e39d5f0f08c1bafd",
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:3d12b9920f34964d24b3b16302a72b68d28c1dfe9f49a7d31497c23ee69b22a3",
+			DecisionKey: "sha256:ea4767cebab4840f0710f60ef9279792ff9fd6f35bdb71aa6b3b6b618986e496",
 			ClaimKey:    originalClaim, Action: "retained", Reason: "evidence-unsupported",
 			ScoreJSON: zeroScore, ProjectionKind: "person_attribute", ProjectionRowID: 1},
 		{RunID: "run-parity-edit", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
 			InputFingerprint:          editInput,
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:470e1c0b023c68ef3ee51625aa7265d90eacf8276d03d731d4129febed882f95",
-			ClaimKey:    originalClaim, Action: "retained", Reason: "evidence-unsupported",
-			ScoreJSON: zeroScore},
+			DecisionKey: "sha256:963d13580fbf315fcccdb50319eb86fbdecf7bbde4d23f7879c2b327b22e733a",
+			ClaimKey:    editedClaim, Action: "applied", Reason: "applied-projection",
+			ScoreJSON: appliedScore},
 		{RunID: "run-parity-edit", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
 			InputFingerprint:          editInput,
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:bb1a06878da4d27c36b8ccd1b432f327ce8959f20443bf458d4b97c654ca947c",
-			ClaimKey:    editedClaim, Action: "applied", Reason: "applied-projection",
-			ScoreJSON: appliedScore},
+			DecisionKey: "sha256:edb59b5ce40b48de532a24895473140b3560bc9c7811d273f734f21fb438bc97",
+			ClaimKey:    originalClaim, Action: "retained", Reason: "evidence-unsupported",
+			ScoreJSON: zeroScore},
 		{RunID: "run-parity-reimported", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
-			InputFingerprint:          "sha256:d28662c7747fd0513ee80628e1ecd0e9d6427366c1f53b2280344d53c886e8eb",
+			InputFingerprint:          "sha256:5a826356974fa68a0d006c7ba5107a8a2fc74bc6ffd9dd3d06c83b4548abf420",
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:6020af1bc587840b6b4a7e39668e0c1389548fb43be7bd6e9b183c0153d9fc50",
+			DecisionKey: "sha256:249fc89417fd516c0b5c5327dfe15e142341d0733075fe9337168b4113b303eb",
 			ClaimKey:    originalClaim, Action: "applied", Reason: "applied-projection",
 			ScoreJSON: appliedScore, ProjectionKind: "person_attribute", ProjectionRowID: 2},
 		{RunID: "run-parity-success", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
-			InputFingerprint:          "sha256:06a125246aa3c69a5cf7303d2a0854c099a0b790ca50c33d7e03c287030c7ca4",
+			InputFingerprint:          "sha256:c526c83123b3b8c3862b7e36df1cc0455f5209b646720a20a9f8fe50efc29434",
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:53457a110470f894bbc26b41bd57e8f5d13383c1a22601076f7b743e126888e6",
+			DecisionKey: "sha256:4a9b51bbb720bf0b4ff546ba87e7ae620f9d507b8e69adbb8ab672b82569ab0b",
 			ClaimKey:    originalClaim, Action: "applied", Reason: "applied-projection",
 			ScoreJSON: appliedScore, ProjectionKind: "person_attribute", ProjectionRowID: 1},
 	}
 	assert.Equal(t, wantResolutions, resolutionSnapshot)
-	mutatedResolutions := slices.Clone(wantResolutions)
-	mutatedResolutions[0].InputFingerprint = strings.Repeat("0", 71)
-	assert.NotEqual(t, wantResolutions, mutatedResolutions,
-		"resolution content mutation must be visible to the exact snapshot")
 	assert.Equal(t, []string{"chat"}, parityCurrentChannel(t, f))
 
 	oldCursor := loadPersonSweepCursor(t, f.store, f.key)
@@ -1067,10 +1063,6 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 		LastBackstopAt: &backstopAt}
 	assert.Equal(t, wantOldCursor, oldCursor)
 	assert.Equal(t, wantNewCursor, newCursor)
-	mutatedCursor := wantNewCursor
-	mutatedCursor.ReconcileAfterKey = "00000000000000000000"
-	assert.NotEqual(t, wantNewCursor, mutatedCursor,
-		"cursor coordinate mutation must be visible to the exact snapshot")
 	work := parityWorkSnapshotNow(t, f.store, f.personID)
 	assert.False(t, work.Exists, "clean production apply should remove durable work")
 	f.provider.mu.Lock()

@@ -549,6 +549,9 @@ func TestPersonFactOpenAPIOperationsContainNoReviewMutation(t *testing.T) {
 		"/api/v1/people/{id}/fact-claims": {
 			http.MethodGet: "listPersonFactClaims",
 		},
+		"/api/v1/people/{id}/fact-staleness": {
+			http.MethodGet: "listPersonFactStaleness",
+		},
 		"/api/v1/people/{id}/fact-decisions": {
 			http.MethodGet: "listPersonFactDecisions",
 		},
