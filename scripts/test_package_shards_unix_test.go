@@ -104,6 +104,7 @@ func TestSilent(t *testing.T) { record(t) }
 	} {
 		t.Run("part="+part.index+"/"+part.count+",SHARD_FAIL="+part.fail, func(t *testing.T) {
 			require := require.New(t)
+			assert := assert.New(t)
 			records := t.TempDir()
 			t.Setenv("SHARD_RECORD", records)
 			t.Setenv("SHARD_FAIL", part.fail)
@@ -115,14 +116,14 @@ func TestSilent(t *testing.T) { record(t) }
 			output, err := cmd.CombinedOutput()
 			if part.failed {
 				require.Error(err, string(output))
-				assert.Contains(t, string(output), "--- FAIL: TestNested/routes/get (")
+				assert.Contains(string(output), "--- FAIL: TestNested/routes/get (")
 			} else {
 				require.NoError(err, string(output))
 			}
 			if len(part.names) == 0 {
 				// Bash 3.2 can report an unbound variable here and still exit 0.
-				assert.NotContains(t, string(output), "unbound variable")
-				assert.Contains(t, string(output), "No tests found in .")
+				assert.NotContains(string(output), "unbound variable")
+				assert.Contains(string(output), "No tests found in .")
 			}
 			entries, err := os.ReadDir(records)
 			require.NoError(err)
@@ -130,7 +131,7 @@ func TestSilent(t *testing.T) { record(t) }
 			for _, entry := range entries {
 				names = append(names, entry.Name())
 			}
-			assert.Equal(t, part.names, names)
+			assert.Equal(part.names, names)
 		})
 	}
 	for _, parts := range [][2]string{{"0", "2"}, {"3", "2"}, {"1", "0"}, {"bad", "2"}, {"1", "65"}, {"999999999999999999999", "2"}} {
