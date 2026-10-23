@@ -21,7 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
-const personMergeSnapshotVersion = 1
+const personMergeSnapshotVersion = 2
 
 const (
 	identityMatchCandidatesTableName       = "identity_match_candidates"
@@ -124,7 +124,10 @@ type personMergeReference struct {
 	KindValue  string
 }
 
+type personMergeChildOf struct{ ParentTable, ParentKeyColumn string }
+
 type personMergeTableSpec struct {
+	ChildOf          *personMergeChildOf
 	TableName        string
 	KeyColumn        string
 	KeyColumns       []string
@@ -153,7 +156,12 @@ func polymorphicPersonReference(idColumn, kindColumn string) personMergeReferenc
 	}
 }
 
-const personMergePersonIDColumn = "person_id"
+const (
+	personMergePersonIDColumn         = "person_id"
+	personObservationIDColumn         = "observation_id"
+	personObservationEvidenceIDColumn = "evidence_id"
+	personObservationsTableName       = "person_observations"
+)
 
 // personMergeTableRegistry is the closed allowlist for every table that can
 // point at a person. Operation tables are classified but not recursively
@@ -161,27 +169,27 @@ const personMergePersonIDColumn = "person_id"
 var personMergeTableRegistry = map[string]personMergeTableSpec{
 	"person_participants": {
 		TableName: "person_participants", KeyColumn: "participant_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_tracking": {
-		TableName: "person_tracking", KeyColumn: "person_id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		TableName: "person_tracking", KeyColumn: personMergePersonIDColumn, Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"vcard_resource_envelopes": {
 		TableName: "vcard_resource_envelopes", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"carddav_resources": {
 		TableName: "carddav_resources", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"carddav_publications": {
-		TableName: "carddav_publications", KeyColumn: "person_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		TableName: "carddav_publications", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_carddav_inference_state": {
-		TableName: "person_carddav_inference_state", KeyColumn: "person_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		TableName: "person_carddav_inference_state", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_uid_aliases": {
 		TableName: "person_uid_aliases", KeyColumn: "retired_uid", Snapshot: true,
@@ -197,14 +205,14 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	personRelationshipReviewsTableName: {
 		TableName: personRelationshipReviewsTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{
-			directPersonReference("person_id"),
+			directPersonReference(personMergePersonIDColumn),
 			directPersonReference("matched_person_id"),
 		},
 	},
 	personAttributeValuesTableName: {
 		TableName: personAttributeValuesTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{
-			directPersonReference("person_id"),
+			directPersonReference(personMergePersonIDColumn),
 			polymorphicPersonReference("value_record_id", "value_record_type"),
 		},
 	},
@@ -267,37 +275,40 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	// Fact-ledger history remains scoped to the person whose identity produced
 	// it, so an absorbed person's ledger cascades with that root. Explicit pin
 	// events are profile state, however, and must survive an exact split.
-	"person_observations":             {TableName: "person_observations", KeyColumn: "id", Snapshot: false, PersonReferences: []personMergeReference{directPersonReference("person_id"), directPersonReference("subject_person_id")}},
-	"person_observation_events":       {TableName: "person_observation_events", KeyColumn: "id", Snapshot: false, PersonReferences: []personMergeReference{directPersonReference("person_id")}},
-	"person_observation_suppressions": {TableName: "person_observation_suppressions", KeyColumn: "id", Snapshot: false, PersonReferences: []personMergeReference{directPersonReference("person_id")}},
-	"person_observation_clocks":       {TableName: "person_observation_clocks", KeyColumn: "person_id", Snapshot: false, PersonReferences: []personMergeReference{directPersonReference("person_id")}},
+	personObservationsTableName:       {TableName: personObservationsTableName, KeyColumn: "id", Snapshot: true, PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn), directPersonReference("subject_person_id")}},
+	"person_observation_events":       {TableName: "person_observation_events", KeyColumn: "id", Snapshot: true, ChildOf: &personMergeChildOf{personObservationsTableName, personObservationIDColumn}, PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)}},
+	"person_observation_suppressions": {TableName: "person_observation_suppressions", KeyColumn: "id", Snapshot: true, PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)}},
+	"person_observation_clocks":       {TableName: "person_observation_clocks", KeyColumn: personMergePersonIDColumn, Snapshot: true, PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)}},
+	"person_observation_evidence":     {TableName: "person_observation_evidence", KeyColumn: personObservationIDColumn, KeyColumns: []string{personObservationIDColumn, personObservationEvidenceIDColumn}, Snapshot: true, ChildOf: &personMergeChildOf{personObservationsTableName, personObservationIDColumn}},
+	"person_observation_premises":     {TableName: "person_observation_premises", KeyColumn: "derived_id", KeyColumns: []string{"derived_id", "premise_id"}, Snapshot: true, ChildOf: &personMergeChildOf{personObservationsTableName, "derived_id"}},
+	"person_observation_categories":   {TableName: "person_observation_categories", KeyColumn: personObservationIDColumn, KeyColumns: []string{personObservationIDColumn, "category"}, Snapshot: true, ChildOf: &personMergeChildOf{personObservationsTableName, personObservationIDColumn}},
 	"person_fact_generations": {
 		TableName: "person_fact_generations", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_evidence": {
 		TableName: "person_fact_evidence", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_claims": {
 		TableName: "person_fact_claims", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_evidence_status_events": {
 		TableName: "person_fact_evidence_status_events", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_resolutions": {
 		TableName: "person_fact_resolutions", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_decisions": {
 		TableName: "person_fact_decisions", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_pin_events": {
 		TableName: "person_fact_pin_events", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	// Brief enrollment is profile state, like tracking, and moves to the
 	// survivor. Brief versions belong to the fact generation that produced
@@ -314,27 +325,27 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	},
 	"person_names": {
 		TableName: "person_names", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	personContactPointsTableName: {
 		TableName: personContactPointsTableName, KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_addresses": {
 		TableName: "person_addresses", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_dates": {
 		TableName: "person_dates", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_categories": {
 		TableName: "person_categories", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_media": {
 		TableName: "person_media", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	identityMatchCandidatesTableName: {
 		TableName: identityMatchCandidatesTableName, KeyColumn: "id", Snapshot: true,
@@ -359,21 +370,21 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	},
 	"employments": {
 		TableName: "employments", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"activity_event_persons": {
 		TableName: "activity_event_persons", KeyColumn: "message_id",
-		KeyColumns: []string{"message_id", "person_id"}, Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		KeyColumns: []string{"message_id", personMergePersonIDColumn}, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_contact_state": {
-		TableName: "person_contact_state", KeyColumn: "person_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		TableName: "person_contact_state", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"daily_note_entry_persons": {
 		TableName: "daily_note_entry_persons", KeyColumn: "entry_id",
-		KeyColumns: []string{"entry_id", "person_id"}, Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		KeyColumns: []string{"entry_id", personMergePersonIDColumn}, Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 }
 
@@ -572,6 +583,9 @@ func (s *Store) capturePersonMergeTableTx(
 	spec personMergeTableSpec,
 	survivorID, absorbedID int64,
 ) ([]personMergeSnapshotRow, error) {
+	if spec.ChildOf != nil {
+		return s.captureObservationChildrenTx(ctx, tx, spec, survivorID, absorbedID)
+	}
 	predicates := make([]string, 0, len(spec.PersonReferences))
 	args := make([]any, 0, len(spec.PersonReferences)*3)
 	keyColumns := spec.keyColumns()
@@ -681,8 +695,22 @@ func (s *Store) capturePersonMergeQueryTx(
 func personMergeRowProvenance(
 	table string, values []any, indexes map[string]int, absorbedID int64,
 ) personMergeProvenanceKind {
+	if table == personObservationsTableName {
+		id, _ := personMergeSnapshotInt64(values[indexes[personMergePersonIDColumn]])
+		if id != absorbedID {
+			return personMergeProvenanceInboundReference
+		}
+		origin := personMergeSnapshotTextValue(values[indexes["origin"]])
+		level := personMergeSnapshotTextValue(values[indexes["level"]])
+		pinned, _ := personMergeSnapshotBool(values[indexes["pinned"]])
+		owner := personMergeSnapshotTextValue(values[indexes["owner_state"]])
+		if origin == "owner" || (level == "explicit" && (pinned || owner == "confirmed")) {
+			return personMergeProvenanceAbsorbedProfile
+		}
+		return personMergeProvenanceDerived
+	}
 	if table == personAttributeValuesTableName {
-		if index, ok := indexes["person_id"]; ok {
+		if index, ok := indexes[personMergePersonIDColumn]; ok {
 			if id, valid := personMergeSnapshotInt64(values[index]); valid && id == absorbedID {
 				return personMergeProvenanceAbsorbedProfile
 			}
@@ -1019,7 +1047,7 @@ func appendUniqueString(values []string, value string) []string {
 }
 
 func encodePersonMergeSnapshot(snapshot personMergeSnapshot) ([]byte, string, error) {
-	if snapshot.Version != personMergeSnapshotVersion {
+	if snapshot.Version != personMergeSnapshotVersion && snapshot.Version != 1 {
 		return nil, "", fmt.Errorf("%w: unsupported snapshot version %d",
 			ErrPersonMergeInvalid, snapshot.Version)
 	}
@@ -1071,7 +1099,7 @@ func decodePersonMergeSnapshot(compressed []byte, wantSHA256 string) (personMerg
 		return personMergeSnapshot{}, fmt.Errorf("%w: decode JSON: %w",
 			ErrPersonMergeSnapshotCorrupt, err)
 	}
-	if snapshot.Version != personMergeSnapshotVersion {
+	if snapshot.Version != personMergeSnapshotVersion && snapshot.Version != 1 {
 		return personMergeSnapshot{}, fmt.Errorf("%w: unsupported version %d",
 			ErrPersonMergeSnapshotCorrupt, snapshot.Version)
 	}
