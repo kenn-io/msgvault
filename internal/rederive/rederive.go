@@ -140,9 +140,9 @@ func runPass(ctx context.Context, s *store.Store, sourceType, identifier string,
 	}
 	ledgerKey := LedgerKey(sourceType, identifier, pass.version)
 	if sum == nil || sum.MessagesScanned == 0 || sum.unchanged {
-		// Empty and unchanged passes have no derived rows to invalidate.
-		// Record completion without forcing a current cache to rebuild.
-		return sum, s.MarkMigrationAppliedContext(ctx, ledgerKey, 1)
+		// Current rows need no invalidation of their own. Publish any pending
+		// committed email writes before recording completion.
+		return sum, s.MarkMigrationAppliedWithPendingDerivedRevisionContext(ctx, ledgerKey)
 	}
 	if err := s.MarkMigrationAppliedWithDerivedDataRevisionContext(ctx, ledgerKey); err != nil {
 		return sum, err

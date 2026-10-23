@@ -6620,6 +6620,8 @@ type ArchivedRawMessage struct {
 	MessageID      int64
 	ConversationID int64
 	RawData        []byte
+	// RawDecodeError reports a corrupt compressed payload separately from SQL errors.
+	RawDecodeError error
 	// BodyText is the currently stored plain-text body, so a caller
 	// re-deriving it can skip rows that would not change.
 	BodyText string
@@ -6648,6 +6650,7 @@ func decompressArchivedRaw(messageID int64, raw []byte, compression sql.NullStri
 // ScanArchivedEmailContext returns a source's first retained MIME message with
 // afterID < id <= throughID, read with its stored text and search envelope, or
 // nil when none remains. Reading one row bounds memory for very large messages.
+// An undecodable payload sets RawDecodeError; query failures return an error.
 func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID, throughID int64) (*ArchivedRawMessage, error) {
 	item := &ArchivedRawMessage{}
 	var raw []byte
@@ -6668,8 +6671,8 @@ func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID,
 	}
 	item.stored.fts.MessageID = item.MessageID
 	item.BodyText, item.Snippet = item.stored.body, item.stored.snippet
-	item.RawData, err = decompressArchivedRaw(item.MessageID, raw, compression)
-	return item, err
+	item.RawData, item.RawDecodeError = decodeMessageRaw(raw, compression)
+	return item, nil
 }
 
 // ScanArchivedRawMessages returns up to limit archived messages for a source
@@ -6781,10 +6784,18 @@ func (s *Store) UpdateArchivedEmailTextContext(ctx context.Context, item *Archiv
 	}
 	var changed bool
 	err = s.withTxContext(ctx, func(tx *loggedTx) (err error) {
-		changed, err = s.writeDerivedEmailText(ctx, tx, item.MessageID, bodyText, bodyHTML, snippet)
+		changed, err = s.writeDerivedEmailTextPendingRevision(ctx, tx, item.MessageID, bodyText, bodyHTML, snippet)
 		return err
 	})
 	return changed, err
+}
+
+func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *loggedTx, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	changed, err := s.writeDerivedEmailText(ctx, tx, messageID, bodyText, bodyHTML, snippet)
+	if err != nil || !changed {
+		return changed, err
+	}
+	return changed, setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
 }
 
 // derivedEmailText is a retained email's stored text and the search document

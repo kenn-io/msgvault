@@ -117,7 +117,8 @@ func TestEmailRetriesFailedRowsAndResumesAfterCancellation(t *testing.T) {
 func archiveCurrentEmail(t *testing.T, st *store.Store, src *store.Source, key string) {
 	t.Helper()
 	id := archiveEmail(t, st, src, key, "Heizkörper")
-	_, err := st.UpdateMessageDerivedEmailTextContext(t.Context(), id, sql.NullString{String: "Heizkörper", Valid: true}, sql.NullString{String: "<p>Heizkörper</p>", Valid: true}, sql.NullString{String: "Heizkörper", Valid: true})
+	require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: "Heizkörper", Valid: true}, sql.NullString{String: "<p>Heizkörper</p>", Valid: true}))
+	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "Heizkörper", id)
 	require.NoError(t, err)
 }
 
@@ -141,9 +142,10 @@ func TestEmailFirstSyncBoundsReadQueries(t *testing.T) {
 	require.NoError(err)
 	require.Equal(int64(32), sum.MessagesScanned)
 	reads := strings.Count(logs.String(), `"kind":"query`)
-	// Each row needs its MIME/envelope scan and FTS comparison. The three
-	// fixed reads check completion, check the retry phase, and finish the scan.
-	require.LessOrEqual(reads, 2*32+3, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
+	// Each row needs its MIME/envelope scan and FTS comparison. The four
+	// fixed reads check completion, check the retry phase, finish the scan, and
+	// check whether a prior interrupted repair still needs a cache revision.
+	require.LessOrEqual(reads, 2*32+4, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
 }
 
 func TestEmailPreservesProviderSnippets(t *testing.T) {
@@ -178,4 +180,59 @@ func TestEmailCurrentTextKeepsCache(t *testing.T) {
 	Heal(t.Context(), slog.New(slog.NewTextHandler(&logs, nil)), st, src)
 	assert.Contains(t, logs.String(), "checked archived message text")
 	assert.Zero(t, derivedDataRevision(t, st))
+}
+
+func TestEmailRetryPublishesRevisionAfterRevisionWriteFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, src, id := archiveEmailSource(t, "outlook", "HeizkÃ¶rper")
+	fault := `CREATE TRIGGER fail_email_revision BEFORE INSERT ON archive_metadata WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT, 'revision failure'); END`
+	drop := `DROP TRIGGER fail_email_revision`
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(`CREATE FUNCTION fail_email_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
+		require.NoError(err)
+		fault = `CREATE TRIGGER fail_email_revision BEFORE INSERT ON archive_metadata FOR EACH ROW EXECUTE FUNCTION fail_email_revision()`
+		drop += ` ON archive_metadata`
+	}
+	_, err := st.DB().Exec(fault)
+	require.NoError(err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.Error(err)
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Equal("Heizkörper", body, "the failed revision publication follows a committed text repair")
+	assert.Zero(derivedDataRevision(t, st))
+	_, err = st.DB().Exec(drop)
+	require.NoError(err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	assert.Positive(derivedDataRevision(t, st), "completion must publish the earlier committed repair to analytics caches")
+}
+
+func TestEmailCorruptCompressionDoesNotStopLaterRows(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+	}{
+		{"header", []byte("invalid zlib")},
+		{"checksum", []byte{0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x02}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, src, bad := archiveEmailSource(t, "outlook", "keep me")
+			last := archiveEmail(t, st, src, "later", "stale")
+			_, err := st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), tc.raw, bad)
+			require.NoError(err)
+			sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+			require.NoError(err)
+			assert.Equal(int64(1), sum.Undecodable)
+			body, err := st.GetMessageBodyText(last)
+			require.NoError(err)
+			assert.Equal("Heizkörper", body)
+			body, err = st.GetMessageBodyText(bad)
+			require.NoError(err)
+			assert.Equal("keep me", body)
+		})
+	}
 }

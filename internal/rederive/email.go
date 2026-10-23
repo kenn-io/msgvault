@@ -222,7 +222,7 @@ func parseEmailRetryID(hex string) (int64, bool) {
 func (w *emailWalk) repairRow(ctx context.Context, item *store.ArchivedRawMessage) (bool, error) {
 	sum := w.sum
 	sum.MessagesScanned++
-	parsed, err := mime.Parse(item.RawData)
+	parsed, err := parseArchivedEmail(item)
 	if err != nil {
 		sum.Undecodable++
 		return false, nil //nolint:nilerr // Undecodable MIME is counted and left unchanged.
@@ -251,4 +251,11 @@ func (w *emailWalk) repairRow(ctx context.Context, item *store.ArchivedRawMessag
 		w.progress(fmt.Sprintf("%d scanned, %d bodies rewritten", sum.MessagesScanned, sum.BodiesRewritten))
 	}
 	return false, nil
+}
+
+func parseArchivedEmail(item *store.ArchivedRawMessage) (*mime.Message, error) {
+	if item.RawDecodeError != nil {
+		return nil, item.RawDecodeError
+	}
+	return mime.Parse(item.RawData)
 }
