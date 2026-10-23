@@ -42,6 +42,7 @@ type DoclingWorker struct {
 	catalog       DocumentExtractionCatalog
 	opener        DocumentAttachmentOpener
 	provider      document.RenditionProvider
+	rangeClient   *docling.Client
 	config        DoclingWorkerConfig
 	descriptor    document.RenditionDescriptor
 	input         ResolvedInputPolicy
@@ -186,7 +187,8 @@ func NewDoclingWorker(catalog DocumentExtractionCatalog, opener DocumentAttachme
 		return nil, fmt.Errorf("configure Docling normalization: %w", err)
 	}
 	config.Documents.Scope.MessageTypes = slices.Clone(config.Documents.Scope.MessageTypes)
-	return &DoclingWorker{catalog: catalog, opener: opener, provider: provider, config: config,
+	rangeClient, _ := provider.(*docling.Client)
+	return &DoclingWorker{rangeClient: rangeClient, catalog: catalog, opener: opener, provider: provider, config: config,
 		descriptor: descriptor, input: input, normalization: normalization}, nil
 }
 
@@ -248,16 +250,43 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 	if err != nil {
 		return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, err))
 	}
-	upload, authorization, err := w.authorizeUpload(content, candidate, route.Format, claim)
-	if err != nil {
-		return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, err))
+	var source document.SourceDocument
+	ranged := false
+	if route.Format.ID == "pdf" && w.rangeClient != nil {
+		record, inspectErr := w.inspectPDF(content, candidate)
+		if inspectErr != nil {
+			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, inspectErr))
+		}
+		if !record.Eligible {
+			return result, fail(errors.New("docling PDF exceeds the configured inspection bounds"))
+		}
+		if record.Measurements.Pages > doclingPDFRangePages {
+			ranged = true
+			source, err = w.renderPageRanges(workCtx, content, candidate, route.Format, claim, record, &accounting)
+		}
 	}
-	if err := workCtx.Err(); err != nil {
-		return result, fail(err)
+	if !ranged {
+		upload, authorization, authErr := w.authorizeUpload(content, candidate, route.Format, claim)
+		if authErr != nil {
+			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, authErr))
+		}
+		started := time.Now()
+		var rendered document.RenditionResult
+		rendered, err = document.RenderRendition(workCtx, w.provider, upload, authorization)
+		accounting.Latency = time.Since(started)
+		if err == nil {
+			accounting.Requests = int(rendered.Receipt.Usage.Requests)
+			accounting.Retries = int(rendered.Receipt.Usage.Retries)
+			accounting.UnitsProcessed = max(len(rendered.Evidence.Units), int(rendered.Receipt.Usage.Units))
+			if accounting.UnitsProcessed > w.config.Documents.MaxPagesPerDocument {
+				err = errors.New("docling output exceeds the configured unit bound")
+			} else if slices.Contains(rendered.Receipt.Warnings, "partial_success") {
+				err = errors.New("docling returned a partial result")
+			} else {
+				source, err = doclingSourceDocument(rendered)
+			}
+		}
 	}
-	started := time.Now()
-	rendered, err := document.RenderRendition(workCtx, w.provider, upload, authorization)
-	accounting.Latency = time.Since(started)
 	if err != nil {
 		if requests.submitted.Load() && doclingJobOutlastedLimits(err) {
 			err = fmt.Errorf("%w: %w", errDoclingJobTimeout, err)
@@ -265,20 +294,8 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		return result, fail(err)
 	}
 	accounting.ReturnedModel = w.descriptor.ID
-	accounting.Requests = int(rendered.Receipt.Usage.Requests)
-	accounting.Retries = int(rendered.Receipt.Usage.Retries)
-	// The receipt counts returned evidence before any whole-document fallback.
-	accounting.UnitsProcessed = max(len(rendered.Evidence.Units), int(rendered.Receipt.Usage.Units))
-	if accounting.UnitsProcessed > w.config.Documents.MaxPagesPerDocument {
-		return result, fail(errors.New("docling output exceeds the configured unit bound"))
-	}
-	if slices.Contains(rendered.Receipt.Warnings, "partial_success") {
-		return result, fail(errors.New("docling returned a partial result"))
-	}
-	source, err := doclingSourceDocument(rendered)
-	if err != nil {
-		return result, fail(err)
-	}
+	accounting.Requests = max(accounting.Requests, int(requests.requests.Load()))
+	accounting.Retries = max(accounting.Retries, int(requests.retries.Load()))
 	normalized, err := document.NormalizeDocument(source, w.normalization)
 	if err != nil {
 		return result, fail(err)
@@ -355,8 +372,11 @@ func (w *DoclingWorker) readSource(ctx context.Context, candidate store.Document
 type doclingMemoryUpload struct {
 	*bytes.Reader
 
-	metadata document.AuthorizedUploadMetadata
+	metadata   document.AuthorizedUploadMetadata
+	capability document.UploadCapability
 }
+
+func (u *doclingMemoryUpload) CapabilityProof() document.UploadCapability { return u.capability }
 
 func (u *doclingMemoryUpload) Close() error                                { return nil }
 func (u *doclingMemoryUpload) Metadata() document.AuthorizedUploadMetadata { return u.metadata }

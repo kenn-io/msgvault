@@ -214,6 +214,10 @@ func TestDoclingConsentDisclosesCredentialBinding(t *testing.T) {
 	requirements.ErrorContains(command.ExecuteContext(withTestConfig(t, cfg)), "requires --yes")
 	assertions.Contains(output.String(), c.APIKeyEnv)
 	assertions.Contains(output.String(), "X-Api-Key")
+	assertions.Contains(output.String(), "PDFs over 50 pages")
+	assertions.Contains(output.String(), "Each job uploads the original PDF again")
+	assertions.Contains(output.String(), "unpublished plaintext")
+	assertions.Contains(output.String(), "daemon restarts")
 	assertions.NotContains(output.String(), "synthetic-secret-value")
 }
 

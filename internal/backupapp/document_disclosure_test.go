@@ -66,7 +66,7 @@ func TestBackupManifestDisclosesAndRestoresDocumentPlaintext(t *testing.T) {
 	require.Len(capture.artifacts, 1)
 	var disclosure backupapp.DocumentDisclosure
 	require.NoError(json.Unmarshal(capture.artifacts[0].Data, &disclosure))
-	assert.Equal(2, disclosure.SchemaVersion)
+	assert.Equal(3, disclosure.SchemaVersion)
 	assert.Equal(int64(2), disclosure.Profiles)
 	assert.Equal(int64(1), disclosure.EnabledProfiles)
 	assert.Equal(int64(1), disclosure.ConsentedProfiles)
@@ -113,14 +113,15 @@ func TestDocumentAuxiliaryTargetRestoresSnapshotWithoutDisclosure(t *testing.T) 
 }
 
 func TestDocumentAuxiliaryTargetAcceptsLegacyDisclosureSchema(t *testing.T) {
-	target := backupapp.NewDocumentAuxiliaryTarget()
-	staged, err := target.StageAuxiliary(t.Context(), []backup.RestoredAuxiliary{{
-		Name:   "document-derivatives",
-		Format: "application/vnd.msgvault.document-derivatives+json; contains-normalized-plaintext=true",
-		Data:   []byte(`{"schema_version":1,"contains_normalized_attachment_plaintext":true,"chunks":1,"characters":4}`),
-	}})
-	require.NoError(t, err)
-	require.NoError(t, staged.Commit(t.Context()))
+	for _, payload := range []string{
+		`{"schema_version":1,"contains_normalized_attachment_plaintext":true,"chunks":1,"characters":4}`,
+		`{"schema_version":2,"contains_normalized_attachment_plaintext":true,"chunks":1,"characters":4}`,
+	} {
+		target := backupapp.NewDocumentAuxiliaryTarget()
+		staged, err := target.StageAuxiliary(t.Context(), []backup.RestoredAuxiliary{{Name: "document-derivatives", Format: "application/vnd.msgvault.document-derivatives+json; contains-normalized-plaintext=true", Data: []byte(payload)}})
+		require.NoError(t, err)
+		require.NoError(t, staged.Commit(t.Context()))
+	}
 }
 
 type capturingDocumentAuxiliaryTarget struct {
@@ -139,3 +140,42 @@ type noOpDocumentAuxiliaryRestore struct{}
 
 func (noOpDocumentAuxiliaryRestore) Commit(context.Context) error   { return nil }
 func (noOpDocumentAuxiliaryRestore) Rollback(context.Context) error { return nil }
+
+func TestBackupDisclosesStagedRangesWithoutChunks(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	archive := t.TempDir()
+	databasePath, attachmentsDirectory := seedCompatArchive(t, archive)
+	database, err := sql.Open("sqlite3", databasePath)
+	requirements.NoError(err)
+	_, err = database.Exec(`CREATE TABLE document_chunks (char_count INTEGER NOT NULL);
+ CREATE TABLE document_extraction_ranges (markdown TEXT NOT NULL, char_count INTEGER NOT NULL);
+ INSERT INTO document_extraction_ranges VALUES ('checkpoint sentinel',19)`)
+	requirements.NoError(err)
+	requirements.NoError(database.Close())
+	repository, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	requirements.NoError(err)
+	app := backupapp.New("range-disclosure-test")
+	manifest, err := backup.Create(t.Context(), repository, app, backup.CreateOptions{DBPath: databasePath, ContentDir: attachmentsDirectory, DataDir: archive})
+	requirements.NoError(err)
+	requirements.True(backupapp.ManifestContainsDocumentPlaintext(manifest))
+	capture := &capturingDocumentAuxiliaryTarget{}
+	restoredPath := filepath.Join(t.TempDir(), "restore")
+	_, err = backup.Restore(t.Context(), repository, app, backup.RestoreOptions{TargetDir: restoredPath, AuxiliaryTarget: capture})
+	requirements.NoError(err)
+	requirements.Len(capture.artifacts, 1)
+	var disclosure backupapp.DocumentDisclosure
+	requirements.NoError(json.Unmarshal(capture.artifacts[0].Data, &disclosure))
+	assertions.Equal(3, disclosure.SchemaVersion)
+	assertions.Equal(int64(0), disclosure.Chunks)
+	assertions.Equal(int64(1), disclosure.StagedRanges)
+	assertions.Equal(int64(19), disclosure.StagedCharacters)
+	_, err = backupapp.NewDocumentAuxiliaryTarget().StageAuxiliary(t.Context(), capture.artifacts)
+	requirements.NoError(err)
+	restored, err := sql.Open("sqlite3", filepath.Join(restoredPath, "msgvault.db"))
+	requirements.NoError(err)
+	defer func() { requirements.NoError(restored.Close()) }()
+	var text string
+	requirements.NoError(restored.QueryRow("SELECT markdown FROM document_extraction_ranges").Scan(&text))
+	assertions.Equal("checkpoint sentinel", text)
+}

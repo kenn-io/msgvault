@@ -32,6 +32,8 @@ var (
 )
 
 type DocumentExtractionCatalog interface {
+	LoadDocumentExtractionRanges(ctx context.Context, claim store.DocumentExtractionClaim, maxBytes int64) ([]store.DocumentExtractionRange, error)
+	SaveDocumentExtractionRange(ctx context.Context, claim store.DocumentExtractionClaim, checkpoint store.DocumentExtractionRange, maxBytes int64) error
 	ClaimDocumentExtraction(ctx context.Context, input store.DocumentExtractionClaimInput) (store.DocumentExtractionClaim, error)
 	RenewDocumentExtractionClaim(ctx context.Context, claim store.DocumentExtractionClaim, leaseUntil time.Time) error
 	PublishDocumentExtraction(ctx context.Context, publication store.DocumentExtractionPublication) error

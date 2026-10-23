@@ -4674,3 +4674,17 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Successful PDF selections remain unpublished until the complete extraction commits.
+CREATE TABLE IF NOT EXISTS document_extraction_ranges (
+    extraction_id TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+    first_page INTEGER NOT NULL CHECK (first_page >= 1),
+    last_page INTEGER NOT NULL CHECK (last_page >= first_page),
+    total_pages INTEGER NOT NULL CHECK (total_pages >= last_page),
+    evidence TEXT NOT NULL,
+    evidence_checksum TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    char_count BIGINT NOT NULL CHECK (char_count >= 0),
+    payload_bytes BIGINT NOT NULL CHECK (payload_bytes > 0),
+    PRIMARY KEY (extraction_id, first_page)
+);

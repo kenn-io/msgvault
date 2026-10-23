@@ -31,6 +31,7 @@ import (
 )
 
 type workerCatalog struct {
+	ranges            []store.DocumentExtractionRange
 	claimInput        store.DocumentExtractionClaimInput
 	publication       *store.DocumentExtractionPublication
 	failure           *store.DocumentExtractionFailure
@@ -1075,4 +1076,12 @@ func TestMistralWorkerSizeDiagnosticsReachStatus(t *testing.T) {
 			assert.Equal(tc.want, status.Failures[0].Detail)
 		})
 	}
+}
+
+func (c *workerCatalog) LoadDocumentExtractionRanges(context.Context, store.DocumentExtractionClaim, int64) ([]store.DocumentExtractionRange, error) {
+	return c.ranges, nil
+}
+func (c *workerCatalog) SaveDocumentExtractionRange(_ context.Context, _ store.DocumentExtractionClaim, r store.DocumentExtractionRange, _ int64) error {
+	c.ranges = append(c.ranges, r)
+	return nil
 }
