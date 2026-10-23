@@ -7,7 +7,7 @@ const (
 	mediaSearchRequestBurst      = 2
 )
 
-func (s *Server) mediaSearchGuard(label string, next http.HandlerFunc) http.HandlerFunc {
+func (s *Server) documentSearchGuard(label string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.requestAuthentication(r).Mode == AuthModeLoopback &&
 			s.crossOriginAmbientReadRequest(r) {
