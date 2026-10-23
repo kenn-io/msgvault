@@ -17,7 +17,7 @@ import (
 
 // doclingAdapterVersion names the Docbank Docling request and result contract
 // in the consent identity. Bump it when that contract changes.
-const doclingAdapterVersion = "docbank-docling-documents-v1"
+const doclingAdapterVersion = "docbank-docling-documents-v2"
 
 // ApplyConfiguredProviderDefaults fills Docling settings that the TOML file
 // omitted. Config.Save writes every field, so a saved file can still carry

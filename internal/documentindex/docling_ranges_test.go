@@ -37,8 +37,9 @@ func doclingPDFPages(t *testing.T, pages int) []byte {
 		objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 16 16] /Resources << /XObject << /Im %d 0 R >> >> /Contents %d 0 R >>", pages+3, pages+4))
 	}
 	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", kids.String(), pages)
-	objects = append(objects, fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream", imageBytes.Len(), imageBytes.String()))
-	objects = append(objects, "<< /Length 10 >>\nstream\nq /Im Do Q\nendstream")
+	objects = append(objects,
+		fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream", imageBytes.Len(), imageBytes.String()),
+		"<< /Length 10 >>\nstream\nq /Im Do Q\nendstream")
 	return mediatest.PDFObjects("synthetic document range fixture", objects)
 }
 
@@ -135,7 +136,7 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			f := storetest.New(t)
-			content := doclingPDFPages(t, 101)
+			content := doclingPDFPages(t, 600)
 			digest := sha256.Sum256(content)
 			hash := hex.EncodeToString(digest[:])
 			var selections []string
@@ -203,6 +204,7 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			c.Endpoint = server.URL
 			c.MaxPollAttempts = 1
 			c.PollInterval = time.Millisecond
+			c.MaxPagesPerDocument = 600
 			descriptor, err := c.DoclingDescriptor()
 			requirements.NoError(err)
 			input, err := c.doclingInputPolicy()
@@ -255,13 +257,13 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			requirements.NoError(err)
 			result, err := worker.ProcessCandidate(t.Context(), candidate)
 			requirements.NoError(err)
-			assertions.Equal(101, result.Units)
-			assertions.Equal([]string{"1,50", "51,100", "51,100", "101,101"}, selections)
+			assertions.Equal(600, result.Units)
+			assertions.Equal([]string{"1,50", "51,100", "51,100", "101,150", "151,200", "201,250", "251,300", "301,350", "351,400", "401,450", "451,500", "501,550", "551,600"}, selections)
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_heads").Scan(&heads))
 			assertions.Equal(1, heads)
 			var requests int
 			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT request_count FROM document_extractions WHERE id = ?"), result.ExtractionID).Scan(&requests))
-			assertions.Equal(4, requests)
+			assertions.Equal(22, requests)
 			search, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "sentinel"})
 			requirements.NoError(err)
 			assertions.NotEmpty(search.Results)

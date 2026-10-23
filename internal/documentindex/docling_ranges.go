@@ -25,13 +25,11 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 		return document.SourceDocument{}, err
 	}
 	saved := make(map[int]store.DocumentExtractionRange, len(checkpoints))
-	var payloadBytes int64
 	for _, r := range checkpoints {
 		if r.TotalPages != pages || (r.FirstPage-1)%doclingPDFRangePages != 0 || r.LastPage != min(r.FirstPage+doclingPDFRangePages-1, r.TotalPages) {
 			return document.SourceDocument{}, errors.New("document range checkpoint has inconsistent page bounds")
 		}
 		saved[r.FirstPage] = r
-		payloadBytes += int64(len(r.Evidence) + len(r.Markdown))
 	}
 	source := document.SourceDocument{Family: "pdf", UnitKind: "page"}
 	var markdown []string
@@ -39,6 +37,8 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 	for first := 1; first <= pages; first += doclingPDFRangePages {
 		last := min(first+doclingPDFRangePages-1, pages)
 		checkpoint, ok := saved[first]
+		var units []document.SourceUnit
+		var fallback bool
 		if !ok {
 			upload, authorization, err := w.authorizeUpload(content, candidate, format, claim)
 			if err != nil {
@@ -53,7 +53,7 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 				return document.SourceDocument{}, err
 			}
 			started := time.Now()
-			rendered, err := w.rangeClient.RenderPageRange(ctx, upload, authorization, docling.PageRange{First: int64(first), Last: int64(last)})
+			rendered, err := w.provider.RenderPageRange(ctx, upload, authorization, docling.PageRange{First: int64(first), Last: int64(last)})
 			accounting.Latency += time.Since(started)
 			if err != nil {
 				return document.SourceDocument{}, fmt.Errorf("render Docling page range: %w", err)
@@ -82,12 +82,9 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 			for _, unit := range evidence.Units {
 				checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
 			}
-			payloadBytes += int64(len(encoded) + len(checkpoint.Markdown))
-			if payloadBytes > w.config.Documents.MaxResponseBytes {
-				return document.SourceDocument{}, errors.New("document range checkpoints exceed response byte bound")
-			}
 			// Validate before saving so an incomplete selection can be retried.
-			if _, fallback, err := doclingRangeUnits(checkpoint); err != nil {
+			units, fallback, err = doclingEvidenceRangeUnits(evidence, checkpoint)
+			if err != nil {
 				return document.SourceDocument{}, err
 			} else if fallback && strings.TrimSpace(checkpoint.Markdown) == "" {
 				return document.SourceDocument{}, errors.New("docling range has no bounded Markdown fallback")
@@ -95,10 +92,11 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 			if err := w.catalog.SaveDocumentExtractionRange(ctx, claim, checkpoint, w.config.Documents.MaxResponseBytes); err != nil {
 				return document.SourceDocument{}, err
 			}
-		}
-		units, fallback, err := doclingRangeUnits(checkpoint)
-		if err != nil {
-			return document.SourceDocument{}, err
+		} else {
+			units, fallback, err = doclingRangeUnits(checkpoint)
+			if err != nil {
+				return document.SourceDocument{}, err
+			}
 		}
 		degraded = degraded || fallback
 		source.Units = append(source.Units, units...)
@@ -137,6 +135,10 @@ func doclingRangeUnits(r store.DocumentExtractionRange) ([]document.SourceUnit, 
 	if err != nil || checksum != r.EvidenceChecksum || !bytes.Equal(canonical, r.Evidence) {
 		return nil, false, errors.New("invalid canonical document range evidence")
 	}
+	return doclingEvidenceRangeUnits(evidence, r)
+}
+
+func doclingEvidenceRangeUnits(evidence document.NormalizedEvidenceV1, r store.DocumentExtractionRange) ([]document.SourceUnit, bool, error) {
 	degraded := evidence.UnitKind != document.EvidenceUnitPage || evidence.Family != "pdf"
 	for _, omission := range evidence.Omissions {
 		if omission.Kind == document.EvidenceOmissionField && omission.Field == "page_range" {

@@ -107,7 +107,7 @@ func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
 	requirements.NoError(f.Store.InitSchemaContext(t.Context()))
 	version, err := f.Store.SchemaVersionContext(t.Context())
 	requirements.NoError(err)
-	assertions.Equal(12, version)
+	assertions.Equal(11, version)
 	var count int
 	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 	assertions.Zero(count)

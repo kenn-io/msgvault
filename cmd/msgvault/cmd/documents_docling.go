@@ -129,8 +129,8 @@ func printDoclingConsentDisclosure(w io.Writer, c *documentindex.DocumentsConfig
 	_, _ = fmt.Fprintln(w, "- Complete PDF page evidence retains page locators. Incomplete structured mappings use whole-document Markdown without page claims to preserve tables and text.")
 	_, _ = fmt.Fprintln(w, "- PDFs over 50 pages use consecutive 50-page jobs. Each job uploads the original PDF again and gets its own time and polling limits. The page cap still applies to the whole PDF.")
 	_, _ = fmt.Fprintln(w, "- Normalized plaintext units and chunks are stored in the local archive database and may be included in disclosed full backups.")
-	_, _ = fmt.Fprintln(w, "- Successful PDF ranges retain bounded Markdown and canonical evidence locally until publication. Retry and resume reuse them across daemon restarts. A full rebuild starts fresh; partial results are retried explicitly.")
-	_, _ = fmt.Fprintln(w, "- Range checkpoints contain unpublished plaintext and may be included in disclosed full backups. Raw provider JSON remains transient. Document text embeddings require separate consent.")
+	_, _ = fmt.Fprintln(w, "- Successful PDF ranges retain bounded Markdown and canonical evidence locally, including after failure. Publication, source or derived-data purge, or seven-day cleanup after superseding work removes them. Retry and resume reuse them across daemon restarts. A full rebuild starts fresh; partial results are retried explicitly.")
+	_, _ = fmt.Fprintln(w, "- Range checkpoints contain unpublished plaintext and may be included in disclosed full backups, which can retain it after archive cleanup. Raw provider JSON remains transient. Document text embeddings require separate consent.")
 }
 
 func documentConsentCommand(provider string) string {

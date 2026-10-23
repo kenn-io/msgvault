@@ -42,8 +42,7 @@ type DoclingWorkerConfig struct {
 type DoclingWorker struct {
 	catalog       DocumentExtractionCatalog
 	opener        DocumentAttachmentOpener
-	provider      document.RenditionProvider
-	rangeClient   *docling.Client
+	provider      *docling.Client
 	config        DoclingWorkerConfig
 	descriptor    document.RenditionDescriptor
 	input         ResolvedInputPolicy
@@ -127,7 +126,7 @@ func (doclingEnvironmentSecrets) ResolveSecret(_ context.Context, binding string
 
 // NewDoclingClient sends only to the configured origin. Ambient proxy settings
 // must not route private attachment bytes through a second recipient.
-func NewDoclingClient(c *DocumentsConfig) (document.RenditionProvider, error) {
+func NewDoclingClient(c *DocumentsConfig) (*docling.Client, error) {
 	if c == nil || c.Provider != ProviderDocling {
 		return nil, errors.New("docling client requires provider=docling")
 	}
@@ -161,7 +160,7 @@ func NewDoclingClient(c *DocumentsConfig) (document.RenditionProvider, error) {
 }
 
 func NewDoclingWorker(catalog DocumentExtractionCatalog, opener DocumentAttachmentOpener,
-	provider document.RenditionProvider, config DoclingWorkerConfig) (*DoclingWorker, error) {
+	provider *docling.Client, config DoclingWorkerConfig) (*DoclingWorker, error) {
 	if catalog == nil || opener == nil || provider == nil {
 		return nil, errors.New("docling worker requires catalog, attachment opener and provider")
 	}
@@ -188,8 +187,7 @@ func NewDoclingWorker(catalog DocumentExtractionCatalog, opener DocumentAttachme
 		return nil, fmt.Errorf("configure Docling normalization: %w", err)
 	}
 	config.Documents.Scope.MessageTypes = slices.Clone(config.Documents.Scope.MessageTypes)
-	rangeClient, _ := provider.(*docling.Client)
-	return &DoclingWorker{rangeClient: rangeClient, catalog: catalog, opener: opener, provider: provider, config: config,
+	return &DoclingWorker{catalog: catalog, opener: opener, provider: provider, config: config,
 		descriptor: descriptor, input: input, normalization: normalization}, nil
 }
 
@@ -253,7 +251,7 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 	}
 	var source document.SourceDocument
 	ranged := false
-	if route.Format.ID == "pdf" && w.rangeClient != nil {
+	if route.Format.ID == "pdf" {
 		pages, inspectErr := media.CountPDFPages(content)
 		if inspectErr != nil {
 			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, inspectErr))
