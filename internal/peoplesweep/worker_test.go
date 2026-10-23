@@ -225,6 +225,10 @@ func (s *workerFailureStore) FinalizePersonSweepFailure(ctx context.Context, fin
 	return nil
 }
 
+func (*workerFailureStore) DeferPersonSweepAttempt(context.Context, Lease, string, time.Time) error {
+	return nil
+}
+
 type workerFailureSource struct{}
 
 func (workerFailureSource) LoadPersonSweepWindow(_ context.Context, request WindowRequest) (PersonWindow, error) {
@@ -280,6 +284,16 @@ type workerFailureSink struct{ err error }
 
 func (s workerFailureSink) ApplyPersonSweep(context.Context, ApplyRequest) (ApplyResult, error) {
 	return ApplyResult{}, s.err
+}
+
+func (s workerFailureSink) ApplyPersonSweepStatusOnly(context.Context, StatusOnlyApplyRequest) (Lease, error) {
+	return Lease{}, s.err
+}
+
+func (workerFailureSink) PersonSweepEvidenceStatusesApplied(
+	context.Context, int64, []personfacts.EvidenceStatusChange,
+) (bool, error) {
+	return false, nil
 }
 
 func testConfigWithProvider(provider ProviderConfig) Config {
@@ -871,6 +885,16 @@ type workerProductionSink struct {
 	err          error
 }
 
+func (s *workerProductionSink) ApplyPersonSweepStatusOnly(_ context.Context, request StatusOnlyApplyRequest) (Lease, error) {
+	return request.Lease, s.err
+}
+
+func (*workerProductionSink) PersonSweepEvidenceStatusesApplied(
+	context.Context, int64, []personfacts.EvidenceStatusChange,
+) (bool, error) {
+	return false, nil
+}
+
 func (s *workerProductionSink) ApplyPersonSweep(ctx context.Context, request ApplyRequest) (ApplyResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ApplyResult{}, err
@@ -880,7 +904,7 @@ func (s *workerProductionSink) ApplyPersonSweep(ctx context.Context, request App
 	if request.Brief != nil {
 		mutations.BriefVersion = s.briefVersion
 	}
-	return ApplyResult{Mutations: mutations}, s.err
+	return ApplyResult{Mutations: mutations, AttemptProjectedWrites: mutations.ProjectionRowsWritten}, s.err
 }
 
 func TestPersonSweepWorkerHeartbeatsLeaseDuringProviderIO(t *testing.T) {
