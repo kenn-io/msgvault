@@ -47,7 +47,7 @@
         {#each group.items as item (item.id)}
           {@const Icon = item.icon}
           <li>
-            <Tooltip text={item.label}>
+            <Tooltip text={item.label} side={collapsed ? 'right' : 'bottom'}>
               <button
                 type="button"
                 class="sidebar__item"
@@ -65,13 +65,13 @@
     {/each}
   </nav>
   <div class="sidebar__footer">
-    <Tooltip text={status.label} focusable={collapsed}>
+    <Tooltip text={status.label} focusable={collapsed} side={collapsed ? 'right' : 'bottom'}>
       <span class="sidebar__status">
         <span aria-hidden="true"><StatusDot status={status.tone} label={status.label} /></span>
         <span class:kit-sr-only={collapsed}>{collapsed ? status.label : status.text}</span>
       </span>
     </Tooltip>
-    <Tooltip text="Keyboard shortcuts">
+    <Tooltip text="Keyboard shortcuts" side={collapsed ? 'right' : 'bottom'}>
       <button
         type="button"
         class="sidebar__item"
@@ -83,7 +83,7 @@
       </button>
     </Tooltip>
     {#if showCollapseToggle}
-      <Tooltip text={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+      <Tooltip text={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} side={collapsed ? 'right' : 'bottom'}>
         <button
           type="button"
           class="sidebar__item"
@@ -131,27 +131,6 @@
 
   .sidebar:not(.sidebar--rail) :global(.kit-tooltip) {
     display: none;
-  }
-
-  /* Kit places tooltips above or below the trigger. In the rail that covers the
-     neighbouring icon, and the open tooltip catches its clicks. Shift rail
-     tooltips beside the 36x32 trigger, centred on it, and point the arrow left.
-     Remove when kit-ui Tooltip supports side placement. */
-  .sidebar--rail :global(.kit-tooltip[data-side='bottom']) {
-    translate: 44px calc(-50% - 24px);
-  }
-
-  .sidebar--rail :global(.kit-tooltip[data-side='top']) {
-    translate: 44px calc(50% + 24px);
-  }
-
-  .sidebar--rail :global(.kit-tooltip[data-side])::before {
-    top: calc(50% - 4px);
-    bottom: auto;
-    left: -5px;
-    border: 0;
-    border-bottom: 1px solid var(--border-default);
-    border-left: 1px solid var(--border-default);
   }
 
   .sidebar__brand {

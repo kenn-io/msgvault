@@ -70,6 +70,29 @@ Object.defineProperty(Element.prototype, 'scrollIntoView', {
   value() {}
 });
 
+// kit-ui's AppSidebar imports Svelte's window.devicePixelRatio binding, which
+// calls matchMedia while the module loads. jsdom does not provide it.
+if (typeof window.matchMedia !== 'function') {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value(query: string): MediaQueryList {
+      return {
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener() {},
+        removeListener() {},
+        addEventListener() {},
+        removeEventListener() {},
+        dispatchEvent() {
+          return false;
+        }
+      };
+    }
+  });
+}
+
 beforeEach(() => {
   document.documentElement.dataset.density = 'compact';
   document.documentElement.style.setProperty('--row-height', compactRowHeight);

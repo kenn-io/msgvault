@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
-  import { startAppOpenedReporting } from '@kenn-io/kit-ui/utils/app-opened';
+  import { startBrowserTelemetry } from '@kenn-io/kit-ui/utils/browser-telemetry';
   import { onDestroy, onMount } from 'svelte';
   import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
@@ -72,17 +72,19 @@
   $effect(() => {
     if (session.authMode === undefined || session.authMode === 'required') return;
     const client = session.client;
-    return startAppOpenedReporting({
+    const telemetry = startBrowserTelemetry({
       route: '/api/v1/telemetry/events',
       surface: 'web',
       storageKey: 'msgvault.app-opened.web',
-      post: (route, event) =>
+      post: (route, event, options) =>
         client.fetch(route, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(event),
+          keepalive: options?.keepalive,
         }),
     });
+    return () => telemetry.stop();
   });
   $effect(() => {
     if (oauthCallback || !shellMounted || messageID === undefined) return;
