@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -118,12 +119,34 @@ func runSetupForTest(t *testing.T, answers string) (string, string) {
 
 func TestSetupWithoutGoogleCredentials(t *testing.T) {
 	// Enter at the credential prompt, then "n" for the remote server.
-	home, out := runSetupForTest(t, "\nn\n")
+	home, out := runSetupForTest(t, "\n\nn\n")
 
 	assert.NotContains(t, out, "add-account")
 	assert.Contains(t, out, "add-imap")
 	_, err := os.Stat(filepath.Join(home, "nas-bundle"))
 	assert.True(t, os.IsNotExist(err), "no NAS bundle without a remote")
+}
+
+func TestSetupPersistsDetectedActivityTimezone(t *testing.T) {
+	previous := resolveLocalTimezone
+	resolveLocalTimezone = func() (string, error) { return "America/Vancouver", nil }
+	t.Cleanup(func() { resolveLocalTimezone = previous })
+
+	home, _ := runSetupForTest(t, "\n\nn\n")
+	persisted, err := config.Load(filepath.Join(home, "config.toml"), home)
+	require.NoError(t, err)
+	assert.Equal(t, "America/Vancouver", persisted.Activity.Timezone)
+}
+
+func TestSetupActivityTimezoneRejectsLocal(t *testing.T) {
+	previous := resolveLocalTimezone
+	resolveLocalTimezone = func() (string, error) { return "", assert.AnError }
+	t.Cleanup(func() { resolveLocalTimezone = previous })
+
+	cfg := config.NewDefaultConfig()
+	_, err := setupActivityTimezone(bufio.NewReader(strings.NewReader("Local\n")), cfg)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "host-dependent")
 }
 
 func TestSetupDoesNotPersistHTTPForRuntimeRemoteURL(t *testing.T) { //nolint:paralleltest // process environment
@@ -141,7 +164,7 @@ func TestSetupDoesNotPersistHTTPForRuntimeRemoteURL(t *testing.T) { //nolint:par
 	require.NoError(err)
 	cmd := &cobra.Command{}
 	cmd.SetContext(withTestConfig(t, runtimeConfig))
-	cmd.SetIn(strings.NewReader("\ny\n"))
+	cmd.SetIn(strings.NewReader("\n\ny\n"))
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	require.NoError(runSetup(cmd, nil))
@@ -165,7 +188,7 @@ func TestSetupPersistsExplicitRemoteMatchingEnvironment(t *testing.T) { //nolint
 	require.NoError(err)
 	cmd := &cobra.Command{}
 	cmd.SetContext(withTestConfig(t, cfg))
-	cmd.SetIn(strings.NewReader("\nn\ny\narchive.example.test\n8080\n"))
+	cmd.SetIn(strings.NewReader("\n\nn\ny\narchive.example.test\n8080\n"))
 	cmd.SetOut(&bytes.Buffer{})
 	require.NoError(runSetup(cmd, nil))
 	snapshot, err := config.ReadConfigFile(path)
@@ -183,7 +206,7 @@ func TestSetupWithGoogleCredentialsPrintsGmailSteps(t *testing.T) {
 	secretsPath := filepath.Join(t.TempDir(), "client_secret.json")
 	require.NoError(os.WriteFile(secretsPath, []byte(`{"installed":{}}`), 0600))
 
-	home, out := runSetupForTest(t, secretsPath+"\nn\n")
+	home, out := runSetupForTest(t, secretsPath+"\n\nn\n")
 
 	assert.Contains(out, "add-account")
 	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
@@ -341,7 +364,7 @@ func TestSetupReplacesClientCommandWithFile(t *testing.T) {
 	cfg.Remote.URL = "https://archive.example"
 	cmd := &cobra.Command{}
 	cmd.SetContext(withTestConfig(t, cfg))
-	cmd.SetIn(strings.NewReader("n\n" + secrets + "\nn\n"))
+	cmd.SetIn(strings.NewReader("n\n" + secrets + "\n\nn\n"))
 	cmd.SetOut(&bytes.Buffer{})
 	require.NoError(runSetup(cmd, nil))
 	snapshot, err := config.ReadConfigFile(path)

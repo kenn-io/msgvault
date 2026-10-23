@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-23"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -4238,7 +4238,7 @@ msgvault serve --bind 0.0.0.0 --port 8080
 
 ## setup
 
-Run the first-run setup wizard. It writes `config.toml`, optionally stores a Google OAuth credential (needed only for Gmail and Google Calendar; press Enter to skip), and optionally configures a remote deployment.
+Run the first-run setup wizard. It writes `config.toml`, offers the detected host IANA timezone for activity day boundaries (existing activity rows are re-dated automatically when it changes), optionally stores a Google OAuth credential (needed only for Gmail and Google Calendar; press Enter to skip), and optionally configures a remote deployment.
 
 ```bash
 msgvault setup

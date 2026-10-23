@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
@@ -28,8 +29,9 @@ var setupCmd = &cobra.Command{
 This command helps you:
   1. Optionally configure Google OAuth credentials (Gmail and Google
      Calendar only; press Enter to skip)
-  2. Optionally configure a remote NAS server for token export
-  3. Create the config.toml file
+  2. Choose the IANA timezone used for activity day boundaries
+  3. Optionally configure a remote NAS server for token export
+  4. Create the config.toml file
 
 Run this once after installing msgvault to get started quickly. Then run
 "msgvault setup providers" to turn on search, attachment, and people lanes
@@ -70,7 +72,13 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Step 2: Optionally configure remote NAS
+	// Step 2: Choose the timezone used for activity day boundaries.
+	activityTimezone, err := setupActivityTimezone(reader, cfg)
+	if err != nil {
+		return err
+	}
+
+	// Step 3: Optionally configure remote NAS
 	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg)
 	if err != nil {
 		return err
@@ -92,6 +100,10 @@ func runSetup(cmd *cobra.Command, args []string) error {
 			config.Edit{Key: "remote.allow_insecure", Value: strings.HasPrefix(remoteURL, "http://")},
 		)
 	}
+	if activityTimezone != "" {
+		cfg.Activity.Timezone = activityTimezone
+		edits = append(edits, config.Edit{Key: "activity.timezone", Value: activityTimezone})
+	}
 
 	// Only save if we configured something
 	if len(edits) > 0 {
@@ -108,6 +120,57 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	namedOAuthApp, _ := setupOAuthApp(&cfg.OAuth)
 	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), cfg.Remote.URL != "",
 		cfg.OAuth.ClientSecrets != "" && cfg.OAuth.ServiceAccountKey == "", setupUsesServiceAccount(&cfg.OAuth), namedOAuthApp)
+	return nil
+}
+
+func setupActivityTimezone(reader *bufio.Reader, cfg *config.Config) (string, error) {
+	fmt.Println()
+	fmt.Println("Step 2: Activity timezone")
+	fmt.Println("--------------------------")
+	fmt.Println("Activity day views use this IANA timezone instead of UTC to group events.")
+	fmt.Println("Changing it re-dates existing activity rows automatically.")
+
+	current := cfg.Activity.Timezone
+	if current == "" {
+		current = "UTC"
+	}
+
+	if detected, err := resolveLocalTimezone(); err == nil {
+		fmt.Printf("Detected host timezone: %s\n", detected)
+		if detected == current {
+			fmt.Printf("Activity timezone is already %s.\n", current)
+			return "", nil
+		}
+		if promptYesNo(reader, fmt.Sprintf("Use %s for activity day boundaries?", detected)) {
+			if err := validateSetupActivityTimezone(detected); err != nil {
+				return "", err
+			}
+			return detected, nil
+		}
+	} else {
+		fmt.Println("Could not detect a concrete host timezone.")
+	}
+
+	fmt.Printf("Activity timezone is currently %s.\n", current)
+	fmt.Print("Enter UTC or an IANA timezone name (press Enter to keep current): ")
+	zone, _ := reader.ReadString('\n')
+	zone = strings.TrimSpace(zone)
+	if zone == "" || zone == current {
+		return "", nil
+	}
+	if err := validateSetupActivityTimezone(zone); err != nil {
+		return "", err
+	}
+	return zone, nil
+}
+
+func validateSetupActivityTimezone(zone string) error {
+	if zone == "Local" {
+		return fmt.Errorf("activity timezone %q is host-dependent; use UTC or an IANA zone name", zone)
+	}
+	if _, err := time.LoadLocation(zone); err != nil {
+		return fmt.Errorf("invalid activity timezone %q: %w", zone, err)
+	}
 	return nil
 }
 
@@ -245,7 +308,7 @@ func setupOAuthSecrets(reader *bufio.Reader, cfg *config.Config) (string, error)
 
 func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *config.Config) (string, string, error) {
 	fmt.Println()
-	fmt.Println("Step 2: Remote NAS Server (Optional)")
+	fmt.Println("Step 3: Remote NAS Server (Optional)")
 	fmt.Println("-------------------------------------")
 	fmt.Println("Configure a remote msgvault server to export tokens for headless deployment.")
 	fmt.Println()
