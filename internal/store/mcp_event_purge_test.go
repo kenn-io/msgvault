@@ -31,7 +31,8 @@ func TestMCPEventsPurgePreservesExpiryAndEndGrace(t *testing.T) {
 				endedAt = now.Add(72 * time.Hour)
 				require.NoError(f.Store.ExpireMCPSubscriptions(t.Context(), endedAt))
 			} else {
-				require.NoError(f.Store.EndMCPSubscription(t.Context(), active.ID, active.Principal, now))
+				_, err = f.Store.EndMCPSubscription(t.Context(), active.ID, active.Principal, now)
+				require.NoError(err)
 			}
 			purgeAt := input.ExpiresAt.Add(24 * time.Hour)
 			if minimum := endedAt.Add(24 * time.Hour); minimum.After(purgeAt) {

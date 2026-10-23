@@ -297,7 +297,7 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 	if err != nil {
 		return result, safeStoreError(err)
 	}
-	s.stopWorker(id, sub.Generation)
+	s.stopWorkerBefore(id, sub.Generation)
 	s.Wake()
 	return SubscribeResult{ID: id, RefreshBefore: sub.ExpiresAt.UnixMilli(), Cursor: encodeCursor(s.key, id, sub.CursorEpoch, sub.CursorSeq), Truncated: truncated}, nil
 }
@@ -322,11 +322,16 @@ func (s *Service) Unsubscribe(ctx context.Context, principal string, req Unsubsc
 		return err
 	}
 	id := subscriptionID(principal, req.Name, args.bytes, req.Delivery.URL)
-	err = s.operation(ctx, func() error { return s.st.EndMCPSubscription(ctx, id, principal, time.Now().UTC()) })
+	var generation int64
+	err = s.operation(ctx, func() error {
+		var err error
+		generation, err = s.st.EndMCPSubscription(ctx, id, principal, time.Now().UTC())
+		return err
+	})
 	if err != nil {
 		return safeStoreError(err)
 	}
-	s.stopWorker(id, 0)
+	s.stopWorkerBefore(id, generation)
 	s.Wake()
 	return nil
 }

@@ -511,10 +511,12 @@ const MCPActiveSubscriptionLimit = 64
 // the first, before an occurrence is dead-lettered.
 const MCPMaxDeliveryAttempts = 5
 
-// EndMCPSubscription unsubscribes a subscription. A key with no live row
+// EndMCPSubscription unsubscribes a subscription and returns its new generation
+// so callers can cancel older workers. A key with no live row
 // (never subscribed, already unsubscribed, or gone) is "subscription_not_found".
-func (s *Store) EndMCPSubscription(ctx context.Context, id, principal string, now time.Time) error {
-	return s.withMCPEventTx(ctx, func(tx *sql.Tx, _ MCPEventClock) error {
+func (s *Store) EndMCPSubscription(ctx context.Context, id, principal string, now time.Time) (int64, error) {
+	var generation int64
+	err := s.withMCPEventTx(ctx, func(tx *sql.Tx, _ MCPEventClock) error {
 		sub, err := s.mcpSubscription(ctx, tx, id)
 		if err != nil {
 			return err
@@ -529,8 +531,13 @@ func (s *Store) EndMCPSubscription(ctx context.Context, id, principal string, no
 			return mcpStoreError("subscription_not_found")
 		}
 		stopMCPSubscription(sub, "unsubscribed", "", now)
+		generation = sub.Generation
 		return s.saveMCPSubscription(ctx, tx, sub)
 	})
+	if err != nil {
+		return 0, err
+	}
+	return generation, nil
 }
 
 func mcpEventMatches(sub MCPSubscription, event MCPEvent) bool {

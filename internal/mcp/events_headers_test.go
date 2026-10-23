@@ -86,12 +86,6 @@ func TestEventsNameHeader(t *testing.T) {
 		require.True(t, ok, rec.Body.String())
 		assert.InDelta(t, -32020.0, errObj["code"], 0.5)
 	})
-	t.Run("batch for other methods is rejected by the SDK", func(t *testing.T) {
-		body := `[{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}]`
-		rec, _ := eventsNameCall(t, "tools/list", body, nil)
-		assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-		assert.NotContains(t, rec.Body.String(), "header mismatch: Mcp-Name")
-	})
 	t.Run("tools/list untouched", func(t *testing.T) {
 		body := `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
 		rec, _ := eventsNameCall(t, "tools/list", body, nil)

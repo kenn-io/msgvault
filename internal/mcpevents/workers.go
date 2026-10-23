@@ -90,10 +90,10 @@ func (s *Service) reconcileOperation(ctx context.Context, priority bool, fn func
 		return false, ctx.Err()
 	}
 }
-func (s *Service) stopWorker(id string, keepGeneration int64) {
+func (s *Service) stopWorkerBefore(id string, generation int64) {
 	s.workersMu.Lock()
 	w := s.workers[id]
-	if w == nil || w.generation == keepGeneration {
+	if w == nil || w.generation >= generation {
 		s.workersMu.Unlock()
 		return
 	}
