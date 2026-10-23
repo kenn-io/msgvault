@@ -450,6 +450,8 @@ func TestTUITelemetryGateSerializesReports(t *testing.T) {
 				synctest.Wait()
 				cancel()
 				require.ErrorIs(t, <-waiter, context.Canceled)
+				// Check before accepted reports finish, since an accepted report clears failures.
+				assert.Zero(t, gate.failures, "a canceled waiter spends no failure budget")
 				assert.Equal(t, []string{"directory"}, screens)
 
 				close(release)
@@ -461,7 +463,6 @@ func TestTUITelemetryGateSerializesReports(t *testing.T) {
 					want = append(want, "email")
 				}
 				assert.Equal(t, want, screens)
-				assert.Zero(t, gate.failures, "a canceled waiter spends no failure budget")
 			})
 		})
 	}
