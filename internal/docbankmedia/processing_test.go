@@ -45,6 +45,50 @@ func TestProcessingPlansAndProfiles(t *testing.T) {
 	assert.Equal([]string{"version"}, fake.Jobs)
 }
 
+func TestProcessingFailedJobRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		phase, code string
+		reopens     bool
+	}{
+		{"queued", "consent", true},
+		{"build_staged", "stale_authority", true},
+		{"generation_staged", "consent", true},
+		{"queued", "terminal", false},
+		{"queued", "ambiguous", false},
+	} {
+		t.Run(tc.phase+"_"+tc.code, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fake := docbanktest.NewProcessingHandler(t)
+			fake.States["job-version"] = [3]string{"failed", tc.phase, tc.code}
+			server := httptest.NewServer(fake)
+			defer server.Close()
+			client, err := docbankmedia.NewClient(server.URL, nil)
+			require.NoError(err)
+			selector := docbankmedia.ProcessingSelector{NodeID: 7, ContentVersionID: "version", Profile: "documents"}
+			jobID, err := client.StartProcessing(t.Context(), selector, "plan-one")
+			if tc.reopens {
+				require.NoError(err)
+				assert.Equal("job-version", jobID)
+			} else {
+				require.Error(err)
+				var httpErr *docbankmedia.HTTPError
+				require.ErrorAs(err, &httpErr)
+				assert.Equal("rendition_failed", httpErr.Reason)
+			}
+			job, err := client.JobStatus(t.Context(), "job-version")
+			require.NoError(err)
+			if tc.reopens {
+				assert.Equal("queued", job.State)
+				assert.Empty(job.FailureCode)
+			} else {
+				assert.Equal("failed", job.State)
+				assert.Equal(tc.code, job.FailureCode)
+			}
+		})
+	}
+}
+
 func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
