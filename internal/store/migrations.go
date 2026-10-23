@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -659,4 +660,50 @@ func (s *Store) MarkMigrationAppliedContext(
 		return fmt.Errorf("migration version must be positive, got %d", version)
 	}
 	return s.markMigrationAppliedContext(ctx, s.db, name, version)
+}
+
+// colonFreeSuffixSQL matches names that extend a prefix with a remainder free
+// of colons, the same guard source merges use for rederive ledger keys.
+const colonFreeSuffixSQL = `SUBSTR(name, 1, LENGTH(?)) = ? AND SUBSTR(name, LENGTH(?) + 1) NOT LIKE '%:%'`
+
+// NextMigrationKeyContext returns the first ledger name after `after` that
+// extends prefix with a colon-free remainder, or "" when none remains.
+func (s *Store) NextMigrationKeyContext(ctx context.Context, prefix, after string) (string, error) {
+	var name string
+	err := s.db.QueryRowContext(ctx, `SELECT name FROM applied_migrations
+		WHERE `+colonFreeSuffixSQL+` AND name > ? ORDER BY name LIMIT 1`, prefix, prefix, prefix, after).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("next migration after %q: %w", after, err)
+	}
+	return name, nil
+}
+
+// ReplaceMigrationContext atomically deletes ledger name old and records
+// version 1 of name replacement. Either name may be empty to skip that step.
+func (s *Store) ReplaceMigrationContext(ctx context.Context, old, replacement string) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if old != "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, old); err != nil {
+				return fmt.Errorf("forget migration %q: %w", old, err)
+			}
+		}
+		if replacement == "" {
+			return nil
+		}
+		return s.markMigrationAppliedContext(ctx, tx, replacement, 1)
+	})
+}
+
+// ForgetMigrationsContext deletes ledger name and every name extending
+// name+"#" with a colon-free remainder in one statement.
+func (s *Store) ForgetMigrationsContext(ctx context.Context, name string) error {
+	prefix := name + "#"
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM applied_migrations
+		WHERE name = ? OR (`+colonFreeSuffixSQL+`)`, name, prefix, prefix, prefix); err != nil {
+		return fmt.Errorf("forget migration %q: %w", name, err)
+	}
+	return nil
 }

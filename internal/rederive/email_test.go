@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -71,14 +71,7 @@ func TestEmailFailedRowRollsBackAndResumes(t *testing.T) {
 	require.NoError(st.UpsertMessageRaw(bad, []byte("invalid MIME")))
 	failed := archiveEmail(t, st, src, "failed", "stale")
 	last := archiveEmail(t, st, src, "last", "stale")
-	fault := fmt.Sprintf(`CREATE TRIGGER fail_email_preview BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'preview failure'); END`, failed)
-	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		_, err = st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION fail_email_preview() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'preview failure'; END IF; RETURN NEW; END $$`, failed))
-		require.NoError(err)
-		fault = `CREATE TRIGGER fail_email_preview BEFORE UPDATE OF snippet ON messages FOR EACH ROW EXECUTE FUNCTION fail_email_preview()`
-	}
-	_, err = st.DB().Exec(fault)
-	require.NoError(err)
+	unblock := blockEmailSnippet(t, st, failed)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	sum, err := Run(ctx, st, src.SourceType, src.Identifier, src.ID, func(string) { cancel() })
@@ -94,12 +87,7 @@ func TestEmailFailedRowRollsBackAndResumes(t *testing.T) {
 	body, err = st.GetMessageBodyText(failed)
 	require.NoError(err)
 	assert.Equal("stale", body, "failed preview must roll back the preceding body write")
-	drop := "DROP TRIGGER fail_email_preview"
-	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		drop += " ON messages"
-	}
-	_, err = st.DB().Exec(drop)
-	require.NoError(err)
+	unblock()
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	body, err = st.GetMessageBodyText(failed)
@@ -108,6 +96,72 @@ func TestEmailFailedRowRollsBackAndResumes(t *testing.T) {
 	body, err = st.GetMessageBodyText(bad)
 	require.NoError(err)
 	assert.Equal("keep me", body)
+}
+
+func TestEmailRetryOnlyUnresolvedRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, src, failed := archiveOutlookEmail(t, "stale")
+	archiveEmail(t, st, src, "later", "stale")
+	unblock := blockEmailSnippet(t, st, failed)
+	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	assert.Equal(int64(1), sum.Errors)
+	assert.Equal(int64(1), sum.BodiesRewritten)
+	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	assert.Equal(int64(1), sum.MessagesScanned, "a sync retries only unresolved MIME rows")
+	unblock()
+	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	assert.Equal(int64(1), sum.MessagesScanned)
+	assert.Zero(sum.Errors)
+	sum, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	assert.Equal(int64(2), sum.MessagesScanned, "manual repair still inspects the whole archive")
+}
+
+func TestEmailFirstSyncBoundsReadQueries(t *testing.T) {
+	require := require.New(t)
+	st, src, id := archiveOutlookEmail(t, "Heizkörper")
+	for i := range 32 {
+		if i > 0 {
+			id = archiveEmail(t, st, src, strconv.Itoa(i), "Heizkörper")
+		}
+		_, err := st.UpdateMessageDerivedEmailTextContext(t.Context(), id, sql.NullString{String: "Heizkörper", Valid: true}, sql.NullString{String: "<p>Heizkörper</p>", Valid: true}, sql.NullString{String: "Heizkörper", Valid: true})
+		require.NoError(err)
+	}
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		store.ConfigureSQLLogging(store.SQLLogOptions{})
+	})
+	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	require.Equal(int64(32), sum.MessagesScanned)
+	reads := strings.Count(logs.String(), `"kind":"query`)
+	require.LessOrEqual(reads, 2*32+8, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
+}
+
+func blockEmailSnippet(t *testing.T, st *store.Store, id int64) func() {
+	t.Helper()
+	query := fmt.Sprintf(`CREATE TRIGGER fail_retry_snippet BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'snippet failure'); END`, id)
+	drop := "DROP TRIGGER fail_retry_snippet"
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION fail_retry_snippet() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'snippet failure'; END IF; RETURN NEW; END $$`, id))
+		require.NoError(t, err)
+		query = `CREATE TRIGGER fail_retry_snippet BEFORE UPDATE OF snippet ON messages FOR EACH ROW EXECUTE FUNCTION fail_retry_snippet()`
+		drop += " ON messages"
+	}
+	_, err := st.DB().Exec(query)
+	require.NoError(t, err)
+	return func() {
+		_, err := st.DB().Exec(drop)
+		require.NoError(t, err)
+	}
 }
 
 func TestEmailPreservesProviderSnippets(t *testing.T) {

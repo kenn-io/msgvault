@@ -80,8 +80,8 @@ func Lookup(sourceType string) (Func, string, bool) {
 	return e.fn, e.version, ok
 }
 
-func passes(sourceType string) []entry {
-	email := entry{fn: repairEmail, version: emailVersion}
+func passes(sourceType, identifier string, retry bool) []entry {
+	email := entry{fn: emailPass(LedgerKey(sourceType, identifier, emailVersion), retry), version: emailVersion}
 	if fn, version, ok := Lookup(sourceType); ok {
 		return []entry{{fn: fn, version: version}, email}
 	}
@@ -159,7 +159,7 @@ func RunIfStale(
 }
 
 func run(ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string), onlyStale bool) (sum *Summary, ran bool, err error) {
-	for _, pass := range passes(sourceType) {
+	for _, pass := range passes(sourceType, identifier, onlyStale) {
 		if onlyStale {
 			applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, pass.version), 1)
 			if err != nil {

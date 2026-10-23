@@ -6624,6 +6624,52 @@ type ArchivedRawMessage struct {
 	// re-deriving it can skip rows that would not change.
 	BodyText string
 	Snippet  string
+	// stored is the stored text and search envelope read with the payload.
+	stored derivedEmailText
+}
+
+// decompressArchivedRaw inflates a zlib-compressed archived payload.
+func decompressArchivedRaw(messageID int64, raw []byte, compression sql.NullString) ([]byte, error) {
+	if !compression.Valid || compression.String != "zlib" {
+		return raw, nil
+	}
+	r, err := zlib.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("zlib reader for message %d: %w", messageID, err)
+	}
+	defer func() { _ = r.Close() }()
+	raw, err = io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("decompress message %d: %w", messageID, err)
+	}
+	return raw, nil
+}
+
+// ScanArchivedEmailContext returns a source's first retained MIME message with
+// afterID < id <= throughID, read with its stored text and search envelope, or
+// nil when none remains. Reading one row bounds memory for very large messages.
+func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID, throughID int64) (*ArchivedRawMessage, error) {
+	item := &ArchivedRawMessage{}
+	var raw []byte
+	var compression sql.NullString
+	dest := append([]any{&item.MessageID, &item.ConversationID, &raw, &compression}, item.stored.scanDest()...)
+	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.conversation_id, r.raw_data, r.compression, `+s.derivedEmailTextColumns()+`
+		FROM messages m
+		JOIN message_raw r ON r.message_id = m.id
+		LEFT JOIN message_bodies b ON b.message_id = m.id
+		WHERE m.source_id = ? AND r.raw_format = 'mime' AND m.id > ? AND m.id <= ?
+		ORDER BY m.id
+		LIMIT 1`, sourceID, afterID, throughID).Scan(dest...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil //nolint:nilnil // An exhausted archive scan has no row and no error.
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan archived email: %w", err)
+	}
+	item.stored.fts.MessageID = item.MessageID
+	item.BodyText, item.Snippet = item.stored.body, item.stored.snippet
+	item.RawData, err = decompressArchivedRaw(item.MessageID, raw, compression)
+	return item, err
 }
 
 // ScanArchivedRawMessages returns up to limit archived messages for a source
@@ -6657,18 +6703,9 @@ func (s *Store) ScanArchivedRawMessagesContext(ctx context.Context, sourceID int
 		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText, &item.Snippet); err != nil {
 			return nil, err
 		}
-		if compression.Valid && compression.String == "zlib" {
-			r, zerr := zlib.NewReader(bytes.NewReader(raw))
-			if zerr != nil {
-				return nil, fmt.Errorf("zlib reader for message %d: %w", item.MessageID, zerr)
-			}
-			raw, err = io.ReadAll(r)
-			_ = r.Close()
-			if err != nil {
-				return nil, fmt.Errorf("decompress message %d: %w", item.MessageID, err)
-			}
+		if item.RawData, err = decompressArchivedRaw(item.MessageID, raw, compression); err != nil {
+			return nil, err
 		}
-		item.RawData = raw
 		out = append(out, item)
 	}
 	return out, rows.Err()
@@ -6703,18 +6740,9 @@ func (s *Store) ScanArchivedRawMessagesForConversation(
 		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression); err != nil {
 			return nil, err
 		}
-		if compression.Valid && compression.String == "zlib" {
-			r, zerr := zlib.NewReader(bytes.NewReader(raw))
-			if zerr != nil {
-				return nil, fmt.Errorf("zlib reader for message %d: %w", item.MessageID, zerr)
-			}
-			raw, err = io.ReadAll(r)
-			_ = r.Close()
-			if err != nil {
-				return nil, fmt.Errorf("decompress message %d: %w", item.MessageID, err)
-			}
+		if item.RawData, err = decompressArchivedRaw(item.MessageID, raw, compression); err != nil {
+			return nil, err
 		}
-		item.RawData = raw
 		out = append(out, item)
 	}
 	return out, rows.Err()
@@ -6737,13 +6765,23 @@ func (s *Store) UpdateMessageDerivedText(
 // envelope repairs therefore survive MIME re-derivation. All writes commit together.
 // The result reports whether derived text or search data changed.
 func (s *Store) UpdateMessageDerivedEmailTextContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
-	matches, err := s.derivedEmailTextMatchesContext(ctx, messageID, bodyText, bodyHTML, snippet)
+	row, err := s.loadDerivedEmailText(boundQuerier{ctx: ctx, q: s.db}, messageID)
+	if err != nil {
+		return false, fmt.Errorf("compare derived email text: %w", err)
+	}
+	return s.UpdateArchivedEmailTextContext(ctx, &ArchivedRawMessage{MessageID: messageID, stored: row}, bodyText, bodyHTML, snippet)
+}
+
+// UpdateArchivedEmailTextContext is UpdateMessageDerivedEmailTextContext for a
+// row from ScanArchivedEmailContext, compared against the text read with it.
+func (s *Store) UpdateArchivedEmailTextContext(ctx context.Context, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	matches, err := s.derivedEmailTextMatchesContext(ctx, item.stored, bodyText, bodyHTML, snippet)
 	if err != nil || matches {
 		return false, err
 	}
 	var changed bool
 	err = s.withTxContext(ctx, func(tx *loggedTx) (err error) {
-		changed, err = s.writeDerivedEmailText(ctx, tx, messageID, bodyText, bodyHTML, snippet)
+		changed, err = s.writeDerivedEmailText(ctx, tx, item.MessageID, bodyText, bodyHTML, snippet)
 		return err
 	})
 	return changed, err
@@ -6756,41 +6794,46 @@ type derivedEmailText struct {
 	fts                 FTSDoc
 }
 
-func (row derivedEmailText) matches(bodyText, bodyHTML, snippet sql.NullString) bool {
+func (row *derivedEmailText) matches(bodyText, bodyHTML, snippet sql.NullString) bool {
 	return row.body == bodyText.String && row.html == bodyHTML.String && row.snippet == snippet.String
 }
 
-func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailText, error) {
+// derivedEmailTextColumns selects the columns scanned by derivedEmailText.scanDest
+// from messages m joined to message_bodies b.
+func (s *Store) derivedEmailTextColumns() string {
 	aggregate := "GROUP_CONCAT"
 	if s.IsPostgreSQL() {
 		aggregate = "STRING_AGG"
 	}
 	envelope := storedFTSEnvelopeSQL(aggregate)
+	return `COALESCE(b.body_text, ''), COALESCE(b.body_html, ''), COALESCE(m.snippet, ''), ` +
+		envelope.subject + `, ` + envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs
+}
+
+func (row *derivedEmailText) scanDest() []any {
+	return []any{&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs}
+}
+
+func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailText, error) {
 	row := derivedEmailText{fts: FTSDoc{MessageID: messageID}}
-	err := q.QueryRow(`SELECT
-		COALESCE(b.body_text, ''), COALESCE(b.body_html, ''), COALESCE(m.snippet, ''), `+
-		envelope.subject+`, `+envelope.fromAddr+`, `+envelope.toAddrs+`, `+envelope.ccAddrs+`
+	err := q.QueryRow(`SELECT `+s.derivedEmailTextColumns()+`
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, messageID).
-		Scan(&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs)
+		Scan(row.scanDest()...)
 	return row, err
 }
 
-func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, messageID int64, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
-	q := boundQuerier{ctx: ctx, q: s.db}
-	row, err := s.loadDerivedEmailText(q, messageID)
-	if err != nil {
-		return false, fmt.Errorf("compare derived email text: %w", err)
-	}
+func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, row derivedEmailText, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
 	if !row.matches(bodyText, bodyHTML, snippet) {
 		return false, nil
 	}
 	if !s.fts5Available {
 		return true, nil
 	}
+	q := boundQuerier{ctx: ctx, q: s.db}
 	row.fts.Body = bodyText.String
 	matches, err := s.dialect.FTSMatches(q, row.fts)
 	if s.dialect.IsFTSValueTooLargeError(err) {
-		return ftsMessageUnsearchable(q, messageID)
+		return ftsMessageUnsearchable(q, row.fts.MessageID)
 	}
 	return matches, err
 }
