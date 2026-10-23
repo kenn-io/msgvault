@@ -22,11 +22,11 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		status int
 		want   string
 	}{
-		{"table", []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, 200, "Coverage complete"},
+		{"table", []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, 200, "generated"},
 		{"scope limit", []string{"search", "quartz"}, 200, "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"},
 		{"result limit", []string{"search", "quartz"}, 200, "More may match"},
 		{"terminal", []string{"search", "quarterly numbers"}, 200, "Coverage complete"},
-		{"json", []string{"search", "quarterly numbers", "--json"}, 200, `"message_id":44`},
+		{"json", []string{"search", "quarterly numbers", "--json"}, 200, `"message_id":11`},
 		{"mode delegated", []string{"search", "words", "--mode", "hybrid"}, 503, "media_search_mode_unavailable"},
 		{"upper limit delegated", []string{"search", "words", "--limit", "101"}, 400, "invalid_limit"},
 		{"person relation delegated", []string{"search", "words", "--direction", "from_person"}, 400, "invalid_person"},
@@ -35,7 +35,6 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal("/api/v1/media/search", r.URL.Path)
 				switch test.name {
@@ -59,9 +58,9 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]string{"error": test.want, "message": test.want})
 					return
 				}
-				state := "complete"
+				state, excerpt := "complete", "quarterly numbers"
 				if test.name == "terminal" {
-					state = "\x1b[31mcomplete\x1b[0m\a"
+					state, excerpt = "\x1b[31mcomplete\x1b[0m\a", "quarterly\x1b[31m numbers\x1b[0m\a"
 				}
 				attachmentError := &generated.ErrorResponse{ErrorData: "transport", Message: new("Attachment search is unavailable.")}
 				attachments := []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}
@@ -69,7 +68,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					attachmentError = &generated.ErrorResponse{ErrorData: "media_search_scope_limit", Message: new(test.want)}
 					attachments = []generated.MediaAttachmentResult{}
 				}
-				_ = json.NewEncoder(w).Encode(generated.MediaSearchResponse{Coverage: generated.SearchCoverage{State: state}, Results: []generated.MediaSearchResult{}, Partial: true, Attachments: &generated.MediaAttachmentSearch{Results: attachments, Truncated: test.name != "scope limit", ErrorData: attachmentError}, RecordingsError: &generated.ErrorResponse{ErrorData: "media_search_unavailable", Message: new("Docbank transcript search is unavailable")}})
+				_ = json.NewEncoder(w).Encode(generated.MediaSearchResponse{Coverage: generated.SearchCoverage{State: state}, Results: []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}}, Partial: true, Attachments: &generated.MediaAttachmentSearch{Results: attachments, Truncated: test.name != "scope limit", ErrorData: attachmentError}, RecordingsError: &generated.ErrorResponse{ErrorData: "media_search_unavailable", Message: new("Docbank transcript search is unavailable")}})
 			}))
 			t.Cleanup(daemon.Close)
 			command := newMediaCmd(func(context.Context) (*daemonclient.Client, func(), error) {
@@ -90,6 +89,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 			}
 			require.NoError(err)
 			assert.Contains(output.String(), test.want)
+			assert.Contains(output.String(), "quarterly numbers")
 			assert.NotContains(output.String(), "\x1b")
 			assert.NotContains(output.String(), "\a")
 			if test.name == "scope limit" {

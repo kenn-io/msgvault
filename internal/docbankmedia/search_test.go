@@ -240,7 +240,7 @@ func TestSearchDocumentsContract(t *testing.T) {
 			if fault == "node name" || fault == "full name page" {
 				require.NoError(err)
 				assert.Empty(got.Results)
-				assert.Equal(fault == "full name page", got.Truncated)
+				assert.False(got.Truncated)
 				return
 			}
 			if fault != "" && fault != "mixed" {

@@ -42,7 +42,7 @@
     const requestedQuery = query.trim();
     const requestedClient = client;
     const requestedParticipantID = participantID;
-    const allowed = supported && Boolean(requestedQuery);
+    const allowed = supported && admitted && Boolean(requestedQuery);
     const retryRequested = retry !== previousRetry;
     previousRetry = retry;
     result = undefined;

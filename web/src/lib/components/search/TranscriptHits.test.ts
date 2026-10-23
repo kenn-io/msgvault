@@ -187,10 +187,8 @@ describe('TranscriptHits', () => {
     } else {
       expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
       expect(screen.getByText(/Recording search supports plain words only/)).toBeTruthy();
-      expect(fetchFn).toHaveBeenCalledTimes(1);
-    }
-    if (query === 'quarterly-review') {
-      expect(screen.getByRole('region', { name: 'Attachments' }).textContent).toContain('quarterly-review');
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(screen.queryByRole('region', { name: 'Attachments' })).toBeNull();
     }
   });
 
