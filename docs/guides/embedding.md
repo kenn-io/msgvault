@@ -13,40 +13,76 @@ accept a context; the caller controls cancellation, scheduling, and shutdown.
 
 This package is newer than the latest release.
 
-## Reuse MCP tool definitions
+## Run scoped MCP reads
 
-`go.kenn.io/msgvault/pkg/mcp` lets a Go application reuse the native MCP
-schemas without running the standalone MCP server. Call `ReadTool` with an
-explicit tool name, then register the returned definition with your own handler:
+`go.kenn.io/msgvault/pkg/mcp.Reader` runs native tools against a caller-owned
+archive without a daemon or listener. It supports `get_message`,
+`list_messages`, `list_thread`, `search_metadata`, `search_message_bodies`,
+`get_stats`, and `get_attachment`. The application owns member authentication,
+current permissions, and its MCP transport.
+
+Open an archive as described below, then create one reader for its lifetime:
 
 ```go
-import (
-    sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-    msgvaultmcp "go.kenn.io/msgvault/pkg/mcp"
-)
+reader, err := msgvaultmcp.NewReader(messages, msgvaultmcp.ReaderOptions{
+    AttachmentsDir: attachmentDirectory,
+})
+if err != nil {
+    return err
+}
+defer reader.Close()
 
-// readMessages is the application's typed MCP handler.
 tool, err := msgvaultmcp.ReadTool("list_messages")
 if err != nil {
     return err
 }
-sdkmcp.AddTool(server, tool, readMessages)
+sdkmcp.AddTool(server, tool, func(ctx context.Context, req *sdkmcp.CallToolRequest,
+    args map[string]any) (*sdkmcp.CallToolResult, any, error) {
+    // Application-owned admission returns current source IDs and a release
+    // function. Hold that authority fence through the entire operation.
+    sourceIDs, release, err := admitRead(ctx)
+    if err != nil {
+        return nil, nil, err
+    }
+    defer release()
+    return reader.Call(ctx, sourceIDs, req, args)
+})
 ```
 
-The lookup includes the base read-only catalog. Write tools and tools requiring
-optional backends, such as `query_sql` and `search_documents`, return an error,
-as do unknown names. Each result is an independent copy, including nested
-schemas and annotations; schemas use `map[string]any`. Looking up a definition
-does not register it or expose other tools.
+Here `msgvaultmcp` is `go.kenn.io/msgvault/pkg/mcp`, and `sdkmcp` is
+`github.com/modelcontextprotocol/go-sdk/mcp`. Use the SDK's generic `AddTool`
+so it validates both arguments and output against the native schemas. The
+reader preserves native paging, body windows, search, errors and attachment
+chunk semantics. It does not accept arbitrary query engines or execute other
+tools just because they appear in the catalog.
 
-The application supplies execution, authentication, authorization, and transport.
-It must implement the selected tool's documented behavior and response bounds.
-The SDK's generic `AddTool` function validates the input and output schemas;
-the lower-level `server.AddTool` method leaves validation to the caller.
-Neither a schema nor its read-only annotation enforces access to archive data.
-In particular, `archive.WithSourceScope` applies to the HTTP handler described
-below, not to arbitrary MCP handlers. This package does not open an archive,
-discover configuration, or start a daemon or listener.
+Supply current source IDs on **every call**. Nil and empty scopes permit no
+sources. Source scope is applied inside native SQL to account resolution,
+references, lists, search results, counts and attachment metadata before bytes
+are read. Arguments can narrow that scope. This API grants whole sources; it
+cannot authorize selected messages within a source.
+
+The reader also supports the PostgreSQL-only `CGO_ENABLED=0` library profile.
+Each call uses one native read snapshot. The application must keep its own
+permission/admission transaction valid until the call returns. Cached
+attachment continuations recheck the current call's source scope and content
+hash before returning bytes. A previous successful chunk grants no access to
+later chunks. An empty `AttachmentsDir` leaves attachment bytes unavailable;
+it does not discover local configuration. Stop and drain calls before closing
+the reader, then close the archive. Closing the reader releases cached bytes
+and leaves the caller-owned archive open.
+
+### Reuse other read definitions
+
+`ReadTool(name)` returns an independent copy of a native base read definition,
+including nested schemas and annotations. Schemas use `map[string]any`.
+Unknown names, writes, and tools requiring optional backends (including
+`query_sql` and `search_documents`) return an error. A definition alone does
+not register a handler, grant access or make a tool executable through Reader.
+For tools outside Reader's supported subset, the caller supplies execution.
+Do not treat `archive.WithSourceScope` as a general permission boundary for
+arbitrary query engines or handlers; its HTTP contract remains restricted to
+the operations listed below.
 
 ## Open an archive
 

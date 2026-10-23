@@ -13,8 +13,8 @@ import (
 // and tools requiring optional backends return an error.
 //
 // This is a definition only: it does not open an archive, register a handler,
-// validate calls, or authorize access. Callers own those responsibilities and
-// must implement the selected tool's documented behavior. Use the SDK's generic
+// validate calls, or authorize access. Callers own admission and transport; Reader provides native execution for its
+// supported subset. Use the SDK's generic
 // AddTool function to validate inputs and outputs against these schemas.
 func ReadTool(name string) (*sdkmcp.Tool, error) {
 	return internalmcp.ReadTool(name)
