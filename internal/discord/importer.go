@@ -1663,7 +1663,7 @@ func (imp *Importer) resolveDeferredReplies(ctx context.Context, sourceID int64)
 	afterID := int64(0)
 	for {
 		unresolved, err := imp.store.ListUnresolvedMessageRepliesAfterContext(ctx,
-			sourceID, discordMessageType, afterID, imp.pageSize,
+			sourceID, discordMessageType, afterID, imp.pageSize, 0,
 		)
 		if err != nil {
 			return err

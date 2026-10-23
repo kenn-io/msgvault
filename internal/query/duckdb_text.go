@@ -66,7 +66,7 @@ const textSenderJoin = `LEFT JOIN (
 func (e *DuckDBEngine) buildTextFilterConditions(
 	filter TextFilter,
 ) (string, []any) {
-	conditions := []string{textTypeFilter()}
+	conditions := []string{textTypeFilter(), store.LiveMessagesWhere("msg", false)}
 	var args []any
 
 	if filter.SourceID != nil {
@@ -357,7 +357,7 @@ func (e *DuckDBEngine) TextAggregate(
 	}
 
 	// Build WHERE clause with text type filter.
-	conditions := []string{textTypeFilter()}
+	conditions := []string{textTypeFilter(), store.LiveMessagesWhere("msg", false)}
 	var args []any
 
 	if opts.SourceID != nil {

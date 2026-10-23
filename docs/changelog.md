@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Matrix sync decrypts history through the account's key backup and recovers earlier placeholders, edits, reactions and reply links. First setup requires a recovery secret or `--skip-key-backup`. `add-matrix` accepts `--recovery-file`, `--recovery-passphrase` and `--skip-key-backup`. See the [Matrix guide](usage/matrix.md) for credential storage and authentication limits.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - On Windows, a keyed daemon's first start no longer fails with `provider credential DACL permits inherited access` when a client is polling at the same moment.

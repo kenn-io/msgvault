@@ -878,31 +878,36 @@ func (s *Store) ListUnresolvedMessageReplies(sourceID int64, messageType string)
 func (s *Store) ListUnresolvedMessageRepliesAfter(
 	sourceID int64, messageType string, afterID int64, limit int,
 ) ([]UnresolvedMessageReply, error) {
-	return s.ListUnresolvedMessageRepliesAfterContext(context.Background(), sourceID, messageType, afterID, limit)
+	return s.ListUnresolvedMessageRepliesAfterContext(context.Background(), sourceID, messageType, afterID, limit, 0)
 }
 
 // ListUnresolvedMessageRepliesAfterContext honors cancellation during ListUnresolvedMessageRepliesAfter.
 func (s *Store) ListUnresolvedMessageRepliesAfterContext(ctx context.Context,
-	sourceID int64, messageType string, afterID int64, limit int,
+	sourceID int64, messageType string, afterID int64, limit int, conversationID int64,
 ) ([]UnresolvedMessageReply, error) {
 	if limit <= 0 {
 		return nil, errors.New("list unresolved message replies: limit must be positive")
 	}
-	return s.listUnresolvedMessageRepliesContext(ctx, sourceID, messageType, afterID, limit)
+	return s.listUnresolvedMessageRepliesContext(ctx, sourceID, messageType, afterID, limit, conversationID)
 }
 
 func (s *Store) listUnresolvedMessageReplies(
 	sourceID int64, messageType string, afterID int64, limit int,
 ) ([]UnresolvedMessageReply, error) {
-	return s.listUnresolvedMessageRepliesContext(context.Background(), sourceID, messageType, afterID, limit)
+	return s.listUnresolvedMessageRepliesContext(context.Background(), sourceID, messageType, afterID, limit, 0)
 }
 
 // listUnresolvedMessageRepliesContext honors cancellation during listUnresolvedMessageReplies.
 func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
-	sourceID int64, messageType string, afterID int64, limit int,
+	sourceID int64, messageType string, afterID int64, limit int, conversationID int64,
 ) ([]UnresolvedMessageReply, error) {
 	limitClause := ""
 	args := []any{sourceID, messageType, afterID}
+	conversationClause := ""
+	if conversationID != 0 {
+		conversationClause = " AND conversation_id = ?"
+		args = append(args, conversationID)
+	}
 	if limit > 0 {
 		limitClause = " LIMIT ?"
 		args = append(args, limit)
@@ -916,7 +921,7 @@ func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
 		  AND reply_to_message_id IS NULL
 		  AND metadata IS NOT NULL
 		  AND CAST(metadata AS TEXT) LIKE '%"referenced_message_id"%'
-		ORDER BY id`+limitClause,
+		`+conversationClause+` ORDER BY id`+limitClause,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved message replies: %w", err)
