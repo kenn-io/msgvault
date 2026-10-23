@@ -703,6 +703,7 @@ jobs:
         run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/...
 
       - name: Test CLI in isolated shards (pgvector-tagged)
+        if: ${{ !cancelled() }}
         run: scripts/test-package-shards.sh ./cmd/msgvault/cmd 4 "fts5 sqlite_vec pgvector" 60m
 
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
