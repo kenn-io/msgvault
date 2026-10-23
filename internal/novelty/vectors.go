@@ -10,6 +10,9 @@ const microOne = 1000000
 // allows float32 rounding of MessageVector output but rejects raw chunks.
 const unitTolerance = 1e-4
 
+// MaxMessageChunks is the maximum number of chunks used to build a message vector.
+const MaxMessageChunks = 4
+
 // MessageVector normalizes each of the first maxChunks chunks, then normalizes
 // their mean. Zero chunks are skipped; malformed chunks reject the message.
 func MessageVector(chunks [][]float32, dim, maxChunks int) ([]float32, bool) {
