@@ -13,21 +13,22 @@ import (
 // ProcessingHandler models Docbank's profile, plan, job stream, and status routes.
 // Configure fields between worker passes; request records are guarded by Mu.
 type ProcessingHandler struct {
-	Profiles        int
-	NodeIDs         map[string]int64
-	JobFaults       map[string]int
-	PollFaults      map[string]int
-	Reasons         map[string]string
-	Rendition       bool
-	T               *testing.T
-	Mu              sync.Mutex
-	Fingerprint     string
-	PlanFingerprint string
-	Faults          map[string]int       // content version to plan HTTP status
-	States          map[string][3]string // job ID to state, phase, and failure code
-	Polls           []string
-	Plans           []string
-	Jobs            []string
+	Profiles          int
+	NodeIDs           map[string]int64
+	JobFaults         map[string]int
+	PollFaults        map[string]int
+	Reasons           map[string]string
+	IneligibleReasons map[string]string
+	Rendition         bool
+	T                 *testing.T
+	Mu                sync.Mutex
+	Fingerprint       string
+	PlanFingerprint   string
+	Faults            map[string]int       // content version to plan HTTP status
+	States            map[string][3]string // job ID to state, phase, and failure code
+	Polls             []string
+	Plans             []string
+	Jobs              []string
 }
 
 func NewProcessingHandler(t *testing.T) *ProcessingHandler {
@@ -74,7 +75,7 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": h.Reasons[version]}))
 				return
 			}
-			assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"fingerprint": h.PlanFingerprint}))
+			assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"fingerprint": h.PlanFingerprint, "rendition_ineligible_reason": h.IneligibleReasons[version]}))
 		} else {
 			assert.Equal(h.T, h.PlanFingerprint, input.Fingerprint)
 			if assert.NotNil(h.T, input.Consent) {
@@ -91,6 +92,11 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			state, ok := h.States["job-"+version]
+			if ok && state[0] == "failed" && state[2] != "consent" && state[2] != "stale_authority" {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": "rendition_failed"}))
+				return
+			}
 			if !ok || state[0] == "failed" {
 				h.States["job-"+version] = [3]string{"queued", "rendition", ""}
 			}
