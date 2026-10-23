@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-23"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -3476,6 +3476,7 @@ msgvault attribute-definition list [--object-type person|organization] [--includ
 msgvault attribute-definition get <definition-id> [--json]
 msgvault attribute-definition create --definition <json|@path|-> [--dry-run] [--json]
 msgvault attribute-definition rename <definition-id> [--label <text>] [--description <text> | --clear-description] [--json]
+msgvault attribute-definition set-stability <definition-id> <fixed|durable|volatile> [--json]
 msgvault attribute-definition delete <definition-id>
 ```
 
@@ -3483,6 +3484,13 @@ msgvault attribute-definition delete <definition-id>
 conflict with definitions already stored by the daemon. `rename` does not
 change the immutable slug or universal ID. Deletion is limited to user-created,
 deletable definitions that have no stored values.
+
+`set-stability` changes the definition's stability class with revision protection.
+It accepts only `fixed`, `durable`, or `volatile`; `list` displays the class.
+See [attribute stability](usage/people.md#create-a-portable-field-definition) for
+the shipped defaults and API behavior.
+
+New on `main`; not available in v0.21.0.
 
 ---
 
