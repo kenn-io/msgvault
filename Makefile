@@ -35,8 +35,7 @@ PG_TEST_PARALLEL ?= 4
 # at a time inside one binary, so left whole it sets the wall clock of the
 # whole lane. The *-unsharded targets run everything else and exist for CI;
 # `make test` and `make test-pg-shipped` still run every package.
-# CI's PostgreSQL remainder target passes a longer SHARDED_TEST_PKGS list
-# adding ./internal/beeper and ./internal/query.
+# CI's PostgreSQL remainder passes the sharded matrix's package list.
 SHARDED_TEST_PKGS := ./cmd/msgvault/cmd ./internal/store ./internal/api
 TEST_SHARDS ?= 4
 TEST_PROFILE ?= auto
