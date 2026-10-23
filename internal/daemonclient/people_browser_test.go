@@ -333,7 +333,7 @@ func TestPeopleBrowserProfileAttributesAndInboxMappings(t *testing.T) {
 				"person_id":51,"attributes":[{
 					"definition":{
 						"id":7,"universal_id":"field-7","object_type":"person","slug":"nickname","label":"Nickname",
-						"value_type":"text","field_type":"text","cardinality":"single","ownership":"user",
+						"value_type":"text","field_type":"text","cardinality":"single","ownership":"user","stability":"volatile",
 						"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"
 					},
 					"current":[{
@@ -379,6 +379,7 @@ func TestPeopleBrowserProfileAttributesAndInboxMappings(t *testing.T) {
 	assert.Equal(int64(51), attributes.PersonID)
 	require.Len(attributes.Groups, 1)
 	assert.Equal("nickname", attributes.Groups[0].Definition.Slug)
+	assert.Equal(store.AttributeStabilityVolatile, attributes.Groups[0].Definition.Stability)
 	require.Len(attributes.Groups[0].Current, 1)
 	assert.Equal("Al", *attributes.Groups[0].Current[0].Value.Text)
 
