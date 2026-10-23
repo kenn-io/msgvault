@@ -109,13 +109,13 @@ func TestDropDocumentMessageTriggersUpgrade(t *testing.T) {
 	var lanes []string
 	rows, err := f.Store.DB().QueryContext(ctx, `SELECT source_lane FROM person_sweep_cursors`)
 	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
 	for rows.Next() {
 		var lane string
 		requirements.NoError(rows.Scan(&lane))
 		lanes = append(lanes, lane)
 	}
 	requirements.NoError(rows.Err())
-	requirements.NoError(rows.Close())
 	checks.Equal([]string{"conversation_text"}, lanes, "only the retired lane's cursors are deleted")
 }
 
