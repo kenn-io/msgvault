@@ -1119,6 +1119,40 @@ func TestAttachmentMirrorProcessingOperatorRepair(t *testing.T) {
 	assert.Equal([]string{"a"}, r.processing.Jobs)
 }
 
+func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	r.processing.States["job-a"] = [3]string{"awaiting_review", "rendition", ""}
+	r.processingDue()
+	before := time.Now().UTC().Truncate(time.Second).Add(store.BeeperMediaRetryDelay)
+	// The scheduler publishes the batch error as last_error.
+	err := r.runBatch(t.Context())
+	counts := r.processingCounts()
+	assert.Zero(counts.Requested)
+	assert.Equal(map[string]int64{"awaiting_review": 1}, counts.Outcomes)
+	var jobID string
+	var next *time.Time
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id, next_action_at FROM docbank_attachment_processing`).Scan(&jobID, &next))
+	assert.Equal("job-a", jobID)
+	if assert.NotNil(next) {
+		assert.False(next.Before(before))
+		assert.True(next.Before(time.Now().UTC().Add(store.BeeperMediaRetryDelay + time.Second)))
+	}
+	require.ErrorContains(err, "awaiting_review")
+	r.processing.States["job-a"] = [3]string{"completed", "rendition", ""}
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"job-a"}, r.processing.Polls)
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+	assert.Empty(r.processingCounts().Outcomes)
+	assert.Equal([]string{"job-a", "job-a"}, r.processing.Polls)
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+}
+
 func TestAttachmentMirrorProcessingIneligiblePlan(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
