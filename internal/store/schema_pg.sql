@@ -406,7 +406,7 @@ CREATE TABLE IF NOT EXISTS person_sweep_changes (
     person_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     source_lane TEXT NOT NULL CHECK (source_lane IN (
         'conversation_text', 'meeting_text', 'attachment_caption',
-        'attachment_ocr'
+        'attachment_ocr', 'document_text'
     )),
     change_kind TEXT NOT NULL CHECK (change_kind IN (
         'upsert', 'delete', 'scope', 'tracking', 'publication'
@@ -453,7 +453,7 @@ CREATE TABLE IF NOT EXISTS person_sweep_cursors (
     person_id                   BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     source_lane                 TEXT NOT NULL CHECK (source_lane IN (
         'conversation_text', 'meeting_text', 'attachment_caption',
-        'attachment_ocr'
+        'attachment_ocr', 'document_text'
     )),
     program_fingerprint         TEXT NOT NULL,
     catalog_fingerprint         TEXT NOT NULL,

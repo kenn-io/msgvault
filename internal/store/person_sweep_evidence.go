@@ -119,7 +119,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 			}
 		}
 
-	case peoplesweep.SourceAttachmentCaption, peoplesweep.SourceAttachmentOCR:
+	case peoplesweep.SourceDocumentText, peoplesweep.SourceAttachmentCaption, peoplesweep.SourceAttachmentOCR:
 		return window, peoplesweep.ErrSourceTextUnavailable
 	}
 	if loadReconciliation && request.ReconcileUpper != "" && len(window.Changes) == 0 &&
@@ -740,7 +740,7 @@ func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts
 	if decodeErr != nil {
 		return reject(personfacts.ReasonUnalignedEvidence, "invalid person sweep evidence ref"), nil //nolint:nilerr // Malformed evidence is a recorded domain rejection.
 	}
-	if ref.SourceLane == "document_text" || ref.SourceLane == peoplesweep.SourceAttachmentCaption || ref.SourceLane == peoplesweep.SourceAttachmentOCR {
+	if ref.SourceLane == peoplesweep.SourceDocumentText || ref.SourceLane == peoplesweep.SourceAttachmentCaption || ref.SourceLane == peoplesweep.SourceAttachmentOCR {
 		return personfacts.AlignmentResult{}, peoplesweep.ErrSourceTextUnavailable
 	}
 	if a.Store == nil {
@@ -830,9 +830,6 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 		if err != nil {
 			return nil, fmt.Errorf("decode stored person sweep evidence %s: %w", stored.Key, err)
 		}
-		if ref.SourceLane == "document_text" {
-			continue
-		}
 		for _, change := range changes {
 			if !personSweepChangeMatchesRef(personID, change, ref) {
 				continue
@@ -894,8 +891,16 @@ func (s *Store) personSweepStoredEvidence(ctx context.Context, personID int64) (
 }
 
 func personSweepChangeMatchesRef(personID int64, change peoplesweep.ArchiveChange, ref peoplesweep.EvidenceRef) bool {
-	if change.PersonID != personID || change.SourceLane != ref.SourceLane ||
+	if change.PersonID != personID ||
 		change.SourceID != ref.SourceID || change.MessageID != ref.MessageID {
+		return false
+	}
+	if ref.SourceLane == peoplesweep.SourceDocumentText {
+		return (change.SourceLane == peoplesweep.SourceConversationText || change.SourceLane == peoplesweep.SourceMeetingText) &&
+			change.AttachmentID == 0 && change.OccurrenceKey == "" &&
+			change.EvidenceEffect != peoplesweep.EvidenceEffectSourceEdited
+	}
+	if change.SourceLane != ref.SourceLane {
 		return false
 	}
 	switch ref.SourceLane {

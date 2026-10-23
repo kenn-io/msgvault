@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -2540,8 +2541,18 @@ trusted_imap_sent_mailboxes = { "imaps://alice@example.com@imap.example.com:993"
 }
 
 func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte("[attachments.documents]\nenabled = true\n"), 0o600))
-	_, err := Load(path, "")
-	require.ErrorContains(t, err, "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
+	require.NoError(os.WriteFile(path, []byte("[attachments.documents]\nenabled = true\nmodel = 'retired'\n"), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	require.NotNil(cfg)
+	assert.Contains(logs.String(), "level=WARN")
+	assert.Contains(logs.String(), "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
+	assert.Equal(1, strings.Count(logs.String(), "[attachments.documents]"))
 }

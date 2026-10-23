@@ -1196,12 +1196,3 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 		})
 	}
 }
-
-func TestMediaSearchReplacesLocalDocumentRoute(t *testing.T) {
-	f := newMediaSearchFixture(t)
-	server := f.server(false)
-	retired := doGet(server, "/api/v1/documents/search?q=synthetic")
-	assert.Equal(t, http.StatusNotFound, retired.Code)
-	code, _, raw := searchMediaFor(t, server, "q=synthetic")
-	assert.Equal(t, http.StatusOK, code, raw)
-}

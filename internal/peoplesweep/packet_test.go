@@ -285,7 +285,10 @@ func packetTestEvidence(messageID int64, lane SourceClass, excerpt string) Evide
 	}
 	switch lane {
 	case SourceConversationText, SourceMeetingText:
-
+	case SourceDocumentText:
+		ref.AttachmentID = messageID + 100
+		ref.OccurrenceKey = "occurrence"
+		ref.ChunkKey = "chunk"
 	case SourceAttachmentCaption, SourceAttachmentOCR:
 		ref.AttachmentID = messageID + 100
 	}

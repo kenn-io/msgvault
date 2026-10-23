@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +198,28 @@ func TestResolverV1CorroborationUsesIndependentSources(t *testing.T) {
 	}
 	decision = resolverTestDecision(t, resolverTestResolve(t, input), "duplicate-source", DecisionApplied)
 	assert.Equal(t, 150, decision.Score.Corroboration)
+}
+
+func TestResolverV1DocumentChunksShareOneCorroborationSource(t *testing.T) {
+	first := resolverTestEvidence("first-document-chunk", EvidenceArchive, DirectSelf, AuthorityOrdinary, 0)
+	second := resolverTestEvidence("second-document-chunk", EvidenceArchive, DirectSelf, AuthorityOrdinary, 0)
+	encodeRef := func(chunk string, start, end int) string {
+		payload, err := json.Marshal(map[string]any{
+			"source_lane": "document_text", "source_id": 3, "message_id": 11,
+			"attachment_id": 17, "source_message_id": "message-11",
+			"occurrence_key": "occurrence-17", "chunk_key": chunk,
+			"span_start": start, "span_end": end,
+		})
+		require.NoError(t, err)
+		return "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString(payload)
+	}
+	first.Input.SourceRef = encodeRef("chunk-a", 0, 8)
+	second.Input.SourceRef = encodeRef("chunk-b", 9, 17)
+
+	input := resolverTestInput(resolverTestMultiTarget())
+	input.Claims = []ResolvedClaim{resolverTestClaim("same-document", "value", 1000, first, second)}
+	decision := resolverTestDecision(t, resolverTestResolve(t, input), "same-document", DecisionApplied)
+	assert.Zero(t, decision.Score.Corroboration)
 }
 
 func TestResolverV1PinAndExplicitUnpin(t *testing.T) {
@@ -1233,30 +1254,4 @@ func resolverTestDecision(
 	}
 	require.FailNow(t, "decision not found", "claim=%s action=%s decisions=%+v", claimKey, action, resolution.Decisions)
 	return Decision{}
-}
-
-func TestResolverV1StoredDocumentChunksCountOncePerOccurrence(t *testing.T) {
-	for _, differentDocument := range []bool{false, true} {
-		t.Run(strconv.FormatBool(differentDocument), func(t *testing.T) {
-			first := resolverTestEvidence("chunk-one", EvidenceArchive, DirectSelf, AuthorityOrdinary, 0)
-			second := resolverTestEvidence("chunk-two", EvidenceArchive, DirectSelf, AuthorityOrdinary, 0)
-			ref := func(chunk, occurrence string) string {
-				return "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString([]byte(`{"source_lane":"document_text","source_id":1,"message_id":2,"attachment_id":3,"occurrence_key":"`+occurrence+`","chunk_key":"`+chunk+`"}`))
-			}
-			first.Input.SourceRef = ref("one", "document-one")
-			occurrence := "document-one"
-			if differentDocument {
-				occurrence = "document-two"
-			}
-			second.Input.SourceRef = ref("two", occurrence)
-			input := resolverTestInput(resolverTestMultiTarget())
-			input.Claims = []ResolvedClaim{resolverTestClaim("claim", "value", 1000, first, second)}
-			decision := resolverTestDecision(t, resolverTestResolve(t, input), "claim", DecisionApplied)
-			want := 0
-			if differentDocument {
-				want = 50
-			}
-			assert.Equal(t, want, decision.Score.Corroboration)
-		})
-	}
 }

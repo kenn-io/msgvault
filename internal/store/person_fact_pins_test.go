@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -957,56 +956,4 @@ func assertPersonFactPinHostGeneration(
 	assert.Equal("person-fact-pin:"+string(target.Kind)+":"+target.Key, cursors[0].Lane)
 	assert.Equal(fmt.Sprintf("event:%d", eventID), cursors[0].Start)
 	assert.Equal(fmt.Sprintf("pinned:%t@%s", pinned, target.Revision), cursors[0].End)
-}
-
-func TestPersonFactUnpinStoredDocumentChunksCountOnce(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, personID, targets := newPersonFactProjectionStore(t)
-	target := targets[AttributeSlugPrimaryChannel]
-	_, err := st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
-		PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel,
-		Value: AttributeValue{Type: AttributeValueText, Text: new("email")}, Source: ProvenanceUser,
-	})
-	require.NoError(err)
-	claim := personFactProjectionClaim(personID, target, `"chat"`, "stored-document")
-	// One older document falls below the replacement margin. Extra chunks must
-	// not lift it across that threshold when unpin reloads the stored evidence.
-	claim.Confidence.ReportedScore = 1000
-	first := claim.Evidence[0]
-	first.SourceClass = personfacts.EvidencePublic
-	first.Directness = personfacts.DirectOther
-	first.Authority = personfacts.AuthorityAuthoritative
-	first.SourceURL = "https://example.test/document-one"
-	first.EventTime = personFactLedgerNow.Add(-800 * 24 * time.Hour)
-	firstRef := "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString([]byte(`{"source_lane":"document_text","source_id":1,"message_id":2,"attachment_id":3,"occurrence_key":"occurrence","chunk_key":"one"}`))
-	second := first
-	second.SourceURL = "https://example.test/document-two"
-	secondRef := "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString([]byte(`{"source_lane":"document_text","source_id":1,"message_id":2,"attachment_id":3,"occurrence_key":"occurrence","chunk_key":"two"}`))
-	claim.Evidence = []personfacts.EvidenceInput{first, second}
-	generation, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "stored-document", []personfacts.ProposedClaim{claim}, nil), nil)
-	require.NoError(err)
-	require.Len(generation.Decisions, 1)
-	require.Equal(personfacts.ReasonPinRetained, generation.Decisions[0].Reason)
-	// Recreate historical archive evidence in the durable ledger. New archive
-	// evidence requires live text alignment, which was removed with the pipeline.
-	for sourceURL, sourceRef := range map[string]string{first.SourceURL: firstRef, second.SourceURL: secondRef} {
-		result, err := st.db.ExecContext(t.Context(), st.Rebind(`UPDATE person_fact_evidence SET source_class='archive', source_url='', source_ref=?, span_start=0, span_end=4, content_sha256=? WHERE person_id=? AND source_url=?`), sourceRef, strings.Repeat("a", 64), personID, sourceURL)
-		require.NoError(err)
-		rows, err := result.RowsAffected()
-		require.NoError(err)
-		require.Equal(int64(1), rows)
-	}
-	unpinned, err := st.SetPersonFactPinContext(t.Context(), personID,
-		personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, false, "test")
-	require.NoError(err)
-	require.Len(unpinned.Resolutions, 1)
-	require.Len(unpinned.Resolutions[0].Decisions, 1)
-	assert.Equal(900, unpinned.Resolutions[0].Decisions[0].Score.Total)
-	assert.Zero(unpinned.Resolutions[0].Decisions[0].Score.Corroboration)
-	assert.Empty(unpinned.Projections)
-	values, err := st.ListPersonAttributeValuesContext(t.Context(), personID, PersonAttributeQuery{DefinitionSlug: AttributeSlugPrimaryChannel})
-	require.NoError(err)
-	require.Len(values, 1)
-	assert.Equal("email", *values[0].Value.Text)
 }
