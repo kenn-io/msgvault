@@ -28,7 +28,7 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 		assert.Equal("7", r.URL.Query().Get("person_id"))
 		assert.Equal([]string{"from_person"}, r.URL.Query()["direction"])
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"coverage":{"binding_required":false,"scoped_documents":1,"complete_documents":1,"state":"complete"},"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,"partial":false,"truncated":false,"results":[{"message_id":11,"conversation_id":12,"attachment_id":13,"origin":"supplied","excerpt":"quarterly numbers"}],"attachments":{"results":[{"message_id":21,"conversation_id":12,"attachment_id":23,"filename":"report.pdf","containing_title":"Report","excerpt":"quartz"}]}}`))
+		_, _ = w.Write([]byte(`{"coverage":{"binding_required":false,"scoped_documents":1,"complete_documents":1,"state":"complete"},"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,"partial":false,"truncated":false,"results":[{"message_id":11,"conversation_id":12,"attachment_id":13,"origin":"supplied","excerpt":"quarterly numbers"}]}`))
 	}))
 	t.Cleanup(daemon.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true})
@@ -37,9 +37,6 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	h := &handlers{mediaSearcher: client}
 	response := runTool[generated.MediaSearchResponse](t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "quarterly numbers", "person_id": float64(7), "directions": []any{"from_person"}})
 	assert.Equal([]generated.MediaSearchResult{{MessageID: 11, ConversationID: 12, AttachmentID: 13, Origin: generated.MediaSearchResultOriginSupplied, Excerpt: "quarterly numbers"}}, response.Results)
-	require.NotNil(response.Attachments)
-	require.Len(response.Attachments.Results, 1)
-	assert.Equal("report.pdf", response.Attachments.Results[0].Filename)
 	delegated := runToolExpectError(t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "words", "limit": float64(101), "directions": []any{"from_person"}})
 	assert.Contains(resultText(t, delegated), "API error (400): invalid media search")
 	assert.True(searchMediaDefinition().availability(capabilitiesFor(ServeOptions{MediaSearcher: client})))

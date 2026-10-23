@@ -106,7 +106,7 @@
         }
         if (!data?.results || !data.coverage) throw new Error('Transcript search unavailable');
         const missingID = untrack(() => missingMessageID);
-        result = { ...data, results: data.results.filter(hit => hit.message_id !== missingID) };
+        result = { ...data, results: data.results.filter(hit => hit.message_id !== missingID), attachments: data.attachments ? { ...data.attachments, results: data.attachments.results.filter(hit => hit.message_id !== missingID) } : undefined };
       } catch {
         if (!freshness.isCurrent(generation)) return;
         result = undefined;
@@ -155,7 +155,7 @@
         {#if retryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
       </div>
     {:else if !admitted}
-      <p role="status">Recording search supports plain words only. Punctuation and quoted phrases are unavailable.</p>
+      <p role="status">Media search supports plain words only. Punctuation and quoted phrases are unavailable.</p>
     {:else if result}
       {#if incomplete && !recordingNotice}
         <p class="coverage" role="status">

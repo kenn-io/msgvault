@@ -184,7 +184,7 @@ describe('TranscriptHits', () => {
       expect(new URL((fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
     } else {
       expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
-      expect(screen.getByText(/Recording search supports plain words only/)).toBeTruthy();
+      expect(screen.getByText(/Media search supports plain words only/)).toBeTruthy();
       expect(fetchFn).not.toHaveBeenCalled();
     }
   });
@@ -311,4 +311,24 @@ it('marks a selected message in only one result list', async () => {
   render(TranscriptHits, { props: { client, query: 'quartz', supported: true, selectedMessageID: 44 } });
   await screen.findByRole('link', { name: 'Report' });
   expect(screen.getAllByRole('link', { current: true })).toHaveLength(1);
+});
+
+it('filters a known missing message from both lists when a pending response arrives', async () => {
+  vi.useFakeTimers();
+  let finish!: (value: Response) => void;
+  const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
+  const client = createAPIClient(fetchFn);
+  const view = render(TranscriptHits, { props: { client, query: 'quartz', supported: true, missingMessageID: 44 } });
+  await vi.advanceTimersByTimeAsync(300);
+  finish(Response.json(report({ results: [hit({ message_id: 44 }), hit({ message_id: 45 })], attachments: {
+    results: [
+      { message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'missing.pdf', containing_title: 'Missing report', excerpt: 'quartz' },
+      { message_id: 46, conversation_id: 22, attachment_id: 56, filename: 'available.pdf', containing_title: 'Available report', excerpt: 'quartz' },
+    ], truncated: false,
+  } })));
+  await vi.advanceTimersByTimeAsync(300);
+  expect(screen.queryByRole('link', { name: 'Missing report' })).toBeNull();
+  expect(screen.getAllByRole('link').map(link => link.getAttribute('href'))).toEqual(['/messages/45', '/messages/46']);
+  expect(fetchFn).toHaveBeenCalledTimes(1);
+  view.unmount();
 });
