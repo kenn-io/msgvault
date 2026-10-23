@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -441,6 +442,71 @@ func TestCardDAVSetBookRolesUnsubscribePreservesUserLinkedImports(t *testing.T) 
 	require.NoError(err)
 	require.Len(attributes, 1)
 	assert.Equal(attributeWrite.Value.ID, attributes[0].ID)
+}
+
+func TestCardDAVSetBookRolesUnsubscribePreservesOwnerInstructions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, book, mappings := importCardDAVRoleTestPeople(t, "instruction")
+	mapping := mappings["instruction"]
+	require.NotNil(mapping.PersonID)
+	personID := *mapping.PersonID
+	person, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(err)
+
+	instruction := addTestInstruction(t, st, personID, "Vee")
+	afterAdd, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(err)
+	assert.Equal(person.Revision, afterAdd.Revision,
+		"adding an instruction must exercise the ledger ownership guard")
+
+	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{
+		IsSubscribed: false, IsLookupSource: true,
+	}))
+
+	_, err = st.GetPersonContext(t.Context(), personID)
+	require.NoError(err, "owner instruction must preserve its imported person")
+	gotInstruction, err := st.GetPersonInstructionContext(t.Context(), instruction.ID)
+	require.NoError(err, "owner instruction must survive CardDAV cleanup")
+	assert.Equal("owner_entered", gotInstruction.ContentTrust)
+	assert.Equal(1, instructionEventCount(t, st, instruction.ID, "propose"),
+		"instruction history must survive CardDAV cleanup")
+
+	gotMapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
+	require.NoError(err)
+	assert.Nil(gotMapping.PersonID, "the remote mapping should be unbound while the person survives")
+}
+
+func TestCardDAVSetBookRolesUnsubscribePreservesOwnerReviewedInstructions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, book, mappings := importCardDAVRoleTestPeople(t, "reviewed-instruction")
+	mapping := mappings["reviewed-instruction"]
+	require.NotNil(mapping.PersonID)
+	personID := *mapping.PersonID
+	instructionID := insertTestPersonInstruction(
+		t, st, personID, personfacts.InstructionKindOther, "", "avoid late calls",
+		personfacts.InstructionStatusProposed,
+	)
+	_, err := st.DecidePersonInstructionContext(t.Context(), store.PersonInstructionDecision{
+		InstructionID: instructionID, ExpectedRevision: 1,
+		Action: personfacts.InstructionActionUnsure, Actor: "owner",
+	})
+	require.NoError(err)
+
+	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{
+		IsSubscribed: false, IsLookupSource: true,
+	}))
+
+	_, err = st.GetPersonContext(t.Context(), personID)
+	require.NoError(err, "owner-reviewed instruction must preserve its imported person")
+	gotInstruction, err := st.GetPersonInstructionContext(t.Context(), instructionID)
+	require.NoError(err, "owner-reviewed instruction must survive CardDAV cleanup")
+	assert.Equal(personfacts.InstructionReviewUnsure, gotInstruction.ReviewState)
+	assert.Equal(1, instructionEventCount(t, st, instructionID, "unsure"),
+		"owner review history must survive CardDAV cleanup")
 }
 
 func TestCardDAVSetBookRolesUnsubscribePreservesReviewedRelationships(t *testing.T) {

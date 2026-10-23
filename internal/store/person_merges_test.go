@@ -153,6 +153,39 @@ func TestMergePersons_RootsAndBindings(t *testing.T) {
 	require.ErrorIs(err, store.ErrPersonNotFound)
 }
 
+func TestMergePersons_RefusesAbsorbedInstructionHistory(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	survivor := mustPromotedPerson(t, f.Store, "merge-instruction-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t, f.Store, "merge-instruction-absorbed@example.com", "Absorbed")
+	instruction := addTestInstruction(t, f.Store, absorbed.ID, "Vee")
+
+	survivor, err := f.Store.GetPersonContext(ctx, survivor.ID)
+	require.NoError(err)
+	absorbed, err = f.Store.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	_, err = f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "merge-instruction-history", Actor: "test",
+	})
+	require.ErrorIs(err, store.ErrPersonMergeInvalid)
+	assert.Contains(err.Error(), "instruction history")
+
+	stillAbsorbed, err := f.Store.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	assert.Equal(absorbed.ID, stillAbsorbed.ID)
+	instructions, err := f.Store.ListPersonInstructionsContext(ctx, absorbed.ID, store.PersonInstructionFilter{})
+	require.NoError(err)
+	require.Len(instructions, 1)
+	assert.Equal(instruction.ID, instructions[0].ID)
+	assert.Equal("Vee", instructions[0].ValueText)
+	assert.Equal(1, instructionEventCount(t, f.Store, instruction.ID, "propose"))
+}
+
 func TestMergePersons_CardDAVState(t *testing.T) {
 	t.Run("resource binding follows exact split", func(t *testing.T) {
 		require := require.New(t)
