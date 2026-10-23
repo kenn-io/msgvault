@@ -470,7 +470,7 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 			WHERE destination_key = ? AND state = 'failed'`, destination); err != nil {
 			return fmt.Errorf("requeue failed attachment mirror deliveries: %w", err)
 		}
-		if _, err := q.Exec(`DELETE FROM docbank_attachment_processing WHERE destination_key = ? AND (job_id = '' OR outcome IN ('consent', 'stale_authority'))`, destination); err != nil {
+		if _, err := q.Exec(`DELETE FROM docbank_attachment_processing WHERE destination_key = ? AND (job_id = '' OR outcome IN ('requested', 'consent', 'stale_authority'))`, destination); err != nil {
 			return fmt.Errorf("retry attachment processing: %w", err)
 		}
 		if _, err := q.Exec(`DELETE FROM archive_metadata WHERE key = ?`, beeperMediaScanKey(destination)); err != nil {
