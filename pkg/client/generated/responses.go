@@ -3025,6 +3025,28 @@ type ListPersonIdentitiesErrorResponseJSON503 = ErrorResponse
 
 type ListPersonIdentitiesErrorResponseJSONDefault = ErrorResponse
 
+type ListPersonInstructionsResponse = PersonInstructionsResponse
+
+type ListPersonInstructionsErrorResponse = ErrorResponse
+
+type ListPersonInstructionsErrorResponseJSON = ErrorResponse
+
+type ListPersonInstructionsErrorResponseJSON503 = ErrorResponse
+
+type ListPersonInstructionsErrorResponseJSONDefault = ErrorResponse
+
+type AddPersonInstructionResponse = PersonInstruction
+
+type AddPersonInstructionErrorResponse = ErrorResponse
+
+type AddPersonInstructionErrorResponseJSON = ErrorResponse
+
+type AddPersonInstructionErrorResponseJSON409 = ErrorResponse
+
+type AddPersonInstructionErrorResponseJSON503 = ErrorResponse
+
+type AddPersonInstructionErrorResponseJSONDefault = ErrorResponse
+
 type MergePersonsResponse = PersonMergeResult
 
 type MergePersonsErrorResponse = ErrorResponse
@@ -3182,6 +3204,36 @@ type ListPersonFactTargetsErrorResponse = ErrorResponse
 type ListPersonFactTargetsErrorResponseJSON = ErrorResponse
 
 type ListPersonFactTargetsErrorResponseJSONDefault = ErrorResponse
+
+type ListPersonInstructionReviewResponse = PersonInstructionsResponse
+
+type ListPersonInstructionReviewErrorResponse = ErrorResponse
+
+type ListPersonInstructionReviewErrorResponseJSON = ErrorResponse
+
+type ListPersonInstructionReviewErrorResponseJSONDefault = ErrorResponse
+
+type GetPersonInstructionResponse = PersonInstruction
+
+type GetPersonInstructionErrorResponse = ErrorResponse
+
+type GetPersonInstructionErrorResponseJSON = ErrorResponse
+
+type GetPersonInstructionErrorResponseJSON503 = ErrorResponse
+
+type GetPersonInstructionErrorResponseJSONDefault = ErrorResponse
+
+type DecidePersonInstructionResponse = PersonInstructionDecisionResult
+
+type DecidePersonInstructionErrorResponse = ErrorResponse
+
+type DecidePersonInstructionErrorResponseJSON = ErrorResponse
+
+type DecidePersonInstructionErrorResponseJSON409 = ErrorResponse
+
+type DecidePersonInstructionErrorResponseJSON503 = ErrorResponse
+
+type DecidePersonInstructionErrorResponseJSONDefault = ErrorResponse
 
 type DecidePersonMergeCandidateResponse = PersonMergeReviewCandidate
 
@@ -6729,6 +6781,29 @@ type ListPersonIdentitiesResp struct {
 	JSONDefault  *ListPersonIdentitiesErrorResponseJSONDefault
 }
 
+type ListPersonInstructionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonInstructionsResponse
+	JSON400      *ListPersonInstructionsErrorResponse
+	JSON404      *ListPersonInstructionsErrorResponseJSON
+	JSON503      *ListPersonInstructionsErrorResponseJSON503
+	JSONDefault  *ListPersonInstructionsErrorResponseJSONDefault
+}
+
+type AddPersonInstructionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *AddPersonInstructionResponse
+	JSON400      *AddPersonInstructionErrorResponse
+	JSON404      *AddPersonInstructionErrorResponseJSON
+	JSON409      *AddPersonInstructionErrorResponseJSON409
+	JSON503      *AddPersonInstructionErrorResponseJSON503
+	JSONDefault  *AddPersonInstructionErrorResponseJSONDefault
+}
+
 type MergePersonsResp200Headers struct {
 	ETag string `header:"ETag"`
 }
@@ -6910,6 +6985,39 @@ type ListPersonFactTargetsResp struct {
 	JSON400      *ListPersonFactTargetsErrorResponse
 	JSON503      *ListPersonFactTargetsErrorResponseJSON
 	JSONDefault  *ListPersonFactTargetsErrorResponseJSONDefault
+}
+
+type ListPersonInstructionReviewResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonInstructionReviewResponse
+	JSON400      *ListPersonInstructionReviewErrorResponse
+	JSON503      *ListPersonInstructionReviewErrorResponseJSON
+	JSONDefault  *ListPersonInstructionReviewErrorResponseJSONDefault
+}
+
+type GetPersonInstructionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonInstructionResponse
+	JSON400      *GetPersonInstructionErrorResponse
+	JSON404      *GetPersonInstructionErrorResponseJSON
+	JSON503      *GetPersonInstructionErrorResponseJSON503
+	JSONDefault  *GetPersonInstructionErrorResponseJSONDefault
+}
+
+type DecidePersonInstructionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DecidePersonInstructionResponse
+	JSON400      *DecidePersonInstructionErrorResponse
+	JSON404      *DecidePersonInstructionErrorResponseJSON
+	JSON409      *DecidePersonInstructionErrorResponseJSON409
+	JSON503      *DecidePersonInstructionErrorResponseJSON503
+	JSONDefault  *DecidePersonInstructionErrorResponseJSONDefault
 }
 
 type DecidePersonMergeCandidateResp200Headers struct {
