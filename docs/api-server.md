@@ -161,7 +161,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.50.0**.
+it is separate from the binary release version. The current schema is **3.51.0**.
+
+Schema 3.51.0 adds attachment processing outcomes and worker errors.
 
 Schema 3.50.0 adds [`POST /api/v1/import/message`](#post-apiv1importmessage), which archives one message from a source msgvault has no connector for.
 
