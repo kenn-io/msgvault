@@ -106,7 +106,7 @@ func TestDocumentRangesCleanup(t *testing.T) {
 				requirements.NoError(err)
 				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 				assertions.Equal(1, count)
-				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-6*24*time.Hour), claim.ExtractionID)
+				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ?, created_at = ? WHERE id = ?"), time.Now().UTC().Add(-6*24*time.Hour), time.Now().UTC().Add(-9*24*time.Hour), claim.ExtractionID)
 				requirements.NoError(err)
 				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(-7*24*time.Hour), 100)
 				requirements.NoError(err)
