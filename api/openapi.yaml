@@ -23886,7 +23886,7 @@ paths:
     get:
       operationId: searchMedia
       parameters:
-        - description: Spoken words to find in transcripts
+        - description: Words to find in recordings and attachments
           in: query
           name: q
           required: true
@@ -23985,7 +23985,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Search source-selected transcripts as visible messages
+      summary: Search recordings and attachments as visible messages
       tags:
         - API
   /api/v1/media/search/status:

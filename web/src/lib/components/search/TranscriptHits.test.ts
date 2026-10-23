@@ -110,7 +110,7 @@ describe('TranscriptHits', () => {
     expect(screen.queryByRole('link')).toBeNull();
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
-    expect(screen.getByText(status === 503 ? 'Recording search unavailable.' : 'Could not load recording matches.')).toBeTruthy();
+    expect(screen.getByText(status === 503 ? 'Recording search unavailable.' : 'Could not load media matches.')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await vi.advanceTimersByTimeAsync(300);
     if (refresh) expect(screen.getByText('No spoken matches.')).toBeTruthy();
@@ -155,12 +155,12 @@ describe('TranscriptHits', () => {
       expect((fetchFn.mock.calls[0][0] as Request).signal.aborted).toBe(true);
       finish(Response.json(report()));
       await vi.advanceTimersByTimeAsync(300);
-      expect(screen.getByText('Recording search timed out.')).toBeTruthy();
+      expect(screen.getByText('Media search timed out.')).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
       expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
       expect(screen.queryByRole('link')).toBeNull();
     } else {
-      expect(screen.getByText('Recording results expired.')).toBeTruthy();
+      expect(screen.getByText('Media results expired.')).toBeTruthy();
     }
     await vi.advanceTimersByTimeAsync(60_000);
     expect(view.fetchFn).toHaveBeenCalledTimes(1);

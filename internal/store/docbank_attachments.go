@@ -86,6 +86,8 @@ const docbankAttachmentPageSize = 500
 // docbankReceiptChunk bounds the hashes in one receipt query below backend variable limits.
 const docbankReceiptChunk = 512
 
+const docbankAttachmentHashExpr = `LOWER(COALESCE(NULLIF(a.content_hash,''), SUBSTR(a.storage_path,4)))`
+
 func docbankAttachmentEligibleWhere() string {
 	nonHex := `SUBSTR(a.storage_path,4)`
 	for _, digit := range "0123456789abcdef" {
@@ -533,13 +535,12 @@ func LoadDocbankAttachmentRefs(
 // DocbankAttachmentStatus counts outcomes and distinct eligible files without a delivery row.
 func (s *Store) DocbankAttachmentStatus(ctx context.Context, destination string) (DocbankAttachmentSummary, error) {
 	result := DocbankAttachmentSummary{Reasons: make(map[string]int64)}
-	fileHash := `LOWER(COALESCE(NULLIF(a.content_hash,''), SUBSTR(a.storage_path,4)))`
 	err := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT COUNT(DISTINCT `+fileHash+`) FROM attachments a
+		SELECT COUNT(DISTINCT `+docbankAttachmentHashExpr+`) FROM attachments a
 		WHERE `+docbankAttachmentEligibleWhere()+`
 		  AND NOT EXISTS (
 			SELECT 1 FROM docbank_attachment_deliveries d
-			WHERE d.destination_key = ? AND d.content_hash = `+fileHash+`)`), destination).Scan(&result.Remaining)
+			WHERE d.destination_key = ? AND d.content_hash = `+docbankAttachmentHashExpr+`)`), destination).Scan(&result.Remaining)
 	if err != nil {
 		return result, fmt.Errorf("count remaining attachment mirror files: %w", err)
 	}

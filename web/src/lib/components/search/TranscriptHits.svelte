@@ -68,7 +68,7 @@
       expired = Boolean(result);
       stop();
       result = undefined;
-      notice = expired ? '' : 'Recording search timed out.';
+      notice = expired ? '' : 'Media search timed out.';
       retryable = !expired;
     }
 
@@ -110,7 +110,7 @@
       } catch {
         if (!freshness.isCurrent(generation)) return;
         result = undefined;
-        notice = 'Could not load recording matches.';
+        notice = 'Could not load media matches.';
         retryable = true;
       } finally {
         if (freshness.isCurrent(generation)) {
@@ -148,7 +148,7 @@
     {#if !supported}
       <p role="status">Media search requires Full text with no grouping and at most one Person filter.</p>
     {:else if expired}
-      <p role="status">Recording results expired.</p>
+      <p role="status">Media results expired.</p>
     {:else if notice}
       <div class="unavailable" role="status">
         <span>{notice}</span>
@@ -193,7 +193,7 @@
       </div>
       {:else if result.results.length === 0 && !incomplete}<p>No spoken matches.</p>{/if}
     {:else}
-      <p role="status">Searching recordings…</p>
+      <p role="status">Searching media…</p>
     {/if}
   </section>
   {#if result?.attachments}

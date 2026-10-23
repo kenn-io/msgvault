@@ -631,7 +631,7 @@ type ClientInterface interface {
 	GetMCPCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResponse, error)
 	GetMCPCapabilitiesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResp, error)
 
-	// SearchMedia Search source-selected transcripts as visible messages
+	// SearchMedia Search recordings and attachments as visible messages
 	SearchMedia(ctx context.Context, options *SearchMediaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMediaResponse, error)
 	SearchMediaWithResponse(ctx context.Context, options *SearchMediaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMediaResp, error)
 
@@ -10443,7 +10443,7 @@ func (c *Client) GetMCPCapabilities(ctx context.Context, reqEditors ...runtime.R
 	return responseParser(ctx, resp)
 }
 
-// SearchMedia Search source-selected transcripts as visible messages
+// SearchMedia Search recordings and attachments as visible messages
 func (c *Client) SearchMedia(ctx context.Context, options *SearchMediaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMediaResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

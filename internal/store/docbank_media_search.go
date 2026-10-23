@@ -63,7 +63,7 @@ func documentSearchRows(destination string, scope *personscope.Scope) (string, [
  JOIN messages m ON m.id = a.message_id
  JOIN conversations cv ON cv.id = m.conversation_id
  LEFT JOIN docbank_attachment_deliveries d
-   ON d.destination_key = ? AND d.content_hash = LOWER(COALESCE(NULLIF(a.content_hash,''),SUBSTR(a.storage_path,4)))
+   ON d.destination_key = ? AND d.content_hash = ` + docbankAttachmentHashExpr + `
  WHERE ` + docbankAttachmentEligibleWhere() + ` AND ` + LiveMessagesWhere("m", true)
 	if scope != nil {
 		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
