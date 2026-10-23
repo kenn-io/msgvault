@@ -701,6 +701,7 @@ func (err *ErrActivityProjectionStale) Error() string {
 // the authoritative write transaction.
 type ActivityProjectionToken struct {
 	MessageID               int64
+	Unsent                  bool
 	SourceID                int64
 	LastModified            time.Time
 	Queue                   ActivityQueueObservation
@@ -1427,7 +1428,14 @@ func (s *Store) validateActivityMessageTx(
 	if err != nil {
 		return fmt.Errorf("lock activity message %d: %w", token.MessageID, err)
 	}
+	var unsent bool
+	if err := tx.QueryRowContext(ctx, `SELECT `+s.activityUnsentSQL()+`
+		FROM messages m LEFT JOIN sources src ON src.id = m.source_id
+		WHERE m.id = ?`, token.MessageID).Scan(&unsent); err != nil {
+		return fmt.Errorf("read activity unsent status for message %d: %w", token.MessageID, err)
+	}
 	if !lastModified.Valid ||
+		unsent != token.Unsent ||
 		sourceID != token.SourceID ||
 		messageType != token.MessageType ||
 		!lastModified.Time.Equal(token.LastModified) ||

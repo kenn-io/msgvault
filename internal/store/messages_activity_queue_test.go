@@ -116,7 +116,7 @@ VALUES (1, 1, 1, 'm1', 'email', 'seeded');
 		         revision = activity_projection_queue.revision + 1,
 		         queued_at = CURRENT_TIMESTAMP;
 		 END`,
-		`DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v4'`,
+		`DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v5'`,
 	} {
 		_, err = seed.DB().Exec(stmt)
 		require.NoErrorf(err, "wind the archive back: %s", stmt)
