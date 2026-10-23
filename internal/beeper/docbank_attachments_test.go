@@ -1054,7 +1054,6 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 		{"new_state", "rendition", "provider_code", "requested"},
 		{"operator_required", "rendition", "other", "operator_required"},
 		{"failed", "rendition", "provider_timeout", "provider_timeout"},
-		{"failed", "rendition", "consent", "consent"},
 		{"failed", "rendition", "", "failed"},
 		{"failed", "rendition", strings.Repeat("a", 129), "failed"},
 		{"failed", "rendition", "provider\nerror", "failed"},
@@ -1089,6 +1088,98 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 			assert.Equal([]string{"a"}, r.processing.Jobs)
 		})
 	}
+}
+
+func TestAttachmentMirrorProcessingRevokedConsentBlocks(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a", "b")
+	require.NoError(r.runBatch(t.Context()))
+	r.processing.States["job-a"] = [3]string{"failed", "rendition", "consent"}
+	r.processingDue()
+	err := r.runBatch(t.Context())
+	require.ErrorContains(err, "document_profile \"documents\": check the profile and grant consent in Docbank: consent")
+	var outcome, jobID string
+	var next *time.Time
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT outcome, job_id, next_action_at FROM docbank_attachment_processing WHERE content_hash = 'a'`).Scan(&outcome, &jobID, &next))
+	assert.Equal("consent", outcome)
+	assert.Equal("job-a", jobID)
+	assert.Nil(next)
+	assert.Equal(map[string]int64{"consent": 1}, r.processingCounts().Outcomes)
+	assert.Equal([]string{"job-a"}, r.processing.Polls)
+	assert.Equal([]string{"a", "b"}, r.processing.Jobs)
+	// Observation resumes on a later pass; consent recovery requires backfill.
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"job-a", "job-b"}, r.processing.Polls)
+	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "b", "a"}, r.processing.Jobs)
+	assert.Equal(int64(2), r.processingCounts().Requested)
+	assert.Empty(r.processingCounts().Outcomes)
+}
+
+func TestAttachmentMirrorProcessingOperatorRepair(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	r.processing.States["job-a"] = [3]string{"operator_required", "rendition", "ambiguous"}
+	r.processingDue()
+	before := time.Now().UTC().Truncate(time.Second).Add(store.BeeperMediaRetryDelay)
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(map[string]int64{"operator_required": 1}, r.processingCounts().Outcomes)
+	var next *time.Time
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT next_action_at FROM docbank_attachment_processing`).Scan(&next))
+	if assert.NotNil(next) {
+		assert.False(next.Before(before))
+		assert.True(next.Before(time.Now().UTC().Add(store.BeeperMediaRetryDelay + time.Second)))
+	}
+	r.processing.States["job-a"] = [3]string{"completed", "rendition", ""}
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"job-a"}, r.processing.Polls)
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+	assert.Empty(r.processingCounts().Outcomes)
+	assert.Equal([]string{"job-a", "job-a"}, r.processing.Polls)
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+}
+
+func TestAttachmentMirrorProcessingIneligiblePlan(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a", "b")
+	r.processing.IneligibleReasons = map[string]string{"a": "unsupported_media_type"}
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(map[string]int64{"unsupported_media_type": 1}, r.processingCounts().Outcomes)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Equal([]string{"a", "b"}, r.processing.Plans)
+	assert.Equal([]string{"b"}, r.processing.Jobs)
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "b"}, r.processing.Plans)
+}
+
+func TestAttachmentMirrorProcessingPlanChangesContinue(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a", "b", "c")
+	for _, hash := range []string{"a", "b"} {
+		r.processing.JobFaults[hash] = http.StatusConflict
+		r.processing.Reasons[hash] = "processing_plan_changed"
+	}
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "b", "c"}, r.processing.Plans)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Equal(int64(2), r.processingCounts().Waiting)
+	delete(r.processing.JobFaults, "a")
+	delete(r.processing.JobFaults, "b")
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int64(3), r.processingCounts().Requested)
 }
 
 func TestAttachmentMirrorProcessingMissingJobContinues(t *testing.T) {
@@ -1259,7 +1350,7 @@ func TestAttachmentMirrorProcessingRequestErrors(t *testing.T) {
 				r.processing.Reasons["a"] = tc.reason
 				before := time.Now().UTC().Truncate(time.Second).Add(5 * time.Minute)
 				err := r.runBatch(t.Context())
-				if tc.retry {
+				if tc.retry && tc.reason != "processing_plan_changed" {
 					require.Error(err)
 				} else {
 					require.NoError(err)
