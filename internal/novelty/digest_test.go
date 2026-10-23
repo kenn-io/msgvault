@@ -62,6 +62,6 @@ func TestSelectionSHA256Golden(t *testing.T) {
 
 func TestAnchorSetSHA256SortsAndDedupes(t *testing.T) {
 	assert.Equal(t, AnchorSetSHA256([]int64{1, 3}), AnchorSetSHA256([]int64{3, 1, 3}))
-	assert.NotEmpty(t, AnchorSetSHA256([]int64{1, 3}))
+	assert.Equal(t, "2335c54ffe3749ceafac20eea51040b4fa52beab7682f26d5d1bb75d1878478b", AnchorSetSHA256([]int64{1, 3}))
 	assert.Empty(t, AnchorSetSHA256(nil))
 }

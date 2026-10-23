@@ -978,6 +978,63 @@ CREATE TABLE IF NOT EXISTS person_sweep_batches (
     PRIMARY KEY (attempt_id, batch_ordinal, call_ordinal)
 );
 
+CREATE TABLE IF NOT EXISTS person_sweep_selections (
+    attempt_id            TEXT NOT NULL REFERENCES person_sweep_attempts(id) ON DELETE CASCADE,
+    purpose               TEXT NOT NULL CHECK (purpose IN ('extraction_context', 'brief')),
+    target_key            TEXT NOT NULL DEFAULT '',   -- '' for brief
+    policy_version        TEXT NOT NULL,              -- 'novelty-v1'
+    mode                  TEXT NOT NULL CHECK (mode IN (
+                              'recency', 'novelty', 'novelty_in_sample', 'recency_fallback')),
+    fallback_reason       TEXT NOT NULL DEFAULT '' CHECK (fallback_reason IN (
+                              '', 'vector_disabled', 'no_active_generation', 'index_stale',
+                              'capability_missing', 'low_coverage', 'vector_load_failed',
+                              'work_limit')),
+    params_fingerprint    TEXT NOT NULL CHECK (params_fingerprint ~ '^[0-9a-f]{64}$'),
+    vector_generation_id  BIGINT,                    -- no FK: vectors.db on SQLite
+    vector_fingerprint    TEXT NOT NULL DEFAULT '',
+    anchor_set_sha256     TEXT NOT NULL DEFAULT '' CHECK (anchor_set_sha256 = '' OR (anchor_set_sha256 ~ '^[0-9a-f]{64}$')),
+    pool_count            INTEGER NOT NULL CHECK (pool_count >= 0),
+    scored_count          INTEGER NOT NULL CHECK (scored_count >= 0),
+    anchor_count          INTEGER NOT NULL CHECK (anchor_count >= 0),
+    anchor_scored_count   INTEGER NOT NULL CHECK (anchor_scored_count >= 0),
+    selected_count        INTEGER NOT NULL CHECK (selected_count >= 0),
+    recency_count         INTEGER NOT NULL CHECK (recency_count >= 0),
+    novelty_count         INTEGER NOT NULL CHECK (novelty_count >= 0),
+    fill_count            INTEGER NOT NULL CHECK (fill_count >= 0),
+    selection_sha256      TEXT NOT NULL CHECK (selection_sha256 ~ '^[0-9a-f]{64}$'),
+    elapsed_microseconds  BIGINT NOT NULL DEFAULT 0 CHECK (elapsed_microseconds >= 0),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (attempt_id, purpose, target_key),
+    CHECK (scored_count <= pool_count AND anchor_scored_count <= anchor_count),
+    CHECK ((mode = 'recency_fallback') = (fallback_reason <> '')),
+    CHECK ((purpose = 'brief') = (target_key = '')),
+    CHECK (selected_count >= recency_count + novelty_count + fill_count)
+);
+
+CREATE TABLE IF NOT EXISTS person_sweep_selection_items (
+    attempt_id   TEXT NOT NULL,
+    purpose      TEXT NOT NULL,
+    target_key   TEXT NOT NULL,
+    ordinal      INTEGER NOT NULL CHECK (ordinal >= 0),   -- pick order = priority
+    message_id   BIGINT NOT NULL CHECK (message_id > 0), -- identifier only, no FK
+    evidence_id  TEXT NOT NULL,                           -- packetEvidenceID
+    lane         TEXT NOT NULL CHECK (lane IN ('mandatory', 'recency', 'novelty', 'fill')),
+    sent         INTEGER NOT NULL DEFAULT 1 CHECK (sent IN (0, 1)), -- 0 = trimmed before dispatch
+    batch_ordinal INTEGER CHECK (batch_ordinal IS NULL OR batch_ordinal >= 0),
+    novelty_bp   INTEGER CHECK (novelty_bp IS NULL OR novelty_bp BETWEEN 0 AND 10000),
+    support_bp   INTEGER CHECK (support_bp IS NULL OR support_bp BETWEEN 0 AND 10000),
+    score_bp     INTEGER CHECK (score_bp IS NULL OR score_bp BETWEEN 0 AND 10000),
+    PRIMARY KEY (attempt_id, purpose, target_key, ordinal),
+    UNIQUE (attempt_id, purpose, target_key, evidence_id),
+    FOREIGN KEY (attempt_id, purpose, target_key)
+        REFERENCES person_sweep_selections(attempt_id, purpose, target_key) ON DELETE CASCADE,
+    CHECK ((lane = 'novelty') = (score_bp IS NOT NULL)),
+    CHECK (lane <> 'mandatory' OR purpose = 'brief'),
+    CHECK ((sent = 1) = (batch_ordinal IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_selection_items_message
+    ON person_sweep_selection_items(message_id);
+
 CREATE TABLE IF NOT EXISTS person_sweep_daily_usage (
     utc_day                     TEXT PRIMARY KEY,
     reserved_requests           INTEGER NOT NULL DEFAULT 0 CHECK (reserved_requests >= 0),
