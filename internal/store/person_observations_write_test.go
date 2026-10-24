@@ -141,6 +141,38 @@ func TestApplyObservationBatchRejectsGenerationOfOtherPerson(t *testing.T) {
 	require.NoError(f.store.DB().QueryRow(`SELECT COUNT(*) FROM person_observations`).Scan(&count))
 	assert.Zero(t, count)
 }
+
+func TestApplyObservationBatchRejectsUntrackedMachineBatchButAllowsOwnerWrite(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+	require.NoError(err)
+
+	tracking, err := f.store.SetPersonTrackingContext(t.Context(), in.PersonID, false)
+	require.NoError(err)
+	assert.False(tracking.Tracked)
+
+	_, err = f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "extractor")
+	require.ErrorIs(err, store.ErrPersonFactPersonNotTracked)
+	var count int
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT COUNT(*) FROM person_observations WHERE person_id=?`), in.PersonID).Scan(&count))
+	assert.Zero(count)
+
+	ownerInput := personobs.BatchInput{
+		PersonID: in.PersonID,
+		Proposals: []personobs.ProposedObservation{{
+			Level: personobs.LevelExplicit, Origin: personobs.OriginOwner,
+			Kind: personobs.KindState, Content: "[PERSON] chose to keep the record",
+			ConfidenceBP: 1000,
+		}},
+	}
+	ownerResult := applyObservationInput(t, f.store, ownerInput, 0)
+	require.Len(ownerResult.Items, 1)
+	assert.Equal("created", ownerResult.Items[0].Outcome)
+}
+
 func TestApplyObservationBatchAppendsPremiseToOlderDerived(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

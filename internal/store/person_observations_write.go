@@ -472,6 +472,13 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		if fingerprint != b.ProgramFingerprint {
 			return result, errors.New("observation generation belongs to another program")
 		}
+		if err := s.lockProfileIdentityKeyTxContext(
+			ctx, tx, "person-fact-generation", b.PersonID); err != nil {
+			return result, err
+		}
+		if err := verifyTrackedPersonFactPersonTx(ctx, tx, b.PersonID); err != nil {
+			return result, err
+		}
 	}
 	// Source rows must be locked before the person row. That makes the
 	// apply-time alignment check stable against message edits and reassignment.
