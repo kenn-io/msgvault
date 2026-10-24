@@ -124,7 +124,11 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 					w.WriteHeader(f.documentStatus)
 					return
 				}
-				_ = json.NewEncoder(w).Encode(f.documentReport)
+				report := *f.documentReport
+				report.Results = slices.DeleteFunc(slices.Clone(report.Results), func(hit docbankmedia.SearchHit) bool {
+					return !slices.Contains(request.Fence.ContentVersionIDs, hit.ContentVersionID)
+				})
+				_ = json.NewEncoder(w).Encode(report)
 				return
 			}
 			f.requests = append(f.requests, request)
@@ -970,7 +974,7 @@ func TestMediaSearchDocumentsOccurrenceLimit(t *testing.T) {
 	}
 }
 
-func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
+func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newMediaSearchFixture(t)
@@ -982,16 +986,24 @@ func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
 		documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
 	}
 	f.f.SeedDocumentAttachments(first, documents)
+	f.documentReport.Results[0].ContentVersionID = "00000000-0000-4000-8000-000000001001"
 	status, response, raw := searchMediaFor(t, server, "q=quartz")
 	require.Equal(http.StatusOK, status, raw)
 	require.NotNil(response.Attachments)
-	require.NotNil(response.Attachments.Error)
-	assert.Empty(response.Attachments.Results)
-	assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
-	assert.Contains(response.Attachments.Error.Message, "4096 mirrored files excluding images, audio, and video")
-	assert.Contains(response.Attachments.Error.Message, "--person")
+	assert.Nil(response.Attachments.Error)
+	require.Len(response.Attachments.Results, 1)
+	assert.Equal("quartz in the PDF", response.Attachments.Results[0].Excerpt)
 	assert.False(response.Attachments.Truncated)
-	assert.Empty(f.documentRequests)
+	require.Len(f.documentRequests, 2)
+	var versions []string
+	for _, request := range f.documentRequests {
+		assert.LessOrEqual(len(request.Fence.ContentVersionIDs), docbankmedia.MaxSearchVersions)
+		versions = append(versions, request.Fence.ContentVersionIDs...)
+	}
+	assert.Len(versions, 4097)
+	for i := 1; i <= 4097; i++ {
+		assert.Contains(versions, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
+	}
 }
 
 func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
