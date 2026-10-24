@@ -1434,6 +1434,9 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		}
 	}
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	if statsRequireSourceNative(opts) {
+		conditions = append(conditions, store.SourceNativeMessagesWhere("m", "sources"))
+	}
 	// Merge search conditions
 	conditions = append(conditions, searchConditions...)
 	args = append(args, searchArgs...)
@@ -1578,7 +1581,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// Exclude remote-deleted and dedup-soft-deleted messages.
 	// Always pass true: this surface feeds remote-deletion staging and
 	// must never honor an opt-in.
-	conditions = append(conditions, store.LiveMessagesWhere("m", true), archiveOnlyDeletionTargetGuard)
+	conditions = append(conditions, store.LiveMessagesWhere("m", true), archiveOnlyDeletionTargetGuard, store.SourceNativeMessagesWhere("m", "sources"))
 	if filter.HasEmptyTargets() {
 		_, emptyConditions, emptyArgs := e.buildFilterJoinsAndConditions(MessageFilter{
 			EmptyValueTargets:     filter.EmptyValueTargets,
@@ -1818,8 +1821,7 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 	default:
 		return nil, fmt.Errorf("unsupported deletion search mode %q", mode)
 	}
-	searchConditions = append(searchConditions, archiveOnlyDeletionTargetGuard)
-
+	searchConditions = append(searchConditions, archiveOnlyDeletionTargetGuard, store.SourceNativeMessagesWhere("m", "sources"))
 	queryText := fmt.Sprintf(`
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id
@@ -1879,7 +1881,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 	filter.Pagination = Pagination{}
 	filter.HideDeletedFromSource = true
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
-	conditions = append(conditions, archiveOnlyDeletionTargetGuard)
+	conditions = append(conditions, emailOnlyFilterM, archiveOnlyDeletionTargetGuard, store.SourceNativeMessagesWhere("m", "sources"))
 	timeGranularity := filter.TimeRange.Granularity
 	if groupBy == ViewTime {
 		timeGranularity = inferTimeGranularity(timeGranularity, key)

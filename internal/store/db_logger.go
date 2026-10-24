@@ -232,6 +232,9 @@ type loggedTx struct {
 
 	// Set only after this transaction successfully fences a running sync run.
 	syncGenerationFenced bool
+
+	// Shared by invitation parsing and retained-evidence reads during ingestion.
+	icsVerificationRemaining *int
 }
 
 // Exec rebinds before delegating. Transaction-scoped queries are

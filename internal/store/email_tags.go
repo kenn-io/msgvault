@@ -35,7 +35,7 @@ func (s *Store) EmailTagTargetContext(ctx context.Context, id int64, mailbox str
 	if target.Provider == "" {
 		target.Provider = "gmail"
 	}
-	if target.Provider != "imap" {
+	if target.Provider != sourceTypeIMAP {
 		if mailbox != "" {
 			return target, emailtags.Failure("invalid_request", "mailbox selection applies only to IMAP", nil, nil)
 		}
@@ -91,7 +91,7 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 	if result == nil || !result.Verified || result.DryRun || result.Provider != target.Provider {
 		return errors.New("tag snapshot is not verified")
 	}
-	if target.Provider == "imap" && (result.Flags == nil || result.Mailbox != target.Mailbox || result.UIDValidity != target.UIDValidity || result.UID != target.UID) {
+	if target.Provider == sourceTypeIMAP && (result.Flags == nil || result.Mailbox != target.Mailbox || result.UIDValidity != target.UIDValidity || result.UID != target.UID) {
 		return errors.New("IMAP snapshot does not match the target membership")
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{target.SourceID}}, func(tx *loggedTx) error {
@@ -102,7 +102,7 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 		if err != nil {
 			return fmt.Errorf("archived tag identity changed: %w", err)
 		}
-		if target.Provider == "imap" {
+		if target.Provider == sourceTypeIMAP {
 			flags, err := json.Marshal(result.Flags)
 			if err != nil {
 				return err
