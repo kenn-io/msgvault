@@ -112,6 +112,23 @@ it.each([false, true])('preserves signed-in time after a visible signed-out wait
   expect(await bucket()).toBe('1_to_5m');
 });
 
+it.each([false, true])('ends the earlier session after signing in while hidden with delayed timers=%s', async (delayed) => {
+  const reporter = await start();
+  now = 120_000;
+  reporter.signedIn(false);
+  visibility(true);
+  reporter.signedIn(true);
+  if (delayed) vi.setSystemTime(Date.now() + 1_800_000);
+  else vi.advanceTimersByTime(1_800_000);
+  visibility(false);
+  expect(requests).toHaveLength(1);
+  expect(await bucket()).toBe('1_to_5m');
+  now += 10_000;
+  close();
+  expect(requests).toHaveLength(2);
+  expect(await bucket(1)).toBe('under_1m');
+});
+
 it('ignores a session that was always hidden', async () => {
   hidden = true;
   await start();

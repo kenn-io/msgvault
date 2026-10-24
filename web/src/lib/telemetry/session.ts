@@ -68,7 +68,8 @@ export function startSessionReporting(client: APIClient) {
   const quietChanged = (_quiet: boolean, reason: BrowserTelemetryQuietReason) => {
     if (reason !== 'disabled') {
       listen(true);
-      resume();
+      // Signing in while hidden starts the hidden-session deadline.
+      visibility();
       return;
     }
     clearTimer();
