@@ -401,6 +401,86 @@ func TestApplyObservationBatchUsesSupportCategoriesReloadedUnderLock(t *testing.
 	assert.True(derivedDetail.Sensitive)
 }
 
+func TestPrepareObservationInheritsCounterPremiseSensitivity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	supportID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	counterSupport, _ := observationSupportForMessage(t, f, "observation-counter", "I do not run", "I do not run", time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC))
+	counter := in.Proposals[0]
+	counter.Content = "[PERSON] does not run"
+	counter.Support = []personobs.SupportInput{counterSupport}
+	counter.ModelCategories = []personobs.Category{personobs.CategoryHealth}
+	counterInput := in
+	counterInput.Proposals = []personobs.ProposedObservation{counter}
+	counterID := applyObservationInput(t, f.store, counterInput, generation).Items[0].ObservationID
+
+	in.Proposals = []personobs.ProposedObservation{{
+		PersonID:     in.PersonID,
+		Level:        personobs.LevelContradiction,
+		Origin:       personobs.OriginReasoning,
+		Kind:         personobs.KindOther,
+		Content:      "[PERSON] has conflicting reports",
+		ConfidenceBP: 800,
+		Premises: []personobs.PremiseInput{
+			{ID: supportID, Role: personobs.PremiseRoleSupport},
+			{ID: counterID, Role: personobs.PremiseRoleCounter},
+		},
+	}}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+	require.NoError(err)
+	require.Len(batch.Items, 1)
+	require.Nil(batch.Items[0].Failure)
+	assert.Contains(batch.Items[0].Categories, personobs.CategoryHealth)
+	assert.True(batch.Items[0].Proposal.Sensitive)
+}
+
+func TestApplyObservationBatchUsesCounterCategoriesReloadedUnderLock(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	supportID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	counterSupport, _ := observationSupportForMessage(t, f, "observation-counter", "I do not run", "I do not run", time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC))
+	counter := in.Proposals[0]
+	counter.Content = "[PERSON] does not run"
+	counter.Support = []personobs.SupportInput{counterSupport}
+	counterInput := in
+	counterInput.Proposals = []personobs.ProposedObservation{counter}
+	counterID := applyObservationInput(t, f.store, counterInput, generation).Items[0].ObservationID
+	counter.ModelCategories = []personobs.Category{personobs.CategoryHealth}
+	counter.ReinforcesID = &counterID
+
+	derived := personobs.ProposedObservation{
+		PersonID:     in.PersonID,
+		Level:        personobs.LevelContradiction,
+		Origin:       personobs.OriginReasoning,
+		Kind:         personobs.KindOther,
+		Content:      "[PERSON] has conflicting reports",
+		ConfidenceBP: 800,
+		Premises: []personobs.PremiseInput{
+			{ID: supportID, Role: personobs.PremiseRoleSupport},
+			{ID: counterID, Role: personobs.PremiseRoleCounter},
+		},
+	}
+	in.Proposals = []personobs.ProposedObservation{counter, derived}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+	require.NoError(err)
+	require.Len(batch.Items, 2)
+	require.Nil(batch.Items[1].Failure)
+	assert.Empty(batch.Items[1].Categories)
+	assert.False(batch.Items[1].Proposal.Sensitive)
+
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "reasoner")
+	require.NoError(err)
+	require.Len(result.Items, 2)
+	assert.Equal("reinforced", result.Items[0].Outcome)
+	assert.Equal("created", result.Items[1].Outcome)
+	detail, err := f.store.GetPersonObservation(t.Context(), result.Items[1].ObservationID)
+	require.NoError(err)
+	assert.Contains(detail.Categories, personobs.CategoryHealth)
+	assert.True(detail.Sensitive)
+}
+
 func TestApplyObservationBatchOwnerAssertionPromotesUnsupportedExtraction(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -861,6 +941,48 @@ func TestApplyObservationBatchRejectsPremiseWhenCitationBecomesExcluded(t *testi
 			assert.Nil(target.SupersededByID)
 		})
 	}
+}
+
+func TestApplyObservationBatchRevalidatesPremiseAfterListExclusionRemoved(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	premiseID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	ref, err := peoplesweep.DecodePersonSweepEvidenceRef(in.Proposals[0].Support[0].Evidence.SourceRef)
+	require.NoError(err)
+
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET list_id=? WHERE id=?`), "newsletter.example.test", ref.MessageID)
+	require.NoError(err)
+	refreshed := applyObservationInput(t, f.store, in, generation)
+	require.Len(refreshed.Items, 1)
+	assert.Equal("reinforced", refreshed.Items[0].Outcome)
+	detail, err := f.store.GetPersonObservation(t.Context(), premiseID)
+	require.NoError(err)
+	assert.Zero(detail.SupportedCount)
+
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET list_id=NULL WHERE id=?`), ref.MessageID)
+	require.NoError(err)
+	derived := in
+	derived.Proposals = []personobs.ProposedObservation{{
+		PersonID:     in.PersonID,
+		Level:        personobs.LevelDeductive,
+		Origin:       personobs.OriginReasoning,
+		Kind:         personobs.KindOther,
+		Content:      "[PERSON] has a running routine",
+		ConfidenceBP: 800,
+		Premises:     []personobs.PremiseInput{{ID: premiseID, Role: personobs.PremiseRoleSupport}},
+	}}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), derived)
+	require.NoError(err)
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "reasoner")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal("created", result.Items[0].Outcome)
+	assert.Nil(result.Items[0].Failure)
+
+	detail, err = f.store.GetPersonObservation(t.Context(), premiseID)
+	require.NoError(err)
+	assert.Equal(1, detail.SupportedCount)
 }
 
 func TestApplyObservationBatchDoesNotLiftSuppressionOnUnsupportedExplicitEvidence(t *testing.T) {

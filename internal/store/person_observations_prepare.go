@@ -102,6 +102,10 @@ func (s *Store) PreparePersonObservationBatch(ctx context.Context, in personobs.
 		}
 		if item.Failure == nil {
 			item.Failure = personobs.ValidateProposal(proposal, premises)
+			if item.Failure != nil && item.Failure.Field == "premises" && item.Failure.Reason == "premise-not-supported" {
+				// Citation exclusions can change before the locked write refreshes them.
+				item.Failure = nil
+			}
 		}
 		if item.Failure == nil {
 			for _, support := range proposal.Support {
@@ -132,9 +136,7 @@ func (s *Store) PreparePersonObservationBatch(ctx context.Context, in personobs.
 		categories := append([]personobs.Category(nil), proposal.ModelCategories...)
 		categories = append(categories, personobs.DetectCategories(proposal.Content)...)
 		for _, edge := range proposal.Premises {
-			if edge.Role == personobs.PremiseRoleSupport {
-				categories = append(categories, premises[edge.ID].Categories...)
-			}
+			categories = append(categories, premises[edge.ID].Categories...)
 		}
 		slices.Sort(categories)
 		item.Categories = slices.Compact(categories)

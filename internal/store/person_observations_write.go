@@ -212,9 +212,6 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		}
 		item.Categories = append([]personobs.Category(nil), item.Categories...)
 		for _, edge := range item.Proposal.Premises {
-			if edge.Role != personobs.PremiseRoleSupport {
-				continue
-			}
 			premise := premises[edge.ID]
 			item.Categories = append(item.Categories, premise.Categories...)
 			item.Proposal.Sensitive = item.Proposal.Sensitive || premise.Sensitive
