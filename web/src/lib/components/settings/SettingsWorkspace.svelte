@@ -689,7 +689,7 @@
                   />
                 {/each}
                 <div class="provider-add">
-                  {#each ['exa', 'sixtyfour'] as kind (kind)}
+                  {#each ['exa', 'sixtyfour', 'context'] as kind (kind)}
                     <PersonEnrichmentProviderCreator
                       {client}
                       kind={kind as ProviderSetting['kind']}

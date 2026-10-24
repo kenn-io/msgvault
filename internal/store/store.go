@@ -1642,6 +1642,9 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 	); err != nil {
 		return fmt.Errorf("migrate person sweep call journal purposes: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationContextEnrichment, 1, false, s.migrateContextEnrichment); err != nil {
+		return fmt.Errorf("migrate Context enrichment provider: %w", err)
+	}
 	if err := s.runOnceMigration(
 		ctx, migrationPersonFactClaimOriginBrief, 1, false,
 		s.migratePersonFactClaimOriginBrief,

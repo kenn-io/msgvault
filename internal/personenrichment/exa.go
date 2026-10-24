@@ -428,7 +428,7 @@ func decodeExaPeopleResult(wire exaSearchResponse, request Request, now time.Tim
 	if err != nil {
 		return Result{}, err
 	}
-	citation := newExaCitation(profileURL, selectedRow.Title, published, now)
+	citation := newProviderCitation(ProviderExa, profileURL, selectedRow.Title, published, now)
 	claims := make([]personfacts.ProposedClaim, 0, len(request.Targets))
 	for _, target := range request.Targets {
 		capability, err := exaPeopleCapabilityForTarget(target)
@@ -519,7 +519,7 @@ func decodeExaDeepResult(wire exaSearchResponse, request Request, now time.Time)
 			if err != nil || strings.TrimSpace(rawCitation.Title) == "" {
 				return Result{}, errors.New("unsafe Exa citation")
 			}
-			citation := newExaCitation(canonicalURL, rawCitation.Title, time.Time{}, now)
+			citation := newProviderCitation(ProviderExa, canonicalURL, rawCitation.Title, time.Time{}, now)
 			if existing, ok := citationByKey[citation.Key]; ok && existing != citation {
 				return Result{}, errors.New("conflicting Exa citation")
 			}
@@ -818,10 +818,10 @@ func optionalExaTime(raw string) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
-func newExaCitation(rawURL, title string, published, retrieved time.Time) Citation {
+func newProviderCitation(provider, rawURL, title string, published, retrieved time.Time) Citation {
 	digest := sha256.Sum256([]byte(rawURL + "\x00" + title))
 	return Citation{
-		Key: "exa:" + hex.EncodeToString(digest[:]), URL: rawURL, Title: title,
+		Key: provider + ":" + hex.EncodeToString(digest[:]), URL: rawURL, Title: title,
 		PublishedAt: published, RetrievedAt: retrieved,
 	}
 }

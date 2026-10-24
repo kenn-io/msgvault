@@ -2199,6 +2199,38 @@ func TestSecretHint(t *testing.T) {
 	}
 }
 
+func TestPutSettingsContextEnrichmentProvider(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, path := newSettingsTestServer(t, "[people.enrichment]\nenabled = false\n")
+	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	payload, err := json.Marshal(map[string]any{
+		"kind":                 "context",
+		"enabled":              false,
+		"endpoint":             "https://api.context.dev/v1/people/search",
+		"allowed_identifiers":  []string{"name", "current_company"},
+		"target_keys":          []string{"2068efb0-9808-498b-ac3a-8e0a87d4513a"},
+		"retention_posture":    "provider-declared",
+		"training_posture":     "provider-declared",
+		"refresh_interval":     "720h",
+		"request_timeout":      "1m",
+		"max_requests_per_run": 5,
+		"max_requests_per_day": 20,
+	})
+	requirements.NoError(err)
+	response := performSettingsRequest(t, srv, http.MethodPut, "/api/v1/settings/person-enrichment/providers/context-primary", payload, get.Header().Get("ETag"), "")
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	loaded, err := config.Load(path, "")
+	requirements.NoError(err)
+	requirements.Len(loaded.People.Enrichment.Providers, 1)
+	provider := loaded.People.Enrichment.Providers[0]
+	assertions.Equal("context", provider.Kind)
+	assertions.Equal("CONTEXT_DEV_API_KEY", provider.APIKeyEnv)
+	assertions.False(provider.Enabled)
+}
+
 func TestSettingsLocalEmbeddingsRejectsProviderCredentials(t *testing.T) {
 	t.Parallel()
 	assert, require := assert.New(t), require.New(t)

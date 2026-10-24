@@ -115,7 +115,7 @@
 <article class="provider-card" aria-labelledby={`provider-${provider.name}`}>
   <header>
     <h4 id={`provider-${provider.name}`}>{provider.name}</h4>
-    <Chip size="xs" tone="muted" uppercase={false}>{provider.kind === 'exa' ? 'Exa' : 'SixtyFour'}</Chip>
+    <Chip size="xs" tone="muted" uppercase={false}>{provider.kind === 'context' ? 'Context.dev' : provider.kind === 'exa' ? 'Exa' : 'SixtyFour'}</Chip>
     <span class="grow"></span>
     <Toggle
       ariaLabel={`Enable ${provider.name}`}
@@ -163,7 +163,7 @@
           Tier
           <input value={draft.tier ?? ''} oninput={(event) => setString('tier', event.currentTarget.value)} />
         </label>
-      {:else}
+      {:else if provider.kind === 'exa'}
         <label>
           Search mode
           <input value={draft.mode ?? ''} oninput={(event) => setString('mode', event.currentTarget.value)} />
