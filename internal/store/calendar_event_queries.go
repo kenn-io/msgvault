@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"database/sql"
@@ -9,6 +10,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	ical "github.com/emersion/go-ical"
 
 	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -20,8 +23,15 @@ var ErrQueryTooBroad = errors.New("calendar query is too broad")
 type CalendarEventRow struct {
 	MessageID, SourceID int64
 	Subject             string
+	rawFormat           string
+	evidenceError       string
 	DeletedFromSource   bool
 	Event               calevent.Event
+}
+
+type calendarSeriesKey struct {
+	source int64
+	id     string
 }
 
 const maxCalendarSeries = 2000
@@ -29,28 +39,32 @@ const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
 var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
- m.deleted_from_source_at IS NOT NULL,
+	m.deleted_from_source_at IS NOT NULL, COALESCE(r.raw_format,''), COALESCE(CAST(m.metadata AS TEXT),''),
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
- e.event_time_zone, e.calendar_time_zone, e.recurrence_json
+ e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.start_wall
  ` + calendarEventFrom
 
 var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
+ LEFT JOIN message_raw r ON r.message_id = m.id
  WHERE m.deleted_at IS NULL
  AND ` + calendarEventVisibility("e", "m") + `
  AND `
 
 // Keep unique archived events. A live copy wins over archived copies; among
 // archived copies, the lowest message ID wins within the merged source.
+// ICS revision and cancellation state excludes source-merge archive-only rows.
 func calendarEventVisibility(event, message string) string {
 	return fmt.Sprintf(`NOT EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages am
- WHERE am.message_id = %[2]s.id AND EXISTS (
+ WHERE am.message_id = %[2]s.id AND (
+  EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id = %[2]s.id AND raw.raw_format = 'ics')
+  OR EXISTS (
   SELECT 1 FROM calendar_events other JOIN messages om ON om.id = other.message_id
   WHERE other.provider_event_id = %[1]s.provider_event_id
   AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL
   AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id)
-   OR other.message_id < %[1]s.message_id)))`, event, message)
+   OR other.message_id < %[1]s.message_id))))`, event, message)
 }
 
 func queryCalendarEventRowsWithinBudget(ctx context.Context, r *loggedDB, predicate string, args []any, budget int) ([]CalendarEventRow, error) {
@@ -91,10 +105,11 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		var row CalendarEventRow
 		e := &row.Event
 		var original, start, end sql.NullTime
-		var originalDate, recurrence string
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
+		var originalDate, recurrence, startWall, messageMetadata string
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource, &row.rawFormat,
+			&messageMetadata,
 			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
-			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
+			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence, &startWall)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
@@ -111,6 +126,19 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		if end.Valid {
 			value := end.Time.UTC()
 			e.End = &value
+		}
+		if startWall != "" {
+			value, err := time.Parse("2006-01-02T15:04:05", startWall)
+			if err != nil {
+				_ = result.Close()
+				return nil, fmt.Errorf("decode calendar wall DTSTART %d: %w", row.MessageID, err)
+			}
+			e.StartWall = &value
+		}
+		if row.rawFormat == rawFormatICS {
+			if _, err := calevent.ParseICSMetadata([]byte(messageMetadata)); err != nil {
+				row.evidenceError = "event data could not be decoded"
+			}
 		}
 		if err := json.Unmarshal([]byte(recurrence), &e.Recurrence); err != nil {
 			_ = result.Close()
@@ -129,6 +157,117 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		return nil, err
 	}
 	return out, nil
+}
+
+func queryICSSparseCancellationTombstones(ctx context.Context, r *loggedDB, events []CalendarEventRow) (map[calendarSeriesKey]bool, error) {
+	bySource := make(map[int64][]string)
+	seen := make(map[calendarSeriesKey]bool)
+	for _, row := range events {
+		if row.rawFormat != rawFormatICS || row.Event.Kind != "exception" || row.Event.SeriesProviderID == "" {
+			continue
+		}
+		key := calendarSeriesKey{source: row.SourceID, id: row.Event.SeriesProviderID}
+		if !seen[key] {
+			seen[key] = true
+			bySource[row.SourceID] = append(bySource[row.SourceID], row.Event.SeriesProviderID)
+		}
+	}
+	tombstones := make(map[calendarSeriesKey]bool)
+	for sourceID, ids := range bySource {
+		for start := 0; start < len(ids); start += 500 {
+			end := min(start+500, len(ids))
+			args := make([]any, 0, end-start+1)
+			args = append(args, sourceID)
+			for _, id := range ids[start:end] {
+				args = append(args, id)
+			}
+			// Typed rows retain cancellation evidence even when message metadata
+			// is damaged. The event reader reports that damage per message.
+			query := `SELECT e.provider_event_id
+				FROM calendar_events e JOIN messages m ON m.id=e.message_id
+				JOIN message_raw raw ON raw.message_id=m.id
+				WHERE m.source_id=? AND raw.raw_format='ics' AND e.kind IN ('single', 'series')
+			  AND e.status='cancelled'
+				  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+				  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)
+				  AND e.provider_event_id IN (` + placeholders(end-start) + `)`
+			rows, err := r.QueryContext(ctx, query, args...)
+			if err != nil {
+				return nil, fmt.Errorf("read sparse ICS cancellation tombstones: %w", err)
+			}
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("scan sparse ICS cancellation tombstone: %w", err)
+				}
+				tombstones[calendarSeriesKey{source: sourceID, id: id}] = true
+			}
+			iterationErr, closeErr := rows.Err(), rows.Close()
+			if iterationErr != nil {
+				return nil, fmt.Errorf("iterate sparse ICS cancellation tombstones: %w", iterationErr)
+			}
+			if closeErr != nil {
+				return nil, fmt.Errorf("close sparse ICS cancellation tombstones: %w", closeErr)
+			}
+		}
+	}
+	return tombstones, nil
+}
+
+func loadCalendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, events []CalendarEventRow, remaining *int) error {
+	var ids []any
+	for _, row := range events {
+		if row.Event.Kind == "series" && row.rawFormat == rawFormatICS {
+			ids = append(ids, row.MessageID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	diagnostics, err := calendarICSRecurrenceErrors(ctx, r, ids, remaining)
+	if errors.Is(err, calrecur.ErrBudgetExceeded) {
+		return calendarRecurrenceBudgetError()
+	}
+	if err != nil {
+		return err
+	}
+	for i := range events {
+		if events[i].Event.Kind != "series" || events[i].rawFormat != rawFormatICS {
+			continue
+		}
+		events[i].Event.RecurrenceError = diagnostics[events[i].MessageID]
+	}
+	return nil
+}
+
+func calendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, ids []any, remaining *int) (map[int64]string, error) {
+	rows, err := r.QueryContext(ctx, `SELECT m.id,r.raw_data,r.compression,m.metadata,s.sync_config
+ FROM message_raw r JOIN messages m ON m.id=r.message_id JOIN sources s ON s.id=m.source_id
+ WHERE r.raw_format='ics' AND m.id IN (`+placeholders(len(ids))+`)`, ids...)
+	if err != nil {
+		return nil, fmt.Errorf("read ICS recurrence evidence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	diagnostics := make(map[int64]string, len(ids))
+	for rows.Next() {
+		var id int64
+		var stored []byte
+		var metadata, compression, config sql.NullString
+		if err := rows.Scan(&id, &stored, &compression, &metadata, &config); err != nil {
+			return nil, fmt.Errorf("scan ICS recurrence evidence: %w", err)
+		}
+		event, _, err := decodeICSRecurrenceEvidence(ctx, stored, compression, metadata.String, config, remaining)
+		if errors.Is(err, calrecur.ErrBudgetExceeded) {
+			return nil, err
+		}
+		if err != nil {
+			diagnostics[id] = err.Error()
+		} else {
+			diagnostics[id] = event.RecurrenceError
+		}
+	}
+	return diagnostics, errors.Join(rows.Err(), rows.Close())
 }
 
 func loadCalendarAttendees(ctx context.Context, r *loggedDB, events []CalendarEventRow) error {
@@ -271,25 +410,54 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 	}, maxCalendarExceptions)
 }
 
-// Only sparse cancellations inherit omitted details from the master.
-func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, error) {
+// Only sparse cancellations inherit omitted details from the master. Evidence
+// decode failures are diagnostics; archive reads and context errors abort.
+func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, string, error) {
+	if err := ctx.Err(); err != nil {
+		return row, "", err
+	}
+	if row.Event.Start != nil && row.Event.End != nil {
+		return row, "", nil
+	}
 	var stored []byte
 	var compression sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression); err != nil {
-		return row, fmt.Errorf("read cancellation evidence: %w", err)
+	var format string
+	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression, &format); err != nil {
+		return row, "", fmt.Errorf("read cancellation evidence: %w", err)
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {
-		return row, err
+		return row, fmt.Sprintf("decode cancellation evidence: %s", err), nil
 	}
 	var fields map[string]any
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return row, fmt.Errorf("decode cancellation evidence: %w", err)
+	switch format {
+	case rawFormatICS:
+		cal, err := ical.NewDecoder(bytes.NewReader(raw)).Decode()
+		if err != nil {
+			return row, fmt.Sprintf("decode ICS cancellation evidence: %s", err), nil
+		}
+		fields = make(map[string]any)
+		for _, child := range cal.Children {
+			if child.Name != ical.CompEvent {
+				continue
+			}
+			for name, key := range map[string]string{"SUMMARY": "summary", "ATTENDEE": "attendees", "ORGANIZER": "organizer", "DTSTART": "start", "DTEND": "end"} {
+				if child.Props.Get(name) != nil {
+					fields[key] = true
+				}
+			}
+		}
+	case "gcal_json":
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return row, fmt.Sprintf("decode cancellation evidence: %s", err), nil
+		}
+	default:
+		return row, fmt.Sprintf("unsupported cancellation raw format %q", format), nil
 	}
 	if fields["start"] != nil || fields["end"] != nil {
-		return row, nil
+		return row, "", nil
 	}
-	return inheritSparseCalendarCancellation(row, master, fields), nil
+	return inheritSparseCalendarCancellation(row, master, fields), "", nil
 }
 
 func inheritSparseCalendarCancellation(row, master CalendarEventRow, fields map[string]any) CalendarEventRow {

@@ -125,7 +125,7 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 	}
 	_, err := base.db.Exec(`DELETE FROM calendar_events`)
 	requirements.NoError(err)
-	_, err = base.db.Exec(`DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`)
+	_, err = base.db.Exec(`DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v2'`)
 	requirements.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -152,7 +152,7 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 	var count int
 	requirements.NoError(base.db.QueryRow(`SELECT COUNT(*) FROM calendar_events`).Scan(&count))
 	assertions.Equal(3, count)
-	applied, err := base.IsMigrationAppliedContext(t.Context(), "calendar_event_projection_v1", 1)
+	applied, err := base.IsMigrationAppliedContext(t.Context(), migrationCalendarEventProjectionV2, calendarEventProjectionVersion)
 	requirements.NoError(err)
 	assertions.False(applied)
 	gate.committed = nil
@@ -169,7 +169,7 @@ func TestCalendarEventBackfillMalformedRecurrenceDoesNotFailInit(t *testing.T) {
 	_, id := calendarFixture(t, st, "bad-rule", `{"id":"bad-series","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=NOT_A_FREQUENCY"]}`)
 	_, err := st.db.Exec(`DELETE FROM calendar_events`)
 	requirements.NoError(err)
-	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`)
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v2'`)
 	requirements.NoError(err)
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 	rows := calendarRows(t, st, id)
@@ -185,7 +185,7 @@ func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
 
 	st := newRFC822IDBackfillBackendStore(t)
 	_, id := calendarFixture(t, st, "upgrade", calendarRaw)
-	for _, query := range []string{`DROP TABLE calendar_event_attendees`, `DROP TABLE calendar_events`, `DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`, `UPDATE archive_metadata SET value = '10' WHERE key = 'schema_version'`} {
+	for _, query := range []string{`DROP TABLE calendar_event_attendees`, `DROP TABLE calendar_events`, `DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v2'`, `UPDATE archive_metadata SET value = '10' WHERE key = 'schema_version'`} {
 		_, err := st.db.Exec(query)
 		requirements.NoError(err)
 	}

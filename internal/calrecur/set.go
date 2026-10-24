@@ -18,7 +18,10 @@ var (
 const SeriesReadBudget, RequestReadBudget = 50000, 500000
 
 type Set struct {
-	DTStart         time.Time
+	DTStart time.Time
+	// CivilStart keeps the supplied local DTSTART fields as a UTC timestamp.
+	// Zero means to derive them from DTStart and Zone.
+	CivilStart      time.Time
 	AllDay          bool
 	StartDate       string
 	Zone            *time.Location
@@ -224,7 +227,11 @@ func (s Set) parseRule(line string) (*rrule.ROption, error) {
 	if seen["COUNT"] && opt.Count <= 0 || seen["INTERVAL"] && opt.Interval <= 0 {
 		return nil, unsupported(line, errors.New("COUNT and INTERVAL must be positive"))
 	}
-	if err := supportedRule(opt, seen, start); err != nil {
+	selectorStart := start
+	if !s.AllDay && !s.CivilStart.IsZero() {
+		selectorStart = s.CivilStart
+	}
+	if err := supportedRule(opt, seen, selectorStart); err != nil {
 		return nil, unsupported(line, err)
 	}
 	opt.Dtstart = start
@@ -240,6 +247,22 @@ func (s Set) parseRule(line string) (*rrule.ROption, error) {
 func supportedRule(opt *rrule.ROption, seen map[string]bool, start time.Time) error {
 	if opt.Freq < rrule.YEARLY || opt.Freq > rrule.DAILY {
 		return errors.New("only daily, weekly, monthly and yearly recurrence is supported")
+	}
+	maxInterval := gregorianCycleDays
+	switch opt.Freq {
+	case rrule.DAILY:
+		// maxInterval already spans one daily Gregorian cycle.
+	case rrule.WEEKLY:
+		maxInterval = gregorianCycleDays / 7
+	case rrule.MONTHLY:
+		maxInterval = gregorianCycleMonths
+	case rrule.YEARLY:
+		maxInterval = gregorianCycleYears
+	default:
+		return errors.New("unsupported recurrence frequency")
+	}
+	if opt.Interval > maxInterval {
+		return fmt.Errorf("interval exceeds the %d-period Gregorian cycle", maxInterval)
 	}
 	for key := range seen {
 		allowed := false
@@ -441,7 +464,13 @@ func greatestCommonDivisor(a, b int) int {
 }
 
 func ParseSet(dtstart time.Time, allDay bool, startDate string, zone *time.Location, lines []string) (Set, error) {
-	s := Set{DTStart: dtstart, AllDay: allDay, StartDate: startDate, Zone: zone}
+	return ParseSetWithCivilStart(dtstart, time.Time{}, allDay, startDate, zone, lines)
+}
+
+// ParseSetWithCivilStart preserves the original local DTSTART fields when a
+// provider resolved an instant through a daylight-saving gap.
+func ParseSetWithCivilStart(dtstart, civilStart time.Time, allDay bool, startDate string, zone *time.Location, lines []string) (Set, error) {
+	s := Set{DTStart: dtstart, CivilStart: civilStart, AllDay: allDay, StartDate: startDate, Zone: zone}
 	if _, err := s.start(); err != nil {
 		return Set{}, unsupported("DTSTART", err)
 	}
@@ -530,7 +559,7 @@ func (s Set) parseDates(line string) ([]Identity, string, error) {
 		if dateValue || strings.HasSuffix(v, "Z") {
 			d, err = time.Parse(layout, v)
 		} else {
-			d, err = parseLocalDateTime(layout, v, valueLoc)
+			d, err = ParseLocalDateTime(layout, v, valueLoc)
 		}
 		if err != nil {
 			return nil, "", fmt.Errorf("parse recurrence value: %w", err)
@@ -547,7 +576,9 @@ func (s Set) parseDates(line string) ([]Identity, string, error) {
 	return ids, property, nil
 }
 
-func parseLocalDateTime(layout, value string, loc *time.Location) (time.Time, error) {
+// ParseLocalDateTime resolves an explicit RFC 5545 local time. Folds use the
+// first occurrence; gaps use the offset before the transition.
+func ParseLocalDateTime(layout, value string, loc *time.Location) (time.Time, error) {
 	anchor, err := time.Parse(layout, value)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse local recurrence time: %w", err)

@@ -19,7 +19,7 @@ type duplicateMetadataEvidence struct {
 func (e duplicateMetadataEvidence) quality(sourceType, sourceMessageID string) int {
 	sourceMessageID = strings.TrimSpace(sourceMessageID)
 	quality := 0
-	if (sourceType == "gmail" || sourceType == "imap" || sourceType == "msmail") && sourceMessageID != "" {
+	if (sourceType == "gmail" || sourceType == sourceTypeIMAP || sourceType == "msmail") && sourceMessageID != "" {
 		quality++
 	}
 	if strings.TrimSpace(e.rfc822ID) != "" {

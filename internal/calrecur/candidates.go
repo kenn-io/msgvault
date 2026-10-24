@@ -96,26 +96,30 @@ func firstLocalWallTime(anchor time.Time, loc *time.Location) (time.Time, bool) 
 }
 
 type ruleIterator struct {
-	nextRaw      rrule.Next
-	budget       *candidateBudget
-	set          Set
-	start, until time.Time
-	count        int
-	generated    int
-	first        bool
+	nextRaw                 rrule.Next
+	budget                  *candidateBudget
+	set                     Set
+	start, startWall, until time.Time
+	count                   int
+	generated               int
+	first                   bool
 }
 
 func (s Set) ruleIterator(opt rrule.ROption, until time.Time, budget *candidateBudget) (*ruleIterator, error) {
 	if !until.IsZero() && (opt.Until.IsZero() || until.Before(opt.Until)) {
 		opt.Until = until
 	}
+	startWall := s.CivilStart
+	if startWall.IsZero() {
+		startWall = civilTime(opt.Dtstart.In(s.location()))
+	}
 	_, exists, err := s.instanceStart(opt.Dtstart)
 	if err != nil {
 		return nil, unsupported("DTSTART", err)
 	}
-	iterator := &ruleIterator{budget: budget, set: s, start: opt.Dtstart, until: opt.Until, count: opt.Count, first: exists}
+	iterator := &ruleIterator{budget: budget, set: s, start: opt.Dtstart, startWall: startWall, until: opt.Until, count: opt.Count, first: exists}
 	if !s.AllDay {
-		opt.Dtstart = civilTime(opt.Dtstart.In(s.location()))
+		opt.Dtstart = startWall
 		opt.Until = civilHorizon(opt.Until, s.location())
 	}
 	// COUNT applies to existing civil dates and wall times.
@@ -144,7 +148,7 @@ func (i *ruleIterator) next() (time.Time, bool, error) {
 			if !exists {
 				continue // A nonexistent wall time must not consume COUNT.
 			}
-			if anchor.Equal(civilTime(i.start.In(i.set.location()))) {
+			if anchor.Equal(i.startWall) {
 				value = i.start // Preserve DTSTART's explicit fold occurrence.
 			}
 			if value.Before(i.start) {

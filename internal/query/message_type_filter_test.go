@@ -27,10 +27,13 @@ func TestSearch_MessageTypeFilterCoversMultipleTypes(t *testing.T) {
 		SentAt:      "2024-05-01 10:00:00",
 		MessageType: "email",
 	})
+	calendarSource := env.AddSource(dbtest.SourceOpts{Type: "gcal", Identifier: "calendar@example.test"})
+	calendarConversation := env.AddConversation(dbtest.ConversationOpts{SourceID: calendarSource})
 	eventID := env.AddMessage(dbtest.MessageOpts{
-		Subject:     term + " calendar edition",
-		SentAt:      "2024-05-02 10:00:00",
-		MessageType: "calendar_event",
+		ConversationID: calendarConversation,
+		Subject:        term + " calendar edition",
+		SentAt:         "2024-05-02 10:00:00",
+		MessageType:    "calendar_event",
 	})
 	smsID := env.AddMessage(dbtest.MessageOpts{
 		Subject:     term + " sms edition",

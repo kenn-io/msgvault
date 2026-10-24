@@ -112,6 +112,7 @@ Import local exports:
   import-eml          Import a tree of RFC 5322 .eml files
   import-emlx         Import Apple Mail .emlx files into msgvault
   import-gvoice       Import Google Voice history from Takeout export
+  import-ics          Import local ICS events
   import-imazing-csv  Import Messages CSV exports created by iMazing
   import-imessage     Import iMessages from local database
   import-maildir      Import a Maildir or Maildir++ archive

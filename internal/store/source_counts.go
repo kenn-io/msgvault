@@ -21,9 +21,9 @@ func (s *Store) CountMessagesBySourceContext(ctx context.Context) (map[int64]Sou
 		SELECT source_id,
 			SUM(CASE WHEN %s THEN 1 ELSE 0 END),
 			SUM(CASE WHEN %s THEN 1 ELSE 0 END)
-		FROM messages
+		FROM messages WHERE %s
 		GROUP BY source_id`,
-		LiveMessagesWhere("", true), SourceDeletedMessagesWhere("")))
+		LiveMessagesWhere("", true), SourceDeletedMessagesWhere(""), SourceNativeMessagesWhere("messages", "sources")))
 	if err != nil {
 		return nil, fmt.Errorf("count messages by source: %w", err)
 	}
@@ -41,4 +41,10 @@ func (s *Store) CountMessagesBySourceContext(ctx context.Context) (map[int64]Sou
 		return nil, fmt.Errorf("count messages by source: %w", err)
 	}
 	return counts, nil
+}
+
+// SourceNativeMessagesWhere restricts counts and deletion previews to records
+// that exist in the source provider. Aliases and table names are trusted SQL.
+func SourceNativeMessagesWhere(alias, sources string) string {
+	return fmt.Sprintf("(COALESCE(%s.message_type, '') <> 'calendar_event' OR EXISTS (SELECT 1 FROM %s native_source WHERE native_source.id = %s.source_id AND native_source.source_type IN ('gcal', 'ics')))", alias, sources, alias)
 }

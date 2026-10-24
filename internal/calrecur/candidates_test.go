@@ -65,7 +65,7 @@ func TestTimedRecurrenceFoldUsesFirstOccurrence(t *testing.T) {
 
 	s, err = ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=2"})
 	requirements.NoError(err)
-	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	end, bounded, _ := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
 	requirements.True(bounded)
 	assertions.Equal(instant(t, "2027-10-31T01:30:00Z"), end.UTC())
 }
@@ -85,13 +85,54 @@ func TestTimedRecurrenceGapHonorsUntilAndBudget(t *testing.T) {
 	})
 	requirements.NoError(err)
 	assertions.Equal([]string{"20270307T103000Z"}, got)
-	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	end, bounded, _ := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
 	requirements.True(bounded)
 	assertions.Equal(instant(t, "2027-03-07T11:30:00Z"), end.UTC())
 	s, err = ParseSet(start, false, "", zone, []string{"RRULE:FREQ=WEEKLY;COUNT=2"})
 	requirements.NoError(err)
 	err = testIter(t.Context(), s, instant(t, "2027-03-22T00:00:00Z"), 3, func(instance) bool { return true })
 	requirements.ErrorIs(err, ErrBudgetExceeded)
-	_, bounded = ConservativeEnd(t.Context(), s, time.Hour, 0, 3)
+	_, bounded, _ = ConservativeEnd(t.Context(), s, time.Hour, 0, 3)
 	assertions.False(bounded)
+}
+
+func TestTimedRecurrenceReachabilityUsesCivilStart(t *testing.T) {
+	for _, tc := range []struct {
+		name, start string
+		want        []string
+	}{
+		{
+			name:  "skipped DTSTART",
+			start: "20111230T090000",
+			// Explicit gap DTSTART keeps its resolved instant and consumes COUNT.
+			want: []string{"2011-12-31T09:00:00+14:00", "2012-01-06T09:00:00+14:00"},
+		},
+		{
+			name:  "existing DTSTART",
+			start: "20111223T090000",
+			// The generated skipped Friday consumes no COUNT.
+			want: []string{"2011-12-23T09:00:00-10:00", "2012-01-06T09:00:00+14:00"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			zone, err := time.LoadLocation("Pacific/Apia")
+			requirements.NoError(err)
+			start, err := ParseLocalDateTime("20060102T150405", tc.start, zone)
+			requirements.NoError(err)
+			civilStart, err := time.Parse("20060102T150405", tc.start)
+			requirements.NoError(err)
+			s, err := ParseSetWithCivilStart(start, civilStart, false, "", zone,
+				[]string{"RRULE:FREQ=DAILY;INTERVAL=7;BYDAY=FR;COUNT=2"})
+			requirements.NoError(err)
+			got, _, err := Expand(t.Context(), s, time.Hour, 0,
+				instant(t, "2011-12-01T00:00:00Z"), instant(t, "2012-02-01T00:00:00Z"), 100)
+			requirements.NoError(err)
+			var starts []string
+			for _, occurrence := range got {
+				starts = append(starts, occurrence.Start.In(zone).Format(time.RFC3339))
+			}
+			assert.Equal(t, tc.want, starts)
+		})
+	}
 }

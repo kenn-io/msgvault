@@ -4688,6 +4688,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     status TEXT NOT NULL DEFAULT '',
     all_day BOOLEAN NOT NULL DEFAULT FALSE,
     start_at DATETIME,
+    start_wall TEXT NOT NULL DEFAULT '',
     end_at DATETIME,
     start_date TEXT NOT NULL DEFAULT '',
     end_date TEXT NOT NULL DEFAULT '',
