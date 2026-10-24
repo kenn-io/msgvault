@@ -4316,7 +4316,7 @@ or set provider prices and monetary caps.
 msgvault setup providers --dry-run
 msgvault setup providers
 msgvault setup providers --allow-sensitive
-msgvault setup providers --yes --document-retention zdr --document-training opted-out
+msgvault setup providers --yes
 ```
 
 | Flag                   | Default             | Description                                                                                                                                                                                                       |
