@@ -8,6 +8,7 @@ import (
 )
 
 func TestSyncStateRoundTrip(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	s := NewSyncState()
@@ -29,6 +30,7 @@ func TestSyncStateRoundTrip(t *testing.T) {
 }
 
 func TestSyncStateLegacyThreadsBlobLoads(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// Checkpoints written by the superseded thread-tracking design carry a
 	// per-conversation "threads" map; they must load cleanly (the key is
@@ -42,6 +44,7 @@ func TestSyncStateLegacyThreadsBlobLoads(t *testing.T) {
 }
 
 func TestLoadSyncStateRejectsNullConversation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	var state *SyncState

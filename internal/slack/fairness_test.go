@@ -11,6 +11,7 @@ import (
 )
 
 func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		duringHistory bool
@@ -79,6 +80,7 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 					}
 				}
 				resumed := NewImporter(imp.store, imp.client, opts.TeamID)
+				resumed.checkpointMinInterval = 0
 				resumed.now = func() time.Time { return now }
 				_, err = resumed.Import(ctx, opts)
 				cancel()
@@ -113,6 +115,7 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 				f.mu.Unlock()
 				opts.Progress = nil
 				resumed := NewImporter(imp.store, imp.client, opts.TeamID)
+				resumed.checkpointMinInterval = 0
 				resumed.now = func() time.Time { return now }
 				_, err = resumed.Import(context.Background(), opts)
 				require.NoError(err)

@@ -20,6 +20,7 @@ import (
 var tsBase = time.Now().Add(-25 * time.Hour).UTC().Truncate(time.Second)
 
 func TestImporterScopesParticipantResolver(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource(sourceTypeSlack, "team-a:user-a")
@@ -102,6 +103,7 @@ func testWorkspace(t *testing.T) *fakeSlack {
 const totalWorkspaceMessages = 13
 
 func TestImportPublicChannelsWithoutSearch(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := testWorkspace(t)
@@ -143,6 +145,7 @@ func TestImportPublicChannelsWithoutSearch(t *testing.T) {
 }
 
 func TestImportWithoutSearchResumesLimitedThreadWalk(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := testWorkspace(t)
 	f.convs = f.convs[:1]
@@ -168,19 +171,18 @@ func TestImportWithoutSearchResumesLimitedThreadWalk(t *testing.T) {
 
 func testImporter(t *testing.T, f *fakeSlack) (*Importer, ImportOptions) {
 	t.Helper()
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 
 	srv := f.serve()
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 	return imp, ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true}
 }
 
 func TestIncludeConversationSelectionPolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		conv Conversation
@@ -204,6 +206,7 @@ func TestIncludeConversationSelectionPolicy(t *testing.T) {
 }
 
 func TestImportSkipsExcludedDMsAndGroupDMs(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := testWorkspace(t)
@@ -227,6 +230,7 @@ func TestImportSkipsExcludedDMsAndGroupDMs(t *testing.T) {
 }
 
 func TestImportPrivateChannelsAndDMsAreIndependent(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name       string
 		excludeDMs bool
@@ -260,6 +264,7 @@ func TestImportPrivateChannelsAndDMsAreIndependent(t *testing.T) {
 }
 
 func TestExcludedDMRetainsResumeStateAndThreadDebt(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newFakeSlack(t)
@@ -306,6 +311,7 @@ func TestExcludedDMRetainsResumeStateAndThreadDebt(t *testing.T) {
 }
 
 func TestReincludedDMRepaysThreadDebt(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newFakeSlack(t)
@@ -346,6 +352,7 @@ func TestReincludedDMRepaysThreadDebt(t *testing.T) {
 }
 
 func TestImportEndToEnd(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -478,6 +485,7 @@ func TestImportEndToEnd(t *testing.T) {
 }
 
 func TestImportUsesNextCursorWhenHasMoreIsFalse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	f.forceHasMoreFalse = true
@@ -490,6 +498,7 @@ func TestImportUsesNextCursorWhenHasMoreIsFalse(t *testing.T) {
 }
 
 func TestFullRepairReportsUpdatesRatherThanAdds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -507,6 +516,7 @@ func TestFullRepairReportsUpdatesRatherThanAdds(t *testing.T) {
 }
 
 func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -542,6 +552,7 @@ func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
 }
 
 func TestReplySweepPersistsDirectChatRecipients(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -583,6 +594,7 @@ func TestReplySweepPersistsDirectChatRecipients(t *testing.T) {
 }
 
 func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -624,6 +636,7 @@ func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 }
 
 func TestBackfillThreadFetchFailureParksDrainDebt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -661,6 +674,7 @@ func TestBackfillThreadFetchFailureParksDrainDebt(t *testing.T) {
 }
 
 func TestImportHistoryFailureLeavesConversationResumable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -688,6 +702,7 @@ func TestImportHistoryFailureLeavesConversationResumable(t *testing.T) {
 }
 
 func TestImportInterruptResumesWithoutDuplicates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -723,6 +738,7 @@ func TestImportInterruptResumesWithoutDuplicates(t *testing.T) {
 }
 
 func TestImportFullReUpsertsInPlace(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -753,6 +769,7 @@ func TestImportFullReUpsertsInPlace(t *testing.T) {
 }
 
 func TestImportLimitLeavesBackfillResumable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -803,6 +820,7 @@ func oldThreadWorkspace(t *testing.T) (*fakeSlack, string) {
 }
 
 func TestSweepFindsLateReplyToAncientThread(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -836,6 +854,7 @@ func TestSweepFindsLateReplyToAncientThread(t *testing.T) {
 // boundary may advance (the debt entry owns recovery), the run stays
 // partial, and the next run's drain-first step archives the reply.
 func TestSweepFetchFailureParksAsDrainDebt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -878,6 +897,7 @@ func TestSweepFetchFailureParksAsDrainDebt(t *testing.T) {
 }
 
 func TestSweepOverlapRecoversLateIndexedReplies(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -923,6 +943,7 @@ func TestSweepOverlapRecoversLateIndexedReplies(t *testing.T) {
 }
 
 func TestCanonicalThreadAuditRecoversReplyNeverServedBySearch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -959,6 +980,7 @@ func TestCanonicalThreadAuditRecoversReplyNeverServedBySearch(t *testing.T) {
 }
 
 func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -988,6 +1010,7 @@ func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 }
 
 func TestLoadResumeStateNewestBlobWins(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -1031,6 +1054,7 @@ func TestLoadResumeStateNewestBlobWins(t *testing.T) {
 }
 
 func TestImportRejectsMalformedNewestResumeState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -1049,6 +1073,7 @@ func TestImportRejectsMalformedNewestResumeState(t *testing.T) {
 }
 
 func TestFullImportRepairsMalformedNewestResumeState(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		blob string
@@ -1084,6 +1109,7 @@ func TestFullImportRepairsMalformedNewestResumeState(t *testing.T) {
 }
 
 func TestLoadResumeStateSurfacesDatabaseReadFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -1100,6 +1126,7 @@ func TestLoadResumeStateSurfacesDatabaseReadFailure(t *testing.T) {
 }
 
 func TestImportRestartsExpiredPersistedWindowCursorAtPinnedBound(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
@@ -1150,6 +1177,7 @@ func TestImportRestartsExpiredPersistedWindowCursorAtPinnedBound(t *testing.T) {
 }
 
 func TestImportRestartsExpiredPersistedCatchUpCursorAtPinnedBound(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
@@ -1201,6 +1229,7 @@ func TestImportRestartsExpiredPersistedCatchUpCursorAtPinnedBound(t *testing.T) 
 }
 
 func TestImportSurfacesInvalidCursorWithoutPersistedPageCursor(t *testing.T) {
+	t.Parallel()
 	f := newFakeSlack(t)
 	f.users = []map[string]any{{
 		"id": "UME", "name": "me", "real_name": "Test User",
@@ -1234,6 +1263,7 @@ func requireResumeState(t *testing.T, imp *Importer, sourceID int64) *SyncState 
 }
 
 func TestBackfillMediaReportsInvalidRaw(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	f.conv("C01").Msgs[6].Files = []map[string]any{
@@ -1241,14 +1271,12 @@ func TestBackfillMediaReportsInvalidRaw(t *testing.T) {
 			"url_private": "https://files.slack.com/files-pri/T01-F_RAWBAD/b.png",
 			"permalink":   "https://testers.slack.com/files/F_RAWBAD"},
 	}
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 
 	// Import with media deferred: the file becomes a pending marker.
 	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
@@ -1277,6 +1305,7 @@ func TestBackfillMediaReportsInvalidRaw(t *testing.T) {
 }
 
 func TestBackfillMediaReportsMissingRaw(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	f.conv("C01").Msgs[6].Files = []map[string]any{
@@ -1305,6 +1334,7 @@ func TestBackfillMediaReportsMissingRaw(t *testing.T) {
 }
 
 func TestSweepDebtSurvivesDeletedAnchorReply(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -1360,6 +1390,7 @@ func TestSweepDebtSurvivesDeletedAnchorReply(t *testing.T) {
 }
 
 func TestGapRecoveryResetsInFlightCatchUp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newFakeSlack(t)
 	f.users = []map[string]any{
@@ -1435,6 +1466,7 @@ func TestGapRecoveryResetsInFlightCatchUp(t *testing.T) {
 }
 
 func TestFileWithoutPermalinkKeepsPendingMarker(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	// Slack serves a hosted file with NO permalink: the marker row must
@@ -1444,15 +1476,13 @@ func TestFileWithoutPermalinkKeepsPendingMarker(t *testing.T) {
 		{"id": "F_NOPERM", "name": "n.png", "mimetype": "image/png", "size": 5,
 			"url_private": "https://files.slack.com/files-pri/T01-F_NOPERM/n.png"},
 	}
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
 	client.mediaTransport = &recordingTransport{body: "png07"}
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 
 	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
 	_, err := imp.Import(context.Background(), opts)
@@ -1472,6 +1502,7 @@ func TestFileWithoutPermalinkKeepsPendingMarker(t *testing.T) {
 }
 
 func TestCatchUpDebtNotStarvedBySaturatedWindows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newFakeSlack(t)
 	f.users = []map[string]any{
@@ -1526,6 +1557,7 @@ func TestCatchUpDebtNotStarvedBySaturatedWindows(t *testing.T) {
 }
 
 func TestCrashBeforeSweepStampsCoverage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -1536,7 +1568,7 @@ func TestCrashBeforeSweepStampsCoverage(t *testing.T) {
 	// no adoption happens. The completing walk must have stamped its own
 	// coverage: later runs advance Cursor with every window, and a
 	// boundary guessed from Cursor would sit past the interval.
-	checkpointMinInterval = time.Hour
+	imp.checkpointMinInterval = time.Hour
 	f.mu.Lock()
 	f.onHistory = func(channelID string) {
 		if channelID == "D01" {
@@ -1572,6 +1604,7 @@ func TestCrashBeforeSweepStampsCoverage(t *testing.T) {
 }
 
 func TestLegacyStampLessStateTriggersCatchUp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -1612,6 +1645,7 @@ func TestLegacyStampLessStateTriggersCatchUp(t *testing.T) {
 }
 
 func TestMaintenanceRepairsReplyEdits(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -1648,6 +1682,7 @@ func TestMaintenanceRepairsReplyEdits(t *testing.T) {
 }
 
 func TestMaintenanceNoThreadsRepairsOnlyTopLevelMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -1683,6 +1718,7 @@ func TestMaintenanceNoThreadsRepairsOnlyTopLevelMessages(t *testing.T) {
 }
 
 func TestFirstReplyToUnthreadedMessageRecoveredByCatchUp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newFakeSlack(t)
 	f.users = []map[string]any{
@@ -1732,6 +1768,7 @@ func TestFirstReplyToUnthreadedMessageRecoveredByCatchUp(t *testing.T) {
 }
 
 func TestFailedRunPersistsFinalState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -1749,7 +1786,7 @@ func TestFailedRunPersistsFinalState(t *testing.T) {
 	// suppressed, the ONLY record of the first conversation's completed
 	// window is the failure-path checkpoint — a plain FailSync would
 	// resume from the pre-run baseline and silently discard that progress.
-	checkpointMinInterval = time.Hour
+	imp.checkpointMinInterval = time.Hour
 	okMsg, badMsg := tsFresh(0), tsFresh(1)
 	f.mu.Lock()
 	f.conv("C01").Msgs = append(f.conv("C01").Msgs, fakeMsg{TS: okMsg, User: "UALICE", Text: "fine"})
@@ -1782,6 +1819,7 @@ func TestFailedRunPersistsFinalState(t *testing.T) {
 }
 
 func TestInitialWalkPinPersistsAcrossResumedRuns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -1822,6 +1860,7 @@ func TestInitialWalkPinPersistsAcrossResumedRuns(t *testing.T) {
 }
 
 func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -1863,6 +1902,7 @@ func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {
 }
 
 func TestAttachmentRowFailureFailsRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -1936,6 +1976,7 @@ func installAttachmentInsertFailure(t *testing.T, st *store.Store) func() {
 }
 
 func TestMembershipFetchFailureMarksRunPartial(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	f.failMembers["C01"] = true
@@ -1954,6 +1995,7 @@ func TestMembershipFetchFailureMarksRunPartial(t *testing.T) {
 }
 
 func TestMPIMMembershipFailureHoldsHistoryUntilRecipientsAvailable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -1990,6 +2032,7 @@ func TestMPIMMembershipFailureHoldsHistoryUntilRecipientsAvailable(t *testing.T)
 }
 
 func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -2041,6 +2084,7 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 }
 
 func TestRepairCompletesDespiteDepartedConversations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -2076,6 +2120,7 @@ func TestRepairCompletesDespiteDepartedConversations(t *testing.T) {
 }
 
 func TestLimitOneSweepConverges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -2107,6 +2152,7 @@ func TestLimitOneSweepConverges(t *testing.T) {
 }
 
 func TestFullRepairSurvivesInterruption(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -2162,6 +2208,7 @@ func TestFullRepairSurvivesInterruption(t *testing.T) {
 }
 
 func TestScopedFullRepairConverges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -2198,6 +2245,7 @@ func TestScopedFullRepairConverges(t *testing.T) {
 }
 
 func TestSweepProcessesUnarchivedParent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, _ := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -2232,6 +2280,7 @@ func TestSweepProcessesUnarchivedParent(t *testing.T) {
 }
 
 func TestSoloSweepEntryReanchorsToTrueRoot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, _ := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -2269,6 +2318,7 @@ func TestSoloSweepEntryReanchorsToTrueRoot(t *testing.T) {
 }
 
 func TestSweepFetchDoesNotRefreshArchivedParent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -2305,6 +2355,7 @@ func TestSweepFetchDoesNotRefreshArchivedParent(t *testing.T) {
 }
 
 func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -2362,6 +2413,7 @@ func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
 }
 
 func TestSweepLimitOneConvergesPastTruncatedDayOverlap(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -2438,6 +2490,7 @@ func TestSweepLimitOneConvergesPastTruncatedDayOverlap(t *testing.T) {
 }
 
 func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -2488,6 +2541,7 @@ func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
 }
 
 func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	// A second channel that stays included throughout, so sweeps keep
@@ -2537,6 +2591,7 @@ func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {
 }
 
 func TestImportLimitBoundsThreadReplies(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
@@ -2578,6 +2633,7 @@ func TestImportLimitBoundsThreadReplies(t *testing.T) {
 }
 
 func TestStandingLimitConvergesThroughThreadDebt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
@@ -2618,6 +2674,7 @@ func TestStandingLimitConvergesThroughThreadDebt(t *testing.T) {
 }
 
 func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	// A legacy G-prefixed private channel (name-filterable, but outside the
@@ -2673,6 +2730,7 @@ func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
 }
 
 func TestStandingLimitSweepsLateReplies(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -2705,6 +2763,7 @@ func TestStandingLimitSweepsLateReplies(t *testing.T) {
 }
 
 func TestStandingLimitPaysCatchUpDebt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
@@ -2753,6 +2812,7 @@ func TestStandingLimitPaysCatchUpDebt(t *testing.T) {
 }
 
 func TestCatchUpClearsDebtForGoneConversation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -2780,6 +2840,7 @@ func TestCatchUpClearsDebtForGoneConversation(t *testing.T) {
 }
 
 func TestSweepDayBoundariesFollowHistoricalDST(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ny, err := time.LoadLocation("America/New_York")
@@ -2818,6 +2879,7 @@ func TestSweepDayBoundariesFollowHistoricalDST(t *testing.T) {
 }
 
 func TestSweepSkipsNotDoneConversations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -2866,6 +2928,7 @@ func TestSweepSkipsNotDoneConversations(t *testing.T) {
 }
 
 func TestImportLimitBoundsProcessedMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -2887,6 +2950,7 @@ func TestImportLimitBoundsProcessedMessages(t *testing.T) {
 }
 
 func TestImportLimitedRunsDrainIncrementalBacklog(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -2924,6 +2988,7 @@ func TestImportLimitedRunsDrainIncrementalBacklog(t *testing.T) {
 }
 
 func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS := oldThreadWorkspace(t)
 	// The 10-day-old message starts with NO replies: it is archived as a
@@ -2954,6 +3019,7 @@ func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
 }
 
 func TestMaintenanceRescanIsExplicit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -2991,6 +3057,7 @@ func TestMaintenanceRescanIsExplicit(t *testing.T) {
 }
 
 func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -3014,6 +3081,7 @@ func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
 }
 
 func TestImportChannelFilters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -3038,6 +3106,7 @@ func TestImportChannelFilters(t *testing.T) {
 }
 
 func TestSweepRecoversGapForReEnabledDM(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
@@ -3090,6 +3159,7 @@ func TestSweepRecoversGapForReEnabledDM(t *testing.T) {
 }
 
 func TestFullRepairWithExcludedDMsCoversSelectedConversations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -3159,6 +3229,7 @@ func tombstoneWorkspace(t *testing.T) (*fakeSlack, string, string) {
 }
 
 func TestTombstoneNeverOverwritesArchivedOriginal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS, _ := tombstoneWorkspace(t)
@@ -3218,6 +3289,7 @@ func TestTombstoneNeverOverwritesArchivedOriginal(t *testing.T) {
 }
 
 func TestTombstonePlaceholderKeepsOrphanedReplies(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS, replyTS := tombstoneWorkspace(t)
@@ -3257,6 +3329,7 @@ func TestTombstonePlaceholderKeepsOrphanedReplies(t *testing.T) {
 }
 
 func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS, _ := tombstoneWorkspace(t)
@@ -3297,6 +3370,7 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 }
 
 func TestMessageReappearanceClearsSlackTombstone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, rootTS, _ := tombstoneWorkspace(t)
 	imp, opts := testImporter(t, f)
@@ -3318,6 +3392,7 @@ func TestMessageReappearanceClearsSlackTombstone(t *testing.T) {
 }
 
 func TestParentArchivedRequiresRawCompletionMarker(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
@@ -3354,6 +3429,7 @@ func TestParentArchivedRequiresRawCompletionMarker(t *testing.T) {
 }
 
 func TestLateIndexedReplyMovesParkedDrainBackward(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -3408,6 +3484,7 @@ func TestLateIndexedReplyMovesParkedDrainBackward(t *testing.T) {
 }
 
 func TestCatchUpFullDrainOverridesParkedTailSeed(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
@@ -3478,6 +3555,7 @@ func TestCatchUpFullDrainOverridesParkedTailSeed(t *testing.T) {
 }
 
 func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -3536,6 +3614,7 @@ func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
 }
 
 func TestBackfillMediaDownloadsDespiteNoMediaConfig(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -3544,15 +3623,13 @@ func TestBackfillMediaDownloadsDespiteNoMediaConfig(t *testing.T) {
 			"url_private": "https://files.slack.com/files-pri/T01-F_CFGOFF/c.png",
 			"permalink":   "https://testers.slack.com/files/F_CFGOFF"},
 	}
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
 	client.mediaTransport = &recordingTransport{body: "png03"}
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 
 	// [slack].media = false shapes the options with NoMedia set — for the
 	// sync AND, via the shared options builder, for backfill-slack-media.
@@ -3576,6 +3653,7 @@ func TestBackfillMediaDownloadsDespiteNoMediaConfig(t *testing.T) {
 }
 
 func TestSweepPagesServeOneSnapshotDespiteMidWalkDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -3624,6 +3702,7 @@ func TestSweepPagesServeOneSnapshotDespiteMidWalkDeletion(t *testing.T) {
 }
 
 func TestMaintenanceRepairsRecentReplyUnderAncientRoot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeSlack(t)
