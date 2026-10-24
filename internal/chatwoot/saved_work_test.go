@@ -58,7 +58,6 @@ func TestHistoryHandlesSavedArtifactsOnce(t *testing.T) {
 	}{
 		{"full", true, 0}, {"reconcile", false, 0}, {"limited_full", true, 1}, {"limited_reconcile", false, 1},
 	} {
-		// serial: swaps the package clock now.
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)

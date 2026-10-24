@@ -847,7 +847,6 @@ func fixtureDNSResponse(request []byte, addresses ...netip.Addr) []byte {
 // serial: replaces the process-wide slog logger.
 func TestClientLogsUpstreamBodyOnlyAtDebug(t *testing.T) {
 	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
-		// serial: replaces the process-wide slog logger.
 		t.Run(level.String(), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -890,7 +889,6 @@ func TestClientLogsUpstreamBodyOnlyAtDebug(t *testing.T) {
 // serial: replaces the process-wide slog logger.
 func TestClientLogsExpectedFailuresAtDebug(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusGone, http.StatusPreconditionFailed} {
-		// serial: replaces the process-wide slog logger.
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)

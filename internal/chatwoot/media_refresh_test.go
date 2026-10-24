@@ -170,7 +170,6 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 		{"retained_failed_replacement", "/recording-a.ogg", []string{"synthetic replacement recording B bytes"}, 1, false, true},
 		{"successful_same_key_replacement", "/recording-a.ogg", []string{"synthetic replacement recording B bytes"}, 2, false, false},
 	} {
-		// serial: swaps the package clock now.
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)

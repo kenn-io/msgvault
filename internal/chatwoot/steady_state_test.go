@@ -415,7 +415,6 @@ func TestCappedArtifactReadStillReachesSkippedIDs(t *testing.T) {
 // serial: swaps the package clock now.
 func TestReconcileRereadsMessagesCommittedOutOfOrder(t *testing.T) {
 	for _, evidence := range []string{"commit_time", "missing", "invalid"} {
-		// serial: swaps the package clock now.
 		t.Run(evidence, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			fixed := now
@@ -468,7 +467,6 @@ func TestReconcileRereadsMessagesCommittedOutOfOrder(t *testing.T) {
 // serial: swaps the package clock now.
 func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 	for _, empty := range []bool{false, true} {
-		// serial: swaps the package clock now.
 		t.Run(strconv.FormatBool(empty), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			fixed := now
@@ -511,7 +509,6 @@ func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 // serial: swaps the package clock now.
 func TestFutureActivityDoesNotHideNormalDiscovery(t *testing.T) {
 	for _, poisoned := range []bool{false, true} {
-		// serial: swaps the package clock now.
 		t.Run(strconv.FormatBool(poisoned), func(t *testing.T) {
 			checks, must := assert.New(t), require.New(t)
 			previousNow := now
