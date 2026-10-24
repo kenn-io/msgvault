@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -2226,6 +2227,7 @@ func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {
 }
 
 func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
+	testutil.SkipIfPostgres(t, "the generated client never reads the database; the SQLite lanes check it")
 	t.Parallel()
 	requirements :=
 		require.New(t)
