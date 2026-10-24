@@ -681,8 +681,8 @@ jobs:
         with:
           group: linux-test
 
-      - name: Install SQLite development headers
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Enable pgvector extension
         run: |
@@ -797,8 +797,8 @@ jobs:
         with:
           group: linux-postgres
 
-      - name: Install SQLite development headers
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev bubblewrap
 
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
