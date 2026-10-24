@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -29,12 +30,9 @@ import (
 // four.
 func seedLifecycleShapedArchive(t *testing.T) *store.Store {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "msgvault.db"))
-	require.NoError(t, err, "open store")
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	require.NoError(t, s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "msgvault.db"))
 
-	_, err = s.DB().Exec(`
+	_, err := s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES
 	(1, 1, 'thread-1', 'email_thread'),

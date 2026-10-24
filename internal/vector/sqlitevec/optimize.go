@@ -42,6 +42,10 @@ type OptimizeOptions struct {
 	BatchSize int
 	Threads   int
 	Progress  func(OptimizeProgress)
+	// AfterBatch runs after the copy transaction and progress callback finish.
+	// It may yield exclusive archive ownership. An error stops preparation,
+	// preserving the committed copy for a later attempt.
+	AfterBatch func() error
 }
 
 // OptimizePlan describes the prepared raw Vec1 copy and its model parameters.
@@ -251,6 +255,24 @@ func (b *Backend) PrepareAccelerator(
 		current.LastEmbeddingID = lastID
 		if options.Progress != nil {
 			options.Progress(OptimizeProgress{IndexedCount: indexed, TotalCount: snapshot.Count})
+		}
+		if options.AfterBatch != nil {
+			if err := options.AfterBatch(); err != nil {
+				return OptimizePlan{}, err
+			}
+			// Another archive operation may have changed or retired this
+			// generation while ownership was yielded. Check before copying
+			// another batch, including when the last batch just committed.
+			after, err := b.generationVectorSnapshot(ctx, generationID)
+			if err != nil {
+				return OptimizePlan{}, err
+			}
+			if after.State == vector.GenerationRetired {
+				return OptimizePlan{}, fmt.Errorf("%w: %d", vector.ErrGenerationRetired, generationID)
+			}
+			if after.Count != snapshot.Count || after.Revision != snapshot.Revision || after.Dimension != snapshot.Dimension {
+				return OptimizePlan{}, fmt.Errorf("%w: generation %d changed while preparation yielded", ErrAcceleratorSourceChanged, generationID)
+			}
 		}
 	}
 

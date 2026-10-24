@@ -11,6 +11,7 @@ import (
 // A purge that lands after an import reads its resume state must not let the
 // import checkpoint the purged channel's old coverage again.
 func TestPurgeCannotInterleaveWithLoadedSlackResumeState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)

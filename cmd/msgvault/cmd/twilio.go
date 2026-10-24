@@ -158,6 +158,9 @@ var syncTwilioCmd = &cobra.Command{
 With no identifier, sync every configured [[twilio]] source. --limit bounds call
 processing, and a limited run that stops early prints the command that resumes
 it. --after uses a UTC date and implies --full. --probe reports sample counts without printing call evidence.
+Recordings are stored as WAV with a 1 GiB default cap per recording. Configure
+max_media_mb to change the cap. Oversized recordings are skipped; raise the cap
+and run --full to retry them.
 This command does not place calls or enable paid processing.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

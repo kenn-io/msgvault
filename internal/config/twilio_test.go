@@ -28,8 +28,8 @@ schedule = "15 */6 * * *"
 			assert.Equal("user@example.com", source.AccountEmail)
 			assert.Equal("us1", source.Region)
 			assert.Equal("15 */6 * * *", source.Schedule)
-			assert.Equal(attachmentpolicy.SkipReason(""), source.MediaPolicy().Evaluate(meeting, 250<<20))
-			assert.Equal(attachmentpolicy.SkipSizeCap, source.MediaPolicy().Evaluate(meeting, (250<<20)+1))
+			assert.Equal(attachmentpolicy.SkipReason(""), source.MediaPolicy().Evaluate(meeting, 1<<30))
+			assert.Equal(attachmentpolicy.SkipSizeCap, source.MediaPolicy().Evaluate(meeting, (1<<30)+1))
 		}},
 		{"incomplete credentials", "[[twilio]]\naccount_email = 'user@example.com'\nenabled = false\n", "", nil},
 		{"regional credentials and disabled media", `

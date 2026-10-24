@@ -28,6 +28,7 @@ func addRecentCalls(api *contractAPI, offsets map[int64]time.Duration) {
 }
 
 func TestNotFoundRetiresOnlyUnavailableWork(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		cap           int
@@ -44,6 +45,7 @@ func TestNotFoundRetiresOnlyUnavailableWork(t *testing.T) {
 			notFound: func(request string) bool { return request == "messages 1 11 12" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			api := newContractAPI(t, tc.cap, nil)
 			addRecentCalls(api, map[int64]time.Duration{11: 0, 12: -time.Second})
@@ -78,6 +80,7 @@ func TestNotFoundRetiresOnlyUnavailableWork(t *testing.T) {
 // A missing history range is not proof the history is gone, so its pending
 // work stays saved and the sync reports the failure.
 func TestNotFoundHistoryRangeKeepsPendingHistory(t *testing.T) {
+	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
 	api := newContractAPI(t, 20, nil)
 	api.AddMessage(1, 11, now())
@@ -102,6 +105,7 @@ func TestNotFoundHistoryRangeKeepsPendingHistory(t *testing.T) {
 }
 
 func TestOutOfScopeProviderDataIsNotArchived(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		mutate  func(api *contractAPI)
@@ -119,6 +123,7 @@ func TestOutOfScopeProviderDataIsNotArchived(t *testing.T) {
 		{"listing_account", func(api *contractAPI) { api.ConversationAccountID = 4 }, "invalid conversation scope"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			api := newContractAPI(t, 20, nil)
 			api.AddMessage(1, 11, now())
 			tc.mutate(api)
@@ -132,6 +137,7 @@ func TestOutOfScopeProviderDataIsNotArchived(t *testing.T) {
 }
 
 func TestSavedConversationFromAnotherAccountIsRejected(t *testing.T) {
+	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
 	api := newContractAPI(t, 20, nil)
 	addRecentCalls(api, map[int64]time.Duration{11: 0})
@@ -155,6 +161,7 @@ func TestSavedConversationFromAnotherAccountIsRejected(t *testing.T) {
 // A server that returns messages for an empty combined range cannot prove a
 // range complete, so the importer stops before archiving from it.
 func TestImportRejectsRangesThatIgnoreEmptyBounds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	api := newContractAPI(t, 20, []map[string]any{chatwootapi.Message(101, 1767225600, nil)})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

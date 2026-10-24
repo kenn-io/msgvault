@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	stdsync "sync"
 	"syscall"
 	"time"
 
@@ -61,8 +62,9 @@ import (
 )
 
 var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Run msgvault as a daemon with scheduled sync",
+	Use:         "serve",
+	Annotations: map[string]string{strictConfigAnnotation: "required"},
+	Short:       "Run msgvault as a daemon with scheduled sync",
 	Long: `Run msgvault as a long-running daemon that syncs email accounts on schedule.
 
 The daemon runs in the foreground and performs:
@@ -867,6 +869,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
+		operationGate:          operationGate,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
@@ -1751,6 +1754,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	operationGate             api.OperationGate
+	embeddingsOptimizeMu      stdsync.Mutex
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -1955,6 +1960,14 @@ func (a *storeAPIAdapter) DeleteDailyNoteEntryContext(ctx context.Context, id in
 
 func (a *storeAPIAdapter) ConversationExistsContext(ctx context.Context, conversationID int64) (bool, error) {
 	return a.store.ConversationExistsContext(ctx, conversationID)
+}
+
+func (a *storeAPIAdapter) RefreshChatMembersContext(ctx context.Context) error {
+	return a.store.RefreshChatMembersContext(ctx)
+}
+
+func (a *storeAPIAdapter) SearchChatsMetadataContext(ctx context.Context, q store.ChatDiscoveryQuery) (*store.ChatDiscoveryPage, error) {
+	return a.store.SearchChatsMetadataContext(ctx, q)
 }
 
 func (a *storeAPIAdapter) GetConversationWindowContext(
@@ -2516,6 +2529,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
+		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
+	}
 	if manualSyncCLICommand(req.Args) {
 		defer func() {
 			force, skip := manualSyncCacheFlagValues(req.Args)
@@ -3776,6 +3792,7 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // resource-bounded child. The child owns the cache lock and its DuckDB
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
+	ctx = a.invocationContext(ctx)
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
 		return 0, err
 	}

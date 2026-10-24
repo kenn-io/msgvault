@@ -13,6 +13,77 @@ accept a context; the caller controls cancellation, scheduling, and shutdown.
 
 This package is newer than the latest release.
 
+## Run scoped MCP reads
+
+`go.kenn.io/msgvault/pkg/mcp.Reader` runs native tools against a caller-owned
+archive without a daemon or listener. It supports `get_message`,
+`list_messages`, `list_thread`, `search_metadata`, `search_message_bodies`,
+`get_stats`, and `get_attachment`. The application owns member authentication,
+current permissions, and its MCP transport.
+
+Open an archive as described below, then create one reader for its lifetime:
+
+```go
+reader, err := msgvaultmcp.NewReader(messages, msgvaultmcp.ReaderOptions{
+    AttachmentsDir: attachmentDirectory,
+})
+if err != nil {
+    return err
+}
+defer reader.Close()
+
+tool, err := msgvaultmcp.ReadTool("list_messages")
+if err != nil {
+    return err
+}
+sdkmcp.AddTool(server, tool, func(ctx context.Context, req *sdkmcp.CallToolRequest,
+    args map[string]any) (*sdkmcp.CallToolResult, any, error) {
+    // Application-owned admission returns current source IDs and a release
+    // function. Hold that authority fence through the entire operation.
+    sourceIDs, release, err := admitRead(ctx)
+    if err != nil {
+        return nil, nil, err
+    }
+    defer release()
+    return reader.Call(ctx, sourceIDs, req, args)
+})
+```
+
+Here `msgvaultmcp` is `go.kenn.io/msgvault/pkg/mcp`, and `sdkmcp` is
+`github.com/modelcontextprotocol/go-sdk/mcp`. Use the SDK's generic `AddTool`
+so it validates both arguments and output against the native schemas. The
+reader preserves native paging, body windows, search, errors and attachment
+chunk semantics. It does not accept arbitrary query engines or execute other
+tools just because they appear in the catalog.
+
+Supply current source IDs on **every call**. Nil and empty scopes permit no
+sources. Source scope is applied inside native SQL to account resolution,
+references, lists, search results, counts and attachment metadata before bytes
+are read. Arguments can narrow that scope. This API grants whole sources; it
+cannot authorize selected messages within a source.
+
+The reader also supports the PostgreSQL-only `CGO_ENABLED=0` library profile.
+Each call uses one native read snapshot. The application must keep its own
+permission/admission transaction valid until the call returns. Cached
+attachment continuations recheck the current call's source scope and content
+hash before returning bytes. A previous successful chunk grants no access to
+later chunks. An empty `AttachmentsDir` leaves attachment bytes unavailable;
+it does not discover local configuration. Stop and drain calls before closing
+the reader, then close the archive. Closing the reader releases cached bytes
+and leaves the caller-owned archive open.
+
+### Reuse other read definitions
+
+`ReadTool(name)` returns an independent copy of a native base read definition,
+including nested schemas and annotations. Schemas use `map[string]any`.
+Unknown names, writes, and tools requiring optional backends (including
+`query_sql` and `search_documents`) return an error. A definition alone does
+not register a handler, grant access or make a tool executable through Reader.
+For tools outside Reader's supported subset, the caller supplies execution.
+Do not treat `archive.WithSourceScope` as a general permission boundary for
+arbitrary query engines or handlers; its HTTP contract remains restricted to
+the operations listed below.
+
 ## Open an archive
 
 For SQLite, run schema setup before opening the archive:

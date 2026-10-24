@@ -20,11 +20,13 @@ func deletedFromSource(t *testing.T, st *store.Store, messageID int64) bool {
 // Chatwoot keeps a deleted message's row but replaces its content and removes
 // its files. Neither the artifact refresh nor --full may overwrite the archive.
 func TestDeletedMessageKeepsArchivedContent(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		full bool
 	}{{"artifact_refresh", false}, {"full", true}} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			message := chatwootapi.Message(901, now().Unix(), nil)
 			message["content"] = "deletedquartz original words"
@@ -63,6 +65,7 @@ func TestDeletedMessageKeepsArchivedContent(t *testing.T) {
 }
 
 func TestMessageDeletedBeforeFirstSyncIsNotArchived(t *testing.T) {
+	t.Parallel()
 	deleted := chatwootapi.Message(901, 1767225600, nil)
 	deleted["content"] = "This message was deleted"
 	deleted["content_attributes"] = map[string]any{"deleted": true}

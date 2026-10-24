@@ -23,6 +23,7 @@ All notable changes to msgvault, grouped by release.
   archive schema version 12 and HTTP API schema 3.25.0.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
+- A bad value in a setting only the daemon reads, such as `[integrations.kata] endpoint` or `MSGVAULT_API_PORT`, no longer stops other commands. They print a warning and reach the running daemon, including an older compatible one. `serve`, `daemon start`, `daemon restart`, and saving configuration still reject the file; see [Validation](configuration.md#validation).
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
 - Anonymous telemetry now counts submitted empty searches, displayed workflow errors, and sources entering failure during scheduled sync or Sync now, using fixed values without error text or source identifiers. Everything omits empty-search counts while recording search is unknown or set up.
 - msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
@@ -91,6 +92,11 @@ All notable changes to msgvault, grouped by release.
   take several minutes to build a one-time From-address index. See
   [startup progress](guides/daemon-migration.md#what-you-will-see).
 
+- On Linux, saving or editing `config.toml` works on filesystems that do not
+  record file birth time, such as ext4 created with 128-byte inodes. Before,
+  every save, settings change, and CardDAV account test or save there failed
+  with a config conflict.
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry
@@ -149,7 +155,7 @@ All notable changes to msgvault, grouped by release.
   guest notifications default to `none`. The daemon verifies calendar access
   and archives successful changes immediately.
 - [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
-  their recordings saved locally.
+  their recordings saved locally, up to 1 GiB each by default (`max_media_mb`).
 - [Kata issues](usage/kata-issues.md) can quote an exact passage from a
   message, transcript, or file, from the Web UI, `msgvault kata`, HTTP, or MCP
   (`--allow-kata-writes`). Retrying a create returns the original issue, and

@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestSummaryTableText(t *testing.T) {
@@ -633,10 +634,7 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	t.Cleanup(func() { _ = s.Close() })
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	// Seed two accounts with one message each.
 	src1, err := s.GetOrCreateSource("gmail", "alice@example.com")
@@ -708,10 +706,7 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	t.Cleanup(func() { _ = s.Close() })
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
 	emailConv, err := s.EnsureConversation(src.ID, "email-thread", "")
@@ -803,10 +798,7 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	t.Cleanup(func() { _ = s.Close() })
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
 	conv, err := s.EnsureConversation(src.ID, "c1", "")
@@ -905,10 +897,7 @@ func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	t.Cleanup(func() { _ = s.Close() })
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src1, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
@@ -976,10 +965,7 @@ func TestSearchCmd_CollectionFlagUnknown(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	t.Cleanup(func() { _ = s.Close() })
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
@@ -1005,7 +991,7 @@ func TestSearchCmd_CollectionFlagUnknown(t *testing.T) {
 	root.SetArgs([]string{
 		"search", "--collection", "does-not-exist", "anything",
 	})
-	err = root.Execute()
+	err := root.Execute()
 	require.Error(err, "expected error for unknown collection")
 	assert.ErrorContains(t, err, "no collection")
 }

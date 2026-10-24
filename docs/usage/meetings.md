@@ -492,7 +492,9 @@ Run it again until the summary says the sync is complete.
 
 - **Audio.** Each completed recording is downloaded as WAV, in two channels
   when Twilio has them. WAV takes about 1 MB per minute of a mono recording
-  and 2 MB for dual-channel. The default limit is 250 MiB per recording.
+  and 2 MB for dual-channel. The default limit is 1 GiB per recording, the
+  largest file msgvault's Docbank audio route delivers;
+  [`max_media_mb`](../configuration.md#twilio-sources) changes it.
   An opened meeting in the Web UI links each stored recording for download.
 - **Transcripts.** Legacy recording transcriptions and completed Conversation
   Intelligence transcripts. When a recording has both, the Intelligence

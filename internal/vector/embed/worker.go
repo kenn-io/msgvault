@@ -585,6 +585,10 @@ func (w *Worker) run(
 				}
 				continue
 			}
+			// The skip stamps are committed, so they succeed even if the
+			// coverage stamp below fails; later scans will not find them.
+			outcomes.succeed(idsWithout(skipIDs, skipMissed))
+			outcomes.checkpoint(ctx)
 		}
 
 		// Safe to stamp after the upsert: the upsert is idempotent, so a crash

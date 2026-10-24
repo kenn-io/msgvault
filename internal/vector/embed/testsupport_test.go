@@ -142,27 +142,36 @@ func (s *testWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int
 	return err
 }
 
-// SetEmbedGenIfUnchanged mirrors store.Store.SetEmbedGenIfUnchanged: a
-// per-row optimistic-CAS stamp gated on last_modified, used by the worker's
-// content read→stamp path. Returns the ids whose UPDATE matched 0 rows (CAS
-// misses) so the worker can log them and exclude them from success accounting.
+// SetEmbedGenIfUnchanged mirrors store.Store.SetEmbedGenIfUnchanged: one
+// transaction of per-row optimistic-CAS stamps gated on last_modified, used by
+// the worker's content read→stamp path. Returns the ids whose UPDATE matched 0
+// rows (CAS misses) so the worker can log them and exclude them from success
+// accounting.
 func (s *testWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	for _, it := range items {
-		res, err := s.db.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`,
 			target, it.ID, it.LastModified)
 		if err != nil {
-			return missed, covered, err
+			return nil, 0, err
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return missed, covered, err
+			return nil, 0, err
 		}
 		if n == 0 {
 			missed = append(missed, it.ID)
 		} else {
 			covered++
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
 	}
 	return missed, covered, nil
 }

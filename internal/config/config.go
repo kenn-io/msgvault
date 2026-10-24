@@ -299,6 +299,14 @@ func (t TelemetryConfig) EnabledOrDefault() bool {
 }
 
 func (s *ServerConfig) Validate() error {
+	if err := s.validateDaemonAutoRestart(); err != nil {
+		return err
+	}
+	return s.validateDaemonSettings()
+}
+
+// validateDaemonSettings checks the [server] settings only the daemon reads.
+func (s *ServerConfig) validateDaemonSettings() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
 	}
@@ -308,15 +316,6 @@ func (s *ServerConfig) Validate() error {
 			return fmt.Errorf("invalid [server] remote_clients client_id %q: must be non-empty and unique", client.ClientID)
 		}
 		clientIDs[client.ClientID] = true
-	}
-	switch s.DaemonAutoRestart {
-	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
-	default:
-		return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
-			s.DaemonAutoRestart,
-			DaemonAutoRestartNewer,
-			DaemonAutoRestartNever,
-			DaemonAutoRestartAlways)
 	}
 	for _, entry := range s.TrustedProxies {
 		if entry == "" {
@@ -330,6 +329,20 @@ func (s *ServerConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateDaemonAutoRestart checks the policy client commands read to decide
+// whether to replace a running daemon, so it fails every load.
+func (s *ServerConfig) validateDaemonAutoRestart() error {
+	switch s.DaemonAutoRestart {
+	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
+		return nil
+	}
+	return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
+		s.DaemonAutoRestart,
+		DaemonAutoRestartNewer,
+		DaemonAutoRestartNever,
+		DaemonAutoRestartAlways)
 }
 
 // IsLoopback returns true if the bind address is a loopback address.
@@ -594,6 +607,29 @@ type Config struct {
 	bindSource         string
 	configPath         string // resolved path to the loaded config file
 	runtimeConfigState runtimeConfigState
+	// daemonErrs holds validation errors from settings only the daemon reads.
+	// Load joins them into its error; LoadClientWithOverrides keeps them here.
+	daemonErrs []error
+}
+
+func (c *Config) deferDaemonError(err error) {
+	if err != nil {
+		c.daemonErrs = append(c.daemonErrs, err)
+	}
+}
+
+// DaemonConfigError joins the invalid settings only the daemon reads, as
+// recorded by LoadClientWithOverrides, or returns nil when there are none.
+func (c *Config) DaemonConfigError() error {
+	return errors.Join(c.daemonErrs...)
+}
+
+// requireDaemonValid returns the config, or the recorded daemon errors.
+func (c *Config) requireDaemonValid() (*Config, error) {
+	if err := c.DaemonConfigError(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // IMAPConfig contains operator-owned settings for IMAP mutations.
@@ -930,9 +966,7 @@ func loadWithOverrides(path, homeDir string, overrides RuntimeOverrides) (*Confi
 		if err := cfg.applyRuntimeOverrides(overrides); err != nil {
 			return nil, err
 		}
-		if err := cfg.Server.Validate(); err != nil {
-			return nil, err
-		}
+		cfg.deferDaemonError(cfg.Server.Validate())
 		return cfg, nil
 	}
 	content, err := os.ReadFile(path)
@@ -966,6 +1000,21 @@ func (c *Config) ReloadConfigFile(snapshot ConfigFile) (*Config, error) {
 }
 
 func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
+	cfg, err := loadConfigFileLenient(snapshot, homeDir, overrides)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.requireDaemonValid()
+}
+
+// LoadClientConfigFile decodes a captured snapshot for read-only use by a
+// client command. Like LoadClientWithOverrides, it records invalid daemon-only
+// settings in DaemonConfigError instead of failing.
+func LoadClientConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
+	return loadConfigFileLenient(snapshot, homeDir, nil)
+}
+
+func loadConfigFileLenient(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
 	cfg := NewDefaultConfig()
 	if homeDir != "" {
 		homeDir = expandPath(homeDir)
@@ -987,9 +1036,7 @@ func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverr
 			if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
 				return nil, err
 			}
-			if err := cfg.Server.Validate(); err != nil {
-				return nil, err
-			}
+			cfg.deferDaemonError(cfg.Server.Validate())
 		}
 		return cfg, nil
 	}
@@ -1030,11 +1077,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	if metadata.IsDefined("people", "identity_scoring", "minimum_probability") &&
 		cfg.People.IdentityScoring.MinimumProbability == 0 {
-		return nil, errors.New("people.identity_scoring.minimum_probability must be at least 0.80 and less than 1.00")
+		cfg.deferDaemonError(errors.New("people.identity_scoring.minimum_probability must be at least 0.80 and less than 1.00"))
 	}
 	if metadata.IsDefined("people", "identity_scoring", "batch_size") &&
 		cfg.People.IdentityScoring.BatchSize == 0 {
-		return nil, errors.New("people.identity_scoring.batch_size must be between 1 and 100")
+		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
@@ -1042,30 +1089,27 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
 		if key.String() == "carddav.password" {
-			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
+			cfg.deferDaemonError(errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json"))
 		}
 		if len(key) >= 3 && key[0] == "carddav_connections" && key[2] == "password" {
-			return nil, errors.New("carddav_connections passwords are not allowed in config; store them in private connection token files")
+			cfg.deferDaemonError(errors.New("carddav_connections passwords are not allowed in config; store them in private connection token files"))
 		}
 		if strings.HasPrefix(key.String(), "people.identity_scoring.") {
-			return nil, fmt.Errorf("unknown people.identity_scoring config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown people.identity_scoring config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
-			return nil, fmt.Errorf("unknown IMAP draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown IMAP draft config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "gmail.drafts.") {
-			return nil, fmt.Errorf("unknown Gmail draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown Gmail draft config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "beeper.drafts.") {
-			return nil, fmt.Errorf("unknown Beeper draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown Beeper draft config key %q", key.String()))
 		}
 	}
-	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateDraftSources(content); err != nil {
-		return nil, err
-	}
+	cfg.normalizeFastmailSources(fastmailSourceIDConfigured(content))
+	cfg.deferDaemonError(cfg.validateFastmailSources())
+	cfg.deferDaemonError(cfg.validateDraftSources(content))
 
 	// Expand ~ in paths
 	cfg.Data.DataDir = expandPath(cfg.Data.DataDir)
@@ -1139,38 +1183,27 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.OAuth.Validate(); err != nil {
 		return nil, fmt.Errorf("oauth: %w", err)
 	}
-
-	if err := cfg.Server.Validate(); err != nil {
+	if err := cfg.Server.validateDaemonAutoRestart(); err != nil {
 		return nil, err
 	}
+	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
 	}
 	cfg.Web.ApplyDefaults()
-	if err := cfg.Web.Validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Web.Validate())
 	if !ValidCardDAVProvider(cfg.CardDAV.Provider) {
-		return nil, errors.New("carddav.provider must be empty, \"google\" or \"microsoft\"")
+		cfg.deferDaemonError(errors.New("carddav.provider must be empty, \"google\" or \"microsoft\""))
 	}
-	if _, _, err := cfg.CardDAV.TrustedDestination(); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateCardDAVConnections(); err != nil {
-		return nil, err
-	}
+	_, _, err = cfg.CardDAV.TrustedDestination()
+	cfg.deferDaemonError(err)
+	cfg.deferDaemonError(cfg.validateCardDAVConnections())
 	cfg.Integrations.Tasks.ApplyDefaults()
-	if err := cfg.Integrations.Tasks.Validate("tasks"); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Integrations.Tasks.Validate("tasks"))
 	cfg.Integrations.Kata.ApplyDefaults()
-	if err := cfg.Integrations.Kata.Validate("kata"); err != nil {
-		return nil, err
-	}
-	if err := cfg.Integrations.Docbank.validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Integrations.Kata.Validate("kata"))
+	cfg.deferDaemonError(cfg.Integrations.Docbank.validate())
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
 		return nil, err
@@ -1183,9 +1216,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.People.IdentityScoring.ApplyDefaults()
-	if err := cfg.People.IdentityScoring.Validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.People.IdentityScoring.Validate())
 	if err := cfg.Backup.Validate(); err != nil {
 		return nil, err
 	}
@@ -1281,13 +1312,21 @@ func fastmailSourceIDConfigured(content []byte) []bool {
 	return configured
 }
 
-func (c *Config) validateFastmailSources(sourceIDConfigured []bool) error {
-	seenAccounts := []string{}
-	seenSourceIDs := map[int64]bool{}
+// normalizeFastmailSources trims selectors and records which entries set
+// source_id, for every entry, so validation has no order-dependent side effects.
+func (c *Config) normalizeFastmailSources(sourceIDConfigured []bool) {
 	for i := range c.Fastmail {
 		source := &c.Fastmail[i]
 		source.Account = strings.TrimSpace(source.Account)
 		source.sourceIDConfigured = i < len(sourceIDConfigured) && sourceIDConfigured[i]
+	}
+}
+
+func (c *Config) validateFastmailSources() error {
+	seenAccounts := []string{}
+	seenSourceIDs := map[int64]bool{}
+	for i := range c.Fastmail {
+		source := &c.Fastmail[i]
 		if source.sourceIDConfigured && source.SourceID <= 0 {
 			return fmt.Errorf("[[fastmail]] entry %d: source_id must be positive", i+1)
 		}
@@ -1330,6 +1369,9 @@ var ErrFastmailSourceLookup = errors.New("fastmail source lookup failed")
 // inventory to multiple ingestion sources. Explicit source ID entries take
 // precedence over account matches.
 func (c *Config) FastmailSourceFor(st FastmailSourceStore, sourceID int64) (*FastmailSource, error) {
+	if err := c.validateFastmailSources(); err != nil {
+		return nil, err
+	}
 	if st == nil {
 		return nil, errors.New("fastmail source lookup requires a source store")
 	}
@@ -1498,7 +1540,21 @@ func (c *Config) Save() error {
 	return c.saveWithHooks(configSaveHooks{})
 }
 
+// ErrSaveRefused marks a save that would rewrite a file the daemon cannot load.
+var ErrSaveRefused = errors.New("refusing to save config")
+
 func (c *Config) saveWithHooks(hooks configSaveHooks) error {
+	// Saving re-encodes the decoded struct, which would drop unknown keys and
+	// default explicit zeros in a file the daemon would reject.
+	snapshot, err := ReadConfigFile(c.ConfigFilePath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errConfigSymlinkTargetMissing) {
+		return fmt.Errorf("%w: %w", ErrSaveRefused, err)
+	}
+	if err == nil && snapshot.Exists {
+		if _, err := LoadConfigFile(snapshot, c.HomeDir); err != nil {
+			return fmt.Errorf("%w: %w", ErrSaveRefused, err)
+		}
+	}
 	// Ensure home directory exists
 	if err := c.EnsureHomeDir(); err != nil {
 		return fmt.Errorf("create config directory: %w", err)

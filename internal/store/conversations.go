@@ -623,3 +623,23 @@ func (s *Store) ConversationMetadataBatchContext(ctx context.Context,
 	}
 	return metadata, nil
 }
+
+// ConversationTitlesBatchContext loads archived titles by source conversation ID.
+func (s *Store) ConversationTitlesBatchContext(ctx context.Context, sourceID int64, ids []string) (map[string]string, error) {
+	titles := make(map[string]string)
+	err := queryInChunksContext(ctx, s.db, ids, []any{sourceID},
+		`SELECT source_conversation_id, COALESCE(title, '') FROM conversations
+		 WHERE source_id = ? AND source_conversation_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var id, title string
+			if err := rows.Scan(&id, &title); err != nil {
+				return err
+			}
+			titles[id] = title
+			return nil
+		})
+	if err != nil {
+		return nil, fmt.Errorf("load conversation titles batch: %w", err)
+	}
+	return titles, nil
+}

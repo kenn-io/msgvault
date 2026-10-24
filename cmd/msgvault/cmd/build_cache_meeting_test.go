@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestBuildCache_IncludesMeetingTranscripts verifies meeting messages and
@@ -21,9 +22,7 @@ func TestBuildCache_IncludesMeetingTranscripts(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	// An ordinary email: sender alice → recipient carol.
 	emailSrc, err := st.GetOrCreateSource("gmail", "alice@example.com")

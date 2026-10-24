@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -1543,6 +1544,9 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	if err := enqueueActivityProjectionMessage(q, d, id); err != nil {
 		return 0, err
 	}
+	if err := enqueueChatMembers(q, msg.ConversationID); err != nil {
+		return 0, err
+	}
 	if journalCandidate && !prior.found && d.DriverName() != postgresDriverName {
 		if err := appendPersonSweepMessageInsert(q, d, id); err != nil {
 			return 0, err
@@ -2555,6 +2559,12 @@ func ensureParticipantWith(
 	domain string,
 	onInsert func() error,
 ) (int64, error) {
+	// Keep the resolved parent alive until message persistence commits,
+	// without blocking the foreign-key checks of a concurrent chat refresh.
+	lockClause := ""
+	if dialect.DriverName() == postgresDriverName {
+		lockClause = " FOR KEY SHARE"
+	}
 	// ON CONFLICT must mirror the partial unique index on
 	// participants(email_address) WHERE email_address IS NOT NULL — both
 	// PG and SQLite require the WHERE clause on the conflict target to
@@ -2581,7 +2591,7 @@ func ensureParticipantWith(
 		}
 		var id int64
 		err = q.QueryRow(
-			`SELECT id FROM participants WHERE email_address = ?`+dialect.SelectForUpdate(),
+			`SELECT id FROM participants WHERE email_address = ?`+lockClause,
 			email,
 		).Scan(&id)
 		if err == nil {
@@ -2715,6 +2725,9 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 
 	if len(rs.ParticipantIDs) == 0 {
 		return nil
+	}
+	if err := enqueueChatMembersForMessage(tx, messageID); err != nil {
+		return err
 	}
 
 	recipients := normalizedMessageRecipients(rs)
@@ -4073,10 +4086,7 @@ func (s *Store) backfillFTSRowByRowContext(
 			slog.Warn("skipping message in FTS backfill",
 				slog.Int64("message_id", id),
 				slog.Any("error", err))
-			if _, uerr := s.db.ExecContext(ctx,
-				`UPDATE messages SET search_fts = ''::tsvector, indexing_version = ? WHERE id = ?`,
-				CurrentFTSIndexingVersion, id,
-			); uerr != nil {
+			if uerr := markFTSMessageUnsearchable(boundQuerier{ctx: ctx, q: s.db}, id); uerr != nil {
 				return indexed, fmt.Errorf("mark FTS-overflow row %d terminal: %w", id, uerr)
 			}
 			continue
@@ -6626,15 +6636,87 @@ func (s *Store) EndWaitingProviderAttachments(ctx context.Context, sourceID int6
 	return ended, nil
 }
 
+// markFTSMessageUnsearchable shares the terminal PostgreSQL overflow policy.
+func markFTSMessageUnsearchable(q querier, messageID int64) error {
+	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
+	return err
+}
+
+// ftsMessageUnsearchable reports whether the PostgreSQL overflow policy
+// already marked messageID.
+func ftsMessageUnsearchable(q querier, messageID int64) (bool, error) {
+	var terminal bool
+	err := q.QueryRow(`SELECT COALESCE(search_fts = ''::tsvector AND indexing_version = ?, FALSE) FROM messages WHERE id = ?`, CurrentFTSIndexingVersion, messageID).Scan(&terminal)
+	return terminal, err
+}
+
 // ArchivedRawMessage is one archived message paired with the verbatim provider
 // payload stored for it, decompressed.
 type ArchivedRawMessage struct {
 	MessageID      int64
 	ConversationID int64
 	RawData        []byte
+	// RawDecodeError reports a corrupt compressed payload separately from SQL errors.
+	RawDecodeError error
 	// BodyText is the currently stored plain-text body, so a caller
 	// re-deriving it can skip rows that would not change.
 	BodyText string
+	Snippet  string
+	// stored is the stored text and search envelope read with the payload.
+	stored derivedEmailText
+	// rawFingerprint binds a scanned repair to its retained encoded MIME.
+	rawFingerprint *[sha256.Size]byte
+}
+
+// decompressArchivedRaw inflates a zlib-compressed archived payload.
+func decompressArchivedRaw(messageID int64, raw []byte, compression sql.NullString) ([]byte, error) {
+	if !compression.Valid || compression.String != "zlib" {
+		return raw, nil
+	}
+	r, err := zlib.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("zlib reader for message %d: %w", messageID, err)
+	}
+	defer func() { _ = r.Close() }()
+	raw, err = io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("decompress message %d: %w", messageID, err)
+	}
+	return raw, nil
+}
+
+// ScanArchivedEmailContext returns a source's first retained MIME message with
+// afterID < id <= throughID, read with its stored text and search envelope, or
+// nil when none remains. Reading one row bounds memory for very large messages.
+// An undecodable payload sets RawDecodeError; query failures return an error.
+func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID, throughID int64) (*ArchivedRawMessage, error) {
+	item := &ArchivedRawMessage{}
+	var raw []byte
+	var compression sql.NullString
+	dest := append([]any{&item.MessageID, &item.ConversationID, &raw, &compression}, item.stored.scanDest()...)
+	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.conversation_id, r.raw_data, r.compression, `+s.derivedEmailTextColumns()+`
+		FROM messages m
+		JOIN message_raw r ON r.message_id = m.id
+		LEFT JOIN message_bodies b ON b.message_id = m.id
+		WHERE m.source_id = ? AND r.raw_format = 'mime' AND m.id > ? AND m.id <= ?
+		ORDER BY m.id
+		LIMIT 1`, sourceID, afterID, throughID).Scan(dest...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil //nolint:nilnil // An exhausted archive scan has no row and no error.
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan archived email: %w", err)
+	}
+	item.stored.fts.MessageID = item.MessageID
+	item.BodyText, item.Snippet = item.stored.body, item.stored.snippet
+	item.decodeArchivedEmail(raw, compression)
+	return item, nil
+}
+
+func (item *ArchivedRawMessage) decodeArchivedEmail(raw []byte, compression sql.NullString) {
+	fingerprint := rawMIMEFingerprint(raw, compression)
+	item.rawFingerprint = &fingerprint
+	item.RawData, item.RawDecodeError = decodeMessageRaw(raw, compression)
 }
 
 // ScanArchivedRawMessages returns up to limit archived messages for a source
@@ -6648,7 +6730,7 @@ func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID i
 // ScanArchivedRawMessagesContext honors cancellation during ScanArchivedRawMessages.
 func (s *Store) ScanArchivedRawMessagesContext(ctx context.Context, sourceID int64, format string, afterID int64, limit int) ([]ArchivedRawMessage, error) {
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`
-		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, '')
+		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, ''), COALESCE(m.snippet, '')
 		FROM messages m
 		JOIN message_raw r ON r.message_id = m.id
 		LEFT JOIN message_bodies b ON b.message_id = m.id
@@ -6665,21 +6747,12 @@ func (s *Store) ScanArchivedRawMessagesContext(ctx context.Context, sourceID int
 		var item ArchivedRawMessage
 		var raw []byte
 		var compression sql.NullString
-		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText); err != nil {
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText, &item.Snippet); err != nil {
 			return nil, err
 		}
-		if compression.Valid && compression.String == "zlib" {
-			r, zerr := zlib.NewReader(bytes.NewReader(raw))
-			if zerr != nil {
-				return nil, fmt.Errorf("zlib reader for message %d: %w", item.MessageID, zerr)
-			}
-			raw, err = io.ReadAll(r)
-			_ = r.Close()
-			if err != nil {
-				return nil, fmt.Errorf("decompress message %d: %w", item.MessageID, err)
-			}
+		if item.RawData, err = decompressArchivedRaw(item.MessageID, raw, compression); err != nil {
+			return nil, err
 		}
-		item.RawData = raw
 		out = append(out, item)
 	}
 	return out, rows.Err()
@@ -6714,18 +6787,9 @@ func (s *Store) ScanArchivedRawMessagesForConversation(
 		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression); err != nil {
 			return nil, err
 		}
-		if compression.Valid && compression.String == "zlib" {
-			r, zerr := zlib.NewReader(bytes.NewReader(raw))
-			if zerr != nil {
-				return nil, fmt.Errorf("zlib reader for message %d: %w", item.MessageID, zerr)
-			}
-			raw, err = io.ReadAll(r)
-			_ = r.Close()
-			if err != nil {
-				return nil, fmt.Errorf("decompress message %d: %w", item.MessageID, err)
-			}
+		if item.RawData, err = decompressArchivedRaw(item.MessageID, raw, compression); err != nil {
+			return nil, err
 		}
-		item.RawData = raw
 		out = append(out, item)
 	}
 	return out, rows.Err()
@@ -6739,19 +6803,189 @@ func (s *Store) UpdateMessageDerivedText(
 ) error {
 	fts.MessageID = messageID
 	return s.withTx(func(tx *loggedTx) error {
-		if err := upsertMessageBody(tx, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML); err != nil {
-			return fmt.Errorf("update derived message body: %w", err)
-		}
-		if _, err := tx.Exec(`UPDATE messages SET snippet = ? WHERE id = ?`, snippet, messageID); err != nil {
-			return fmt.Errorf("update derived message snippet: %w", err)
-		}
-		if s.fts5Available {
-			if err := s.dialect.FTSUpsert(tx, fts); err != nil {
-				return fmt.Errorf("update derived message FTS: %w", err)
-			}
-		}
-		return nil
+		return s.updateMessageDerivedText(tx, messageID, bodyText, bodyHTML, snippet, fts, s.dialect.FTSUpsert)
 	})
+}
+
+// UpdateArchivedEmailTextContext atomically repairs body, snippet, and search
+// for a row from ScanArchivedEmailContext while preserving its current envelope.
+func (s *Store) UpdateArchivedEmailTextContext(ctx context.Context, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	matches, err := s.archivedEmailTextMatchesContext(ctx, item, bodyText, bodyHTML, snippet)
+	if err != nil || matches {
+		return false, err
+	}
+	var changed bool
+	err = s.withTxContext(ctx, func(tx *loggedTx) (err error) {
+		changed, err = s.writeDerivedEmailTextPendingRevision(ctx, tx, item, bodyText, bodyHTML, snippet)
+		return err
+	})
+	return changed, err
+}
+
+func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *loggedTx, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	changed, err := s.writeDerivedEmailText(ctx, tx, item, bodyText, bodyHTML, snippet)
+	if err != nil || !changed {
+		return changed, err
+	}
+	return changed, setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
+}
+
+// derivedEmailText is a retained email's stored text and the search document
+// FTSUpsert would write for its stored envelope.
+type derivedEmailText struct {
+	body, html, snippet string
+	fts                 FTSDoc
+}
+
+func (row *derivedEmailText) matches(bodyText, bodyHTML, snippet sql.NullString) bool {
+	return row.body == bodyText.String && row.html == bodyHTML.String && row.snippet == snippet.String
+}
+
+// derivedEmailTextColumns selects the columns scanned by derivedEmailText.scanDest
+// from messages m joined to message_bodies b.
+func (s *Store) derivedEmailTextColumns() string {
+	aggregate := "GROUP_CONCAT"
+	if s.IsPostgreSQL() {
+		aggregate = "STRING_AGG"
+	}
+	envelope := storedFTSEnvelopeSQL(aggregate)
+	return `COALESCE(b.body_text, ''), COALESCE(b.body_html, ''), COALESCE(m.snippet, ''), ` +
+		envelope.subject + `, ` + envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs
+}
+
+func (row *derivedEmailText) scanDest() []any {
+	return []any{&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs}
+}
+
+func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailText, error) {
+	row := derivedEmailText{fts: FTSDoc{MessageID: messageID}}
+	err := q.QueryRow(`SELECT `+s.derivedEmailTextColumns()+`
+		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, messageID).
+		Scan(row.scanDest()...)
+	return row, err
+}
+
+func (s *Store) archivedEmailTextMatchesContext(ctx context.Context, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	if item.rawFingerprint == nil {
+		return false, errors.New("email repair requires a scanned MIME fingerprint")
+	}
+	return s.derivedEmailTextMatchesContext(ctx, item.stored, bodyText, bodyHTML, snippet)
+}
+
+func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, row derivedEmailText, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	if !row.matches(bodyText, bodyHTML, snippet) {
+		return false, nil
+	}
+	if !s.fts5Available {
+		return true, nil
+	}
+	q := boundQuerier{ctx: ctx, q: s.db}
+	row.fts.Body = bodyText.String
+	matches, err := s.dialect.FTSMatches(q, row.fts)
+	if s.dialect.IsFTSValueTooLargeError(err) {
+		return ftsMessageUnsearchable(q, row.fts.MessageID)
+	}
+	return matches, err
+}
+
+// writeDerivedEmailText indexes the new body with the envelope read under the
+// message lock. Current text is not rewritten, and an overflow that is already
+// terminal reports no change.
+func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, item *ArchivedRawMessage, bodyText, bodyHTML, snippet sql.NullString) (bool, error) {
+	if err := s.lockArchivedEmailTextContext(ctx, tx, item); err != nil {
+		return false, fmt.Errorf("lock derived email write: %w", err)
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	row, err := s.loadArchivedEmailTextForWrite(q, item)
+	if err != nil {
+		return false, fmt.Errorf("load derived email envelope: %w", err)
+	}
+	row.fts.Body = bodyText.String
+	if row.matches(bodyText, bodyHTML, snippet) {
+		return s.upsertFTSOrUnsearchable(q, row.fts)
+	}
+	upsert := func(q querier, doc FTSDoc) error { _, err := s.upsertFTSOrUnsearchable(q, doc); return err }
+	return true, s.updateMessageDerivedText(q, item.MessageID, bodyText, bodyHTML, snippet, row.fts, upsert)
+}
+
+// ErrArchivedEmailSnippetChanged requires a fresh scan before retrying a repair.
+var ErrArchivedEmailSnippetChanged = errors.New("archived email snippet changed")
+
+// loadArchivedEmailTextForWrite preserves provider snippets changed since the
+// scan. The caller holds the message lock through this check and the writes.
+func (s *Store) loadArchivedEmailTextForWrite(q querier, item *ArchivedRawMessage) (derivedEmailText, error) {
+	row, err := s.loadDerivedEmailText(q, item.MessageID)
+	if err != nil {
+		return row, err
+	}
+	if row.snippet != item.stored.snippet {
+		return row, fmt.Errorf("%w after repair scan: message %d", ErrArchivedEmailSnippetChanged, item.MessageID)
+	}
+	return row, nil
+}
+
+// lockArchivedEmailTextContext orders writes with sync and rejects stale MIME
+// before any body, snippet, or search correction can replace the sync snapshot.
+func (s *Store) lockArchivedEmailTextContext(ctx context.Context, tx *loggedTx, item *ArchivedRawMessage) error {
+	if err := s.lockMeetingEvidenceWith(ctx, tx, item.MessageID); err != nil {
+		return err
+	}
+	var raw []byte
+	var compression sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw
+		WHERE message_id = ? AND raw_format = 'mime'`+s.dialect.SelectForUpdate(), item.MessageID).Scan(&raw, &compression)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if errors.Is(err, sql.ErrNoRows) || rawMIMEFingerprint(raw, compression) != *item.rawFingerprint {
+		return fmt.Errorf("message %d MIME changed after email repair scan", item.MessageID)
+	}
+	return nil
+}
+
+func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc, upsertFTS func(querier, FTSDoc) error) error {
+	if err := upsertMessageBody(q, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML); err != nil {
+		return fmt.Errorf("update derived message body: %w", err)
+	}
+	if _, err := q.Exec(`UPDATE messages SET snippet = ? WHERE id = ?`, snippet, messageID); err != nil {
+		return fmt.Errorf("update derived message snippet: %w", err)
+	}
+	if s.fts5Available {
+		if err := upsertFTS(q, fts); err != nil {
+			return fmt.Errorf("update derived message FTS: %w", err)
+		}
+	}
+	return nil
+}
+
+// upsertFTSOrUnsearchable applies the backfill's terminal policy when
+// PostgreSQL rejects the bounded search vector, keeping the caller's other
+// writes. It reports false when the row was already terminal.
+func (s *Store) upsertFTSOrUnsearchable(q querier, doc FTSDoc) (bool, error) {
+	if _, err := q.Exec("SAVEPOINT derived_fts"); err != nil {
+		return false, err
+	}
+	changed, err := true, s.dialect.FTSUpsert(q, doc)
+	if s.dialect.IsFTSValueTooLargeError(err) {
+		slog.Warn("marking message unsearchable after FTS overflow", "message_id", doc.MessageID, "error", err)
+		changed, err = markFTSOverflowUnsearchable(q, doc.MessageID)
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = q.Exec("RELEASE SAVEPOINT derived_fts")
+	return changed, err
+}
+
+func markFTSOverflowUnsearchable(q querier, messageID int64) (bool, error) {
+	if _, err := q.Exec("ROLLBACK TO SAVEPOINT derived_fts"); err != nil {
+		return false, err
+	}
+	terminal, err := ftsMessageUnsearchable(q, messageID)
+	if err != nil || terminal {
+		return false, err
+	}
+	return true, markFTSMessageUnsearchable(q, messageID)
 }
 
 // ArchivedSourceMessageIDs returns the subset of sourceMessageIDs already

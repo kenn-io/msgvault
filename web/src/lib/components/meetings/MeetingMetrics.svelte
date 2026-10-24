@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Table } from '@kenn-io/kit-ui';
+
   import type { Metrics } from '../../api/generated/models';
 
   let { metrics }: { metrics: Metrics } = $props();
@@ -40,12 +42,12 @@
     <section class="evidence-section" aria-labelledby={`${headingID}-duration-evidence`}>
       <h4 id={`${headingID}-duration-evidence`}>Duration evidence</h4>
       <div class="table-scroll">
-        <table aria-label="Duration evidence">
+        <Table unsorted bare ariaLabel="Duration evidence">
           <thead><tr><th scope="col">Evidence</th><th scope="col">Meetings</th><th scope="col">Known time</th></tr></thead>
           <tbody>{#each metrics.duration_by_basis as basis (basis.basis)}
             <tr><th scope="row">{basisLabels[basis.basis] ?? basis.basis}</th><td>{basis.count}</td><td>{basis.basis === 'unknown' ? 'Unavailable' : duration(basis.total_seconds)}</td></tr>
           {/each}</tbody>
-        </table>
+        </Table>
       </div>
     </section>
   {/if}
@@ -53,12 +55,12 @@
     <section class="evidence-section" aria-labelledby={`${headingID}-monthly`}>
       <h4 id={`${headingID}-monthly`}>Monthly activity</h4>
       <div class="table-scroll">
-        <table aria-label="Monthly meeting activity">
+        <Table unsorted bare ariaLabel="Monthly meeting activity">
           <thead><tr><th scope="col">Month</th><th scope="col">Meetings</th><th scope="col">Known</th><th scope="col">Unknown</th><th scope="col">Known time</th><th scope="col">Average</th></tr></thead>
           <tbody>{#each metrics.months as month (month.month)}
             <tr><th scope="row">{month.month}</th><td>{month.totals.meeting_count}</td><td>{month.totals.known_duration_count}</td><td>{month.totals.unknown_duration_count}</td><td>{duration(month.totals.total_known_seconds)}</td><td>{duration(month.totals.average_known_seconds)}</td></tr>
           {/each}</tbody>
-        </table>
+        </Table>
       </div>
       <p class="note">Months without meetings are omitted.</p>
     </section>
@@ -82,9 +84,12 @@
   .note { padding-top: var(--space-3); border-top: 1px solid var(--border-muted); color: var(--text-muted); font-size: var(--font-size-xs); line-height: 1.5; }
   .evidence-section { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--border-muted); }
   .table-scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: var(--font-size-xs); }
-  th, td { padding: var(--space-2); border-bottom: 1px solid var(--border-muted); text-align: right; }
-  th:first-child { text-align: left; } th { color: var(--text-secondary); } td { color: var(--text-primary); }
+  .table-scroll :global(table) { width: 100%; border-collapse: collapse; font-size: var(--font-size-xs); }
+  .table-scroll :global(th),
+  .table-scroll :global(td) { padding: var(--space-2); border-bottom: 1px solid var(--border-muted); text-align: right; }
+  .table-scroll :global(th:first-child) { text-align: left; }
+  .table-scroll :global(th) { color: var(--text-secondary); }
+  .table-scroll :global(td) { color: var(--text-primary); }
   @media (max-width: 640px) {
     .metrics-heading { align-items: start; flex-direction: column; gap: var(--space-1); }
     .metric-grid { grid-template-columns: 1fr; }

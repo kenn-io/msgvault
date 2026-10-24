@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-18"
+last_edited: "2026-10-20"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -20,6 +20,28 @@ provider setup is covered in [recommended configuration](usage/recommended-confi
 The [complete example](#example-configuration) below illustrates the available
 sections; it is not a required starting configuration.
 
+### Validation
+
+Invalid TOML, wrong-typed values, and invalid values in sections that commands
+read themselves fail every command. An invalid value in a setting only the
+daemon reads does not. These are `[server]` and `MSGVAULT_API_PORT` and
+`MSGVAULT_CORS_CREDENTIALS` (but not `daemon_auto_start`,
+`daemon_auto_restart`, or the other `MSGVAULT_*` overrides), `[web]`,
+`[integrations.*]`, `[carddav]`, `[carddav_connections]`,
+`[people.identity_scoring]`, `[[imap.drafts]]`, `[[gmail.drafts]]`,
+`[[beeper.drafts]]`, and `[[fastmail]]`.
+
+A command that hits one still runs, and prints
+`Warning: invalid daemon config: ...` to stderr after it finishes. With
+`MSGVAULT_API_PORT=invalid`, `msgvault stats` warns and still reaches the
+running daemon, even an older compatible one, which is never replaced while the
+config is invalid. `msgvault serve`, `msgvault daemon start`, and
+`msgvault daemon restart` fail with the config error before they stop or start
+anything. When no usable daemon is running, the on-demand start fails with the
+config error instead of launching one. Saving configuration is refused while
+the file on disk would not load cleanly, the daemon's add-account API returns
+the reason when it refuses, and `msgvault add-synctech-sms-drive` fails at
+start. `msgvault update` also stays strict.
 
 ## Remote Deletion Consent
 
@@ -1430,6 +1452,9 @@ may run. The route inspects stored CAS bytes, so MIME claims do not expand
 Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
 typed local states.
 
+Msgvault's Docbank audio route delivers files up to 1 GiB, even when a source's
+capture limit is higher. Larger files remain in the msgvault archive.
+
 Agents can quote the transcripts of delivered files in
 [Kata issues](usage/kata-issues.md#cite-a-docbank-transcript).
 
@@ -1771,7 +1796,7 @@ schedule = "15 */6 * * *"
 | `enabled` | `false` | Allow daemon scheduling |
 | `schedule` | — | Five-field cron expression |
 | `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
-| `max_media_mb` | `250` | Per-recording size cap in MiB; `0` uses the default |
+| `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-twilio --full` to retry |
 
 ### Muesli Sources
 

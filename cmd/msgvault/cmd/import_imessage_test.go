@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestImportIMessage_NoAutoDefaultIdentity pins the documented behavior: the
@@ -20,10 +21,7 @@ func TestImportIMessage_NoAutoDefaultIdentity(t *testing.T) {
 	// auto-write because there's no per-user identifier known at source
 	// creation time. Spec § Auto-default-identity § "Ingest paths that do
 	// not auto-write".
-	s, err := store.Open(filepath.Join(t.TempDir(), "msgvault.db"))
-	require.NoError(err)
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "msgvault.db"))
 
 	src, err := resolveImessageSource(s)
 	require.NoError(err, "resolveImessageSource")

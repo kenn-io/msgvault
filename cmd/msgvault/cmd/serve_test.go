@@ -13,9 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +36,7 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telemetry"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -414,9 +413,7 @@ func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	cfg = c
 	t.Cleanup(func() { cfg = oldCfg })
 
-	st, err := store.Open(c.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, c.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "orphaned-import@example.com")
 	require.NoError(err)
 	_, err = st.CreateSyncOperation(source.ID, "orphaned-operation")
@@ -1956,10 +1953,7 @@ func TestOpenDaemonAnalyticsEngineExplicitDuckDBFailureIsFatal(t *testing.T) {
 func openTestDaemonAnalyticsStore(t *testing.T) (*config.Config, *store.Store) {
 	t.Helper()
 	c := lifecycleTestConfig(t.TempDir())
-	s, err := store.Open(c.DatabaseDSN())
-	require.NoError(t, err, "open store")
-	t.Cleanup(func() { _ = s.Close() })
-	require.NoError(t, s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, c.DatabaseDSN())
 	return c, s
 }
 
@@ -1988,10 +1982,7 @@ func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
 	source, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
@@ -2128,7 +2119,8 @@ func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
 	)
 }
 
-func TestDaemonCLIRunCannotUseServerRemoteDeleteConfigOrEnvironment(t *testing.T) {
+func testDaemonCLIRunCannotUseServerRemoteDeleteConfigOrEnvironment(t *testing.T, binaryPath string) {
+	t.Helper()
 	cfg := testConfigValue()
 	cfgFile := ""
 	homeDir := ""
@@ -2136,18 +2128,6 @@ func TestDaemonCLIRunCannotUseServerRemoteDeleteConfigOrEnvironment(t *testing.T
 
 	require := require.New(t)
 	assert := assert.New(t)
-
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	require.NoError(err)
-	binaryName := "msgvault"
-	if runtime.GOOS == "windows" {
-		binaryName += ".exe"
-	}
-	binaryPath := filepath.Join(t.TempDir(), binaryName)
-	build := exec.Command("go", "build", "-tags", "fts5 sqlite_vec", "-o", binaryPath, "./cmd/msgvault")
-	build.Dir = repoRoot
-	buildOutput, err := build.CombinedOutput()
-	require.NoError(err, "build real msgvault binary: %s", buildOutput)
 
 	savedResolver := daemonCLIExecutableResolver
 	daemonCLIExecutableResolver = func() (string, error) { return binaryPath, nil }
@@ -2175,10 +2155,7 @@ remote_enabled = true
 	})
 	t.Setenv(remoteDeleteEnvVar, "1")
 
-	st, err := store.Open(serverCfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, serverCfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "boundary@example.invalid")
 	require.NoError(err)
 
@@ -2710,10 +2687,7 @@ func TestStoreAPIAdapterServesCLIInitDB(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
 	adapter := &storeAPIAdapter{store: s}
 	srv := api.NewServer(
@@ -2995,13 +2969,10 @@ func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
 	_ = testCtx
 	cfg.Data.DataDir = t.TempDir()
 
-	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(cfg.Data.DataDir, "msgvault.db"))
 
 	const imapID = "imaps://user@example.com@imap.example.com:993"
-	_, err = s.GetOrCreateSource("imap", imapID)
+	_, err := s.GetOrCreateSource("imap", imapID)
 	require.NoError(err, "create imap source")
 
 	// getOAuthMgr is only invoked on the Gmail path; fail loudly so
@@ -3040,10 +3011,7 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 	_ = testCtx
 	cfg.Data.DataDir = t.TempDir()
 
-	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(cfg.Data.DataDir, "msgvault.db"))
 
 	const (
 		imapID    = "imaps://user@example.com@imap.example.com:993"
@@ -3089,10 +3057,7 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 	_ = testCtx
 	cfg.Data.DataDir = t.TempDir()
 
-	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(cfg.Data.DataDir, "msgvault.db"))
 
 	// Use a closed port on loopback so buildAPIClient succeeds (the
 	// client doesn't dial in its constructor) and confirmDefaultIdentity
@@ -3149,10 +3114,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
 	// Unknown identifier returns empty slice (not nil), enabling the
 	// Gmail token-first fallback in runScheduledSync.

@@ -1979,7 +1979,11 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Accounts = s.cfg.Accounts[:len(s.cfg.Accounts)-1]
 		s.cfgMu.Unlock()
 		s.logger.Error("failed to save config", "error", err)
-		writeError(w, http.StatusInternalServerError, "save_error", "Failed to save configuration")
+		message := "Failed to save configuration"
+		if errors.Is(err, config.ErrSaveRefused) {
+			message = err.Error()
+		}
+		writeError(w, http.StatusInternalServerError, "save_error", message)
 		return
 	}
 

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -23,6 +24,26 @@ type FTSDoc struct {
 	FromAddr  string
 	ToAddrs   string
 	CcAddrs   string
+}
+
+type ftsEnvelopeExpressions struct {
+	subject, fromAddr, toAddrs, ccAddrs string
+}
+
+// storedFTSEnvelopeSQL keeps archive comparison, repair, and backfill on the
+// same stored subject, sender fallback, and recipient selection.
+// The enclosing query must alias messages as m.
+func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
+	recipients := func(kind string) string {
+		return fmt.Sprintf("COALESCE((SELECT %s(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = '%s'), '')", aggregate, kind)
+	}
+	return ftsEnvelopeExpressions{
+		subject: "COALESCE(m.subject, '')",
+		fromAddr: `COALESCE(CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
+			THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id) END, ` + recipients("from") + `)`,
+		toAddrs: recipients("to"),
+		ccAddrs: recipients("cc"),
+	}
 }
 
 // ColumnMigration is a single ALTER TABLE ADD COLUMN statement used by

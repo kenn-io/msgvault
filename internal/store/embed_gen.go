@@ -376,11 +376,12 @@ func (s *Store) embedGenMetadataDigest(
 // re-finds it on account of the bumped last_modified.
 //
 // Each row is a separate UPDATE because every message carries a distinct
-// last_modified token. Statements are not wrapped in one transaction: each is
-// independently correct, and the cross-DB worker contract already tolerates a
-// partial stamp (the next scan re-finds any unstamped row and re-runs an
-// idempotent batch). Used by the embed worker's content read→stamp path; the
-// backfill path keeps the plain SetEmbedGen (it has no read→stamp window).
+// last_modified token. The UPDATEs share one transaction, so a driver error
+// stamps nothing: the worker counts the whole batch as failed, and the next
+// scan re-finds every row and re-runs the idempotent batch. A partial stamp
+// would leave rows covered that the worker counted as failed. Used by the
+// embed worker's content read→stamp path; the backfill path keeps the plain
+// SetEmbedGen (it has no read→stamp window).
 //
 // Returns newly covered rows and IDs whose content token no longer matches. A miss
 // means last_modified moved between the worker's content read and this stamp
@@ -405,28 +406,37 @@ func (s *Store) embedGenMetadataDigest(
 // full rebuild or the auto-backstop re-embeds it regardless. See
 // docs/usage/vector-search.md ("CAS resolution").
 func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
-	for _, it := range items {
-		q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND (embed_gen IS NULL OR embed_gen <> ?)`
-		res, err := s.db.ExecContext(ctx, s.dialect.Rebind(q), target, it.ID, it.LastModified, target)
-		if err != nil {
-			return missed, covered, fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return missed, covered, fmt.Errorf("rows affected (id=%d): %w", it.ID, err)
-		}
-		if n == 0 {
-			var alreadyCovered bool
-			err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND last_modified = ? AND embed_gen = ?)`), it.ID, it.LastModified, target).Scan(&alreadyCovered)
+	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+		for _, it := range items {
+			res, err := tx.ExecContext(ctx,
+				`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND (embed_gen IS NULL OR embed_gen <> ?)`,
+				target, it.ID, it.LastModified, target)
 			if err != nil {
-				return missed, covered, fmt.Errorf("read existing embed_gen (id=%d): %w", it.ID, err)
+				return fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("rows affected (id=%d): %w", it.ID, err)
+			}
+			if n != 0 {
+				covered++
+				continue
+			}
+			var alreadyCovered bool
+			err = tx.QueryRowContext(ctx,
+				`SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND last_modified = ? AND embed_gen = ?)`,
+				it.ID, it.LastModified, target).Scan(&alreadyCovered)
+			if err != nil {
+				return fmt.Errorf("read existing embed_gen (id=%d): %w", it.ID, err)
 			}
 			if !alreadyCovered {
 				missed = append(missed, it.ID)
 			}
-		} else {
-			covered++
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 	return missed, covered, nil
 }

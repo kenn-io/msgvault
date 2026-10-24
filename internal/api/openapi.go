@@ -376,6 +376,7 @@ import (
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds authenticated streamed Muesli recording imports.
 // 3.25.0 adds owner-only open-loop routes, decisions, and continuation cursors.
+// 3.25.0 adds archived chat discovery ranked by the best matching name or title.
 const APISchemaVersion = "3.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
@@ -1105,9 +1106,18 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	if account := schemas["CliAccountResponse"]; account != nil && account.Properties["alias"] != nil {
 		account.Properties["alias"].Nullable = true
 	}
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow", "MessageRecording"} {
-		if schema := schemas[schemaName]; schema != nil {
-			for _, property := range []string{"filename", "mime_type"} {
+	for _, fields := range []struct {
+		name       string
+		properties []string
+	}{
+		{"FileSearchRow", []string{"filename", "mime_type"}},
+		{"FileMetadataResponse", []string{"filename", "mime_type"}},
+		{"PersonFileSearchRow", []string{"filename", "mime_type"}},
+		{"MessageRecording", []string{"filename", "mime_type"}},
+		{"ChatDiscoveryResult", []string{"title", "source_display_name", "source_conversation_id", "source_identifier"}},
+	} {
+		if schema := schemas[fields.name]; schema != nil {
+			for _, property := range fields.properties {
 				if schema.Properties[property] != nil {
 					schema.Properties[property].Nullable = true
 				}

@@ -75,29 +75,33 @@ func gatedProbeStatus(srv *Server) int {
 
 func TestBackupFreezeBeginBlocksGateUntilEnd(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-	srv := newBackupFreezeTestServer(nil)
 
-	// Before any freeze, the gated probe reaches the handler (400: no body).
-	assert.Equal(http.StatusBadRequest, gatedProbeStatus(srv), "gate open before freeze")
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		srv := newBackupFreezeTestServer(nil)
+		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
 
-	token := beginBackupFreeze(t, srv)
+		// Before any freeze, the gated probe reaches the handler (400: no body).
+		assert.Equal(http.StatusBadRequest, gatedProbeStatus(srv), "gate open before freeze")
 
-	probeResp := httptest.NewRecorder()
-	probeReq := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
-	srv.Router().ServeHTTP(probeResp, probeReq)
-	require.Equal(http.StatusServiceUnavailable, probeResp.Code, "gated probe while frozen: %s", probeResp.Body.String())
-	var errResp ErrorResponse
-	require.NoError(json.Unmarshal(probeResp.Body.Bytes(), &errResp), "decode error envelope")
-	assert.Equal("operation_in_progress", errResp.Error, "error code")
-	assert.Contains(errResp.Message, "backup freeze", "message names the freeze holder")
+		token := beginBackupFreeze(t, srv)
 
-	endResp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(endResp, endBackupFreeze(t, token))
-	require.Equal(http.StatusOK, endResp.Code, "end status: %s", endResp.Body.String())
+		probeResp := httptest.NewRecorder()
+		probeReq := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
+		srv.Router().ServeHTTP(probeResp, probeReq)
+		require.Equal(http.StatusServiceUnavailable, probeResp.Code, "gated probe while frozen: %s", probeResp.Body.String())
+		var errResp ErrorResponse
+		require.NoError(json.Unmarshal(probeResp.Body.Bytes(), &errResp), "decode error envelope")
+		assert.Equal("operation_in_progress", errResp.Error, "error code")
+		assert.Contains(errResp.Message, "backup freeze", "message names the freeze holder")
 
-	assert.Equal(http.StatusBadRequest, gatedProbeStatus(srv), "gate reopens after end")
+		endResp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(endResp, endBackupFreeze(t, token))
+		require.Equal(http.StatusOK, endResp.Code, "end status: %s", endResp.Body.String())
+
+		assert.Equal(http.StatusBadRequest, gatedProbeStatus(srv), "gate reopens after end")
+	})
 }
 
 // TestBackupFreezeBeginReturnsBusyWithinBoundWhenGateHeld pins the fix

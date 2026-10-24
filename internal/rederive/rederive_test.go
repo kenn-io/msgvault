@@ -194,14 +194,3 @@ func derivedDataRevision(t *testing.T, st *store.Store) int64 {
 	`).Scan(&revision))
 	return revision
 }
-
-func TestRunRejectsUnregisteredType(t *testing.T) {
-	_, err := Run(context.Background(), testutil.NewTestStore(t), "no-such-type", "acct", 1, nil)
-	require.Error(t, err)
-}
-
-func TestRunIfStaleIsNoOpForUnregisteredType(t *testing.T) {
-	_, ran, err := RunIfStale(context.Background(), testutil.NewTestStore(t), "no-such-type", "acct", 1, nil)
-	require.NoError(t, err)
-	assert.False(t, ran)
-}

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestListFoldersCmd_NoIMAPAccounts(t *testing.T) {
@@ -24,12 +24,10 @@ func TestListFoldersCmd_NoIMAPAccounts(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	// Only Gmail source
-	_, err = s.GetOrCreateSource("gmail", "g@example.com")
+	_, err := s.GetOrCreateSource("gmail", "g@example.com")
 	require.NoError(err, "create gmail source")
 	_ = s.Close()
 
@@ -69,11 +67,9 @@ func TestListFoldersCmd_GmailIdentifier(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
-	_, err = s.GetOrCreateSource("gmail", "g@example.com")
+	_, err := s.GetOrCreateSource("gmail", "g@example.com")
 	require.NoError(err, "create gmail source")
 	_ = s.Close()
 
@@ -113,11 +109,9 @@ func TestListFoldersCmd_IMAPNoCredentials(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
-	_, err = s.GetOrCreateSource("imap", "i@example.com")
+	_, err := s.GetOrCreateSource("imap", "i@example.com")
 	require.NoError(err, "create imap source")
 	_ = s.Close()
 
@@ -168,11 +162,9 @@ func TestListFoldersCmd_ListAllPrintsEachSource(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
-	_, err = s.GetOrCreateSource("imap", "a@example.com")
+	_, err := s.GetOrCreateSource("imap", "a@example.com")
 	require.NoError(err, "create imap source a")
 	_, err = s.GetOrCreateSource("imap", "b@example.com")
 	require.NoError(err, "create imap source b")
@@ -226,11 +218,9 @@ func TestListFoldersCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
-	_, err = s.GetOrCreateSource("imap", "i@example.com")
+	_, err := s.GetOrCreateSource("imap", "i@example.com")
 	require.NoError(err, "create imap source")
 	_, err = s.GetOrCreateSource("gmail", "g@example.com")
 	require.NoError(err, "create gmail source")

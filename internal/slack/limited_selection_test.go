@@ -9,6 +9,7 @@ import (
 )
 
 func TestLimitedSelectedChannelsRotateSweepsAcrossRestarts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	now := time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC)
@@ -36,6 +37,7 @@ func TestLimitedSelectedChannelsRotateSweepsAcrossRestarts(t *testing.T) {
 	opts.Limit = 1
 	for range 6 {
 		restarted := NewImporter(imp.store, imp.client, "T01")
+		restarted.checkpointMinInterval = 0
 		restarted.now = func() time.Time { return now }
 		_, err := restarted.Import(t.Context(), opts)
 		require.NoError(err)
@@ -48,6 +50,7 @@ func TestLimitedSelectedChannelsRotateSweepsAcrossRestarts(t *testing.T) {
 }
 
 func TestLimitedSelectedDMAdvancesIncrementalHistory(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	now := time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC)
@@ -73,6 +76,7 @@ func TestLimitedSelectedDMAdvancesIncrementalHistory(t *testing.T) {
 }
 
 func TestSelectedDMDiscoversLateReplies(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	now := time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC)
@@ -102,6 +106,7 @@ func TestSelectedDMDiscoversLateReplies(t *testing.T) {
 }
 
 func TestSelectedChannelMissingFromListingIsReported(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)

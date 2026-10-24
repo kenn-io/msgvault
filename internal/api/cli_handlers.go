@@ -2136,7 +2136,7 @@ func (s *Server) currentPeopleSweepConfig() (peoplesweep.Config, bool) {
 	if !snapshot.Exists {
 		return s.cfg.People.Sweep, true
 	}
-	loaded, err := config.LoadConfigFile(snapshot, s.cfg.HomeDir)
+	loaded, err := config.LoadClientConfigFile(snapshot, s.cfg.HomeDir)
 	if err != nil {
 		return peoplesweep.Config{}, false
 	}

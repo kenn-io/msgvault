@@ -37,7 +37,7 @@ Examples:
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 
-			imp, accountIDs, dbPath, cleanup, err := openBeeperImporter(backfillBeeperMediaAccounts, state, true)
+			imp, s, accountIDs, dbPath, cleanup, err := openBeeperImporter(backfillBeeperMediaAccounts, state, true)
 			if err != nil {
 				return err
 			}
@@ -60,9 +60,7 @@ Examples:
 					)
 				}
 				writeBeeperMediaBackfillSummary(cmd.OutOrStdout(), accountID, sum)
-				if sum.Errors > 0 {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %d errors — see sync run items; re-run to retry\n", sum.Errors)
-				}
+				writeBeeperRunFailures(ctx, cmd.OutOrStdout(), s, sum, accountID, "backfill-beeper-media")
 			}
 
 			return rebuildCacheAfterWrite(dbPath, state)

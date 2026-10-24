@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/twilio"
 )
 
@@ -176,10 +177,8 @@ func twilioSyncFixture(t *testing.T, recordingStatus string, mediaStatus int) *c
 		opts.Endpoints = map[string]string{"voice": server.URL, "intelligence": server.URL}
 		return twilio.NewClient(opts)
 	}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource("twilio", "work")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource("twilio", "work")
 	require.NoError(err)
 	require.NoError(st.Close())
 	return cfg
@@ -269,10 +268,7 @@ func retiredTwilioFixture(t *testing.T) (*config.Config, *store.Store) {
 	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Analytics.AutoBuildCache = false
 	cfg.Twilio = []config.TwilioSource{{Identifier: "history"}}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	from, err := st.GetOrCreateSource(twilio.SourceType, "history")
 	require.NoError(err)
 	into, err := st.GetOrCreateSource(twilio.SourceType, "live")
@@ -376,11 +372,8 @@ func TestTwilioDaemonDispatchesRegisteredScheduledSource(t *testing.T) {
 		opts.Endpoints = map[string]string{"voice": server.URL}
 		return twilio.NewClient(opts)
 	}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource("twilio", "work")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource("twilio", "work")
 	require.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cmd := &cobra.Command{Use: serveCmd.Use}
@@ -418,10 +411,8 @@ func TestTwilioDaemonDispatchesRegisteredScheduledSource(t *testing.T) {
 func TestTwilioRemovalDoesNotRecreateScheduledSource(t *testing.T) {
 	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource("twilio", "work")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource("twilio", "work")
 	require.NoError(err)
 	require.NoError(st.Close())
 	root := newTestRootCmd()

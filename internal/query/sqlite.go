@@ -948,6 +948,7 @@ func (e *SQLiteEngine) executeAggregateQuery(ctx context.Context, query string, 
 // ListMessages retrieves messages matching the filter.
 func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error) {
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 
 	// Build ORDER BY with validation. Every structured filter in
 	// buildFilterJoinsAndConditions resolves through an EXISTS / NOT EXISTS
@@ -1296,11 +1297,13 @@ func (e *SQLiteEngine) ListVirtualAccounts(ctx context.Context) (map[int64][]sto
 
 // ListAccounts returns all source accounts.
 func (e *SQLiteEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) {
+	conditions, args := appendIDFilter([]string{"TRUE"}, nil, "id", nil, sourcescope.IDs(ctx))
+	where := strings.Join(conditions, " AND ")
 	rows, err := e.queryContext(ctx, `
 		SELECT id, source_type, identifier, COALESCE(display_name, ''), last_sync_at
-		FROM sources
+		FROM sources WHERE `+where+`
 		ORDER BY identifier
-	`)
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
@@ -1361,6 +1364,7 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 			conditions = append(conditions, e.dialect.BoolTrueExpr("m.has_attachments"))
 		}
 	}
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	// Merge search conditions
 	conditions = append(conditions, searchConditions...)
 	args = append(args, searchArgs...)
@@ -1447,29 +1451,16 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		return nil, fmt.Errorf("attachment stats: %w", err)
 	}
 
-	// Label count - filter by source when sourceID is provided
-	var labelQuery string
-	if opts.SourceID != nil {
-		labelQuery = "SELECT COUNT(*) FROM labels WHERE source_id = ?"
-		if err := e.queryRowContext(ctx, labelQuery, *opts.SourceID).Scan(&stats.LabelCount); err != nil {
-			return nil, fmt.Errorf("label count: %w", err)
-		}
-	} else {
-		labelQuery = "SELECT COUNT(*) FROM labels"
-		if err := e.queryRowContext(ctx, labelQuery).Scan(&stats.LabelCount); err != nil {
-			return nil, fmt.Errorf("label count: %w", err)
-		}
+	// Inventory counts include permitted accounts and labels with no messages.
+	labelConditions, labelArgs := appendSourceFilter([]string{"TRUE"}, nil, "", opts.SourceID, nil)
+	labelConditions, labelArgs = appendSourceFilter(labelConditions, labelArgs, "", nil, sourcescope.IDs(ctx))
+	if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM labels WHERE "+strings.Join(labelConditions, " AND "), labelArgs...).Scan(&stats.LabelCount); err != nil {
+		return nil, fmt.Errorf("label count: %w", err)
 	}
-
-	// Account count - verify source exists when filtering by sourceID
-	if opts.SourceID != nil {
-		if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM sources WHERE id = ?", *opts.SourceID).Scan(&stats.AccountCount); err != nil {
-			return nil, fmt.Errorf("account count: %w", err)
-		}
-	} else {
-		if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM sources").Scan(&stats.AccountCount); err != nil {
-			return nil, fmt.Errorf("account count: %w", err)
-		}
+	accountConditions, accountArgs := appendIDFilter([]string{"TRUE"}, nil, "id", opts.SourceID, nil)
+	accountConditions, accountArgs = appendIDFilter(accountConditions, accountArgs, "id", nil, sourcescope.IDs(ctx))
+	if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM sources WHERE "+strings.Join(accountConditions, " AND "), accountArgs...).Scan(&stats.AccountCount); err != nil {
+		return nil, fmt.Errorf("account count: %w", err)
 	}
 
 	return stats, nil
@@ -2144,6 +2135,7 @@ func (e *SQLiteEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 	structured := *q
 	structured.TextTerms = nil
 	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, &structured)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	expr, arg := e.dialect.BuildFTSBodyTerm(q.TextTerms)
 	conditions = append(conditions, expr)
 	if arg != "" {
@@ -2307,6 +2299,7 @@ func (e *SQLiteEngine) SearchDeepWithStats(
 // the query (drill-down filters, hide-deleted, etc.).
 func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2594,6 +2587,7 @@ func ParseTimePeriodBounds(period string) (after, before time.Time, ok bool) {
 // Uses the same query logic as SearchFast to ensure consistent counts.
 func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	return e.executeSearchCount(ctx, conditions, args, ftsJoin)
 }
 
@@ -2693,6 +2687,7 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		return nil, err
 	}
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	var results []MessageSummary
 	if limit != 0 {
 		var err error

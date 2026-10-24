@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/fbmessenger"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestBuildCache_AfterMessengerImport verifies invariant #3 from the plan:
@@ -23,9 +23,7 @@ func TestBuildCache_AfterMessengerImport(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/json_simple")
 	require.NoError(err)

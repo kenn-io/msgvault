@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
@@ -30,9 +31,7 @@ func TestCreateSubsetVCardResourcesRequireFlag(t *testing.T) {
 	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(err, "open test archive")
-	require.NoError(st.InitSchema(), "init test archive")
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
 	senderID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")

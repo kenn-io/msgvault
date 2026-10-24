@@ -72,8 +72,8 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # in both configurations, so test-pg-both runs just these in the shipped-build
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
-NOCGO_LINT_PKGS := ./pkg/archive/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./scripts/contextual-retrieval-eval
+NOCGO_LINT_PKGS := ./pkg/archive/... ./pkg/mcp/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -206,7 +206,7 @@ test-pg: require-test-db
 .PHONY: test-pg-nocgo
 test-pg-nocgo: require-test-db
 	CGO_ENABLED=0 go build ./internal/store ./internal/query ./internal/slack ./internal/discord ./internal/api
-	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive
+	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive ./pkg/mcp
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build

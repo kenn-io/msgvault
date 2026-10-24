@@ -180,10 +180,9 @@ requests remain valid.
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
 
-Schema 3.24.0 adds the [open-loop](#open-loops) routes.
-
-Schema 3.25.0 adds `POST /api/v1/loops/{message_id}/reopen` to clear a done or
-snooze decision on one exact question.
+Schema 3.25.0 adds the [open-loop](#open-loops) routes, including
+`POST /api/v1/loops/{message_id}/reopen` to clear a done or snooze decision on
+one exact question.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -1938,6 +1937,42 @@ include `remote_addr` and `query_shape`. The shape records recognized operator
 and parameter names, with `text` marking free text. It excludes query values
 and unknown operator names. `remote_addr` is the connected peer address;
 forwarded-address headers do not replace it.
+
+### Find archived chats {#find-archived-chats}
+
+**Endpoint:** `GET /api/v1/conversations/search`
+
+Unreleased API schema 3.25.0 adds ranked chat discovery for owner clients.
+Delegated agent tokens are denied by the existing archive-read policy.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `q` | string | required | 1–16 unique tokens, at most 256 UTF-8 bytes |
+| `limit` | integer | 20 | Maximum results, from 1 to 100 |
+| `source_id` | integer | all sources | Positive archive source ID |
+
+Invalid arguments return `400`: malformed numbers use `invalid_limit` or
+`invalid_source_id`; other invalid values use `invalid_query`. The response
+contains `results` (an array, including when empty) and `has_more` (whether
+additional matches exist beyond the limit). There is no cursor or exact count; narrow the
+query or source, or increase the limit to inspect more candidates.
+
+Each result contains `conversation_id`, `message_id`, `source_conversation_id`,
+`source_id`, `source_type`, `source_identifier`, `source_display_name`,
+`network`, `title`, `conversation_type`, `matched_tokens`, `matched_names`,
+`evidence_truncated`, and `match_kind` (`exact` or `partial`). Use the archive
+`conversation_id` to filter archived messages. `message_id` is the chat's
+newest visible message, for opening the thread; the provider ID identifies the
+original chat. Network labels come from source labels. Missing Beeper labels,
+or suffixes equal to the account ID after trimming, are `unknown`; native
+sources use their type.
+
+The [CLI discovery reference](cli-reference.md#find-chat) owns token matching,
+ranking, archive scope and scan-cost semantics. This endpoint uses that same
+Store operation. It reads metadata, never message bodies, and makes no identity
+changes.
+
+---
 
 ### Search messages {#get-apiv1search}
 

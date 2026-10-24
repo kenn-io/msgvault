@@ -19,6 +19,7 @@ func testClient(t *testing.T, f *fakeSlack) *Client {
 }
 
 func TestClientRetriesOn429(t *testing.T) {
+	t.Parallel()
 	f := newFakeSlack(t)
 	f.rateLimit429s = 2
 	c := testClient(t, f)
@@ -30,6 +31,7 @@ func TestClientRetriesOn429(t *testing.T) {
 }
 
 func TestClientErrorMapping(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		apiError string
@@ -53,6 +55,7 @@ func TestClientErrorMapping(t *testing.T) {
 }
 
 func TestClientRejectsUnallowlistedMethods(t *testing.T) {
+	t.Parallel()
 	f := newFakeSlack(t)
 	c := testClient(t, f)
 
@@ -62,6 +65,7 @@ func TestClientRejectsUnallowlistedMethods(t *testing.T) {
 }
 
 func TestSearchMessagesPageDecodesChannelIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -98,6 +102,7 @@ func TestSearchMessagesPageDecodesChannelIDs(t *testing.T) {
 }
 
 func TestClientPagination(t *testing.T) {
+	t.Parallel()
 	f := newFakeSlack(t)
 	f.users = []map[string]any{
 		{"id": "U1"}, {"id": "U2"}, {"id": "U3"}, {"id": "U4"}, {"id": "U5"},
@@ -113,6 +118,7 @@ func TestClientPagination(t *testing.T) {
 }
 
 func TestClientRejectsHasMoreWithoutNextCursor(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{
@@ -135,6 +141,7 @@ func TestClientRejectsHasMoreWithoutNextCursor(t *testing.T) {
 }
 
 func TestClientRejectsRepeatedNextCursor(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{
