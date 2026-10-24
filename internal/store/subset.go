@@ -892,10 +892,6 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if err := copySubsetAccountIdentities(tx, options.IncludeIdentity, hasDeliveryAddresses); err != nil {
 		return nil, err
 	}
-	if err := markSubsetDraftsAuthored(tx); err != nil {
-		return nil, err
-	}
-
 	if _, err := tx.Exec(`
 		INSERT INTO reactions SELECT * FROM src.reactions
 		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
@@ -959,6 +955,20 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		  AND label_id IN (SELECT id FROM labels)`); err != nil {
 		return nil, fmt.Errorf("copy message_labels: %w", err)
 	}
+	if present, err := sourceTableExists(tx, "imap_message_memberships"); err != nil {
+		return nil, fmt.Errorf("inspect IMAP memberships: %w", err)
+	} else if present {
+		if _, err := copyByName(tx, "imap_message_memberships",
+			`message_id IN (SELECT id FROM selected_messages) AND source_id IN (SELECT id FROM sources)`); err != nil {
+			return nil, fmt.Errorf("copy IMAP memberships: %w", err)
+		}
+	}
+
+	preservedLabels, err := preserveSubsetDraftEvidence(tx)
+	if err != nil {
+		return nil, fmt.Errorf("preserve subset draft evidence: %w", err)
+	}
+	result.Labels += preservedLabels
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.
@@ -3005,17 +3015,58 @@ func subsetPendingDeliveryAddresses(tx *sql.Tx) ([]subsetIdentityKey, error) {
 	return out, rows.Err()
 }
 
-// markSubsetDraftsAuthored records draft authorship on included messages
-// whose draft evidence the subset does not copy: IMAP \Draft flags and draft
-// records. A message the source has not yet derived would otherwise lose it,
-// and deriving it in the subset could count the draft as received mail.
-func markSubsetDraftsAuthored(tx *sql.Tx) error {
+// Managed draft records stay behind. Keep their authorship and any draft
+// evidence that copied labels and IMAP memberships do not already preserve.
+func preserveSubsetDraftEvidence(tx *sql.Tx) (int64, error) {
+	drafts := `SELECT m.id FROM src.messages m JOIN src.sources s ON s.id = m.source_id
+		WHERE m.id IN (SELECT id FROM selected_messages)
+		  AND ` + draftEvidenceInSchemaSQL("src.", "m", "s")
 	if _, err := tx.Exec(`UPDATE messages SET draft_authored = TRUE
-		WHERE draft_authored = FALSE AND id IN (
-			SELECT m.id FROM src.messages m JOIN src.sources s ON s.id = m.source_id
-			WHERE m.id IN (SELECT id FROM selected_messages)
-			  AND ` + draftEvidenceInSchemaSQL("src.", "m", "s") + `)`); err != nil {
-		return fmt.Errorf("record subset draft authorship: %w", err)
+		WHERE draft_authored = FALSE AND id IN (` + drafts + `)`); err != nil {
+		return 0, err
 	}
-	return nil
+	missing := `SELECT m.id, m.source_id FROM messages m JOIN sources s ON s.id = m.source_id
+		WHERE m.id IN (` + drafts + `) AND NOT ` + draftEvidenceSQL("m", "s")
+	rows, err := tx.Query(`SELECT source_id FROM (` + missing + `) GROUP BY source_id`)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	var sourceIDs []int64
+	for rows.Next() {
+		var sourceID int64
+		if err := rows.Scan(&sourceID); err != nil {
+			return 0, err
+		}
+		sourceIDs = append(sourceIDs, sourceID)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, sourceID := range sourceIDs {
+		name := fmt.Sprintf("msgvault-archive:%d:draft", sourceID)
+		for {
+			var used bool
+			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM labels WHERE source_id = ? AND name = ?)`, sourceID, name).Scan(&used); err != nil {
+				return 0, err
+			}
+			if !used {
+				break
+			}
+			name += ":archive"
+		}
+		var labelID int64
+		if err := tx.QueryRow(`INSERT INTO labels(source_id, name, system_role)
+			VALUES (?, ?, 'drafts') RETURNING id`, sourceID, name).Scan(&labelID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`INSERT INTO source_merge_preserved_labels(label_id) VALUES (?)`, labelID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`INSERT INTO message_labels(message_id, label_id)
+			SELECT id, ? FROM (`+missing+`) WHERE source_id = ?`, labelID, sourceID); err != nil {
+			return 0, err
+		}
+	}
+	return int64(len(sourceIDs)), nil
 }

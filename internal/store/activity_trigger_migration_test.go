@@ -5,11 +5,38 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestActivityTriggerMigrationRequeuesProjectedUnsentMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, personID := activityProjectionFixture(t)
+	occurredAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	messageID := f.NewMessage().WithSentAt(occurredAt).Create(t, f.Store)
+	projection := activityProjectionForMessage(t, f, messageID, personID, occurredAt)
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
+	require.NoError(err)
+	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
+	// Bypass attribution hooks to reproduce a draft projected by an older daemon.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)`), messageID, labels["DRAFT"])
+	require.NoError(err)
+	queued, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	require.NoError(err)
+	require.Empty(queued)
+	_, err = f.Store.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v5'`)
+	require.NoError(err)
+	require.NoError(f.Store.InitSchema())
+	queued, err = f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	require.NoError(err)
+	require.Len(queued, 1)
+	assert.Equal(messageID, queued[0].MessageID)
+	assert.False(queued[0].Eligible)
+}
 
 // The helper initializes an archive through the combined message and attachment
 // trigger migration, then this test proves that activity triggers are installed.
