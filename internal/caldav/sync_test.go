@@ -150,32 +150,34 @@ func count(t *testing.T, st *store.Store, sql string) int {
 }
 
 func TestSyncNonMailtoParticipants(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
 	f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "ORGANIZER;CN=Host:urn:uuid:host\r\nATTENDEE;CN=Guest One;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:urn:uuid:one\r\nATTENDEE;CN=Guest Two;ROLE=REQ-PARTICIPANT;PARTSTAT=DECLINED:urn:uuid:two\r\nATTENDEE;CN=Guest Three;EMAIL=three@example.org;PARTSTAT=TENTATIVE:urn:uuid:three\r\nEND:VEVENT", 1)
 	st := testutil.NewTestStore(t)
 	result, err := c.Sync(t.Context(), st, syncOpts())
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Events)
+	requirements.NoError(err)
+	assertions.Equal(1, result.Events)
 	rows, err := st.DB().Query(`SELECT email, display_name, role, rsvp FROM calendar_event_attendees ORDER BY ordinal`)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer func() { _ = rows.Close() }()
 	var got [][4]string
 	for rows.Next() {
 		var a [4]string
-		require.NoError(t, rows.Scan(&a[0], &a[1], &a[2], &a[3]))
+		requirements.NoError(rows.Scan(&a[0], &a[1], &a[2], &a[3]))
 		got = append(got, a)
 	}
-	require.NoError(t, rows.Err())
-	assert.Equal(t, [][4]string{
+	requirements.NoError(rows.Err())
+	assertions.Equal([][4]string{
 		{"", "Guest One", "optional", "accepted"},
 		{"", "Guest Two", "required", "declined"},
 		{"three@example.org", "Guest Three", "required", "tentative"},
 		{"", "Host", "organizer", "unknown"},
 	}, got)
-	assert.Equal(t, 1, count(t, st, `SELECT COUNT(*) FROM message_recipients WHERE recipient_type='to'`))
+	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM message_recipients WHERE recipient_type='to'`))
 }
 
 func TestSyncInterruptedFirstSyncResumesRemainingResources(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
 	f.raw["b.ics"] = strings.Replace(calendarBody, "UID:example@example.org", "UID:second@example.org", 1)
 	st := testutil.NewTestStore(t)
@@ -186,62 +188,64 @@ func TestSyncInterruptedFirstSyncResumesRemainingResources(t *testing.T) {
 	} else {
 		_, err = st.DB().Exec(`CREATE TRIGGER reject_caldav_progress BEFORE UPDATE ON sync_runs WHEN NEW.messages_processed > 0 AND NEW.status='running' BEGIN SELECT RAISE(ABORT,'progress blocked'); END`)
 	}
-	require.NoError(t, err)
+	requirements.NoError(err)
 	first, err := c.Sync(t.Context(), st, syncOpts())
-	require.ErrorContains(t, err, "progress blocked")
-	assert.Equal(t, 1, first.Events)
-	assert.Equal(t, 1, count(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Empty(t, sourceToken(t, st))
+	requirements.ErrorContains(err, "progress blocked")
+	assertions.Equal(1, first.Events)
+	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages`))
+	assertions.Empty(sourceToken(t, st))
 	if st.IsPostgreSQL() {
 		_, err = st.DB().Exec(`DROP TRIGGER reject_caldav_progress ON sync_runs; DROP FUNCTION reject_caldav_progress()`)
 	} else {
 		_, err = st.DB().Exec(`DROP TRIGGER reject_caldav_progress`)
 	}
-	require.NoError(t, err)
+	requirements.NoError(err)
 	second, err := c.Sync(t.Context(), st, syncOpts())
-	require.NoError(t, err)
-	assert.Equal(t, 1, second.Events)
-	assert.Equal(t, 1, second.Calendars)
-	assert.Equal(t, 2, count(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Equal(t, "t1", sourceToken(t, st))
+	requirements.NoError(err)
+	assertions.Equal(1, second.Events)
+	assertions.Equal(1, second.Calendars)
+	assertions.Equal(2, count(t, st, `SELECT COUNT(*) FROM messages`))
+	assertions.Equal("t1", sourceToken(t, st))
 	third, err := c.Sync(t.Context(), st, syncOpts())
-	require.NoError(t, err)
-	assert.Zero(t, third.Events)
+	requirements.NoError(err)
+	assertions.Zero(third.Events)
 }
 
 func TestSyncTimeZoneChangeRewritesUnchangedInstants(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	c, _ := archiveFixture(t)
 	st := testutil.NewTestStore(t)
 	opts := syncOpts()
 	_, err := c.Sync(t.Context(), st, opts)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	opts.TimeZone = "America/New_York"
 	changed, err := c.Sync(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, changed.Events)
+	requirements.NoError(err)
+	assertions.Equal(1, changed.Events)
 	var zone, metadata string
-	require.NoError(t, st.DB().QueryRow(`SELECT e.calendar_time_zone, m.metadata FROM calendar_events e JOIN messages m ON m.id=e.message_id`).Scan(&zone, &metadata))
-	assert.Equal(t, "America/New_York", zone)
+	requirements.NoError(st.DB().QueryRow(`SELECT e.calendar_time_zone, m.metadata FROM calendar_events e JOIN messages m ON m.id=e.message_id`).Scan(&zone, &metadata))
+	assertions.Equal("America/New_York", zone)
 	var meta map[string]any
-	require.NoError(t, json.Unmarshal([]byte(metadata), &meta))
-	assert.Equal(t, "America/New_York", meta["time_zone"])
+	requirements.NoError(json.Unmarshal([]byte(metadata), &meta))
+	assertions.Equal("America/New_York", meta["time_zone"])
 	unchanged, err := c.Sync(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, unchanged.Events)
+	requirements.NoError(err)
+	assertions.Zero(unchanged.Events)
 }
 
 func TestSyncSkippedDateRecurrenceListsOccurrences(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
 	f.raw["a.ics"] = strings.Replace(calendarBody, "DTSTART:20270314T130000Z", "DTSTART;TZID=Pacific/Apia:20111230T090000\r\nRRULE:FREQ=DAILY;INTERVAL=7;BYDAY=FR", 1)
 	st := testutil.NewTestStore(t)
 	_, err := c.Sync(t.Context(), st, syncOpts())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2012, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2012, 1, 14, 0, 0, 0, 0, time.UTC))
-	require.NoError(t, err)
-	assert.Empty(t, page.Unexpandable)
-	require.Len(t, page.Occurrences, 2)
-	assert.Equal(t, "2012-01-05T19:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
-	assert.Equal(t, "2012-01-12T19:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
+	requirements.NoError(err)
+	assertions.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 2)
+	assertions.Equal("2012-01-05T19:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2012-01-12T19:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
 }
 
 func TestSyncPreservesDisplayNameOnSelectorConflict(t *testing.T) {

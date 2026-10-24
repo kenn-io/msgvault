@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -29,16 +30,20 @@ func TestCalDAVSyncForwardsToDaemon(t *testing.T) {
 }
 
 func TestCalDAVSyncRecordsFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the password file needs an owner-only ACL")
+	}
+	assertions, requirements := assert.New(t), require.New(t)
 	markDaemonCLISubprocessForTest(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	passwordFile := filepath.Join(t.TempDir(), "password")
-	require.NoError(t, os.WriteFile(passwordFile, []byte("synthetic-password"), 0600))
+	requirements.NoError(os.WriteFile(passwordFile, []byte("synthetic-password"), 0600))
 	// Discovery rejects the untrusted loopback destination before dialing.
 	cfg.CalDAV.Sources = []config.CalDAVSource{{Name: "personal", URL: "https://127.0.0.1/dav", Username: "owner@example.org", PasswordFile: passwordFile}}
 	state := testInvocationWithConfig(cfg)
 	var events []map[string]any
 	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
-		assert.Equal(t, "sync_failed", event)
+		assertions.Equal("sync_failed", event)
 		events = append(events, props)
 		return nil
 	}}
@@ -48,7 +53,7 @@ func TestCalDAVSyncRecordsFailure(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	require.ErrorContains(t, cmd.Execute(), "discover CalDAV calendars")
-	require.Len(t, events, 1)
-	assert.Equal(t, "caldav", events[0]["sync_source"])
+	requirements.ErrorContains(cmd.Execute(), "discover CalDAV calendars")
+	requirements.Len(events, 1)
+	assertions.Equal("caldav", events[0]["sync_source"])
 }
