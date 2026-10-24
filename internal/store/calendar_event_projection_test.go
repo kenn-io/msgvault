@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,16 +20,38 @@ import (
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
 
-func calendarFixture(t *testing.T, st *Store, key, raw string) (*MessagePersistData, int64) {
+func calendarFixture(t *testing.T, st *Store, key, raw string, calendars ...string) (*MessagePersistData, int64) {
 	t.Helper()
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	calendar := "calendar@example.com"
+	if len(calendars) > 0 {
+		calendar = calendars[0]
+	}
+	source, err := st.GetOrCreateSource("gcal", calendar)
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"calendar@example.com","time_zone":"UTC"}`))
+	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, fmt.Sprintf(`{"calendar_id":%q,"time_zone":"UTC"}`, calendar)))
+	var event struct {
+		ICalUID  string    `json:"iCalUID"`
+		Updated  time.Time `json:"updated"`
+		Sequence int       `json:"sequence"`
+	}
+	// Projection failure fixtures deliberately include malformed provider data.
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		event.ICalUID = ""
+	}
+	metadata := map[string]any{"calendar_id": calendar, "ical_uid": event.ICalUID}
+	if !event.Updated.IsZero() {
+		metadata["provider_updated_at_unix_nano"] = event.Updated.UTC().UnixNano()
+	}
+	if event.Sequence != 0 {
+		metadata["sequence"] = event.Sequence
+	}
+	metadataJSON, err := json.Marshal(metadata, json.Deterministic(true))
+	require.NoError(t, err)
 	data := &MessagePersistData{
 		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
 		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: "Example event"},
 		RawMIME:      []byte(raw), RawFormat: "gcal_json",
-		Metadata: &sql.NullString{String: `{"calendar_id":"calendar@example.com"}`, Valid: true},
+		Metadata: &sql.NullString{String: string(metadataJSON), Valid: true},
 	}
 	id, err := st.PersistMessage(data)
 	require.NoError(t, err)
@@ -45,7 +68,7 @@ func calendarRows(t *testing.T, st *Store, ids ...int64) []CalendarEventRow {
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "e.message_id IN ("+placeholders(len(ids))+")", args, len(ids))
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.meetingReader(ctx), "e.message_id IN ("+placeholders(len(ids))+")", args, len(ids))
 	require.NoError(t, err)
 	return rows
 }
@@ -98,9 +121,62 @@ func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
 	data, id := calendarFixture(t, st, "unchanged", calendarRaw)
 	rejectCalendarWrites(t, st)
 	requirements.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error { return st.refreshCalendarEventProjectionWith(t.Context(), tx, id) }))
-	// Canonical persistence also skips an identical typed projection.
+	// Metadata-only persistence does not represent a new provider observation.
+	data.RawMIME = nil
 	_, err := st.PersistMessage(data)
 	requirements.NoError(err)
+}
+
+func TestCalendarProviderObservationOrderAdvancesForRepeatedSnapshotsAndCancellations(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, id := calendarFixture(t, st, "observed", calendarRaw)
+	var before int64
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, id).Scan(&before))
+
+	// Identical provider snapshots still advance order when archived repeatedly.
+	require.NoError(st.UpsertMessageRawWithFormat(id, data.RawMIME, data.RawFormat))
+	var afterRaw int64
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, id).Scan(&afterRaw))
+	assert.Greater(afterRaw, before)
+
+	require.NoError(st.SetCalendarEventProviderMetadata(id, sql.NullString{
+		String: `{"calendar_id":"calendar@example.com","ical_uid":"event-uid@example.com","status":"cancelled"}`,
+		Valid:  true,
+	}))
+	var afterCancellation int64
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, id).Scan(&afterCancellation))
+	assert.Greater(afterCancellation, afterRaw)
+}
+
+func TestCalendarProviderObservationOrderMigration(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, older := calendarFixture(t, st, "older", calendarRaw)
+	_, newer := calendarFixture(t, st, "newer", strings.ReplaceAll(calendarRaw, "event-example", "newer-event"))
+
+	// Recreate an archive created before the observation-order column and table.
+	_, err := st.db.Exec(`ALTER TABLE calendar_events DROP COLUMN provider_observation_order`)
+	require.NoError(err)
+	_, err = st.db.Exec(`DROP TABLE calendar_event_observation_clock`)
+	require.NoError(err)
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarProviderObservationV1)
+	require.NoError(err)
+	_, err = st.db.Exec(`UPDATE archive_metadata SET value = '12' WHERE key = 'schema_version'`)
+	require.NoError(err)
+	setCalendarEventLastModified(t, st, older, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
+	setCalendarEventLastModified(t, st, newer, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	require.NoError(st.InitSchemaContext(t.Context()))
+	var olderOrder, newerOrder, clock int64
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, older).Scan(&olderOrder))
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, newer).Scan(&newerOrder))
+	require.NoError(st.db.QueryRow(`SELECT observation_order FROM calendar_event_observation_clock WHERE singleton = 1`).Scan(&clock))
+	assert.Greater(newerOrder, olderOrder)
+	assert.Equal(newerOrder, clock)
+	version, err := st.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(SchemaVersion, version)
 }
 
 func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {
@@ -222,6 +298,47 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	rows := calendarRows(t, copied, id)
 	requirements.Len(rows, 1)
 	assert.Equal(t, "event-example", rows[0].Event.ProviderEventID)
+}
+
+func TestCopySubsetPreservesCalendarProviderObservationOrder(t *testing.T) {
+	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("SQLite subset copy")
+	}
+	requirements, assertions := require.New(t), assert.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	st, err := OpenForTest(path)
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	rawA := `{"id":"alias-a","iCalUID":"subset@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T10:00:00Z"},"end":{"dateTime":"2027-03-09T11:00:00Z"}}`
+	dataA, aliasA := calendarFixture(t, st, "alias-a", rawA)
+	dataB, aliasB := calendarFixture(t, st, "alias-b", `{"id":"alias-b","iCalUID":"subset@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T12:00:00Z"},"end":{"dateTime":"2027-03-09T13:00:00Z"}}`)
+	dataA.RawMIME = []byte(`{"id":"alias-a","iCalUID":"subset@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T14:00:00Z"},"end":{"dateTime":"2027-03-09T15:00:00Z"}}`)
+	_, err = st.PersistMessage(dataA)
+	requirements.NoError(err)
+	var sourceOrderA, sourceOrderB int64
+	requirements.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasA).Scan(&sourceOrderA))
+	requirements.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasB).Scan(&sourceOrderB))
+	assertions.Greater(sourceOrderA, sourceOrderB, "the final A observation must outrank the intervening B snapshot")
+	requirements.NoError(st.Close())
+
+	destination := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(path, destination, 100, false)
+	requirements.NoError(err)
+	copied, err := OpenForTest(filepath.Join(destination, "msgvault.db"))
+	requirements.NoError(err)
+	defer func() { requirements.NoError(copied.Close()) }()
+	var copiedOrderA, copiedOrderB, copiedClock int64
+	requirements.NoError(copied.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasA).Scan(&copiedOrderA))
+	requirements.NoError(copied.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasB).Scan(&copiedOrderB))
+	requirements.NoError(copied.db.QueryRow(`SELECT observation_order FROM calendar_event_observation_clock WHERE singleton = 1`).Scan(&copiedClock))
+	assertions.Equal(sourceOrderA, copiedOrderA)
+	assertions.Equal(sourceOrderB, copiedOrderB)
+	assertions.Equal(max(sourceOrderA, sourceOrderB), copiedClock)
+
+	requirements.NoError(copied.UpsertMessageRawWithFormat(aliasB, dataB.RawMIME, dataB.RawFormat))
+	var nextOrderB int64
+	requirements.NoError(copied.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasB).Scan(&nextOrderB))
+	assertions.Greater(nextOrderB, max(sourceOrderA, sourceOrderB), "new observations in the subset must outrank every copied snapshot")
 }
 
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {

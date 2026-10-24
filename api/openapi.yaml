@@ -1370,6 +1370,8 @@ components:
         message_id:
           format: int64
           type: integer
+        ref:
+          type: string
         series_message_id:
           format: int64
           type: integer
@@ -1386,6 +1388,7 @@ components:
         subject:
           type: string
       required:
+        - ref
         - message_id
         - series_message_id
         - source_id
@@ -7839,6 +7842,69 @@ components:
         - message_id
         - source_message_id
       type: object
+    MeetingLink:
+      additionalProperties: true
+      properties:
+        end:
+          format: date-time
+          type: string
+        ref:
+          type: string
+        start:
+          format: date-time
+          type: string
+        subject:
+          type: string
+      required:
+        - ref
+        - start
+        - end
+      type: object
+    MeetingLinkDecisionRequest:
+      additionalProperties: false
+      properties:
+        decision:
+          enum:
+            - link
+            - unlink
+          type: string
+        event:
+          type: string
+        message_id:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+          type: integer
+      required:
+        - message_id
+        - event
+        - decision
+      type: object
+    MeetingLinkDecisionResponse:
+      additionalProperties: true
+      properties:
+        decision:
+          type: string
+        event:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+      required:
+        - message_id
+        - event
+        - decision
+      type: object
+    MeetingLinksResponse:
+      additionalProperties: true
+      properties:
+        links:
+          items:
+            $ref: "#/components/schemas/MeetingLink"
+          type: array
+      required:
+        - links
+      type: object
     MeetingMetricsRequest:
       additionalProperties: false
       not:
@@ -7995,6 +8061,50 @@ components:
           maxItems: 100
           minItems: 1
           type: array
+      type: object
+    MeetingSuggestion:
+      additionalProperties: true
+      properties:
+        member_message_id:
+          format: int64
+          type: integer
+        overlap_minutes:
+          format: int64
+          type: integer
+        reasons:
+          items:
+            type: string
+          type: array
+        ref:
+          type: string
+        shared_attendees:
+          format: int64
+          type: integer
+        title_tokens:
+          format: int64
+          type: integer
+      required:
+        - ref
+        - member_message_id
+        - overlap_minutes
+        - shared_attendees
+        - title_tokens
+        - reasons
+      type: object
+    MeetingSuggestionsResponse:
+      additionalProperties: true
+      properties:
+        suggestions:
+          items:
+            $ref: "#/components/schemas/MeetingSuggestion"
+          type: array
+        unexpandable:
+          items:
+            $ref: "#/components/schemas/CalendarUnexpandable"
+          type: array
+      required:
+        - suggestions
+        - unexpandable
       type: object
     MergeOrganizationBody:
       additionalProperties: false
@@ -16687,7 +16797,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.26.0
+  version: 3.27.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24270,6 +24380,147 @@ paths:
       summary: Render bounded archived meeting context
       tags:
         - Meetings
+  /api/v1/meetings/links:
+    get:
+      operationId: getMeetingLinks
+      parameters:
+        - in: query
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            maximum: 9007199254740991
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingLinksResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a note's linked calendar occurrences
+      tags:
+        - Meetings
+  /api/v1/meetings/links/decisions:
+    post:
+      operationId: decideMeetingLink
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingLinkDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingLinkDecisionResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Link or unlink an archived meeting
+      tags:
+        - Meetings
   /api/v1/meetings/metrics:
     post:
       operationId: getMeetingMetrics
@@ -24343,6 +24594,69 @@ paths:
       security:
         - apiKey: []
       summary: Get archived meeting duration metrics
+      tags:
+        - Meetings
+  /api/v1/meetings/suggestions:
+    get:
+      operationId: suggestMeetingLinks
+      parameters:
+        - in: query
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingSuggestionsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Suggest archived meeting links
       tags:
         - Meetings
   /api/v1/messages:

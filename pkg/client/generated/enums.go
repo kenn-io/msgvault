@@ -1210,6 +1210,23 @@ func (m MeetingImportResponseStatus) Validate() error {
 	}
 }
 
+type MeetingLinkDecisionRequestDecision string
+
+const (
+	Link   MeetingLinkDecisionRequestDecision = "link"
+	Unlink MeetingLinkDecisionRequestDecision = "unlink"
+)
+
+// Validate checks if the MeetingLinkDecisionRequestDecision value is valid
+func (m MeetingLinkDecisionRequestDecision) Validate() error {
+	switch m {
+	case Link, Unlink:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingLinkDecisionRequestDecision value, got: %v", m))
+	}
+}
+
 type MeetingScopeRequestDeletion string
 
 const (

@@ -4694,8 +4694,16 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     event_time_zone TEXT NOT NULL DEFAULT '',
     calendar_time_zone TEXT NOT NULL DEFAULT '',
     recurrence_json TEXT NOT NULL DEFAULT '[]',
-    recurrence_end_at DATETIME
+    recurrence_end_at DATETIME,
+    provider_observation_order BIGINT NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS calendar_event_observation_clock (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    observation_order BIGINT NOT NULL DEFAULT 0
+);
+INSERT INTO calendar_event_observation_clock (singleton, observation_order)
+VALUES (1, 0) ON CONFLICT (singleton) DO NOTHING;
+CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
@@ -4709,3 +4717,26 @@ CREATE TABLE IF NOT EXISTS calendar_event_attendees (
     is_copy_self BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (message_id, ordinal)
 );
+
+CREATE TABLE IF NOT EXISTS meeting_link_key (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    calendar_id TEXT NOT NULL DEFAULT '',
+    scheduled_at DATETIME,
+    PRIMARY KEY (message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_key_scheduled ON meeting_link_key(julianday(scheduled_at));
+CREATE INDEX IF NOT EXISTS idx_meeting_details_duration ON meeting_details(duration_seconds);
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    member_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    target_ical_uid TEXT NOT NULL DEFAULT '',
+    target_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+    occurrence_key TEXT NOT NULL DEFAULT '',
+    decision TEXT NOT NULL CHECK(decision IN ('link', 'split')),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((target_ical_uid <> '' AND target_message_id IS NULL) OR (target_ical_uid = '' AND target_message_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_identity ON meeting_link_decisions(member_message_id, target_ical_uid, COALESCE(target_message_id, 0), occurrence_key);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_target ON meeting_link_decisions(target_message_id);
+CREATE INDEX IF NOT EXISTS idx_messages_calendar_ical_uid ON messages(CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.ical_uid') END) WHERE message_type = 'calendar_event';

@@ -2072,6 +2072,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_index_state ADD COLUMN target_profile_id TEXT`, "document_index_state.target_profile_id"},
 		{`ALTER TABLE attachments ADD COLUMN attachment_state TEXT`, "attachments.attachment_state"},
 		{`ALTER TABLE attachments ADD COLUMN attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},
+		{`ALTER TABLE calendar_events ADD COLUMN provider_observation_order BIGINT NOT NULL DEFAULT 0`, "calendar_events.provider_observation_order"},
 		// vcard_projection_revision: the lock and change token native vCard
 		// envelope commits serialize on. Existing rows start at 1 like fresh
 		// ones; the absolute value never matters, only that a projection
