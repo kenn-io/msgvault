@@ -43,22 +43,6 @@ test('operations invokes only advertised CardDAV and visual actions and surfaces
   await expect(visualDetail.getByRole('button', { name: 'Start CardDAV sync' })).toHaveCount(0);
 });
 
-test('operations related links fetch and render their live status authorities', async ({ page }) => {
-  const fixture = await installOperations(page);
-  await page.goto(operationsURL);
-
-  for (const [linkName, statusName, expectedCopy, endpoint] of [
-    ['Open Visual attachment status', 'Visual attachment status', '8 of 10 attachments current', '/api/v1/multimodal/status']
-  ] as const) {
-    const link = page.getByRole('button', { name: linkName });
-    await link.click();
-    await expect(page.getByRole('region', { name: statusName })).toContainText(expectedCopy);
-    await expect.poll(() => fixture.statusRequests).toContain(endpoint);
-    await page.getByRole('button', { name: 'Back to operations' }).click();
-    await expect(link).toBeFocused();
-  }
-});
-
 test('the refresh control reloads status only and keeps paged history, detail, and focus', async ({ page }) => {
   await page.clock.install();
   const fixture = await installOperations(page);

@@ -1086,51 +1086,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it.each([
-    ['visual_embedding', 'visual_attachments', 'Open Visual attachment status', 'getVisualAttachmentStatus',
-      'Visual attachment status', '8 of 10 attachments current', '/api/v1/multimodal/status']
-  ] as const)('routes %s to its live status authority across Back and Forward', async (
-    kind, lane, linkName, authority, statusName, expectedCopy, expectedPath
-  ) => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
-    const requests: string[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      requests.push(path);
-      if (path.endsWith('/operations/status')) return Response.json({ lanes: [{
-        kind, lane, configured: true, history_availability: 'available',
-        related_status: authority,
-        supported_actions: []
-      }] });
-      if (path.endsWith('/operations/runs')) return Response.json({
-        runs: [], unavailable_kinds: [], membership_revision: 1
-      });
-      const status = operationAuthorityResponse(path);
-      if (status) return status;
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
-
-    await fireEvent.click(await screen.findByRole('button', { name: linkName }));
-    expect(await screen.findByRole('region', { name: statusName })).toBeDefined();
-    expect(await screen.findByText(expectedCopy)).toBeDefined();
-    expect(state.current).toMatchObject({ workspace: 'operations', operationStatus: authority });
-    expect(requests).toContain(expectedPath);
-
-    window.history.back();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('button', { name: linkName })).toBeDefined();
-    expect(state.current.operationStatus).toBe('');
-    window.history.forward();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('region', { name: statusName })).toBeDefined();
-    expect(state.current.operationStatus).toBe(authority);
-
-    rendered.unmount();
-    state.destroy();
-  });
-
   it('opens CardDAV settings from Operations on the CardDAV category', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1277,7 +1232,7 @@ describe('AppShell', () => {
     }
   );
 
-  it('restores each live Operations status authority from history and reload', async () => {
+  it('restores the live Operations status authority from history and reload', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;

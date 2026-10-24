@@ -17,22 +17,18 @@ const visualStatus = {
 };
 
 describe('OperationRelatedStatus', () => {
-  it.each([
-    ['getVisualAttachmentStatus', '/api/v1/multimodal/status', visualStatus, '7 of 10 attachments current']
-  ] as const)('fetches and renders the live %s authority without private coordinates', async (
-    authority, expectedPath, response, expectedCopy
-  ) => {
+  it('fetches and renders the live visual attachment authority without private coordinates', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(input instanceof Request ? input : new Request(input));
-      return Response.json(response);
+      return Response.json(visualStatus);
     });
     render(OperationRelatedStatus, {
-      client: createAPIClient(fetchFn), authority, configured: true, onClose: vi.fn(), onConfigure: vi.fn()
+      client: createAPIClient(fetchFn), authority: 'getVisualAttachmentStatus', configured: true, onClose: vi.fn(), onConfigure: vi.fn()
     });
 
-    expect(await screen.findByText(expectedCopy)).toBeDefined();
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([expectedPath]);
+    expect(await screen.findByText('7 of 10 attachments current')).toBeDefined();
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual(['/api/v1/multimodal/status']);
     expect(document.body.textContent).not.toContain('private');
   });
 
