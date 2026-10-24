@@ -73,6 +73,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					Attachments: &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true},
 				}
 				if test.recordingsError != "" {
+					response.Coverage.State = "unknown"
 					response.Results = []generated.MediaSearchResult{}
 					response.Partial = true
 					response.RecordingsError = &generated.ErrorResponse{ErrorData: test.recordingsError, Message: new("Docbank transcript search is unavailable")}

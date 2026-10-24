@@ -122,7 +122,7 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 	})
 }
 
-func TestDocumentSearchVersionsTextFormats(t *testing.T) {
+func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

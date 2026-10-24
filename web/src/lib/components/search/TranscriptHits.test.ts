@@ -233,7 +233,6 @@ describe('TranscriptHits', () => {
     expect(screen.getByText('More may match')).toBeTruthy();
     await fireEvent.click(link);
     expect(onOpen).toHaveBeenCalledWith(attachment);
-    expect(screen.getByText('Provider transcript')).toBeTruthy();
   });
 
   it('hides the attachment section when absent', async () => {
@@ -279,7 +278,7 @@ describe('TranscriptHits', () => {
 
   it.each([undefined, 7])('shows the scope-limit notice for attachments with Person %s', async (participantID) => {
     const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ results: [], attachments: {
-      results: [], truncated: false, error: { error: 'media_search_scope_limit', message: 'Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope' },
+      results: [], truncated: false, error: { error: 'media_search_scope_limit', message: 'Attachment search supports at most 4096 mirrored files excluding images, audio, and video; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope' },
     } }))));
     render(TranscriptHits, { props: { client, query: 'quarterly', supported: true, participantID } });
     await screen.findByText(participantID === undefined

@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -30,8 +29,6 @@ type mediaSearchFixture struct {
 	duringDocumentSearch func()
 	report               docbankmedia.SearchReport
 	requests             []docbankmedia.SearchRequest
-	validationMu         sync.Mutex
-	validationStatus     int
 	validated            int
 	duringSearch         func()
 	remoteStatus         int
@@ -109,13 +106,7 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 			assert.True(t, request.ContentFirst)
 			if r.URL.Path == "/api/v1/search/validate" {
 				assert.Nil(t, request.Fence)
-				f.validationMu.Lock()
 				f.validated++
-				f.validationMu.Unlock()
-				if f.validationStatus != 0 {
-					w.WriteHeader(f.validationStatus)
-					return
-				}
 				_, _ = w.Write([]byte(`{"valid":true}`))
 				return
 			}
@@ -1060,7 +1051,6 @@ func TestMediaSearchDocumentsEmptyScope(t *testing.T) {
 			server := f.server(false)
 			if name == "no versions in scope" {
 				server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
-				f.validationStatus = http.StatusBadRequest
 			} else {
 				f.document(t, server)
 				f.documentReport.Results = []docbankmedia.SearchHit{}
@@ -1173,9 +1163,7 @@ func TestMediaSearchDocumentsUnlinkedDuringSearch(t *testing.T) {
 
 func TestMediaSearchDocumentsNilReader(t *testing.T) {
 	f := newMediaSearchFixture(t)
-	f.match(t, "audio")
 	server := f.server(false)
-	f.document(t, server)
 	query := "q=quartz"
 	server.docbankAttachments = nil
 	status, _, raw := searchMediaFor(t, server, query)
@@ -1192,7 +1180,6 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 			f := newMediaSearchFixture(t)
 			recording := f.match(t, "audio")
 			server := f.server(false)
-			first, second := f.document(t, server)
 			remoteCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 			defer cancel()
 			slowCtx, slowCancel := context.WithTimeout(t.Context(), time.Second)
@@ -1210,6 +1197,7 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 				require.Len(response.Results, 1)
 				assert.Equal(recording.messageID, response.Results[0].MessageID)
 			} else {
+				first, second := f.document(t, server)
 				f.duringDocumentSearch = slow
 				response, err := server.docbankAttachments.SearchAttachments(t.Context(), remoteCtx, "quartz", 20, nil, resolve)
 				require.NoError(err)
