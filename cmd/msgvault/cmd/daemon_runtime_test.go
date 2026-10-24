@@ -24,7 +24,8 @@ func TestListLiveDaemonRuntimeRecordsKeepsUnjudgedRecords(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
-	// An unsupported identity is Unknown, so discovery cannot judge it locally.
+	t.Setenv("MSGVAULT_HOME", dataDir)
+	// An unsupported identity stands in for a foreign namespace, which is hard to create in a test.
 	path, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:               os.Getpid(),
 		ProcessIdentityV2: "future-v1:unavailable",
@@ -32,12 +33,12 @@ func TestListLiveDaemonRuntimeRecordsKeepsUnjudgedRecords(t *testing.T) {
 		Address:           "127.0.0.1:1",
 		Service:           daemonService,
 	})
-	require.NoError(err)
+	require.NoError(err, "write runtime record")
 
 	records, err := listLiveDaemonRuntimeRecords(dataDir)
 
-	require.NoError(err)
-	assert.Empty(records, "Unknown records stay out of discovery")
+	require.NoError(err, "list live records")
+	assert.Empty(records, "unjudged records stay out of discovery")
 	assert.FileExists(path, "listing preserves the Unknown record")
 }
 

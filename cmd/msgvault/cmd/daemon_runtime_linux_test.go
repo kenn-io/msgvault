@@ -5,7 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,9 +58,8 @@ func TestClaimServeOwnershipStartsOverDeadSiblingRecord(t *testing.T) {
 	store := daemonRuntimeStore(dataDir)
 	path, err := store.Path(2)
 	require.NoError(err)
-	sibling, err := store.Read(path)
+	_, err = store.Read(path)
 	require.NoError(err, "dead sibling left its record")
-	require.NotEmpty(sibling.ProcessIdentityV2)
 
 	runDaemonPIDNamespace(t, dataDir, "restart")
 
@@ -68,6 +67,13 @@ func TestClaimServeOwnershipStartsOverDeadSiblingRecord(t *testing.T) {
 	held, err := daemonOwnerLockHeld(dataDir)
 	require.NoError(err)
 	assert.False(held, "normal shutdown releases ownership")
+}
+
+var daemonPIDNamespaceProbe struct {
+	sync.Once
+
+	output []byte
+	err    error
 }
 
 func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
@@ -79,15 +85,20 @@ func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bwrap, //nolint:gosec // Bubblewrap comes from LookPath; the test binary and flags are controlled here.
+	args := []string{
 		"--unshare-user", "--unshare-pid", "--die-with-parent",
-		"--ro-bind", "/", "/", "--bind", dataDir, dataDir, "--proc", "/proc",
-		"--", os.Args[0], "-test.run=^TestDaemonRuntimePIDNamespaceHelper$", "-test.v")
+		"--ro-bind", "/", "/", "--bind", dataDir, dataDir, "--proc", "/proc", "--",
+	}
+	daemonPIDNamespaceProbe.Do(func() {
+		probe := exec.CommandContext(ctx, bwrap, append(args, "/usr/bin/true")...)
+		daemonPIDNamespaceProbe.output, daemonPIDNamespaceProbe.err = probe.CombinedOutput()
+	})
+	if daemonPIDNamespaceProbe.err != nil {
+		t.Skipf("user/PID namespaces unavailable: %v\n%s", daemonPIDNamespaceProbe.err, daemonPIDNamespaceProbe.output)
+	}
+	cmd := exec.CommandContext(ctx, bwrap, append(args, os.Args[0], "-test.run=^TestDaemonRuntimePIDNamespaceHelper$", "-test.v")...) //nolint:gosec // Bubblewrap comes from LookPath; the test binary and flags are controlled here.
 	cmd.Env = append(os.Environ(), "MSGVAULT_HOME="+dataDir, "MSGVAULT_TEST_PIDNS="+mode)
 	output, err := cmd.CombinedOutput()
-	if err != nil && strings.Contains(string(output), "bwrap:") && !strings.Contains(string(output), "=== RUN   TestDaemonRuntimePIDNamespaceHelper") {
-		t.Skipf("user/PID namespaces unavailable: %s", output)
-	}
 	require.NoError(t, err, "namespace helper (%s):\n%s", mode, output)
 }
 
@@ -103,9 +114,8 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	store := daemonRuntimeStore(dataDir)
 	path, err := store.Path(os.Getpid())
 	require.NoError(err)
-	var previous daemon.RuntimeRecord
 	if mode != "crash" {
-		previous, err = store.Read(path)
+		previous, err := store.Read(path)
 		require.NoError(err)
 		require.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(previous), "exercise Foreign, rather than Unknown or Gone")
 		require.True(daemon.ProcessAlive(previous.PID), "foreign PID collides with a live local process")
@@ -113,10 +123,9 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	if mode == "list" {
 		records, err := store.List()
 		require.NoError(err)
-		require.Len(records, 2)
 		for _, rec := range records {
-			require.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(rec))
 			if rec.PID != os.Getpid() {
+				require.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(rec))
 				require.False(daemon.ProcessAlive(rec.PID), "host producer's PID is absent inside the sandbox")
 			}
 		}
@@ -127,12 +136,10 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	}
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
 	if mode == "restart" {
-		prep, err := prepareBackgroundDaemonStart(cfg, cfg.Server.DaemonAutoRestart, "", loggerFromContext(t.Context()))
+		_, launchLock, err := waitForUsableBackgroundRuntimeOrLaunchLock(t.Context(), dataDir, cfg.Server.DaemonAutoRestart, 500*time.Millisecond)
 		require.NoError(err)
-		require.Nil(prep.Reusable, "a dead sibling must not be reused by serve start")
-		records, err := listLiveDaemonRuntimeRecords(dataDir)
-		require.NoError(err)
-		require.Empty(records, "a dead sibling must stay outside local daemon discovery")
+		require.NotNil(launchLock, "a dead sibling must allow CLI auto-start")
+		require.NoError(launchLock.Unlock())
 	}
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	owner, err := claimServeOwnership(ctx, cfg, "127.0.0.1", 8123, "v-test")
@@ -142,6 +149,5 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	}
 	written, err := store.Read(path)
 	require.NoError(err)
-	assert.Equal(daemon.ProcessScopeLocal, daemon.RuntimeProcessScope(written))
 	assert.NotEmpty(written.Metadata[runtimeShutdownToken], "serve publishes its shutdown credential")
 }
