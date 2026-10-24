@@ -35,8 +35,8 @@ type QueryEngine = query.Engine
 // keeps any authorization transaction open until ServeHTTP returns.
 //
 // Scoped handlers support message lists, full-text searches, message details,
-// conversation windows, attachment metadata, and CLI account discovery. Other
-// operations are denied. ServerOptions.Store must be a native *Store. This is
+// conversation windows, attachment metadata, CLI account discovery, and archived
+// calendar occurrence lists and details. Other operations are denied. ServerOptions.Store must be a native *Store. This is
 // not an authorization wrapper for arbitrary Store or QueryEngine methods.
 func WithSourceScope(ctx context.Context, sourceIDs []int64) context.Context {
 	return sourcescope.WithSourceIDs(ctx, sourceIDs)

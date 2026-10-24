@@ -23,6 +23,8 @@ func TestCalendarEventsClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertions.Equal("/api/v1/calendar/events", r.URL.Path)
 		assertions.Equal("2027-03-01T17:00:00Z", r.URL.Query().Get("from"))
+		assertions.Equal("1", r.URL.Query().Get("limit"))
+		assertions.Equal("previous-page", r.URL.Query().Get("cursor"))
 		assertions.Equal("synthetic-owner-key", r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
 		assertions.NoError(json.MarshalWrite(w, store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, SeriesMessageID: 40, Subject: "Edited event", Status: "cancelled", Attendees: []calevent.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "optional", RSVP: "declined", IsCopySelf: true}}, Start: from, End: from.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 50, Reason: "unsupported recurrence"}}}))
@@ -31,7 +33,7 @@ func TestCalendarEventsClient(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "synthetic-owner-key", AllowInsecure: true, HTTPClient: server.Client()})
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(client.Close()) })
-	page, err := client.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	page, err := client.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0), Limit: new(1), Cursor: "previous-page"})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(int64(42), page.Occurrences[0].MessageID)
