@@ -31,6 +31,7 @@ const (
 	personMergeActionDeduplicated          = "deduplicated"
 	personAttributeValuesTableName         = "person_attribute_values"
 	personContactPointsTableName           = "person_contact_points"
+	personInstructionsTableName            = "person_instructions"
 	personMergeReviewCandidatesTableName   = "person_merge_review_candidates"
 	personRelationshipsTableName           = "person_relationships"
 	personRelationshipReviewsTableName     = "person_relationship_reviews"
@@ -308,12 +309,12 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "person_briefs", KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
-	"person_instructions": {
-		TableName: "person_instructions", KeyColumn: "id", Snapshot: false,
+	personInstructionsTableName: {
+		TableName: personInstructionsTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
 	"person_instruction_events": {
-		TableName: "person_instruction_events", KeyColumn: "id", Snapshot: false,
+		TableName: "person_instruction_events", KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
 	"person_names": {

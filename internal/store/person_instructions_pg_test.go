@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -48,28 +49,39 @@ func TestInstructionWriteConcurrentWithMergeNoDeadlock(t *testing.T) {
 	}
 	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
 	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
-	id := insertTestPersonInstruction(t, st, bob.ID, personfacts.InstructionKindAddressAs, "Vee", "call me Vee", personfacts.InstructionStatusProposed)
+	id := addTestInstruction(t, st, bob.ID, "Vee").ID
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	start := make(chan struct{})
 	decision := make(chan error, 1)
-	merged := make(chan error, 1)
+	type mergeOutcome struct {
+		result *store.PersonMergeResult
+		err    error
+	}
+	merged := make(chan mergeOutcome, 1)
 	go func() {
 		<-start
-		_, err := st.DecidePersonInstructionContext(ctx, store.PersonInstructionDecision{InstructionID: id, ExpectedRevision: 1, Action: personfacts.InstructionActionConfirm, Actor: "owner"})
+		_, err := st.DecidePersonInstructionContext(ctx, store.PersonInstructionDecision{InstructionID: id, ExpectedRevision: 1, Action: personfacts.InstructionActionRevoke, Actor: "owner"})
 		decision <- err
 	}()
 	go func() {
 		<-start
-		_, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: alice.ID, AbsorbedID: bob.ID, ExpectedSurvivorRevision: alice.Revision, ExpectedAbsorbedRevision: bob.Revision, IdempotencyKey: "instruction-race", Actor: "owner"})
-		merged <- err
+		result, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: alice.ID, AbsorbedID: bob.ID, ExpectedSurvivorRevision: alice.Revision, ExpectedAbsorbedRevision: bob.Revision, IdempotencyKey: "instruction-race", Actor: "owner"})
+		merged <- mergeOutcome{result: result, err: err}
 	}()
 	close(start)
-	require.ErrorIs(<-merged, store.ErrPersonMergeInvalid)
-	require.NoError(<-decision)
-	instructions, err := st.ListPersonInstructionsContext(ctx, bob.ID, store.PersonInstructionFilter{})
+	mergeResult := <-merged
+	require.NoError(mergeResult.err)
+	require.NotNil(mergeResult.result)
+	decisionErr := <-decision
+	assert.True(decisionErr == nil || errors.Is(decisionErr, store.ErrPersonNotFound), "%v", decisionErr)
+	instruction, err := st.GetPersonInstructionContext(ctx, id)
 	require.NoError(err)
-	require.Len(instructions, 1)
-	assert.Equal(id, instructions[0].ID)
-	assert.Equal(personfacts.InstructionStatusActive, instructions[0].Status)
+	assert.Equal(id, instruction.ID)
+	assert.Equal(mergeResult.result.Person.ID, instruction.PersonID)
+	assert.Equal(1, instructionEventCount(t, st, id, "merge_moved"))
+	var proposalEvents int
+	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_instruction_events
+		WHERE person_id=? AND instruction_id=? AND action='propose'`), mergeResult.result.Person.ID, id).Scan(&proposalEvents))
+	assert.Equal(1, proposalEvents)
 }
