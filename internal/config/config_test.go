@@ -2561,5 +2561,6 @@ func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
 	require.NotNil(reloaded)
 	assert.Contains(logs.String(), "level=WARN")
 	assert.Contains(logs.String(), "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
+	assert.Contains(logs.String(), "for Mistral run docbank processing probe --profile <name> --seeds <dir>")
 	assert.Equal(1, strings.Count(logs.String(), "[attachments.documents]"))
 }

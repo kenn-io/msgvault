@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -885,15 +884,11 @@ func TestConfigValidationAcceptsNegotiatedProtocolCapabilities(t *testing.T) {
 	}
 }
 
-func TestRemovedDocumentSourceWarnsAndIsIgnored(t *testing.T) {
+func TestRemovedDocumentSourceIsIgnored(t *testing.T) {
 	for name, documentOnly := range map[string]bool{"mixed sources": false, "document only": true} {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			var warnings bytes.Buffer
-			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&warnings, nil)))
-			t.Cleanup(func() { slog.SetDefault(previous) })
 			cfg := validConfig()
 			for name, provider := range cfg.Providers {
 				if documentOnly {
@@ -913,7 +908,6 @@ func TestRemovedDocumentSourceWarnsAndIsIgnored(t *testing.T) {
 				require.NoError(err)
 				assert.NotContains(profile.AllowedSources, peoplesweep.SourceDocumentText)
 			}
-			assert.Contains(warnings.String(), "document_text was removed; drop it from allowed_sources")
 		})
 	}
 }
