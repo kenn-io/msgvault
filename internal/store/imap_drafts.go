@@ -77,7 +77,7 @@ func (s *Store) PersistIMAPDraftContext(
 			}
 			return fmt.Errorf("read IMAP draft source: %w", err)
 		}
-		if sourceType != "imap" {
+		if sourceType != sourceTypeIMAP {
 			return errors.New("invalid_source")
 		}
 		var existing int64
