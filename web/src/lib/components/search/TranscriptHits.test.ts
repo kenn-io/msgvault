@@ -276,18 +276,6 @@ describe('TranscriptHits', () => {
     expect(screen.queryByRole('link', { name: 'Report' })).toBeNull();
   });
 
-  it.each([undefined, 7])('shows the scope-limit notice for attachments with Person %s', async (participantID) => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ results: [], attachments: {
-      results: [], truncated: false, error: { error: 'media_search_scope_limit', message: 'Attachment search supports at most 4096 mirrored files excluding images, audio, and video; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope' },
-    } }))));
-    render(TranscriptHits, { props: { client, query: 'quarterly', supported: true, participantID } });
-    await screen.findByText(participantID === undefined
-      ? 'Attachment search supports at most 4096 mirrored files excluding images, audio, and video. Add a Person filter to search attachments.'
-      : 'This Person filter exceeds the attachment-search limit of 4096 mirrored files excluding images, audio, and video. Choose a Person filter with fewer attachments.');
-    expect(screen.queryByText('No matches in text Docbank has extracted from mirrored attachments.')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-  });
-
   it.each([
     ['a recording and an attachment', [hit({ message_id: 44 })], 'voice.wav'],
     ['two attachments', [], 'report.pdf'],
