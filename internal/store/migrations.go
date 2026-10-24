@@ -99,6 +99,7 @@ const (
 	migrationPersonSweepAttemptBriefFailure = "person_sweep_attempt_brief_failure_v1"
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
+	migrationPersonInstructionOriginalText  = "person_instruction_original_text_v1"
 	migrationChatMembers                    = "chat_members_v1"
 )
 

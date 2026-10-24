@@ -1635,6 +1635,14 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonInstructionOriginalText, 1, false, func(ctx context.Context) error {
+		if _, err := s.db.ExecContext(ctx, `UPDATE person_instructions SET original_text=normalized_text WHERE original_text=''`); err != nil {
+			return fmt.Errorf("backfill original person instruction text: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("migrate original person instruction text: %w", err)
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
