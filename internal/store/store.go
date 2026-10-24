@@ -1881,9 +1881,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		ctx, migrationActivityProjectionTriggers, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-				return s.dialect.EnsureActivityProjectionTriggers(
+				if err := s.dialect.EnsureActivityProjectionTriggers(
 					boundQuerier{ctx: ctx, q: tx},
-				)
+				); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`
+					SELECT ae.message_id, 1, CURRENT_TIMESTAMP
+					FROM activity_events ae JOIN messages m ON m.id = ae.message_id
+					LEFT JOIN sources src ON src.id = m.source_id
+					WHERE `+s.activityUnsentSQL()))
+				return err
 			})
 		},
 	); err != nil {

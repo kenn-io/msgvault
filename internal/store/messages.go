@@ -1636,6 +1636,14 @@ func nullTimeEqual(left, right sql.NullTime) bool {
 	return left.Valid == right.Valid && (!left.Valid || left.Time.Equal(right.Time))
 }
 
+func requeueActivityProjectionSQL(selectIDs string) string {
+	return `INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		` + selectIDs + `
+		ON CONFLICT(message_id) DO UPDATE SET
+			revision = activity_projection_queue.revision + 1,
+			queued_at = CURRENT_TIMESTAMP`
+}
+
 func enqueueActivityProjectionMessage(q querier, d Dialect, messageID int64) error {
 	statement := d.InsertOrIgnore(`
 		INSERT OR IGNORE INTO activity_projection_queue

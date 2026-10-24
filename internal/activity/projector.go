@@ -885,6 +885,7 @@ func (p *Projector) projections(
 	for _, candidate := range candidates {
 		token := store.ActivityProjectionToken{
 			MessageID:               candidate.MessageID,
+			Unsent:                  candidate.Unsent,
 			SourceID:                candidate.SourceID,
 			LastModified:            candidate.LastModified,
 			Queue:                   candidate.Queue,

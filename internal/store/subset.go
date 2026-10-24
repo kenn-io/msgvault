@@ -959,6 +959,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		  AND label_id IN (SELECT id FROM labels)`); err != nil {
 		return nil, fmt.Errorf("copy message_labels: %w", err)
 	}
+	if present, err := sourceTableExists(tx, "imap_message_memberships"); err != nil {
+		return nil, fmt.Errorf("inspect IMAP memberships: %w", err)
+	} else if present {
+		if _, err := copyByName(tx, "imap_message_memberships",
+			`message_id IN (SELECT id FROM selected_messages) AND source_id IN (SELECT id FROM sources)`); err != nil {
+			return nil, fmt.Errorf("copy IMAP memberships: %w", err)
+		}
+	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.
@@ -3006,9 +3014,8 @@ func subsetPendingDeliveryAddresses(tx *sql.Tx) ([]subsetIdentityKey, error) {
 }
 
 // markSubsetDraftsAuthored records draft authorship on included messages
-// whose draft evidence the subset does not copy: IMAP \Draft flags and draft
-// records. A message the source has not yet derived would otherwise lose it,
-// and deriving it in the subset could count the draft as received mail.
+// before draft records are left behind. A message the source has not yet
+// derived could otherwise count as received mail in the subset.
 func markSubsetDraftsAuthored(tx *sql.Tx) error {
 	if _, err := tx.Exec(`UPDATE messages SET draft_authored = TRUE
 		WHERE draft_authored = FALSE AND id IN (
