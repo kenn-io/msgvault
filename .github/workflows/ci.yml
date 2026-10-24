@@ -141,10 +141,6 @@ jobs:
       - name: Install SQLite development headers
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
-      - name: Install Bubblewrap
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
-
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
         run: make test-unsharded
@@ -186,12 +182,8 @@ jobs:
         with:
           group: linux-test
 
-      - name: Install SQLite development headers
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
-
-      - name: Install Bubblewrap
-        if: runner.os == 'Linux' && matrix.name == 'cli'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m

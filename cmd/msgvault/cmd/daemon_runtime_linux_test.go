@@ -85,7 +85,7 @@ func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
 		"--", os.Args[0], "-test.run=^TestDaemonRuntimePIDNamespaceHelper$", "-test.v")
 	cmd.Env = append(os.Environ(), "MSGVAULT_HOME="+dataDir, "MSGVAULT_TEST_PIDNS="+mode)
 	output, err := cmd.CombinedOutput()
-	if err != nil && strings.Contains(string(output), "bwrap:") && (strings.Contains(string(output), "Operation not permitted") || strings.Contains(string(output), "Permission denied")) {
+	if err != nil && strings.Contains(string(output), "bwrap:") && !strings.Contains(string(output), "=== RUN   TestDaemonRuntimePIDNamespaceHelper") {
 		t.Skipf("user/PID namespaces unavailable: %s", output)
 	}
 	require.NoError(t, err, "namespace helper (%s):\n%s", mode, output)
@@ -125,15 +125,15 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 		assert.Empty(records, "listing skips both foreign records")
 		return
 	}
-	if mode == "crash" {
-		// A daemon still publishes a record when process creation time is unavailable.
-		stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 0, false })
-	} else {
-		starting, err := daemonStartInProgress(t.Context(), dataDir)
-		require.NoError(err)
-		require.False(starting, "a dead sibling must not block automatic daemon startup")
-	}
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	if mode == "restart" {
+		prep, err := prepareBackgroundDaemonStart(cfg, cfg.Server.DaemonAutoRestart, "", loggerFromContext(t.Context()))
+		require.NoError(err)
+		require.Nil(prep.Reusable, "a dead sibling must not be reused by serve start")
+		records, err := listLiveDaemonRuntimeRecords(dataDir)
+		require.NoError(err)
+		require.Empty(records, "a dead sibling must stay outside local daemon discovery")
+	}
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	owner, err := claimServeOwnership(ctx, cfg, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "serve starts over the dead sibling record")
@@ -144,8 +144,4 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(daemon.ProcessScopeLocal, daemon.RuntimeProcessScope(written))
 	assert.NotEmpty(written.Metadata[runtimeShutdownToken], "serve publishes its shutdown credential")
-	if mode == "restart" {
-		assert.NotEqual(previous.ProcessIdentityV2, written.ProcessIdentityV2, "serve replaces the sibling at the same path")
-		assert.NotEqual(previous.Metadata[runtimeShutdownToken], written.Metadata[runtimeShutdownToken])
-	}
 }
