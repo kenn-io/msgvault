@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestBackupRestorePackedTargetSelection(t *testing.T) {
@@ -160,10 +161,7 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "msgvault.db")
-	st, err := store.OpenForTest(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "restore-cli@example.com")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(source.ID, "restore-cli-thread", "Restore CLI")

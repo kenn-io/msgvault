@@ -106,7 +106,6 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 	cfg.Data.DataDir = tmp
 	dbPath := cfg.DatabaseDSN()
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	t.Cleanup(func() { _ = st.Close() })
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.test", "manual"))

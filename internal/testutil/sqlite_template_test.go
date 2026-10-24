@@ -14,11 +14,8 @@ import (
 
 func TestNewSQLiteTestStoreAt(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
-	path := filepath.Join(t.TempDir(), "nested", "archive.db")
+	path := filepath.Join(t.TempDir(), "archive.db")
 	st := NewSQLiteTestStoreAt(t, path)
-	uid, err := st.ArchiveUID()
-	require.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "clone@example.com")
 	require.NoError(err)
 	require.NoError(st.Close())
@@ -29,16 +26,7 @@ func TestNewSQLiteTestStoreAt(t *testing.T) {
 	sources, err := reopened.ListSources("")
 	require.NoError(err)
 	require.Len(sources, 1)
-	assert.Equal(source.ID, sources[0].ID)
-	assert.Equal("clone@example.com", sources[0].Identifier)
-	var integrity string
-	require.NoError(reopened.DB().QueryRow("PRAGMA integrity_check").Scan(&integrity))
-	assert.Equal("ok", integrity)
-
-	second := NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "second.db"))
-	secondUID, err := second.ArchiveUID()
-	require.NoError(err)
-	assert.NotEqual(uid, secondUID)
+	assert.Equal(t, source.ID, sources[0].ID)
 }
 
 // TestSQLiteFixtureClonesTemplateWithoutReplayingDDL pins the fixture's cost

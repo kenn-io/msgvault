@@ -213,7 +213,6 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	requirementsForTest.NoError(os.MkdirAll(analyticsDir, 0o755))
 
 	const revision = int64(42)
