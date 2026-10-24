@@ -152,6 +152,7 @@ func TestKataEvidenceMessage(t *testing.T) {
 func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 	for _, name := range []string{"retained", "replaced revision", "generated", "unknown supplied input", "pending", "revoked", "different destination", "deleted at source", "content refresh", "reused attachment"} {
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
 			require := require.New(t)
 			f := newBeeperMediaFixture(t)
 			audio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "voice1", strings.Repeat("a", 64))
@@ -206,7 +207,7 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 				require.ErrorIs(err, kataevidence.ErrUnavailable)
 			} else {
 				require.NoError(err)
-				assert.Equal(t, kataevidence.DocbankBinding{
+				assert.Equal(kataevidence.DocbankBinding{
 					Reference: ref,
 					Revision:  mapping.Revision, SourceID: "source-aaaa", SourceVersionID: "version", SuppliedInputID: inputID,
 					VaultUID: "vault", ContentVersionID: "content", ContentSHA256: audio.hash, Profile: mapping.ProcessingProfile,
@@ -218,13 +219,13 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)
 				require.Len(sources, 2)
-				assert.Equal(t, "docbank_rendition", sources[1].Kind)
-				assert.Equal(t, kataevidence.SourceKeys(ref), kataevidence.SourceKeys(sources[1]))
+				assert.Equal("docbank_rendition", sources[1].Kind)
+				assert.Equal(kataevidence.SourceKeys(ref), kataevidence.SourceKeys(sources[1]))
 			case "reused attachment":
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)
 				require.Len(sources, 1)
-				assert.Equal(t, "document_chunk", sources[0].Kind)
+				assert.Equal("document_chunk", sources[0].Kind)
 			}
 		})
 	}
