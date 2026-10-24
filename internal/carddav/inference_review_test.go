@@ -29,6 +29,7 @@ func appendInferenceReviewNote(t *testing.T, st *store.Store, personID int64, te
 }
 
 func TestPublishPersonRequiresReviewForInferredNotes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{}
@@ -45,6 +46,7 @@ func TestPublishPersonRequiresReviewForInferredNotes(t *testing.T) {
 }
 
 func TestSyncSkipsPublishedInferredNoteChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{reportCurrent: true}
@@ -64,6 +66,7 @@ func TestSyncSkipsPublishedInferredNoteChanges(t *testing.T) {
 }
 
 func TestCurrentPublicationReviewApprovesExactCardAndRejectsStale(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{}
@@ -96,6 +99,7 @@ func TestCurrentPublicationReviewApprovesExactCardAndRejectsStale(t *testing.T) 
 }
 
 func TestCurrentPublicationNoopApprovalAndUnpublishClearsScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{}
@@ -132,6 +136,7 @@ func TestCurrentPublicationNoopApprovalAndUnpublishClearsScope(t *testing.T) {
 }
 
 func TestReviewedPublicationTransportFailureKeepsExactAuthorization(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{putFailures: 1}
@@ -152,6 +157,7 @@ func TestReviewedPublicationTransportFailureKeepsExactAuthorization(t *testing.T
 }
 
 func TestCurrentPublicationRetirementRemovesPreviouslyOwnedEmployment(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{}
@@ -181,6 +187,7 @@ func TestCurrentPublicationRetirementRemovesPreviouslyOwnedEmployment(t *testing
 }
 
 func TestCurrentPublicationSupersessionDoesNotDuplicateOwnedNote(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{reportCurrent: true}
@@ -204,8 +211,10 @@ func TestCurrentPublicationSupersessionDoesNotDuplicateOwnedNote(t *testing.T) {
 }
 
 func TestOrdinaryPublicationUpdatesManualAndDeterministicNotes(t *testing.T) {
+	t.Parallel()
 	for _, source := range []store.Provenance{store.ProvenanceUser, store.ProvenanceSystem} {
 		t.Run(string(source), func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			assert := assert.New(t)
 			fixture := &mutationFixture{}
@@ -224,6 +233,7 @@ func TestOrdinaryPublicationUpdatesManualAndDeterministicNotes(t *testing.T) {
 }
 
 func TestTwoServicesCancelQueuedPublishBeforeNetwork(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	fixture := &mutationFixture{}
 	reached, resume := make(chan struct{}), make(chan struct{})
@@ -261,6 +271,7 @@ func TestTwoServicesCancelQueuedPublishBeforeNetwork(t *testing.T) {
 }
 
 func TestSyncSkipsReviewDebtAndPublishesAnotherPersonsOrdinaryChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixtures := map[string]*mutationFixture{"first.vcf": {}, "second.vcf": {}}
@@ -303,6 +314,7 @@ func TestSyncSkipsReviewDebtAndPublishesAnotherPersonsOrdinaryChange(t *testing.
 }
 
 func TestReviewedPublicationRestartRecoversPersistedOwnershipWithoutAnotherPut(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{timeout: true}
@@ -338,6 +350,7 @@ func TestReviewedPublicationRestartRecoversPersistedOwnershipWithoutAnotherPut(t
 }
 
 func TestCurrentPublicationApprovalScopeChangesAfterUnpublishAndNewTarget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{}
@@ -377,12 +390,14 @@ func TestCurrentPublicationApprovalScopeChangesAfterUnpublishAndNewTarget(t *tes
 }
 
 func TestPublicationPreviewSizeAcceptsExactLimitAndRejectsOverflow(t *testing.T) {
+	t.Parallel()
 	body := make([]byte, 32*1024*1024+1)
 	require.NoError(t, checkPublicationPreviewSize(body[:len(body)-1]))
 	require.ErrorIs(t, checkPublicationPreviewSize(body), ErrCardDAVPreviewTooLarge)
 }
 
 func TestCurrentPublicationResolverRetirementRequiresReviewAndRemovesOwnedNote(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{}
@@ -440,8 +455,10 @@ func TestCurrentPublicationResolverRetirementRequiresReviewAndRemovesOwnedNote(t
 }
 
 func TestReviewedPublicationIntentMetadataClearsWithBody(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"commit", "rollback", "throttle"} {
 		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			assert := assert.New(t)
 			service, st, personID, _ := seededMutationService(t, &mutationFixture{})

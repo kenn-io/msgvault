@@ -54,6 +54,7 @@ func contractRecipients(t *testing.T, st *store.Store, messageID int64, role str
 }
 
 func TestImportContractActorsSendersAndRecipients(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	contact := map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"}
@@ -144,6 +145,7 @@ func TestImportContractActorsSendersAndRecipients(t *testing.T) {
 }
 
 func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	owner := map[string]any{"id": int64(8), "type": "user", "name": "Example Owner", "email": "owner@example.com"}
@@ -271,8 +273,10 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 }
 
 func TestImportContractPrivateExclusionKeepsActivityAndResumes(t *testing.T) {
+	t.Parallel()
 	for _, cap := range []int{1, 20} {
 		t.Run(strconv.Itoa(cap), func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			messages := []map[string]any{chatwootapi.Message(101, 1767225600, nil), chatwootapi.Message(102, 1767225601, nil), chatwootapi.Message(103, 1767225602, nil)}
 			messages[0]["private"] = true
@@ -310,6 +314,7 @@ func TestImportContractPrivateExclusionKeepsActivityAndResumes(t *testing.T) {
 }
 
 func TestImportContractEmailSubjectAndHTMLBody(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, content, body string
 		email               map[string]any
@@ -318,6 +323,7 @@ func TestImportContractEmailSubjectAndHTMLBody(t *testing.T) {
 		{"plain_text_address", "Contact <support@example.com> for help.", "Contact <support@example.com> for help.", map[string]any{"text_content": map[string]any{"full": "Contact <support@example.com> for help."}, "html_content": map[string]any{"full": "<p>Contact support for help.</p>"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			message := chatwootapi.Message(101, 1767225600, nil)
@@ -353,6 +359,7 @@ func TestImportContractEmailSubjectAndHTMLBody(t *testing.T) {
 }
 
 func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	contact := map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"}
@@ -529,6 +536,7 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 }
 
 func TestImportContractLateAudioTranscriptReplacesSearchContent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	payload := []byte("synthetic recording A bytes")
@@ -576,6 +584,7 @@ func TestImportContractLateAudioTranscriptReplacesSearchContent(t *testing.T) {
 }
 
 func TestImportContractSourceAndActorIsolationAcrossInstances(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -604,6 +613,7 @@ func TestImportContractSourceAndActorIsolationAcrossInstances(t *testing.T) {
 }
 
 func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	message := chatwootapi.Message(601, 1767225600, nil)
@@ -640,6 +650,7 @@ func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
 }
 
 func TestImportContractRelatedMessageAvailability(t *testing.T) {
+	t.Parallel()
 	checks, must := assert.New(t), require.New(t)
 	message := chatwootapi.Message(201, 1767225600, nil)
 	message["content_type"] = "voice_call"
@@ -721,6 +732,7 @@ func TestImportContractRelatedMessageAvailability(t *testing.T) {
 }
 
 func TestImportContractRelatedMessageSubset(t *testing.T) {
+	t.Parallel()
 	must, checks := require.New(t), assert.New(t)
 	sourcePath := filepath.Join(t.TempDir(), "source.db")
 	st, err := store.Open(sourcePath)

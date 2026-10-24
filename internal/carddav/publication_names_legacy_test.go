@@ -32,8 +32,10 @@ func removePublishedScalarNameOwner(t *testing.T, st *store.Store, personID int6
 }
 
 func TestLegacyPublicationNameRepair(t *testing.T) {
+	t.Parallel()
 	for _, typed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "rename", true: "typed-name"}[typed], func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &mutationFixture{}
@@ -67,6 +69,7 @@ func TestLegacyPublicationNameRepair(t *testing.T) {
 }
 
 func TestLegacyPublicationNamePreservesImportedHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &mutationFixture{}
@@ -92,6 +95,7 @@ func TestLegacyPublicationNamePreservesImportedHistory(t *testing.T) {
 }
 
 func TestLegacyPublicationNameSurvivesFirstRemoteEditBeforeReconciliation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &mutationFixture{exactGet: true}
@@ -122,6 +126,7 @@ func TestLegacyPublicationNameSurvivesFirstRemoteEditBeforeReconciliation(t *tes
 }
 
 func TestRemoteMatchedCardKeepsUnownedFullNameAfterPublication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &mutationFixture{exactGet: true}
@@ -186,6 +191,7 @@ func TestRemoteMatchedCardKeepsUnownedFullNameAfterPublication(t *testing.T) {
 }
 
 func TestLegacyPublicationNameAdoptionBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, original, current    string
 		version                    vcard.Version
@@ -207,6 +213,7 @@ func TestLegacyPublicationNameAdoptionBoundaries(t *testing.T) {
 		{name: "undesired", original: "FN:Initial Example", current: "FN:Initial Example", localPublication: true, undesired: true, want: []string{"Initial Example"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			origin, err := url.Parse("https://contacts.example")
@@ -252,8 +259,10 @@ func TestLegacyPublicationNameAdoptionBoundaries(t *testing.T) {
 }
 
 func TestPublicationBlankNameRemainsValid(t *testing.T) {
+	t.Parallel()
 	for _, version := range []vcard.Version{vcard.Version30, vcard.Version40} {
 		t.Run(string(version), func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			origin, err := url.Parse("https://contacts.example")
@@ -281,6 +290,7 @@ func TestPublicationBlankNameRemainsValid(t *testing.T) {
 }
 
 func TestLegacyPublicationNameRepairWithEqualTypedName(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	origin, err := url.Parse("https://contacts.example")
@@ -317,6 +327,7 @@ func TestLegacyPublicationNameRepairWithEqualTypedName(t *testing.T) {
 }
 
 func TestLegacyPublicationOriginMigrationRepairsPublishedCard(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &mutationFixture{}
@@ -349,6 +360,7 @@ func TestLegacyPublicationOriginMigrationRepairsPublishedCard(t *testing.T) {
 }
 
 func TestLegacyPublicationNameRemovalBeforeAdoptionRequiresConflict(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		replacement string
@@ -357,6 +369,7 @@ func TestLegacyPublicationNameRemovalBeforeAdoptionRequiresConflict(t *testing.T
 		{name: "removed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &conflictMutationServer{}
@@ -386,6 +399,7 @@ func TestLegacyPublicationNameRemovalBeforeAdoptionRequiresConflict(t *testing.T
 }
 
 func TestRemoteMatchedCardNameRemovalRequiresConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	fixture := &mutationFixture{exactGet: true, reportCurrent: true}
 	service, st, personID, book := seededMutationService(t, fixture)
@@ -424,7 +438,9 @@ func TestRemoteMatchedCardNameRemovalRequiresConflict(t *testing.T) {
 }
 
 func TestLegacyPublicationNameKeepRemote(t *testing.T) {
+	t.Parallel()
 	t.Run("unrelated-conflict-keeps-seed", func(t *testing.T) {
+		t.Parallel()
 		assert := assert.New(t)
 		require := require.New(t)
 		fixture, service, st, personID, book := legacyKeepRemoteConflict(t, func(st *store.Store, personID int64) {
@@ -448,6 +464,7 @@ func TestLegacyPublicationNameKeepRemote(t *testing.T) {
 		assert.Equal([]string{"Renamed Example"}, publicationFullNames(t, fixture.body))
 	})
 	t.Run("rejected-rename-imports-card-name", func(t *testing.T) {
+		t.Parallel()
 		assert := assert.New(t)
 		require := require.New(t)
 		fixture, service, st, personID, book := legacyKeepRemoteConflict(t, func(st *store.Store, personID int64) {

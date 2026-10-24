@@ -199,6 +199,7 @@ func seededMutationService(t *testing.T, fixture *mutationFixture) (*Service, *s
 }
 
 func TestPublishPersonCreatesConditionallyAndCommitsCanonicalCard(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -222,6 +223,7 @@ func TestPublishPersonCreatesConditionallyAndCommitsCanonicalCard(t *testing.T) 
 }
 
 func TestPublishThenSyncAcceptsEscapedUIDChild(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -244,6 +246,7 @@ func TestPublishThenSyncAcceptsEscapedUIDChild(t *testing.T) {
 }
 
 func TestPublishPersonSkipsSemanticallyUnchangedMappedCard(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -267,6 +270,7 @@ func TestPublishPersonSkipsSemanticallyUnchangedMappedCard(t *testing.T) {
 }
 
 func TestTimedOutUpdatePersistsIntentAndSyncRecoveryDoesNotReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -296,6 +300,7 @@ func TestTimedOutUpdatePersistsIntentAndSyncRecoveryDoesNotReplay(t *testing.T) 
 }
 
 func TestTimedOutCreateRecoveryProvesCanonicalResourceWithoutReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -323,6 +328,7 @@ func TestTimedOutCreateRecoveryProvesCanonicalResourceWithoutReplay(t *testing.T
 }
 
 func TestTimedOutCreateRecoveryAdoptsResourceMaterializedByPull(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -341,6 +347,7 @@ func TestTimedOutCreateRecoveryAdoptsResourceMaterializedByPull(t *testing.T) {
 }
 
 func TestCreateRecoveryAcceptsOneConditional412OnlyAfterCanonicalProof(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -391,6 +398,7 @@ func TestCreateRecoveryAcceptsOneConditional412OnlyAfterCanonicalProof(t *testin
 }
 
 func TestCreateRecoveryRetriesAfterRepeatedTransientFailures(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -409,6 +417,7 @@ func TestCreateRecoveryRetriesAfterRepeatedTransientFailures(t *testing.T) {
 }
 
 func TestDefinitiveCreateRejectionClearsPendingIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -428,6 +437,7 @@ func TestDefinitiveCreateRejectionClearsPendingIntent(t *testing.T) {
 }
 
 func TestDefinitiveMappedMutationRejectionRestoresFence(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		mutate func(*testing.T, *mutationFixture, *Service, *store.Store, int64) error
@@ -451,6 +461,7 @@ func TestDefinitiveMappedMutationRejectionRestoresFence(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &mutationFixture{}
@@ -474,6 +485,7 @@ func TestDefinitiveMappedMutationRejectionRestoresFence(t *testing.T) {
 }
 
 func TestDefinitiveCreateRecoveryRejectionClearsPendingIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -491,6 +503,7 @@ func TestDefinitiveCreateRecoveryRejectionClearsPendingIntent(t *testing.T) {
 }
 
 func TestMutationRejectsExplicitlyDeniedCapabilityBeforeNetwork(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name       string
 		capability string
@@ -530,6 +543,7 @@ func TestMutationRejectsExplicitlyDeniedCapabilityBeforeNetwork(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			fixture := &mutationFixture{}
 			service, st, personID, book := seededMutationService(t, fixture)
 			test.prepare(t, service, st, personID)
@@ -546,6 +560,7 @@ func TestMutationRejectsExplicitlyDeniedCapabilityBeforeNetwork(t *testing.T) {
 }
 
 func TestConditionalCreateCollisionRecordsResolvableConflict(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	remoteBody := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:remote-owner\r\nFN:Remote Owner\r\nEND:VCARD\r\n")
@@ -584,6 +599,7 @@ func TestConditionalCreateCollisionRecordsResolvableConflict(t *testing.T) {
 }
 
 func TestTimedOutCreateRecoveryRoutesDivergentCanonicalCardToConflict(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &mutationFixture{timeout: true}
@@ -607,6 +623,7 @@ func TestTimedOutCreateRecoveryRoutesDivergentCanonicalCardToConflict(t *testing
 }
 
 func TestUnpublishPersonDeletesConditionallyButKeepsPerson(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	fixture := &mutationFixture{}
@@ -622,6 +639,7 @@ func TestUnpublishPersonDeletesConditionallyButKeepsPerson(t *testing.T) {
 }
 
 func TestUnpublishRemoteImportWithoutPublicationPreservesSource(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -660,8 +678,10 @@ func TestUnpublishRemoteImportWithoutPublicationPreservesSource(t *testing.T) {
 }
 
 func TestUnpublishPersonTreatsAbsentRemoteAsComplete(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
 			fixture := &mutationFixture{}
 			service, _, personID, _ := seededMutationService(t, fixture)
 			require.NoError(t, service.PublishPerson(t.Context(), personID))
@@ -674,6 +694,7 @@ func TestUnpublishPersonTreatsAbsentRemoteAsComplete(t *testing.T) {
 }
 
 func TestTimedOutDeleteRecoveryAcceptsPullTombstoneWithoutReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -699,6 +720,7 @@ func TestTimedOutDeleteRecoveryAcceptsPullTombstoneWithoutReplay(t *testing.T) {
 }
 
 func TestTimedOutDeleteRecoveryAcceptsCanonicalGoneWithoutReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -716,6 +738,7 @@ func TestTimedOutDeleteRecoveryAcceptsCanonicalGoneWithoutReplay(t *testing.T) {
 }
 
 func TestPublishPersonUsesV4ForV4OnlyWriteTarget(t *testing.T) {
+	t.Parallel()
 	fixture := &mutationFixture{}
 	service, st, personID, book := seededMutationService(t, fixture)
 	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
@@ -727,6 +750,7 @@ func TestPublishPersonUsesV4ForV4OnlyWriteTarget(t *testing.T) {
 }
 
 func TestPublishPersonRejectsWildcardStoredETagBeforeNetwork(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	fixture := &mutationFixture{}
@@ -742,6 +766,7 @@ func TestPublishPersonRejectsWildcardStoredETagBeforeNetwork(t *testing.T) {
 }
 
 func TestRetryAfterRollsBackIntentAndClampsGateToOneHour(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -767,6 +792,7 @@ func TestRetryAfterRollsBackIntentAndClampsGateToOneHour(t *testing.T) {
 }
 
 func TestNon429RetryAfterRollsBackIntentAndPersistsGate(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	required := require.New(t)
 
@@ -794,6 +820,7 @@ func TestNon429RetryAfterRollsBackIntentAndPersistsGate(t *testing.T) {
 }
 
 func TestThrottledUnpublishRetriesAfterGateExpires(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -823,6 +850,7 @@ func TestThrottledUnpublishRetriesAfterGateExpires(t *testing.T) {
 }
 
 func TestActiveRetryGateStopsSyncBeforeAnyRequest(t *testing.T) {
+	t.Parallel()
 	fixture := &mutationFixture{}
 	service, st, _, _ := seededMutationService(t, fixture)
 	setRetryGate(t, st, time.Now().Add(time.Hour))
@@ -833,6 +861,7 @@ func TestActiveRetryGateStopsSyncBeforeAnyRequest(t *testing.T) {
 }
 
 func TestActiveRetryGateStopsPendingRecoveryBeforeAnyRequest(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -851,6 +880,7 @@ func TestActiveRetryGateStopsPendingRecoveryBeforeAnyRequest(t *testing.T) {
 }
 
 func TestCanonicalGet429PersistsGateAndPreservesAmbiguousUpdateIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -889,6 +919,7 @@ func TestCanonicalGet429PersistsGateAndPreservesAmbiguousUpdateIntent(t *testing
 }
 
 func TestRecoveryGet429PersistsGateAndPreservesPendingIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -919,6 +950,7 @@ func TestRecoveryGet429PersistsGateAndPreservesPendingIntent(t *testing.T) {
 }
 
 func TestPull429PersistsAccountRetryGate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -938,6 +970,7 @@ func TestPull429PersistsAccountRetryGate(t *testing.T) {
 }
 
 func TestConcurrent429sPreserveLongestAccountRetryGate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

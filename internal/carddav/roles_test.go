@@ -11,6 +11,7 @@ import (
 )
 
 func TestListBooksAndSetBookRolesUseServiceContract(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -30,6 +31,7 @@ func TestListBooksAndSetBookRolesUseServiceContract(t *testing.T) {
 }
 
 func TestPublicationViewProjectsProspectivePublishedAndConflictState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -100,10 +102,12 @@ func TestPublicationViewProjectsProspectivePublishedAndConflictState(t *testing.
 }
 
 func TestPublicationViewStatePrecedence(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []store.CardDAVMutationOperation{
 		store.CardDAVMutationCreate, store.CardDAVMutationUpdate, store.CardDAVMutationDelete,
 	} {
 		t.Run(string(operation), func(t *testing.T) {
+			t.Parallel()
 			view := publicationViewFromSource(&store.CardDAVPublicationStateSource{
 				PersonID: 7, HasPublication: true,
 				Desired: operation != store.CardDAVMutationDelete, PendingOperation: operation,
@@ -125,6 +129,7 @@ func TestPublicationViewStatePrecedence(t *testing.T) {
 }
 
 func TestNonWriteTargetPendingMutationNeverReachesServer(t *testing.T) {
+	t.Parallel()
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests++
@@ -147,6 +152,7 @@ func TestNonWriteTargetPendingMutationNeverReachesServer(t *testing.T) {
 }
 
 func TestRoleWideningForcesOneFullReconcile(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -175,6 +181,7 @@ func TestRoleWideningForcesOneFullReconcile(t *testing.T) {
 }
 
 func TestRoleWideningReconcilesUnchangedUnboundResources(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		prepare          func(t *testing.T, service *Service, st *store.Store, book store.CardDAVAddressBook) int64
@@ -219,6 +226,7 @@ func TestRoleWideningReconcilesUnchangedUnboundResources(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 
@@ -276,6 +284,7 @@ func TestRoleWideningReconcilesUnchangedUnboundResources(t *testing.T) {
 }
 
 func TestRoleWideningPreservesMappedLocalTombstones(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		changeRemote  bool
@@ -287,6 +296,7 @@ func TestRoleWideningPreservesMappedLocalTombstones(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 
@@ -365,6 +375,7 @@ func TestRoleWideningPreservesMappedLocalTombstones(t *testing.T) {
 }
 
 func TestSyncStopsWhenBookBecomesIgnoredBetweenFetchAndApply(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
