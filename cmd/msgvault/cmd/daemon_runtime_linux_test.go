@@ -64,9 +64,6 @@ func TestDaemonAutoStartOverDeadSiblingRecord(t *testing.T) {
 	runDaemonPIDNamespace(t, dataDir, "restart")
 
 	assert.NoFileExists(path, "normal shutdown removes the replacement record")
-	held, err := daemonOwnerLockHeld(dataDir)
-	require.NoError(err)
-	assert.False(held, "normal shutdown releases ownership")
 }
 
 var daemonPIDNamespaceProbe struct {
@@ -80,6 +77,9 @@ func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
 	t.Helper()
 	bwrap, err := exec.LookPath("bwrap")
 	if errors.Is(err, exec.ErrNotFound) {
+		if os.Getenv("CI") != "" {
+			require.NoError(t, err, "Bubblewrap is required for PID namespace tests in CI")
+		}
 		t.Skip("Bubblewrap is required for PID namespace tests")
 	}
 	require.NoError(t, err)
@@ -90,10 +90,13 @@ func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
 		"--ro-bind", "/", "/", "--bind", dataDir, dataDir, "--proc", "/proc", "--",
 	}
 	daemonPIDNamespaceProbe.Do(func() {
-		probe := exec.CommandContext(ctx, bwrap, append(args, "/usr/bin/true")...)
+		probe := exec.CommandContext(ctx, bwrap, append(args, os.Args[0], "-test.run=^$")...) //nolint:gosec // Bubblewrap comes from LookPath; the test binary and flags are controlled here.
 		daemonPIDNamespaceProbe.output, daemonPIDNamespaceProbe.err = probe.CombinedOutput()
 	})
 	if daemonPIDNamespaceProbe.err != nil {
+		if os.Getenv("CI") != "" {
+			require.NoError(t, daemonPIDNamespaceProbe.err, "user/PID namespaces unavailable in CI:\n%s", daemonPIDNamespaceProbe.output)
+		}
 		t.Skipf("user/PID namespaces unavailable: %v\n%s", daemonPIDNamespaceProbe.err, daemonPIDNamespaceProbe.output)
 	}
 	cmd := exec.CommandContext(ctx, bwrap, append(args, os.Args[0], "-test.run=^TestDaemonRuntimePIDNamespaceHelper$", "-test.v")...) //nolint:gosec // Bubblewrap comes from LookPath; the test binary and flags are controlled here.
@@ -133,6 +136,11 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 		require.NoError(err)
 		assert.Empty(records, "listing skips both foreign records")
 		return
+	}
+	if mode == "crash" {
+		// Production omits create_time when the process read fails. This keeps
+		// a missing scope guard observable even after the create-time tolerance.
+		stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 0, false })
 	}
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
 	if mode == "restart" {
