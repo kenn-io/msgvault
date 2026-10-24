@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // seedTwoSourceArchiveIn builds an archive with two connected accounts whose
@@ -28,16 +29,13 @@ func seedTwoSourceArchiveIn(t *testing.T, dataDir string, shareMessageID bool) *
 	t.Helper()
 	require := require.New(t)
 
-	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	t.Cleanup(func() { require.NoError(s.Close()) })
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
 
 	secondMessageID := "<shared@example.com>"
 	if !shareMessageID {
 		secondMessageID = "<s2-only@example.com>"
 	}
-	_, err = s.DB().Exec(`
+	_, err := s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES
 	(1, 'gmail', 'me@example.com'),
 	(2, 'whatsapp', '+15550100');

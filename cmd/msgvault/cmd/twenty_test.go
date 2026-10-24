@@ -139,11 +139,8 @@ func TestServeTwentySyncNowCompletes(t *testing.T) {
 	sourceConfig.Enabled = true
 	sourceConfig.Schedule = "0 0 1 1 *"
 	cfg.Twenty = []config.TwentySource{sourceConfig}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource("twenty", "work")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource("twenty", "work")
 	require.NoError(err)
 	oldFactory := newTwentyClient
 	t.Cleanup(func() { newTwentyClient = oldFactory })
@@ -194,10 +191,7 @@ func TestTwentyManualMultipleSourcesRefreshesEarlierWritesOnFailure(t *testing.T
 	first, second := twentySourceConfig("first"), twentySourceConfig("second")
 	second.APIKey = "second-key"
 	cfg.Twenty = []config.TwentySource{first, second}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	oldFactory, oldRefresh := newTwentyClient, rebuildTwentyCacheAfterWrite
 	t.Cleanup(func() { newTwentyClient = oldFactory; rebuildTwentyCacheAfterWrite = oldRefresh })
 	newTwentyClient = func(_, key string) (twenty.Source, error) {
@@ -236,12 +230,9 @@ func TestSyncTwentyContinuesAfterSourceImportFailure(t *testing.T) {
 	first, second := twentySourceConfig("first"), twentySourceConfig("second")
 	first.APIKey, second.APIKey = "first-key", "second-key"
 	cfg.Twenty = []config.TwentySource{first, second}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	for _, source := range cfg.Twenty {
-		_, err = st.GetOrCreateSource(twenty.SourceType, source.Identifier)
+		_, err := st.GetOrCreateSource(twenty.SourceType, source.Identifier)
 		require.NoError(err)
 	}
 
@@ -266,7 +257,7 @@ func TestSyncTwentyContinuesAfterSourceImportFailure(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	err = syncTwentyCmd.RunE(cmd, nil)
+	err := syncTwentyCmd.RunE(cmd, nil)
 
 	require.ErrorContains(err, "twenty sync first failed: first discovery unavailable")
 	assert.Equal(1, firstClient.listCalls)
@@ -292,12 +283,9 @@ func TestSyncTwentyStopsAfterCanceledSource(t *testing.T) {
 	first, second := twentySourceConfig("first"), twentySourceConfig("second")
 	first.APIKey, second.APIKey = "first-key", "second-key"
 	cfg.Twenty = []config.TwentySource{first, second}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	for _, source := range cfg.Twenty {
-		_, err = st.GetOrCreateSource(twenty.SourceType, source.Identifier)
+		_, err := st.GetOrCreateSource(twenty.SourceType, source.Identifier)
 		require.NoError(err)
 	}
 
@@ -326,7 +314,7 @@ func TestSyncTwentyStopsAfterCanceledSource(t *testing.T) {
 	syncTwentyLimit, syncTwentyAfter, syncTwentyFull, syncTwentyProbe = 0, "", false, false
 	cmd := &cobra.Command{}
 	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
-	err = syncTwentyCmd.RunE(cmd, nil)
+	err := syncTwentyCmd.RunE(cmd, nil)
 
 	require.ErrorIs(err, context.Canceled)
 	assert.Equal(2, firstClient.listCalls)
@@ -361,10 +349,7 @@ func TestSyncTwentyContinuesWhenOneSourceHasNoAPIKey(t *testing.T) {
 	ready.BaseURL = srv.URL
 	cfg.Twenty = []config.TwentySource{unconfigured, ready}
 
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	for _, source := range cfg.Twenty {
 		_, err := st.GetOrCreateSource(twenty.SourceType, source.Identifier)
 		require.NoError(err)
@@ -382,7 +367,7 @@ func TestSyncTwentyContinuesWhenOneSourceHasNoAPIKey(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	err = syncTwentyCmd.RunE(cmd, nil)
+	err := syncTwentyCmd.RunE(cmd, nil)
 
 	readySource, lookupErr := st.GetSourceByTypeAndIdentifier(twenty.SourceType, "ready")
 	require.NoError(lookupErr)

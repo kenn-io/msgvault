@@ -8,16 +8,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestConfirmDefaultIdentity_HappyPath(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
@@ -32,10 +29,7 @@ func TestConfirmDefaultIdentity_HappyPath(t *testing.T) {
 func TestConfirmDefaultIdentity_EmptyIdentifierIsNoOp(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
@@ -48,10 +42,7 @@ func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
 	logger := testLoggerValue()
 
 	tmpDir := t.TempDir()
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(t, err)
-	defer func() { _ = s.Close() }()
-	require.NoError(t, s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
 	savedLogger := logger
 	defer func() { logger = savedLogger }()
@@ -73,12 +64,9 @@ func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
 func TestConfirmDefaultIdentity_LegacyMigrationOverridesNoDefault(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
-	_, err = s.GetOrCreateSource("gmail", "alice@example.com")
+	_, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
 	// Simulate --no-default-identity: do not call confirmDefaultIdentity.
 	// Then run startup migrations with a non-empty legacy address list.

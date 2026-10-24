@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -293,11 +293,8 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 	_ = testCtx
 	requirements.NoError(configured.Save())
 
-	mainStore, err := store.Open(mainPath)
-	requirements.NoError(err)
-	t.Cleanup(func() { _ = mainStore.Close() })
-	requirements.NoError(mainStore.InitSchema())
-	_, err = mainStore.DB().Exec(`
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
+	_, err := mainStore.DB().Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'test', 'default-policy-source');
 		INSERT INTO conversations
 			(id, source_id, source_conversation_id, conversation_type)
@@ -523,10 +520,7 @@ func TestCompletedBuildActivatesWithoutPersonRequestsAfterLivePolicyDrift(t *tes
 			testCtx := withTestConfig(t, configured)
 			require.NoError(configured.Save())
 
-			mainStore, err := store.Open(mainPath)
-			require.NoError(err)
-			t.Cleanup(func() { _ = mainStore.Close() })
-			require.NoError(mainStore.InitSchema())
+			mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
 			profile, err := configured.Vector.SemanticPersonEmbeddingProfile()
 			require.NoError(err)
 			_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), profile)
@@ -638,10 +632,7 @@ func TestPersonSearchProductionCompositionDoesNotPublishReadyWithoutThePersonEng
 	useLocal = false
 	t.Cleanup(func() { useLocal = savedUseLocal })
 
-	mainStore, err := store.Open(mainPath)
-	requirements.NoError(err)
-	t.Cleanup(func() { _ = mainStore.Close() })
-	requirements.NoError(mainStore.InitSchema())
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
 	semanticProfile, err := configured.Vector.SemanticPersonEmbeddingProfile()
 	requirements.NoError(err)
 	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(testCtx, semanticProfile)

@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/muesli"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -65,10 +64,7 @@ func TestServeScheduledMuesliSyncCompletes(t *testing.T) {
 		Identifier: "mac", AccountEmail: "you@example.com", DBPath: path,
 		Contacts: &contacts, Enabled: true, Schedule: "0 0 1 1 *",
 	}}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	_, err = st.GetOrCreateSource(muesli.SourceType, "mac")
 	require.NoError(err)
 

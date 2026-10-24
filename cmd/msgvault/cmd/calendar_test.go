@@ -402,9 +402,7 @@ func TestSyncCalendarExplicitDiscoveryWithOnlyRetiredSources(t *testing.T) {
 				HomeDir: dataDir,
 				Data:    config.DataConfig{DataDir: dataDir},
 			}
-			seed, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(err)
-			require.NoError(seed.InitSchema())
+			seed := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			retired, err := seed.GetOrCreateSource(sourceTypeCalendar, "user@example.test/primary")
 			require.NoError(err)
 			require.NoError(seed.UpdateSourceSyncConfig(retired.ID,
@@ -591,10 +589,7 @@ func TestCalendarCommandsRegistered(t *testing.T) {
 func newCalendarDecisionStore(t *testing.T) *store.Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	return st
 }
 

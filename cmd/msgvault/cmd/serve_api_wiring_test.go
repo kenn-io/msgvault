@@ -25,16 +25,14 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersonRenameHTTPRefreshesCachedPeople(t *testing.T) {
+func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	alice, err := st.EnsureParticipant("alice@example.com", "Alice Observed", "example.com")
 	require.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "user@example.com")
@@ -65,7 +63,6 @@ func TestPersonRenameHTTPRefreshesCachedPeople(t *testing.T) {
 	cfg, err := config.Load(configPath, tmp)
 	require.NoError(err)
 
-	binary := buildNativeCLI(t)
 	old := executeBuildCacheSubprocessMode
 	executeBuildCacheSubprocessMode = func(ctx context.Context, mode buildCacheMode) error {
 		command, commandErr := newBuildCacheSubprocessCommand(ctx, mode)

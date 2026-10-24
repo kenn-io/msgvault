@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -140,9 +140,7 @@ func newDaemonOptimizeFixture(t *testing.T) (*config.Config, vector.GenerationID
 	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
 	cfg.Vector.Embeddings.Dimension = 4
 	cfg.Vector.Search.ANNThreads = 1
-	main, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(t, err)
-	require.NoError(t, main.InitSchema())
+	main := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	require.NoError(t, main.Close())
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: cfg.Vector.DBPath, Dimension: 4})
 	require.NoError(t, err)
