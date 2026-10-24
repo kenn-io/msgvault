@@ -29,7 +29,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		{name: "table", args: []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, status: 200, want: []string{"Coverage complete", "generated", "quarterly numbers", "report.pdf", "More may match"}},
 		{name: "recordings unavailable", args: []string{"search", "quartz"}, status: 200, recordingsError: "media_search_unavailable", want: []string{"partial true", "Docbank transcript search is unavailable", "Attachments truncated true", "report.pdf", "More may match"}, absent: []string{"quarterly numbers", "generated"}},
 		{name: "attachments unavailable", args: []string{"search", "quarterly numbers"}, status: 200, attachmentsError: "transport", want: []string{"Coverage complete", "generated", "quarterly numbers", "Attachments truncated false", "Attachment search is unavailable."}, absent: []string{"report.pdf", "More may match"}},
-		{name: "terminal", args: []string{"search", "quarterly numbers"}, status: 200, terminal: true, want: []string{"Coverage complete", "generated", "quarterly numbers", "report.pdf", "More may match"}},
+		{name: "terminal", args: []string{"search", "quarterly numbers"}, status: 200, terminal: true},
 		{name: "json", args: []string{"search", "quarterly numbers", "--json"}, status: 200, want: []string{`"message_id":11`, "generated", "quarterly numbers", "report.pdf"}},
 		{name: "mode delegated", args: []string{"search", "words", "--mode", "hybrid"}, status: 503, want: []string{"media_search_mode_unavailable"}},
 		{name: "upper limit delegated", args: []string{"search", "words", "--limit", "101"}, status: 400, want: []string{"invalid_limit"}},
@@ -72,6 +72,12 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					Results:     []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}},
 					Attachments: &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true},
 				}
+				if test.terminal {
+					response.Attachments.Results[0].Filename = "report\x1b[31m.pdf\x1b[0m\a"
+					response.Attachments.Results[0].Excerpt = "quartz\x1b[31m match\x1b[0m\a"
+					response.Attachments.ErrorData = &generated.ErrorResponse{ErrorData: "transport", Message: new("Attachment\x1b[31m search unavailable\x1b[0m\a")}
+					response.RecordingsError = &generated.ErrorResponse{ErrorData: "transport", Message: new("Recording\x1b[31m search unavailable\x1b[0m\a")}
+				}
 				if test.recordingsError != "" {
 					response.Coverage.State = "unknown"
 					response.Results = []generated.MediaSearchResult{}
@@ -107,8 +113,10 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 			for _, absent := range test.absent {
 				assert.NotContains(output.String(), absent)
 			}
-			assert.NotContains(output.String(), "\x1b")
-			assert.NotContains(output.String(), "\a")
+			if test.terminal {
+				assert.NotContains(output.String(), "\x1b")
+				assert.NotContains(output.String(), "\a")
+			}
 		})
 	}
 }

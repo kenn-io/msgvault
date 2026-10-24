@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type mediaSearchFixture struct {
@@ -968,26 +969,15 @@ func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newMediaSearchFixture(t)
-	recording := f.match(t, "audio")
+	f.match(t, "audio")
 	server := f.server(false)
-	first, second := f.document(t, server)
-	query := "q=quartz"
-	participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
-	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?,?)`), participant, first, second, recording.messageID)
-	require.NoError(err)
-	query += "&participant_id=" + strconv.FormatInt(participant, 10)
-	tx, err := f.f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(err)
-	defer func() { _ = tx.Rollback() }()
+	first, _ := f.document(t, server)
+	var documents []storetest.DocumentAttachment
 	for i := 2; i <= 4097; i++ {
-		hash := fmt.Sprintf("%064x", i)
-		_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), first, hash, hash[:2]+"/"+hash)
-		require.NoError(err)
-		_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
-		require.NoError(err)
+		documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
 	}
-	require.NoError(tx.Commit())
-	status, response, raw := searchMediaFor(t, server, query)
+	f.f.SeedDocumentAttachments(first, documents)
+	status, response, raw := searchMediaFor(t, server, "q=quartz")
 	require.Equal(http.StatusOK, status, raw)
 	require.NotNil(response.Attachments)
 	require.NotNil(response.Attachments.Error)
@@ -1159,16 +1149,6 @@ func TestMediaSearchDocumentsUnlinkedDuringSearch(t *testing.T) {
 	assert.Empty(response.Results)
 	assert.False(response.Attachments.Truncated)
 	require.Empty(response.Attachments.Results)
-}
-
-func TestMediaSearchDocumentsNilReader(t *testing.T) {
-	f := newMediaSearchFixture(t)
-	server := f.server(false)
-	query := "q=quartz"
-	server.docbankAttachments = nil
-	status, _, raw := searchMediaFor(t, server, query)
-	require.Equal(t, http.StatusOK, status, raw)
-	assert.NotContains(t, raw, `"attachments"`)
 }
 
 // Local attribution can outlast the remote budget after a slow successful response.

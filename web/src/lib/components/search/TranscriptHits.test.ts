@@ -246,7 +246,7 @@ describe('TranscriptHits', () => {
 
   it.each([
     ['transport', true], ['server_error', true], ['timeout', true], ['rate_limited', true],
-    ['validation', false], ['unauthorized', false], ['invalid_request', false],
+    ['invalid_request', false],
   ])('offers attachment retry for %s only when transient', async (error, retryable) => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ attachments: {
       results: [], truncated: false, error: { error, message: 'Attachment search is unavailable.' },

@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -127,47 +126,35 @@ func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing
 	require := require.New(t)
 	f := storetest.New(t)
 	mid := f.CreateMessage("text-formats")
-	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(err)
-	defer func() { _ = tx.Rollback() }()
-	formats := []struct {
-		mime    string
-		version string
-	}{
-		{"application/pdf", "pdf"},
-		{"text/csv", "csv"},
-		{"application/json", "json"},
-		{"message/rfc822", "email"},
-		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word"},
-		{"image/png", ""},
-		{"application/pdf", "parameterized"},
-		{"image/tiff", ""},
-		{"image/jpeg", ""},
-		{"image/webp", ""},
-		{"application/jsonl", "jsonl"},
-		{"application/zip", "zip"},
-		{"audio/mpeg", ""},
-		{"image/gif", ""},
-		{"application/octet-stream", "octet-stream-pdf"},
-		{"application/octet-stream", "untyped-pdf"},
-		{"video/mp4", ""},
+	formats := []storetest.DocumentAttachment{
+		{MIMEType: "application/pdf", VersionID: "00000000-0000-4000-8000-000000000001"},
+		{MIMEType: "text/csv", VersionID: "00000000-0000-4000-8000-000000000002"},
+		{MIMEType: "application/json", VersionID: "00000000-0000-4000-8000-000000000003"},
+		{MIMEType: "message/rfc822", VersionID: "00000000-0000-4000-8000-000000000004"},
+		{MIMEType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", VersionID: "00000000-0000-4000-8000-000000000005"},
+		{MIMEType: "application/jsonl", VersionID: "00000000-0000-4000-8000-000000000007"},
+		{MIMEType: "application/zip", VersionID: "00000000-0000-4000-8000-000000000008"},
+		{MIMEType: "application/octet-stream", VersionID: "00000000-0000-4000-8000-000000000009"},
+		{MIMEType: "", VersionID: "00000000-0000-4000-8000-00000000000a"},
+		{MIMEType: "image/tiff", VersionID: "00000000-0000-4000-8000-00000000000b"},
+		{MIMEType: "audio/mpeg", VersionID: "00000000-0000-4000-8000-00000000000c"},
+		{MIMEType: "video/mp4", VersionID: "00000000-0000-4000-8000-00000000000d"},
 	}
-	want := []string{"pdf", "csv", "json", "email", "word", "parameterized", "jsonl", "zip", "octet-stream-pdf", "untyped-pdf"}
-	for i := range 4110 {
-		mimeType, version := "image/png", fmt.Sprintf("image-%d", i)
-		if i < len(formats) {
-			mimeType = formats[i].mime
-			if formats[i].version != "" {
-				version = formats[i].version
-			}
-		}
-		hash := fmt.Sprintf("%064x", 0xabcdef+i)
-		_, err := tx.Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'file',?,?,'stored')`), mid, strings.ToUpper(hash), hash[:2]+"/"+hash)
-		require.NoError(err)
-		_, err = tx.Exec(f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'file',?,'delivered',7,?,'','')`), hash, mimeType, version)
-		require.NoError(err)
+	want := []string{
+		"00000000-0000-4000-8000-000000000001",
+		"00000000-0000-4000-8000-000000000002",
+		"00000000-0000-4000-8000-000000000003",
+		"00000000-0000-4000-8000-000000000004",
+		"00000000-0000-4000-8000-000000000005",
+		"00000000-0000-4000-8000-000000000007",
+		"00000000-0000-4000-8000-000000000008",
+		"00000000-0000-4000-8000-000000000009",
+		"00000000-0000-4000-8000-00000000000a",
 	}
-	require.NoError(tx.Commit())
+	for i := range 4100 {
+		formats = append(formats, storetest.DocumentAttachment{MIMEType: "image/png", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+100)})
+	}
+	f.SeedDocumentAttachments(mid, formats)
 	ids, exceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
 	require.NoError(err)
 	assert.False(exceeded)

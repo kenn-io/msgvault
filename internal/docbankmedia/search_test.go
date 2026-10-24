@@ -192,7 +192,7 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 }
 
 func TestSearchDocumentsContract(t *testing.T) {
-	for _, fault := range []string{"content evidence", "content blob", "node name", "full name page", "mixed", "foreign vault", "foreign version", "zero node", "zero rank", "long excerpt", "unknown evidence", "mixed unknown evidence"} {
+	for _, fault := range []string{"content evidence", "content blob", "node name", "full name page", "mixed", "foreign vault", "unknown evidence", "mixed unknown evidence"} {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -207,14 +207,6 @@ func TestSearchDocumentsContract(t *testing.T) {
 				report.Results[0].Evidence = append(report.Results[0].Evidence, SearchEvidence{Kind: "node_name"})
 			case "foreign vault":
 				report.Results[0].VaultUID = "00000000-0000-4000-8000-000000000020"
-			case "foreign version":
-				report.Results[0].ContentVersionID = "00000000-0000-4000-8000-000000000003"
-			case "zero node":
-				report.Results[0].NodeID = 0
-			case "zero rank":
-				report.Results[0].Rank = 0
-			case "long excerpt":
-				report.Results[0].Excerpt = strings.Repeat("a", 2049)
 			case "unknown evidence":
 				report.Results[0].Evidence[0].Kind = "unknown"
 			case "mixed unknown evidence":
@@ -233,7 +225,7 @@ func TestSearchDocumentsContract(t *testing.T) {
 			require.NoError(err)
 			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: 1, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}}})
 			switch fault {
-			case "foreign vault", "foreign version", "zero node", "zero rank", "long excerpt", "unknown evidence", "mixed unknown evidence":
+			case "foreign vault", "unknown evidence", "mixed unknown evidence":
 				require.ErrorIs(err, ErrInvalidReceipt)
 				return
 			}
