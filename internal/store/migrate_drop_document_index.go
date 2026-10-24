@@ -43,17 +43,12 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 			"DROP TRIGGER IF EXISTS trg_document_message_type_revision",
 			"DROP TABLE IF EXISTS document_chunks_fts",
 		}
-		tableExists := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`
 		columnExists := `SELECT COUNT(*) FROM pragma_table_info('person_sweep_cursors') WHERE name = ?`
 		if postgres {
 			statements = []string{
 				"DROP FUNCTION IF EXISTS msgvault_append_person_sweep_document_changes(BIGINT, BIGINT, BIGINT, TEXT, TEXT)",
 				"DROP TRIGGER IF EXISTS trg_document_message_type_revision ON messages",
 			}
-			tableExists = `SELECT COUNT(*) FROM information_schema.tables
-				WHERE table_schema = current_schema() AND table_name = ?`
-			columnExists = `SELECT COUNT(*) FROM information_schema.columns
-				WHERE table_schema = current_schema() AND table_name = 'person_sweep_cursors' AND column_name = ?`
 		}
 		present := func(query, name string) (bool, error) {
 			var n int
@@ -70,14 +65,7 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 			}
 		}
 		for _, table := range retiredDocumentTables {
-			exists, err := present(tableExists, table)
-			if err != nil {
-				return fmt.Errorf("find retired document table %s: %w", table, err)
-			}
-			if !exists {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, "DROP TABLE "+table); err != nil {
+			if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS "+table); err != nil {
 				return fmt.Errorf("drop retired document table %s: %w", table, err)
 			}
 		}
@@ -92,14 +80,19 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 			}
 		}
 		for _, column := range retiredDocumentCursorColumns {
-			exists, err := present(columnExists, column)
-			if err != nil {
-				return fmt.Errorf("find retired cursor column %s: %w", column, err)
+			drop := "ALTER TABLE person_sweep_cursors DROP COLUMN "
+			if postgres {
+				drop += "IF EXISTS "
+			} else {
+				exists, err := present(columnExists, column)
+				if err != nil {
+					return fmt.Errorf("find retired cursor column %s: %w", column, err)
+				}
+				if !exists {
+					continue
+				}
 			}
-			if !exists {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, "ALTER TABLE person_sweep_cursors DROP COLUMN "+column); err != nil {
+			if _, err := tx.ExecContext(ctx, drop+column); err != nil {
 				return fmt.Errorf("drop retired cursor column %s: %w", column, err)
 			}
 		}
