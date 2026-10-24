@@ -3,7 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func runInstructionCommand(t *testing.T, ctx context.Context, args ...string) (string, error) {
+func runInstructionCommand(ctx context.Context, t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	cmd := newPersonInstructionsCommand()
 	var output bytes.Buffer
@@ -33,6 +33,27 @@ func runInstructionCommand(t *testing.T, ctx context.Context, args ...string) (s
 	err := cmd.Execute()
 	return output.String(), err
 }
+
+type instructionOutputErrorWriter struct {
+	err error
+}
+
+func (w instructionOutputErrorWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func TestWriteInstructionCLIRowsWrapsFlushError(t *testing.T) {
+	require := require.New(t)
+	writeErr := errors.New("output closed")
+	cmd := newPersonInstructionsCommand()
+	cmd.SetOut(instructionOutputErrorWriter{err: writeErr})
+
+	err := writeInstructionCLIRows(cmd, nil)
+
+	require.ErrorContains(err, "flush instruction table")
+	require.ErrorIs(err, writeErr)
+}
+
 func TestPersonInstructionsAddListRevokeThroughDaemon(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -51,28 +72,28 @@ func TestPersonInstructionsAddListRevokeThroughDaemon(t *testing.T) {
 		{"add", personID, "--kind", "fax", "--text", "avoid calls"},
 		{"add", personID, "--kind", "timing", "--text", "avoid calls", "--until", time.Now().UTC().AddDate(0, 0, 185).Format(time.DateOnly)},
 	} {
-		_, err := runInstructionCommand(t, ctx, args...)
+		_, err := runInstructionCommand(ctx, t, args...)
 		require.Error(err)
 	}
 	assert.Zero(requests.Load())
-	output, err := runInstructionCommand(t, ctx, "add", personID, "--kind", "address_as", "--text", "call me Vee", "--value", "Vee")
+	output, err := runInstructionCommand(ctx, t, "add", personID, "--kind", "address_as", "--text", "call me Vee", "--value", "Vee")
 	require.NoError(err)
 	assert.Contains(output, "address_as")
 	assert.Contains(output, "active")
 	rows, err := st.ListPersonInstructionsContext(t.Context(), person.ID, store.PersonInstructionFilter{})
 	require.NoError(err)
 	require.Len(rows, 1)
-	output, err = runInstructionCommand(t, ctx, "list", personID)
+	output, err = runInstructionCommand(ctx, t, "list", personID)
 	require.NoError(err)
 	assert.Contains(output, "ID")
 	assert.Contains(output, "call me vee")
-	output, err = runInstructionCommand(t, ctx, "revoke", strconv.FormatInt(rows[0].ID, 10), "--reason", "changed")
+	output, err = runInstructionCommand(ctx, t, "revoke", strconv.FormatInt(rows[0].ID, 10), "--reason", "changed")
 	require.NoError(err)
 	assert.Contains(output, "revoked")
 	row, err := st.GetPersonInstructionContext(t.Context(), rows[0].ID)
 	require.NoError(err)
 	assert.Equal(personfacts.InstructionStatusRevoked, row.Status)
-	output, err = runInstructionCommand(t, ctx, "list", personID, "--all", "--json")
+	output, err = runInstructionCommand(ctx, t, "list", personID, "--all", "--json")
 	require.NoError(err)
 	assert.Contains(output, `"revoked"`)
 	// Proposals are written by a later extraction program; seed one to exercise
@@ -80,7 +101,7 @@ func TestPersonInstructionsAddListRevokeThroughDaemon(t *testing.T) {
 	var proposal int64
 	now := time.Now().UTC()
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO person_instructions(person_id,instruction_key,kind,normalized_text,value_text,origin,status,stated_at,valid_from) VALUES (?,?,'address_as','call me Val','Val','extraction','proposed',?,?) RETURNING id`), person.ID, personfacts.InstructionKey(personfacts.InstructionKindAddressAs, "", "Val", "call me Val"), now, now).Scan(&proposal))
-	output, err = runInstructionCommand(t, ctx, "confirm", fmt.Sprint(proposal))
+	output, err = runInstructionCommand(ctx, t, "confirm", strconv.FormatInt(proposal, 10))
 	require.NoError(err)
 	assert.Contains(output, "Suggested: save 'Val' as a nickname")
 	profile, err := st.GetPersonProfileContext(t.Context(), person.ID)
@@ -120,7 +141,7 @@ func TestPersonInstructionsReviewIdentifiesPersonAndScopeThroughDaemon(t *testin
 	httpSrv := httptest.NewServer(srv.Router())
 	t.Cleanup(httpSrv.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: httpSrv.URL, AllowInsecure: true}})
-	output, err := runInstructionCommand(t, ctx, "review")
+	output, err := runInstructionCommand(ctx, t, "review")
 	require.NoError(err)
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	require.Len(lines, len(instructions)+1)
@@ -129,13 +150,13 @@ func TestPersonInstructionsReviewIdentifiesPersonAndScopeThroughDaemon(t *testin
 		var fields []string
 		for _, line := range lines[1:] {
 			candidate := strings.Fields(line)
-			if candidate[0] == fmt.Sprint(row.ID) {
+			if candidate[0] == strconv.FormatInt(row.ID, 10) {
 				fields = candidate
 				break
 			}
 		}
 		require.GreaterOrEqual(len(fields), 3)
-		assert.Equal(fmt.Sprint(row.PersonID), fields[1])
+		assert.Equal(strconv.FormatInt(row.PersonID, 10), fields[1])
 		scope := row.ScopeKey
 		if scope == "" {
 			scope = "person"
