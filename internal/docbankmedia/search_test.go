@@ -192,17 +192,33 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 }
 
 func TestSearchDocumentsContract(t *testing.T) {
-	for _, fault := range []string{"content evidence", "node name", "full name page", "mixed"} {
+	for _, fault := range []string{"content evidence", "content blob", "node name", "full name page", "mixed", "foreign vault", "foreign version", "zero node", "zero rank", "long excerpt", "unknown evidence", "mixed unknown evidence"} {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "quartz", Evidence: []SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}}}
 			switch fault {
+			case "content blob":
+				report.Results[0].Evidence[0].Kind = "content_blob"
 			case "node name", "full name page":
 				report.Results[0].Evidence[0].Kind = "node_name"
 				report.Truncated = fault == "full name page"
 			case "mixed":
 				report.Results[0].Evidence = append(report.Results[0].Evidence, SearchEvidence{Kind: "node_name"})
+			case "foreign vault":
+				report.Results[0].VaultUID = "00000000-0000-4000-8000-000000000020"
+			case "foreign version":
+				report.Results[0].ContentVersionID = "00000000-0000-4000-8000-000000000003"
+			case "zero node":
+				report.Results[0].NodeID = 0
+			case "zero rank":
+				report.Results[0].Rank = 0
+			case "long excerpt":
+				report.Results[0].Excerpt = strings.Repeat("a", 2049)
+			case "unknown evidence":
+				report.Results[0].Evidence[0].Kind = "unknown"
+			case "mixed unknown evidence":
+				report.Results[0].Evidence = append(report.Results[0].Evidence, SearchEvidence{Kind: "unknown"})
 			}
 			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request SearchRequest
@@ -216,6 +232,11 @@ func TestSearchDocumentsContract(t *testing.T) {
 			client, err := NewClient(remote.URL, nil)
 			require.NoError(err)
 			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: 1, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}}})
+			switch fault {
+			case "foreign vault", "foreign version", "zero node", "zero rank", "long excerpt", "unknown evidence", "mixed unknown evidence":
+				require.ErrorIs(err, ErrInvalidReceipt)
+				return
+			}
 			if fault == "node name" || fault == "full name page" {
 				require.NoError(err)
 				assert.Empty(got.Results)

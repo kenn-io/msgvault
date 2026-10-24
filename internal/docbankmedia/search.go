@@ -207,15 +207,28 @@ func (c *Client) VaultFence(ctx context.Context, versions []string) (SearchFence
 
 // SearchDocuments searches exact mirrored versions without transcript selectors.
 func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (SearchReport, error) {
+	ids := make(map[string]bool, len(request.Fence.ContentVersionIDs))
+	for _, id := range request.Fence.ContentVersionIDs {
+		ids[id] = true
+	}
 	report, err := c.searchReport(ctx, request)
 	if err != nil {
 		return SearchReport{}, err
 	}
 	results := make([]SearchHit, 0, len(report.Results))
 	for _, hit := range report.Results {
+		if !validSearchHit(hit, request.Fence.VaultUID, ids) {
+			return SearchReport{}, ErrInvalidReceipt
+		}
 		content := false
 		for _, evidence := range hit.Evidence {
-			content = content || evidence.Kind != "node_name"
+			switch evidence.Kind {
+			case "content_blob", "rendition_segment":
+				content = true
+			case "node_name":
+			default:
+				return SearchReport{}, ErrInvalidReceipt
+			}
 		}
 		if !content {
 			continue
