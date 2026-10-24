@@ -10,8 +10,18 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+// EmailFamilyMinAPISchemaVersion is the first API schema with the related-copies route.
+const EmailFamilyMinAPISchemaVersion = "3.26.0"
+
 // EmailFamilyContext reads an email's related copies through the owning daemon.
 func (c *Client) EmailFamilyContext(ctx context.Context, id int64) (*store.EmailFamily, error) {
+	compatible, err := c.SupportsAPISchemaVersion(ctx, EmailFamilyMinAPISchemaVersion)
+	if err != nil {
+		return nil, fmt.Errorf("check related copies capability: %w", err)
+	}
+	if !compatible {
+		return nil, fmt.Errorf("related copies require daemon API schema %s or newer", EmailFamilyMinAPISchemaVersion)
+	}
 	resp, err := APIResponseWithNotFound(
 		c,
 		func(client *apiclient.Client) (*generated.GetEmailFamilyResp, error) {
