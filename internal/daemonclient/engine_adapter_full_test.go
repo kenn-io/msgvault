@@ -1017,8 +1017,8 @@ func TestEngineGetDeletionTargetsBySearchBoundedGatesOnDaemonSchemaAndForwardsMa
 	for _, tc := range []struct {
 		name, schema string
 	}{
-		{"supported daemon", "3.25.0"},
-		{"older daemon", "3.24.0"},
+		{"supported daemon", "3.26.0"},
+		{"older daemon", "3.25.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -1050,9 +1050,9 @@ func TestEngineGetDeletionTargetsBySearchBoundedGatesOnDaemonSchemaAndForwardsMa
 				query.DeletionSearchFast, query.MaxDeletionTargetSearchResults,
 			)
 			assertions.Equal(1, healthRequests)
-			if tc.schema == "3.24.0" {
+			if tc.schema == "3.25.0" {
 				requirements.ErrorIs(err, ErrBoundedDeletionSearchUnsupported)
-				requirements.ErrorContains(err, "requires daemon API schema 3.25.0 or newer")
+				requirements.ErrorContains(err, "requires daemon API schema 3.26.0 or newer")
 				requirements.ErrorContains(err, "upgrade the daemon and retry")
 				assertions.Zero(targetRequests)
 				return
