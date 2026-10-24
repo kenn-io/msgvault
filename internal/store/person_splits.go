@@ -12,6 +12,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 const (
@@ -271,6 +274,17 @@ func (s *Store) splitPersonMergeOnce(
 				return fmt.Errorf("%w: ancestor absorbed UID alias is not owned by source",
 					ErrPersonSplitParticipants)
 			}
+		}
+		if err := s.restorePersonInstructionLinksTx(ctx, tx, request.MergeID, snapshot); err != nil {
+			return err
+		}
+		for _, ancestor := range ancestorRestorations {
+			if err := s.restorePersonInstructionLinksTx(ctx, tx, ancestor.merge.ID, ancestor.snapshot); err != nil {
+				return err
+			}
+		}
+		if err := s.markSplitPersonInstructionsTx(ctx, tx, newPersonID); err != nil {
+			return err
 		}
 		var ownershipQuery strings.Builder
 		ownershipQuery.WriteString(`UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`)
@@ -777,15 +791,42 @@ func (s *Store) restorePersonSplitRowsTx(
 		return nil, err
 	}
 
-	// Recreate deleted and removed deduplicated parent rows first. Existing dependent
-	// rows may need their merge-time foreign-key remaps reversed afterward.
+	// Recreate deleted and removed deduplicated rows first. Proposals and suspended
+	// instructions must precede deduplicated instructions so collision handling can
+	// preserve post-merge owner edits. Existing dependent rows are reversed later.
 	slices.SortStableFunc(move, func(left, right personSplitJournalRow) int {
 		priority := personSplitRestorePriority(left.tableName) -
 			personSplitRestorePriority(right.tableName)
-		if priority != 0 || left.tableName != "person_fact_pin_events" ||
+		if priority != 0 {
+			return priority
+		}
+		if left.tableName == personInstructionsTableName &&
+			right.tableName == personInstructionsTableName {
+			leftProposal := personSplitSnapshotRowText(rowsByPath[left.snapshotPath], "status") ==
+				string(personfacts.InstructionStatusProposed)
+			rightProposal := personSplitSnapshotRowText(rowsByPath[right.snapshotPath], "status") ==
+				string(personfacts.InstructionStatusProposed)
+			if leftProposal != rightProposal {
+				if leftProposal {
+					return -1
+				}
+				return 1
+			}
+			leftSuspended := personSplitSnapshotRowText(rowsByPath[left.snapshotPath], "status") ==
+				string(personfacts.InstructionStatusSuspended)
+			rightSuspended := personSplitSnapshotRowText(rowsByPath[right.snapshotPath], "status") ==
+				string(personfacts.InstructionStatusSuspended)
+			if leftSuspended != rightSuspended {
+				if leftSuspended {
+					return -1
+				}
+				return 1
+			}
+		}
+		if left.tableName != "person_fact_pin_events" ||
 			right.tableName != "person_fact_pin_events" ||
 			!left.originalRowID.Valid || !right.originalRowID.Valid {
-			return priority
+			return 0
 		}
 		if left.originalRowID.Int64 < right.originalRowID.Int64 {
 			return -1
@@ -826,9 +867,10 @@ func (s *Store) restorePersonSplitRowsTx(
 			}
 			continue
 		}
+		var instructionLifecycleChanged bool
 		if row.action == personMergeActionDeduplicated {
 			var restore bool
-			snapshotRow, restore, err = s.preparePersonSplitDeduplicatedRowTx(
+			snapshotRow, restore, instructionLifecycleChanged, err = s.preparePersonSplitDeduplicatedRowTx(
 				ctx, tx, row, snapshotRow,
 			)
 			if err != nil {
@@ -879,6 +921,16 @@ func (s *Store) restorePersonSplitRowsTx(
 				return nil, err
 			}
 			continue
+		}
+		if row.tableName == personInstructionsTableName && instructionLifecycleChanged &&
+			personSplitInstructionHasLiveStatus(personSplitSnapshotColumnsByName(snapshotRow.Columns)) {
+			if err := s.supersedeRestoredPersonSplitCollisionTx(
+				ctx, tx, mergeID, splitID, newPersonID,
+				personSplitSnapshotRowText(snapshotRow, "instruction_key"), snapshotRow.RowID,
+				time.Now().UTC(),
+			); err != nil {
+				return nil, err
+			}
 		}
 		if err := s.insertPersonSplitSnapshotRowTx(
 			ctx, tx, snapshotRow, sourceID, newPersonID,
@@ -945,7 +997,7 @@ func (s *Store) restorePersonSplitRowsTx(
 			continue
 		}
 		if err := s.restoreExistingPersonSplitRowTx(
-			ctx, tx, row, snapshotRow, sourceID, newPersonID,
+			ctx, tx, mergeID, splitID, row, snapshotRow, sourceID, newPersonID,
 			survivorSnapshotID, absorbedSnapshotID, sourceUID, newUID,
 		); err != nil {
 			return nil, err
@@ -1149,6 +1201,13 @@ var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency
 }
 
 var personSplitSnapshotColumnDependencies = map[string]map[string]personSplitSnapshotDependency{
+	personInstructionsTableName: {
+		"contact_point_id": {column: "contact_point_id", table: "person_contact_points", key: "id"},
+		"supersedes_id":    {column: "supersedes_id", table: personInstructionsTableName, key: "id"},
+	},
+	"person_instruction_events": {
+		"instruction_id": {column: "instruction_id", table: personInstructionsTableName, key: "id"},
+	},
 	personRelationshipReviewsTableName: {
 		"accepted_relationship_id": {
 			column: "accepted_relationship_id", table: personRelationshipsTableName, key: "id",
@@ -1447,7 +1506,7 @@ func personSplitRestorePriority(table string) int {
 		return 10
 	case "identity_match_candidate_redirects", identityMatchCandidateSourcesTableName,
 		identityMatchEvidenceTableName, personRelationshipReviewsTableName,
-		personMergeReviewCandidatesTableName:
+		personMergeReviewCandidatesTableName, "person_instruction_events":
 		return 20
 	case identityMatchEvidenceSourcesTableName:
 		return 30
@@ -1459,6 +1518,7 @@ func personSplitRestorePriority(table string) int {
 func (s *Store) restoreExistingPersonSplitRowTx(
 	ctx context.Context,
 	tx *loggedTx,
+	mergeID, splitID int64,
 	journal personSplitJournalRow,
 	row personMergeSnapshotRow,
 	sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID int64,
@@ -1502,13 +1562,21 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 		}
 		postByName = personSplitSnapshotColumnsByName(post.Columns)
 	}
+	instructionLifecycleChanged := row.TableName == personInstructionsTableName &&
+		personSplitInstructionLifecycleChanged(currentByName, postByName)
+	preserveInstructionLifecycle := row.TableName == personInstructionsTableName &&
+		personSplitInstructionLifecycleMustPreserve(currentByName, postByName)
 	keyColumns := make(map[string]struct{}, len(spec.keyColumns()))
 	for _, name := range spec.keyColumns() {
 		keyColumns[name] = struct{}{}
 	}
 	assignments := make([]string, 0, len(row.Columns))
 	args := make([]any, 0, len(row.Columns)+3)
+	var restoredInstructionPersonID int64
 	for _, column := range row.Columns {
+		if preserveInstructionLifecycle && personSplitInstructionLifecycleColumn(column.Name) {
+			continue
+		}
 		if !recordTargetPresent &&
 			(column.Name == "active_until" || column.Name == "superseded_at") {
 			continue
@@ -1558,8 +1626,34 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 		if !restore {
 			continue
 		}
+		if value != nil && row.TableName == personInstructionsTableName &&
+			personSplitInstructionTimestampColumn(column.Name) {
+			value, err = personSplitInstructionTimestampValue(value)
+			if err != nil {
+				return fmt.Errorf("%w: restore person instruction %s timestamp: %w",
+					ErrPersonMergeSnapshotCorrupt, column.Name, err)
+			}
+		}
+		if row.TableName == personInstructionsTableName && column.Name == personMergePersonIDColumn {
+			if personID, ok := value.(int64); ok {
+				restoredInstructionPersonID = personID
+			}
+		}
 		assignments = append(assignments, personSplitIdentifier(column.Name)+" = ?")
 		args = append(args, value)
+	}
+	if row.TableName == personInstructionsTableName && instructionLifecycleChanged &&
+		personSplitInstructionHasLiveStatus(currentByName) && restoredInstructionPersonID > 0 {
+		currentID := currentByName["id"].Integer
+		instructionKey := currentByName["instruction_key"].Text
+		if currentID != nil && instructionKey != nil {
+			if err := s.supersedeRestoredPersonSplitCollisionTx(
+				ctx, tx, mergeID, splitID, restoredInstructionPersonID,
+				*instructionKey, *currentID, time.Now().UTC(),
+			); err != nil {
+				return err
+			}
+		}
 	}
 	if personSplitRevisionedTable(row.TableName) {
 		assignments = append(assignments,
@@ -1656,6 +1750,40 @@ func rebasePersonMergePostRowReferences(
 	return sql.NullString{String: string(rebased), Valid: true}, true, nil
 }
 
+// rebasePersonMergePostRowIntegerColumnTo aligns a prior journal's integer
+// reference with the target of its restored physical row.
+func rebasePersonMergePostRowIntegerColumnTo(
+	encoded sql.NullString,
+	spec personMergeTableSpec,
+	columnName string,
+	targetID int64,
+) (sql.NullString, error) {
+	if !encoded.Valid || encoded.String == "" {
+		return encoded, nil
+	}
+	var post personMergeSnapshotRow
+	if err := json.Unmarshal([]byte(encoded.String), &post); err != nil {
+		return sql.NullString{}, fmt.Errorf("%w: decode %s post-merge row: %w",
+			ErrPersonMergeSnapshotCorrupt, spec.TableName, err)
+	}
+	column, ok := personSplitSnapshotColumnsByName(post.Columns)[columnName]
+	if !ok || column.Integer == nil {
+		return sql.NullString{}, fmt.Errorf("%w: missing %s post-merge %s",
+			ErrPersonMergeSnapshotCorrupt, spec.TableName, columnName)
+	}
+	if targetID <= 0 {
+		return sql.NullString{}, fmt.Errorf("%w: invalid %s post-merge %s target",
+			ErrPersonMergeSnapshotCorrupt, spec.TableName, columnName)
+	}
+	if *column.Integer == targetID {
+		return encoded, nil
+	}
+	rebased, _, err := rebasePersonMergePostRowIntegerColumn(
+		encoded, spec, columnName, *column.Integer, targetID,
+	)
+	return rebased, err
+}
+
 func (s *Store) personSplitExistingColumnValueTx(
 	ctx context.Context,
 	tx *loggedTx,
@@ -1745,6 +1873,14 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 				return err
 			}
 		}
+		if value != nil && row.TableName == personInstructionsTableName &&
+			personSplitInstructionTimestampColumn(column.Name) {
+			value, err = personSplitInstructionTimestampValue(value)
+			if err != nil {
+				return fmt.Errorf("%w: restore person instruction %s timestamp: %w",
+					ErrPersonMergeSnapshotCorrupt, column.Name, err)
+			}
+		}
 		if personSplitRevisionedTable(row.TableName) && column.Name == "revision" {
 			revision, ok := value.(int64)
 			if !ok {
@@ -1768,9 +1904,33 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 	return nil
 }
 
+func personSplitInstructionTimestampColumn(name string) bool {
+	switch name {
+	case "stated_at", "valid_from", "valid_until", "confirmed_at", "created_at", "updated_at":
+		return true
+	default:
+		return false
+	}
+}
+
+func personSplitInstructionTimestampValue(value any) (any, error) {
+	switch timestamp := value.(type) {
+	case time.Time:
+		return timestamp.UTC(), nil
+	case string:
+		parsed, err := parseDBTime(timestamp)
+		if err != nil {
+			return nil, err
+		}
+		return parsed.UTC(), nil
+	default:
+		return nil, fmt.Errorf("%T is not a timestamp", value)
+	}
+}
+
 func personSplitRevisionedTable(table string) bool {
 	switch table {
-	case "vcard_resource_envelopes", personRelationshipsTableName, "employments":
+	case "vcard_resource_envelopes", personRelationshipsTableName, "employments", personInstructionsTableName:
 		return true
 	default:
 		return false
@@ -1867,6 +2027,7 @@ func personSplitSnapshotValue(value personMergeSnapshotValue) any {
 
 type priorPersonMergeJournalRow struct {
 	mergeID       int64
+	action        string
 	originalRowID sql.NullInt64
 	originalKey   string
 	currentRowID  sql.NullInt64
@@ -1920,7 +2081,7 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 		rebasedCurrent = &currentRows[0]
 	}
 
-	rows, err := tx.QueryContext(ctx, `SELECT merge_id, original_row_id,
+	rows, err := tx.QueryContext(ctx, `SELECT merge_id, action, original_row_id,
 		original_row_key, current_row_id, current_row_key, post_merge_row_json
 		FROM person_merge_rows
 		WHERE merge_id <> ? AND table_name = ? AND split_id IS NULL
@@ -1933,7 +2094,7 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 	for rows.Next() {
 		var item priorPersonMergeJournalRow
 		if err := rows.Scan(
-			&item.mergeID, &item.originalRowID, &item.originalKey,
+			&item.mergeID, &item.action, &item.originalRowID, &item.originalKey,
 			&item.currentRowID, &item.currentKey, &item.postMergeJSON,
 		); err != nil {
 			return fmt.Errorf("scan prior %s split journal: %w", journal.tableName, err)
@@ -1957,13 +2118,20 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 		if err != nil {
 			return err
 		}
-		if (recreated && !lineageMatch) || (!recreated && !locatorMatch) {
+		restoredDeduplicatedInstruction := journal.tableName == personInstructionsTableName &&
+			item.action == personMergeActionDeduplicated && locatorMatch
+		if (recreated && !lineageMatch && !restoredDeduplicatedInstruction) ||
+			(!recreated && !locatorMatch) {
 			continue
 		}
 		action := "deleted_snapshot"
 		var currentRowID, currentRowKey any
 		if exists {
 			action = "moved"
+			if item.action == personMergeActionDeduplicated &&
+				(!recreated || restoredDeduplicatedInstruction) {
+				action = personMergeActionDeduplicated
+			}
 			if newRowID.Valid {
 				currentRowID = newRowID.Int64
 			}
@@ -1984,6 +2152,25 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 			)
 			if err != nil {
 				return err
+			}
+			switch journal.tableName {
+			case personInstructionsTableName:
+				instructionID := personSplitSnapshotRowInteger(*rebasedCurrent, "id")
+				rebasedPostMergeJSON, err = rebasePersonMergePostRowIntegerColumnTo(
+					rebasedPostMergeJSON, spec, "id", instructionID,
+				)
+				if err != nil {
+					return fmt.Errorf("rebase prior instruction identity after split: %w", err)
+				}
+			case "person_instruction_events":
+				// instruction_id is an event reference, not a person reference.
+				instructionID := personSplitSnapshotRowInteger(*rebasedCurrent, "instruction_id")
+				rebasedPostMergeJSON, err = rebasePersonMergePostRowIntegerColumnTo(
+					rebasedPostMergeJSON, spec, "instruction_id", instructionID,
+				)
+				if err != nil {
+					return fmt.Errorf("rebase prior instruction event target after split: %w", err)
+				}
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE person_merge_rows SET
@@ -2206,36 +2393,38 @@ func (s *Store) preparePersonSplitDeduplicatedRowTx(
 	tx *loggedTx,
 	journal personSplitJournalRow,
 	original personMergeSnapshotRow,
-) (personMergeSnapshotRow, bool, error) {
+) (personMergeSnapshotRow, bool, bool, error) {
 	spec, ok := personMergeTableRegistry[journal.tableName]
 	if !ok {
-		return original, false,
+		return original, false, false,
 			fmt.Errorf("%w: unregistered split table %q", ErrPersonMergeInvalid, journal.tableName)
 	}
 	where, args, err := personSplitCurrentRowWhere(spec, journal)
 	if err != nil {
-		return original, false, err
+		return original, false, false, err
 	}
 	currentRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
 		`SELECT * FROM `+personSplitIdentifier(journal.tableName)+` WHERE `+where,
 		args, 0)
 	if err != nil {
-		return original, false, err
+		return original, false, false, err
 	}
 	if len(currentRows) == 0 || !journal.postMergeJSON.Valid {
-		return original, false, nil
+		return original, false, false, nil
 	}
 	if len(currentRows) != 1 {
-		return original, false, fmt.Errorf("%w: current %s row is ambiguous",
+		return original, false, false, fmt.Errorf("%w: current %s row is ambiguous",
 			ErrPersonSplitParticipants, journal.tableName)
 	}
 	var post personMergeSnapshotRow
 	if err := json.Unmarshal([]byte(journal.postMergeJSON.String), &post); err != nil {
-		return original, false, fmt.Errorf("%w: decode deduplicated %s post-merge row: %w",
+		return original, false, false, fmt.Errorf("%w: decode deduplicated %s post-merge row: %w",
 			ErrPersonMergeSnapshotCorrupt, journal.tableName, err)
 	}
 	currentByName := personSplitSnapshotColumnsByName(currentRows[0].Columns)
 	postByName := personSplitSnapshotColumnsByName(post.Columns)
+	instructionLifecycleChanged := original.TableName == personInstructionsTableName &&
+		personSplitInstructionLifecycleChanged(currentByName, postByName)
 	protected := make(map[string]struct{}, len(spec.keyColumns())+len(spec.PersonReferences)*2)
 	for _, name := range spec.keyColumns() {
 		protected[name] = struct{}{}
@@ -2250,9 +2439,11 @@ func (s *Store) preparePersonSplitDeduplicatedRowTx(
 		currentValue, hasCurrent := currentByName[name]
 		postValue, hasPost := postByName[name]
 		if hasCurrent != hasPost || (hasCurrent && !reflect.DeepEqual(currentValue, postValue)) {
-			return original, false, nil
+			return original, false, instructionLifecycleChanged, nil
 		}
 	}
+	preserveInstructionLifecycle := original.TableName == personInstructionsTableName &&
+		personSplitInstructionLifecycleMustPreserve(currentByName, postByName)
 	reconciled := original
 	reconciled.Columns = slices.Clone(original.Columns)
 	for index := range reconciled.Columns {
@@ -2262,11 +2453,23 @@ func (s *Store) preparePersonSplitDeduplicatedRowTx(
 		}
 		currentValue, hasCurrent := currentByName[name]
 		postValue, hasPost := postByName[name]
-		if hasCurrent && hasPost && !reflect.DeepEqual(currentValue, postValue) {
+		if name == "revision" && original.TableName == personInstructionsTableName {
+			originalRevision := reconciled.Columns[index].Value.Integer
+			if originalRevision == nil || !hasCurrent || currentValue.Integer == nil {
+				return original, false, false, fmt.Errorf("%w: invalid %s revision",
+					ErrPersonMergeSnapshotCorrupt, original.TableName)
+			}
+			if *currentValue.Integer > *originalRevision {
+				reconciled.Columns[index].Value = currentValue
+			}
+			continue
+		}
+		if hasCurrent && hasPost && (!reflect.DeepEqual(currentValue, postValue) ||
+			(preserveInstructionLifecycle && personSplitInstructionLifecycleColumn(name))) {
 			reconciled.Columns[index].Value = currentValue
 		}
 	}
-	return reconciled, true, nil
+	return reconciled, true, instructionLifecycleChanged, nil
 }
 
 func personSplitRowKeyWhere(
@@ -2390,6 +2593,156 @@ func (s *Store) recomputePersonSplitActivityTx(
 		if err := s.recomputeContactStateTx(ctx, tx, personID, revisions, true); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (s *Store) restorePersonInstructionLinksTx(ctx context.Context, tx *loggedTx, mergeID int64, snapshot personMergeSnapshot) error {
+	for _, row := range snapshot.Rows {
+		if row.TableName != personInstructionsTableName {
+			continue
+		}
+		target := personSplitSnapshotRowInteger(row, "supersedes_id")
+		if target <= 0 {
+			continue
+		}
+		// Only journal rows actually restored by this split may receive old links.
+		if _, err := tx.ExecContext(ctx, `UPDATE person_instructions SET supersedes_id=? WHERE id=? AND EXISTS(SELECT 1 FROM person_instructions target WHERE target.id=?) AND EXISTS(SELECT 1 FROM person_merge_rows journal WHERE journal.merge_id=? AND journal.table_name='person_instructions' AND journal.original_row_id=? AND journal.split_id IS NOT NULL)`, target, row.RowID, target, mergeID, row.RowID); err != nil {
+			return fmt.Errorf("restore split instruction supersession: %w", err)
+		}
+	}
+	return nil
+}
+func (s *Store) markSplitPersonInstructionsTx(ctx context.Context, tx *loggedTx, newPersonID int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE instruction_id IN (SELECT id FROM person_instructions WHERE person_id=?)`, newPersonID, newPersonID); err != nil {
+		return fmt.Errorf("reparent split instruction events: %w", err)
+	}
+	rows, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+` WHERE i.person_id=? ORDER BY i.id`, time.Now().UTC(), newPersonID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		reviewState := personfacts.InstructionReviewNone
+		if instructionLive(row) {
+			reviewState = personfacts.InstructionReviewSplit
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET review_state=? WHERE id=?`, reviewState, row.ID); err != nil {
+			return fmt.Errorf("mark split instruction: %w", err)
+		}
+		if err = appendPersonInstructionEventTx(ctx, tx, &row, personfacts.InstructionActionSplitMoved, "system", map[string]any{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Lifecycle columns must reverse or retain an owner decision together. In
+// particular, restoring only half of the confirmation pair violates its CHECK.
+func personSplitInstructionLifecycleColumn(name string) bool {
+	switch name {
+	case "origin", "stated_at", "generation_id", "source_observation_id", "status", "adopted", "valid_from", "valid_until", "confirmed_at", "confirmed_by", "review_state":
+		return true
+	default:
+		return false
+	}
+}
+
+func personSplitInstructionLifecycleChanged(current, post map[string]personMergeSnapshotValue) bool {
+	for name, value := range current {
+		if personSplitInstructionLifecycleColumn(name) {
+			// Exact splits write this system marker after rebasing older merge
+			// baselines. It must not make those baselines look owner-edited.
+			if name == "review_state" && value.Text != nil &&
+				*value.Text == string(personfacts.InstructionReviewSplit) {
+				continue
+			}
+			if baseline, ok := post[name]; ok && !reflect.DeepEqual(value, baseline) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func personSplitInstructionLifecycleMustPreserve(
+	current, post map[string]personMergeSnapshotValue,
+) bool {
+	if personSplitInstructionLifecycleChanged(current, post) {
+		return true
+	}
+	status := current["status"].Text
+	if status == nil {
+		return false
+	}
+	switch personfacts.InstructionStatus(*status) {
+	case personfacts.InstructionStatusSuperseded, personfacts.InstructionStatusExpired,
+		personfacts.InstructionStatusRevoked, personfacts.InstructionStatusRejected:
+		return true
+	default:
+		return false
+	}
+}
+
+func personSplitInstructionHasLiveStatus(columns map[string]personMergeSnapshotValue) bool {
+	status := columns["status"].Text
+	if status == nil {
+		return false
+	}
+	switch personfacts.InstructionStatus(*status) {
+	case personfacts.InstructionStatusProposed, personfacts.InstructionStatusActive,
+		personfacts.InstructionStatusSuspended:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Store) supersedeRestoredPersonSplitCollisionTx(
+	ctx context.Context,
+	tx *loggedTx,
+	mergeID, splitID, personID int64,
+	instructionKey string,
+	exceptID int64,
+	now time.Time,
+) error {
+	var conflictingID int64
+	err := tx.QueryRowContext(ctx, `SELECT instruction.id
+		FROM person_instructions instruction
+		JOIN person_merge_rows journal
+		  ON journal.merge_id = ? AND journal.table_name = ?
+		 AND journal.original_row_id = instruction.id
+		WHERE journal.split_id = ? AND journal.action = 'deleted_snapshot'
+		  AND instruction.person_id = ? AND instruction.instruction_key = ?
+		  AND instruction.id <> ? AND instruction.status IN ('proposed','active','suspended')
+		ORDER BY instruction.id LIMIT 1`,
+		mergeID, personInstructionsTableName, splitID, personID, instructionKey, exceptID,
+	).Scan(&conflictingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("find restored instruction collision: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE person_instructions
+		SET status = 'superseded', review_state = 'none',
+		    revision = revision + 1, updated_at = ?
+		WHERE id = ? AND status IN ('proposed','active','suspended')`, now, conflictingID)
+	if err != nil {
+		return fmt.Errorf("supersede restored instruction collision: %w", err)
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("count superseded restored instructions: %w", err)
+	} else if changed != 1 {
+		return fmt.Errorf("%w: restored instruction changed", ErrPersonSplitParticipants)
+	}
+	conflicting := &PersonInstruction{
+		ID: conflictingID, PersonID: personID, InstructionKey: instructionKey,
+	}
+	if err := appendPersonInstructionEventTx(
+		ctx, tx, conflicting, personfacts.InstructionActionSupersede, "system:split",
+		map[string]string{"reason": "post_merge_confirmation"},
+	); err != nil {
+		return err
 	}
 	return nil
 }
