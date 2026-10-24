@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -464,10 +463,7 @@ func TestEmbeddingsListRequiresUpgradeWithoutWritingOldMetadata(t *testing.T) {
 	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
 	cfg.Vector.Embeddings.Dimension = 4
 	ctx := withTestConfig(t, cfg)
-	main, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	defer func() { require.NoError(main.Close()) }()
-	require.NoError(main.InitSchema())
+	main := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: cfg.Vector.DBPath, MainDB: main.DB(), Dimension: 4})
 	require.NoError(err)
 	defer func() { require.NoError(backend.Close()) }()

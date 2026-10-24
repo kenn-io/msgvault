@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -416,13 +415,7 @@ func TestCreateSubsetFailsFastWhenArchiveOwned(t *testing.T) {
 	testCtx := withStoreResolverConfig(t, testCfg)
 	_ = testCtx
 
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(
-		err, "open test archive")
-
-	require.NoError(
-		st.InitSchema(), "init test archive")
-
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 	require.NoError(
 		st.Close(), "close test archive")
 
