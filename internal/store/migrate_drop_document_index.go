@@ -37,9 +37,7 @@ var retiredDocumentCursorColumns = []string{
 
 func (s *Store) dropDocumentIndex(ctx context.Context) error {
 	postgres := s.IsPostgreSQL()
-	var deletedRows int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		deletedRows = 0
 		statements := []string{
 			"DROP TRIGGER IF EXISTS trg_person_sweep_documents_message_update",
 			"DROP TRIGGER IF EXISTS trg_document_message_type_revision",
@@ -79,11 +77,6 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 			if !exists {
 				continue
 			}
-			var rows int64
-			if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&rows); err != nil {
-				return fmt.Errorf("count retired document rows in %s: %w", table, err)
-			}
-			deletedRows += rows
 			if _, err := tx.ExecContext(ctx, "DROP TABLE "+table); err != nil {
 				return fmt.Errorf("drop retired document table %s: %w", table, err)
 			}
@@ -115,6 +108,6 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("deleted retired document rows during schema migration", "rows", deletedRows)
+	slog.Info("deleted retired document rows during schema migration")
 	return nil
 }
