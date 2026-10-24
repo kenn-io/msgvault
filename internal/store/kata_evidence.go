@@ -76,6 +76,15 @@ func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID 
 	}
 	ref.AttachmentID = attachmentID
 	var refs []kataevidence.Reference
+	var partKey string
+	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(source_part_key,'') FROM attachments WHERE id=? AND message_id=?`), attachmentID, messageID).Scan(&partKey)
+	if err == nil {
+		file := ref
+		file.Kind, file.OccurrenceKey = "document_chunk", legacyDocumentOccurrenceKey(messageID, partKey, attachmentID)
+		refs = append(refs, file)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("read Kata attachment: %w", err)
+	}
 	// Historical deliveries follow the source tuple regardless of current bytes or eligibility.
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`
 		SELECT o.occurrence_ref FROM beeper_media_occurrences o`+beeperMediaTupleJoin+`
@@ -102,6 +111,17 @@ func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID 
 		return nil, kataevidence.ErrUnavailable
 	}
 	return refs, nil
+}
+
+// legacyDocumentOccurrenceKey preserves the digest stored in existing Kata
+// citations. Its encoding must stay unchanged after the document index retires.
+func legacyDocumentOccurrenceKey(messageID int64, sourcePartKey string, attachmentID int64) string {
+	identity := fmt.Sprintf("unstable\x00%d\x00%d", messageID, attachmentID)
+	if sourcePartKey != "" {
+		identity = fmt.Sprintf("stable\x00%d\x00%s", messageID, sourcePartKey)
+	}
+	digest := sha256.Sum256([]byte(identity))
+	return "dococc_" + hex.EncodeToString(digest[:])
 }
 
 // KataDocbankBinding reads the one retained delivery of an attachment to

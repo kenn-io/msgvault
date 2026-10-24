@@ -58,6 +58,48 @@ func TestHistoricalKataDocumentCitationUnavailable(t *testing.T) {
 	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
 }
 
+func TestKataCitationSourceMatchesLegacyDocumentCitation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		partKey any
+		key     string
+	}{
+		{"stable", "mime:2", "dococc_fca76aec6b7772dcd390d7dc77234efaf2a0c365aad316719a75350baf8c215e"},
+		{"null", nil, "dococc_99373c3722401a27c9e5a6ce6a90774c733c01f1684fcbbb8b759bc989e320f4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			overriding := ""
+			if f.Store.IsPostgreSQL() {
+				overriding = " OVERRIDING SYSTEM VALUE"
+			}
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+overriding+` VALUES (4101,?,?,'historical-document','email')`), f.Source.ID, f.ConvID)
+			require.NoError(err)
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments (id,message_id,filename,storage_path,source_part_key)`+overriding+` VALUES (4201,4101,'budget.pdf','',?)`), tc.partKey)
+			require.NoError(err)
+			uid, err := f.Store.ArchiveUIDContext(t.Context())
+			require.NoError(err)
+			// A saved issue cites the file key produced before the document index was retired.
+			citation := kataevidence.Reference{Version: 1, Kind: "document_chunk", ArchiveUID: uid, MessageID: 4101, SourceType: f.Source.SourceType, SourceIdentifier: f.Source.Identifier, SourceMessageID: "historical-document", AttachmentID: 4201, OccurrenceKey: tc.key}
+			savedKeys := kataevidence.SourceKeys(citation)
+			refs, err := f.Store.KataCitationSource(t.Context(), 4101, 4201)
+			require.NoError(err)
+			var lookupKeys []string
+			for _, ref := range refs {
+				keys := kataevidence.SourceKeys(ref)
+				lookupKeys = append(lookupKeys, keys[len(keys)-1])
+			}
+			assert.Contains(lookupKeys, savedKeys[len(savedKeys)-1])
+
+			other := f.CreateMessage("other-message")
+			_, err = f.Store.KataCitationSource(t.Context(), other, 4201)
+			require.ErrorIs(err, kataevidence.ErrUnavailable)
+		})
+	}
+}
+
 func TestKataEvidenceMessage(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
