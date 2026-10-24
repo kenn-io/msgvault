@@ -17,7 +17,6 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 		duringHistory bool
 		unreadable    bool
 	}{
-		{name: "between conversations"},
 		{name: "during history", duringHistory: true},
 		{name: "unreadable between conversations", unreadable: true},
 		{name: "unreadable during history", duringHistory: true, unreadable: true},

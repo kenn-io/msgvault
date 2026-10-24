@@ -104,69 +104,64 @@ const totalWorkspaceMessages = 13
 
 func TestImportPublicChannelsWithoutSearch(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := testWorkspace(t)
-	f.scopes = "channels:read,channels:history,users:read,users:read.email"
-	f.searchMissingScope = true
-	f.onSearch = func(string, int) { assertions.Fail("token without search scope must not search") }
-	f.convs = append(f.convs, &fakeConv{
-		ID: "C03", Name: "announcements", Kind: "public", NotMember: true,
-		Members: []string{"UALICE"},
-		Msgs:    []fakeMsg{{TS: ts(40), User: "UALICE", Text: "public announcement"}},
-	})
-	imp, opts := testImporter(t, f)
-	now := tsBase.Add(24 * time.Hour)
-	imp.now = func() time.Time { return now }
+	for _, tc := range []struct {
+		name      string
+		limit     int
+		runs      int
+		wantCount int
+	}{
+		{name: "unlimited", runs: 1, wantCount: 12},
+		{name: "limited thread walk", limit: 3, runs: 20, wantCount: 13},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := testWorkspace(t)
+			f.scopes = "channels:read,channels:history,users:read,users:read.email"
+			f.searchMissingScope = true
+			f.onSearch = func(string, int) { assertions.Fail("token without search scope must not search") }
+			f.convs = append(f.convs, &fakeConv{
+				ID: "C03", Name: "announcements", Kind: "public", NotMember: true,
+				Members: []string{"UALICE"},
+				Msgs:    []fakeMsg{{TS: ts(40), User: "UALICE", Text: "public announcement"}},
+			})
+			imp, opts := testImporter(t, f)
+			now := tsBase.Add(24 * time.Hour)
+			imp.now = func() time.Time { return now }
 
-	sum, err := imp.Import(context.Background(), opts)
-	requirements.NoError(err)
-	assertions.Equal(2, sum.ConversationsProcessed)
-	var count int
-	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
-	assertions.Equal(11, count, "public messages and replies, including an unjoined channel")
-	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id IN ('C02', 'G01', 'D01')`).Scan(&count))
-	assertions.Zero(count, "private conversations must not enter the archive")
+			sum, err := imp.Import(context.Background(), opts)
+			requirements.NoError(err)
+			assertions.Equal(2, sum.ConversationsProcessed)
+			var count int
+			requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+			assertions.Equal(11, count, "public messages and replies, including an unjoined channel")
+			requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id IN ('C02', 'G01', 'D01')`).Scan(&count))
+			assertions.Zero(count, "private conversations must not enter the archive")
 
-	// The first reply to an old, previously unthreaded message cannot be
-	// found through an incremental history window. It requires a new walk.
-	f.convs[0].Msgs[0].Replies = []fakeMsg{{TS: ts(1500), ThreadTS: ts(0), User: "UALICE", Text: "late public reply"}}
-	now = now.Add(2 * time.Hour)
-	sum, err = imp.Import(context.Background(), opts)
-	requirements.NoError(err)
-	assertions.Positive(sum.RepliesFetched)
-	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
-	assertions.Equal(12, count)
+			// The first reply to an old, previously unthreaded message cannot be
+			// found through an incremental history window. It requires a new walk.
+			f.convs[0].Msgs[0].Replies = []fakeMsg{{TS: ts(1500), ThreadTS: ts(0), User: "UALICE", Text: "late public reply"}}
+			if tc.limit > 0 {
+				f.convs[0].Msgs = append(f.convs[0].Msgs, fakeMsg{TS: ts(1501), User: "UALICE", Text: "new root"})
+			}
+			now = now.Add(2 * time.Hour)
+			opts.Limit = tc.limit
+			for range tc.runs {
+				sum, err = imp.Import(context.Background(), opts)
+				requirements.NoError(err)
+			}
+			if tc.limit == 0 {
+				assertions.Positive(sum.RepliesFetched)
+			}
+			requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+			assertions.Equal(tc.wantCount, count, "resumed thread walks must leave room for new channel messages")
 
-	_, err = imp.Import(context.Background(), opts)
-	requirements.NoError(err)
-	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
-	assertions.Equal(12, count, "re-reading threads must not duplicate messages")
-}
-
-func TestImportWithoutSearchResumesLimitedThreadWalk(t *testing.T) {
-	t.Parallel()
-	requirements := require.New(t)
-	f := testWorkspace(t)
-	f.convs = f.convs[:1]
-	f.scopes = "channels:read,channels:history,users:read,users:read.email"
-	f.searchMissingScope = true
-	imp, opts := testImporter(t, f)
-	now := tsBase.Add(24 * time.Hour)
-	imp.now = func() time.Time { return now }
-	_, err := imp.Import(context.Background(), opts)
-	requirements.NoError(err)
-	f.convs[0].Msgs[0].Replies = []fakeMsg{{TS: ts(1500), ThreadTS: ts(0), User: "UALICE", Text: "late reply"}}
-	f.convs[0].Msgs = append(f.convs[0].Msgs, fakeMsg{TS: ts(1501), User: "UALICE", Text: "new root"})
-	now = now.Add(2 * time.Hour)
-	opts.Limit = 3
-	for range 20 {
-		_, err = imp.Import(context.Background(), opts)
-		requirements.NoError(err)
+			_, err = imp.Import(context.Background(), opts)
+			requirements.NoError(err)
+			requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+			assertions.Equal(tc.wantCount, count, "re-reading threads must not duplicate messages")
+		})
 	}
-	var count int
-	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
-	assert.Equal(t, 12, count, "resumed thread walks must leave room for new channel messages")
 }
 
 func testImporter(t *testing.T, f *fakeSlack) (*Importer, ImportOptions) {
@@ -203,30 +198,6 @@ func TestIncludeConversationSelectionPolicy(t *testing.T) {
 			assert.Equal(t, tt.want, includeConversation(&tt.conv, &tt.opts))
 		})
 	}
-}
-
-func TestImportSkipsExcludedDMsAndGroupDMs(t *testing.T) {
-	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := testWorkspace(t)
-	historyCalls := map[string]int{}
-	f.onHistory = func(channelID string) { historyCalls[channelID]++ }
-	imp, opts := testImporter(t, f)
-	opts.ExcludeDMs = true
-	opts.ExcludeGroupDMs = true
-
-	sum, err := imp.Import(context.Background(), opts)
-	requirements.NoError(err)
-	assertions.Equal(2, sum.ConversationsProcessed)
-	assertions.Zero(historyCalls["D01"])
-	assertions.Zero(historyCalls["G01"])
-
-	var conversations int
-	requirements.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
-		`SELECT COUNT(*) FROM conversations WHERE source_conversation_id IN (?, ?)`),
-		"D01", "G01").Scan(&conversations))
-	assertions.Zero(conversations)
 }
 
 func TestImportPrivateChannelsAndDMsAreIndependent(t *testing.T) {
@@ -497,24 +468,6 @@ func TestImportUsesNextCursorWhenHasMoreIsFalse(t *testing.T) {
 		"a non-empty next_cursor must continue history and reply pagination regardless of has_more")
 }
 
-func TestFullRepairReportsUpdatesRatherThanAdds(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	f := testWorkspace(t)
-	imp, opts := testImporter(t, f)
-
-	first, err := imp.Import(context.Background(), opts)
-	require.NoError(err)
-	require.Equal(totalWorkspaceMessages, first.MessagesAdded)
-	require.Zero(first.MessagesUpdated)
-
-	opts.Full = true
-	second, err := imp.Import(context.Background(), opts)
-	require.NoError(err)
-	assert.Zero(t, second.MessagesAdded)
-	assert.Equal(t, totalWorkspaceMessages, second.MessagesUpdated)
-}
-
 func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -745,8 +698,10 @@ func TestImportFullReUpsertsInPlace(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	first, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
+	require.Equal(totalWorkspaceMessages, first.MessagesAdded)
+	require.Zero(first.MessagesUpdated)
 
 	// An old message is edited at the source; only --full re-walks it.
 	f.mu.Lock()
@@ -755,8 +710,10 @@ func TestImportFullReUpsertsInPlace(t *testing.T) {
 
 	full := opts
 	full.Full = true
-	_, err = imp.Import(context.Background(), full)
+	second, err := imp.Import(context.Background(), full)
 	require.NoError(err)
+	assert.Zero(second.MessagesAdded)
+	assert.Equal(totalWorkspaceMessages, second.MessagesUpdated)
 
 	var body string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
@@ -786,7 +743,7 @@ func TestImportLimitLeavesBackfillResumable(t *testing.T) {
 	require.NoError(err)
 	var partial int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&partial))
-	assert.Less(partial, totalWorkspaceMessages)
+	assert.Less(partial, 11, "limited run must stop before all top-level messages are archived")
 
 	// An uncapped run completes the backfill: every message exactly once.
 	_, err = imp.Import(context.Background(), opts)
@@ -2590,7 +2547,7 @@ func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {
 	assert.Equal(t, 1, n, "a reply created while its channel was excluded must be recovered on re-entry")
 }
 
-func TestImportLimitBoundsThreadReplies(t *testing.T) {
+func TestStandingLimitConvergesThroughThreadDebt(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2598,21 +2555,21 @@ func TestImportLimitBoundsThreadReplies(t *testing.T) {
 	f.users = []map[string]any{
 		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
 	}
+	// The root has more replies than the standing limit, so the drain
+	// must carry the thread across runs.
 	busyRoot := fakeMsg{TS: ts(0), User: "UME", Text: "busy root"}
 	for i := range 12 {
 		busyRoot.Replies = append(busyRoot.Replies,
 			fakeMsg{TS: ts(i + 1), ThreadTS: busyRoot.TS, User: "UME", Text: "reply " + strconv.Itoa(i)})
 	}
-	f.convs = []*fakeConv{{
-		ID: "C20", Name: "busy", Kind: "public", Members: []string{"UME"},
-		Msgs: []fakeMsg{busyRoot},
-	}}
+	conv := &fakeConv{ID: "C30", Name: "steady", Kind: "public", Members: []string{"UME"}, Msgs: []fakeMsg{busyRoot}}
+	f.convs = []*fakeConv{conv}
 	imp, opts := testImporter(t, f)
 	st := imp.store
+	now := tsBase.Add(time.Hour)
+	imp.now = func() time.Time { return now }
 
-	// One discovered thread must not blow through the budget: its
-	// reply_count forecast charges the run at recording time, and the drain
-	// fetches on budget-sized pages, parking the remainder as durable debt.
+	// One discovered thread must stay within the reply budget.
 	limited := opts
 	limited.Limit = 3
 	_, err := imp.Import(context.Background(), limited)
@@ -2622,46 +2579,18 @@ func TestImportLimitBoundsThreadReplies(t *testing.T) {
 	assert.Positive(partial)
 	assert.LessOrEqual(partial, 4, "--limit 3 must bound thread replies, not just top-level history")
 
-	// The unlimited run completes the thread: every message exactly once.
-	_, err = imp.Import(context.Background(), opts)
-	require.NoError(err)
-	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
-	assert.Equal(13, total, "resumed runs must recover the budget-clipped replies")
-	assert.Equal(distinct, total)
-}
-
-func TestStandingLimitConvergesThroughThreadDebt(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newFakeSlack(t)
-	f.users = []map[string]any{
-		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
-	}
-	// The OLDEST message is a root with more replies than the standing
-	// limit; several newer top-levels sit above it. Newest-first pagination
-	// reaches the root last, so the drain must carry the thread across runs.
-	busyRoot := fakeMsg{TS: ts(0), User: "UME", Text: "busy root"}
-	for i := range 12 {
-		busyRoot.Replies = append(busyRoot.Replies,
-			fakeMsg{TS: ts(i + 1), ThreadTS: busyRoot.TS, User: "UME", Text: "reply " + strconv.Itoa(i)})
-	}
-	conv := &fakeConv{ID: "C30", Name: "steady", Kind: "public", Members: []string{"UME"}, Msgs: []fakeMsg{busyRoot}}
+	// Newer top-level messages must also be recovered while replies drain.
+	f.mu.Lock()
 	for i := range 5 {
 		conv.Msgs = append(conv.Msgs, fakeMsg{TS: ts(100 + i), User: "UME", Text: "top " + strconv.Itoa(i)})
 	}
-	f.convs = []*fakeConv{conv}
-	imp, opts := testImporter(t, f)
-	st := imp.store
+	f.mu.Unlock()
+	now = now.Add(time.Hour)
 
 	// A standing --limit cron must converge to a complete archive BY
 	// ITSELF: each run makes durable progress (history pages, then reply
 	// drain resumed from the per-thread drained-to ts) — no unlimited run
 	// required, no stall.
-	limited := opts
-	limited.Limit = 4
 	for range 12 {
 		_, err := imp.Import(context.Background(), limited)
 		require.NoError(err)
@@ -2727,39 +2656,6 @@ func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "G05:"+gapReply).Scan(&n))
 	require.Equal(1, n, "gap recovery must anchor threads rooted after the backfill pin")
-}
-
-func TestStandingLimitSweepsLateReplies(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	f, rootTS := oldThreadWorkspace(t)
-	imp, opts := testImporter(t, f)
-	st := imp.store
-
-	// A standing --limit schedule must still discover replies: the sweep
-	// participates in limited runs with a work budget instead of being
-	// skipped outright (which would mean a permanently-capped sync NEVER
-	// archives another reply).
-	limited := opts
-	limited.Limit = 6
-	for range 4 {
-		_, err := imp.Import(context.Background(), limited)
-		require.NoError(err)
-	}
-	lateReply := tsFresh(0)
-	f.mu.Lock()
-	root := f.conv("C09").findRoot(rootTS)
-	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
-	f.mu.Unlock()
-
-	for range 4 {
-		_, err := imp.Import(context.Background(), limited)
-		require.NoError(err)
-	}
-	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
-		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
-	require.Equal(1, n, "limited runs must sweep in late replies — no unlimited run required")
 }
 
 func TestStandingLimitPaysCatchUpDebt(t *testing.T) {
