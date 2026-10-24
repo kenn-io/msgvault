@@ -1204,7 +1204,8 @@ func TestAttachmentMirrorProcessingBlockedKeepsUploading(t *testing.T) {
 			}
 			r.add("new.pdf", "application/pdf", []byte("new file"))
 			err := r.runBatch(t.Context())
-			require.ErrorContains(err, "document_profile \"documents\": check the profile and grant consent in Docbank")
+			require.ErrorContains(err, "document_profile \"documents\"")
+			assert.NotContains(err.Error(), "grant consent")
 			if tc.reason != "" {
 				assert.Contains(err.Error(), tc.reason)
 			}
