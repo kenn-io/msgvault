@@ -32,6 +32,7 @@ type CalDAVMetadata struct {
 	Href         string `json:"href,omitempty"`
 	ETag         string `json:"etag,omitempty"`
 	AccountEmail string `json:"account_email,omitempty"`
+	TimeZone     string `json:"time_zone,omitempty"`
 	Status       string `json:"status,omitempty"`
 	AllDay       bool   `json:"all_day,omitempty"`
 	// OverrideRemoved survives resource deletion to distinguish stale overrides
@@ -400,15 +401,12 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 		}
 	}
 	if organizer := p.Get("ORGANIZER"); organizer != nil {
-		item.OrganizerEmail = calDAVEmail(organizer.Value)
+		item.OrganizerEmail = calDAVEmail(organizer)
 		item.OrganizerName = organizer.Params.Get("CN")
 	}
 	var attendees []gcalmodel.Attendee
 	for _, v := range p["ATTENDEE"] {
-		email := calDAVEmail(v.Value)
-		if email == "" {
-			continue
-		}
+		email := calDAVEmail(&v)
 		rsvp := strings.ToLower(v.Params.Get("PARTSTAT"))
 		if rsvp == "" || rsvp == "needs-action" {
 			rsvp = "needsAction"
@@ -423,10 +421,10 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 	e.Attendees = buildAttendees(gcalmodel.Person{Email: item.OrganizerEmail, DisplayName: item.OrganizerName}, attendees)
 	return item, nil
 }
-func calDAVEmail(value string) string {
-	uri, err := url.Parse(value)
+func calDAVEmail(property *ical.Prop) string {
+	uri, err := url.Parse(property.Value)
 	if err != nil || !strings.EqualFold(uri.Scheme, "mailto") {
-		return ""
+		return gcalmodel.NormalizeParticipantEmail(property.Params.Get("EMAIL"))
 	}
 	mailbox := uri.Opaque
 	if mailbox == "" {

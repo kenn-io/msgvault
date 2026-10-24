@@ -226,7 +226,11 @@ func (s Set) parseRule(line string) (*rrule.ROption, error) {
 	if seen["COUNT"] && opt.Count <= 0 || seen["INTERVAL"] && opt.Interval <= 0 {
 		return nil, unsupported(line, errors.New("COUNT and INTERVAL must be positive"))
 	}
-	if err := supportedRule(opt, seen, start); err != nil {
+	anchor := start
+	if !s.startCivil.IsZero() {
+		anchor = s.startCivil
+	}
+	if err := supportedRule(opt, seen, anchor); err != nil {
 		return nil, unsupported(line, err)
 	}
 	opt.Dtstart = start
@@ -460,6 +464,10 @@ func ParseSet(dtstart time.Time, allDay bool, startDate string, zone *time.Locat
 				return Set{}, unsupported(line, errors.New("declared DTSTART differs from event start"))
 			}
 			s.startCivil = anchor
+		}
+	}
+	for _, line := range lines {
+		if strings.HasPrefix(line, "DTSTART:") {
 			continue
 		}
 		if strings.HasPrefix(line, "RRULE:") {

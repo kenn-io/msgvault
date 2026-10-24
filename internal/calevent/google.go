@@ -128,7 +128,7 @@ func buildAttendees(organizer gcalmodel.Person, attendees []gcalmodel.Attendee) 
 		}
 		result = append(result, Attendee{Email: email, DisplayName: a.DisplayName, Role: role, RSVP: rsvp, IsCopySelf: a.Self})
 	}
-	if organizerEmail != "" && !organizerSeen {
+	if (organizerEmail != "" || organizer.DisplayName != "") && !organizerSeen {
 		result = append(result, Attendee{Email: organizerEmail, DisplayName: organizer.DisplayName, Role: "organizer", RSVP: "unknown", IsCopySelf: organizer.Self})
 	}
 	return result
