@@ -912,7 +912,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 	}
 	require.NoError(t, f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "00000000-0000-4000-8000-000000000001"}, ""))
 	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
-	f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "quartz in the PDF", Evidence: []docbankmedia.SearchEvidence{{Kind: "content_blob"}}}}}
+	f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "quartz in the PDF", Evidence: []docbankmedia.SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}}}
 	return first, second
 }
 
@@ -1002,6 +1002,8 @@ func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
 	require.NotNil(response.Attachments.Error)
 	assert.Empty(response.Attachments.Results)
 	assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
+	assert.Contains(response.Attachments.Error.Message, "4096 mirrored document files")
+	assert.Contains(response.Attachments.Error.Message, "--person")
 	assert.False(response.Attachments.Truncated)
 	assert.Empty(f.documentRequests)
 }

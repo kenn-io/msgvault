@@ -139,6 +139,27 @@
 
 </script>
 
+{#snippet resultRow(hit: MediaSearchResult | MediaAttachmentResult, index: number, recording: MediaSearchResult | undefined)}
+  {@const prefix = recording ? id : `${id}-attachment`}
+  <li>
+    <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id && (recording || !result?.results.some(other => other.message_id === hit.message_id)) ? 'true' : undefined}
+      aria-labelledby={`${prefix}-title-${index}`} aria-describedby={`${prefix}-meta-${index} ${prefix}-excerpt-${index}`}
+      onclick={(event) => openHit(event, hit)}>
+      <span class="recording-icon" aria-hidden="true">{#if recording}<FileVolume size={16} />{:else}<FileText size={16} />{/if}</span>
+      <strong id={`${prefix}-title-${index}`} title={hit.containing_title}>{hit.containing_title || 'Untitled message'}</strong>
+      {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}
+      <span class="provenance" id={`${prefix}-meta-${index}`}>
+        <span class="filename" title={hit.filename}>{hit.filename || (recording ? 'Unnamed recording' : 'Unnamed attachment')}</span>
+        {#if recording}<Chip size="xs" tone="neutral" uppercase={false}>{formatTranscriptOrigin(recording.origin)}</Chip>{/if}
+      </span>
+      <span class="transcript" class:timed={recording?.start_ms !== undefined}>
+        {#if recording?.start_ms !== undefined}<time datetime={`PT${recording.start_ms / 1000}S`} title={recording.end_ms === undefined ? undefined : `Until ${formatOffset(recording.end_ms)}`}>{formatOffset(recording.start_ms)}</time>{/if}
+        <span class="excerpt" id={`${prefix}-excerpt-${index}`}>{hit.excerpt}</span>
+      </span>
+    </a>
+  </li>
+{/snippet}
+
 <section class="transcript-hits" aria-label="Media search" tabindex="-1" data-recording-hits data-scroll>
   <section aria-label="Recordings">
     <header>
@@ -168,23 +189,7 @@
       {/if}
       <ol>
         {#each result.results as hit, index (index)}
-          <li>
-            <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id ? 'true' : undefined}
-              aria-labelledby={`${id}-title-${index}`} aria-describedby={`${id}-meta-${index} ${id}-excerpt-${index}`}
-              onclick={(event) => openHit(event, hit)}>
-              <span class="recording-icon" aria-hidden="true"><FileVolume size={16} /></span>
-              <strong id={`${id}-title-${index}`} title={hit.containing_title}>{hit.containing_title || 'Untitled message'}</strong>
-              {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}
-              <span class="provenance" id={`${id}-meta-${index}`}>
-                <span class="filename" title={hit.filename}>{hit.filename || 'Unnamed recording'}</span>
-                <Chip size="xs" tone="neutral" uppercase={false}>{formatTranscriptOrigin(hit.origin)}</Chip>
-              </span>
-              <span class="transcript" class:timed={hit.start_ms !== undefined}>
-                {#if hit.start_ms !== undefined}<time datetime={`PT${hit.start_ms / 1000}S`} title={hit.end_ms === undefined ? undefined : `Until ${formatOffset(hit.end_ms)}`}>{formatOffset(hit.start_ms)}</time>{/if}
-                <span class="excerpt" id={`${id}-excerpt-${index}`}>{hit.excerpt}</span>
-              </span>
-            </a>
-          </li>
+          {@render resultRow(hit, index, hit)}
         {/each}
       </ol>
       {#if recordingNotice}<div class="unavailable" role="status">
@@ -202,17 +207,7 @@
       {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.error === 'media_search_scope_limit' ? attachmentScopeNotice(participantID) : result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
       <ol>
         {#each result.attachments.results as hit, index (index)}
-          <li>
-            <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id && !result.results.some(recording => recording.message_id === hit.message_id) ? 'true' : undefined}
-              aria-labelledby={`${id}-attachment-title-${index}`} aria-describedby={`${id}-attachment-meta-${index} ${id}-attachment-excerpt-${index}`}
-              onclick={(event) => openHit(event, hit)}>
-              <span class="recording-icon" aria-hidden="true"><FileText size={16} /></span>
-              <strong id={`${id}-attachment-title-${index}`} title={hit.containing_title}>{hit.containing_title || 'Untitled message'}</strong>
-              {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}
-              <span class="provenance" id={`${id}-attachment-meta-${index}`}><span class="filename" title={hit.filename}>{hit.filename || 'Unnamed attachment'}</span></span>
-              <span class="transcript"><span class="excerpt" id={`${id}-attachment-excerpt-${index}`}>{hit.excerpt}</span></span>
-            </a>
-          </li>
+          {@render resultRow(hit, index, undefined)}
         {/each}
       </ol>
       {#if result.attachments.results.length === 0 && !result.attachments.error}<p>No matches in text Docbank has extracted from {result.attachments.truncated ? 'searched' : 'mirrored'} attachments.</p>{/if}

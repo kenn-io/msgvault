@@ -375,9 +375,9 @@ import (
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds authenticated streamed Muesli recording imports.
-// 3.25.0 adds archived chat discovery ranked by the best matching name or title,
-// optional attachment text results, and recording errors in media search.
-const APISchemaVersion = "3.25.0"
+// 3.25.0 adds archived chat discovery ranked by the best matching name or title.
+// 3.26.0 adds optional attachment text results and recording errors in media search.
+const APISchemaVersion = "3.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

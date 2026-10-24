@@ -90,14 +90,14 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
 	return with, query, args
 }
 
-// DocumentSearchVersions returns up to 4096 delivered versions that can hold text.
+// DocumentSearchVersions returns up to 4096 delivered document versions.
 // A larger scope returns no versions and reports that the scope limit was exceeded.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
 	// Docbank indexes text/* natively. Its document providers also extract
-	// registered document formats and OCR images; audio uses recording search.
+	// registered document formats; audio uses recording search.
 	mimePredicates := []string{`LOWER(d.mime_type) LIKE 'text/%'`}
 	var mimeArgs []any
-	mediaTypes := []string{"application/jsonl", "image/jpeg", "image/png", "image/webp", "image/tiff"}
+	var mediaTypes []string
 	for _, format := range document.FormatMetadataCatalog() {
 		if format.Provider && !strings.HasPrefix(format.MediaType, "text/") {
 			mediaTypes = append(mediaTypes, format.MediaType)

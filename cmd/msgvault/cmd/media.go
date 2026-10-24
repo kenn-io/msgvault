@@ -16,11 +16,11 @@ import (
 )
 
 func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error)) *cobra.Command {
-	parent := &cobra.Command{Use: "media", Short: "Search transcripts and mirrored attachment text"}
+	parent := &cobra.Command{Use: "media", Short: "Search transcripts and mirrored document text"}
 	var request daemonclient.MediaSearchOptions
 	var directions []string
 	var jsonOutput bool
-	search := &cobra.Command{Use: "search <query>", Short: "Find transcript and attachment text in visible messages", Args: cobra.MinimumNArgs(1), RunE: func(command *cobra.Command, args []string) (result error) {
+	search := &cobra.Command{Use: "search <query>", Short: "Find transcript and document text in visible messages", Args: cobra.MinimumNArgs(1), RunE: func(command *cobra.Command, args []string) (result error) {
 		request.Query = strings.Join(args, " ")
 		if request.Limit < 1 || (command.Flags().Changed("person") && request.PersonID <= 0) {
 			return errors.New("limit and explicit --person must be positive")

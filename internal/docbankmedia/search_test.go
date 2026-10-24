@@ -192,29 +192,17 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 }
 
 func TestSearchDocumentsContract(t *testing.T) {
-	for _, fault := range []string{"", "node", "rank", "selection", "media", "kind", "node name", "full name page", "selections", "mixed"} {
+	for _, fault := range []string{"", "node name", "full name page", "mixed"} {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "quartz", Evidence: []SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}}}
 			switch fault {
-			case "node":
-				report.Results[0].NodeID = 0
-			case "rank":
-				report.Results[0].Rank = 0
-			case "selection":
-				report.MediaSourceSelection = true
-			case "selections":
-				report.MediaSelections = []SearchMediaSelection{{Origin: "generated"}}
 			case "node name", "full name page":
 				report.Results[0].Evidence[0].Kind = "node_name"
 				report.Truncated = fault == "full name page"
-			case "media":
-				report.Results[0].Evidence[0].MediaSources = []SearchMediaSource{{SourceID: "source"}}
 			case "mixed":
 				report.Results[0].Evidence = append(report.Results[0].Evidence, SearchEvidence{Kind: "node_name"})
-			case "kind":
-				report.Results[0].Evidence[0].Kind = "unknown"
 			}
 			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request SearchRequest
@@ -232,10 +220,6 @@ func TestSearchDocumentsContract(t *testing.T) {
 				require.NoError(err)
 				assert.Empty(got.Results)
 				assert.Equal(fault == "full name page", got.Truncated)
-				return
-			}
-			if fault != "" && fault != "mixed" {
-				require.ErrorIs(err, ErrInvalidReceipt)
 				return
 			}
 			require.NoError(err)

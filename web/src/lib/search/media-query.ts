@@ -6,8 +6,8 @@ const UNREADABLE_QUERY = 'Recording search cannot read this query. Check archive
 
 export function attachmentScopeNotice(participantID: number | undefined): string {
   return participantID === undefined
-    ? 'Attachment search supports at most 4096 mirrored files that can hold text. Add a Person filter to search attachments.'
-    : 'This Person filter exceeds the attachment-search limit of 4096 mirrored files that can hold text. Choose a Person filter with fewer attachments.';
+    ? 'Attachment search supports at most 4096 mirrored document files. Add a Person filter to search attachments.'
+    : 'This Person filter exceeds the attachment-search limit of 4096 mirrored document files. Choose a Person filter with fewer attachments.';
 }
 
 export function refusedMediaSearchNotice(

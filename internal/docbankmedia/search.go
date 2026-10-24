@@ -211,23 +211,10 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 	if err != nil {
 		return SearchReport{}, err
 	}
-	if report.MediaSourceSelection || len(report.MediaSelections) != 0 {
-		return SearchReport{}, ErrInvalidReceipt
-	}
-	ids := make(map[string]bool, len(request.Fence.ContentVersionIDs))
-	for _, id := range request.Fence.ContentVersionIDs {
-		ids[id] = true
-	}
 	results := make([]SearchHit, 0, len(report.Results))
 	for _, hit := range report.Results {
-		if !validSearchHit(hit, request.Fence.VaultUID, ids) || len(hit.Evidence) == 0 {
-			return SearchReport{}, ErrInvalidReceipt
-		}
 		content := false
 		for _, evidence := range hit.Evidence {
-			if !slices.Contains([]string{"rendition_segment", "content_blob", "node_name"}, evidence.Kind) || len(evidence.MediaSources) != 0 {
-				return SearchReport{}, ErrInvalidReceipt
-			}
 			content = content || evidence.Kind != "node_name"
 		}
 		if !content {

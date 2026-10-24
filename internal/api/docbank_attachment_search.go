@@ -99,6 +99,7 @@ func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *Me
 func attachmentSearchError(err error) *ErrorResponse {
 	_, failure := mediaSearchFailure(err)
 	if failure.Error == "media_search_scope_limit" {
+		failure.Message = "Attachment search supports at most 4096 mirrored document files; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"
 		return &failure
 	}
 	if failure.Error == "invalid_media_search" {

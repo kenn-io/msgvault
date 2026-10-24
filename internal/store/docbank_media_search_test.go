@@ -139,16 +139,20 @@ func TestDocumentSearchVersionsTextFormats(t *testing.T) {
 		{"application/json", "json"},
 		{"message/rfc822", "email"},
 		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word"},
-		{"IMAGE/PNG", "ocr-image"},
+		{"IMAGE/PNG", ""},
 		{"application/PDF; charset=binary", "parameterized"},
-		{"image/tiff", "supplied-text"},
+		{"image/tiff", ""},
+		{"image/jpeg", ""},
+		{"image/webp", ""},
+		{"application/jsonl", ""},
+		{"application/zip", ""},
 		{"audio/mpeg", ""},
 		{"image/gif", ""},
 		{"application/octet-stream", ""},
 	}
-	want := []string{"pdf", "csv", "json", "email", "word", "ocr-image", "parameterized", "supplied-text"}
+	want := []string{"pdf", "csv", "json", "email", "word", "parameterized"}
 	for i := range 4110 {
-		mimeType, version := "application/zip", fmt.Sprintf("archive-%d", i)
+		mimeType, version := "image/png", fmt.Sprintf("image-%d", i)
 		if i < len(formats) {
 			mimeType = formats[i].mime
 			if formats[i].version != "" {
