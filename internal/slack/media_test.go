@@ -107,7 +107,6 @@ func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
 }
 
 func TestDownloadFileSizeCap(t *testing.T) {
-	t.Parallel()
 	rt := &recordingTransport{body: strings.Repeat("x", 64)}
 	c := NewClient("", "xoxp-test")
 	c.mediaTransport = rt
