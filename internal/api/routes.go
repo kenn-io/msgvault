@@ -845,7 +845,6 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
 			queryIntegerParam(limitParam, "Maximum occurrences to return, default 20, max 100"),
 		}
-
 	case "getCLIMessage", "getCLIMessageRaw":
 		return []*huma.Param{queryStringParam("id", "Message numeric ID or source message ID", true)}
 	case "getCLIMessageOriginal":

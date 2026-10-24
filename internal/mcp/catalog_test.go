@@ -364,7 +364,6 @@ func TestCatalogSchemas(t *testing.T) {
 				if shape.similar {
 					expectedNames = append(expectedNames, "find_similar_messages")
 				}
-
 				if shape.savedViews {
 					expectedNames = append(expectedNames, ToolListSavedViews, ToolGetSavedView, ToolRunSavedView)
 				}

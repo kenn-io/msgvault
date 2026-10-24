@@ -532,7 +532,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := registerSQLiteMaintenanceJob(sched, s); err != nil {
 		return fmt.Errorf("schedule SQLite maintenance: %w", err)
 	}
-
 	if err := registerFilenameDiscoveryJob(sched, s); err != nil {
 		return fmt.Errorf("schedule filename discovery: %w", err)
 	}

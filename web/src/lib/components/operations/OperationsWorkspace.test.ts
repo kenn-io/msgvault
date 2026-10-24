@@ -265,8 +265,6 @@ describe('OperationsWorkspace', () => {
     expect(within(lanes).queryByRole('button', { name: 'Build visual index' })).toBeNull();
   });
 
-
-
   it('emits canonical URL patches from filters and keeps available history visible when one kind degrades', async () => {
     const onStateChange = vi.fn();
     render(OperationsWorkspace, {
