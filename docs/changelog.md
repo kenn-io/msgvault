@@ -8,15 +8,15 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
+- Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. More than 4096 such files are searched in batches of 4096, with results merged by Docbank rank.
 - Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`. Requires archive schema version 13 and HTTP API schema 3.27.0.
 - Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
 
-  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent, and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled. The API schema is 4.0.0.
+  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent (use `docbank processing probe`, Docbank newer than v0.16.0), and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled. The API schema is 4.0.0.
 
   A people inference provider profile that listed `document_text` gets a new fingerprint when that source is removed. Checks and consent are bound to the exact fingerprint. Run `msgvault person provider check <name>`, review the updated policy, then run `msgvault person provider consent <name> --yes` before inference resumes.
 
-  Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. The upgrade deletes locally extracted text, chunks, and consent rows. Backups made before the upgrade keep them, still restore, and stay marked by `backup list`. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Stored Kata document citations retain their saved quote and resolve as unavailable.
+  Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. The upgrade drops the local document text, chunk, and consent tables. Backups made before the upgrade keep them, still restore, and stay marked by `backup list`. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Stored Kata document citations retain their saved quote and resolve as unavailable.
 
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).

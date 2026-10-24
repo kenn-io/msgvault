@@ -1292,13 +1292,13 @@ Docbank file. List and search views omit these receipts. URL-only attachments ar
 
 #### Search document text through Docbank (unreleased)
 
-Configure a Docbank rendition profile, such as a Docling profile, and set its name in `[integrations.docbank] document_profile`. Docbank's daemon must support the chosen processor. A Mistral profile requires the Docbank release that provides Mistral processing.
+Configure a Docbank rendition profile, such as a Docling profile, and set its name in `[integrations.docbank] document_profile`. Docbank's daemon must support the chosen processor. A Mistral profile needs a Docbank release newer than v0.16.0. Create the five seed files and run `docbank processing probe --profile <name> --seeds <dir>` to write its capability manifest, as [Docbank's Mistral OCR configuration](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#document-ocr-with-mistral) describes. It replaces `msgvault documents probe-mistral`.
 
 Follow the [attachment mirror setup](https://msgvault.io/docs/configuration/#mirror-stored-attachments-to-docbank-unreleased) to review the processing plan and grant consent in Docbank. Msgvault requests that profile for mirrored files. Docbank owns extraction, text, and embeddings. Check processing progress with `msgvault docbank attachments status`.
 
 Search with `msgvault media search "project proposal"`, `GET /api/v1/media/search`, MCP `search_media`, or the Web Everything panel. Add `--person <id>` and `--direction from_person` to the CLI search to scope results to a person.
 
-Remove `[attachments.documents]` from old configuration files. The loader warns and ignores that section with guidance to use `document_profile`. The upgrade deletes local document text, chunks, and consent rows. Snapshots made before the upgrade keep them and still restore; `msgvault backup list` marks them in the `DOCUMENT TEXT` column. Docbank processes the mirrored files again, which incurs OCR charges when using Mistral.
+Remove `[attachments.documents]` from old configuration files. The loader warns and ignores that section with guidance to use `document_profile`. The upgrade drops the local document text, chunk, and consent tables. Snapshots made before the upgrade keep them and still restore; `msgvault backup list` marks them in the `DOCUMENT TEXT` column. Docbank processes the mirrored files again, which incurs OCR charges when using Mistral.
 
 #### Send stored audio to Docbank
 
