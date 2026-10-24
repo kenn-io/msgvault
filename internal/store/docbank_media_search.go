@@ -116,16 +116,14 @@ func (s *Store) documentSearchVisible(scope *personscope.Scope) (string, []any) 
  WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + messageWhere + ` LIMIT 1 OFFSET 0)`, args
 }
 
-// DocumentSearchVersions returns up to 4096 delivered document versions.
-// A larger scope returns no versions and reports that the scope limit was exceeded.
-func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
+// DocumentSearchVersions returns delivered document versions in the visible scope.
+func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, error) {
 	delivers := `SELECT d.content_hash, d.version_id FROM docbank_attachment_deliveries d
  WHERE d.destination_key = ? AND ` + documentSearchDelivered
 	distinct := "DISTINCT"
 	if s.IsPostgreSQL() {
 		// Sort receipts before checking visibility. DISTINCT ON then streams unique
-		// versions, so LIMIT stops attachment lookups at the 4097th visible version.
-		// OFFSET prevents PostgreSQL from moving visibility ahead of the sort.
+		// versions. OFFSET prevents PostgreSQL from moving visibility ahead of the sort.
 		delivers += ` ORDER BY d.version_id OFFSET 0`
 		distinct = "DISTINCT ON (d.version_id)"
 	}
@@ -133,27 +131,24 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 	visible, scopeArgs := s.documentSearchVisible(scope)
 	args = append(args, scopeArgs...)
 	query := `SELECT ` + distinct + ` d.version_id FROM (` + delivers + `) d
- WHERE ` + visible + ` LIMIT 4097`
+ WHERE ` + visible
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
-		return nil, false, fmt.Errorf("list document search versions: %w", err)
+		return nil, fmt.Errorf("list document search versions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var versions []string
 	for rows.Next() {
 		var version string
 		if err := rows.Scan(&version); err != nil {
-			return nil, false, fmt.Errorf("scan document search version: %w", err)
+			return nil, fmt.Errorf("scan document search version: %w", err)
 		}
 		versions = append(versions, version)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if len(versions) > 4096 {
-		return nil, true, nil
-	}
-	return versions, false, nil
+	return versions, nil
 }
 
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.

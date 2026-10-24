@@ -67,9 +67,8 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 			}
 		}
 		scope := &personscope.Scope{ParticipantIDs: []int64{participant}, Directions: []personscope.Direction{personscope.FromPerson}}
-		ids, scopeExceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
+		ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
 		require.NoError(err)
-		assert.False(scopeExceeded)
 		assert.ElementsMatch([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
 		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100)
 		require.NoError(err)
@@ -121,7 +120,7 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 	})
 }
 
-func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing.T) {
+func TestDocumentSearchVersionsTextFormatsExcludeImages(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -155,8 +154,7 @@ func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing
 		formats = append(formats, storetest.DocumentAttachment{MIMEType: "image/png", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+100)})
 	}
 	f.SeedDocumentAttachments(mid, formats)
-	ids, exceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
+	ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
 	require.NoError(err)
-	assert.False(exceeded)
 	assert.ElementsMatch(want, ids)
 }
