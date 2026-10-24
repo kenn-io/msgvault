@@ -8,13 +8,15 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 // ImportICS archives a local calendar export under a stable caller-chosen source.
-func ImportICS(ctx context.Context, st *store.Store, path, identifier string) (*store.ICalendarImportSummary, error) {
+// A non-empty timeZone becomes the source's zone for floating times.
+func ImportICS(ctx context.Context, st *store.Store, path, identifier, timeZone string) (*store.ICalendarImportSummary, error) {
 	identifier = strings.TrimSpace(identifier)
 	if identifier == "" {
 		return nil, errors.New("--identifier is required")
@@ -34,12 +36,26 @@ func ImportICS(ctx context.Context, st *store.Store, path, identifier string) (*
 	if len(raw) > calevent.MaxICSBytes {
 		return nil, errors.New("ICS file exceeds 32 MiB limit")
 	}
-	if err := validateICSImport(st, identifier, raw); err != nil {
+	if timeZone != "" {
+		if _, err := time.LoadLocation(timeZone); err != nil {
+			return nil, fmt.Errorf("time zone: %w", err)
+		}
+	}
+	if err := validateICSImport(st, identifier, raw, timeZone); err != nil {
 		return nil, err
 	}
 	source, err := st.GetOrCreateSource("ics", identifier)
 	if err != nil {
 		return nil, fmt.Errorf("create ICS source: %w", err)
+	}
+	if timeZone != "" {
+		config, err := json.Marshal(map[string]string{"time_zone": timeZone})
+		if err != nil {
+			return nil, fmt.Errorf("encode ICS source config: %w", err)
+		}
+		if err := st.UpdateSourceSyncConfig(source.ID, string(config)); err != nil {
+			return nil, fmt.Errorf("set ICS source time zone: %w", err)
+		}
 	}
 	summary, err := st.PersistICalendarContext(ctx, source.ID, raw)
 	if err != nil {
@@ -48,10 +64,12 @@ func ImportICS(ctx context.Context, st *store.Store, path, identifier string) (*
 	return &summary, nil
 }
 
-func validateICSImport(st *store.Store, identifier string, raw []byte) error {
-	zone, err := icsImportZone(st, identifier)
-	if err != nil {
-		return err
+func validateICSImport(st *store.Store, identifier string, raw []byte, zone string) error {
+	if zone == "" {
+		var err error
+		if zone, err = icsImportZone(st, identifier); err != nil {
+			return err
+		}
 	}
 	components, err := calevent.ParseICS(raw, "", zone)
 	if err != nil {
