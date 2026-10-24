@@ -88,6 +88,7 @@ Add and sync sources:
   remove-account         Remove an account and all its data
   sync                   Sync new mail from Gmail, IMAP, and Microsoft accounts
   sync-beeper            Sync chats from Beeper Desktop (all connected networks)
+  sync-caldav            Archive CalDAV events
   sync-calendar          Sync Google Calendar events for an account
   sync-carddav           Synchronize enabled CardDAV connections
   sync-chatwoot          Sync Chatwoot inboxes

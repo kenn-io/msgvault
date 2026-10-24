@@ -54,15 +54,23 @@ func Discover(ctx context.Context, client *Client, enteredURL string) (Discovery
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, client.operationTimeout)
 	defer cancel()
-	return discoverWithBudget(operationCtx, client, enteredURL, &Budget{remaining: client.operationBytes})
+	return discoverWithBudget(operationCtx, client, AddressBookKind, enteredURL, &Budget{remaining: client.operationBytes})
+}
+
+// DiscoverCollections runs Discover for kind. The caller owns the operation
+// deadline and transfer budget.
+func DiscoverCollections(
+	operationCtx context.Context, client *Client, kind Kind, enteredURL string, budget *Budget,
+) (Discovery, error) {
+	return discoverWithBudget(operationCtx, client, kind, enteredURL, budget)
 }
 
 func discoverWithBudget(
-	operationCtx context.Context, client *Client, enteredURL string, budget *Budget,
+	operationCtx context.Context, client *Client, kind Kind, enteredURL string, budget *Budget,
 ) (Discovery, error) {
 	entered, err := url.Parse(enteredURL)
 	if err != nil {
-		return Discovery{}, fmt.Errorf("parse CardDAV base URL: %w", ErrUnsafeTarget)
+		return Discovery{}, fmt.Errorf("parse %s base URL: %w", kind.name, ErrUnsafeTarget)
 	}
 	if _, err := client.validateTarget(operationCtx, entered); err != nil {
 		return Discovery{}, err
@@ -74,32 +82,32 @@ func discoverWithBudget(
 			return Discovery{}, directErr
 		}
 		wellKnown := *client.origin
-		wellKnown.Path = "/.well-known/carddav"
+		wellKnown.Path = "/.well-known/" + kind.wellKnown
 		principal, err = discoverHref(operationCtx, client, &wellKnown, CurrentUserPrincipalProperty, budget)
 		if err != nil {
-			return Discovery{}, fmt.Errorf("discover CardDAV principal: %w", err)
+			return Discovery{}, fmt.Errorf("discover %s principal: %w", kind.name, err)
 		}
 	}
 	if principal == nil {
-		return Discovery{}, errors.New("CardDAV discovery did not return current-user-principal")
+		return Discovery{}, fmt.Errorf("%s discovery did not return current-user-principal", kind.name)
 	}
 
-	homes, err := discoverHrefs(operationCtx, client, principal, AddressbookHomeSetProperty, budget)
+	homes, err := discoverHrefs(operationCtx, client, principal, kind.homeSet, budget)
 	if err != nil {
-		return Discovery{}, fmt.Errorf("discover CardDAV address-book home: %w", err)
+		return Discovery{}, fmt.Errorf("discover %s collection home: %w", kind.name, err)
 	}
 	if len(homes) == 0 {
-		return Discovery{}, errors.New("CardDAV discovery did not return addressbook-home-set")
+		return Discovery{}, fmt.Errorf("%s discovery did not return %s", kind.name, kind.homeSet.Local)
 	}
 	books := make([]DiscoveredBook, 0)
 	seenBooks := map[string]bool{}
 	for _, home := range homes {
-		discovered, err := discoverBooks(operationCtx, client, home, budget)
+		discovered, err := discoverBooks(operationCtx, client, kind, home, budget)
 		if err != nil {
 			return Discovery{}, err
 		}
 		for _, book := range discovered {
-			key := canonicalCollectionURL(book.URL)
+			key := CollectionURLIdentity(book.URL)
 			if seenBooks[key] {
 				continue
 			}
@@ -107,7 +115,7 @@ func discoverWithBudget(
 			book.DiscoveryIndex = len(books)
 			books = append(books, book)
 			if len(books) > 1000 {
-				return Discovery{}, errors.New("CardDAV discovery exceeded 1000 address books")
+				return Discovery{}, fmt.Errorf("%s discovery exceeded 1000 collections", kind.name)
 			}
 		}
 	}
@@ -213,7 +221,7 @@ func discoverHref(
 		return nil, nil //nolint:nilnil // A missing optional DAV property is distinct from a request failure.
 	}
 	if len(hrefs) != 1 {
-		return nil, fmt.Errorf("CardDAV discovery returned conflicting %s values", property.Local)
+		return nil, fmt.Errorf("DAV discovery returned conflicting %s values", property.Local)
 	}
 	return hrefs[0], nil
 }
@@ -240,7 +248,7 @@ func discoverHrefs(
 		return nil, err
 	}
 	if len(multiStatus.Responses) != 1 {
-		return nil, fmt.Errorf("CardDAV discovery expected one response, got %d", len(multiStatus.Responses))
+		return nil, fmt.Errorf("DAV discovery expected one response, got %d", len(multiStatus.Responses))
 	}
 	davResponse := multiStatus.Responses[0]
 	if _, err := resolveDiscoveryHref(ctx, client, effectiveTarget, davResponse.Href); err != nil {
@@ -259,6 +267,8 @@ func discoverHrefs(
 			if propStat.Properties.CurrentUserPrincipal != "" {
 				hrefs = append(hrefs, propStat.Properties.CurrentUserPrincipal)
 			}
+		case CalendarHomeSetProperty:
+			hrefs = append(hrefs, propStat.Properties.CalendarHomeSet...)
 		case AddressbookHomeSetProperty:
 			hrefs = append(hrefs, propStat.Properties.AddressbookHomeSet...)
 		}
@@ -270,29 +280,27 @@ func discoverHrefs(
 		if err != nil {
 			return nil, err
 		}
-		key := canonicalCollectionURL(value)
+		key := CollectionURLIdentity(value)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 		resolved = append(resolved, value)
 		if len(resolved) > 1000 {
-			return nil, errors.New("CardDAV discovery exceeded 1000 property hrefs")
+			return nil, errors.New("DAV discovery exceeded 1000 property hrefs")
 		}
 	}
 	return resolved, nil
 }
 
 func discoverBooks(
-	ctx context.Context, client *Client, home *url.URL, budget *Budget,
+	ctx context.Context, client *Client, kind Kind, home *url.URL, budget *Budget,
 ) ([]DiscoveredBook, error) {
-	body, err := PropfindBody([]PropertyName{
+	body, err := PropfindBody(append([]PropertyName{
 		ResourceTypeProperty,
 		DisplayNameProperty,
 		SupportedReportSetProperty,
-		CurrentUserPrivilegesProperty,
-		SupportedAddressDataProperty,
-	})
+	}, kind.discovery...))
 	if err != nil {
 		return nil, err
 	}
@@ -300,18 +308,18 @@ func discoverBooks(
 	response, err := client.doWithBudget(
 		ctx, Request{Method: "PROPFIND", URL: home.String(), Depth: &depth, Body: body}, budget)
 	if err != nil {
-		return nil, fmt.Errorf("enumerate CardDAV address books: %w", err)
+		return nil, fmt.Errorf("enumerate %s collections: %w", kind.name, err)
 	}
 	effectiveHome := response.EffectiveURL
 	if effectiveHome == nil {
 		effectiveHome = home
 	}
-	multiStatus, err := ParseMultiStatus(response.Body, DefaultXMLLimits())
+	multiStatus, err := kind.parseMultiStatus(response.Body, DefaultXMLLimits())
 	if err != nil {
-		return nil, fmt.Errorf("parse CardDAV address books: %w", err)
+		return nil, fmt.Errorf("parse %s collections: %w", kind.name, err)
 	}
 	if len(multiStatus.Responses) > 1000 {
-		return nil, errors.New("CardDAV discovery exceeded 1000 responses")
+		return nil, fmt.Errorf("%s discovery exceeded 1000 responses", kind.name)
 	}
 
 	foundHome := false
@@ -320,22 +328,22 @@ func discoverBooks(
 	for index, davResponse := range multiStatus.Responses {
 		resolved, err := resolveDiscoveryHref(ctx, client, effectiveHome, davResponse.Href)
 		if err != nil {
-			return nil, fmt.Errorf("resolve CardDAV discovery response %d: %w", index+1, err)
+			return nil, fmt.Errorf("resolve %s discovery response %d: %w", kind.name, index+1, err)
 		}
-		isHome := sameCollectionURL(resolved, effectiveHome)
+		isHome := SameCollectionURL(resolved, effectiveHome)
 		if davResponse.StatusCode != 0 && (davResponse.StatusCode < 200 || davResponse.StatusCode >= 300) {
 			if isHome {
-				return nil, fmt.Errorf("CardDAV discovery response %d failed: %w", index+1, &StatusError{StatusCode: davResponse.StatusCode})
+				return nil, fmt.Errorf("%s discovery response %d failed: %w", kind.name, index+1, &StatusError{StatusCode: davResponse.StatusCode})
 			}
 			continue
 		}
 		properties := mergeSuccessfulProperties(davResponse.PropStats)
 		if isHome {
 			if !properties.ResourceTypePresent {
-				return nil, fmt.Errorf("CardDAV discovery response %d omitted successful resourcetype", index+1)
+				return nil, fmt.Errorf("%s discovery response %d omitted successful resourcetype", kind.name, index+1)
 			}
 			if foundHome || !properties.IsCollection {
-				return nil, errors.New("CardDAV discovery returned an invalid home collection response")
+				return nil, fmt.Errorf("%s discovery returned an invalid home collection response", kind.name)
 			}
 			foundHome = true
 			continue
@@ -343,11 +351,11 @@ func discoverBooks(
 		if !properties.ResourceTypePresent {
 			continue
 		}
-		if !properties.IsAddressBook {
+		if !kind.isMember(properties) {
 			continue
 		}
 		if !properties.IsCollection {
-			return nil, fmt.Errorf("CardDAV discovery response %d identified a non-collection address book", index+1)
+			return nil, fmt.Errorf("%s discovery response %d identified a non-collection resource", kind.name, index+1)
 		}
 		if _, err := client.ValidateChildHref(ctx, effectiveHome, davResponse.Href); err != nil {
 			return nil, err
@@ -357,17 +365,17 @@ func discoverBooks(
 			return nil, err
 		}
 		var alias *url.URL
-		if !sameCollectionURL(advertised, resolved) {
+		if !SameCollectionURL(advertised, resolved) {
 			alias = advertised
 		}
-		key := canonicalCollectionURL(resolved)
+		key := CollectionURLIdentity(resolved)
 		if seen[key] {
-			return nil, fmt.Errorf("CardDAV discovery returned duplicate book %s", key)
+			return nil, fmt.Errorf("%s discovery returned duplicate collection %s", kind.name, key)
 		}
 		seen[key] = true
 		displayName := strings.TrimSpace(properties.DisplayName)
 		if displayName == "" {
-			displayName = "Contacts"
+			displayName = kind.defaultName
 		}
 		books = append(books, DiscoveredBook{
 			URL: resolved, DiscoveryAliasURL: alias, DisplayName: displayName, DiscoveryIndex: len(books),
@@ -378,7 +386,7 @@ func discoverBooks(
 		})
 	}
 	if !foundHome {
-		return nil, errors.New("CardDAV discovery did not include the home collection response")
+		return nil, fmt.Errorf("%s discovery did not include the home collection response", kind.name)
 	}
 	return books, nil
 }
@@ -403,6 +411,11 @@ func mergeSuccessfulProperties(propStats []PropStat) Properties {
 			merged.ResourceTypePresent = true
 			merged.IsCollection = merged.IsCollection || properties.IsCollection
 			merged.IsAddressBook = merged.IsAddressBook || properties.IsAddressBook
+			merged.IsCalendar = merged.IsCalendar || properties.IsCalendar
+		}
+		if properties.CalendarComponentsPresent {
+			merged.CalendarComponentsPresent = true
+			merged.CalendarComponents = append(merged.CalendarComponents, properties.CalendarComponents...)
 		}
 		if properties.PrivilegesPresent {
 			merged.PrivilegesPresent = true
@@ -478,11 +491,13 @@ func discoveryFallbackAllowed(err error) bool {
 	}
 }
 
-func sameCollectionURL(left, right *url.URL) bool {
-	return canonicalCollectionURL(left) == canonicalCollectionURL(right)
+// SameCollectionURL reports whether two URLs name the same collection.
+func SameCollectionURL(left, right *url.URL) bool {
+	return CollectionURLIdentity(left) == CollectionURLIdentity(right)
 }
 
-func canonicalDAVURLIdentity(value *url.URL) string {
+// CanonicalDAVURLIdentity normalizes the origin and removes the fragment for a DAV resource identity.
+func CanonicalDAVURLIdentity(value *url.URL) string {
 	clone := *value
 	clone.Scheme = strings.ToLower(clone.Scheme)
 	clone.Host = net.JoinHostPort(strings.ToLower(clone.Hostname()), netguard.EffectivePort(&clone))
@@ -490,7 +505,9 @@ func canonicalDAVURLIdentity(value *url.URL) string {
 	return clone.String()
 }
 
-func canonicalCollectionURL(value *url.URL) string {
+// CollectionURLIdentity returns the normalized identity key used to compare
+// collection URLs.
+func CollectionURLIdentity(value *url.URL) string {
 	clone := *value
 	clone.Scheme = strings.ToLower(clone.Scheme)
 	clone.Host = net.JoinHostPort(strings.ToLower(clone.Hostname()), netguard.EffectivePort(&clone))

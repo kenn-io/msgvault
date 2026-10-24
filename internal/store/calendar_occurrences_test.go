@@ -14,6 +14,23 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+func TestCalendarOccurrenceOverlapsZeroDuration(t *testing.T) {
+	start := time.Date(2027, 3, 14, 13, 0, 0, 0, time.UTC)
+	o := calrecur.Occurrence{Start: start, End: start}
+	for _, tc := range []struct {
+		name     string
+		from, to time.Time
+		want     bool
+	}{
+		{"at start", start, start.Add(time.Second), true},
+		{"at end", start.Add(-time.Second), start, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, calendarOccurrenceOverlaps(o, tc.from, tc.to))
+		})
+	}
+}
+
 func TestListCalendarOccurrences(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

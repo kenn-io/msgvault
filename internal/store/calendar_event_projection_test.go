@@ -224,6 +224,63 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	assert.Equal(t, "event-example", rows[0].Event.ProviderEventID)
 }
 
+func TestCalDAVSubsetOmitsEventsKeepsGoogle(t *testing.T) {
+	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("SQLite subset copy")
+	}
+	assertions, requirements := assert.New(t), require.New(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	st, err := OpenForTest(sourcePath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	source, err := st.GetOrCreateSource("caldav", "calendar@example.org")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "shared-resource", "calendar", "Shared resource")
+	requirements.NoError(err)
+	const resource = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VEVENT\r\nUID:event-a@example.org\r\nDTSTART:20270314T130000Z\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:event-b@example.org\r\nDTSTART:20270321T130000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	for _, eventID := range []string{"event-a@example.org", "event-b@example.org"} {
+		id, err := st.UpsertMessage(&Message{ConversationID: conversationID, SourceID: source.ID, SourceMessageID: eventID, MessageType: "calendar_event"})
+		requirements.NoError(err)
+		requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(resource), "caldav_ics"))
+		requirements.Len(calendarRows(t, st, id), 1)
+	}
+	_, googleID := calendarFixture(t, st, "google", calendarRaw)
+	requirements.NoError(st.Close())
+	destination := filepath.Join(t.TempDir(), "subset")
+	result, err := CopySubsetWithOptions(sourcePath, destination, 10, CopySubsetOptions{})
+	requirements.NoError(err)
+	assertions.Equal(int64(1), result.Messages)
+	copied, err := OpenForTest(filepath.Join(destination, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = copied.Close() })
+	rows, err := copied.db.Query(`SELECT m.id, r.raw_format FROM messages m JOIN message_raw r ON r.message_id = m.id`)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+	var ids []int64
+	var formats []string
+	for rows.Next() {
+		var id int64
+		var format string
+		requirements.NoError(rows.Scan(&id, &format))
+		ids = append(ids, id)
+		formats = append(formats, format)
+	}
+	requirements.NoError(rows.Err())
+	assertions.Equal([]int64{googleID}, ids)
+	assertions.Equal([]string{"gcal_json"}, formats)
+	requirements.NoError(rows.Close())
+	var calDAVMessages, calDAVProjections, calDAVSources int
+	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE source_id = ?`, source.ID).Scan(&calDAVMessages))
+	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM calendar_events WHERE message_id <> ?`, googleID).Scan(&calDAVProjections))
+	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'caldav'`).Scan(&calDAVSources))
+	assertions.Zero(calDAVMessages)
+	assertions.Zero(calDAVProjections)
+	assertions.Zero(calDAVSources)
+}
+
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	dbURL := skipUnlessPostgresInternal(t)

@@ -117,6 +117,9 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		}
 		switch e.Kind {
 		case "exception", "single":
+			if e.Kind == "exception" && row.SourceType == calevent.CalDAVSourceType && row.OverrideRemoved {
+				continue
+			}
 			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
@@ -172,6 +175,13 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 
 // Resolve archived exceptions once, then suppress their original generated instances.
 func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+	// A removed CalDAV override restores the original occurrence. Overrides
+	// deleted with their resource remain part of its final archived snapshot.
+	if row.SourceType == calevent.CalDAVSourceType {
+		exceptionRows = slices.DeleteFunc(slices.Clone(exceptionRows), func(x CalendarEventRow) bool {
+			return x.OverrideRemoved || x.DeletedFromSource && !row.DeletedFromSource
+		})
+	}
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set
 	if prepareErr == nil {
@@ -298,7 +308,7 @@ func calendarOccurrenceOverlaps(o calrecur.Occurrence, from, to time.Time) bool 
 		}
 		return o.StartDate < endDate && o.EndDate > from.Format(time.DateOnly)
 	}
-	return from.Before(to) && o.Start.Before(to) && o.End.After(from)
+	return from.Before(to) && o.Start.Before(to) && (o.End.After(from) || o.End.Equal(o.Start) && !o.Start.Before(from))
 }
 
 func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, int, error) {
@@ -313,7 +323,7 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 	if err != nil {
 		return set, 0, 0, err
 	}
-	days := 0
+	duration, days := e.End.Sub(*e.Start), e.RecurrenceDurationDays
 	if e.AllDay {
 		first, err := time.Parse(time.DateOnly, e.StartDate)
 		if err != nil {
@@ -324,6 +334,18 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 			return set, 0, 0, fmt.Errorf("calendar end date: %w", err)
 		}
 		days = int(last.Sub(first) / (24 * time.Hour))
+	} else if days > 0 {
+		// Timed civil days are measured in the series zone; the rest is elapsed.
+		start := e.Start.In(zone)
+		end, err := calrecur.AddCivilDays(start, days)
+		if err != nil {
+			return set, 0, 0, err
+		}
+		civil := end.Sub(start)
+		if civil > duration {
+			return set, 0, 0, errors.New("calendar civil duration exceeds event bounds")
+		}
+		duration -= civil
 	}
-	return set, e.End.Sub(*e.Start), days, nil
+	return set, duration, days, nil
 }

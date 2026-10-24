@@ -35,12 +35,17 @@ type Event struct {
 	StartDate, EndDate                      string
 	EventTimeZone, CalendarTimeZone         string
 	Recurrence                              []string
-	Attendees                               []Attendee
+	// RecurrenceDurationDays is the civil-day part of a timed series' nominal
+	// duration; End minus Start minus those days is the elapsed remainder.
+	RecurrenceDurationDays int
+	Attendees              []Attendee
 }
 
 // Decode reads a provider snapshot with the source calendar's time zone.
 func Decode(rawFormat string, raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	switch rawFormat {
+	case CalDAVRawFormat:
+		return decodeCalDAV(raw, metadata, calendarZone)
 	case gcalmodel.RawFormat:
 		return decodeGoogleEvent(raw, metadata, calendarZone)
 	default:

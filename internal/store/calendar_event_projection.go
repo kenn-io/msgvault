@@ -22,6 +22,38 @@ const calendarEventProjectionVersion = 1
 // single kind so unknown bounds remain candidates for the occurrence reader.
 const calendarEventDecodeFailureStatus = "decode_error"
 
+// CalendarEventTimesMatchContext compares decoded times with the stored
+// projection, which may predate a time zone database update.
+func (s *Store) CalendarEventTimesMatchContext(ctx context.Context, messageID int64, event calevent.Event) (bool, error) {
+	var start, end, original sql.NullTime
+	var startDate, endDate, originalDate string
+	var allDay bool
+	err := s.db.QueryRowContext(ctx, `SELECT start_at, end_at, start_date, end_date, all_day, original_start_at, original_start_date FROM calendar_events WHERE message_id = ?`, messageID).Scan(&start, &end, &startDate, &endDate, &allDay, &original, &originalDate)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read calendar projection times: %w", err)
+	}
+	matches := func(stored sql.NullTime, decoded *time.Time) bool {
+		if decoded == nil {
+			return !stored.Valid
+		}
+		return stored.Valid && stored.Time.Equal(*decoded)
+	}
+	var originalAt *time.Time
+	var decodedOriginalDate string
+	if event.Original != nil {
+		if event.Original.AllDay {
+			decodedOriginalDate = event.Original.Date
+		} else {
+			originalAt = &event.Original.Instant
+		}
+	}
+	return matches(start, event.Start) && matches(end, event.End) && matches(original, originalAt) &&
+		startDate == event.StartDate && endDate == event.EndDate && allDay == event.AllDay && originalDate == decodedOriginalDate, nil
+}
+
 func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {
 	q := boundQuerier{ctx: ctx, q: tx}
 	var messageType, metadata sql.NullString
@@ -59,19 +91,30 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read calendar projection raw: %w", err)
 	}
-	if format.String != gcalmodel.RawFormat {
+	if format.String != gcalmodel.RawFormat && format.String != calevent.CalDAVRawFormat {
 		return clearProjection()
 	}
 	var config sql.NullString
 	if err := q.QueryRow(`SELECT sync_config FROM sources WHERE id = ?`, sourceID).Scan(&config); err != nil {
 		return fmt.Errorf("read calendar projection source: %w", err)
 	}
-	event, ok := decodeCalendarProjection(stored, compression, []byte(metadata.String), calendarConfigZone(config))
+	event, ok := decodeCalendarProjection(format.String, stored, compression, []byte(metadata.String), calendarConfigZone(config))
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if !ok {
 		return clearProjection()
+	}
+	// Keep timed CalDAV message times aligned with the event decoded from its
+	// raw snapshot, including when a source configuration refresh reprojects it.
+	if format.String == calevent.CalDAVRawFormat && !event.AllDay && event.Status != calendarEventDecodeFailureStatus {
+		sent := event.Start
+		if sent == nil && event.Original != nil && !event.Original.AllDay {
+			sent = &event.Original.Instant
+		}
+		if _, err := q.Exec(`UPDATE messages SET sent_at = ? WHERE id = ?`, sent, messageID); err != nil {
+			return fmt.Errorf("refresh archived CalDAV message time: %w", err)
+		}
 	}
 	canonical, err := json.Marshal(event)
 	if err != nil {
@@ -99,8 +142,8 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 			originalAt = &event.Original.Instant
 		}
 	}
-	columns := []string{"message_id", "projection_version", "content_hash", "provider_event_id", "series_provider_id", "kind", "original_start_at", "original_start_date", "status", "all_day", "start_at", "end_at", "start_date", "end_date", "event_time_zone", "calendar_time_zone", "recurrence_json", "recurrence_end_at"}
-	values := []any{messageID, calendarEventProjectionVersion, hash, event.ProviderEventID, event.SeriesProviderID, event.Kind, originalAt, originalDate, event.Status, event.AllDay, event.Start, event.End, event.StartDate, event.EndDate, event.EventTimeZone, event.CalendarTimeZone, string(recurrence), recurrenceEnd}
+	columns := []string{"message_id", "projection_version", "content_hash", "provider_event_id", "series_provider_id", "kind", "original_start_at", "original_start_date", "status", "all_day", "start_at", "end_at", "start_date", "end_date", "event_time_zone", "calendar_time_zone", "recurrence_json", "recurrence_duration_days", "recurrence_end_at"}
+	values := []any{messageID, calendarEventProjectionVersion, hash, event.ProviderEventID, event.SeriesProviderID, event.Kind, originalAt, originalDate, event.Status, event.AllDay, event.Start, event.End, event.StartDate, event.EndDate, event.EventTimeZone, event.CalendarTimeZone, string(recurrence), event.RecurrenceDurationDays, recurrenceEnd}
 	updates := make([]string, 0, len(columns)-1)
 	for _, column := range columns[1:] {
 		updates = append(updates, column+" = excluded."+column)
@@ -120,12 +163,12 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	return nil
 }
 
-func decodeCalendarProjection(stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {
+func decodeCalendarProjection(format string, stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	var event calevent.Event
 	var ok bool
 	if err == nil {
-		event, ok, err = calevent.Decode(gcalmodel.RawFormat, raw, metadata, zone)
+		event, ok, err = calevent.Decode(format, raw, metadata, zone)
 	}
 	if err != nil {
 		return calevent.Event{Kind: "single", Status: calendarEventDecodeFailureStatus}, true

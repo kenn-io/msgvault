@@ -19,8 +19,10 @@ var ErrQueryTooBroad = errors.New("calendar query is too broad")
 
 type CalendarEventRow struct {
 	MessageID, SourceID int64
+	SourceType          string
 	Subject             string
 	DeletedFromSource   bool
+	OverrideRemoved     bool
 	Event               calevent.Event
 }
 
@@ -28,14 +30,14 @@ const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
-var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
- m.deleted_from_source_at IS NOT NULL,
+var calendarEventSelect = `SELECT e.message_id, m.source_id, s.source_type, COALESCE(m.subject, ''),
+	m.deleted_from_source_at IS NOT NULL, m.metadata,
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
- e.event_time_zone, e.calendar_time_zone, e.recurrence_json
+ e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.recurrence_duration_days
  ` + calendarEventFrom
 
-var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
+var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id JOIN sources s ON s.id = m.source_id
  WHERE m.deleted_at IS NULL
  AND ` + calendarEventVisibility("e", "m") + `
  AND `
@@ -91,13 +93,23 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		var row CalendarEventRow
 		e := &row.Event
 		var original, start, end sql.NullTime
+		var metadata sql.NullString
 		var originalDate, recurrence string
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.SourceType, &row.Subject, &row.DeletedFromSource,
+			&metadata,
 			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
-			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
+			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence, &e.RecurrenceDurationDays)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
+		}
+		if row.SourceType == calevent.CalDAVSourceType && metadata.Valid {
+			var calDAVMetadata calevent.CalDAVMetadata
+			if err := json.Unmarshal([]byte(metadata.String), &calDAVMetadata); err != nil {
+				_ = result.Close()
+				return nil, fmt.Errorf("decode CalDAV event metadata %d: %w", row.MessageID, err)
+			}
+			row.OverrideRemoved = calDAVMetadata.OverrideRemoved
 		}
 		if originalDate != "" {
 			e.Original = &calrecur.Identity{Date: originalDate, AllDay: true}
@@ -275,8 +287,14 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, error) {
 	var stored []byte
 	var compression sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression); err != nil {
+	var format string
+	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression, &format); err != nil {
 		return row, fmt.Errorf("read cancellation evidence: %w", err)
+	}
+	// Only Google sends sparse cancellations; an iCalendar override is a
+	// complete component and inherits nothing from its master.
+	if format != gcalmodel.RawFormat {
+		return row, nil
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {

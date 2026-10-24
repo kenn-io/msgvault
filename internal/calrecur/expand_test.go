@@ -142,3 +142,66 @@ func TestExpandHalfOpenWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestExpandZeroDurationOccurrenceWindow(t *testing.T) {
+	start := instant(t, "2027-03-14T13:00:00Z")
+	set, err := ParseSet(start, false, "", time.UTC, []string{"RRULE:FREQ=DAILY;COUNT=2"})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name     string
+		from, to time.Time
+		want     int
+	}{
+		{"at start", start, start.Add(time.Second), 1},
+		{"at end", start.Add(-time.Second), start, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := Expand(t.Context(), set, 0, 0, tc.from, tc.to, 100)
+			require.NoError(t, err)
+			assert.Len(t, got, tc.want)
+		})
+	}
+}
+
+func TestExpandGapStartKeepsDeclaredClock(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	set, err := ParseSet(instant(t, "2027-03-14T07:30:00Z"), false, "", zone, []string{"RRULE:FREQ=WEEKLY;COUNT=2", "DTSTART:20270314T023000"})
+	requirements.NoError(err)
+	got, _, err := Expand(t.Context(), set, time.Hour, 0, instant(t, "2027-03-14T00:00:00Z"), instant(t, "2027-03-29T00:00:00Z"), 100)
+	requirements.NoError(err)
+	requirements.Len(got, 2)
+	assertions.Equal("2027-03-14T07:30:00Z", got[0].Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2027-03-21T06:30:00Z", got[1].Start.UTC().Format(time.RFC3339))
+}
+
+func TestCivilDurationGapAndFold(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	for _, tc := range []struct{ start, end string }{
+		{"2027-03-13T14:00:00Z", "2027-03-14T13:00:00Z"},
+		{"2027-03-13T07:30:00Z", "2027-03-14T07:30:00Z"},
+		{"2027-11-06T05:30:00Z", "2027-11-07T05:30:00Z"},
+	} {
+		t.Run(tc.start, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			start, err := time.Parse(time.RFC3339, tc.start)
+			requirements.NoError(err)
+			set, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=1"})
+			requirements.NoError(err)
+			got, _, err := Expand(t.Context(), set, 0, 1, start, start.Add(48*time.Hour), 100)
+			requirements.NoError(err)
+			requirements.Len(got, 1)
+			assertions.Equal(tc.end, got[0].End.UTC().Format(time.RFC3339))
+			exception, err := EffectiveException(set, Exception{Original: Identity{Instant: start}, Ref: 42}, 0, 1)
+			requirements.NoError(err)
+			assertions.True(exception.HasException)
+			assertions.Equal(int64(42), exception.ExceptionRef)
+			assertions.Equal(tc.end, exception.End.UTC().Format(time.RFC3339))
+			end, bounded := ConservativeEnd(t.Context(), set, 0, 1, 100)
+			assertions.True(bounded)
+			assertions.Equal(tc.end, end.UTC().Format(time.RFC3339))
+		})
+	}
+}
