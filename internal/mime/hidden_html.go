@@ -102,7 +102,12 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 						value = "initial"
 					}
 				default:
-					value = inlineHTMLColor(value)
+					parsed := inlineHTMLColor(value)
+					// A shorthand with an image, gradient, or color this check can't read still sets a background.
+					if parsed == "" && name == "background-color" && strings.ContainsAny(value, "( ") {
+						parsed = "unknown"
+					}
+					value = parsed
 				}
 			} else if !validInlineCSSValue(name, value) {
 				value = ""
@@ -243,7 +248,9 @@ func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
 				state.color = value
 			}
 		case "background-color":
-			if value != "transparent" {
+			if value == "unknown" {
+				state.background = ""
+			} else if value != "transparent" {
 				state.background = value
 			}
 		case "display":
