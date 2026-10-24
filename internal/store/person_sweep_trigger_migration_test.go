@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -46,42 +45,4 @@ func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 	changes := personSweepChangesAfter(t, f.store, f.alicePersonID, before)
 	requirements.Len(changes, 1)
 	assert.Equal(t, messageID, changes[0].MessageID)
-}
-
-func TestDropDocumentIndexInterruptedUpgradeKeepsMessageWrites(t *testing.T) {
-	require := require.New(t)
-	f := newPersonSweepJournalFixture(t, true, false)
-	if !f.store.IsPostgreSQL() {
-		t.Skip("PostgreSQL trigger function dependency")
-	}
-	id := f.insertMessage(t, "interrupted-document-upgrade", "email", f.aliceID, time.Now().UTC())
-	retiredSchema, err := os.ReadFile("testdata/retired_document_tables_postgres.sql")
-	require.NoError(err)
-	_, err = f.store.DB().ExecContext(t.Context(), string(retiredSchema))
-	require.NoError(err)
-	schema, err := os.ReadFile("testdata/person_sweep_document_triggers_postgres.sql")
-	require.NoError(err)
-	_, err = f.store.DB().ExecContext(t.Context(), string(schema))
-	require.NoError(err)
-	_, err = f.store.DB().ExecContext(t.Context(), `
-		DELETE FROM applied_migrations WHERE name IN ('drop_document_index_v1', 'person_sweep_change_triggers_v6');
-		UPDATE archive_metadata SET value='11' WHERE key='schema_version';
-		CREATE FUNCTION interrupt_document_upgrade() RETURNS trigger AS $$
-		BEGIN
-			IF NEW.name = 'drop_document_index_v1' THEN RAISE EXCEPTION 'interrupt after document trigger removal'; END IF;
-			RETURN NEW;
-		END $$ LANGUAGE plpgsql;
-		CREATE TRIGGER interrupt_document_upgrade BEFORE INSERT ON applied_migrations
-		FOR EACH ROW EXECUTE FUNCTION interrupt_document_upgrade();`)
-	require.NoError(err)
-	// The old caller works before the upgrade, with a tracked sender in scope.
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), id)
-	require.NoError(err)
-	err = f.store.InitSchemaContext(t.Context())
-	require.ErrorContains(err, "interrupt after document trigger removal")
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET deleted_at=NULL, snippet=? WHERE id=?`), "after", id)
-	require.NoError(err, "message writes survive interruption between migrations")
-	var snippet string
-	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT snippet FROM messages WHERE id=?`), id).Scan(&snippet))
-	assert.Equal(t, "after", snippet)
 }

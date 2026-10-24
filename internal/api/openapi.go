@@ -279,9 +279,8 @@ import (
 // mixed selections; clients can disclose that subset before confirmation.
 // 2.19.0 extends operation history with durable invocation lanes, date bounds,
 // filter-bound pagination, fixed error codes, supported actions, and related
-// status identifiers. It adds GET /api/v1/documents/status/current to resolve
-// status for the selected durable document profile. These Operations response
-// changes remain within the unreleased 2.x contract.
+// status identifiers. These Operations response changes remain within the
+// unreleased 2.x contract.
 // 2.20.0 adds the "last time we talked" person brief: the current version, the
 // version history, owner rejection, manual generation, and the brief enrollment
 // opt-in at /api/v1/people/{id}/brief*. A brief version reports its

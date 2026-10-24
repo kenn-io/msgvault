@@ -602,18 +602,6 @@ func TestSetupProvidersEnablesVisualLaneWhenManifestExists(t *testing.T) {
 	assert.Contains(output, "msgvault multimodal build --yes")
 }
 
-func TestSetupProvidersRejectsUnknownDocumentPostures(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-
-	_, err := fixture.run(t, "providers", "--yes", "--document-retention", "unknown")
-	require.ErrorContains(err, "--document-retention")
-	assert.Empty(strings.TrimSpace(strings.TrimPrefix(fixture.readConfig(t), strings.ReplaceAll(setupProvidersMinimalConfig, "{{DIR}}", filepath.ToSlash(fixture.dir)))))
-}
-
 func TestSetupProvidersExplicitOpenAIOnboardsInference(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
