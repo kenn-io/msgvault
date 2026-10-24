@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"fmt"
+	"net/url"
 	"testing"
 	"time"
 
@@ -15,6 +16,16 @@ func TestPersonSweepProviderPacketOmitsIneligibleTargets(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newProductionPersonSweepParityFixture(t)
+	enableSensitiveTargetsForPersonSweepTest(t, f)
+	requirements.True(f.profile.AllowSensitive)
+	personalityIncludedInSourceCatalog := false
+	for _, target := range f.catalog.Targets {
+		if target.Slug == store.AttributeSlugPersonality {
+			personalityIncludedInSourceCatalog = true
+		}
+	}
+	requirements.True(personalityIncludedInSourceCatalog,
+		"fixture must include personality before inference-eligibility filtering")
 	result := parityRunWholeWorker(t, f, peoplesweep.RunIncremental)
 	requirements.Equal(1, result.PeopleSucceeded)
 	requirements.NotEmpty(f.provider.packets)
@@ -25,6 +36,49 @@ func TestPersonSweepProviderPacketOmitsIneligibleTargets(t *testing.T) {
 			assertions.NotEqual(store.AttributeSlugPersonality, target.Slug)
 		}
 	}
+}
+
+// The shared parity fixture uses the least-privileged profile. Rebuild its
+// worker with sensitive targets enabled so this test isolates inference
+// eligibility as the reason personality is omitted.
+func enableSensitiveTargetsForPersonSweepTest(t *testing.T, f *personSweepParityFixture) {
+	t.Helper()
+	provider := f.config.Providers["default"]
+	provider.AllowSensitive = true
+	f.config.Providers["default"] = provider
+	profile, err := f.config.Profile()
+	require.NoError(t, err)
+	f.profile = profile
+	_, err = f.store.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(t, err)
+	require.NoError(t, f.store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: profile.Fingerprint,
+		CheckedAt:          f.now,
+		DriverVersion:      profile.DriverVersion,
+		OutputMode:         profile.OutputMode,
+		ModelVersion:       "parity-reported-model",
+	}))
+	_, _, err = f.store.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "parity")
+	require.NoError(t, err)
+	f.catalog, err = f.store.BuildPersonFactCatalogContext(t.Context(), profile.AllowSensitive)
+	require.NoError(t, err)
+	f.key.CatalogFingerprint = f.catalog.Fingerprint
+	_, err = f.store.EnsurePersonSweepCursors(t.Context(), []peoplesweep.CursorKey{f.key})
+	require.NoError(t, err)
+	targetURL, err := url.Parse(f.server.URL)
+	require.NoError(t, err)
+	httpClient := f.server.Client()
+	httpClient.Transport = parityRewriteTransport{base: httpClient.Transport, target: targetURL}
+	registry, err := peoplesweep.NewDriverRegistry(httpClient, nil, nil)
+	require.NoError(t, err)
+	runner, err := peoplesweep.NewRunner(f.config, f.store, registry,
+		peoplesweep.NewCredentialResolver(nil, func(name string) (string, bool) {
+			assert.Equal(t, "PARITY_SYNTHETIC_KEY", name)
+			return "synthetic-parity-key", true
+		}))
+	require.NoError(t, err)
+	f.worker.Config = f.config
+	f.worker.Runner = parityRedactedRunner{StructuredRunner: runner}
 }
 
 func TestPersonSweepCursorKeyUnchangedByInferenceEligibility(t *testing.T) {

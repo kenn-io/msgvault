@@ -212,19 +212,41 @@ func extractionStructuredRequest(packet EvidencePacket, packetJSON []byte) Struc
 // ExtractionCatalog selects automatic-extraction targets without changing the
 // full catalog used by sweep runs and cursor identities.
 func ExtractionCatalog(catalog personfacts.Catalog) (personfacts.Catalog, error) {
+	extraction, err := filterExtractionCatalog(catalog, true, nil)
+	if err != nil {
+		return personfacts.Catalog{}, fmt.Errorf("fingerprint extraction person fact catalog: %w", err)
+	}
+	return extraction, nil
+}
+
+// filterExtractionCatalog combines inference eligibility and provider
+// sensitivity policy before fingerprinting the selected targets. When
+// selectedKeys is non-nil, it records the same set for packet-state filtering.
+func filterExtractionCatalog(
+	catalog personfacts.Catalog,
+	allowSensitive bool,
+	selectedKeys map[string]struct{},
+) (personfacts.Catalog, error) {
 	ineligible := make(map[string]struct{}, len(catalog.InferenceIneligible))
 	for _, key := range catalog.InferenceIneligible {
 		ineligible[key] = struct{}{}
 	}
 	targets := make([]personfacts.TargetDescriptor, 0, len(catalog.Targets))
 	for _, target := range catalog.Targets {
-		if _, excluded := ineligible[target.Key]; !excluded {
-			targets = append(targets, target)
+		if _, excluded := ineligible[target.Key]; excluded {
+			continue
 		}
+		if target.Sensitive && !allowSensitive {
+			continue
+		}
+		if selectedKeys != nil {
+			selectedKeys[target.Key] = struct{}{}
+		}
+		targets = append(targets, target)
 	}
 	fingerprint, err := personfacts.CatalogFingerprint(targets)
 	if err != nil {
-		return personfacts.Catalog{}, fmt.Errorf("fingerprint extraction person fact catalog: %w", err)
+		return personfacts.Catalog{}, err
 	}
 	catalog.Targets = targets
 	catalog.Fingerprint = fingerprint
@@ -237,25 +259,12 @@ func packetForProfile(packet EvidencePacket, profile ProviderProfile) (EvidenceP
 	if err != nil {
 		return EvidencePacket{}, err
 	}
-	canonical.Catalog, err = ExtractionCatalog(canonical.Catalog)
-	if err != nil {
-		return EvidencePacket{}, err
-	}
 	eligible := make(map[string]struct{}, len(canonical.Catalog.Targets))
-	targets := make([]personfacts.TargetDescriptor, 0, len(canonical.Catalog.Targets))
-	for _, target := range canonical.Catalog.Targets {
-		if target.Sensitive && !profile.AllowSensitive {
-			continue
-		}
-		eligible[target.Key] = struct{}{}
-		targets = append(targets, target)
-	}
-	canonical.Catalog.Targets = targets
-	fingerprint, err := personfacts.CatalogFingerprint(targets)
+	extractionCatalog, err := filterExtractionCatalog(canonical.Catalog, profile.AllowSensitive, eligible)
 	if err != nil {
 		return EvidencePacket{}, fmt.Errorf("fingerprint policy-filtered person fact catalog: %w", err)
 	}
-	canonical.Catalog.Fingerprint = fingerprint
+	canonical.Catalog = extractionCatalog
 	canonical.CurrentProjection = slices.DeleteFunc(canonical.CurrentProjection, func(value ProjectedValue) bool {
 		_, ok := eligible[value.TargetKey]
 		return !ok
