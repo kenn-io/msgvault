@@ -177,7 +177,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		status, failure := mediaSearchFailure(err)
-		if failure.Error == "invalid_media_search" || response.Attachments == nil || response.Attachments.Error != nil {
+		if failure.Error == "invalid_media_search" || response.Attachments == nil || response.Attachments.Error != nil && len(response.Attachments.Results) == 0 {
 			if s.writeIfContextError(w, err) {
 				return
 			}
