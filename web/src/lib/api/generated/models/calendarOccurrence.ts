@@ -10,6 +10,7 @@ export interface CalendarOccurrence {
   end: string;
   end_date: string;
   message_id: number;
+  ref: string;
   series_message_id: number;
   source_id: number;
   start: string;

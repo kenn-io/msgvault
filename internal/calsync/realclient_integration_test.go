@@ -59,7 +59,7 @@ func TestRealClientSyncOffsetFreeTime(t *testing.T) {
 	requirements.True(event.sentAt.Valid)
 	assertions.Equal("2027-03-02T14:00:00Z", event.sentAt.Time.UTC().Format(time.RFC3339))
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	assertions.Empty(page.Unexpandable)
 	requirements.Len(page.Occurrences, 1)

@@ -970,7 +970,7 @@ func TestSparseStandaloneCancellationOccurrences(t *testing.T) {
 			assertions.Equal("cancelled", status)
 			assertions.Equal(known, start.Valid)
 			assertions.Equal(known, end.Valid)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			if known {
 				requirements.Len(page.Occurrences, 1)
@@ -1007,7 +1007,7 @@ func TestCancellationPreservesEmptyExceptionSnapshot(t *testing.T) {
 			requirements.NoError(err)
 			assertions.False(inserted)
 		}
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 		requirements.NoError(err)
 		requirements.Len(page.Occurrences, 1)
 		assertions.Empty(page.Occurrences[0].Subject)

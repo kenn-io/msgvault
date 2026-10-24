@@ -14,7 +14,7 @@ import (
 func TestCalendarOccurrenceGeneratedEmptyStrings(t *testing.T) {
 	start := time.Date(2026, time.October, 18, 14, 0, 0, 0, time.UTC)
 	base := generated.CalendarOccurrence{
-		MessageID: 1, SeriesMessageID: 1, SourceID: 2,
+		Ref: "evt:1", MessageID: 1, SeriesMessageID: 1, SourceID: 2,
 		Subject: "Meeting", Start: start, End: start.Add(time.Hour),
 		StartDate: "2026-10-18", EndDate: "2026-10-19", Status: "confirmed",
 		Attendees: []generated.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "required", Rsvp: "accepted"}},
