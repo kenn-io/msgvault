@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -1027,6 +1028,75 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 	assert.Equal(int64(2048), got.PayloadBytes, "PayloadBytes")
 	assert.Equal(2, got.AttachmentCount, "AttachmentCount")
 	assert.True(got.HasAttachments, "HasAttachments")
+}
+
+func TestStore_GetAllRawMIMECandidatesIncludesNonMIMEFormats(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	var wantIDs []int64
+	for _, format := range []string{"granola_json", "gcal_json"} {
+		id := newRFC822Message(t, f, format, "")
+		require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"title":"Example"}`), format))
+		wantIDs = append(wantIDs, id)
+	}
+	for _, scope := range [][]int64{nil, {f.Source.ID}} {
+		candidates, err := f.Store.GetAllRawMIMECandidates(scope...)
+		require.NoError(err)
+		var gotIDs []int64
+		for _, candidate := range candidates {
+			gotIDs = append(gotIDs, candidate.ID)
+		}
+		assert.Equal(wantIDs, gotIDs)
+	}
+}
+
+func TestStore_GetAllRawMIMECandidatesExcludesCalDAVResources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	calDAV, err := f.Store.GetOrCreateSource("caldav", "calendar@example.test")
+	require.NoError(err, "GetOrCreateSource CalDAV")
+	conversationID, err := f.Store.EnsureConversationWithType(
+		calDAV.ID, "shared-resource", "calendar", "Shared resource",
+	)
+	require.NoError(err, "EnsureConversationWithType")
+	const resource = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VEVENT\r\nUID:event-a@example.test\r\nDTSTART:20270101T120000Z\r\n" +
+		"SUMMARY:First event\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:event-b@example.test\r\nDTSTART:20270102T120000Z\r\n" +
+		"SUMMARY:Second event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	calendarIDs := make([]int64, 0, 2)
+	for _, eventID := range []string{"event-a@example.test", "event-b@example.test"} {
+		id, err := f.Store.UpsertMessage(&store.Message{
+			ConversationID:  conversationID,
+			SourceID:        calDAV.ID,
+			SourceMessageID: eventID,
+			MessageType:     "calendar_event",
+			SizeEstimate:    int64(len(resource)),
+		})
+		require.NoError(err, "UpsertMessage CalDAV event")
+		require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(resource), calevent.CalDAVRawFormat),
+			"UpsertMessageRawWithFormat CalDAV event")
+		calendarIDs = append(calendarIDs, id)
+	}
+
+	emailID := newRFC822Message(t, f, "mail-with-raw", "")
+	require.NoError(f.Store.UpsertMessageRaw(emailID, []byte(
+		"From: sender@example.test\r\nSubject: Email\r\n\r\nBody",
+	)), "UpsertMessageRaw email")
+	candidates, err := f.Store.GetAllRawMIMECandidates()
+	require.NoError(err, "GetAllRawMIMECandidates")
+	candidateIDs := make([]int64, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidateIDs = append(candidateIDs, candidate.ID)
+	}
+	assert.Contains(candidateIDs, emailID, "MIME email remains a content-hash candidate")
+	for _, id := range calendarIDs {
+		assert.NotContains(candidateIDs, id,
+			"distinct VEVENTs sharing one CalDAV resource must not become MIME hash candidates")
+	}
 }
 
 func TestStore_GetDuplicateGroupMessagesBatch_MatchesPerGroupQuery(t *testing.T) {

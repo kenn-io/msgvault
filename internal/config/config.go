@@ -614,6 +614,7 @@ type Config struct {
 	Accounts           []AccountSchedule               `toml:"accounts"`
 	WhatsAppApple      []WhatsAppAppleSource           `toml:"whatsapp_apple"`
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
+	CalDAV             CalDAVConfig                    `toml:"caldav"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
@@ -1295,6 +1296,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	_, _, err = cfg.CardDAV.TrustedDestination()
 	cfg.deferDaemonError(err)
+	cfg.deferDaemonError(cfg.validateCalDAV())
 	cfg.deferDaemonError(cfg.validateCardDAVConnections())
 	cfg.Integrations.Tasks.ApplyDefaults()
 	cfg.deferDaemonError(cfg.Integrations.Tasks.Validate("tasks"))

@@ -407,7 +407,7 @@ func assignMessageIDs(
 	// for the same base. Probing for those IDs per duplicate group would cost
 	// one extra query per message on archives where almost every message is a
 	// group of one.
-	existing, err := st.SourceMessageMetadata(sourceID)
+	existing, err := st.SourceMessageMetadata(sourceID, false)
 	if err != nil {
 		return nil, fmt.Errorf("load existing iMazing CSV messages: %w", err)
 	}
