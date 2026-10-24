@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -50,7 +51,7 @@ Examples:
 			if err != nil || id < 1 {
 				return usageErr(cmd, errors.New("message ID must be a positive archive ID"))
 			}
-			client, _, err := OpenHTTPStore(cmd.Context(), emailFamilyMinAPISchemaVersion)
+			client, _, err := OpenHTTPStore(cmd.Context(), daemonclient.EmailFamilyMinAPISchemaVersion)
 			if err != nil {
 				return fmt.Errorf("open store: %w", err)
 			}
