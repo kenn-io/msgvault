@@ -3651,6 +3651,18 @@ func (d DocbankAttachmentBackfillResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
+type DocbankAttachmentProcessingSummary struct {
+	Extracted int64            `json:"extracted"`
+	Outcomes  map[string]int64 `json:"outcomes"`
+	Profile   string           `json:"profile" validate:"required"`
+	Requested int64            `json:"requested"`
+	Waiting   int64            `json:"waiting"`
+}
+
+func (d DocbankAttachmentProcessingSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type DocbankAttachmentRef struct {
 	BlobHash  string `json:"blob_hash" validate:"required"`
 	Endpoint  string `json:"endpoint" validate:"required"`
@@ -3664,10 +3676,12 @@ func (d DocbankAttachmentRef) Validate() error {
 }
 
 type DocbankAttachmentStatus struct {
-	Counts        *DocbankAttachmentSummary    `json:"counts,omitempty"`
-	Folder        string                       `json:"folder" validate:"required"`
-	State         DocbankAttachmentStatusState `json:"state" validate:"required"`
-	UploadConsent bool                         `json:"upload_consent"`
+	Counts        *DocbankAttachmentSummary           `json:"counts,omitempty"`
+	Folder        string                              `json:"folder" validate:"required"`
+	LastError     *string                             `json:"last_error,omitzero"`
+	Processing    *DocbankAttachmentProcessingSummary `json:"processing,omitempty"`
+	State         DocbankAttachmentStatusState        `json:"state" validate:"required"`
+	UploadConsent bool                                `json:"upload_consent"`
 }
 
 func (d DocbankAttachmentStatus) Validate() error {
@@ -3681,6 +3695,13 @@ func (d DocbankAttachmentStatus) Validate() error {
 	}
 	if err := typesValidator.Var(d.Folder, "required"); err != nil {
 		errors = errors.Append("Folder", err)
+	}
+	if d.Processing != nil {
+		if v, ok := any(d.Processing).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Processing", err)
+			}
+		}
 	}
 	if v, ok := any(d.State).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {

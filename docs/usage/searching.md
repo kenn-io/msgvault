@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-12"
+last_edited: "2026-10-22"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -340,7 +340,7 @@ Media search uses lexical retrieval through the configured Docbank integration. 
 
 ## Search mirrored attachment text
 
-On unreleased builds, media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as images, audio, or video. Docbank searches the text it can extract from those files. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` for attachments; recording results still return. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
+On unreleased builds, media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as images, audio, or video. Docbank searches the text it can extract from those files. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. Set `document_profile` in the [attachment mirror configuration](../configuration.md#mirror-stored-attachments-to-docbank-unreleased) to request text extraction in Docbank. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` for attachments; recording results still return. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
 
 Use `documents search` for msgvault's local document index and `media search` for text Docbank has extracted from mirrored attachments.
 

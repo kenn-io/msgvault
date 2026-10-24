@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-20"
+last_edited: "2026-10-22"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
+- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`. Requires archive schema version 13 and HTTP API schema 3.27.0.
 
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).

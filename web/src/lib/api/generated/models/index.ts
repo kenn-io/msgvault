@@ -229,6 +229,8 @@ export * from "./discoverRequest";
 export * from "./discoverResult";
 export * from "./display";
 export * from "./docbankAttachmentBackfillResponse";
+export * from "./docbankAttachmentProcessingSummary";
+export * from "./docbankAttachmentProcessingSummaryOutcomes";
 export * from "./docbankAttachmentRef";
 export * from "./docbankAttachmentStatus";
 export * from "./docbankAttachmentStatusState";
