@@ -25,9 +25,6 @@ func (s *Store) LoadKataEvidenceSource(ctx context.Context, selector kataevidenc
 
 func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector kataevidence.Selector) (kataevidence.SourceRecord, error) {
 	var result kataevidence.SourceRecord
-	if selector.Kind == "document_chunk" {
-		return result, kataevidence.ErrUnavailable
-	}
 	result.Reference = kataevidence.Reference{Version: kataevidence.Version, Kind: selector.Kind, ArchiveUID: uid, MessageID: selector.MessageID}
 	ref := &result.Reference
 	// A message cites its stored body text or the raw MIME fallback.
