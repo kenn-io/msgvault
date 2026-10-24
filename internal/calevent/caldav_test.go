@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emersion/go-ical"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -194,7 +195,7 @@ func TestCalDAVEmailDecodesMailtoMailboxOnce(t *testing.T) {
 		{"mailto:Guest%ZZ@example.org", ""},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
-			assert.Equal(t, tc.want, calDAVEmail(tc.input))
+			assert.Equal(t, tc.want, calDAVEmail(&ical.Prop{Value: tc.input}))
 		})
 	}
 }
@@ -326,6 +327,7 @@ func TestCalDAVAttendeeRolesAndRSVP(t *testing.T) {
 		{Email: "dave@example.org", Role: "required", RSVP: "needs_action"},
 		{Email: "guest@example.org", Role: "optional", RSVP: "accepted"},
 		{Email: "info@example.org", Role: "optional", RSVP: "needs_action"},
+		{Role: "required", RSVP: "needs_action"},
 		{Email: "room@example.org", Role: "room", RSVP: "needs_action"},
 		{Email: "alice@example.org", DisplayName: "Alice", Role: "organizer", RSVP: "unknown"},
 	}, event.Attendees)
