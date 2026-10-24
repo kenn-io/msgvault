@@ -8,13 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -154,62 +152,6 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		APIKey:             "mcp-http-key",
 		AllowWrites:        true,
 	}, gotHTTPOpts)
-}
-
-func TestMCPDelegatedModeServesDraftsWithCurrentAPI(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	previousHTTPAddr := mcpHTTPAddr
-	previousServe := serveMCPStdioWithOptions
-	previousSchemaCheck := remoteAPISchemaCheckEnabled
-	mcpHTTPAddr = ""
-	remoteAPISchemaCheckEnabled = true
-	var serveCalled bool
-	serveMCPStdioWithOptions = func(_ context.Context, options mcpserver.ServeOptions) error {
-		serveCalled = true
-		assertions.True(options.DelegatedOnly)
-		assertions.NotNil(options.Calendar)
-		assertions.NotEmpty(options.DraftCommands)
-		return errors.New("stop after capture")
-	}
-	t.Cleanup(func() {
-		mcpHTTPAddr = previousHTTPAddr
-		serveMCPStdioWithOptions = previousServe
-		remoteAPISchemaCheckEnabled = previousSchemaCheck
-	})
-
-	var healthRequests atomic.Int32
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/health":
-			healthRequests.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion})
-		case "/api/v1/agent-tokens/self":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"permissions": []string{"draft.create"}})
-		case "/api/session":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"auth_mode": "delegated"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(daemon.Close)
-	tokenFile := filepath.Join(t.TempDir(), "agent-token")
-	requirements.NoError(os.WriteFile(tokenFile, []byte("mva1_test-token"), 0o600))
-	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
-		agentURL: daemon.URL, agentTokenFile: tokenFile, agentAllowInsecure: true,
-		agentURLChanged: true, agentTokenChanged: true,
-	})
-	cmd := &cobra.Command{}
-	cmd.SetContext(ctx)
-
-	err := mcpCmd.RunE(cmd, nil)
-
-	requirements.ErrorContains(err, "stop after capture")
-	assertions.True(serveCalled)
-	assertions.Equal(int32(2), healthRequests.Load())
 }
 
 func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -889,6 +890,12 @@ func TestRemovedDocumentSourceIsIgnored(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			peoplesweep.ResetDocumentTextWarningForTest()
+			t.Cleanup(peoplesweep.ResetDocumentTextWarningForTest)
+			var warnings bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&warnings, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
 			cfg := validConfig()
 			for name, provider := range cfg.Providers {
 				if documentOnly {
@@ -897,7 +904,15 @@ func TestRemovedDocumentSourceIsIgnored(t *testing.T) {
 				provider.AllowedSources = append(provider.AllowedSources, peoplesweep.SourceDocumentText)
 				cfg.Providers[name] = provider
 			}
+			original := cfg
+			original.Providers = maps.Clone(cfg.Providers)
 			cfg.ApplyDefaults()
+			if documentOnly {
+				assert.Contains(warnings.String(), "people sweep disabled because allowed_sources contains only retired sources")
+			} else {
+				original.ApplyDefaults()
+				assert.Equal(1, strings.Count(warnings.String(), "document_text was removed; drop it from allowed_sources"))
+			}
 			require.NoError(cfg.Validate())
 			assert.Equal(!documentOnly, cfg.Enabled)
 			for _, provider := range cfg.Providers {
