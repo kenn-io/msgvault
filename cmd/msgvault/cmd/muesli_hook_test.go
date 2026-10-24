@@ -75,13 +75,6 @@ func testMuesliHookBuiltArtifactDispatch(t *testing.T, binary string) {
 	if runtime.GOOS == "windows" {
 		suffix = ".exe"
 	}
-	prebuilt, err := filepath.Abs(filepath.Join("..", "..", "..", "msgvault"+suffix))
-	require.NoError(err)
-	if _, err := os.Stat(prebuilt); err == nil {
-		binary = prebuilt
-	} else {
-		require.ErrorIs(err, os.ErrNotExist)
-	}
 	alias := filepath.Join(t.TempDir(), "msgvault-muesli-hook"+suffix)
 	require.NoError(os.Symlink(binary, alias))
 	command := exec.CommandContext(t.Context(), alias, "serve", "--help")

@@ -1318,89 +1318,107 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 	assert.Equal("gmail", sources[0].SourceType, "remaining source type")
 }
 
-func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
-	cfg := testConfigValue()
-
-	require := require.New(t)
-	tmpDir := t.TempDir()
-	dbPath := tmpDir + "/msgvault.db"
-	tokensDir := filepath.Join(tmpDir, "tokens")
-	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-
-	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	_, err := s.GetOrCreateSource("gmail", "tok@example.com")
-	require.NoError(err, "create source")
-	_ = s.Close()
-
-	// Create a fake token file
-	tokenPath := oauth.TokenFilePath(tokensDir, "tok@example.com")
-	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write token")
-
-	savedCfg := cfg
-	defer func() { cfg = savedCfg }()
-
-	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
-	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-
-	root := newTestRootCmd()
-	root.SetContext(testCtx)
-	root.AddCommand(newRemoveAccountLocalTestCmd())
-	root.SetArgs([]string{
-		"remove-account", "tok@example.com", "--yes",
-	})
-
-	require.NoError(root.Execute(), "remove-account")
-
-	_, err = os.Stat(tokenPath)
-	assert.True(t, os.IsNotExist(err), "token file should be removed for gmail source")
-}
-
-func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
-	cfg := testConfigValue()
-
-	require := require.New(t)
-	tmpDir := t.TempDir()
-	dbPath := tmpDir + "/msgvault.db"
-	tokensDir := filepath.Join(tmpDir, "tokens")
-	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-
-	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	_, err := s.GetOrCreateSource("teams", "tok@example.com")
-	require.NoError(err, "create source")
-	_ = s.Close()
-
-	mgr := microsoft.NewGraphManager("client-id", "", "", tokensDir, nil)
-	tokenPath := mgr.TokenPath("tok@example.com")
-	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write teams token")
-
-	savedCfg := cfg
-	defer func() { cfg = savedCfg }()
-
-	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
-		Microsoft: config.MicrosoftConfig{
-			ClientID: "client-id",
+func TestRemoveAccountCmd_RemovesTokenPerSourceType(t *testing.T) {
+	tests := []struct {
+		name        string
+		sourceType  string
+		identifier  string
+		args        []string
+		microsoft   config.MicrosoftConfig
+		writeToken  func(t *testing.T, tokensDir string) string
+		wantRemoved bool
+	}{
+		{
+			name: "gmail", sourceType: "gmail", identifier: "tok@example.com",
+			args: []string{"remove-account", "tok@example.com", "--yes"},
+			writeToken: func(t *testing.T, tokensDir string) string {
+				t.Helper()
+				path := oauth.TokenFilePath(tokensDir, "tok@example.com")
+				require.NoError(t, os.WriteFile(path, []byte(`{}`), 0600), "write token")
+				return path
+			},
+			wantRemoved: true,
+		},
+		{
+			name: "teams graph token", sourceType: "teams", identifier: "tok@example.com",
+			args:      []string{"remove-account", "tok@example.com", "--yes", "--type", "teams"},
+			microsoft: config.MicrosoftConfig{ClientID: "client-id"},
+			writeToken: func(t *testing.T, tokensDir string) string {
+				t.Helper()
+				path := microsoft.NewGraphManager("client-id", "", "", tokensDir, nil).TokenPath("tok@example.com")
+				require.NoError(t, os.WriteFile(path, []byte(`{}`), 0600), "write teams token")
+				return path
+			},
+			wantRemoved: true,
+		},
+		{
+			name: "circleback", sourceType: sourceTypeCircleback, identifier: "tok@example.com",
+			args: []string{"remove-account", "tok@example.com", "--yes", "--type", sourceTypeCircleback},
+			writeToken: func(t *testing.T, tokensDir string) string {
+				t.Helper()
+				path := circleback.NewManager("", tokensDir, nil).TokenPath("tok@example.com")
+				require.NoError(t, os.WriteFile(path, []byte(`{}`), 0600), "write circleback token")
+				return path
+			},
+			wantRemoved: true,
+		},
+		{
+			name: "slack", sourceType: sourceTypeSlack, identifier: "T01:UME",
+			args: []string{"remove-account", "T01:UME", "--yes", "--type", sourceTypeSlack},
+			writeToken: func(t *testing.T, tokensDir string) string {
+				t.Helper()
+				require.NoError(t, slack.SaveToken(tokensDir, "T01", "testers", "UME", "xoxp-test"), "write slack token")
+				path := filepath.Join(tokensDir, "slack_T01_UME.json")
+				require.FileExists(t, path, "slack token file must exist before removal")
+				return path
+			},
+			wantRemoved: true,
+		},
+		{
+			name: "non-gmail source keeps the token", sourceType: "mbox", identifier: "imp@example.com",
+			args: []string{"remove-account", "imp@example.com", "--yes"},
+			writeToken: func(t *testing.T, tokensDir string) string {
+				t.Helper()
+				path := oauth.TokenFilePath(tokensDir, "imp@example.com")
+				require.NoError(t, os.WriteFile(path, []byte(`{}`), 0600), "write token")
+				return path
+			},
+			wantRemoved: false,
 		},
 	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfigValue()
+			require := require.New(t)
+			tmpDir := t.TempDir()
+			tokensDir := filepath.Join(tmpDir, "tokens")
+			require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 
-	root := newTestRootCmd()
-	root.SetContext(testCtx)
-	root.AddCommand(newRemoveAccountLocalTestCmd())
-	root.SetArgs([]string{
-		"remove-account", "tok@example.com", "--yes", "--type", "teams",
-	})
+			s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
+			_, err := s.GetOrCreateSource(tt.sourceType, tt.identifier)
+			require.NoError(err, "create source")
+			require.NoError(s.Close(), "close store")
+			tokenPath := tt.writeToken(t, tokensDir)
 
-	require.NoError(root.Execute(), "remove-account")
+			savedCfg := cfg
+			t.Cleanup(func() { cfg = savedCfg })
+			cfg = &config.Config{
+				HomeDir:   tmpDir,
+				Data:      config.DataConfig{DataDir: tmpDir},
+				Microsoft: tt.microsoft,
+			}
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	_, err = os.Stat(tokenPath)
-	assert.True(t, os.IsNotExist(err), "Graph token file should be removed for teams source")
+			root := newTestRootCmd()
+			root.SetContext(testCtx)
+			root.AddCommand(newRemoveAccountLocalTestCmd())
+			root.SetArgs(tt.args)
+			require.NoError(root.Execute(), "remove-account")
+
+			_, err = os.Stat(tokenPath)
+			assert.Equal(t, tt.wantRemoved, os.IsNotExist(err), "token file removal")
+		})
+	}
 }
 
 func TestRemoveAccountCmd_DiscordDeletesTokenOnlyAfterFinalBotReference(t *testing.T) {
@@ -1621,46 +1639,6 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	assert.Equal(sourceTypeDiscord, second.SourceType)
 }
 
-func TestRemoveAccountCmd_CirclebackRemovesToken(t *testing.T) {
-	cfg := testConfigValue()
-
-	require := require.New(t)
-	tmpDir := t.TempDir()
-	dbPath := tmpDir + "/msgvault.db"
-	tokensDir := filepath.Join(tmpDir, "tokens")
-	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-
-	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	_, err := s.GetOrCreateSource(sourceTypeCircleback, "tok@example.com")
-	require.NoError(err, "create source")
-	require.NoError(s.Close(), "close store")
-
-	mgr := circleback.NewManager("", tokensDir, nil)
-	tokenPath := mgr.TokenPath("tok@example.com")
-	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write circleback token")
-
-	savedCfg := cfg
-	t.Cleanup(func() { cfg = savedCfg })
-	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
-	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-
-	root := newTestRootCmd()
-	root.SetContext(testCtx)
-	root.AddCommand(newRemoveAccountLocalTestCmd())
-	root.SetArgs([]string{
-		"remove-account", "tok@example.com", "--yes", "--type", sourceTypeCircleback,
-	})
-
-	require.NoError(root.Execute(), "remove-account")
-
-	_, err = os.Stat(tokenPath)
-	assert.True(t, os.IsNotExist(err), "token file should be removed for Circleback source")
-}
-
 func TestRemoveAccountCmd_RemovesNotionMeetingSource(t *testing.T) {
 	cfg := testConfigValue()
 
@@ -1690,88 +1668,6 @@ func TestRemoveAccountCmd_RemovesNotionMeetingSource(t *testing.T) {
 	defer func() { require.NoError(check.Close()) }()
 	_, err = check.GetSourceByTypeAndIdentifier(sourceTypeNotionMeetings, "notion-personal")
 	require.ErrorIs(err, store.ErrSourceNotFound)
-}
-
-func TestRemoveAccountCmd_SlackRemovesToken(t *testing.T) {
-	cfg := testConfigValue()
-
-	require := require.New(t)
-	tmpDir := t.TempDir()
-	dbPath := tmpDir + "/msgvault.db"
-	tokensDir := filepath.Join(tmpDir, "tokens")
-	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-
-	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	_, err := s.GetOrCreateSource(sourceTypeSlack, "T01:UME")
-	require.NoError(err, "create source")
-	require.NoError(s.Close(), "close store")
-
-	require.NoError(slack.SaveToken(tokensDir, "T01", "testers", "UME", "xoxp-test"), "write slack token")
-	tokenPath := filepath.Join(tokensDir, "slack_T01_UME.json")
-	_, err = os.Stat(tokenPath)
-	require.NoError(err, "slack token file must exist before removal")
-
-	savedCfg := cfg
-	t.Cleanup(func() { cfg = savedCfg })
-	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
-	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-
-	root := newTestRootCmd()
-	root.SetContext(testCtx)
-	root.AddCommand(newRemoveAccountLocalTestCmd())
-	root.SetArgs([]string{
-		"remove-account", "T01:UME", "--yes", "--type", sourceTypeSlack,
-	})
-
-	require.NoError(root.Execute(), "remove-account")
-
-	_, err = os.Stat(tokenPath)
-	assert.True(t, os.IsNotExist(err), "token file should be removed for Slack source")
-}
-
-func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
-	cfg := testConfigValue()
-
-	require := require.New(t)
-	tmpDir := t.TempDir()
-	dbPath := tmpDir + "/msgvault.db"
-	tokensDir := filepath.Join(tmpDir, "tokens")
-	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-
-	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	_, err := s.GetOrCreateSource("mbox", "imp@example.com")
-	require.NoError(err, "create source")
-	_ = s.Close()
-
-	// Create a token file that should NOT be removed
-	tokenPath := oauth.TokenFilePath(tokensDir, "imp@example.com")
-	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write token")
-
-	savedCfg := cfg
-	defer func() { cfg = savedCfg }()
-
-	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
-	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-
-	root := newTestRootCmd()
-	root.SetContext(testCtx)
-	root.AddCommand(newRemoveAccountLocalTestCmd())
-	root.SetArgs([]string{
-		"remove-account", "imp@example.com", "--yes",
-	})
-
-	require.NoError(root.Execute(), "remove-account")
-
-	_, err = os.Stat(tokenPath)
-	assert.False(t, os.IsNotExist(err), "token file should NOT be removed for non-gmail source")
 }
 
 func TestResolveSource_IMAPDisplayName(t *testing.T) {
