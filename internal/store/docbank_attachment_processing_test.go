@@ -123,25 +123,26 @@ func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) 
 	f := storetest.New(t)
 	ctx := t.Context()
 	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "attachments", "documents", "fp"))
-	documents := []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "provider_timeout"}, {MIMEType: "application/pdf", VersionID: "consent"}, {MIMEType: "application/pdf", VersionID: "stale_authority"}}
+	documents := []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "provider_timeout"}, {MIMEType: "application/pdf", VersionID: "consent"}, {MIMEType: "application/pdf", VersionID: "stale_authority"}, {MIMEType: "application/pdf", VersionID: "pdf_password_required"}}
 	f.SeedDocumentAttachments(f.CreateMessage("backfill"), documents)
-	for i, outcome := range []string{"provider_timeout", "consent", "stale_authority"} {
+	for i, outcome := range []string{"provider_timeout", "consent", "stale_authority", "pdf_password_required"} {
 		d := store.DocbankAttachmentProcessing{ContentHash: fmt.Sprintf("%064x", 0xabcdef+i), VersionID: outcome, Fingerprint: "fp", Outcome: outcome, JobID: "job-" + outcome}
 		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Time{}))
 	}
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
-	require.Len(due, 2)
+	require.Len(due, 3)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf0), due[0].ContentHash)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf1), due[1].ContentHash)
+	assert.Equal(fmt.Sprintf("%064x", 0xabcdf2), due[2].ContentHash)
 	for _, d := range due {
 		assert.Empty(d.Outcome)
 		assert.Empty(d.JobID)
 	}
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
-	assert.Equal(int64(2), counts.Waiting)
+	assert.Equal(int64(3), counts.Waiting)
 	assert.Equal(map[string]int64{"provider_timeout": 1}, counts.Outcomes)
 	var savedOutcome, jobID string
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome, job_id FROM docbank_attachment_processing WHERE content_hash = ?`), fmt.Sprintf("%064x", 0xabcdef)).Scan(&savedOutcome, &jobID))
