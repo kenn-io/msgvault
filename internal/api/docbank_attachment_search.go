@@ -31,33 +31,34 @@ type MediaAttachmentSearch struct {
 // SearchAttachments searches delivered attachment versions in bounded batches.
 // Results from each batch of 4,096 are interleaved by their position within
 // that batch, so order across batches is approximate. Only visible messages appear.
+// A failed later batch keeps earlier batches' hits and marks the search truncated.
 func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
 	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
-	fail := func(err error) (MediaAttachmentSearch, error) {
-		response.Error = attachmentSearchError(err)
-		return response, err
-	}
 	versions, err := reader.Store.DocumentSearchVersions(ctx, reader.Destination, scope)
 	if err != nil {
 		response.Error = &ErrorResponse{Error: "server_error", Message: "Attachment search is unavailable."}
 		return response, err
 	}
-	// Docbank lexical search spans profiles but requires a registered name.
-	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile, Limit: limit}
 	if len(versions) == 0 {
 		return response, nil
 	}
 	fence, err := reader.Client.VaultFence(remoteCtx, versions)
 	if err != nil {
-		return fail(err)
+		response.Error = attachmentSearchError(err)
+		return response, err
 	}
-	request.Fence = &fence
+	// Docbank lexical search spans profiles but requires a registered name.
+	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile, Limit: limit, Fence: &fence}
 	var hits []docbankmedia.SearchHit
 	for chunk := range slices.Chunk(versions, docbankmedia.MaxSearchVersions) {
 		fence.ContentVersionIDs = chunk
 		report, err := reader.Client.SearchDocuments(remoteCtx, request)
 		if err != nil {
-			return fail(err)
+			response.Error, response.Truncated = attachmentSearchError(err), &chunk[0] != &versions[0]
+			if !response.Truncated {
+				return response, err
+			}
+			break
 		}
 		hits = append(hits, report.Results...)
 		response.Truncated = response.Truncated || report.Truncated
