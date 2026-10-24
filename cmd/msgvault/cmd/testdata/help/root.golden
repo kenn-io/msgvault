@@ -152,7 +152,7 @@ Indexes, embeddings, and analytics cache:
   cache-stats Show statistics about the analytics cache
   documents   Manage document attachment indexing
   embeddings  Manage message vector embeddings
-  eval        Score search quality (requires sqlite_vec build)
+  eval        Score search quality against relevance judgments (qrels)
   multimodal  Manage and search visual attachment embeddings
   rebuild-fts Rebuild the full-text search index from scratch
 
