@@ -471,6 +471,12 @@ func (s *Store) emailFamilyNodes(ctx context.Context, ids []int64, scope string,
 			node.LinkageOutcome = outcome.String
 		}
 		node.ownID = string(ownID)
+		// Replies name this copy by its own Message-ID. Without it stored
+		// (a legacy row the RFC 822 ID backfill has not reached), relatives
+		// cannot find it, so the copy is not complete.
+		if node.LinkageOutcome == "complete" && node.ownID == "" {
+			node.LinkageOutcome = "missing_message_id"
+		}
 		byID[node.MessageID] = node
 		nodes = append(nodes, node)
 		return nil

@@ -469,3 +469,15 @@ func TestEmailFamilyJoinsProviderThreads(t *testing.T) {
 		})
 	}
 }
+
+// A row whose own Message-ID was never stored cannot be found from its
+// relatives, so repair deriving its keys does not make it complete.
+func TestEmailFamilyReportsCopyWithoutStoredMessageID(t *testing.T) {
+	a := newAttrFixture(t, "imap", "a@example.test")
+	id := a.persist(attrMail{raw: "Message-ID: <legacy@example.test>\r\nSubject: Old\r\n\r\nBody"})
+
+	family, err := a.st.EmailFamilyContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, family.Members, 1)
+	assert.Equal(t, "missing_message_id", family.Members[0].LinkageOutcome)
+}
