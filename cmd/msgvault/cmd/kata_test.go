@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -334,10 +333,7 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	var transcriptRef kataevidence.Reference
 	require.NoError(json.Unmarshal(encodedRef, &transcriptRef))
 	chunkRef := transcriptRef
-	var partKey string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_part_key FROM attachments WHERE id=?`), attachmentID).Scan(&partKey))
-	legacyKey := sha256.Sum256([]byte(fmt.Sprintf("stable\x00%d\x00%s", messageID, partKey)))
-	chunkRef.Kind, chunkRef.OccurrenceKey, chunkRef.DocbankRendition = "document_chunk", fmt.Sprintf("dococc_%x", legacyKey), nil
+	chunkRef.Kind, chunkRef.OccurrenceKey, chunkRef.DocbankRendition = "document_chunk", "dococc_73e834d2f900e92d8989bb4c23542fc865f9099e29189122d154715e3edeace0", nil
 	chunkRef.DocumentChunk = &kataevidence.DocumentReference{CanonicalBlobHash: hash, ExtractionID: "extraction", ManifestChecksum: hash, ChunkKey: "chunk", ChunkChecksum: hash, StartRune: 0, EndRune: 10}
 	metadata := func(refs ...kataevidence.Reference) map[string]any {
 		entries := make([]kataissues.Entry, 0, len(refs))

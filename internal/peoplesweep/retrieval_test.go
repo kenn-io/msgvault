@@ -32,9 +32,9 @@ func (f retrievalArchive) HydratePersonSweepMessages(_ context.Context, _ int64,
 }
 
 func TestPersonSweepContextRetrieverDeduplicatesEachSignalBeforeFusion(t *testing.T) {
-	one := retrievalItem(1, SourceConversationText, "")
-	two := retrievalItem(2, SourceConversationText, "")
-	three := retrievalItem(3, SourceConversationText, "")
+	one := retrievalItem(1)
+	two := retrievalItem(2)
+	three := retrievalItem(3)
 	archive := retrievalArchive{
 		candidates: []int64{1, 2, 3},
 		lexical:    []EvidenceItem{one, one, two},
@@ -53,6 +53,19 @@ func TestPersonSweepContextRetrieverDeduplicatesEachSignalBeforeFusion(t *testin
 	})
 }
 
-func retrievalItem(id int64, lane SourceClass, chunk string) EvidenceItem {
-	return EvidenceItem{PersonID: 9, SourceClass: lane, Ref: EvidenceRef{SourceLane: lane, SourceID: 1, MessageID: id, ChunkKey: chunk}}
+func retrievalItem(id int64) EvidenceItem {
+	return EvidenceItem{PersonID: 9, SourceClass: SourceConversationText, Ref: EvidenceRef{SourceLane: SourceConversationText, SourceID: 1, MessageID: id}}
+}
+
+func TestPersonSweepContextRetrieverRejectsCrossPersonArchiveResults(t *testing.T) {
+	other := retrievalItem(1)
+	other.PersonID = 10
+	retriever := NewContextRetriever(retrievalArchive{
+		candidates: []int64{1}, lexical: []EvidenceItem{retrievalItem(1), other},
+	})
+	_, err := retriever.RetrievePersonSweepContext(t.Context(), ContextRequest{
+		PersonID: 9, CandidateMessageIDs: []int64{1}, Limit: 3,
+		Target: personfacts.TargetDescriptor{Description: "role history"},
+	})
+	assert.ErrorContains(t, err, "person")
 }

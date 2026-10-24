@@ -976,62 +976,73 @@ func TestMediaSearchDocumentsOccurrenceLimit(t *testing.T) {
 }
 
 func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newMediaSearchFixture(t)
-	f.match(t, "audio")
-	server := f.server(false)
-	first, _ := f.document(t, server)
-	var documents []storetest.DocumentAttachment
-	for i := 2; i <= 4099; i++ {
-		documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
-	}
-	f.f.SeedDocumentAttachments(first, documents)
-	template := f.documentReport.Results[0]
-	f.documentReport.Results = []docbankmedia.SearchHit{
-		{ContentVersionID: "00000000-0000-4000-8000-000000000002", Rank: 1, Excerpt: "first batch, first hit"},
-		{ContentVersionID: "00000000-0000-4000-8000-000000000003", Rank: 2, Excerpt: "first batch, second hit"},
-		{ContentVersionID: "00000000-0000-4000-8000-000000000004", Rank: 3, Excerpt: "first batch, third hit"},
-		{ContentVersionID: "00000000-0000-4000-8000-000000001001", Rank: 1, Excerpt: "second batch, first hit"},
-		{ContentVersionID: "00000000-0000-4000-8000-000000001002", Rank: 2, Excerpt: "second batch, second hit"},
-		{ContentVersionID: "00000000-0000-4000-8000-000000001003", Rank: 3, Excerpt: "second batch, third hit"},
-	}
-	for i := range f.documentReport.Results {
-		f.documentReport.Results[i].VaultUID = template.VaultUID
-		f.documentReport.Results[i].NodeID = template.NodeID
-		f.documentReport.Results[i].Evidence = template.Evidence
-	}
-	if !f.f.Store.IsPostgreSQL() {
-		// Four hit IDs plus destination and occurrence limit fit; all six hits don't.
-		f.f.Store.DB().SetMaxOpenConns(1)
-		conn, err := f.f.Store.DB().Conn(t.Context())
-		require.NoError(err)
-		require.NoError(conn.Raw(func(driverConn any) error {
-			sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-			require.True(ok)
-			sqliteConn.SetLimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 6)
-			return nil
-		}))
-		require.NoError(conn.Close())
-	}
-	status, response, raw := searchMediaFor(t, server, "q=quartz&limit=3")
-	require.Equal(http.StatusOK, status, raw)
-	require.NotNil(response.Attachments)
-	assert.Nil(response.Attachments.Error)
-	require.Len(response.Attachments.Results, 3)
-	assert.Equal("first batch, first hit", response.Attachments.Results[0].Excerpt)
-	assert.Equal("second batch, first hit", response.Attachments.Results[1].Excerpt)
-	assert.Equal("first batch, second hit", response.Attachments.Results[2].Excerpt)
-	assert.True(response.Attachments.Truncated)
-	require.Len(f.documentRequests, 2)
-	var versions []string
-	for _, request := range f.documentRequests {
-		assert.LessOrEqual(len(request.Fence.ContentVersionIDs), docbankmedia.MaxSearchVersions)
-		versions = append(versions, request.Fence.ContentVersionIDs...)
-	}
-	assert.Len(versions, 4099)
-	for i := 1; i <= 4099; i++ {
-		assert.Contains(versions, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
+	for _, boundedLookup := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bounded occurrence lookup=%t", boundedLookup), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			if boundedLookup && f.f.Store.IsPostgreSQL() {
+				t.Skip("SQLite variable limit")
+			}
+			f.match(t, "audio")
+			server := f.server(false)
+			first, _ := f.document(t, server)
+			var documents []storetest.DocumentAttachment
+			for i := 2; i <= 4099; i++ {
+				documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
+			}
+			f.f.SeedDocumentAttachments(first, documents)
+			template := f.documentReport.Results[0]
+			f.documentReport.Results = []docbankmedia.SearchHit{
+				{ContentVersionID: "00000000-0000-4000-8000-000000000002", Rank: 1, Excerpt: "first batch, first hit"},
+				{ContentVersionID: "00000000-0000-4000-8000-000000000003", Rank: 2, Excerpt: "first batch, second hit"},
+				{ContentVersionID: "00000000-0000-4000-8000-000000000004", Rank: 3, Excerpt: "first batch, third hit"},
+				{ContentVersionID: "00000000-0000-4000-8000-000000001001", Rank: 1, Excerpt: "second batch, first hit"},
+				{ContentVersionID: "00000000-0000-4000-8000-000000001002", Rank: 2, Excerpt: "second batch, second hit"},
+				{ContentVersionID: "00000000-0000-4000-8000-000000001003", Rank: 3, Excerpt: "second batch, third hit"},
+			}
+			for i := range f.documentReport.Results {
+				f.documentReport.Results[i].VaultUID = template.VaultUID
+				f.documentReport.Results[i].NodeID = template.NodeID
+				f.documentReport.Results[i].Evidence = template.Evidence
+			}
+			if boundedLookup && !f.f.Store.IsPostgreSQL() {
+				// The API bounds the occurrence lookup to limit+1 hit IDs.
+				// Four hit IDs plus destination and occurrence limit fit; all six hits don't.
+				f.f.Store.DB().SetMaxOpenConns(1)
+				conn, err := f.f.Store.DB().Conn(t.Context())
+				require.NoError(err)
+				require.NoError(conn.Raw(func(driverConn any) error {
+					sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+					require.True(ok)
+					sqliteConn.SetLimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 6)
+					return nil
+				}))
+				require.NoError(conn.Close())
+			}
+			status, response, raw := searchMediaFor(t, server, "q=quartz&limit=3")
+			require.Equal(http.StatusOK, status, raw)
+			require.NotNil(response.Attachments)
+			assert.Nil(response.Attachments.Error)
+			require.Len(response.Attachments.Results, 3)
+			assert.Equal("first batch, first hit", response.Attachments.Results[0].Excerpt)
+			assert.Equal("second batch, first hit", response.Attachments.Results[1].Excerpt)
+			assert.Equal("first batch, second hit", response.Attachments.Results[2].Excerpt)
+			assert.True(response.Attachments.Truncated)
+			if boundedLookup {
+				return
+			}
+			require.Len(f.documentRequests, 2)
+			var versions []string
+			for _, request := range f.documentRequests {
+				assert.LessOrEqual(len(request.Fence.ContentVersionIDs), docbankmedia.MaxSearchVersions)
+				versions = append(versions, request.Fence.ContentVersionIDs...)
+			}
+			assert.Len(versions, 4099)
+			for i := 1; i <= 4099; i++ {
+				assert.Contains(versions, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
+			}
+		})
 	}
 }
 
