@@ -140,7 +140,23 @@ func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
 	// every row in LATER batches still gets indexed.
 	const total = 5500
 	const oversizedIdx = 2500
-	ids := f.CreateMessages(total)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO messages (conversation_id, source_id, source_message_id, message_type, size_estimate)
+		SELECT ?, ?, 'msg-' || g, 'email', 1000 FROM generate_series(0, ?) g`), f.ConvID, f.Source.ID, total-2)
+	require.NoError(err)
+	f.CreateMessage("sentinel")
+
+	ids := make([]int64, 0, total)
+	func() {
+		rows, err := f.Store.DB().Query(f.Store.Rebind("SELECT id FROM messages WHERE source_id = ? ORDER BY id"), f.Source.ID)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		for rows.Next() {
+			var id int64
+			require.NoError(rows.Scan(&id))
+			ids = append(ids, id)
+		}
+		require.NoError(rows.Err())
+	}()
 	require.Len(ids, total)
 
 	require.NoError(f.Store.UpsertMessageBody(ids[oversizedIdx],
