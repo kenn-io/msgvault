@@ -307,70 +307,67 @@ func (s *Store) loadMeetingTranscript(
 	return meetingcontent.Decode(format, raw, []byte(metadata.String)).Transcript, nil
 }
 
-func loadMeetingContextParticipants(
-	ctx context.Context, tx *loggedTx, id int64,
-) ([]meetingcontent.Participant, error) {
-	participants := make([]meetingcontent.Participant, 0)
-	seen := make(map[string]struct{})
-	seenRoleID := make(map[string]struct{})
-	rows, err := tx.QueryContext(ctx, `
-		SELECT mr.participant_id,
-			COALESCE(NULLIF(mr.display_name, ''), NULLIF(p.display_name, ''), ''),
-			COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), ''),
-			COALESCE(p.phone_number, ''),
-			LOWER(mr.recipient_type)
-		FROM message_recipients mr
-		JOIN participants p ON p.id = mr.participant_id
-		WHERE mr.message_id = ?
-		ORDER BY mr.id`, id)
-	if err != nil {
-		return nil, fmt.Errorf("load meeting recipients %d: %w", id, err)
+func loadMeetingContextParticipants(ctx context.Context, tx *loggedTx, id int64) ([]meetingcontent.Participant, error) {
+	page, err := loadMeetingContextParticipantsPage(ctx, reboundReader{reader: tx.Tx, rebind: tx.rebind}, []int64{id})
+	participants := page[id]
+	if participants == nil {
+		participants = []meetingcontent.Participant{}
 	}
+	return participants, err
+}
+
+func loadMeetingContextParticipantsPage(ctx context.Context, r SQLReader, ids []int64) (map[int64][]meetingcontent.Participant, error) {
+	out := make(map[int64][]meetingcontent.Participant, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, 2*len(ids)+1)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, meetingSenderRole)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	marks := placeholders(len(ids))
+	rows, err := r.QueryContext(ctx, `SELECT mr.message_id, p.id,
+ COALESCE(NULLIF(mr.display_name, ''), NULLIF(p.display_name, ''), ''),
+ COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), ''),
+ COALESCE(p.phone_number, ''), LOWER(mr.recipient_type), 0 AS position, mr.id AS ordinal
+ FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id IN (`+marks+`)
+ UNION ALL
+ SELECT m.id, p.id, COALESCE(p.display_name, ''), COALESCE(p.email_address, ''), COALESCE(p.phone_number, ''), ?, 1, 0
+ FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.id IN (`+marks+`)
+ ORDER BY 1, 7, 8`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("load meeting participants: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	seen := map[int64]map[string]bool{}
+	seenRoleID := map[int64]map[string]bool{}
 	for rows.Next() {
+		var id, participantID, ordinal int64
+		var position int
 		var participant meetingcontent.Participant
-		var participantID int64
-		if scanErr := rows.Scan(&participantID, &participant.Name, &participant.Email, &participant.Phone, &participant.Role); scanErr != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("scan meeting recipient %d: %w", id, scanErr)
+		if err := rows.Scan(&id, &participantID, &participant.Name, &participant.Email, &participant.Phone, &participant.Role, &position, &ordinal); err != nil {
+			return nil, err
 		}
 		participant.ParticipantID = new(participantID)
-		seenRoleID[meetingParticipantRoleIDKey(participant.Role, participantID)] = struct{}{}
+		if seen[id] == nil {
+			seen[id], seenRoleID[id] = map[string]bool{}, map[string]bool{}
+		}
 		key := meetingParticipantKey(participant)
-		if _, exists := seen[key]; exists {
+		roleID := meetingParticipantRoleIDKey(participant.Role, participantID)
+		if seen[id][key] || position == 1 && seenRoleID[id][roleID] {
 			continue
 		}
-		seen[key] = struct{}{}
-		participants = append(participants, participant)
+		seen[id][key], seenRoleID[id][roleID] = true, true
+		out[id] = append(out[id], participant)
 	}
-	if iterationErr := rows.Err(); iterationErr != nil {
-		_ = rows.Close()
-		return nil, fmt.Errorf("iterate meeting recipients %d: %w", id, iterationErr)
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
 	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("close meeting recipients %d: %w", id, closeErr)
-	}
-
-	var sender meetingcontent.Participant
-	var senderID int64
-	err = tx.QueryRowContext(ctx, `
-		SELECT p.id, COALESCE(p.display_name, ''), COALESCE(p.email_address, ''),
-			COALESCE(p.phone_number, '')
-		FROM messages m
-		JOIN participants p ON p.id = m.sender_id
-		WHERE m.id = ?`, id).Scan(&senderID, &sender.Name, &sender.Email, &sender.Phone)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("load meeting sender %d: %w", id, err)
-	}
-	if err == nil {
-		sender.ParticipantID = new(senderID)
-		sender.Role = meetingSenderRole
-		key := meetingParticipantKey(sender)
-		_, archived := seenRoleID[meetingParticipantRoleIDKey(sender.Role, senderID)]
-		if _, exists := seen[key]; !exists && !archived {
-			participants = append(participants, sender)
-		}
-	}
-	return participants, nil
+	return out, nil
 }
 
 func meetingParticipantRoleIDKey(role string, participantID int64) string {

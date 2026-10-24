@@ -787,6 +787,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS provider_started_at TIMESTAMPTZ`, "person_enrichment_attempts.provider_started_at"},
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS dispatch_authorized_at TIMESTAMPTZ`, "person_enrichment_attempts.dispatch_authorized_at"},
 		{`ALTER TABLE person_enrichment_work ADD COLUMN IF NOT EXISTS has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE`, "person_enrichment_work.has_fresh_trigger"},
+		{`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS provider_observation_order BIGINT NOT NULL DEFAULT 0`, "calendar_events.provider_observation_order"},
 	}
 }
 
@@ -2386,6 +2387,7 @@ var exclusiveLockTables = []string{
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
+	"meeting_link_key", "meeting_link_decisions",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"matrix_encrypted_events", "matrix_megolm_claims", "matrix_pending_edits",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
