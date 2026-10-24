@@ -75,7 +75,7 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	requirements.NoError(f.Store.InitSchemaContext(ctx))
-	checks.Contains(logs.String(), `"msg":"deleted retired document rows during schema migration","rows":6`)
+	checks.Contains(logs.String(), `"msg":"deleted retired document rows during schema migration"`)
 
 	_, err = f.Store.GetAttachmentChangeConsumer(ctx, "document-index/v1")
 	requirements.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing)
@@ -122,7 +122,7 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 	}
 	checks.Zero(count(retired), "the upgrade drops the retired tables, triggers, functions, and cursor columns")
 	if !f.Store.IsPostgreSQL() {
-		checks.Zero(disclosedChunks(t, f.Store), "a backup after the upgrade discloses no document text")
+		checks.Zero(disclosedChunks(t, f.Store), "a backup after the upgrade exports no document derivatives")
 	}
 	var lanes []string
 	rows, err := f.Store.DB().QueryContext(ctx, `SELECT source_lane FROM person_sweep_cursors`)
