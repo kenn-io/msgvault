@@ -144,13 +144,15 @@ func TestDocumentSearchVersionsTextFormats(t *testing.T) {
 		{"image/tiff", ""},
 		{"image/jpeg", ""},
 		{"image/webp", ""},
-		{"application/jsonl", ""},
-		{"application/zip", ""},
+		{"application/jsonl", "jsonl"},
+		{"application/zip", "zip"},
 		{"audio/mpeg", ""},
 		{"image/gif", ""},
-		{"application/octet-stream", ""},
+		{"application/octet-stream", "octet-stream-pdf"},
+		{"", "untyped-pdf"},
+		{"video/mp4", ""},
 	}
-	want := []string{"pdf", "csv", "json", "email", "word", "parameterized"}
+	want := []string{"pdf", "csv", "json", "email", "word", "parameterized", "jsonl", "zip", "octet-stream-pdf", "untyped-pdf"}
 	for i := range 4110 {
 		mimeType, version := "image/png", fmt.Sprintf("image-%d", i)
 		if i < len(formats) {

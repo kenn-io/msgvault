@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/msgvault/internal/personscope"
 )
 
@@ -56,25 +55,28 @@ type DocumentSearchOccurrence struct {
 	OccurredAt      *time.Time
 }
 
-// documentSearchRows shares attachment eligibility, visibility, and person scope.
-func (s *Store) documentSearchRows(destination string, scope *personscope.Scope, deliveryFilter string, deliveryArgs []any) (string, string, []any) {
-	args := append([]any{destination}, deliveryArgs...)
+func (s *Store) documentSearchAttachmentMatch() string {
 	// LOWER on both sides lets SQLite use the existing hash expression index.
 	attachmentIDs := `SELECT matched.id FROM attachments matched
  WHERE LOWER(matched.content_hash) = LOWER(d.content_hash)
  UNION ALL SELECT matched.id FROM attachments matched
  WHERE matched.storage_path = SUBSTR(d.content_hash,1,2) || '/' || d.content_hash
    AND COALESCE(matched.content_hash,'') = ''`
-	attachmentMatch := `a.id IN (` + attachmentIDs + `)`
 	if s.IsPostgreSQL() {
-		attachmentMatch = `a.id = ANY(ARRAY(` + attachmentIDs + `))`
+		return `a.id = ANY(ARRAY(` + attachmentIDs + `))`
 	}
+	return `a.id IN (` + attachmentIDs + `)`
+}
+
+// documentSearchRows shares attachment eligibility, visibility, and person scope.
+func (s *Store) documentSearchRows(destination string, scope *personscope.Scope, deliveryFilter string, deliveryArgs []any) (string, string, []any) {
+	args := append([]any{destination}, deliveryArgs...)
 	// Materialize indexed receipt matches before applying message visibility.
 	// Otherwise PostgreSQL can start with messages and repeat the delivery scan.
 	with := `WITH delivered_attachments AS MATERIALIZED (
  SELECT d.version_id, a.id AS attachment_id, a.message_id, COALESCE(a.filename,'') AS filename
  FROM docbank_attachment_deliveries d
- JOIN attachments a ON ` + attachmentMatch + `
+ JOIN attachments a ON ` + s.documentSearchAttachmentMatch() + `
  WHERE d.destination_key = ? AND d.state = 'delivered'
  AND (` + deliveryFilter + `) AND ` + docbankAttachmentEligibleWhere() + `)`
 	query := `
@@ -93,22 +95,35 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
 // DocumentSearchVersions returns up to 4096 delivered document versions.
 // A larger scope returns no versions and reports that the scope limit was exceeded.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
-	// Docbank indexes text/* natively. Its document providers also extract
-	// registered document formats; audio uses recording search.
-	mimePredicates := []string{`LOWER(d.mime_type) LIKE 'text/%'`}
-	var mimeArgs []any
-	var mediaTypes []string
-	for _, format := range document.FormatMetadataCatalog() {
-		if format.Provider && !strings.HasPrefix(format.MediaType, "text/") {
-			mediaTypes = append(mediaTypes, format.MediaType)
-		}
+	// Docbank detects document formats from bytes, including generic or absent
+	// MIME types. Keep images and recordings outside the document fence.
+	delivers := `SELECT d.content_hash, d.version_id FROM docbank_attachment_deliveries d
+ WHERE d.destination_key = ? AND d.state = 'delivered' AND d.version_id <> ''
+ AND LOWER(TRIM(d.mime_type)) NOT LIKE 'image/%'
+ AND LOWER(TRIM(d.mime_type)) NOT LIKE 'audio/%'
+ AND LOWER(TRIM(d.mime_type)) NOT LIKE 'video/%'`
+	distinct := "DISTINCT"
+	if s.IsPostgreSQL() {
+		// Sort receipts before checking visibility. DISTINCT ON then streams unique
+		// versions, so LIMIT stops attachment lookups at the 4097th visible version.
+		// OFFSET prevents PostgreSQL from moving visibility ahead of the sort.
+		delivers += ` ORDER BY d.version_id OFFSET 0`
+		distinct = "DISTINCT ON (d.version_id)"
 	}
-	for _, mediaType := range mediaTypes {
-		mimePredicates = append(mimePredicates, `(LOWER(TRIM(d.mime_type)) = ? OR LOWER(TRIM(d.mime_type)) LIKE ?)`)
-		mimeArgs = append(mimeArgs, mediaType, mediaType+";%")
+	args := []any{destination}
+	visible := `SELECT 1 FROM attachments a
+ JOIN messages m ON m.id = a.message_id
+ JOIN conversations cv ON cv.id = m.conversation_id
+ WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + LiveMessagesWhere("m", true)
+	if scope != nil {
+		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
+		visible += " AND (" + predicate + ")"
+		args = append(args, values...)
 	}
-	with, query, args := s.documentSearchRows(destination, scope, `d.version_id <> '' AND (`+strings.Join(mimePredicates, " OR ")+`)`, mimeArgs)
-	query = with + ` SELECT d.version_id` + query + ` GROUP BY d.version_id LIMIT 4097`
+	// EXISTS checks one visible occurrence per receipt instead of materializing
+	// every occurrence. OFFSET keeps PostgreSQL's lookup correlated to the receipt.
+	query := `SELECT ` + distinct + ` d.version_id FROM (` + delivers + `) d
+ WHERE EXISTS (` + visible + ` LIMIT 1 OFFSET 0) LIMIT 4097`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("list document search versions: %w", err)

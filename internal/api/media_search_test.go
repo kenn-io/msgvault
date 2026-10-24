@@ -1002,7 +1002,7 @@ func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
 	require.NotNil(response.Attachments.Error)
 	assert.Empty(response.Attachments.Results)
 	assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
-	assert.Contains(response.Attachments.Error.Message, "4096 mirrored document files")
+	assert.Contains(response.Attachments.Error.Message, "4096 mirrored files excluding images, audio, and video")
 	assert.Contains(response.Attachments.Error.Message, "--person")
 	assert.False(response.Attachments.Truncated)
 	assert.Empty(f.documentRequests)
@@ -1016,6 +1016,8 @@ func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
 	}{
 		{"unavailable", http.StatusServiceUnavailable, ""},
 		{"rejected query", http.StatusBadRequest, "invalid_media_search"},
+		{"store failure", 0, "server_error"},
+		{"late store failure", 0, "server_error"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1025,11 +1027,22 @@ func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
 			server := f.server(false)
 			f.document(t, server)
 			f.documentStatus = test.status
+			storeFailure := func() {
+				_, err := f.f.Store.DB().Exec(`ALTER TABLE docbank_attachment_deliveries RENAME TO unavailable_attachment_deliveries`)
+				require.NoError(err)
+			}
+			switch test.name {
+			case "store failure":
+				storeFailure()
+			case "late store failure":
+				f.duringDocumentSearch = storeFailure
+			}
 			status, response, raw := searchMediaFor(t, server, "q=quartz")
 			require.Equal(http.StatusOK, status, raw)
 			require.NotNil(response.Attachments)
 			require.NotNil(response.Attachments.Error)
 			assert.Empty(response.Attachments.Results)
+			assert.NotEmpty(response.Results)
 			if test.code != "" {
 				assert.Equal(test.code, response.Attachments.Error.Error)
 			}
