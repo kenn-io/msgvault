@@ -3757,6 +3757,7 @@ type DocumentIndexStatus struct {
 	RetryOwners                  int64                       `json:"retry_owners"`
 	StagingOwners                int64                       `json:"staging_owners"`
 	StoredPlaintextChunks        int64                       `json:"stored_plaintext_chunks"`
+	StoredPlaintextRanges        int64                       `json:"stored_plaintext_ranges"`
 	SuccessfulAttempts           int64                       `json:"successful_attempts"`
 	TerminalOwners               int64                       `json:"terminal_owners"`
 	UnknownRoleOccurrences       int64                       `json:"unknown_role_occurrences"`

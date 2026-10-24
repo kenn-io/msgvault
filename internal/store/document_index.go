@@ -121,6 +121,7 @@ type DocumentIndexStatus struct {
 	TerminalOwners             int64                       `json:"terminal_owners"`
 	MissingOwners              int64                       `json:"missing_owners"`
 	StoredPlaintextChunks      int64                       `json:"stored_plaintext_chunks"`
+	StoredPlaintextRanges      int64                       `json:"stored_plaintext_ranges"`
 }
 
 // DocumentIndexStatusRequest identifies one exact profile and configured scope.
@@ -718,10 +719,12 @@ func (s *Store) GetDocumentIndexStatusForScope(
 	if err != nil {
 		return DocumentIndexStatus{}, fmt.Errorf("read document index role exclusions: %w", err)
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM document_chunks`).Scan(
-		&status.StoredPlaintextChunks,
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM document_chunks),
+		       (SELECT COUNT(*) FROM document_extraction_ranges)`).Scan(
+		&status.StoredPlaintextChunks, &status.StoredPlaintextRanges,
 	); err != nil {
-		return DocumentIndexStatus{}, fmt.Errorf("count stored document plaintext chunks: %w", err)
+		return DocumentIndexStatus{}, fmt.Errorf("count stored document plaintext: %w", err)
 	}
 	status.Failures, status.FailuresExhausted, err = s.documentFailureDiagnostics(ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes)
 	if err != nil {

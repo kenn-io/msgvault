@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/store"
@@ -29,6 +30,86 @@ func TestDoclingDocumentsConsentBuildAndLifecycle(t *testing.T) {
 
 func TestDoclingDocumentsNativeCSVConsentBuildAndLifecycle(t *testing.T) {
 	testDoclingDocumentsLifecycle(t, []byte("name,value\nsynthetic,docling1057sentinel\n"), "text/csv", "document.csv")
+}
+
+func TestDoclingStatusDisclosesFailedRangePlaintext(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	markDaemonCLISubprocessForTest(t)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Attachments.Documents.Enabled = true
+	cfg.Attachments.Documents.Provider = documentindex.ProviderDocling
+	cfg.Attachments.Documents.Endpoint = "http://127.0.0.1:5001"
+	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(string) bool { return false })
+	ctx := withTestConfig(t, cfg)
+	f := storetest.New(t)
+	deps := documentsCommandDeps{
+		openStore:            func(context.Context) (*store.Store, func(), error) { return f.Store, func() {}, nil },
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return f.Store, func() {}, nil },
+	}
+	run := func(args ...string) string {
+		command := newDocumentsCmd(deps)
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs(args)
+		requirements.NoError(command.ExecuteContext(ctx))
+		return output.String()
+	}
+	run("consent-docling", "--yes")
+	documentsConfig, _, _, profile, err := configuredDocumentProfile("", invocationFromContext(ctx))
+	requirements.NoError(err)
+	hash := strings.Repeat("a", 64)
+	messageID := f.CreateMessage("range-status")
+	requirements.NoError(f.Store.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+		Filename: "range.pdf", MIMEType: "application/pdf", Size: 128,
+		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:1",
+	}))
+	var attachmentID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&attachmentID))
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(ctx, attachmentID, 1)
+	requirements.NoError(err)
+	requirements.True(eligible)
+	claim, err := f.Store.ClaimDocumentExtraction(ctx, store.DocumentExtractionClaimInput{
+		ExtractionID: "range-status-attempt", ProfileID: profile.ID, CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		OccurrenceAttachmentID: attachmentID, OccurrenceMIMEType: "application/pdf", OccurrenceMessageType: "email",
+		LeaseOwner: "range-status-worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
+	})
+	requirements.NoError(err)
+	source := document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete, Family: "pdf", UnitKind: document.EvidenceUnitPage}
+	for page := 1; page <= 50; page++ {
+		source.Units = append(source.Units, document.SourceEvidenceUnitV1{Order: page - 1, Text: "saved sentinel", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: int64(page), End: int64(page)}})
+	}
+	policy, err := document.NewEvidencePolicy(10000)
+	requirements.NoError(err)
+	evidence, err := document.NormalizeEvidenceV1(source, policy)
+	requirements.NoError(err)
+	encoded, checksum, err := document.MarshalNormalizedEvidenceV1(evidence)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.SaveDocumentExtractionRange(ctx, claim, store.DocumentExtractionRange{
+		FirstPage: 1, LastPage: 50, TotalPages: 51, Evidence: encoded, EvidenceChecksum: checksum, CharCount: 50 * len("saved sentinel"),
+	}, documentsConfig.MaxResponseBytes))
+	requirements.NoError(f.Store.FailDocumentExtraction(ctx, store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_timeout", RetryAt: time.Now().UTC().Add(time.Minute),
+	}))
+	var status documentStatusOutput
+	requirements.NoError(json.Unmarshal([]byte(run("status", "--json")), &status))
+	assertions.Zero(status.Status.StoredPlaintextChunks)
+	assertions.Equal(int64(1), status.Status.StoredPlaintextRanges)
+	assertions.Equal(int64(1), status.Status.FailedAttempts)
+	assertions.True(status.StoresPlaintext)
+	assertions.True(status.BackupsMayContainText)
+	humanStatus := run("status")
+	assertions.Contains(humanStatus, "Normalized plaintext stored: true")
+	assertions.Contains(humanStatus, "Backups may contain normalized plaintext: true")
+	_, err = f.Store.PurgeDocumentDerivedByHash(ctx, hash)
+	requirements.NoError(err)
+	requirements.NoError(json.Unmarshal([]byte(run("status", "--json")), &status))
+	assertions.Zero(status.Status.StoredPlaintextRanges)
+	assertions.False(status.StoresPlaintext)
+	assertions.False(status.BackupsMayContainText)
 }
 
 func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uploadName string) {

@@ -381,6 +381,11 @@ heading path, normalized text, checksum, score, and an opaque stable cursor.
 The same search is available at `GET /api/v1/documents/search`; status is at
 `GET /api/v1/documents/status`.
 
+Status reports plaintext storage and backup exposure while either published
+chunks or unpublished Docling range checkpoints remain in the archive, including
+after a failed extraction. JSON status counts them separately in
+`stored_plaintext_chunks` and `stored_plaintext_ranges`.
+
 Use `--source-id`, `--message-id`, or `--attachment-id` for exact archive
 objects. `--person` selects a durable person; `--participant` selects an
 observed participant and uses their durable person when one is bound. They

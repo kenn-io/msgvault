@@ -114,6 +114,7 @@ func TestDocumentIndexStatusUsesGeneratedDaemonContract(t *testing.T) {
 		assert.NoError(json.NewEncoder(w).Encode(store.DocumentIndexStatusResponse{
 			Status: store.DocumentIndexStatus{
 				ProfileExists: true, ExactConsent: true, ReadyOwners: 4,
+				StoredPlaintextRanges:    2,
 				AverageProviderLatencyMS: 12.5,
 				Failures:                 []store.DocumentFailureDiagnostic{{CanonicalBlobHash: "synthetic-hash", ReasonCode: "invalid_local_source", Detail: "PDF end marker is missing or not final", State: "terminal"}},
 				FailuresExhausted:        true,
@@ -135,6 +136,7 @@ func TestDocumentIndexStatusUsesGeneratedDaemonContract(t *testing.T) {
 	assert.True(response.Status.ProfileExists)
 	assert.True(response.Status.ExactConsent)
 	assert.Equal(int64(4), response.Status.ReadyOwners)
+	assert.Equal(int64(2), response.Status.StoredPlaintextRanges)
 	assert.InDelta(12.5, response.Status.AverageProviderLatencyMS, 0.001)
 	require.Len(response.Status.Failures, 1)
 	assert.Equal("PDF end marker is missing or not final", response.Status.Failures[0].Detail)

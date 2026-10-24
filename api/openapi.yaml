@@ -3987,6 +3987,9 @@ components:
         stored_plaintext_chunks:
           format: int64
           type: integer
+        stored_plaintext_ranges:
+          format: int64
+          type: integer
         successful_attempts:
           format: int64
           type: integer
@@ -4027,6 +4030,7 @@ components:
         - terminal_owners
         - missing_owners
         - stored_plaintext_chunks
+        - stored_plaintext_ranges
       type: object
     DocumentIndexStatusResponse:
       additionalProperties: true
