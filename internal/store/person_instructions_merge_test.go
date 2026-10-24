@@ -389,6 +389,97 @@ func TestNestedMergeDeduplicationRestoresEarlierInstructionAndEvents(t *testing.
 	assert.Equal(personfacts.InstructionStatusActive, testInstruction(t, st, carolInstruction.ID).Status)
 }
 
+func TestNestedExactSplitsKeepDeduplicatedInstructionOnOriginalPerson(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	carol := mustPromotedPerson(t, st, "carol@example.com", "carol")
+	aliceInstruction := addTestInstruction(t, st, alice.ID, "Vee")
+	bobInstruction := addTestInstruction(t, st, bob.ID, "Vee")
+
+	first, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	firstMergeParticipants := append([]int64(nil), first.Person.ParticipantIDs...)
+	second, err := mergeInstructionPeople(t.Context(), t, st, carol.ID, alice.ID)
+	require.NoError(err)
+
+	current, err := st.GetPerson(carol.ID)
+	require.NoError(err)
+	secondSplit, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
+		SourcePersonID: carol.ID, MergeID: second.Merge.ID,
+		ParticipantIDs: firstMergeParticipants, ExpectedSourceRevision: current.Revision,
+		IdempotencyKey: "instruction-split-second-merge", Actor: "owner",
+	})
+	require.NoError(err)
+	require.True(secondSplit.ExactReversal)
+
+	current, err = st.GetPerson(secondSplit.NewPerson.ID)
+	require.NoError(err)
+	firstSplit, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
+		SourcePersonID: secondSplit.NewPerson.ID, MergeID: first.Merge.ID,
+		ParticipantIDs: bob.ParticipantIDs, ExpectedSourceRevision: current.Revision,
+		IdempotencyKey: "instruction-split-first-merge", Actor: "owner",
+	})
+	require.NoError(err)
+	require.True(firstSplit.ExactReversal)
+
+	assert.Equal(secondSplit.NewPerson.ID, testInstruction(t, st, aliceInstruction.ID).PersonID)
+	assert.Equal(firstSplit.NewPerson.ID, testInstruction(t, st, bobInstruction.ID).PersonID)
+}
+
+func TestExactSplitListsRestoredDeduplicatedInstruction(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	addTestInstruction(t, st, alice.ID, "Vee")
+	absorbed := addTestInstruction(t, st, bob.ID, "Vee")
+
+	merged, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	split := splitInstructionMerge(t, st, merged, bob.ParticipantIDs)
+	require.True(split.ExactReversal)
+
+	rows, err := st.ListPersonInstructionsContext(t.Context(), split.NewPerson.ID, store.PersonInstructionFilter{})
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.Equal(absorbed.ID, rows[0].ID)
+	assert.True(rows[0].VisibleToAgents)
+}
+
+func TestExactSplitExpiresRestoredInstructionBeforeRenewal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	survivor := addTestInstruction(t, st, alice.ID, "Vee")
+	absorbed := addTestInstruction(t, st, bob.ID, "Vee")
+
+	merged, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	now := time.Now().UTC()
+	validFrom := now.Add(-2 * time.Hour)
+	validUntil := now.Add(-time.Hour)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+		`UPDATE person_instructions SET valid_from=?,valid_until=? WHERE id=?`,
+	), validFrom, validUntil, survivor.ID)
+	require.NoError(err)
+	split := splitInstructionMerge(t, st, merged, bob.ParticipantIDs)
+	require.True(split.ExactReversal)
+
+	renewed, err := st.AddPersonInstructionContext(t.Context(), store.PersonInstructionInput{
+		PersonID: split.NewPerson.ID, Kind: personfacts.InstructionKindAddressAs,
+		ValueText: "Vee", Text: "call me Vee", Actor: "owner",
+	})
+	require.NoError(err)
+	assert.NotEqual(absorbed.ID, renewed.ID)
+	assert.Equal(personfacts.InstructionStatusExpired, testInstruction(t, st, absorbed.ID).Status)
+}
+
 func TestExactSplitPreservesPostMergeInstructionConfirmation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

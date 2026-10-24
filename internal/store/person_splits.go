@@ -1831,6 +1831,14 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 				return err
 			}
 		}
+		if value != nil && row.TableName == personInstructionsTableName &&
+			personSplitInstructionTimestampColumn(column.Name) {
+			value, err = personSplitInstructionTimestampValue(value)
+			if err != nil {
+				return fmt.Errorf("%w: restore person instruction %s timestamp: %w",
+					ErrPersonMergeSnapshotCorrupt, column.Name, err)
+			}
+		}
 		if personSplitRevisionedTable(row.TableName) && column.Name == "revision" {
 			revision, ok := value.(int64)
 			if !ok {
@@ -1852,6 +1860,30 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 		return fmt.Errorf("recreate split row %s: %w", row.TableName, err)
 	}
 	return nil
+}
+
+func personSplitInstructionTimestampColumn(name string) bool {
+	switch name {
+	case "stated_at", "valid_from", "valid_until", "confirmed_at", "created_at", "updated_at":
+		return true
+	default:
+		return false
+	}
+}
+
+func personSplitInstructionTimestampValue(value any) (any, error) {
+	switch timestamp := value.(type) {
+	case time.Time:
+		return timestamp.UTC(), nil
+	case string:
+		parsed, err := parseDBTime(timestamp)
+		if err != nil {
+			return nil, err
+		}
+		return parsed.UTC(), nil
+	default:
+		return nil, fmt.Errorf("%T is not a timestamp", value)
+	}
 }
 
 func personSplitRevisionedTable(table string) bool {
@@ -1953,6 +1985,7 @@ func personSplitSnapshotValue(value personMergeSnapshotValue) any {
 
 type priorPersonMergeJournalRow struct {
 	mergeID       int64
+	action        string
 	originalRowID sql.NullInt64
 	originalKey   string
 	currentRowID  sql.NullInt64
@@ -2006,7 +2039,7 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 		rebasedCurrent = &currentRows[0]
 	}
 
-	rows, err := tx.QueryContext(ctx, `SELECT merge_id, original_row_id,
+	rows, err := tx.QueryContext(ctx, `SELECT merge_id, action, original_row_id,
 		original_row_key, current_row_id, current_row_key, post_merge_row_json
 		FROM person_merge_rows
 		WHERE merge_id <> ? AND table_name = ? AND split_id IS NULL
@@ -2019,7 +2052,7 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 	for rows.Next() {
 		var item priorPersonMergeJournalRow
 		if err := rows.Scan(
-			&item.mergeID, &item.originalRowID, &item.originalKey,
+			&item.mergeID, &item.action, &item.originalRowID, &item.originalKey,
 			&item.currentRowID, &item.currentKey, &item.postMergeJSON,
 		); err != nil {
 			return fmt.Errorf("scan prior %s split journal: %w", journal.tableName, err)
@@ -2050,6 +2083,9 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 		var currentRowID, currentRowKey any
 		if exists {
 			action = "moved"
+			if item.action == personMergeActionDeduplicated && !recreated {
+				action = personMergeActionDeduplicated
+			}
 			if newRowID.Valid {
 				currentRowID = newRowID.Int64
 			}
