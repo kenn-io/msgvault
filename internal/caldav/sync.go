@@ -34,6 +34,12 @@ type Result struct {
 	Removed                    int64
 }
 
+type sourceConfig struct {
+	CalendarID   string `json:"calendar_id"`
+	TimeZone     string `json:"time_zone"`
+	AccountEmail string `json:"account_email,omitempty"`
+}
+
 func sourceIdentifier(name, collection string) (string, error) {
 	u, err := url.Parse(collection)
 	if err != nil {
@@ -322,11 +328,13 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 		return result, err
 	}
 	checkpoint.PageToken = src.SyncCursor.String
-	current := struct {
-		CalendarID   string `json:"calendar_id"`
-		TimeZone     string `json:"time_zone"`
-		AccountEmail string `json:"account_email,omitempty"`
-	}{CalendarID: ownerEmail, TimeZone: opts.TimeZone, AccountEmail: ownerEmail}
+	var previous sourceConfig
+	if src.SyncConfig.Valid {
+		if err := json.Unmarshal([]byte(src.SyncConfig.String), &previous); err != nil {
+			return result, fmt.Errorf("CalDAV source config: %w", err)
+		}
+	}
+	current := sourceConfig{CalendarID: ownerEmail, TimeZone: opts.TimeZone, AccountEmail: ownerEmail}
 	configJSON, err := json.Marshal(current)
 	if err != nil {
 		return result, err
@@ -338,7 +346,7 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 		return result, err
 	}
 	token := src.SyncCursor.String
-	forceFull := opts.Full || src.SyncConfig.String != string(configJSON)
+	forceFull := opts.Full || previous != current
 	if !forceFull {
 		previous, err := base.GetLatestSyncContext(ctx, src.ID, runID)
 		switch {
