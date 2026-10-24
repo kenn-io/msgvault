@@ -101,10 +101,11 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
 
 // Docbank detects document formats from bytes, including generic or absent
 // MIME types. Keep images and recordings outside the document fence.
-const documentSearchDelivered = `d.state = 'delivered'
- AND d.mime_type NOT LIKE 'image/%'
+const documentSearchFormats = `d.mime_type NOT LIKE 'image/%'
  AND d.mime_type NOT LIKE 'audio/%'
  AND d.mime_type NOT LIKE 'video/%'`
+
+const documentSearchDelivered = `d.state = 'delivered' AND ` + documentSearchFormats
 
 func (s *Store) documentSearchVisible() string {
 	// EXISTS checks one visible occurrence per receipt instead of materializing
@@ -117,7 +118,7 @@ func (s *Store) documentSearchVisible() string {
 
 // DocumentSearchVersions returns delivered document versions in the visible scope.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, error) {
-	with, query, args := s.documentSearchRows(destination, scope, documentSearchDelivered, nil)
+	with, query, args := s.documentSearchRows(destination, scope, documentSearchFormats, nil)
 	query = with + ` SELECT d.version_id` + query + ` GROUP BY d.version_id ORDER BY d.version_id`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {

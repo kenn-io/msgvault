@@ -94,8 +94,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 			break
 		}
 	}
-	switch request.Lane {
-	case peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText:
+	if request.Lane == peoplesweep.SourceConversationText || request.Lane == peoplesweep.SourceMeetingText {
 		items, found, hydrateErr := s.hydratePersonSweepMessageSet(ctx, request.PersonID, request.Lane, messageIDs, 0)
 		if hydrateErr != nil {
 			return window, hydrateErr
@@ -116,7 +115,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 				}
 			}
 		}
-	case peoplesweep.SourceDocumentText, peoplesweep.SourceAttachmentCaption, peoplesweep.SourceAttachmentOCR:
+	} else {
 		return window, peoplesweep.ErrSourceTextUnavailable
 	}
 	if loadReconciliation && request.ReconcileUpper != "" && len(window.Changes) == 0 &&

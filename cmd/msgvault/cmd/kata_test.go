@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -23,7 +24,9 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/kataevidence"
+	"go.kenn.io/msgvault/internal/kataissues"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/testutil/katatest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -323,6 +326,41 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	require.Len(citing.Issues, 1, "the file lookup finds an issue citing only its Docbank transcript")
 	assert.Equal(created.Issue.UID, citing.Issues[0].UID)
 	assert.Contains(string(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef)), "[Send the revised budget by Friday.]\n")
+
+	// A file cited as extracted text and as a Docbank transcript is found by both, once
+	// each, oldest first.
+	encodedRef, err := json.Marshal(window.Evidence[0].Reference)
+	require.NoError(err)
+	var transcriptRef kataevidence.Reference
+	require.NoError(json.Unmarshal(encodedRef, &transcriptRef))
+	chunkRef := transcriptRef
+	var partKey string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_part_key FROM attachments WHERE id=?`), attachmentID).Scan(&partKey))
+	legacyKey := sha256.Sum256([]byte(fmt.Sprintf("stable\x00%d\x00%s", messageID, partKey)))
+	chunkRef.Kind, chunkRef.OccurrenceKey, chunkRef.DocbankRendition = "document_chunk", fmt.Sprintf("dococc_%x", legacyKey), nil
+	chunkRef.DocumentChunk = &kataevidence.DocumentReference{CanonicalBlobHash: hash, ExtractionID: "extraction", ManifestChecksum: hash, ChunkKey: "chunk", ChunkChecksum: hash, StartRune: 0, EndRune: 10}
+	metadata := func(refs ...kataevidence.Reference) map[string]any {
+		entries := make([]kataissues.Entry, 0, len(refs))
+		for _, ref := range refs {
+			entries = append(entries, kataissues.Entry{ID: kataevidence.ID(ref), Passage: kataevidence.PassageID(ref, "Cited words"), Reference: ref})
+		}
+		return map[string]any{kataissues.EvidenceMetadataKey: kataissues.Envelope{Version: 1, Entries: entries}}
+	}
+	kata, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: kataServer.URL, APIKey: katatest.Token, DefaultProject: "example"})
+	require.NoError(err)
+	chunkOnly, err := kata.CreateTask(t.Context(), "example", "chunk-only", taskclient.KataCreate{Title: "Cites the extracted text", Metadata: metadata(chunkRef)})
+	require.NoError(err)
+	both, err := kata.CreateTask(t.Context(), "example", "both", taskclient.KataCreate{Title: "Cites both", Metadata: metadata(chunkRef, transcriptRef)})
+	require.NoError(err)
+	metadataScans.Store(0)
+
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "issues", "--message", strconv.FormatInt(messageID, 10), "--attachment", strconv.FormatInt(attachmentID, 10), "--json"), &citing))
+	uids := []string{}
+	for _, issue := range citing.Issues {
+		uids = append(uids, issue.UID)
+	}
+	assert.Equal(int32(1), metadataScans.Load())
+	assert.Equal([]string{created.Issue.UID, chunkOnly.UID, both.UID}, uids)
 
 	revoked.Store(true)
 	create := newKataCmd()
