@@ -40,9 +40,12 @@ func htmlHasHiddenText(node *html.Node, state htmlTextState) bool {
 		state = hiddenHTMLElement(node, state)
 	}
 	if state.hidden || state.invisible || state.tiny || state.color == "transparent" || state.color != "" && state.color == state.background {
-		if node.Type == html.TextNode && readableHTMLText(node.Data) {
+		if node.Type == html.TextNode && readableHTMLText(node.Data) && node.Parent != nil && node.Parent.Data != "style" && node.Parent.Data != "script" {
 			return true
 		}
+	}
+	// A zero font size leaves an image or link visible.
+	if state.hidden || state.invisible || state.color == "transparent" || state.color != "" && state.color == state.background {
 		for _, attr := range node.Attr {
 			if (node.Data == "img" && attr.Key == "alt" || node.Data == "a" && attr.Key == "href") && readableHTMLText(attr.Val) {
 				return true
@@ -65,6 +68,9 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 	style := make(map[string]string)
 	important := make(map[string]bool)
 	for _, attr := range node.Attr {
+		if attr.Key == "background" && strings.TrimSpace(attr.Val) != "" {
+			style["background-color"] = "unknown"
+		}
 		if value := inlineHTMLColor(attr.Val); value != "" {
 			switch {
 			case attr.Key == "color" && node.Data == "font":
@@ -82,17 +88,24 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 			// Decode escapes after parsing so an escaped ";" or "!" stays a value character.
 			name := strings.ToLower(decodeInlineCSSEscapes(declaration.Property))
 			value := strings.ToLower(declaration.Value)
-			// Douceur misses "! important" with whitespace after the bang.
-			isImportant := declaration.Important || inlineCSSImportant.MatchString(value)
-			value = strings.ToLower(decodeInlineCSSEscapes(inlineCSSImportant.ReplaceAllString(value, "")))
+			// Douceur misses "! important" with whitespace after the bang or an escaped keyword.
+			isImportant := declaration.Important
+			if bang := strings.LastIndex(value, "!"); bang > 0 && value[bang-1] != '\\' && strings.TrimSpace(decodeInlineCSSEscapes(value[bang+1:])) == "important" {
+				isImportant, value = true, value[:bang]
+			}
+			value = strings.TrimSpace(strings.ToLower(decodeInlineCSSEscapes(value)))
 			if name == "background" {
 				name = "background-color"
+			}
+			if name == "background-image" && value != "none" && value != "initial" {
+				name, value = "background-color", "unknown"
 			}
 			if name == "font" {
 				name, value = "font-size", fontShorthandSize(value)
 			}
 			if name == "color" || name == "background-color" {
 				switch {
+				case name == "background-color" && value == "unknown":
 				case name == "color" && (value == "currentcolor" || slices.Contains(inheritCSSKeywords, value)):
 					// The parent's color shows through, so an earlier declaration no longer applies.
 				case slices.Contains(inheritCSSKeywords, value) || value == "initial":
@@ -183,8 +196,6 @@ func fontShorthandSize(value string) string {
 	}
 	return ""
 }
-
-var inlineCSSImportant = regexp.MustCompile(`\s*!\s*important$`)
 
 // inlineCSSValues lists the keywords each checked property accepts. <length> also admits lengths and functions.
 var inlineCSSValues = map[string]string{
