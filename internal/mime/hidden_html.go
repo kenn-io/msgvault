@@ -75,7 +75,7 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 		}
 	}
 	for _, attr := range node.Attr {
-		if attr.Key != "style" {
+		if attr.Key != "style" || len(attr.Val) > maxInlineStyleBytes {
 			continue
 		}
 		for _, declaration := range inlineHTMLDeclarations(attr.Val) {
@@ -87,6 +87,9 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 			value = strings.ToLower(decodeInlineCSSEscapes(inlineCSSImportant.ReplaceAllString(value, "")))
 			if name == "background" {
 				name = "background-color"
+			}
+			if name == "font" {
+				name, value = "font-size", fontShorthandSize(value)
 			}
 			if name == "color" || name == "background-color" {
 				switch {
@@ -114,6 +117,11 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 	}
 	return style
 }
+
+// maxInlineStyleBytes bounds the CSS parser's work on one attribute, which grows quadratically
+// with unbalanced parentheses. Real inline styles are far smaller; a longer one cannot be
+// checked and counts as hiding.
+const maxInlineStyleBytes = 8 << 10
 
 func inlineHTMLDeclarations(value string) []*css.Declaration {
 	var clean strings.Builder
@@ -154,6 +162,21 @@ func inlineHTMLDeclarations(value string) []*css.Declaration {
 		}
 	}
 	return declarations
+}
+
+// fontShorthandSize returns the size the font shorthand sets: the first field, before any "/",
+// that is a font-size keyword or a length with a unit (or zero). It returns "" when there is none.
+func fontShorthandSize(value string) string {
+	if slices.Contains(inheritCSSKeywords, value) {
+		return value
+	}
+	for field := range strings.FieldsSeq(value) {
+		field, _, _ = strings.Cut(field, "/")
+		if _, unit, length := inlineCSSLength(field); length && (unit != "" || field == "0") || slices.Contains(strings.Fields(inlineCSSValues["font-size"]), field) {
+			return field
+		}
+	}
+	return ""
 }
 
 var inlineCSSImportant = regexp.MustCompile(`\s*!\s*important$`)
@@ -207,7 +230,7 @@ func decodeInlineCSSEscapes(value string) string {
 
 func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
 	for _, attr := range node.Attr {
-		state.hidden = state.hidden || attr.Key == "hidden"
+		state.hidden = state.hidden || attr.Key == "hidden" || attr.Key == "style" && len(attr.Val) > maxInlineStyleBytes
 	}
 	var clipped, zeroHeight, positioned, offscreen bool
 	for property, value := range inlineHTMLStyle(node) {
@@ -247,7 +270,7 @@ func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
 		case "overflow", "overflow-y":
 			clipped = clipped || value == "hidden" || value == "clip"
 		case "position":
-			positioned = value == "absolute" || value == "fixed"
+			positioned = value == "absolute" || value == "fixed" || value == "relative"
 		case "left", "top":
 			offscreen = offscreen || offscreenCSSLength(value)
 		case "text-indent", "margin-left", "margin-top":
@@ -335,6 +358,7 @@ func inlineHTMLColor(value string) string {
 			return ""
 		}
 		var rgb [3]int
+		var alpha string
 		for i, channel := range channels {
 			channel = strings.TrimSpace(channel)
 			maximum := 255.0
@@ -352,9 +376,12 @@ func inlineHTMLColor(value string) string {
 				rgb[i] = int(math.Round(255 * number / maximum))
 			} else if number == 0 {
 				return "transparent"
+			} else if number < 1 {
+				// A translucent color never equals an opaque one.
+				alpha = fmt.Sprintf("@%g", number)
 			}
 		}
-		return fmt.Sprintf("#%02x%02x%02x", rgb[0], rgb[1], rgb[2])
+		return fmt.Sprintf("#%02x%02x%02x%s", rgb[0], rgb[1], rgb[2], alpha)
 	}
 	return ""
 }
