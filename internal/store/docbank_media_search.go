@@ -131,7 +131,7 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 	visible, scopeArgs := s.documentSearchVisible(scope)
 	args = append(args, scopeArgs...)
 	query := `SELECT ` + distinct + ` d.version_id FROM (` + delivers + `) d
- WHERE ` + visible
+ WHERE ` + visible + ` ORDER BY d.version_id`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list document search versions: %w", err)
@@ -189,5 +189,3 @@ func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination strin
 	}
 	return result, rows.Err()
 }
-
-const containingTitleMCVSQL = "COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '')"

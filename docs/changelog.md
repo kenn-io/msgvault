@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. More than 4096 such files are searched in batches of 4096, with results merged by Docbank rank.
+- Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate.
 - Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`. Requires archive schema version 13 and HTTP API schema 3.27.0.
 - Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
 
