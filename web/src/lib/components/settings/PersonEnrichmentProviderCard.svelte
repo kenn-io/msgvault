@@ -147,7 +147,7 @@
   <header>
     <div>
       <h4 id={`provider-${provider.name}`}>{provider.name}</h4>
-      <p>{provider.kind === 'exa' ? 'Exa' : 'SixtyFour'} · stable provider name</p>
+      <p>{provider.kind === 'context' ? 'Context.dev' : provider.kind === 'exa' ? 'Exa' : 'SixtyFour'} · stable provider name</p>
     </div>
     <Toggle
       ariaLabel={`Enable ${provider.name}`}
@@ -185,7 +185,7 @@
         Tier
         <input value={draft.tier ?? ''} oninput={(event) => setString('tier', event.currentTarget.value)} />
       </label>
-    {:else}
+    {:else if provider.kind === 'exa'}
       <label>
         Search mode
         <input value={draft.mode ?? ''} oninput={(event) => setString('mode', event.currentTarget.value)} />
@@ -314,7 +314,7 @@
     <ProviderCredentialControl
       {client}
       credentialID={provider.credential_id}
-      label={`${provider.kind === 'exa' ? 'Exa' : 'SixtyFour'} API key for ${provider.name}`}
+      label={`${provider.kind === 'context' ? 'Context.dev' : provider.kind === 'exa' ? 'Exa' : 'SixtyFour'} API key for ${provider.name}`}
       credentialState={provider.credential}
       {credentialETag}
       disabledReason={endpointDirty ? 'Save provider settings first before changing this credential.' : ''}

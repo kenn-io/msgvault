@@ -217,6 +217,11 @@ func TestCLIRunCommandAllowedPermitsExactPersonEnrichmentCommandsAndRejectsRawSh
 			"--identifier-class=email", "--normalization-version=email-v1", "--key-id=" + strings.Repeat("b", 64),
 			"--digest=" + strings.Repeat("c", 64), "--reason=opt_out", "--actor=cli",
 		}, want: true},
+		{name: "Context digest suppression", args: []string{
+			"person", "enrichment", "suppress", "--provider-namespace=context:" + strings.Repeat("a", 64),
+			"--identifier-class=email", "--normalization-version=email-v1", "--key-id=" + strings.Repeat("b", 64),
+			"--digest=" + strings.Repeat("c", 64), "--reason=opt_out", "--actor=cli",
+		}, want: true},
 		{name: "person suppression", args: []string{"person", "enrichment", "suppress", "--person=7", "--reason=data_subject_request"}, want: true},
 		{name: "raw provider flag rejected", args: []string{"person", "enrichment", "suppress", "--provider=exa-default", "--identifier-class=email", "--reason=opt_out"}},
 		{name: "raw positional rejected", args: []string{"person", "enrichment", "suppress", "person@example.test", "--reason=opt_out"}},

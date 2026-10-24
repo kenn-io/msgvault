@@ -947,7 +947,13 @@ describe('SettingsWorkspace', () => {
     expect(requests).toHaveLength(1);
   });
 
-  it('creates an absent Exa provider by stable name with safe disabled defaults', async () => {
+  it.each([
+    { label: 'Exa', kind: 'exa', endpoint: 'https://api.exa.ai/search',
+      identifiers: ['public_profile_url'], targets: ['attribute:location'], mode: { mode: 'people', num_results: 1 } },
+    { label: 'Context.dev', kind: 'context', endpoint: 'https://api.context.dev/v1/people/search',
+      identifiers: ['name', 'current_company'], targets: ['2068efb0-9808-498b-ac3a-8e0a87d4513a'], mode: {} },
+  ])('creates an absent $label provider with safe disabled defaults', async ({ label, kind, endpoint, identifiers, targets, mode }) => {
+    const stableName = `${kind}-primary`;
     const initial = { ...approvedSettingsDocument(), person_enrichment_providers: [] };
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -955,15 +961,15 @@ describe('SettingsWorkspace', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (request.method === 'GET') return settingsResponse(initial, '"config-a"', '"credential-a"');
-      if (request.method === 'PUT' && path === '/api/v1/settings/person-enrichment/providers/exa-primary') {
+      if (request.method === 'PUT' && path === `/api/v1/settings/person-enrichment/providers/${stableName}`) {
         const body = await request.clone().json();
         return settingsResponse({
           ...initial,
           person_enrichment_providers: [{
-            name: 'exa-primary',
+            name: stableName,
             ...body,
             credential: { configured: false, source: 'none' },
-            credential_id: 'people.enrichment/exa-primary'
+            credential_id: `people.enrichment/${stableName}`
           }]
         }, '"config-b"', '"credential-a"');
       }
@@ -972,24 +978,23 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
     await openSettingsCategory('Person enrichment');
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add Exa provider' }));
-    await fireEvent.input(screen.getByLabelText('Exa stable provider name'), {
-      target: { value: 'exa-primary' }
+    await fireEvent.click(await screen.findByRole('button', { name: `Add ${label} provider` }));
+    await fireEvent.input(screen.getByLabelText(`${label} stable provider name`), {
+      target: { value: stableName }
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create Exa provider' }));
+    await fireEvent.click(screen.getByRole('button', { name: `Create ${label} provider` }));
 
     await waitFor(() => expect(requests).toHaveLength(2));
     const write = requests[1] as Request;
     expect(write.headers.get('If-Match')).toBe('"config-a"');
     const body = await write.clone().json();
     expect(body).toMatchObject({
-      kind: 'exa',
+      kind,
       enabled: false,
-      endpoint: 'https://api.exa.ai/search',
-      mode: 'people',
-      num_results: 1,
-      allowed_identifiers: ['public_profile_url'],
-      target_keys: ['attribute:location'],
+      endpoint,
+      ...mode,
+      allowed_identifiers: identifiers,
+      target_keys: targets,
       allow_sensitive_targets: false,
       retention_posture: '',
       training_posture: '',
@@ -1001,8 +1006,8 @@ describe('SettingsWorkspace', () => {
     });
     expect(body).not.toHaveProperty('api_key_env');
     expect(body).not.toHaveProperty('max_cost_usd_micros_per_day');
-    expect(await screen.findByRole('heading', { name: 'exa-primary' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Add Exa provider' })).toBeDefined();
+    expect(await screen.findByRole('heading', { name: stableName })).toBeDefined();
+    expect(screen.getByRole('button', { name: `Add ${label} provider` })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Add SixtyFour provider' })).toBeDefined();
   });
 

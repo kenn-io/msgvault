@@ -23,7 +23,7 @@ const settingsPersonEnrichmentProviderRoute = "/settings/person-enrichment/provi
 // APIKeyEnv and hard monetary caps deliberately remain host-only.
 type PersonEnrichmentProviderSetting struct {
 	Name                  string              `json:"name"`
-	Kind                  string              `json:"kind" enum:"exa,sixtyfour"`
+	Kind                  string              `json:"kind" enum:"exa,sixtyfour,context"`
 	Enabled               bool                `json:"enabled"`
 	Endpoint              string              `json:"endpoint"`
 	PollEndpoint          string              `json:"poll_endpoint,omitempty"`
@@ -47,7 +47,7 @@ type PersonEnrichmentProviderSetting struct {
 }
 
 type PersonEnrichmentProviderUpdate struct {
-	Kind                  string   `json:"kind" enum:"exa,sixtyfour"`
+	Kind                  string   `json:"kind" enum:"exa,sixtyfour,context"`
 	Enabled               bool     `json:"enabled"`
 	Endpoint              string   `json:"endpoint"`
 	PollEndpoint          string   `json:"poll_endpoint,omitempty"`
@@ -189,9 +189,9 @@ func applyPersonEnrichmentProviderUpdate(
 ) (personenrichment.ProviderConfig, error) {
 	// Kind is immutable once a name exists, so it must be valid even for a
 	// disabled provider; otherwise the name could never be enabled.
-	if request.Kind != personenrichment.ProviderExa && request.Kind != personenrichment.ProviderSixtyfour {
+	if request.Kind != personenrichment.ProviderExa && request.Kind != personenrichment.ProviderSixtyfour && request.Kind != personenrichment.ProviderContext {
 		return personenrichment.ProviderConfig{}, fmt.Errorf(
-			"kind must be %q or %q", personenrichment.ProviderExa, personenrichment.ProviderSixtyfour)
+			"kind must be %q, %q, or %q", personenrichment.ProviderExa, personenrichment.ProviderSixtyfour, personenrichment.ProviderContext)
 	}
 	provider.Kind = request.Kind
 	provider.Enabled = request.Enabled

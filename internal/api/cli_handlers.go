@@ -2000,7 +2000,7 @@ func cliRunPersonEnrichmentAllowed(args []string) bool {
 			"provider_person_id": "provider-person-id-v1", "name_company": "name-company-v1",
 		}
 		version, validClass := versionByClass[class]
-		return found && (kind == "exa" || kind == "sixtyfour") && isLowerSHA256(fingerprint) &&
+		return found && (kind == "exa" || kind == "sixtyfour" || kind == "context") && isLowerSHA256(fingerprint) &&
 			validClass && values["normalization-version"] == version &&
 			isLowerSHA256(values["key-id"]) && isLowerSHA256(values["digest"]) &&
 			(values["reason"] == "opt_out" || values["reason"] == "data_subject_request") &&

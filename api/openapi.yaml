@@ -11458,6 +11458,7 @@ components:
           enum:
             - exa
             - sixtyfour
+            - context
           type: string
         max_job_age:
           type: string
@@ -11531,6 +11532,7 @@ components:
           enum:
             - exa
             - sixtyfour
+            - context
           type: string
         max_job_age:
           type: string
@@ -16592,7 +16594,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.25.0
+  version: 3.26.0
 openapi: 3.1.0
 paths:
   /api/ping:

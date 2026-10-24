@@ -28,7 +28,7 @@
   let name = $state('');
   let saving = $state(false);
   let error = $state('');
-  const providerLabel = $derived(kind === 'exa' ? 'Exa' : 'SixtyFour');
+  const providerLabel = $derived(kind === 'context' ? 'Context.dev' : kind === 'exa' ? 'Exa' : 'SixtyFour');
   async function createProvider() {
     if (saving) return;
     const stableName = name.trim();
@@ -96,6 +96,9 @@
       max_requests_per_run: 10,
       max_requests_per_day: 100,
     } satisfies Omit<ProviderUpdate, 'endpoint'>;
+    if (providerKind === 'context') {
+      return { ...common, endpoint: 'https://api.context.dev/v1/people/search', target_keys: ['2068efb0-9808-498b-ac3a-8e0a87d4513a'] };
+    }
     if (providerKind === 'exa') {
       return {
         ...common,
