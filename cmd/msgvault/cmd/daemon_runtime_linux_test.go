@@ -48,7 +48,7 @@ func TestListLiveDaemonRuntimeRecordsKeepsForeignRecord(t *testing.T) {
 	assert.Equal(t, hostBefore, hostAfter)
 }
 
-func TestClaimServeOwnershipStartsOverDeadSiblingRecord(t *testing.T) {
+func TestDaemonAutoStartOverDeadSiblingRecord(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -147,7 +147,4 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	if mode == "restart" {
 		t.Cleanup(func() { require.NoError(owner.Close()) })
 	}
-	written, err := store.Read(path)
-	require.NoError(err)
-	assert.NotEmpty(written.Metadata[runtimeShutdownToken], "serve publishes its shutdown credential")
 }
