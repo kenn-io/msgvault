@@ -103,10 +103,11 @@ func (cc *convScope) drainPageBudget() int {
 // Importer ingests one Slack workspace user's conversations into the
 // msgvault store. One Import run covers one workspace (= one source).
 type Importer struct {
-	store                 *store.Store
-	client                *Client
-	res                   *participantResolver
-	lastCheckpoint        time.Time
+	store          *store.Store
+	client         *Client
+	res            *participantResolver
+	lastCheckpoint time.Time
+	// checkpointMinInterval throttles checkpoint flushes; tests set it to 0 to disable the throttle.
 	checkpointMinInterval time.Duration
 	// now is a clock hook for tests.
 	now func() time.Time
