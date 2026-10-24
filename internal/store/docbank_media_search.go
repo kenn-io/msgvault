@@ -56,12 +56,11 @@ type DocumentSearchOccurrence struct {
 }
 
 func (s *Store) documentSearchAttachmentMatch() string {
-	// LOWER on both sides lets SQLite use the existing hash expression index.
+	hashMatch, pathMatch := docbankAttachmentMatch("matched", "d.content_hash")
 	attachmentIDs := `SELECT matched.id FROM attachments matched
- WHERE LOWER(matched.content_hash) = LOWER(d.content_hash)
+ WHERE ` + hashMatch + `
  UNION ALL SELECT matched.id FROM attachments matched
- WHERE matched.storage_path = SUBSTR(d.content_hash,1,2) || '/' || d.content_hash
-   AND COALESCE(matched.content_hash,'') = ''`
+ WHERE ` + pathMatch
 	if s.IsPostgreSQL() {
 		return `a.id = ANY(ARRAY(` + attachmentIDs + `))`
 	}

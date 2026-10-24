@@ -86,8 +86,6 @@ const docbankAttachmentPageSize = 500
 // docbankReceiptChunk bounds the hashes in one receipt query below backend variable limits.
 const docbankReceiptChunk = 512
 
-const docbankAttachmentHashExpr = `LOWER(COALESCE(NULLIF(a.content_hash,''), SUBSTR(a.storage_path,4)))`
-
 func docbankAttachmentEligibleWhere() string {
 	nonHex := `SUBSTR(a.storage_path,4)`
 	for _, digit := range "0123456789abcdef" {
@@ -106,14 +104,21 @@ func docbankAttachmentEligibleWhere() string {
 // docbankAttachmentSourceExists matches an eligible attachment for hash, a SQL expression.
 func docbankAttachmentSourceExists(hash string) string {
 	eligible := ` AND ` + docbankAttachmentEligibleWhere()
-	// LOWER on both sides lets SQLite use the expression index for a correlated hash.
+	hashMatch, pathMatch := docbankAttachmentMatch("a", hash)
 	return `(EXISTS (
 			SELECT 1 FROM attachments a
-			WHERE LOWER(a.content_hash) = LOWER(` + hash + `)` + eligible + `)
+			WHERE ` + hashMatch + eligible + `)
 		OR EXISTS (
 			SELECT 1 FROM attachments a
-			WHERE a.storage_path = SUBSTR(` + hash + `,1,2) || '/' || ` + hash + `
-			  AND COALESCE(a.content_hash,'') = ''` + eligible + `))`
+			WHERE ` + pathMatch + eligible + `))`
+}
+
+// docbankAttachmentMatch keeps hash and hashless CAS lookups separately indexable.
+func docbankAttachmentMatch(alias, hash string) (string, string) {
+	// LOWER on both sides lets SQLite use the expression index for a correlated hash.
+	return `LOWER(` + alias + `.content_hash) = LOWER(` + hash + `)`,
+		alias + `.storage_path = SUBSTR(` + hash + `,1,2) || '/' || ` + hash + `
+			  AND COALESCE(` + alias + `.content_hash,'') = ''`
 }
 
 // DocbankAttachmentStoragePaths returns local candidates for a mirror source hash.
@@ -535,12 +540,13 @@ func LoadDocbankAttachmentRefs(
 // DocbankAttachmentStatus counts outcomes and distinct eligible files without a delivery row.
 func (s *Store) DocbankAttachmentStatus(ctx context.Context, destination string) (DocbankAttachmentSummary, error) {
 	result := DocbankAttachmentSummary{Reasons: make(map[string]int64)}
+	fileHash := `LOWER(COALESCE(NULLIF(a.content_hash,''), SUBSTR(a.storage_path,4)))`
 	err := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT COUNT(DISTINCT `+docbankAttachmentHashExpr+`) FROM attachments a
+		SELECT COUNT(DISTINCT `+fileHash+`) FROM attachments a
 		WHERE `+docbankAttachmentEligibleWhere()+`
 		  AND NOT EXISTS (
 			SELECT 1 FROM docbank_attachment_deliveries d
-			WHERE d.destination_key = ? AND d.content_hash = `+docbankAttachmentHashExpr+`)`), destination).Scan(&result.Remaining)
+			WHERE d.destination_key = ? AND d.content_hash = `+fileHash+`)`), destination).Scan(&result.Remaining)
 	if err != nil {
 		return result, fmt.Errorf("count remaining attachment mirror files: %w", err)
 	}
