@@ -128,6 +128,7 @@ func TestContextHTTPFailures(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				w.Header().Set("Retry-After", "30")
+				w.Header().Set("X-Request-ID", "private request sentinel")
 				w.Header().Set("Location", "/redirect")
 				w.WriteHeader(test.status)
 				_, _ = w.Write([]byte("private provider body"))
@@ -140,6 +141,7 @@ func TestContextHTTPFailures(t *testing.T) {
 			requirements.ErrorAs(err, &failure)
 			checks.Equal(test.class, failure.Class)
 			checks.Equal("30", failure.RetryAfter)
+			checks.Empty(failure.RequestID)
 			checks.NotContains(err.Error(), "private")
 			checks.Equal(1, calls)
 		})

@@ -61,12 +61,12 @@ func validateContextTargets(targets []personfacts.TargetDescriptor) error {
 		if target.ValueType != personfacts.ValueText {
 			return fmt.Errorf("unsupported context target %q", target.Key)
 		}
-		switch target.Slug {
-		case "name", "full_name", "location":
+		switch personTargetField(target.Slug) {
+		case "name", "location":
 			if target.Cardinality != personfacts.CardinalitySingle {
 				return errors.New("context name and location targets must be single-valued")
 			}
-		case "education", "education_history":
+		case "education":
 			if target.Cardinality != personfacts.CardinalityMulti {
 				return errors.New("context education targets must be multi-valued")
 			}
@@ -118,7 +118,7 @@ func (p *contextProvider) Start(ctx context.Context, request Request) (Attempt, 
 		return Attempt{}, contextFailure(0, FailureTransient, "", "")
 	}
 	defer func() { _ = response.Body.Close() }()
-	requestID := safeExaErrorRequestID(response.Header.Get("X-Request-ID"))
+	requestID := response.Header.Get("X-Request-ID")
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		class := FailureTerminal
 		if response.StatusCode == http.StatusTooManyRequests {
@@ -244,8 +244,8 @@ func contextTargetValues(target personfacts.TargetDescriptor, person contextSear
 		}
 		values = append(values, value)
 	} else {
-		switch target.Slug {
-		case "name", "full_name":
+		switch personTargetField(target.Slug) {
+		case "name":
 			values = append(values, person.Name)
 		case "location":
 			var parts []string
@@ -257,7 +257,7 @@ func contextTargetValues(target personfacts.TargetDescriptor, person contextSear
 			if len(parts) > 0 {
 				values = append(values, strings.Join(parts, ", "))
 			}
-		case "education", "education_history":
+		case "education":
 			for _, school := range person.Schools {
 				if strings.TrimSpace(school) != "" {
 					values = append(values, school)

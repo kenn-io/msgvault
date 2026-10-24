@@ -365,8 +365,8 @@ func exaPeopleCapabilityForTarget(target personfacts.TargetDescriptor) (exaPeopl
 	if key == "" {
 		key = target.Key
 	}
-	switch key {
-	case "name", "full_name":
+	switch personTargetField(key) {
+	case "name":
 		return exaCapabilityName, nil
 	case "first_name":
 		return exaCapabilityFirstName, nil
@@ -374,7 +374,7 @@ func exaPeopleCapabilityForTarget(target personfacts.TargetDescriptor) (exaPeopl
 		return exaCapabilityLastName, nil
 	case "location":
 		return exaCapabilityLocation, nil
-	case "education", "education_history":
+	case "education":
 		return exaCapabilityEducation, nil
 	default:
 		return "", fmt.Errorf("exa people mode target %q is unsupported by the fixed entity schema", target.Key)
