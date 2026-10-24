@@ -5,7 +5,7 @@ Commands start or reuse a local daemon, or use [remote].url from config.toml.
 Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
-  # "id" feeds the commands below
+  # use "id" below
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
@@ -29,7 +29,7 @@ Search and read:
   list-domains  List top sender domains by message count
   list-labels   List all labels with message counts
   list-senders  List top senders by message count
-  loops         List and manage open loops
+  loops         List open loops
   media         Search recording transcripts
   meetings      Read archived meeting context, actions, and metrics
   query         Run a SQL query against the analytics cache
@@ -152,7 +152,7 @@ Indexes, embeddings, and analytics cache:
   cache-stats Show statistics about the analytics cache
   documents   Manage document attachment indexing
   embeddings  Manage message vector embeddings
-  eval        Score search quality against relevance judgments (qrels)
+  eval        Score search quality (requires sqlite_vec build)
   multimodal  Manage and search visual attachment embeddings
   rebuild-fts Rebuild the full-text search index from scratch
 

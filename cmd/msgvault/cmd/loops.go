@@ -25,7 +25,7 @@ func init() {
 func newLoopsCommand() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "loops",
-		Short: "List and manage open loops",
+		Short: "List open loops",
 		Long: `Show who is waiting on a reply from you and who you are waiting on.
 
 Each person gets a separate loop anchored on their oldest open question or
