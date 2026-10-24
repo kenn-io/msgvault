@@ -45,7 +45,7 @@ const (
 	// filenameMinAPISchemaVersion is the first daemon contract with filename: filters.
 	filenameMinAPISchemaVersion = "3.14.0"
 	// boundedDeletionSearchMinAPISchemaVersion adds one-request bounded MCP staging.
-	boundedDeletionSearchMinAPISchemaVersion = "3.26.0"
+	boundedDeletionSearchMinAPISchemaVersion = "3.25.0"
 )
 
 // Engine implements query.Engine by making HTTP calls to a msgvault daemon.
