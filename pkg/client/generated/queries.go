@@ -139,8 +139,10 @@ type ListAttributeDefinitionsQuery struct {
 }
 
 type ListCalendarEventsQuery struct {
-	From time.Time `json:"from" validate:"required"`
-	To   time.Time `json:"to" validate:"required"`
+	From   time.Time `json:"from" validate:"required"`
+	To     time.Time `json:"to" validate:"required"`
+	Limit  *int      `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+	Cursor *string   `json:"cursor,omitempty"`
 }
 
 func (l ListCalendarEventsQuery) Validate() error {

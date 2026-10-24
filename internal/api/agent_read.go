@@ -24,7 +24,8 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
-	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
+	"listCalendarEvents":  agentgrant.PermissionCalendarEventRead, "getCalendarEvent": agentgrant.PermissionCalendarEventRead,
+	"getMessage": agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
 	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
 	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
@@ -52,6 +53,9 @@ func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.
 			return "", newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires search.read, message.read, attachment.read, or stats.read on the requested sources")
 		}
 		return permission, nil
+	}
+	if (operation == "listCalendarEvents" || operation == "getCalendarEvent") && grant != nil && grant.HasPermission(agentgrant.PermissionMessageRead) {
+		permission = agentgrant.PermissionMessageRead
 	}
 	if grant == nil || permission == "" || !grant.HasPermission(permission) {
 		return "", agentReadDenied(permission)
@@ -148,6 +152,8 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
+	case "listCalendarEvents", "getCalendarEvent":
+		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)

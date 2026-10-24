@@ -137,11 +137,11 @@ func calendarRecurrenceEnd(ctx context.Context, event calevent.Event) *time.Time
 	if event.Kind != "series" {
 		return nil
 	}
-	set, duration, days, err := prepareCalendarRecurrence(event)
-	if err != nil {
+	series := newCalendarSeries(CalendarEventRow{Event: event})
+	if series.err != nil {
 		return nil
 	}
-	end, bounded := calrecur.ConservativeEnd(ctx, set, duration, days, calrecur.SeriesReadBudget)
+	end, bounded := calrecur.ConservativeEnd(ctx, series.set, series.duration, series.days, calrecur.SeriesReadBudget)
 	if !bounded {
 		return nil
 	}

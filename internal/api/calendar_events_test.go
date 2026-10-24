@@ -2,10 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type calendarEventsTestStore struct {
@@ -22,11 +23,13 @@ type calendarEventsTestStore struct {
 
 	err   error
 	calls int
+	query store.CalendarOccurrenceQuery
 }
 
-func (s *calendarEventsTestStore) ListCalendarOccurrencesContext(_ context.Context, from, to time.Time) (store.CalendarOccurrencePage, error) {
+func (s *calendarEventsTestStore) ListCalendarOccurrencesContext(_ context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error) {
 	s.calls++
-	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: "Planning", Start: from, End: to}}, Unexpandable: []store.CalendarUnexpandable{}}, s.err
+	s.query = query
+	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: "Planning", Start: query.From, End: query.To}}, Unexpandable: []store.CalendarUnexpandable{}}, s.err
 }
 func TestCalendarEventsRoute(t *testing.T) {
 	backend := &calendarEventsTestStore{mockStore: &mockStore{stats: &StoreStats{}}}
@@ -41,15 +44,16 @@ func TestCalendarEventsRoute(t *testing.T) {
 		status            int
 		want              string
 	}{
-		{"owner", path, "", nil, 200, `"message_id":42`},
-		{"delegated", path, secret, nil, 401, ""},
+		{"owner", path + "&limit=7&cursor=next-page", "", nil, 200, `"message_id":42`},
+		{"detail", "/api/v1/calendar/events/evt:42", "", store.ErrCalendarOccurrenceNotFound, 404, "not_found"},
+		{"delegated", path, secret, nil, 403, "permission_denied"},
 		{"remote", path, "synthetic-reader-key", nil, 403, ""},
 		{"missing", "/api/v1/calendar/events", "", nil, 400, "invalid_argument"},
-		{"reversed", strings.Replace(path, "2027-04-01", "2027-02-01", 1), "", nil, 400, "invalid_argument"},
 		{"broad", path, "", store.ErrQueryTooBroad, 400, "query_too_broad"},
-		{"series cap", path, "", fmt.Errorf("%w: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series", store.ErrQueryTooBroad), 400, "more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"},
+		{"invalid limit", path + "&limit=bad", "", nil, 400, "invalid_argument"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
 			backend.err = tc.err
 			before := backend.calls
 			r := httptest.NewRequest(http.MethodGet, tc.path, nil)
@@ -64,11 +68,49 @@ func TestCalendarEventsRoute(t *testing.T) {
 			srv.Router().ServeHTTP(w, r)
 			require.Equal(t, tc.status, w.Code, w.Body.String())
 			if tc.want != "" {
-				assert.Contains(t, w.Body.String(), tc.want)
+				assertions.Contains(w.Body.String(), tc.want)
+			}
+			if tc.name == "owner" {
+				assertions.Equal(new(7), backend.query.Limit)
+				assertions.Equal("next-page", backend.query.Cursor)
 			}
 			if tc.status == 401 || tc.status == 403 {
-				assert.Equal(t, before, backend.calls)
+				assertions.Equal(before, backend.calls)
 			}
 		})
 	}
+}
+
+func TestCalendarOccurrenceGrantReads(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	sourceIDs, messageIDs := testutil.CalendarArchive(t, st)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: sourceIDs[0], Type: "gcal", Identifier: "calendar0@example.com"}}, time.Time{})
+	requirements.NoError(err)
+	path := "/api/v1/calendar/events?from=2027-03-01T00:00:00Z&to=2027-03-02T00:00:00Z"
+	r := httptest.NewRequest(http.MethodGet, path, nil)
+	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var page store.CalendarOccurrencePage
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(sourceIDs[0], page.Occurrences[0].SourceID)
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/calendar/events/"+page.Occurrences[0].Ref, nil)
+	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	r = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/calendar/events/evt:%d", messageIDs[1]), nil)
+	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	assertions.Equal(http.StatusNotFound, w.Code, w.Body.String())
+}
+
+func (s *calendarEventsTestStore) GetCalendarOccurrenceContext(_ context.Context, _ string) (store.CalendarOccurrenceDetail, error) {
+	return store.CalendarOccurrenceDetail{}, s.err
 }

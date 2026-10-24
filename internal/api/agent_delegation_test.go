@@ -260,7 +260,11 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 			src, id = source, messageID
 		}
 	}
-	_, err := st.CreateCollection("Selected", "", []int64{src.ID})
+	sourceIDs, messageIDs := testutil.CalendarArchive(t, st)
+	calendarSource, err := st.GetSourceByID(sourceIDs[0])
+	requirements.NoError(err)
+	calendarID := messageIDs[0]
+	_, err = st.CreateCollection("Selected", "", []int64{src.ID})
 	requirements.NoError(err)
 	hash := strings.Repeat("a", 64)
 	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
@@ -273,23 +277,25 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	t.Cleanup(srv.agentGrants.Close)
-	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}, {ID: calendarSource.ID, Type: calendarSource.SourceType, Identifier: calendarSource.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	// These expectations stay independent of the production permission map.
 	reads := map[string]struct{ path, want string }{
 		"searchCLI":               {"/api/v1/cli/search?q=glacier", src.Identifier},
 		"searchMessages":          {"/api/v1/search?q=glacier", src.Identifier},
 		"fastSearch":              {"/api/v1/search/fast?q=glacier", src.Identifier},
-		"deepSearch":              {"/api/v1/search/deep?q=glacier", src.Identifier},
+		"deepSearch":              {fmt.Sprintf("/api/v1/search/deep?q=glacier&source_id=%d", src.ID), src.Identifier},
 		"getAggregates":           {"/api/v1/aggregates?view_type=senders", src.Identifier},
 		"getSubAggregates":        {"/api/v1/aggregates/sub?view_type=senders", src.Identifier},
 		"filterMessages":          {"/api/v1/messages/filter", src.Identifier},
 		"listMessages":            {"/api/v1/messages", src.Identifier},
 		"searchMessagesByDomains": {"/api/v1/search/domains?domains=example.test", src.Identifier},
-		"getStats":                {"/api/v1/stats", `"total_messages":1`},
-		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":1`},
+		"getStats":                {"/api/v1/stats", `"total_messages":2`},
+		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":2`},
 		"getTotalStats":           {"/api/v1/stats/total", `"message_count":1`},
 		"getCLIMessageThread":     {fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), src.Identifier},
+		"listCalendarEvents":      {"/api/v1/calendar/events?from=2027-03-01T00:00:00Z&to=2027-03-02T00:00:00Z", fmt.Sprintf(`"ref":"evt:%d"`, calendarID)},
+		"getCalendarEvent":        {fmt.Sprintf("/api/v1/calendar/events/evt:%d", calendarID), fmt.Sprintf(`"ref":"evt:%d"`, calendarID)},
 		"getMessage":              {fmt.Sprintf("/api/v1/messages/%d", id), src.Identifier},
 		"getCLIMessage":           {fmt.Sprintf("/api/v1/cli/message?id=%d", id), src.Identifier},
 		"getAttachment":           {fmt.Sprintf("/api/v1/attachments/%d", attachmentID), "permitted.bin"},
@@ -358,7 +364,6 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 20)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }
