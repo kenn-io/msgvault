@@ -69,7 +69,7 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 	important := make(map[string]bool)
 	for _, attr := range node.Attr {
 		if attr.Key == "background" && strings.TrimSpace(attr.Val) != "" {
-			style["background-color"] = "unknown"
+			style["background-image"] = "image"
 		}
 		if value := inlineHTMLColor(attr.Val); value != "" {
 			switch {
@@ -79,6 +79,14 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 				style["background-color"] = value
 			}
 		}
+	}
+	// The last valid declaration wins, and an important one beats normal ones.
+	apply := func(name, value string, isImportant bool) {
+		if value == "" || important[name] && !isImportant {
+			return
+		}
+		important[name] = isImportant
+		style[name] = value
 	}
 	for _, attr := range node.Attr {
 		if attr.Key != "style" || len(attr.Val) > maxInlineStyleBytes {
@@ -94,11 +102,21 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 				isImportant, value = true, value[:bang]
 			}
 			value = strings.TrimSpace(strings.ToLower(decodeInlineCSSEscapes(value)))
+			// The shorthand also resets the image, to none unless it names one.
 			if name == "background" {
+				shorthandImage := "none"
+				if strings.Contains(value, "url(") || strings.Contains(value, "gradient(") {
+					shorthandImage = "image"
+				}
+				apply("background-image", shorthandImage, isImportant)
 				name = "background-color"
 			}
-			if name == "background-image" && value != "none" && value != "initial" {
-				name, value = "background-color", "unknown"
+			if name == "background-image" {
+				if value != "none" && value != "initial" && !slices.Contains(inheritCSSKeywords, value) {
+					value = "image"
+				} else {
+					value = "none"
+				}
 			}
 			if name == "font" {
 				name, value = "font-size", fontShorthandSize(value)
@@ -125,12 +143,7 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 			} else if !validInlineCSSValue(name, value) {
 				value = ""
 			}
-			// The last valid declaration wins, and an important one beats normal ones.
-			if value == "" || important[name] && !isImportant {
-				continue
-			}
-			important[name] = isImportant
-			style[name] = value
+			apply(name, value, isImportant)
 		}
 	}
 	return style
@@ -248,7 +261,7 @@ func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
 	for _, attr := range node.Attr {
 		state.hidden = state.hidden || attr.Key == "hidden" || attr.Key == "style" && len(attr.Val) > maxInlineStyleBytes
 	}
-	var clipped, zeroHeight, positioned, offscreen bool
+	var clipped, zeroHeight, positioned, offscreen, image bool
 	for property, value := range inlineHTMLStyle(node) {
 		switch property {
 		case "color":
@@ -264,6 +277,8 @@ func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
 			} else if value != "transparent" {
 				state.background = value
 			}
+		case "background-image":
+			image = value == "image"
 		case "display":
 			state.hidden = state.hidden || value == "none"
 		case "mso-hide":
@@ -300,6 +315,10 @@ func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
 		default:
 			// Other properties do not contribute to this check.
 		}
+	}
+	if image {
+		// Text over an image has no known background color.
+		state.background = ""
 	}
 	state.hidden = state.hidden || clipped && zeroHeight || positioned && offscreen
 	return state
