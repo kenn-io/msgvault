@@ -1047,38 +1047,52 @@ func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
 }
 
 func TestMediaSearchDocumentsLaterBatchFailureKeepsEarlierMatches(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newMediaSearchFixture(t)
-	f.match(t, "audio")
-	server := f.server(false)
-	first, second := f.document(t, server)
-	var documents []storetest.DocumentAttachment
-	for i := 2; i <= 4097; i++ {
-		documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
-	}
-	f.f.SeedDocumentAttachments(first, documents)
-	f.duringDocumentSearch = func() {
-		if len(f.documentRequests) == 2 {
-			f.documentStatus = http.StatusServiceUnavailable
-		}
-	}
+	for _, recordingFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recording failure=%t", recordingFailure), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			f.match(t, "audio")
+			server := f.server(false)
+			first, second := f.document(t, server)
+			var documents []storetest.DocumentAttachment
+			for i := 2; i <= 4097; i++ {
+				documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
+			}
+			f.f.SeedDocumentAttachments(first, documents)
+			if recordingFailure {
+				f.remoteStatus = http.StatusServiceUnavailable
+			}
+			f.duringDocumentSearch = func() {
+				if len(f.documentRequests) == 2 {
+					f.documentStatus = http.StatusServiceUnavailable
+				}
+			}
 
-	status, response, raw := searchMediaFor(t, server, "q=quartz")
-	require.Equal(http.StatusOK, status, raw)
-	require.Len(f.documentRequests, 2)
-	assert.Contains(f.documentRequests[0].Fence.ContentVersionIDs, f.documentReport.Results[0].ContentVersionID)
-	assert.NotContains(f.documentRequests[1].Fence.ContentVersionIDs, f.documentReport.Results[0].ContentVersionID)
-	require.NotNil(response.Attachments)
-	require.NotNil(response.Attachments.Error)
-	assert.NotEmpty(response.Results, "recording matches remain available")
-	assert.True(response.Attachments.Truncated, "the failed batch leaves attachment results incomplete")
-	var messageIDs []int64
-	for _, hit := range response.Attachments.Results {
-		messageIDs = append(messageIDs, hit.MessageID)
-		assert.Equal("quartz in the PDF", hit.Excerpt)
+			status, response, raw := searchMediaFor(t, server, "q=quartz")
+			require.Equal(http.StatusOK, status, raw)
+			require.Len(f.documentRequests, 2)
+			assert.Contains(f.documentRequests[0].Fence.ContentVersionIDs, f.documentReport.Results[0].ContentVersionID)
+			assert.NotContains(f.documentRequests[1].Fence.ContentVersionIDs, f.documentReport.Results[0].ContentVersionID)
+			require.NotNil(response.Attachments)
+			require.NotNil(response.Attachments.Error)
+			if recordingFailure {
+				require.NotNil(response.RecordingsError)
+				assert.Equal("media_search_unavailable", response.RecordingsError.Error)
+				assert.True(response.Partial)
+				assert.Empty(response.Results)
+			} else {
+				assert.NotEmpty(response.Results, "recording matches remain available")
+			}
+			assert.True(response.Attachments.Truncated, "the failed batch leaves attachment results incomplete")
+			var messageIDs []int64
+			for _, hit := range response.Attachments.Results {
+				messageIDs = append(messageIDs, hit.MessageID)
+				assert.Equal("quartz in the PDF", hit.Excerpt)
+			}
+			assert.ElementsMatch([]int64{first, second}, messageIDs, "retain both attachment occurrences from the successful first batch")
+		})
 	}
-	assert.ElementsMatch([]int64{first, second}, messageIDs, "retain both attachment occurrences from the successful first batch")
 }
 
 func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
