@@ -148,7 +148,7 @@ func TestConservativeEndAllDayAtMidnightDSTTransition(t *testing.T) {
 	s, err := ParseSet(time.Time{}, true, "2018-11-03", zone, nil)
 	requirements.NoError(err)
 
-	end, bounded := ConservativeEnd(t.Context(), s, 0, 1, 100)
+	end, bounded, _ := ConservativeEnd(t.Context(), s, 0, 1, 100)
 	requirements.True(bounded)
 	want := time.Date(2018, 11, 4, 1, 0, 0, 0, zone).Add(14 * time.Hour)
 	assertions.Equal(want, end)
@@ -193,15 +193,15 @@ func TestConservativeEndCountUntilRdate(t *testing.T) {
 	assertions := assert.New(t)
 	for _, rule := range []string{"RRULE:FREQ=DAILY;COUNT=3", "RRULE:FREQ=DAILY;UNTIL=20270304T170000Z"} {
 		s := parsed(t, rule, "RDATE:20270310T170000Z", "EXDATE:20270310T170000Z")
-		end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+		end, bounded, _ := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
 		assertions.True(bounded)
 		assertions.Equal(instant(t, "2027-03-10T18:00:00Z"), end)
 	}
 	_, err := ParseSet(instant(t, "2027-03-02T17:00:00Z"), false, "", time.UTC, []string{"RRULE:invalid"})
 	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
-	_, bounded := ConservativeEnd(t.Context(), parsed(t, "RRULE:FREQ=DAILY"), time.Hour, 0, 100)
+	_, bounded, _ := ConservativeEnd(t.Context(), parsed(t, "RRULE:FREQ=DAILY"), time.Hour, 0, 100)
 	assertions.False(bounded)
-	_, bounded = ConservativeEnd(t.Context(), parsed(t, "RRULE:FREQ=DAILY;COUNT=101"), time.Hour, 0, 100)
+	_, bounded, _ = ConservativeEnd(t.Context(), parsed(t, "RRULE:FREQ=DAILY;COUNT=101"), time.Hour, 0, 100)
 	assertions.False(bounded)
 }
 
@@ -258,7 +258,7 @@ func TestConservativeEndAllDayAcrossDST(t *testing.T) {
 	requirements.NoError(err)
 	s, err := ParseSet(time.Time{}, true, "2027-03-14", zone, []string{"RRULE:FREQ=WEEKLY;COUNT=2"})
 	requirements.NoError(err)
-	end, bounded := ConservativeEnd(t.Context(), s, 23*time.Hour, 1, 100)
+	end, bounded, _ := ConservativeEnd(t.Context(), s, 23*time.Hour, 1, 100)
 	assertions.True(bounded)
 	assertions.Equal(instant(t, "2027-03-22T21:00:00Z"), end.UTC())
 }
@@ -510,4 +510,9 @@ func TestIterUntilBoundsIteration(t *testing.T) {
 		return true
 	}))
 	assertions.Equal([]string{"20270302T170000Z"}, got)
+}
+
+func TestParseSetRejectsOverflowingMonthlyInterval(t *testing.T) {
+	_, err := ParseSet(time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), false, "", time.UTC, []string{"RRULE:FREQ=MONTHLY;INTERVAL=9223372036854775807;COUNT=2"})
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
 }
