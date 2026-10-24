@@ -269,7 +269,6 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 	} else {
 		detection.voyageManifest = setupVoyageManifestPath(loaded)
 	}
-
 	// The local server is consulted only when nothing hosted is available
 	// for the lane it would fill, so a key holder never waits on a probe.
 	textUnconfigured := !loaded.Vector.Enabled && loaded.Vector.Embeddings.Endpoint == ""
@@ -370,7 +369,6 @@ func (p *setupProvidersPlan) refreshDependencies(loaded *config.Config, detectio
 		switch lane.Lane {
 		case lanePersonSearch:
 			p.Lanes[i] = planPersonSearch(loaded, p, options)
-
 		case lanePeopleInference:
 			p.Lanes[i], p.inference = planPeopleInference(loaded, detection, options, now)
 		}
@@ -416,7 +414,6 @@ func validateSetupProvidersOptions(options setupProvidersOptions) error {
 			return errors.New("--api-key-stdin and --credential-env are mutually exclusive")
 		}
 	}
-
 	for name, value := range map[string]string{
 		"--retention-posture": options.retentionPosture, "--training-posture": options.trainingPosture,
 	} {
@@ -648,7 +645,6 @@ func planPeopleInference(
 		return lane, nil
 	}
 	sources := []string{string(peoplesweep.SourceConversationText), string(peoplesweep.SourceMeetingText)}
-
 	since := time.Date(now.Year()-1, time.January, 1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
 	base := personProviderAddOptions{
 		custom: true, protocol: string(peoplesweep.ProtocolOpenAIChat),
@@ -735,7 +731,6 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 		if plan.laneOn(laneVisualSearch) {
 			lines = append(lines, "  - eligible image and video attachment bytes with bounded message context, after `msgvault multimodal build --yes`")
 		}
-
 	case gateOpenAI:
 		lines = append(lines, "OpenAI ("+setupOpenAIEndpoint+") receives:")
 		if plan.laneOn(laneTextSearch) && textLaneProvider(plan) == "openai" {
@@ -744,7 +739,6 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 		if plan.laneOn(lanePersonSearch) && textLaneProvider(plan) == "openai" {
 			lines = append(lines, "  - one curated, non-sensitive attribute document per person")
 		}
-
 		if plan.inference != nil && plan.inference.gate == gateOpenAI {
 			choice := plan.inference.options
 			lines = append(lines, "  - bounded evidence packets of "+

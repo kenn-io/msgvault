@@ -487,7 +487,6 @@ func operationHistoryLane(kind operations.Kind) operations.Lane {
 		return operations.LanePersonFacts
 	case operations.KindCardDAVSync:
 		return operations.LaneContacts
-
 	case operations.KindVisualEmbedding:
 		return operations.LaneVisualAttachments
 	default:

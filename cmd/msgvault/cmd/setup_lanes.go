@@ -220,7 +220,6 @@ func readSetupConsentState(ctx context.Context, cfg *config.Config) *setupConsen
 // hide the others.
 func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.Store) *setupConsentState {
 	state := &setupConsentState{}
-
 	state.Visual = setupVisualConsent(ctx, cfg, st)
 	if cfg.People.Sweep.Enabled {
 		if profile, err := cfg.People.Sweep.Profile(); err == nil {
@@ -562,7 +561,6 @@ func liveMCPTools(cfg *config.Config) []string {
 	if cfg.Vector.Multimodal.Enabled {
 		tools = append(tools, "search_visual_attachments")
 	}
-
 	return tools
 }
 

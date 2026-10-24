@@ -49,12 +49,6 @@ describe('OperationRelatedStatus', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-
-
-
-
-
-
   it('keeps endpoint failures on the status authority with fixed retry and no Settings redirect', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
       error: 'private_error', message: 'private provider response'

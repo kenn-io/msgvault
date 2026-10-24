@@ -1101,8 +1101,6 @@ describe('AppShell', () => {
   });
 
   it.each([
-
-
     ['visual_embedding', 'visual_attachments', 'Open Visual attachment status', 'getVisualAttachmentStatus',
       'Visual attachment status', '8 of 10 attachments current', '/api/v1/multimodal/status']
   ] as const)('routes %s to its live status authority across Back and Forward', async (

@@ -206,7 +206,6 @@ func (s *Store) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Ref
 		if !strings.EqualFold(ref.Message.BodySHA256, actual.Message.BodySHA256) {
 			return kataevidence.SourceRecord{Display: record.Display}, kataevidence.ErrChanged
 		}
-
 	default:
 		return empty, kataevidence.ErrUnsupported
 	}

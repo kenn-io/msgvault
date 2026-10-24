@@ -116,8 +116,6 @@ describe('FileViewer', () => {
     unregister();
   });
 
-
-
   it('rejects malformed image bytes before creating a URL', async () => {
     const fetchFn = viewerFetch({
       id: 7, message_id: 11, conversation_id: 21, filename: 'fake.png', mime_type: 'image/png',

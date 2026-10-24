@@ -204,7 +204,6 @@ func selectorRange(sel Selector) (int, int, error) {
 		if sel.AttachmentID != 0 {
 			return 0, 0, ErrInvalidReference
 		}
-
 	default:
 		return 0, 0, ErrInvalidReference
 	}
@@ -247,7 +246,6 @@ func setRange(ref Reference, start, end int) Reference {
 		p := *ref.Message
 		p.StartRune, p.EndRune = start, end
 		ref.Message = &p
-
 	case ref.Kind == "docbank_rendition" && ref.DocbankRendition != nil:
 		p := *ref.DocbankRendition
 		p.StartRune, p.EndRune = start, end

@@ -353,7 +353,6 @@ func operationLane(kind operations.Kind) operations.Lane {
 		return operations.LaneMessages
 	case operations.KindPersonEmbedding:
 		return operations.LanePersonFacts
-
 	case operations.KindVisualEmbedding:
 		return operations.LaneVisualAttachments
 	default:

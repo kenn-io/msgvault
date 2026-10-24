@@ -31,7 +31,6 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 		request.Mode != peoplesweep.GenerationCursorBackstop {
 		return peoplesweep.PersonWindow{}, errors.New("load person sweep window: invalid cursor mode")
 	}
-
 	limit := request.Limit
 	if limit <= 0 || limit > maxPersonSweepEvidenceRows {
 		limit = maxPersonSweepEvidenceRows
@@ -86,7 +85,6 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 			continue
 		}
 		window.Changes = append(window.Changes, change)
-
 		window.NextSequence = change.Sequence
 		if _, ok := seen[change.MessageID]; !ok && change.MessageID > 0 {
 			seen[change.MessageID] = struct{}{}
@@ -118,26 +116,21 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 				}
 			}
 		}
-
 	case peoplesweep.SourceDocumentText, peoplesweep.SourceAttachmentCaption, peoplesweep.SourceAttachmentOCR:
 		return window, peoplesweep.ErrSourceTextUnavailable
 	}
 	if loadReconciliation && request.ReconcileUpper != "" && len(window.Changes) == 0 &&
 		request.ReconcileAfter != request.ReconcileUpper && len(window.Seeds) < limit {
 		reconcileLimit := limit - len(window.Seeds)
-
 		reconcileChanges, next, done, scanErr := s.personSweepReconcileChanges(ctx, request, reconcileLimit)
 		if scanErr != nil {
 			return window, scanErr
 		}
-		var reconcile []peoplesweep.EvidenceItem
-		{
-			ids := make([]int64, 0, len(reconcileChanges))
-			for _, change := range reconcileChanges {
-				ids = append(ids, change.MessageID)
-			}
-			reconcile, _, err = s.hydratePersonSweepMessageSet(ctx, request.PersonID, request.Lane, ids, 0)
+		ids := make([]int64, 0, len(reconcileChanges))
+		for _, change := range reconcileChanges {
+			ids = append(ids, change.MessageID)
 		}
+		reconcile, _, err := s.hydratePersonSweepMessageSet(ctx, request.PersonID, request.Lane, ids, 0)
 		if err != nil {
 			return window, err
 		}
@@ -246,7 +239,6 @@ func (s *Store) personSweepReconcileChanges(ctx context.Context, request peoples
 		return nil, request.ReconcileAfter, false, err
 	}
 	predicate, scopeArgs := personscope.MessagePredicate(resolution, "m", "c")
-
 	lane := "m.message_type <> 'meeting_transcript'"
 	if request.Lane == peoplesweep.SourceMeetingText {
 		lane = "m.message_type = 'meeting_transcript'"
@@ -575,7 +567,6 @@ func personSweepHistoricalLanePredicate(classes []peoplesweep.SourceClass) strin
 	if sweepSourceAllowed(classes, peoplesweep.SourceMeetingText) {
 		clauses = append(clauses, "m.message_type = 'meeting_transcript'")
 	}
-
 	if len(clauses) == 0 {
 		return "FALSE"
 	}

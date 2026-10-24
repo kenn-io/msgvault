@@ -225,7 +225,6 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 		}
 	}
-
 	if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 		return err
 	}

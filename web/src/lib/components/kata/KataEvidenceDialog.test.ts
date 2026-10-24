@@ -58,7 +58,6 @@ describe('KataEvidenceDialog', () => {
   const chunk = { kind: 'document_chunk' as const, message_id: 42, attachment_id: 12, extraction_id: 'extract-8', chunk_key: 'chunk-1', start_rune: 0, max_chars: 1000 };
   it.each([
     { kind: 'message', text: 'Café 🙂 send the budget by Friday', quote: 'send the budget', initial: selector, earlier: false },
-
   ])('narrows a $kind citation to the selected text, counting runes', async ({ text, quote, initial, earlier }) => {
     type Wanted = { kind: string; start_rune: number; end_rune?: number; max_chars?: number };
     const requests: Wanted[] = [];

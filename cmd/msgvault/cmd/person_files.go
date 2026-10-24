@@ -307,7 +307,6 @@ func writePersonFilesOutput(command *cobra.Command, output personFilesOutput) er
 				result.PersonProvenance.Directions)
 		}
 	}
-
 	if output.Visual != nil {
 		for _, result := range output.Visual.Results {
 			participants, roles, directions := personProvenanceColumns(result.PersonProvenance)

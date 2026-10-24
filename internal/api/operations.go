@@ -822,7 +822,6 @@ func (s *Server) operationLaneConfigured(
 			status := connection.Status
 			return status.Enabled && status.Configured && status.Available && status.CredentialConfigured
 		})
-
 	case operations.KindMessageEmbedding:
 		return s.cfg.Vector.Enabled
 	case operations.KindPersonEmbedding:
@@ -887,7 +886,6 @@ func operationRelatedStatus(kind operations.Kind) *operations.RelatedStatusID {
 	switch kind {
 	case operations.KindCardDAVSync:
 		related = operations.RelatedStatusCardDAV
-
 	case operations.KindSourceSync:
 		related = operations.RelatedStatusSource
 	case operations.KindVisualEmbedding:

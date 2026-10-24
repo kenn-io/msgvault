@@ -237,7 +237,6 @@ func startVectorInit(
 				logger.Error("register multimodal job failed", "error", err)
 			}
 		}
-
 		logger.Info("daemon startup step complete", "step", "init_vector_backend")
 	}()
 	return h
