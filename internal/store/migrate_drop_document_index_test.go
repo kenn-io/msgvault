@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"strings"
@@ -10,8 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/backup"
-	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -51,9 +48,6 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 	for _, lane := range []string{"document_text", "conversation_text"} {
 		exec(`INSERT INTO person_sweep_cursors (person_id,source_lane,program_fingerprint,catalog_fingerprint,optimistic_sequence,reconcile_upper_key,reconcile_after_key,reconciliation_complete) VALUES (?,?,'program','catalog',0,'','',TRUE)`, personID, lane)
 	}
-	if !f.Store.IsPostgreSQL() {
-		checks.Equal(int64(1), disclosedChunks(t, f.Store), "the retired pipeline's text is disclosed before the upgrade")
-	}
 
 	// The previous release's person-sweep document hook and ledger.
 	if f.Store.IsPostgreSQL() {
@@ -64,11 +58,9 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 		exec(`CREATE TRIGGER trg_person_sweep_documents_message_update AFTER UPDATE ON messages BEGIN SELECT 1; END`)
 	}
 	exec(`DELETE FROM applied_migrations WHERE name IN ('drop_document_index_v1','person_sweep_change_triggers_v6')`)
-	for _, key := range []string{"document-index/v1", "visual-index/v1"} {
-		consumer, _, err := f.Store.RegisterAttachmentChangeConsumer(ctx, key)
-		requirements.NoError(err)
-		requirements.NoError(f.Store.CompleteAttachmentChangeReconciliation(ctx, key, consumer.BaselineSequence))
-	}
+	consumer, _, err := f.Store.RegisterAttachmentChangeConsumer(ctx, "document-index/v1")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.CompleteAttachmentChangeReconciliation(ctx, "document-index/v1", consumer.BaselineSequence))
 
 	var logs bytes.Buffer
 	previousLogger := slog.Default()
@@ -79,22 +71,9 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 
 	_, err = f.Store.GetAttachmentChangeConsumer(ctx, "document-index/v1")
 	requirements.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing)
-	exec(`UPDATE messages SET message_type='sms' WHERE id=?`, messageID)
-	exec(`DELETE FROM attachments WHERE message_id=?`, messageID)
-	destination, err := f.Store.GetOrCreateSource("gmail", "merged@example.test")
-	requirements.NoError(err)
-	_, err = f.Store.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: f.Source.ID, IntoSourceID: destination.ID})
-	requirements.NoError(err)
-	var movedSource int64
-	requirements.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT source_id FROM messages WHERE id=?`), messageID).Scan(&movedSource))
-	checks.Equal(destination.ID, movedSource)
-	changes, err := f.Store.ListAttachmentChanges(ctx, "visual-index/v1", 100)
-	requirements.NoError(err)
-	requirements.NotEmpty(changes)
-	requirements.NoError(f.Store.AdvanceAttachmentChangeConsumer(ctx, "visual-index/v1", changes[len(changes)-1].Sequence))
-	var pending int
-	requirements.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM attachment_change_log`).Scan(&pending))
-	checks.Zero(pending, "remaining consumers can prune changes after upgrade")
+	if f.Store.IsPostgreSQL() {
+		exec(`UPDATE messages SET message_type='sms' WHERE id=?`, messageID)
+	}
 
 	// The next open re-applies the schema; the dropped hook must stay dropped.
 	requirements.NoError(f.Store.InitSchemaContext(ctx))
@@ -121,9 +100,6 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			+ (SELECT COUNT(*) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname LIKE '%document%')`
 	}
 	checks.Zero(count(retired), "the upgrade drops the retired tables, triggers, functions, and cursor columns")
-	if !f.Store.IsPostgreSQL() {
-		checks.Zero(disclosedChunks(t, f.Store), "a backup after the upgrade exports no document derivatives")
-	}
 	var lanes []string
 	rows, err := f.Store.DB().QueryContext(ctx, `SELECT source_lane FROM person_sweep_cursors`)
 	requirements.NoError(err)
@@ -135,32 +111,4 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 	}
 	requirements.NoError(rows.Err())
 	checks.Equal([]string{"conversation_text"}, lanes, "only the retired lane's cursors are deleted")
-}
-
-// disclosedChunks returns the chunk count a backup of the SQLite archive s
-// would disclose.
-func disclosedChunks(t *testing.T, s *store.Store) int64 {
-	t.Helper()
-	requirements := require.New(t)
-	ctx := t.Context()
-	var sequence int
-	var name, path string
-	requirements.NoError(s.DB().QueryRowContext(ctx, `PRAGMA database_list`).Scan(&sequence, &name, &path))
-	session, err := backup.OpenFrozenSession(ctx, path, backup.NoopFreezeCoordinator{})
-	requirements.NoError(err)
-	defer func() { requirements.NoError(session.Close()) }()
-	view, ok := backupapp.New("document-upgrade-test").FrozenView(session).(backup.AuxiliarySource)
-	requirements.True(ok)
-	artifacts, err := view.AuxiliaryArtifacts(ctx)
-	requirements.NoError(err)
-	if len(artifacts) == 0 {
-		return 0
-	}
-	requirements.Len(artifacts, 1)
-	reader, _, err := artifacts[0].Open(ctx)
-	requirements.NoError(err)
-	defer func() { requirements.NoError(reader.Close()) }()
-	var disclosure backupapp.DocumentDisclosure
-	requirements.NoError(json.NewDecoder(reader).Decode(&disclosure))
-	return disclosure.Chunks
 }

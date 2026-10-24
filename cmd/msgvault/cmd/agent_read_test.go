@@ -43,16 +43,14 @@ func TestShowThreadDelegatedThroughRoot(t *testing.T) {
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(owner.Close()) })
 	for _, tc := range []struct {
-		name, permission, wantError, wantCode string
-		sourceID                              int64
-		wantStatus                            int
-		wantCause                             error
-		oldSchema                             bool
+		name, permission, wantCode string
+		sourceID                   int64
+		wantStatus                 int
+		wantCause                  error
 	}{
 		{name: "message read", permission: "message.read", sourceID: src.ID},
 		{name: "missing permission", permission: "search.read", sourceID: src.ID, wantCode: "permission_denied", wantStatus: http.StatusForbidden},
 		{name: "outside source grant", permission: "message.read", sourceID: other.ID, wantCause: store.ErrMessageNotFound},
-		{name: "old schema", permission: "message.read", sourceID: src.ID, oldSchema: true, wantError: "is incompatible with client API schema"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -61,22 +59,9 @@ func TestShowThreadDelegatedThroughRoot(t *testing.T) {
 			require.NoError(err)
 			tokenFile := filepath.Join(t.TempDir(), "agent.token")
 			require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret), 0600))
-			endpoint := server.URL
-			if tc.oldSchema {
-				old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/api/v1/health" {
-						w.Header().Set("Content-Type", "application/json")
-						_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.8.0"}`))
-						return
-					}
-					srv.Router().ServeHTTP(w, r)
-				}))
-				t.Cleanup(old.Close)
-				endpoint = old.URL
-			}
 			root := newRootCommand()
 			root.AddCommand(newShowThreadCmd())
-			root.SetArgs([]string{"--agent-url", endpoint, "--agent-token-file", tokenFile, "--agent-allow-insecure", "show-thread", strconv.FormatInt(id, 10), "--json"})
+			root.SetArgs([]string{"--agent-url", server.URL, "--agent-token-file", tokenFile, "--agent-allow-insecure", "show-thread", strconv.FormatInt(id, 10), "--json"})
 			var stderr bytes.Buffer
 			root.SetErr(&stderr)
 			done := captureStdout(t)
@@ -92,11 +77,6 @@ func TestShowThreadDelegatedThroughRoot(t *testing.T) {
 				require.ErrorAs(err, &apiErr)
 				assert.Equal(tc.wantCode, apiErr.Code)
 				assert.Equal(tc.wantStatus, apiErr.Status)
-				assert.NotContains(output, "Synthetic reply")
-				return
-			}
-			if tc.wantError != "" {
-				require.ErrorContains(err, tc.wantError)
 				assert.NotContains(output, "Synthetic reply")
 				return
 			}

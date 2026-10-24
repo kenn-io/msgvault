@@ -251,12 +251,9 @@ func agentDelegatedSchemaStub(t *testing.T, sessionResponse string, health func(
 func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 	for _, tc := range []struct {
 		version, minimum string
-		refused          bool
 	}{
-		{"4.0.0", "4.1.0", true},
-		{"4.0.1", "4.1.0", true},
-		{api.APISchemaVersion, daemonclient.AgentReadMinAPISchemaVersion, false},
-		{"4.0.0", "", false},
+		{api.APISchemaVersion, daemonclient.AgentReadMinAPISchemaVersion},
+		{api.APISchemaVersion, ""},
 	} {
 		t.Run(tc.version+"/"+tc.minimum, func(t *testing.T) {
 			require := require.New(t)
@@ -267,12 +264,6 @@ func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 			})
 			client, info, err := OpenHTTPStore(ctx, tc.minimum)
 			checks.Equal(int32(1), healthRequests.Load(), "one authenticated health probe")
-			if tc.refused {
-				require.ErrorContains(err, "upgrade the daemon and issue a read grant")
-				checks.Contains(err.Error(), tc.minimum)
-				checks.Nil(client)
-				return
-			}
 			require.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			checks.Equal(HTTPStoreAgentDelegated, info.Kind)

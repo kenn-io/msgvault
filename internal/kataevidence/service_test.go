@@ -116,7 +116,7 @@ func TestPrepareMessageSelectors(t *testing.T) {
 	}
 }
 
-func TestReferencesLongerThanMaxCharsAreRejected(t *testing.T) {
+func TestInvalidReferencesAreRejected(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	svc := kataevidence.New(storetest.New(t).Store)

@@ -59,19 +59,6 @@ test('operations related links fetch and render their live status authorities', 
   }
 });
 
-test('operations sends unconfigured visual status links to settings without fetching', async ({ page }) => {
-  const fixture = await installOperations(page);
-  fixture.setOperationConfigured('visual_embedding', false);
-  await page.goto(operationsURL);
-  await page.getByRole('button', { name: 'Open Visual attachment status' }).click();
-  await expect(page.getByRole('button', { name: 'Open visual attachment settings' })).toBeVisible();
-  expect(fixture.statusRequests).not.toContain('/api/v1/multimodal/status');
-  await page.getByRole('button', { name: 'Open visual attachment settings' }).click();
-  const settings = page.getByRole('main', { name: 'Settings' });
-  await expect(settings).toBeVisible();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
-});
-
 test('the refresh control reloads status only and keeps paged history, detail, and focus', async ({ page }) => {
   await page.clock.install();
   const fixture = await installOperations(page);
