@@ -89,7 +89,16 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 				name = "background-color"
 			}
 			if name == "color" || name == "background-color" {
-				if name != "color" || value != "inherit" && value != "currentcolor" {
+				switch {
+				case name == "color" && (value == "currentcolor" || slices.Contains(inheritCSSKeywords, value)):
+					// The parent's color shows through, so an earlier declaration no longer applies.
+				case slices.Contains(inheritCSSKeywords, value) || value == "initial":
+					// A CSS-wide keyword replaces an earlier background or color with one that adds no color.
+					value = "transparent"
+					if name == "color" {
+						value = "initial"
+					}
+				default:
 					value = inlineHTMLColor(value)
 				}
 			} else if !validInlineCSSValue(name, value) {
@@ -204,7 +213,10 @@ func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
 	for property, value := range inlineHTMLStyle(node) {
 		switch property {
 		case "color":
-			if value != "inherit" && value != "currentcolor" {
+			switch {
+			case value == "initial":
+				state.color = ""
+			case value != "currentcolor" && !slices.Contains(inheritCSSKeywords, value):
 				state.color = value
 			}
 		case "background-color":
