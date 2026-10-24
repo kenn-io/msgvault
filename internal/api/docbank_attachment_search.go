@@ -65,7 +65,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 	if len(versions) > docbankmedia.MaxSearchVersions {
 		slices.SortStableFunc(hits, func(a, b docbankmedia.SearchHit) int { return cmp.Compare(a.Rank, b.Rank) })
 	}
-	if err := reader.visible(ctx, &response, hits, limit, resolve); err != nil {
+	if err := reader.visible(ctx, &response, hits[:min(len(hits), limit+1)], limit, resolve); err != nil {
 		response.Error = &ErrorResponse{Error: "server_error", Message: "Attachment search is unavailable."}
 		return response, err
 	}
