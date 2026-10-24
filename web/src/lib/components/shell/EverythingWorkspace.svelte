@@ -119,17 +119,17 @@
   $effect(() => { if (recording.error) return reportError(() => client, () => 'message'); });
   const readiness = mediaReadiness();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
-  const recordingParticipantID = $derived.by(() => {
+  const mediaParticipantID = $derived.by(() => {
     const filters = exploreState.current.filters;
     if (filters.length !== 1 || filters[0].dimension !== 'participant' || filters[0].values.length !== 1) return undefined;
     const value = filters[0].values[0];
     const id = Number(value);
     return /^[1-9]\d*$/.test(value) && Number.isSafeInteger(id) ? id : undefined;
   });
-  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text'
-    && (exploreState.current.filters.length === 0 || recordingParticipantID !== undefined)
+  const mediaSearchSupported = $derived(exploreState.current.searchMode === 'full_text'
+    && (exploreState.current.filters.length === 0 || mediaParticipantID !== undefined)
     && exploreState.current.groupingChain.length === 0);
-  const recordingSearchVisible = $derived.by(() => {
+  const mediaSearchVisible = $derived.by(() => {
     const query = exploreState.current.query.trim();
     return Boolean(enabled && readiness?.ready && query && exploreState.current.presentation === 'table');
   });
@@ -233,7 +233,7 @@
     } => {
       const selected = readingTargetKey;
       if (!selected || readingSelection) return { status: 'ready', message: '' };
-      if (recordingSelection) return { status: !recording.error ? 'loading' : recording.missing ? 'missing' : 'error', message: recording.missing ? 'This recording message is no longer available.' : 'Could not load this recording message.' };
+      if (recordingSelection) return { status: !recording.error ? 'loading' : recording.missing ? 'missing' : 'error', message: recording.missing ? 'This message is no longer available.' : 'Could not load this message.' };
       if (parseGroupSelection(selected)) {
         if (readingDetailUnavailable) {
           return {
@@ -644,7 +644,7 @@
     searchMode={exploreState.current.searchMode}
     filters={exploreState.current.filters}
     groupingChain={exploreState.current.groupingChain}
-    countLabel={recordingSearchVisible ? '' : countLabel}
+    countLabel={mediaSearchVisible ? '' : countLabel}
     sort={exploreState.current.groupingChain.length > 0 ? undefined : {
       options: [{ value: 'newest', label: 'Newest first' }],
       value: 'newest',
@@ -748,14 +748,14 @@
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
-        <div class="results-primary" class:results-primary--recordings={recordingSearchVisible}>
-          {#if recordingSearchVisible}
+        <div class="results-primary" class:results-primary--recordings={mediaSearchVisible}>
+          {#if mediaSearchVisible}
             <TranscriptHits
               {client}
-              participantID={recordingParticipantID}
+              participantID={mediaParticipantID}
               missingMessageID={recording.missing ? recordingSelection : undefined}
               query={exploreState.current.query}
-              supported={recordingSearchSupported}
+              supported={mediaSearchSupported}
               selectedMessageID={recordingSelection}
               onOpen={(hit) => onOpenRecording(hit.message_id)}
             />

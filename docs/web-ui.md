@@ -187,6 +187,8 @@ sends the query text to the configured Docbank service.
   starts; use **Refresh** for current matches. Transient failures offer
   **Retry**. A query or Person filter change retries a refused search.
 
+On unreleased builds, the same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Browser attachment search takes plain words, like recording search. Use `msgvault media search` for attachment queries containing punctuation. An empty block without an error reports no matches in extracted text from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`. The block names the limit and suggests a Person filter to narrow the search. If a Person filter already exceeds the limit, choose one with fewer attachments. Other attachment failures show the API error message, with Retry for transient failures. "More may match" marks other result limits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
+
 ## Read messages
 
 Open a `/messages/<id>` link to go directly to an archived message. CLI

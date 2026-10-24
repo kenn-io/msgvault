@@ -153,7 +153,9 @@ func TestDocbankAttachmentConsumerLifecycle(t *testing.T) {
 			cfg := config.DocbankIntegrationConfig{Enabled: true, AttachmentUploadConsent: true, URL: "https://example.com"}
 			require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, nil, t.TempDir(), t.TempDir(), cfg, nil))
 			assert.True(sched.IsJobScheduled(api.DocbankAttachmentMirrorJob))
-			reader, err := newDocbankAttachmentReader(t.Context(), st, cfg)
+			recordings, err := newMessageRecordingReader(t.Context(), st, cfg)
+			require.NoError(err)
+			reader, err := newDocbankAttachmentReader(t.Context(), st, cfg, recordings.Client)
 			require.NoError(err)
 			require.NotNil(reader)
 			destination, err := docbankAttachmentDestination(t.Context(), st, cfg)
@@ -181,7 +183,7 @@ func TestDocbankAttachmentConsumerLifecycle(t *testing.T) {
 			gate := api.NewSerialOperationGate()
 			require.NoError(configureBeeperMediaJob(t.Context(), sched, gate, st, nil, t.TempDir(), t.TempDir(), cfg, nil))
 			if change == "consent" || change == "disabled" {
-				reader, err = newDocbankAttachmentReader(t.Context(), nil, cfg)
+				reader, err = newDocbankAttachmentReader(t.Context(), nil, cfg, nil)
 				require.NoError(err)
 				assert.False(sched.IsJobScheduled(api.DocbankAttachmentMirrorJob))
 				assert.Nil(reader)
