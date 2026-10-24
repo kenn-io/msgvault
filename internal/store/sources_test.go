@@ -1417,8 +1417,8 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	// deleted_from_source_at, message_type, …) but DOES NOT have the
 	// new dedup-hide columns (`deleted_at`, `delete_batch_id`).
 	// Approximates a legacy DB just before this branch landed.
-	// metadata has been on messages since the first schema and the activity
-	// queue trigger names it, so a legacy table must carry it too.
+	// metadata and is_sent predate this migration and the activity queue
+	// trigger names them, so a legacy table must carry them too.
 	_, err = st.DB().Exec(`
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,

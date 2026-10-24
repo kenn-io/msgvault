@@ -2152,8 +2152,10 @@ features once published. No startup hook or entrypoint wrapper is required.
 - `app_opened` when the web UI opens, then on its first window focus on a later
   UTC day. The browser reports it to the daemon, never to PostHog.
 - `screen_viewed` when a web or terminal screen opens, counted once per installation per
-  UTC day across both interfaces and daemon restarts. The daemon keeps the current day's
-  screen and action claims in `telemetry-screen-views.json` beside its install ID.
+  UTC day across both interfaces and daemon restarts. The daemon keeps daily
+  screen and message-open claims in `telemetry-screen-claims.json` and search claims in
+  `telemetry-screen-views.json` beside its install ID. On upgrade, the new daemon
+  ledger can count each screen once more and each message-open surface once more that day.
 - `search_run` after current first-page message, extracted-document, or visual-search
   results load, including empty results, restored queries, retries, and reloads. Failed or stale
   replies and continuation pages don't count. Each surface and search type counts once
@@ -2187,6 +2189,21 @@ features once published. No startup hook or entrypoint wrapper is required.
   or crashes may send nothing.
   Time spent signed out doesn't count. Earlier signed-in time carries across
   signing in again, and a tab that closes or expires while signed out sends nothing.
+
+The browser and TUI also skip daily reports the daemon has already accepted:
+
+- After an accepted receipt, the client doesn't send that daily report again that
+  UTC day. Browser receipts survive reloads; TUI receipts survive restarts.
+- After a `disabled` receipt, the client stays quiet to that daemon for the rest of
+  the UTC day.
+- A failed report, including an HTTP 401, leaves its daily report free to send later.
+- TUIs running at the same time may each check permission and overwrite each
+  other's saved receipts. A later TUI may then resend a report the daemon already
+  counted, and the daemon drops it.
+- Each TUI process shares one exponential backoff across its reports and drops
+  reports that arrive during backoff. It stops reporting to that daemon after six
+  failures in a row, an HTTP 401, or another client error. The next TUI process
+  checks again.
 
 For `app_opened`, the web UI records the day it last reported in browser storage, which the
 browser keeps separately for each daemon address. With the default
@@ -2254,7 +2271,10 @@ home; `[log].dir` can override the log location.
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 | `omi/` | Omi request pacing and provider cooldowns per backend and API key, shared by scheduled and manual syncs |
 | `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created unless telemetry is turned off |
-| `telemetry-screen-views.json` | Current UTC day's screen, search, and message claims; created only while telemetry is on |
+| `telemetry-screen-claims.json` | Daily screen and message-open claims; created only while telemetry is on |
+| `telemetry-screen-claims.json.lock` | Lock that serializes writers of `telemetry-screen-claims.json`; created only while telemetry is on |
+| `telemetry-screen-views.json` | Current UTC day's search claims; created only while telemetry is on |
+| `telemetry-tui-v1-*.json` | TUI's accepted daily reports and disabled receipt for one daemon and UTC day; also written when that daemon reports telemetry is off |
 
 ## Example configuration
 
