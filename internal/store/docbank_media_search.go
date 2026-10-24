@@ -99,16 +99,28 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
 	return with, query, args
 }
 
-// DocumentSearchVersions returns up to 4096 delivered document versions.
-// A larger scope returns no versions and reports that the scope limit was exceeded.
-func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
-	// Docbank detects document formats from bytes, including generic or absent
-	// MIME types. Keep images and recordings outside the document fence.
-	delivers := `SELECT d.content_hash, d.version_id FROM docbank_attachment_deliveries d
- WHERE d.destination_key = ? AND d.state = 'delivered'
+// Docbank detects document formats from bytes, including generic or absent
+// MIME types. Keep images and recordings outside the document fence.
+const documentSearchDelivered = `d.state = 'delivered'
  AND d.mime_type NOT LIKE 'image/%'
  AND d.mime_type NOT LIKE 'audio/%'
  AND d.mime_type NOT LIKE 'video/%'`
+
+func (s *Store) documentSearchVisible(scope *personscope.Scope) (string, []any) {
+	messageWhere, args := documentSearchMessageWhere(scope)
+	// EXISTS checks one visible occurrence per receipt instead of materializing
+	// every occurrence. OFFSET keeps PostgreSQL's lookup correlated to the receipt.
+	return `EXISTS (SELECT 1 FROM attachments a
+ JOIN messages m ON m.id = a.message_id
+ JOIN conversations cv ON cv.id = m.conversation_id
+ WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + messageWhere + ` LIMIT 1 OFFSET 0)`, args
+}
+
+// DocumentSearchVersions returns up to 4096 delivered document versions.
+// A larger scope returns no versions and reports that the scope limit was exceeded.
+func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
+	delivers := `SELECT d.content_hash, d.version_id FROM docbank_attachment_deliveries d
+ WHERE d.destination_key = ? AND ` + documentSearchDelivered
 	distinct := "DISTINCT"
 	if s.IsPostgreSQL() {
 		// Sort receipts before checking visibility. DISTINCT ON then streams unique
@@ -118,16 +130,10 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 		distinct = "DISTINCT ON (d.version_id)"
 	}
 	args := []any{destination}
-	messageWhere, scopeArgs := documentSearchMessageWhere(scope)
-	visible := `SELECT 1 FROM attachments a
- JOIN messages m ON m.id = a.message_id
- JOIN conversations cv ON cv.id = m.conversation_id
- WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + messageWhere
+	visible, scopeArgs := s.documentSearchVisible(scope)
 	args = append(args, scopeArgs...)
-	// EXISTS checks one visible occurrence per receipt instead of materializing
-	// every occurrence. OFFSET keeps PostgreSQL's lookup correlated to the receipt.
 	query := `SELECT ` + distinct + ` d.version_id FROM (` + delivers + `) d
- WHERE EXISTS (` + visible + ` LIMIT 1 OFFSET 0) LIMIT 4097`
+ WHERE ` + visible + ` LIMIT 4097`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("list document search versions: %w", err)
