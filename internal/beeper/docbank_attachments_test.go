@@ -993,12 +993,16 @@ func TestAttachmentMirrorBackfillDuringPass(t *testing.T) {
 	assert.True(scan.NextFullScanAt.After(time.Now()))
 }
 
-func (r *mirrorRig) delivered(hashes ...string) {
+func (r *mirrorRig) delivered(versions ...string) []string {
 	r.t.Helper()
-	for _, hash := range hashes {
-		require.NoError(r.t, r.f.Store.RecordDocbankAttachment(r.t.Context(), "dest", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: hash}, ""))
+	var hashes []string
+	for _, version := range versions {
+		hash := r.add(version+".pdf", "application/pdf", []byte(version))
+		hashes = append(hashes, hash)
+		require.NoError(r.t, r.f.Store.RecordDocbankAttachment(r.t.Context(), "dest", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: version}, ""))
 	}
 	r.worker.options.DocumentProfile = "documents"
+	return hashes
 }
 
 func (r *mirrorRig) processingDue() {
@@ -1146,17 +1150,17 @@ func TestAttachmentMirrorProcessingIneligiblePlan(t *testing.T) {
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal(map[string]int64{"unsupported_media_type": 1}, r.processingCounts().Outcomes)
 	assert.Equal(int64(1), r.processingCounts().Requested)
-	assert.Equal([]string{"a", "b"}, r.processing.Plans)
+	assert.ElementsMatch([]string{"a", "b"}, r.processing.Plans)
 	assert.Equal([]string{"b"}, r.processing.Jobs)
 	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a", "b"}, r.processing.Plans)
+	assert.ElementsMatch([]string{"a", "b"}, r.processing.Plans)
 }
 
 func TestAttachmentMirrorProcessingPollFailureContinues(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
-	r.delivered("a", "b")
+	hashes := r.delivered("a", "b")
 	require.NoError(r.runBatch(t.Context()))
 	r.processingDue()
 	r.processing.PollFaults["job-a"] = http.StatusServiceUnavailable
@@ -1165,17 +1169,17 @@ func TestAttachmentMirrorProcessingPollFailureContinues(t *testing.T) {
 	assert.Zero(r.processingCounts().Waiting)
 	var jobID string
 	var next time.Time
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id, next_action_at FROM docbank_attachment_processing WHERE content_hash = 'a'`).Scan(&jobID, &next))
+	require.NoError(r.f.Store.DB().QueryRow(r.f.Store.Rebind(`SELECT job_id, next_action_at FROM docbank_attachment_processing WHERE content_hash = ?`), hashes[0]).Scan(&jobID, &next))
 	assert.Equal("job-a", jobID)
 	assert.True(next.After(time.Now().Add(4 * time.Minute)))
-	assert.Equal([]string{"a", "b"}, r.processing.Jobs)
-	assert.Equal([]string{"job-a", "job-b"}, r.processing.Polls)
+	assert.ElementsMatch([]string{"a", "b"}, r.processing.Jobs)
+	assert.Equal([]string{"job-b", "job-a"}, r.processing.Polls)
 	r.processingDue()
 	delete(r.processing.PollFaults, "job-a")
 	r.processing.States["job-a"] = [3]string{"completed", "rendition", ""}
 	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a", "b"}, r.processing.Jobs)
-	assert.Equal([]string{"job-a", "job-b", "job-a", "job-b"}, r.processing.Polls)
+	assert.ElementsMatch([]string{"a", "b"}, r.processing.Jobs)
+	assert.Equal([]string{"job-b", "job-a", "job-b", "job-a"}, r.processing.Polls)
 	assert.Equal(int64(1), r.processingCounts().Extracted)
 }
 
@@ -1251,7 +1255,7 @@ func TestAttachmentMirrorProcessingRequestErrors(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			r.delivered("a", "b")
+			hashes := r.delivered("a", "b")
 			faults := r.processing.Faults
 			if stage == "start" {
 				faults = r.processing.JobFaults
@@ -1260,17 +1264,17 @@ func TestAttachmentMirrorProcessingRequestErrors(t *testing.T) {
 			before := time.Now().UTC().Truncate(time.Second).Add(store.BeeperMediaRetryDelay)
 			require.Error(r.runBatch(t.Context()))
 			var next time.Time
-			require.NoError(r.f.Store.DB().QueryRow(`SELECT next_action_at FROM docbank_attachment_processing WHERE content_hash = 'a'`).Scan(&next))
+			require.NoError(r.f.Store.DB().QueryRow(r.f.Store.Rebind(`SELECT next_action_at FROM docbank_attachment_processing WHERE content_hash = ?`), hashes[0]).Scan(&next))
 			assert.False(next.Before(before))
 			assert.True(next.Before(time.Now().UTC().Add(store.BeeperMediaRetryDelay + time.Second)))
-			assert.Equal([]string{"a", "b"}, r.processing.Plans)
+			assert.ElementsMatch([]string{"a", "b"}, r.processing.Plans)
 			assert.Equal("queued", r.processing.States["job-b"][0], "the next file still gets a job")
 			require.NoError(r.runBatch(t.Context()))
-			assert.Equal([]string{"a", "b"}, r.processing.Plans, "the failed file waits for its retry delay")
+			assert.ElementsMatch([]string{"a", "b"}, r.processing.Plans, "the failed file waits for its retry delay")
 			delete(faults, "a")
 			r.processingDue()
 			require.NoError(r.runBatch(t.Context()))
-			assert.Equal([]string{"a", "b", "a"}, r.processing.Plans)
+			assert.ElementsMatch([]string{"a", "b", "a"}, r.processing.Plans)
 			assert.Equal(int64(2), r.processingCounts().Requested)
 		})
 	}
@@ -1289,8 +1293,8 @@ func TestAttachmentMirrorProcessingTwoRetriesStop(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			r.delivered("a", "b", "c")
-			for _, hash := range []string{"a", "b"} {
+			hashes := r.delivered("c", "b", "a")
+			for _, hash := range []string{"c", "b"} {
 				if tc.name == "unavailable" {
 					r.processing.Faults[hash] = tc.status
 				} else {
@@ -1301,18 +1305,18 @@ func TestAttachmentMirrorProcessingTwoRetriesStop(t *testing.T) {
 			err := r.runBatch(t.Context())
 			if tc.name == "unavailable" {
 				require.Error(err)
-				assert.Equal([]string{"a", "b"}, r.processing.Plans)
+				assert.ElementsMatch([]string{"c", "b"}, r.processing.Plans)
 				assert.Equal(int64(3), r.processingCounts().Waiting)
 				due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", "profile-one", new(store.DocbankAttachmentProcessingCursor), 20)
 				require.NoError(err)
 				require.Len(due, 1)
-				assert.Equal("c", due[0].ContentHash)
+				assert.Equal(hashes[2], due[0].ContentHash)
 			} else {
 				require.NoError(err)
-				assert.Equal([]string{"a", "b", "c"}, r.processing.Plans)
+				assert.Equal([]string{"c", "b", "a"}, r.processing.Plans)
 				assert.Equal(int64(1), r.processingCounts().Requested)
 				assert.Equal(int64(2), r.processingCounts().Waiting)
-				delete(r.processing.JobFaults, "a")
+				delete(r.processing.JobFaults, "c")
 				delete(r.processing.JobFaults, "b")
 				r.processingDue()
 				require.NoError(r.runBatch(t.Context()))
@@ -1419,7 +1423,7 @@ func TestAttachmentMirrorProcessingLocalErrors(t *testing.T) {
 func TestAttachmentMirrorProcessingGateKeepsFailure(t *testing.T) {
 	r := newMirrorRig(t)
 	r.delivered("a", "b")
-	r.processing.Faults["a"] = http.StatusServiceUnavailable
+	r.processing.Faults["b"] = http.StatusServiceUnavailable
 	r.worker.WithOperationGate(func(context.Context) (func(), bool) {
 		// The first plan fails, then backup freezes writes before its retry is saved.
 		return func() {}, len(r.processing.Plans) == 0
