@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -253,11 +253,17 @@ describe('RelatedCopies', () => {
 
     await rerender({ client, messageID: 2 });
     expect(screen.getByRole('button', { name: 'Related copies' }).getAttribute('aria-expanded')).toBe('false');
-    release(Response.json(family([anchor, member(9, { subject: 'Stale answer' })])));
 
     await openPanel();
     await screen.findByText('No related copies found.');
-    expect(screen.queryByRole('link', { name: 'Stale answer' })).toBeNull();
     expect(fetchFn).toHaveBeenCalledTimes(2);
+
+    // The abandoned response lands after the current one rendered.
+    release(Response.json(family([anchor, member(9, { subject: 'Stale answer' })])));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByRole('link', { name: 'Stale answer' })).toBeNull();
+    expect(screen.getByText('No related copies found.')).toBeTruthy();
   });
 });
