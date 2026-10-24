@@ -32,12 +32,20 @@ func TestListLiveDaemonRuntimeRecordsKeepsForeignRecord(t *testing.T) {
 	require.NoError(err)
 	before, err := os.ReadFile(path)
 	require.NoError(err)
+	host := daemon.NewRuntimeRecord(daemonService, "v-test", daemon.Endpoint{Network: daemon.NetworkTCP, Address: "127.0.0.1:1"})
+	hostPath, err := daemonRuntimeStore(dataDir).Write(host)
+	require.NoError(err)
+	hostBefore, err := os.ReadFile(hostPath)
+	require.NoError(err)
 
 	runDaemonPIDNamespace(t, dataDir, "list")
 
 	after, err := os.ReadFile(path)
 	require.NoError(err, "listing preserves the host record on disk")
 	assert.Equal(t, before, after, "listing leaves the host record unchanged")
+	hostAfter, err := os.ReadFile(hostPath)
+	require.NoError(err, "listing preserves the host record whose PID is absent locally")
+	assert.Equal(t, hostBefore, hostAfter)
 }
 
 func TestClaimServeOwnershipStartsOverDeadSiblingRecord(t *testing.T) {
@@ -86,7 +94,7 @@ func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
 func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	mode := os.Getenv("MSGVAULT_TEST_PIDNS")
 	if mode == "" {
-		return
+		t.Skip("only runs inside the PID namespace helper")
 	}
 	require := require.New(t)
 	assert := assert.New(t)
@@ -101,19 +109,29 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 		require.NoError(err)
 		require.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(previous), "exercise Foreign, rather than Unknown or Gone")
 		require.True(daemon.ProcessAlive(previous.PID), "foreign PID collides with a live local process")
-		before, err := os.ReadFile(path)
-		require.NoError(err)
-
-		records, err := listLiveDaemonRuntimeRecords(dataDir)
-
-		require.NoError(err)
-		assert.Empty(records, "listing skips the foreign record despite the PID collision")
-		after, err := os.ReadFile(path)
-		require.NoError(err, "CleanupDead preserves the foreign record")
-		assert.Equal(before, after)
 	}
 	if mode == "list" {
+		records, err := store.List()
+		require.NoError(err)
+		require.Len(records, 2)
+		for _, rec := range records {
+			require.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(rec))
+			if rec.PID != os.Getpid() {
+				require.False(daemon.ProcessAlive(rec.PID), "host producer's PID is absent inside the sandbox")
+			}
+		}
+		records, err = listLiveDaemonRuntimeRecords(dataDir)
+		require.NoError(err)
+		assert.Empty(records, "listing skips both foreign records")
 		return
+	}
+	if mode == "crash" {
+		// A daemon still publishes a record when process creation time is unavailable.
+		stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 0, false })
+	} else {
+		starting, err := daemonStartInProgress(t.Context(), dataDir)
+		require.NoError(err)
+		require.False(starting, "a dead sibling must not block automatic daemon startup")
 	}
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
