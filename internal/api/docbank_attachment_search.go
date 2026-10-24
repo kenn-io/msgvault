@@ -29,7 +29,8 @@ type MediaAttachmentSearch struct {
 }
 
 // SearchAttachments searches delivered attachment versions in bounded batches.
-// It keeps Docbank's ranking and maps only to currently visible messages.
+// Results from each batch of 4,096 are interleaved by their position within
+// that batch, so order across batches is approximate. Only visible messages appear.
 func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
 	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
 	fail := func(err error) (MediaAttachmentSearch, error) {
@@ -72,7 +73,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 }
 
 // visible replaces response.Results with the hits' attachments in the current
-// scope, in Docbank's rank order.
+// scope, in the supplied hit order.
 func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *MediaAttachmentSearch, hits []docbankmedia.SearchHit, limit int, resolve func() (*personscope.Scope, error)) error {
 	response.Results = []MediaAttachmentResult{}
 	scope, err := resolve()

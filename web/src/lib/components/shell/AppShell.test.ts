@@ -44,20 +44,6 @@ function operationSummary(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function documentIndexStatusResponse() {
-  return {
-    status: {
-      profile_exists: true, profile_enabled: true, exact_consent: true,
-      ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
-      terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
-    }
-  };
-}
-
-function documentVectorStatusResponse() {
-  return { enabled: true, configured: true, status: { coverage: { ready: 7, required: 9 } } };
-}
-
 function visualAttachmentStatusResponse() {
   return {
     current: 8, eligible: 10, retryable: 1, terminal: 0, unavailable: 1,
