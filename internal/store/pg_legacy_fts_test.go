@@ -72,3 +72,15 @@ func TestInitSchema_PGLegacyMessagesGetsFTSColumn(t *testing.T) {
 	// And the dialect now reports FTS available.
 	require.True(st.FTS5Available(), "FTS must be available after legacy upgrade")
 }
+
+func TestInitSchema_PGLegacyMessagesGetsDeletedAt(t *testing.T) {
+	if !strings.HasPrefix(os.Getenv("MSGVAULT_TEST_DB"), "postgres") {
+		t.Skip("requires PostgreSQL")
+	}
+	st := testutil.NewTestStore(t)
+	_, err := st.DB().Exec(`ALTER TABLE messages DROP COLUMN deleted_at CASCADE`)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchemaContext(t.Context()))
+	var count int
+	require.NoError(t, st.DB().QueryRow(`SELECT count(*) FROM messages WHERE deleted_at IS NULL`).Scan(&count))
+}
