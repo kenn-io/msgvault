@@ -1,14 +1,16 @@
 ---
-last_edited: "2026-10-23"
+last_edited: "2026-10-24"
 title: External Person Enrichment
 description: Look up public profile information with explicit provider policies, request limits, and opt-outs.
 ---
 
 External enrichment looks up public information about tracked people and adds
-supported results to their profile fact history. It sends selected identifiers,
-such as a name and current company, to Exa, Sixtyfour, or Context.dev. It does not send
-archived conversations; [profile sweeps](/docs/usage/people-automation/) handle
-facts extracted from your archive.
+supported results to their profile fact history. It sends selected identifiers
+to Exa, Sixtyfour, or Context.dev according to the provider policy. Context.dev
+receives only the name; the current company stays local for exact employer
+matching. Enrichment does not send archived conversations;
+[profile sweeps](/docs/usage/people-automation/) handle facts extracted from your
+archive.
 
 Enrichment is disabled by default. Each provider needs its own policy, request
 limits, and consent. Existing [fact pins](/docs/usage/people-automation/#understand-and-correct-automatic-facts)
@@ -27,8 +29,9 @@ also apply to enrichment results.
 receive: `name`, `email`, `phone`, `current_company`, and
 `public_profile_url`. A field being present locally does not override that list.
 Sixtyfour's allowed list must include both `name` and `current_company`.
-Context.dev requires exactly those two identifier classes; only the name is sent
-in its search query, and the current company is used for local matching.
+Context.dev requires exactly those two identifier classes in its policy; only
+the name is sent in its search query, and the current company is used for exact
+local employer matching.
 
 Results still need to match the person and pass the fact resolver's evidence
 checks. A provider response is a proposed claim, not an instruction to overwrite
@@ -92,12 +95,13 @@ Use the exact catalog keys for those fields.
 
 This uses [People Search](https://docs.context.dev/api-reference/people/search),
 not the separate email/profile lookup in People Enrich. Context receives a
-`name: <name>` query. msgvault filters the returned page by exact name and the
-required exact current employer, rejecting an empty page or ambiguous matches.
-It fetches only the first page and never follows cursors automatically. A
-nonempty page costs 10 Context credits, even when msgvault rejects the candidates;
-an empty page is free. Credits are not reported as a known USD cost. Missing
-fields remain unknown.
+name-only `name: <name>` query. msgvault applies exact name and current employer
+matching locally, rejecting a page without a match or with ambiguous matches.
+It fetches only the first page and never follows cursors automatically. For a
+common name, the intended person can be absent from that one returned page.
+A non-empty page still costs 10 Context credits, even when msgvault rejects all
+the candidates; an empty page is free. Credits are not reported as a known USD
+cost. Missing fields remain unknown.
 Results without safe public profile links use provider-assertion evidence.
 Search returns no per-field confidence or freshness; facts retain conservative
 aggregator evidence scores.

@@ -3014,7 +3014,7 @@ below.
 ### person enrichment
 
 Look up public person information through independently configured and
-consented Exa or Sixtyfour policies:
+consented Exa, Sixtyfour, or Context.dev policies:
 
 | Command | Purpose |
 |---|---|

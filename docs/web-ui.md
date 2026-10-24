@@ -635,11 +635,11 @@ screen appears.
 
 ### Provider policies and credentials
 
-Create or edit named person-enrichment policies for Exa and SixtyFour in
-Settings. Provider checks and consent still govern whether enrichment can
-run; configuration alone does not authorize a provider. The TUI shows these
-policies read-only. See [External Person Enrichment](/docs/usage/people-enrichment/)
-for the provider lifecycle.
+Create or edit named person-enrichment policies for Exa, SixtyFour, and
+Context.dev in Settings. Provider checks and consent still govern whether
+enrichment can run; configuration alone does not authorize a provider. The TUI
+shows these policies read-only. See
+[External Person Enrichment](/docs/usage/people-enrichment/) for the provider lifecycle.
 
 Provider credentials for embeddings, enrichment, and sweeps are write-only,
 and so are the task integration key and the daemon's own API key. Each key is
