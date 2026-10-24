@@ -1833,7 +1833,7 @@ Each VEVENT becomes its own entry. A malformed or unsupported component rejects
 the whole file. Valid series with unsupported recurrence remain archived with
 an expansion error. The command reports updated, unchanged, and unexpandable
 event counts. Imports support UTC times, IANA time zones, all-day dates, and
-floating times. Floating times use the source's `time_zone` or UTC. Changing that zone
+floating times. Floating times use the source's time zone, set with `--time-zone`, or UTC. Changing that zone
 rebuilds event times from the stored raw while preserving floating recurrence identities. Recurring timed events with a day or week DURATION in a zone with clock changes remain archived with an expansion error. All-day dates and exact-time durations still expand. Unsupported custom time zones and
 RECURRENCE-ID RANGE reject a file or email part. For email, the original MIME
 preserves that raw evidence.

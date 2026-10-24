@@ -231,21 +231,21 @@ func parseICSComponents(ctx context.Context, cal *ical.Calendar, doc icsDocument
 		}
 		result, err := parseICSComponent(ctx, cal, comp, method, loc, budget)
 		if errors.Is(err, errICSGuestRemoval) {
-			diagnostics = append(diagnostics, fmt.Sprintf("VEVENT %d: %s", eventIndex, err))
+			diagnostics = append(diagnostics, fmt.Sprintf("VEVENT %d: %s", eventIndex+1, err))
 			eventIndex++
 			continue
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("VEVENT %d: %w", eventIndex, err)
+			return nil, nil, fmt.Errorf("VEVENT %d: %w", eventIndex+1, err)
 		}
 		if err := validateICSTimeZoneUseRange(ctx, cal, comp, result.Event, budget); err != nil {
 			if !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-				return nil, nil, fmt.Errorf("VEVENT %d: %w", eventIndex, err)
+				return nil, nil, fmt.Errorf("VEVENT %d: %w", eventIndex+1, err)
 			}
 			// The iterator guard also rejects recurrences we cannot expand.
 			// Retain their evidence and readable siblings without iterating them.
 			result.Event.RecurrenceError = err.Error()
-			diagnostics = append(diagnostics, fmt.Sprintf("VEVENT %d: %s", eventIndex, err))
+			diagnostics = append(diagnostics, fmt.Sprintf("VEVENT %d: %s", eventIndex+1, err))
 		}
 		result.Raw, err = budget.retain(doc, cal, raw, eventIndex)
 		if err != nil {
