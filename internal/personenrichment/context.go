@@ -118,12 +118,12 @@ func (p *contextProvider) Start(ctx context.Context, request Request) (Attempt, 
 		return Attempt{}, contextFailure(0, FailureTransient, "", "")
 	}
 	defer func() { _ = response.Body.Close() }()
-	requestID := safeExaErrorRequestID(response.Header.Get("X-Request-Id"))
+	requestID := safeExaErrorRequestID(response.Header.Get("X-Request-ID"))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		class := FailureTerminal
-		if response.StatusCode == 429 {
+		if response.StatusCode == http.StatusTooManyRequests {
 			class = FailureRateLimited
-		} else if response.StatusCode == 408 || response.StatusCode >= 500 {
+		} else if response.StatusCode == http.StatusRequestTimeout || response.StatusCode >= 500 {
 			class = FailureTransient
 		}
 		return Attempt{}, contextFailure(response.StatusCode, class, requestID, response.Header.Get("Retry-After"))

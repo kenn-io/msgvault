@@ -166,7 +166,7 @@ func TestContextMissingFieldsDoNotClearFacts(t *testing.T) {
 
 func TestContextInvalidRequestsDoNotSend(t *testing.T) {
 	calls := 0
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(500) }))
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusInternalServerError) }))
 	defer server.Close()
 	provider, err := personenrichment.NewContextProvider(contextConfig(server.URL), "test-key", server.Client())
 	require.NoError(t, err)
@@ -217,7 +217,7 @@ func TestContextWorkerCommitsAndRefreshesThroughConsentPipeline(t *testing.T) {
 	attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{PersonID: f.person.ID, RunID: f.run.ID, Limit: 10})
 	requirements.NoError(err)
 	requirements.Len(attempts, 1)
-	checks.Equal("succeeded", string(attempts[0].State))
+	checks.Equal("succeeded", attempts[0].State)
 	checks.Nil(attempts[0].FailureClass)
 	var claims int
 	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM person_fact_claims").Scan(&claims))
@@ -236,7 +236,7 @@ func TestContextWorkerCommitsAndRefreshesThroughConsentPipeline(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(attempts, 2)
 	for _, attempt := range attempts {
-		checks.Equal("succeeded", string(attempt.State))
+		checks.Equal("succeeded", attempt.State)
 	}
 	checks.Equal(2, calls)
 }
