@@ -148,6 +148,23 @@ func TestDocbankAttachmentStatus(t *testing.T) {
 	require.NotNil(running.Counts)
 	assert.Equal(int64(1), running.Counts.Failed)
 	assert.Zero(running.Counts.Remaining)
+	const lastError = "docbank request failed: server_error"
+	sched.jobStatuses = []JobStatus{{Name: DocbankAttachmentMirrorJob, LastError: lastError}}
+	var withoutProfile DocbankAttachmentStatus
+	require.NoError(json.Unmarshal(get().Body.Bytes(), &withoutProfile))
+	assert.Equal(lastError, withoutProfile.LastError)
+	assert.Nil(withoutProfile.Processing)
+
+	cfg.Integrations.Docbank.DocumentProfile = "documents"
+	require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "destination", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "a"}, ""))
+	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(t.Context(), "destination", "documents", "fp"))
+	require.NoError(f.Store.RecordDocbankAttachmentProcessing(t.Context(), "destination", store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: "a", Fingerprint: "fp", Outcome: "requested", JobID: "job-a"}, time.Time{}))
+	var processing DocbankAttachmentStatus
+	require.NoError(json.Unmarshal(get().Body.Bytes(), &processing))
+	assert.Equal(lastError, processing.LastError)
+	require.NotNil(processing.Processing)
+	assert.Equal("documents", processing.Processing.Profile)
+	assert.Equal(int64(1), processing.Processing.Requested)
 	sched.scheduledJobs[DocbankAttachmentMirrorJob] = false
 	var down DocbankAttachmentStatus
 	require.NoError(json.Unmarshal(get().Body.Bytes(), &down))
@@ -177,46 +194,4 @@ func TestDocbankAttachmentFileReceipt(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &file))
 	assert.Equal(hash, file.ContentHash)
 	assert.Equal([]store.DocbankAttachmentRef{ref}, file.Docbank)
-}
-
-func TestDocbankAttachmentProcessingStatusIsLocal(t *testing.T) {
-	for _, tc := range []struct {
-		name, profile, lastError string
-	}{
-		{"processing", "documents", "grant consent in Docbank"},
-		{"error_without_profile", "", "upload unavailable"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := storetest.New(t)
-			ctx := t.Context()
-			hash := strings.Repeat("a", 64)
-			mid := f.CreateMessage("processing")
-			require.NoError(f.Store.UpsertAttachmentRecord(ctx, mid, store.AttachmentWrite{ContentHash: hash, StoragePath: "aa/" + hash, Filename: "file.pdf", State: "stored"}))
-			require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "a"}, ""))
-			require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "fp"))
-			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: "a", Fingerprint: "fp", Outcome: "requested", JobID: "job-a"}, time.Time{}))
-			cfg := config.NewDefaultConfig()
-			cfg.Integrations.Docbank = config.DocbankIntegrationConfig{Enabled: true, AttachmentUploadConsent: true, URL: "http://127.0.0.1:1", DocumentProfile: tc.profile}
-			sched := newMockScheduler()
-			sched.scheduledJobs = map[string]bool{DocbankAttachmentMirrorJob: true}
-			sched.jobStatuses = []JobStatus{{Name: DocbankAttachmentMirrorJob, LastError: tc.lastError}}
-			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: sched, Logger: slog.New(slog.DiscardHandler)})
-			server.docbankAttachments = &DocbankAttachmentReader{Store: f.Store, Destination: "dest"}
-			w := httptest.NewRecorder()
-			server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/docbank/attachments", nil))
-			require.Equal(http.StatusOK, w.Code)
-			var result DocbankAttachmentStatus
-			require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
-			assert.Equal(tc.lastError, result.LastError)
-			if tc.profile == "" {
-				assert.Nil(result.Processing)
-			} else {
-				require.NotNil(result.Processing)
-				assert.Equal(tc.profile, result.Processing.Profile)
-				assert.Equal(int64(1), result.Processing.Requested)
-			}
-		})
-	}
 }
