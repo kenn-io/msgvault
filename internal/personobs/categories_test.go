@@ -1,6 +1,7 @@
 package personobs
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,4 +55,29 @@ func TestDetectCategoriesInflectionsAndUnicode(t *testing.T) {
 		})
 	}
 	assertions.Empty(DetectCategories("concatenated mortgageable hospitalities kiddish"))
+}
+
+func TestDetectCategoriesCollapsesMultiwordWhitespace(t *testing.T) {
+	for _, text := range []string{
+		"[PERSON] reports financial  hardship",
+		"[PERSON] reports financial\thardship",
+		"[PERSON] reports financial\nhardship",
+	} {
+		t.Run(text, func(t *testing.T) {
+			assert.Contains(t, DetectCategories(text), CategoryFinancialHardship)
+		})
+	}
+}
+
+func FuzzDetectCategoriesWhitespaceNormalization(f *testing.F) {
+	for _, separator := range []string{" ", "  ", "\t", "\n", "\r\n", " \t\n"} {
+		f.Add(separator)
+	}
+	f.Fuzz(func(t *testing.T, separator string) {
+		if separator == "" || len(strings.Fields(separator)) != 0 {
+			t.Skip()
+		}
+		assert.Equal(t, DetectCategories("financial hardship"),
+			DetectCategories("financial"+separator+"hardship"))
+	})
 }

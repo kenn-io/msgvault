@@ -335,6 +335,9 @@ func (s *Server) writePersonMergeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrPersonMergeAlreadySplit):
 		writeError(w, http.StatusConflict, "person_merge_already_split",
 			"The selected merge lineage has already been split")
+	case errors.Is(err, store.ErrPersonMergeOwnerObservations):
+		writeError(w, http.StatusConflict, "person_merge_owner_observations",
+			"Merging this profile would discard owner-authored observations")
 	case errors.Is(err, store.ErrPersonSplitReviewed):
 		writeError(w, http.StatusConflict, "person_split_reviewed_candidates",
 			"Exact reversal is unavailable after a merge review candidate was accepted")

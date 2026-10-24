@@ -73,6 +73,15 @@ func (s *Store) PersonProvenanceForMessages(
 	messageIDs []int64,
 	scope personscope.Scope,
 ) (map[int64]*personscope.Provenance, error) {
+	return s.personProvenanceForMessages(ctx, s.db, messageIDs, scope)
+}
+
+func (s *Store) personProvenanceForMessages(
+	ctx context.Context,
+	queryer contextRowsQuerier,
+	messageIDs []int64,
+	scope personscope.Scope,
+) (map[int64]*personscope.Provenance, error) {
 	if len(messageIDs) == 0 {
 		return map[int64]*personscope.Provenance{}, nil
 	}
@@ -138,7 +147,7 @@ func (s *Store) PersonProvenanceForMessages(
 	)
 	SELECT message_id, participant_id, role FROM person_edges
 	ORDER BY message_id, participant_id, role`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
+	rows, err := queryer.QueryContext(ctx, s.dialect.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person message provenance: %w", err)
 	}

@@ -32,7 +32,7 @@ var categoryLexicon = []struct {
 func DetectCategories(content string) []Category {
 	var out []Category
 	content = strings.NewReplacer("’", "'", "‘", "'", "ʼ", "'").Replace(norm.NFKC.String(content))
-	content = strings.ToLower(content)
+	content = strings.ToLower(strings.Join(strings.Fields(content), " "))
 	for _, entry := range categoryLexicon {
 		if entry.words.MatchString(content) {
 			out = append(out, entry.category)

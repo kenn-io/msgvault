@@ -65,6 +65,28 @@ func TestLoadPersonSweepWindowUsesExactDurableScope(t *testing.T) {
 	checks.Contains(sweepMessageIDs(window.Seeds), aliceMessage)
 }
 
+func TestLoadPersonSweepWindowEmptyChangesDoNotRequireResolvedIdentity(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`DELETE FROM person_participants WHERE person_id=?`), f.alicePersonID)
+	requirements.NoError(err)
+
+	person, err := f.store.GetPersonContext(t.Context(), f.alicePersonID)
+	requirements.NoError(err)
+	checks.Empty(person.ParticipantIDs)
+
+	through := latestPersonSweepSequence(t, f.store)
+	window, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
+		PersonID: f.alicePersonID, Lane: peoplesweep.SourceConversationText,
+		Mode: peoplesweep.GenerationCursorOptimistic, AfterSequence: through,
+		ThroughSequence: through, Limit: 10,
+	})
+	requirements.NoError(err)
+	checks.Empty(window.Seeds)
+}
+
 func TestPersonSweepDurableScopeMatchesResolver(t *testing.T) {
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)

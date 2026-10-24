@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personobs"
 )
 
 const maxPersonOperationIdempotencyKeyBytes = 128
@@ -26,6 +28,7 @@ var (
 	ErrPersonMergeIdempotency       = errors.New("person merge idempotency conflict")
 	ErrPersonMergeCandidateState    = errors.New("person merge candidate state conflict")
 	ErrPersonMergeCandidateNotFound = errors.New("person merge candidate not found")
+	ErrPersonMergeOwnerObservations = errors.New("person merge would delete owner-authored observations")
 	ErrPersonSplitRevision          = errors.New("person split revision conflict")
 	ErrPersonSplitIdempotency       = errors.New("person split idempotency conflict")
 	ErrPersonSplitParticipants      = errors.New("invalid person split participants")
@@ -278,6 +281,21 @@ func (s *Store) MergePersonsContext(
 	})
 }
 
+func (s *Store) rejectPersonMergeWithOwnerObservationsTx(
+	ctx context.Context, tx *loggedTx, absorbedPersonID int64,
+) error {
+	var hasOwnerObservations bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM person_observations WHERE person_id=? AND origin=?
+	)`, absorbedPersonID, personobs.OriginOwner).Scan(&hasOwnerObservations); err != nil {
+		return fmt.Errorf("check absorbed person observations: %w", err)
+	}
+	if hasOwnerObservations {
+		return ErrPersonMergeOwnerObservations
+	}
+	return nil
+}
+
 func (s *Store) mergePersonsOnce(
 	ctx context.Context, request PersonMergeRequest,
 ) (*PersonMergeResult, error) {
@@ -317,6 +335,9 @@ func (s *Store) mergePersonsOnce(
 		if survivor.Revision != request.ExpectedSurvivorRevision ||
 			absorbed.Revision != request.ExpectedAbsorbedRevision {
 			return ErrPersonRevisionConflict
+		}
+		if err := s.rejectPersonMergeWithOwnerObservationsTx(ctx, tx, absorbed.ID); err != nil {
+			return err
 		}
 		if err := s.lockPersonMergeVCardEnvelopesTx(
 			ctx, tx, survivor.ID, absorbed.ID,

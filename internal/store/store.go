@@ -118,9 +118,11 @@ type Store struct {
 	identityMatchReviewAfterDecisionHook  func()
 	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
+	personOperationAfterIdentityLockHook  func()
 	sourceMergeBeforeIdentityLockHook     func()
 	sourceMergeAfterJournalCheckHook      func()
 	personMergeAfterSnapshotHook          func()
+	personObservationTxBarrier            func(phase string)
 	personMatchBlockingBeforeLockHook     func()
 	personEnrichmentClock                 func() time.Time
 	personEnrichmentBudgetBarrier         func()

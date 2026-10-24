@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personobs"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vcard"
@@ -1413,6 +1414,54 @@ func TestCardDAVTombstoneRetainsImportedProjectionForUserEditedPerson(t *testing
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM daily_note_entry_persons
 		WHERE entry_id = ? AND person_id = ?`), noteID, personID).Scan(&noteLinks))
 	assert.Equal(1, noteLinks)
+	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+	require.ErrorIs(err, store.ErrCardDAVResourceNotFound)
+}
+
+func TestCardDAVTombstoneRetainsImportedPersonWithOwnerObservation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, account, book := newCardDAVResourceStore(t)
+	input := remoteResource(book.CanonicalURL+"owner-observation.vcf", "remote-owner-observation", "Observed", "observed@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
+	})
+	require.NoError(err)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+	require.NoError(err)
+	require.NotNil(resource.PersonID)
+	require.NotNil(resource.PersonRevisionAtBind)
+	personID := *resource.PersonID
+
+	created := applyObservationInput(t, st, personobs.BatchInput{
+		PersonID: personID,
+		Proposals: []personobs.ProposedObservation{{
+			PersonID: personID, Level: personobs.LevelExplicit, Origin: personobs.OriginOwner,
+			Kind: personobs.KindState, Content: "[PERSON] prefers morning walks", ConfidenceBP: 1000,
+		}},
+	}, 0)
+	require.Len(created.Items, 1)
+	assert.Equal("created", created.Items[0].Outcome)
+	person, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(err)
+	assert.Equal(*resource.PersonRevisionAtBind, person.Revision,
+		"owner observations do not advance the imported-person projection revision")
+
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	require.Len(books, 1)
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: books[0].SyncRevision, RemovedHrefs: []string{input.Href},
+	})
+	require.NoError(err)
+	_, err = st.GetPersonContext(t.Context(), personID)
+	require.NoError(err)
+	detail, err := st.GetPersonObservation(t.Context(), created.Items[0].ObservationID)
+	require.NoError(err)
+	assert.Equal("[PERSON] prefers morning walks", detail.Content)
 	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
 	require.ErrorIs(err, store.ErrCardDAVResourceNotFound)
 }
