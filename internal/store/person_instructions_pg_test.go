@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -53,7 +54,11 @@ func TestInstructionWriteConcurrentWithMergeNoDeadlock(t *testing.T) {
 	defer cancel()
 	start := make(chan struct{})
 	decision := make(chan error, 1)
-	merged := make(chan error, 1)
+	type mergeOutcome struct {
+		result *store.PersonMergeResult
+		err    error
+	}
+	merged := make(chan mergeOutcome, 1)
 	go func() {
 		<-start
 		_, err := st.DecidePersonInstructionContext(ctx, store.PersonInstructionDecision{InstructionID: id, ExpectedRevision: 1, Action: personfacts.InstructionActionConfirm, Actor: "owner"})
@@ -61,15 +66,23 @@ func TestInstructionWriteConcurrentWithMergeNoDeadlock(t *testing.T) {
 	}()
 	go func() {
 		<-start
-		_, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: alice.ID, AbsorbedID: bob.ID, ExpectedSurvivorRevision: alice.Revision, ExpectedAbsorbedRevision: bob.Revision, IdempotencyKey: "instruction-race", Actor: "owner"})
-		merged <- err
+		result, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: alice.ID, AbsorbedID: bob.ID, ExpectedSurvivorRevision: alice.Revision, ExpectedAbsorbedRevision: bob.Revision, IdempotencyKey: "instruction-race", Actor: "owner"})
+		merged <- mergeOutcome{result: result, err: err}
 	}()
 	close(start)
-	require.ErrorIs(<-merged, store.ErrPersonMergeInvalid)
-	require.NoError(<-decision)
-	instructions, err := st.ListPersonInstructionsContext(ctx, bob.ID, store.PersonInstructionFilter{})
+	mergeResult := <-merged
+	require.NoError(mergeResult.err)
+	require.NotNil(mergeResult.result)
+	decisionErr := <-decision
+	assert.True(decisionErr == nil || errors.Is(decisionErr, store.ErrPersonNotFound) || errors.Is(decisionErr, store.ErrInstructionNotFound), "%v", decisionErr)
+	instructions, err := st.ListPersonInstructionsContext(ctx, mergeResult.result.Person.ID, store.PersonInstructionFilter{})
 	require.NoError(err)
 	require.Len(instructions, 1)
 	assert.Equal(id, instructions[0].ID)
-	assert.Equal(personfacts.InstructionStatusActive, instructions[0].Status)
+	assert.Equal(mergeResult.result.Person.ID, instructions[0].PersonID)
+	assert.Equal(1, instructionEventCount(t, st, id, "merge_moved"))
+	var proposalEvents int
+	require.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM person_instruction_events
+		WHERE person_id=? AND instruction_id=? AND action='propose'`, mergeResult.result.Person.ID, id).Scan(&proposalEvents))
+	assert.Equal(1, proposalEvents)
 }

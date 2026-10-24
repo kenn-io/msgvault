@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -60,12 +63,13 @@ type CopySubsetOptions struct {
 // closure instead: participants are expanded through participant_links and
 // shared person bindings until every included cluster and person binding set
 // is complete, which exposes identifiers of linked identities that have no
-// messages in the subset. Structured profile values and their provenance
-// dependencies require the separate IncludeProfiles opt-in, and the native
-// vCard bodies they were projected from require IncludeVCardResources on top
-// of it. Person attribute definitions and values also require callers to
-// explicitly use CopySubsetWithOptions with IncludeAttributes. When attributes
-// are included, person-valued references
+// messages in the subset. Structured profile values, standing instructions
+// and their decision history, and their provenance dependencies require the
+// separate IncludeProfiles opt-in; the native vCard bodies they were
+// projected from require IncludeVCardResources on top of it. Person attribute
+// definitions and values also require callers to explicitly use
+// CopySubsetWithOptions with IncludeAttributes. When attributes are included,
+// person-valued references
 // follow the same boundary: references to excluded people are omitted by
 // default, while IncludeIdentity follows references from included people and
 // copies each target's complete identity profile.
@@ -85,12 +89,13 @@ func CopySubset(
 // person- and organization-scoped — including their value content, provenance
 // references, and actor metadata. IncludeProfiles copies current and
 // historical structured profile values, media, contact observations,
-// identity-review candidates and evidence, relationship types and edges
-// between copied persons with their decision ledger, their provenance
-// dependencies, and employment history: employments of copied people together
-// with the organizations they reference and those organizations' profile
-// rows. Organization attribute values ride IncludeAttributes but only exist
-// in the subset when IncludeProfiles also ran, because the organizations
+// standing instructions with their decision history, identity-review
+// candidates and evidence, relationship types and edges between copied
+// persons with their decision ledger, their provenance dependencies, and
+// employment history: employments of copied people together with the
+// organizations they reference and those organizations' profile rows.
+// Organization attribute values ride IncludeAttributes but only exist in the
+// subset when IncludeProfiles also ran, because the organizations
 // themselves cross the boundary through employment references.
 // IncludeVCardResources copies the native vCard resources of copied people:
 // the opaque original wire bodies and the retired-UID aliases that resolve to
@@ -583,6 +588,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			`person_id IN (SELECT id FROM persons)`); err != nil {
 			return nil, fmt.Errorf("copy person tracking: %w", err)
 		}
+		if err := copyPersonInstructions(tx); err != nil {
+			return nil, err
+		}
 		if options.IncludeVCardResources {
 			if err := copyVCardResourceEnvelopes(tx); err != nil {
 				return nil, err
@@ -978,6 +986,183 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	}
 
 	return result, nil
+}
+
+func copyPersonInstructions(tx *sql.Tx) error {
+	hasInstructions, err := sourceTableExists(tx, personInstructionsTableName)
+	if err != nil {
+		return fmt.Errorf("check person instruction schema: %w", err)
+	}
+	if !hasInstructions {
+		return nil
+	}
+	columns, err := commonColumns(tx, personInstructionsTableName)
+	if err != nil {
+		return fmt.Errorf("inspect person instruction columns: %w", err)
+	}
+	if len(columns) == 0 {
+		return fmt.Errorf("source and destination share no %s columns", personInstructionsTableName)
+	}
+	selectExpressions := make([]string, len(columns))
+	for index, column := range columns {
+		quoted := column
+		selectExpressions[index] = "source_row." + quoted
+		if foldIdentifier(strings.Trim(column, `"`)) == "supersedes_id" {
+			selectExpressions[index] = `CASE
+				WHEN source_row.` + quoted + ` IS NULL THEN NULL
+				WHEN EXISTS (
+					SELECT 1 FROM src.person_instructions target
+					WHERE target.id = source_row.` + quoted + `
+					  AND target.person_id IN (SELECT id FROM persons)
+				) THEN source_row.` + quoted + `
+				ELSE NULL
+			END`
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf(`
+		INSERT INTO %s (%s)
+		SELECT %s FROM src.%s source_row
+		WHERE source_row.person_id IN (SELECT id FROM persons)`,
+		personInstructionsTableName, strings.Join(columns, ", "),
+		strings.Join(selectExpressions, ", "), personInstructionsTableName,
+	)); err != nil {
+		return fmt.Errorf("copy person instructions: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE person_instructions
+		SET contact_point_id = NULL
+		WHERE contact_point_id IS NOT NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM person_contact_points copied_contact
+			WHERE copied_contact.id = person_instructions.contact_point_id
+		  )`); err != nil {
+		return fmt.Errorf("clear omitted person instruction contacts: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE person_instructions
+		SET original_text=normalized_text WHERE original_text=''`); err != nil {
+		return fmt.Errorf("backfill copied person instruction text: %w", err)
+	}
+	if err := remapSubsetPersonInstructionScopes(tx); err != nil {
+		return err
+	}
+	hasEvents, err := sourceTableExists(tx, "person_instruction_events")
+	if err != nil {
+		return fmt.Errorf("check person instruction event schema: %w", err)
+	}
+	if !hasEvents {
+		return nil
+	}
+	if _, err := copyByName(tx, "person_instruction_events",
+		`person_id IN (SELECT id FROM persons)`); err != nil {
+		return fmt.Errorf("copy person instruction events: %w", err)
+	}
+	if err := remapSubsetPersonInstructionEventKeys(tx); err != nil {
+		return err
+	}
+	return nil
+}
+
+type subsetPersonInstructionScopeRemap struct {
+	id             int64
+	scopeKey       string
+	instructionKey string
+	temporaryKey   string
+}
+
+func remapSubsetPersonInstructionScopes(tx *sql.Tx) error {
+	var remaps []subsetPersonInstructionScopeRemap
+	err := func() (returnErr error) {
+		rows, err := tx.Query(`SELECT id, kind, scope_key, value_text, original_text, instruction_key
+			FROM person_instructions ORDER BY id`)
+		if err != nil {
+			return fmt.Errorf("load copied person instruction scopes: %w", err)
+		}
+		defer func() {
+			if err := rows.Close(); err != nil && returnErr == nil {
+				returnErr = fmt.Errorf("close copied person instruction scopes: %w", err)
+			}
+		}()
+		for rows.Next() {
+			var id int64
+			var kind, scopeKey, valueText, originalText, instructionKey string
+			if err := rows.Scan(&id, &kind, &scopeKey, &valueText, &originalText, &instructionKey); err != nil {
+				return fmt.Errorf("scan copied person instruction scope: %w", err)
+			}
+			var scope personInstructionScopeIdentity
+			if err := json.Unmarshal([]byte(scopeKey), &scope); err != nil || scope.ServiceID == nil {
+				continue
+			}
+			var destinationServiceID int64
+			err := tx.QueryRow(`SELECT destination_id FROM selected_profile_service_map
+				WHERE source_id = ?`, *scope.ServiceID).Scan(&destinationServiceID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("remap copied instruction service %d: service mapping is missing", *scope.ServiceID)
+			}
+			if err != nil {
+				return fmt.Errorf("remap copied instruction service %d: %w", *scope.ServiceID, err)
+			}
+			if destinationServiceID == *scope.ServiceID {
+				continue
+			}
+			scope.ServiceID = &destinationServiceID
+			encodedScope, err := json.Marshal(scope)
+			if err != nil {
+				return fmt.Errorf("encode remapped person instruction scope: %w", err)
+			}
+			newScopeKey := string(encodedScope)
+			newInstructionKey := personfacts.InstructionKey(
+				personfacts.InstructionKind(kind), newScopeKey, valueText, originalText,
+			)
+			temporaryHash := sha256.Sum256([]byte(fmt.Sprintf("subset-instruction-scope:%d:%s", id, instructionKey)))
+			remaps = append(remaps, subsetPersonInstructionScopeRemap{
+				id: id, scopeKey: newScopeKey, instructionKey: newInstructionKey,
+				temporaryKey: hex.EncodeToString(temporaryHash[:]),
+			})
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate copied person instruction scopes: %w", err)
+		}
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+	for _, remap := range remaps {
+		if _, err := tx.Exec(`UPDATE person_instructions SET instruction_key = ? WHERE id = ?`,
+			remap.temporaryKey, remap.id); err != nil {
+			return fmt.Errorf("stage remapped person instruction key: %w", err)
+		}
+	}
+	for _, remap := range remaps {
+		if _, err := tx.Exec(`UPDATE person_instructions
+			SET scope_key = ?, instruction_key = ? WHERE id = ?`,
+			remap.scopeKey, remap.instructionKey, remap.id); err != nil {
+			return fmt.Errorf("apply remapped person instruction scope: %w", err)
+		}
+	}
+	return nil
+}
+
+func remapSubsetPersonInstructionEventKeys(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE person_instruction_events
+		SET instruction_key = (
+			SELECT destination_instruction.instruction_key
+			FROM person_instructions destination_instruction
+			JOIN src.person_instructions source_instruction
+			  ON source_instruction.id = destination_instruction.id
+			WHERE destination_instruction.id = person_instruction_events.instruction_id
+			  AND person_instruction_events.instruction_key = source_instruction.instruction_key
+		)
+		WHERE person_id IN (SELECT id FROM persons)
+		  AND EXISTS (
+			SELECT 1 FROM person_instructions destination_instruction
+			JOIN src.person_instructions source_instruction
+			  ON source_instruction.id = destination_instruction.id
+			WHERE destination_instruction.id = person_instruction_events.instruction_id
+			  AND person_instruction_events.instruction_key = source_instruction.instruction_key
+		)`); err != nil {
+		return fmt.Errorf("remap copied person instruction event keys: %w", err)
+	}
+	return nil
 }
 
 // copyPersonMergePackets copies an audit packet only when the scoped archive
@@ -1500,6 +1685,25 @@ func personMergeSnapshotRowsComplete(
 	for _, row := range packetRows {
 		journalByPath[row.snapshotPath] = row
 	}
+	// A deleted instruction may still be a valid snapshot dependency when the
+	// selected merge packet can recreate that row during an exact split.
+	restorableInstructionIDs := make(map[int64]struct{})
+	for index, row := range snapshot.Rows {
+		if row.TableName != personInstructionsTableName {
+			continue
+		}
+		journal, hasJournal := journalByPath["rows/"+strconv.Itoa(index)]
+		restoredBySplit := hasJournal && journal.action == "deleted_snapshot"
+		if hasJournal && journal.action == personMergeActionDeduplicated &&
+			journal.currentID.Valid && journal.currentID.Int64 != row.RowID {
+			// A non-retained deduplicated instruction is deleted on merge and
+			// recreated from this snapshot when the absorbed person is split.
+			restoredBySplit = true
+		}
+		if restoredBySplit {
+			restorableInstructionIDs[row.RowID] = struct{}{}
+		}
+	}
 	for index, row := range snapshot.Rows {
 		if row.TableName == "daily_note_entry_persons" {
 			// These rows can embed message, owner, or note data outside the
@@ -1511,7 +1715,9 @@ func personMergeSnapshotRowsComplete(
 		if err != nil || !present {
 			return present, err
 		}
-		complete, err := personMergeSnapshotDependenciesComplete(tx, row, lineagePeople)
+		complete, err := personMergeSnapshotDependenciesComplete(
+			tx, row, lineagePeople, restorableInstructionIDs,
+		)
 		if err != nil || !complete {
 			return complete, err
 		}
@@ -1597,7 +1803,9 @@ func personMergeSnapshotRowPresent(
 }
 
 func personMergeSnapshotDependenciesComplete(
-	tx *sql.Tx, row personMergeSnapshotRow, lineagePeople map[int64]struct{},
+	tx *sql.Tx,
+	row personMergeSnapshotRow,
+	lineagePeople, restorableInstructionIDs map[int64]struct{},
 ) (bool, error) {
 	spec, ok := personMergeTableRegistry[row.TableName]
 	if !ok {
@@ -1648,6 +1856,11 @@ func personMergeSnapshotDependenciesComplete(
 	dependencies := map[string][]struct {
 		column, table string
 	}{
+		personInstructionsTableName: {
+			{"contact_point_id", personContactPointsTableName},
+			{"supersedes_id", personInstructionsTableName},
+		},
+		"person_instruction_events":        {{"instruction_id", personInstructionsTableName}},
 		personRelationshipsTableName:       {{"relationship_type_id", "relationship_types"}},
 		personRelationshipReviewsTableName: {{"accepted_relationship_id", personRelationshipsTableName}},
 		personAttributeValuesTableName:     {{"definition_id", "attribute_definitions"}},
@@ -1684,8 +1897,16 @@ func personMergeSnapshotDependenciesComplete(
 			continue
 		}
 		included, err := subsetRowIDExists(tx, dependency.table, id)
-		if err != nil || !included {
-			return included, err
+		if err != nil {
+			return false, err
+		}
+		if !included {
+			if dependency.table == personInstructionsTableName {
+				if _, restorable := restorableInstructionIDs[id]; restorable {
+					continue
+				}
+			}
+			return false, nil
 		}
 	}
 
@@ -1917,6 +2138,56 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 			SELECT service_id FROM src.` + reference.table + `
 			WHERE ` + reference.where + ` AND service_id IS NOT NULL`); err != nil {
 			return fmt.Errorf("select %s services: %w", reference.table, err)
+		}
+	}
+	if includeProfiles {
+		hasInstructions, err := sourceTableExists(tx, personInstructionsTableName)
+		if err != nil {
+			return fmt.Errorf("check person instruction service scopes: %w", err)
+		}
+		if hasInstructions {
+			hasScopeKey, err := sourceColumnExists(tx, personInstructionsTableName, "scope_key")
+			if err != nil {
+				return fmt.Errorf("check person instruction scope key: %w", err)
+			}
+			if hasScopeKey {
+				var serviceIDs []int64
+				err := func() (returnErr error) {
+					rows, err := tx.Query(`SELECT scope_key FROM src.person_instructions
+						WHERE person_id IN (SELECT id FROM persons)`)
+					if err != nil {
+						return fmt.Errorf("load person instruction service scopes: %w", err)
+					}
+					defer func() {
+						if err := rows.Close(); err != nil && returnErr == nil {
+							returnErr = fmt.Errorf("close person instruction service scopes: %w", err)
+						}
+					}()
+					for rows.Next() {
+						var scopeKey string
+						if err := rows.Scan(&scopeKey); err != nil {
+							return fmt.Errorf("scan person instruction service scope: %w", err)
+						}
+						var scope personInstructionScopeIdentity
+						if err := json.Unmarshal([]byte(scopeKey), &scope); err == nil && scope.ServiceID != nil {
+							serviceIDs = append(serviceIDs, *scope.ServiceID)
+						}
+					}
+					if err := rows.Err(); err != nil {
+						return fmt.Errorf("iterate person instruction service scopes: %w", err)
+					}
+					return nil
+				}()
+				if err != nil {
+					return err
+				}
+				for _, serviceID := range serviceIDs {
+					if _, err := tx.Exec(`INSERT OR IGNORE INTO selected_profile_services (source_id)
+						VALUES (?)`, serviceID); err != nil {
+						return fmt.Errorf("select person instruction service %d: %w", serviceID, err)
+					}
+				}
+			}
 		}
 	}
 

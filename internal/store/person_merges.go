@@ -10,9 +10,12 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 const maxPersonOperationIdempotencyKeyBytes = 128
@@ -317,18 +320,6 @@ func (s *Store) mergePersonsOnce(
 		if survivor.Revision != request.ExpectedSurvivorRevision ||
 			absorbed.Revision != request.ExpectedAbsorbedRevision {
 			return ErrPersonRevisionConflict
-		}
-		var hasInstructionHistory bool
-		if err := tx.QueryRowContext(ctx, `SELECT
-			EXISTS (SELECT 1 FROM person_instructions WHERE person_id = ?) OR
-			EXISTS (SELECT 1 FROM person_instruction_events WHERE person_id = ?)`,
-			absorbed.ID, absorbed.ID,
-		).Scan(&hasInstructionHistory); err != nil {
-			return fmt.Errorf("check absorbed person instruction history: %w", err)
-		}
-		if hasInstructionHistory {
-			return fmt.Errorf("%w: absorbed person has instruction history that cannot be preserved by this merge path",
-				ErrPersonMergeInvalid)
 		}
 		if err := s.lockPersonMergeVCardEnvelopesTx(
 			ctx, tx, survivor.ID, absorbed.ID,
@@ -901,6 +892,9 @@ func (s *Store) moveCorePersonProfileTx(
 	}
 	if err := s.reconcilePersonBriefEnrollmentTx(
 		ctx, tx, mergeID, survivorID, absorbedID); err != nil {
+		return err
+	}
+	if err := s.movePersonInstructionsTx(ctx, tx, mergeID, survivorID, absorbedID); err != nil {
 		return err
 	}
 	projectionPersonIDs, err := personMergeRowIDsTx(ctx, tx, `SELECT person_id
@@ -1506,6 +1500,252 @@ func (s *Store) rebasePriorPersonMergeReferenceBaselinesTx(
 	return nil
 }
 
+func rebasePersonMergePostRowIntegerColumn(
+	encoded sql.NullString,
+	spec personMergeTableSpec,
+	columnName string,
+	fromID, toID int64,
+) (sql.NullString, bool, error) {
+	if !encoded.Valid || encoded.String == "" {
+		return encoded, false, nil
+	}
+	var post personMergeSnapshotRow
+	if err := json.Unmarshal([]byte(encoded.String), &post); err != nil {
+		return sql.NullString{}, false, fmt.Errorf(
+			"%w: decode %s post-merge row: %w", ErrPersonMergeSnapshotCorrupt, spec.TableName, err,
+		)
+	}
+	changed := false
+	for index := range post.Columns {
+		column := &post.Columns[index]
+		if column.Name != columnName || column.Value.Integer == nil || *column.Value.Integer != fromID {
+			continue
+		}
+		value := toID
+		column.Value.Integer = &value
+		changed = true
+	}
+	if columnName == "id" && post.RowID == fromID {
+		post.RowID = toID
+		changed = true
+	}
+	if !changed {
+		return encoded, false, nil
+	}
+	byName := personSplitSnapshotColumnsByName(post.Columns)
+	keyColumns := make([]personMergeSnapshotColumn, 0, len(spec.keyColumns()))
+	for _, name := range spec.keyColumns() {
+		value, ok := byName[name]
+		if !ok {
+			return sql.NullString{}, false, fmt.Errorf(
+				"%w: rebased %s post-merge key", ErrPersonMergeSnapshotCorrupt, spec.TableName,
+			)
+		}
+		keyColumns = append(keyColumns, personMergeSnapshotColumn{Name: name, Value: value})
+	}
+	rowKey, err := canonicalPersonMergeSnapshotRowKey(keyColumns, spec.keyColumns())
+	if err != nil {
+		return sql.NullString{}, false, err
+	}
+	post.RowKey = rowKey
+	rebased, err := json.Marshal(post, json.Deterministic(true))
+	if err != nil {
+		return sql.NullString{}, false, fmt.Errorf("encode rebased %s post-merge row: %w", spec.TableName, err)
+	}
+	return sql.NullString{String: string(rebased), Valid: true}, true, nil
+}
+
+func rebasePriorPersonInstructionMergeBaselinesTx(
+	ctx context.Context, tx *loggedTx, mergeID, fromID, toID int64,
+) error {
+	for _, item := range []struct {
+		table, column, query string
+		args                 []any
+	}{
+		{
+			table:  personInstructionsTableName,
+			column: "id",
+			query: `SELECT merge_id, original_row_key, post_merge_row_json
+				FROM person_merge_rows
+				WHERE merge_id <> ? AND table_name = ?
+				  AND current_row_id = ? AND split_id IS NULL AND post_merge_row_json IS NOT NULL
+				ORDER BY merge_id, original_row_key`,
+			args: []any{mergeID, personInstructionsTableName, toID},
+		},
+		{
+			table:  "person_instruction_events",
+			column: "instruction_id",
+			query: `SELECT merge_id, original_row_key, post_merge_row_json
+				FROM person_merge_rows
+				WHERE merge_id <> ? AND table_name = 'person_instruction_events'
+				  AND current_row_id IN (
+					SELECT id FROM person_instruction_events WHERE instruction_id = ?
+				  ) AND split_id IS NULL AND post_merge_row_json IS NOT NULL
+				ORDER BY merge_id, original_row_key`,
+			args: []any{mergeID, toID},
+		},
+	} {
+		spec := personMergeTableRegistry[item.table]
+		rows, err := tx.QueryContext(ctx, item.query, item.args...)
+		if err != nil {
+			return fmt.Errorf("load prior %s merge baselines: %w", item.table, err)
+		}
+		type baseline struct {
+			mergeID     int64
+			originalKey string
+			postJSON    sql.NullString
+		}
+		baselines := []baseline{}
+		for rows.Next() {
+			var row baseline
+			if err := rows.Scan(&row.mergeID, &row.originalKey, &row.postJSON); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan prior %s merge baseline: %w", item.table, err)
+			}
+			baselines = append(baselines, row)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate prior %s merge baselines: %w", item.table, err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close prior %s merge baselines: %w", item.table, err)
+		}
+		for _, row := range baselines {
+			rebased, changed, err := rebasePersonMergePostRowIntegerColumn(
+				row.postJSON, spec, item.column, fromID, toID,
+			)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_rows
+				SET post_merge_row_json = ?
+				WHERE merge_id = ? AND table_name = ? AND original_row_key = ?`,
+				rebased, row.mergeID, item.table, row.originalKey,
+			); err != nil {
+				return fmt.Errorf("rebase prior %s merge baseline: %w", item.table, err)
+			}
+		}
+	}
+	return nil
+}
+
+func rebasePriorPersonInstructionSnapshotBaselinesTx(
+	ctx context.Context,
+	tx *loggedTx,
+	mergeID, instructionID int64,
+	before, after personMergeSnapshotRow,
+) error {
+	// Keep survivor baselines tied to their merge's result. An older exact split
+	// restores that survivor row in place, so rebasing it to a later winner would
+	// make the later instruction appear unchanged and restore stale content.
+	rows, err := tx.QueryContext(ctx, `SELECT merge_id, original_row_key, post_merge_row_json
+		FROM person_merge_rows
+		WHERE merge_id <> ? AND table_name = ? AND current_row_id = ?
+		  AND origin_side = 'absorbed'
+		  AND split_id IS NULL AND post_merge_row_json IS NOT NULL
+		ORDER BY merge_id, original_row_key`,
+		mergeID, personInstructionsTableName, instructionID,
+	)
+	if err != nil {
+		return fmt.Errorf("load prior instruction merge baselines: %w", err)
+	}
+	type baseline struct {
+		mergeID     int64
+		originalKey string
+		postJSON    sql.NullString
+	}
+	baselines := []baseline{}
+	for rows.Next() {
+		var row baseline
+		if err := rows.Scan(&row.mergeID, &row.originalKey, &row.postJSON); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan prior instruction merge baseline: %w", err)
+		}
+		baselines = append(baselines, row)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate prior instruction merge baselines: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close prior instruction merge baselines: %w", err)
+	}
+	for _, row := range baselines {
+		rebased, changed, err := rebasePersonMergeInstructionPostRow(
+			row.postJSON, before, after,
+		)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_merge_rows
+			SET post_merge_row_json = ?
+			WHERE merge_id = ? AND table_name = ? AND original_row_key = ?`,
+			rebased, row.mergeID, personInstructionsTableName, row.originalKey,
+		); err != nil {
+			return fmt.Errorf("rebase prior instruction merge baseline: %w", err)
+		}
+	}
+	return nil
+}
+
+func rebasePersonMergeInstructionPostRow(
+	encoded sql.NullString,
+	before, after personMergeSnapshotRow,
+) (sql.NullString, bool, error) {
+	if !encoded.Valid || encoded.String == "" {
+		return encoded, false, nil
+	}
+	var post personMergeSnapshotRow
+	if err := json.Unmarshal([]byte(encoded.String), &post); err != nil {
+		return sql.NullString{}, false, fmt.Errorf(
+			"%w: decode prior instruction merge row: %w", ErrPersonMergeSnapshotCorrupt, err,
+		)
+	}
+	beforeByName := personSplitSnapshotColumnsByName(before.Columns)
+	afterByName := personSplitSnapshotColumnsByName(after.Columns)
+	changed := false
+	for index := range post.Columns {
+		column := &post.Columns[index]
+		if !personMergeInstructionBaselineColumn(column.Name) {
+			continue
+		}
+		beforeValue, hasBefore := beforeByName[column.Name]
+		afterValue, hasAfter := afterByName[column.Name]
+		if !hasBefore || !hasAfter {
+			return sql.NullString{}, false, fmt.Errorf(
+				"%w: missing instruction merge baseline column %s", ErrPersonMergeSnapshotCorrupt, column.Name,
+			)
+		}
+		if reflect.DeepEqual(beforeValue, afterValue) || !reflect.DeepEqual(column.Value, beforeValue) {
+			continue
+		}
+		column.Value = afterValue
+		changed = true
+	}
+	if !changed {
+		return encoded, false, nil
+	}
+	rebased, err := json.Marshal(post, json.Deterministic(true))
+	if err != nil {
+		return sql.NullString{}, false, fmt.Errorf("encode prior instruction merge row: %w", err)
+	}
+	return sql.NullString{String: string(rebased), Valid: true}, true, nil
+}
+
+// Rebase only merge-managed baselines that still match the pre-reconciliation
+// value, preserving any intervening owner edits.
+func personMergeInstructionBaselineColumn(name string) bool {
+	return personSplitInstructionLifecycleColumn(name) ||
+		personSplitInstructionContentColumn(name) || name == "contact_point_id"
+}
+
 func (s *Store) setPersonMergeRowDispositionTx(
 	ctx context.Context,
 	tx *loggedTx,
@@ -1555,6 +1795,13 @@ func (s *Store) setPersonMergeRowDispositionTx(
 		return fmt.Errorf("count %s merge row disposition: %w", table, affectedErr)
 	} else if affected != 1 {
 		return fmt.Errorf("%w: missing %s merge row journal", ErrPersonMergeInvalid, table)
+	}
+	if action == personMergeActionDeduplicated && table == personInstructionsTableName && currentRowID != nil {
+		if err := rebasePriorPersonInstructionMergeBaselinesTx(
+			ctx, tx, mergeID, originalRowID, *currentRowID,
+		); err != nil {
+			return fmt.Errorf("rebase deduplicated instruction history: %w", err)
+		}
 	}
 	return nil
 }
@@ -2321,4 +2568,303 @@ func listPersonMergeReviewCandidatesTx(
 		return nil, fmt.Errorf("iterate person merge review candidates: %w", err)
 	}
 	return result, nil
+}
+
+func instructionLifecycleRank(i PersonInstruction) int {
+	if i.Origin == personfacts.InstructionOriginOwner {
+		return 2
+	}
+	if i.ConfirmedAt != nil {
+		return 1
+	}
+	return 0
+}
+func instructionRetainedOnMerge(i PersonInstruction) bool {
+	return instructionLifecycleRank(i) > 0 || i.ReviewState == personfacts.InstructionReviewUnsure
+}
+func instructionLive(i PersonInstruction) bool {
+	return i.Status == personfacts.InstructionStatusProposed || i.Status == personfacts.InstructionStatusActive || i.Status == personfacts.InstructionStatusSuspended
+}
+
+func expirePersonInstructionsBeforeMergeTx(
+	ctx context.Context, tx *loggedTx, personID int64, now time.Time,
+) error {
+	expired, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+
+		` WHERE i.person_id=? AND i.status='active' AND i.valid_until<=? ORDER BY i.id`,
+		now, personID, now,
+	)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(expired))
+	for _, row := range expired {
+		if _, ok := seen[row.InstructionKey]; ok {
+			continue
+		}
+		seen[row.InstructionKey] = struct{}{}
+		if err := expirePersonInstructionKeyTx(ctx, tx, personID, row.InstructionKey, 0, now); err != nil {
+			return fmt.Errorf("expire elapsed instruction before merge: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) movePersonInstructionsTx(ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64) error {
+	now := personFactPortableTime(time.Now().UTC())
+	if err := expirePersonInstructionsBeforeMergeTx(ctx, tx, survivorID, now); err != nil {
+		return err
+	}
+	if err := expirePersonInstructionsBeforeMergeTx(ctx, tx, absorbedID, now); err != nil {
+		return err
+	}
+	absorbed, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+` WHERE i.person_id=? ORDER BY i.id`, now, absorbedID)
+	if err != nil {
+		return err
+	}
+	survivor, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+` WHERE i.person_id=? ORDER BY i.id`, now, survivorID)
+	if err != nil {
+		return err
+	}
+	live := make(map[string]PersonInstruction)
+	for _, row := range survivor {
+		if instructionLive(row) {
+			live[row.InstructionKey] = row
+		}
+	}
+	moved := make(map[int64]bool)
+	for _, row := range absorbed {
+		if !instructionRetainedOnMerge(row) {
+			continue
+		}
+		destination := row
+		detail := map[string]any{"absorbed_instruction_id": row.ID, "collision": false}
+		if existing, ok := live[row.InstructionKey]; ok && instructionLive(row) {
+			source, sourceName := existing, "survivor"
+			aRank, sRank := instructionLifecycleRank(row), instructionLifecycleRank(existing)
+			if aRank > sRank || (aRank == sRank && (row.UpdatedAt.After(existing.UpdatedAt) || (row.UpdatedAt.Equal(existing.UpdatedAt) && row.ID > existing.ID))) {
+				source, sourceName = row, "absorbed"
+			}
+			spec := personMergeTableRegistry[personInstructionsTableName]
+			beforeRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+				`SELECT * FROM person_instructions WHERE id=?`, []any{existing.ID}, 0,
+			)
+			if err != nil {
+				return fmt.Errorf("capture instruction before merge collision: %w", err)
+			}
+			if len(beforeRows) != 1 {
+				return fmt.Errorf("%w: merge collision instruction is missing", ErrPersonMergeInvalid)
+			}
+			absorbedBeforeRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+				`SELECT * FROM person_instructions WHERE id=?`, []any{row.ID}, 0,
+			)
+			if err != nil {
+				return fmt.Errorf("capture absorbed instruction before merge collision: %w", err)
+			}
+			if len(absorbedBeforeRows) != 1 {
+				return fmt.Errorf("%w: absorbed merge collision instruction is missing", ErrPersonMergeInvalid)
+			}
+			reviewState := personfacts.InstructionReviewMerged
+			if source.ReviewState == personfacts.InstructionReviewUnsure {
+				reviewState = personfacts.InstructionReviewUnsure
+			}
+			contactPointRef, err := s.personMergeInstructionContactPointTx(
+				ctx, tx, survivorID, source.ContactPointID, existing.ContactPointID,
+			)
+			if err != nil {
+				return fmt.Errorf("resolve merged instruction contact scope: %w", err)
+			}
+			var contactPointID any
+			if contactPointRef.Valid {
+				contactPointID = contactPointRef.Int64
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE person_instructions SET original_text=?,value_text=?,contact_point_id=?,origin=?,stated_at=?,generation_id=?,source_observation_id=?,status=?,adopted=?,valid_from=?,valid_until=?,confirmed_at=?,confirmed_by=?,review_state=?,revision=revision+1,updated_at=? WHERE id=?`, source.Text, source.ValueText, contactPointID, source.Origin, source.StatedAt, source.GenerationID, source.SourceObservationID, source.Status, source.Adopted, source.ValidFrom, source.ValidUntil, source.ConfirmedAt, source.ConfirmedBy, reviewState, now, existing.ID)
+			if err != nil {
+				return fmt.Errorf("reconcile merged instruction: %w", err)
+			}
+			afterRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+				`SELECT * FROM person_instructions WHERE id=?`, []any{existing.ID}, 0,
+			)
+			if err != nil {
+				return fmt.Errorf("capture instruction after merge collision: %w", err)
+			}
+			if len(afterRows) != 1 {
+				return fmt.Errorf("%w: reconciled merge collision instruction is missing", ErrPersonMergeInvalid)
+			}
+			if err := rebasePriorPersonInstructionSnapshotBaselinesTx(
+				ctx, tx, mergeID, existing.ID, beforeRows[0], afterRows[0],
+			); err != nil {
+				return fmt.Errorf("rebase collision instruction baseline: %w", err)
+			}
+			if err := rebasePriorPersonInstructionSnapshotBaselinesTx(
+				ctx, tx, mergeID, row.ID, absorbedBeforeRows[0], afterRows[0],
+			); err != nil {
+				return fmt.Errorf("rebase absorbed collision instruction baseline: %w", err)
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=?,instruction_id=? WHERE instruction_id=?`, survivorID, existing.ID, row.ID); err != nil {
+				return fmt.Errorf("reparent merged instruction events: %w", err)
+			}
+			if _, err = tx.ExecContext(ctx, `DELETE FROM person_instructions WHERE id=?`, row.ID); err != nil {
+				return fmt.Errorf("deduplicate merged instruction: %w", err)
+			}
+			if err = s.setPersonMergeRowDispositionTx(ctx, tx, mergeID, personInstructionsTableName, row.ID, "deduplicated", &existing.ID); err != nil {
+				return err
+			}
+			destination = existing
+			detail["collision"], detail["lifecycle_source"] = true, sourceName
+		} else {
+			reviewState := personfacts.InstructionReviewNone
+			if instructionLive(row) {
+				reviewState = personfacts.InstructionReviewMerged
+				if row.ReviewState == personfacts.InstructionReviewUnsure {
+					reviewState = personfacts.InstructionReviewUnsure
+				}
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET person_id=?,review_state=?,revision=revision+1,updated_at=? WHERE id=?`, survivorID, reviewState, now, row.ID); err != nil {
+				return fmt.Errorf("move merged instruction: %w", err)
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE instruction_id=?`, survivorID, row.ID); err != nil {
+				return fmt.Errorf("move instruction events: %w", err)
+			}
+			destination.PersonID = survivorID
+		}
+		moved[destination.ID] = true
+		if err = appendPersonInstructionEventTx(ctx, tx, &destination, personfacts.InstructionActionMergeMoved, "system", detail); err != nil {
+			return err
+		}
+	}
+	for id := range moved {
+		row, err := scanPersonInstruction(tx.QueryRowContext(ctx, personInstructionSelect+` WHERE i.id=?`, id), now)
+		if err != nil {
+			return err
+		}
+		if row.ContactPointID == nil {
+			continue
+		}
+		var deduplicated bool
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_merge_rows WHERE merge_id=? AND table_name='person_contact_points' AND original_row_id=? AND action='deduplicated')`, mergeID, *row.ContactPointID).Scan(&deduplicated)
+		if err != nil {
+			return fmt.Errorf("load merged instruction scope disposition: %w", err)
+		}
+		if !deduplicated {
+			continue
+		}
+		counterpart, found, err := s.personMergeContactCounterpartTx(ctx, tx, survivorID, *row.ContactPointID)
+		if err != nil {
+			return err
+		}
+		if found {
+			spec := personMergeTableRegistry[personInstructionsTableName]
+			beforeRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+				`SELECT * FROM person_instructions WHERE id=?`, []any{id}, 0,
+			)
+			if err != nil {
+				return fmt.Errorf("capture instruction before scope remap: %w", err)
+			}
+			if len(beforeRows) != 1 {
+				return fmt.Errorf("%w: instruction scope remap source is missing", ErrPersonMergeInvalid)
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET contact_point_id=? WHERE id=?`, counterpart, id); err != nil {
+				return fmt.Errorf("remap merged instruction scope: %w", err)
+			}
+			afterRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+				`SELECT * FROM person_instructions WHERE id=?`, []any{id}, 0,
+			)
+			if err != nil {
+				return fmt.Errorf("capture instruction after scope remap: %w", err)
+			}
+			if len(afterRows) != 1 {
+				return fmt.Errorf("%w: remapped instruction scope is missing", ErrPersonMergeInvalid)
+			}
+			if err := rebasePriorPersonInstructionSnapshotBaselinesTx(
+				ctx, tx, mergeID, id, beforeRows[0], afterRows[0],
+			); err != nil {
+				return fmt.Errorf("rebase prior instruction scope baseline: %w", err)
+			}
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET review_state='conflict',revision=revision+1,updated_at=? WHERE person_id=? AND review_state<>'conflict' AND status='active' AND kind IN ('address_as','prefer_channel') AND EXISTS(SELECT 1 FROM person_instructions other WHERE other.person_id=person_instructions.person_id AND other.kind=person_instructions.kind AND other.scope_key=person_instructions.scope_key AND other.status='active' AND other.instruction_key<>person_instructions.instruction_key)`, now, survivorID); err != nil {
+		return fmt.Errorf("flag merged instruction conflicts: %w", err)
+	}
+	for _, row := range absorbed {
+		if instructionRetainedOnMerge(row) {
+			continue
+		}
+		if err = s.setPersonMergeRowDispositionTx(ctx, tx, mergeID, personInstructionsTableName, row.ID, "deleted_snapshot", nil); err != nil {
+			return err
+		}
+		events, err := personMergeRowIDsTx(ctx, tx, `SELECT id FROM person_instruction_events WHERE person_id=? AND instruction_id=? AND action<>'reject'`, absorbedID, row.ID)
+		if err != nil {
+			return err
+		}
+		for _, id := range events {
+			if err = s.setPersonMergeRowDispositionTx(ctx, tx, mergeID, "person_instruction_events", id, "deleted_snapshot", nil); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE person_id=? AND instruction_id=? AND action='reject'`, survivorID, absorbedID, row.ID); err != nil {
+			return fmt.Errorf("inherit instruction rejection memory: %w", err)
+		}
+	}
+	// Events can outlive the instruction that originally produced them.
+	if _, err = tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE person_id=? AND action='reject'`, survivorID, absorbedID); err != nil {
+		return fmt.Errorf("inherit detached instruction rejections: %w", err)
+	}
+	remaining, err := personMergeRowIDsTx(ctx, tx, `SELECT id FROM person_instruction_events WHERE person_id=?`, absorbedID)
+	if err != nil {
+		return err
+	}
+	for _, id := range remaining {
+		if err = s.setPersonMergeRowDispositionTx(ctx, tx, mergeID, "person_instruction_events", id, "deleted_snapshot", nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) personMergeContactCounterpartTx(ctx context.Context, tx *loggedTx, survivorID, contactPointID int64) (int64, bool, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT survivor.id FROM person_contact_points survivor WHERE survivor.person_id=? AND survivor.id<>? AND survivor.superseded_at IS NULL AND survivor.active_until IS NULL AND EXISTS(SELECT 1 FROM person_contact_points original WHERE original.id=? AND original.source_ref IS NOT NULL AND original.vcard_prop_id IS NOT NULL AND survivor.source=original.source AND survivor.source_ref IS NOT DISTINCT FROM original.source_ref AND COALESCE(survivor.source_resource_uid,'')=COALESCE(original.source_resource_uid,'') AND survivor.vcard_property IS NOT DISTINCT FROM original.vcard_property AND survivor.vcard_prop_id IS NOT DISTINCT FROM original.vcard_prop_id AND survivor.address_kind=original.address_kind AND survivor.service_id IS NOT DISTINCT FROM original.service_id AND survivor.scope_kind IS NOT DISTINCT FROM original.scope_kind AND survivor.scope_value IS NOT DISTINCT FROM original.scope_value AND survivor.normalized_value=original.normalized_value) ORDER BY survivor.id LIMIT 1`, survivorID, contactPointID, contactPointID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("find merged contact counterpart: %w", err)
+	}
+	return id, true, nil
+}
+
+func (s *Store) personMergeInstructionContactPointTx(
+	ctx context.Context,
+	tx *loggedTx,
+	survivorID int64,
+	candidates ...*int64,
+) (sql.NullInt64, error) {
+	for _, candidate := range candidates {
+		if candidate == nil {
+			continue
+		}
+		var activeID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM person_contact_points
+			WHERE id=? AND person_id=? AND superseded_at IS NULL AND active_until IS NULL`,
+			*candidate, survivorID).Scan(&activeID)
+		if err == nil {
+			return sql.NullInt64{Int64: activeID, Valid: true}, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return sql.NullInt64{}, fmt.Errorf("check active contact point %d: %w", *candidate, err)
+		}
+		if counterpart, found, err := s.personMergeContactCounterpartTx(
+			ctx, tx, survivorID, *candidate,
+		); err != nil {
+			return sql.NullInt64{}, err
+		} else if found {
+			return sql.NullInt64{Int64: counterpart, Valid: true}, nil
+		}
+	}
+	for _, candidate := range candidates {
+		if candidate != nil {
+			return sql.NullInt64{Int64: *candidate, Valid: true}, nil
+		}
+	}
+	return sql.NullInt64{}, nil
 }

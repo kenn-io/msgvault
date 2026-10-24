@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -194,6 +196,449 @@ func TestSubsetIncludesFullySplitPersonMergePacket(t *testing.T) {
 	require.NoError(err)
 	_, err = destination.GetPersonContext(ctx, split.NewPerson.ID)
 	require.NoError(err)
+}
+
+func TestSubsetPersonInstructionsRoundTripWithMergePacket(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	survivor, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	absorbed, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	point, err := source.AddPersonContactPointContext(ctx, absorbed.ID, PersonContactPointInput{
+		AddressKind: ContactAddressEmail, OriginalValue: "bob@example.com",
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	var contactPointID int64
+	require.NoError(source.DB().QueryRowContext(ctx, `SELECT id FROM person_contact_points
+		WHERE person_id=? AND normalized_value=? AND superseded_at IS NULL AND active_until IS NULL`,
+		absorbed.ID, point.NormalizedValue).Scan(&contactPointID))
+	instruction, err := source.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: absorbed.ID, Kind: personfacts.InstructionKindAddressAs,
+		ContactPointID: &contactPointID, ValueText: "Bob", Text: "Call me Bob", Actor: "owner",
+	})
+	require.NoError(err)
+	survivor, err = source.GetPersonContext(ctx, survivor.ID)
+	require.NoError(err)
+	absorbed, err = source.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "subset-instructions-merge", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	defaultDir := filepath.Join(t.TempDir(), "default-subset")
+	_, err = CopySubsetWithOptions(sourcePath, defaultDir, 4, CopySubsetOptions{})
+	require.NoError(err)
+	defaultSubset, err := Open(filepath.Join(defaultDir, "msgvault.db"))
+	require.NoError(err)
+	var instructionCount, eventCount int
+	require.NoError(defaultSubset.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM person_instructions`).Scan(&instructionCount))
+	require.NoError(defaultSubset.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM person_instruction_events`).Scan(&eventCount))
+	assert.Zero(instructionCount)
+	assert.Zero(eventCount)
+	require.NoError(defaultSubset.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "profile-subset")
+	copyResult, err := CopySubsetWithOptions(sourcePath, destinationDir, 4, CopySubsetOptions{
+		IncludeIdentity: true, IncludeProfiles: true,
+		IncludeAttributes: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), copyResult.PersonMergePackets)
+	assert.Zero(copyResult.OmittedPersonMergePackets)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	copiedInstruction, err := destination.GetPersonInstructionContext(ctx, instruction.ID)
+	require.NoError(err)
+	assert.Equal(merged.Person.ID, copiedInstruction.PersonID)
+	assert.Equal(instruction.ScopeKey, copiedInstruction.ScopeKey)
+	require.NotNil(copiedInstruction.ContactPointID)
+	assert.Equal(contactPointID, *copiedInstruction.ContactPointID)
+	for _, action := range []string{"propose", "merge_moved"} {
+		var count int
+		require.NoError(destination.DB().QueryRowContext(ctx, `SELECT COUNT(*)
+			FROM person_instruction_events WHERE instruction_id=? AND action=?`,
+			instruction.ID, action).Scan(&count))
+		assert.Equal(1, count, action+" event must survive export")
+	}
+	_, err = destination.GetPersonMergeContext(ctx, merged.Merge.ID)
+	require.NoError(err)
+
+	current, err := destination.GetPersonContext(ctx, merged.Person.ID)
+	require.NoError(err)
+	split, err := destination.SplitPersonMergeContext(ctx, PersonSplitRequest{
+		SourcePersonID: current.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs: absorbed.ParticipantIDs, ExpectedSourceRevision: current.Revision,
+		IdempotencyKey: "subset-instructions-split", Actor: "test",
+	})
+	require.NoError(err)
+	require.True(split.ExactReversal)
+	restored, err := destination.GetPersonInstructionContext(ctx, instruction.ID)
+	require.NoError(err)
+	assert.Equal(split.NewPerson.ID, restored.PersonID)
+	assert.Equal(instruction.ScopeKey, restored.ScopeKey)
+	require.NotNil(restored.ContactPointID)
+	assert.Equal(contactPointID, *restored.ContactPointID)
+	for _, action := range []string{"propose", "merge_moved"} {
+		var count int
+		require.NoError(destination.DB().QueryRowContext(ctx, `SELECT COUNT(*)
+			FROM person_instruction_events WHERE instruction_id=? AND person_id=? AND action=?`,
+			instruction.ID, split.NewPerson.ID, action).Scan(&count))
+		assert.Equal(1, count, action+" event must follow the restored instruction")
+	}
+}
+
+func TestSubsetRemapsPersonInstructionServiceScopeAndHistory(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	_, _, err = source.EnsureCommunicationServiceContext(ctx, CommunicationServiceInput{
+		Slug: "subset-instruction-offset", DisplayLabel: "Subset Instruction Offset",
+		ScopePolicy: ScopePolicyNone, Normalization: NormalizationNone,
+		NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	service, _, err := source.EnsureCommunicationServiceContext(ctx, CommunicationServiceInput{
+		Slug: "subset-instruction-chat", DisplayLabel: "Subset Instruction Chat",
+		ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower,
+		NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	point, err := source.AddPersonContactPointContext(ctx, person.ID, PersonContactPointInput{
+		AddressKind: ContactAddressUsername, ServiceSlug: &service.Slug,
+		OriginalValue: "AliceExample", Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	var contactPointID, sourceServiceID int64
+	require.NoError(source.DB().QueryRowContext(ctx, `SELECT id,service_id
+		FROM person_contact_points WHERE person_id=? AND normalized_value=?`,
+		person.ID, point.NormalizedValue).Scan(&contactPointID, &sourceServiceID))
+	instruction, err := source.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: person.ID, Kind: personfacts.InstructionKindAddressAs,
+		ContactPointID: &contactPointID, ValueText: "Alice", Text: "Call me Alice", Actor: "owner",
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubsetWithOptions(sourcePath, destinationDir, 5, CopySubsetOptions{
+		IncludeIdentity: true, IncludeProfiles: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	copiedService, err := destination.ResolveCommunicationServiceContext(ctx, service.Slug)
+	require.NoError(err)
+	assert.NotEqual(sourceServiceID, copiedService.ID)
+	copied, err := destination.GetPersonInstructionContext(ctx, instruction.ID)
+	require.NoError(err)
+
+	var eventKey string
+	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT instruction_key
+		FROM person_instruction_events WHERE instruction_id=? AND action='propose'`,
+		instruction.ID).Scan(&eventKey))
+	assert.Equal(copied.InstructionKey, eventKey)
+	_, err = destination.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: copied.PersonID, Kind: personfacts.InstructionKindAddressAs,
+		ContactPointID: copied.ContactPointID, ValueText: "Alice", Text: "Call me Alice", Actor: "owner",
+	})
+	require.ErrorIs(err, ErrInstructionDuplicate)
+}
+
+func TestSubsetLegacyInstructionsBackfillTextBeforeScopeRemap(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	_, _, err = source.EnsureCommunicationServiceContext(ctx, CommunicationServiceInput{
+		Slug: "subset-legacy-instruction-service-offset", DisplayLabel: "Subset Legacy Instruction Service Offset",
+		ScopePolicy: ScopePolicyNone, Normalization: NormalizationNone,
+		NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	service, _, err := source.EnsureCommunicationServiceContext(ctx, CommunicationServiceInput{
+		Slug: "subset-legacy-instruction-chat", DisplayLabel: "Subset Legacy Instruction Chat",
+		ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower,
+		NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	point, err := source.AddPersonContactPointContext(ctx, person.ID, PersonContactPointInput{
+		AddressKind: ContactAddressUsername, ServiceSlug: &service.Slug,
+		OriginalValue: "AliceExample", Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	var contactPointID int64
+	require.NoError(source.DB().QueryRowContext(ctx, `SELECT id FROM person_contact_points
+		WHERE person_id=? AND normalized_value=?`, person.ID, point.NormalizedValue).Scan(&contactPointID))
+	instruction, err := source.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: person.ID, Kind: personfacts.InstructionKindAddressAs,
+		ContactPointID: &contactPointID, ValueText: "Alice", Text: "Call me Alice", Actor: "owner",
+	})
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `ALTER TABLE person_instructions DROP COLUMN original_text`)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubsetWithOptions(sourcePath, destinationDir, 5, CopySubsetOptions{
+		IncludeIdentity: true, IncludeProfiles: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	copied, err := destination.GetPersonInstructionContext(ctx, instruction.ID)
+	require.NoError(err)
+	copiedService, err := destination.ResolveCommunicationServiceContext(ctx, service.Slug)
+	require.NoError(err)
+
+	assert.NotEqual(service.ID, copiedService.ID)
+	assert.Equal(copied.NormalizedText, copied.Text)
+	assert.Equal(personfacts.InstructionKey(copied.Kind, copied.ScopeKey,
+		copied.ValueText, copied.Text), copied.InstructionKey)
+	_, err = destination.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: copied.PersonID, Kind: copied.Kind,
+		ContactPointID: copied.ContactPointID, ValueText: copied.ValueText,
+		Text: instruction.Text, Actor: "owner",
+	})
+	require.ErrorIs(err, ErrInstructionDuplicate)
+}
+
+func TestSubsetDropsSplitContactReferenceAndRemapsInstructionService(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	survivor, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	absorbed, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	_, _, err = source.EnsureCommunicationServiceContext(ctx, CommunicationServiceInput{
+		Slug: "subset-excluded-service-offset", DisplayLabel: "Subset Excluded Service Offset",
+		ScopePolicy: ScopePolicyNone, Normalization: NormalizationNone,
+		NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	service, _, err := source.EnsureCommunicationServiceContext(ctx, CommunicationServiceInput{
+		Slug: "subset-split-contact-chat", DisplayLabel: "Subset Split Contact Chat",
+		ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower,
+		NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	point, err := source.AddPersonContactPointContext(ctx, absorbed.ID, PersonContactPointInput{
+		AddressKind: ContactAddressUsername, ServiceSlug: &service.Slug,
+		OriginalValue: "AliceExample", Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	var contactPointID, sourceServiceID int64
+	require.NoError(source.DB().QueryRowContext(ctx, `SELECT id,service_id FROM person_contact_points
+		WHERE person_id=? AND normalized_value=?`, absorbed.ID, point.NormalizedValue).
+		Scan(&contactPointID, &sourceServiceID))
+
+	survivor, err = source.GetPersonContext(ctx, survivor.ID)
+	require.NoError(err)
+	absorbed, err = source.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "subset-split-contact-merge", Actor: "owner",
+	})
+	require.NoError(err)
+	instruction, err := source.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: merged.Person.ID, Kind: personfacts.InstructionKindAddressAs,
+		ContactPointID: &contactPointID, ValueText: "Alice", Text: "Call me Alice", Actor: "owner",
+	})
+	require.NoError(err)
+	current, err := source.GetPersonContext(ctx, merged.Person.ID)
+	require.NoError(err)
+	split, err := source.SplitPersonMergeContext(ctx, PersonSplitRequest{
+		SourcePersonID: current.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs: absorbed.ParticipantIDs, ExpectedSourceRevision: current.Revision,
+		IdempotencyKey: "subset-split-contact-split", Actor: "owner",
+	})
+	require.NoError(err)
+	var splitContactOwner int64
+	require.NoError(source.DB().QueryRowContext(ctx,
+		`SELECT person_id FROM person_contact_points WHERE id=?`, contactPointID).
+		Scan(&splitContactOwner))
+	assert.Equal(split.NewPerson.ID, splitContactOwner)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubsetWithOptions(sourcePath, destinationDir, 1, CopySubsetOptions{
+		IncludeProfiles: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	copied, err := destination.GetPersonInstructionContext(ctx, instruction.ID)
+	require.NoError(err)
+	assert.Equal(survivor.ID, copied.PersonID)
+	assert.Nil(copied.ContactPointID)
+	assert.True(copied.ScopeMissing)
+
+	copiedService, err := destination.ResolveCommunicationServiceContext(ctx, service.Slug)
+	require.NoError(err)
+	assert.NotEqual(sourceServiceID, copiedService.ID)
+	var copiedScope personInstructionScopeIdentity
+	require.NoError(json.Unmarshal([]byte(copied.ScopeKey), &copiedScope))
+	require.NotNil(copiedScope.ServiceID)
+	assert.Equal(copiedService.ID, *copiedScope.ServiceID)
+
+	_, err = destination.AddPersonContactPointContext(ctx, copied.PersonID, PersonContactPointInput{
+		AddressKind: ContactAddressUsername, ServiceSlug: &service.Slug,
+		OriginalValue: "AliceExample", Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	var copiedContactPointID int64
+	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT id FROM person_contact_points
+		WHERE person_id=? AND normalized_value=?`, copied.PersonID, point.NormalizedValue).
+		Scan(&copiedContactPointID))
+	_, err = destination.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: copied.PersonID, Kind: personfacts.InstructionKindAddressAs,
+		ContactPointID: &copiedContactPointID, ValueText: "Alice", Text: "Call me Alice", Actor: "owner",
+	})
+	require.ErrorIs(err, ErrInstructionDuplicate)
+}
+
+func TestSubsetClearsSupersedesReferenceOutsideIncludedPeople(t *testing.T) {
+	require := require.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	included, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	excluded, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	includedInstruction, err := source.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: included.ID, Kind: personfacts.InstructionKindTopic,
+		Text: "avoid late meetings", Actor: "owner",
+	})
+	require.NoError(err)
+	excludedInstruction, err := source.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: excluded.ID, Kind: personfacts.InstructionKindTopic,
+		Text: "avoid early meetings", Actor: "owner",
+	})
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, source.Rebind(
+		`UPDATE person_instructions SET supersedes_id=? WHERE id=?`),
+		excludedInstruction.ID, includedInstruction.ID)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubsetWithOptions(sourcePath, destinationDir, 1, CopySubsetOptions{
+		IncludeProfiles: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	copied, err := destination.GetPersonInstructionContext(ctx, includedInstruction.ID)
+	require.NoError(err)
+	assert.Nil(t, copied.SupersedesID)
+}
+
+func TestSubsetMergePacketAcceptsRestorableHistoricalInstructionEvents(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	survivor, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	absorbed, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	survivorInstruction, err := source.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: survivor.ID, Kind: personfacts.InstructionKindTopic,
+		Text: "avoid work", Actor: "owner",
+	})
+	require.NoError(err)
+	absorbedInstruction, err := source.AddPersonInstructionContext(ctx, PersonInstructionInput{
+		PersonID: absorbed.ID, Kind: personfacts.InstructionKindTopic,
+		Text: "avoid work", Actor: "owner",
+	})
+	require.NoError(err)
+	survivor, err = source.GetPersonContext(ctx, survivor.ID)
+	require.NoError(err)
+	absorbed, err = source.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "subset-historical-instruction-event", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	copyResult, err := CopySubsetWithOptions(sourcePath, destinationDir, 5, CopySubsetOptions{
+		IncludeIdentity: true, IncludeProfiles: true,
+		IncludeAttributes: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), copyResult.PersonMergePackets)
+	assert.Zero(copyResult.OmittedPersonMergePackets)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	current, err := destination.GetPersonContext(ctx, merged.Person.ID)
+	require.NoError(err)
+	split, err := destination.SplitPersonMergeContext(ctx, PersonSplitRequest{
+		SourcePersonID: current.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs: absorbed.ParticipantIDs, ExpectedSourceRevision: current.Revision,
+		IdempotencyKey: "subset-historical-instruction-event-split", Actor: "test",
+	})
+	require.NoError(err)
+	require.True(split.ExactReversal)
+	assert.Equal(merged.Person.ID, testSubsetInstructionPersonID(t, destination, survivorInstruction.ID))
+	assert.Equal(split.NewPerson.ID, testSubsetInstructionPersonID(t, destination, absorbedInstruction.ID))
+	var restoredEvents int
+	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT COUNT(*)
+		FROM person_instruction_events WHERE instruction_id=? AND person_id=? AND action='propose'`,
+		absorbedInstruction.ID, split.NewPerson.ID).Scan(&restoredEvents))
+	assert.Equal(1, restoredEvents)
+}
+
+func testSubsetInstructionPersonID(t *testing.T, st *Store, instructionID int64) int64 {
+	t.Helper()
+	var personID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(),
+		`SELECT person_id FROM person_instructions WHERE id=?`, instructionID).Scan(&personID))
+	return personID
 }
 
 func TestSubsetPersonMergePacketCanSplitAfterNewPersonCreation(t *testing.T) {
