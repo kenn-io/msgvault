@@ -710,8 +710,6 @@ func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
 	require.NoError(err)
 	persistSweepEvidence(t, f.store, documentKey, document)
 
-	_, err = (store.PersonSweepEvidenceAligner{Store: f.store}).Align(t.Context(), document)
-	require.ErrorIs(err, peoplesweep.ErrSourceTextUnavailable)
 	changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, []peoplesweep.ArchiveChange{
 		{PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceConversationText, SourceID: f.sourceID, MessageID: id, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited},
 	})

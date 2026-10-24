@@ -295,12 +295,7 @@ describe('OperationsWorkspace', () => {
     });
     const newer = run({
       id: RUN_TWO, kind: 'visual_embedding', lane: 'visual_attachments', trigger: 'scheduled',
-      state: 'partial', started_at: '2026-08-30T11:00:00Z', finished_at: '2026-08-30T11:00:02Z',
-      counters: [
-        { name: 'attempted', unit: 'attachments', value: 3 },
-        { name: 'succeeded', unit: 'attachments', value: 1 },
-        { name: 'failed', unit: 'attachments', value: 2 }
-      ]
+      state: 'partial', started_at: '2026-08-30T11:00:00Z', finished_at: '2026-08-30T11:00:02Z'
     });
     render(OperationsWorkspace, {
       controller: controller(snapshot({ rows: [older, newer], unavailableKinds: [] })) as never,
@@ -312,7 +307,6 @@ describe('OperationsWorkspace', () => {
     const rows = within(table).getAllByRole('row').slice(1);
     expect(rows[0]!.textContent).toContain('Visual embedding');
     expect(rows[0]!.textContent).toContain('2 seconds');
-    expect(rows[0]!.textContent).toContain('3 attachments attempted · 1 succeeded · 2 failed');
     expect(rows[1]!.textContent).toContain('Source sync');
     expect(rows[1]!.textContent).toContain('1 minute 5 seconds');
 

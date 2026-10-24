@@ -225,37 +225,6 @@ func TestOpenAIProviderProfileOperationalFieldsExcluded(t *testing.T) {
 	}
 }
 
-func TestProviderFingerprintIncludesEgressPolicy(t *testing.T) {
-	base := validConfig()
-	want, err := base.Profile()
-	require.NoError(t, err)
-
-	for _, mutation := range []struct {
-		name   string
-		mutate func(*peoplesweep.Config)
-	}{
-		{"endpoint", providerMutation(func(p *peoplesweep.ProviderConfig) { p.Endpoint = "https://other.example.test/v1" })},
-		{"model", providerMutation(func(p *peoplesweep.ProviderConfig) { p.Model = "other-model" })},
-		{"key environment", providerMutation(func(p *peoplesweep.ProviderConfig) { p.CredentialEnv = "OTHER_KEY" })},
-		{"retention", providerMutation(func(p *peoplesweep.ProviderConfig) { p.RetentionPosture = "provider-policy" })},
-		{"training", providerMutation(func(p *peoplesweep.ProviderConfig) { p.TrainingPosture = "provider-policy" })},
-		{"sources", providerMutation(func(p *peoplesweep.ProviderConfig) {
-			p.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}
-		})},
-		{"source since", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceSince = "2024-01-01" })},
-		{"source until", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceUntil = "2026-01-01" })},
-		{"sensitive", providerMutation(func(p *peoplesweep.ProviderConfig) { p.AllowSensitive = true })},
-	} {
-		t.Run(mutation.name, func(t *testing.T) {
-			gotConfig := cloneConfig(base)
-			mutation.mutate(&gotConfig)
-			got, profileErr := gotConfig.Profile()
-			require.NoError(t, profileErr)
-			assert.NotEqual(t, want.Fingerprint, got.Fingerprint)
-		})
-	}
-}
-
 func TestProviderFingerprintIncludesProtocolCapabilities(t *testing.T) {
 	newAssert := assert.New
 	newRequire := require.New
@@ -517,6 +486,9 @@ func TestProviderProfileFingerprintCoversConsentPolicy(t *testing.T) {
 		})},
 		{"retention", providerMutation(func(p *peoplesweep.ProviderConfig) { p.RetentionPosture = "provider_policy" })},
 		{"training", providerMutation(func(p *peoplesweep.ProviderConfig) { p.TrainingPosture = "provider_policy" })},
+		{"sources", providerMutation(func(p *peoplesweep.ProviderConfig) {
+			p.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}
+		})},
 		{"source since", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceSince = "2024-01-01" })},
 		{"source until", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceUntil = "2026-01-01" })},
 		{"sensitive", providerMutation(func(p *peoplesweep.ProviderConfig) { p.AllowSensitive = true })},

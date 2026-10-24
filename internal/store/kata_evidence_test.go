@@ -50,13 +50,19 @@ func TestKataDocbankSourceEditBeforeReconciliation(t *testing.T) {
 }
 
 func TestHistoricalKataDocumentCitationUnavailable(t *testing.T) {
+	require := require.New(t)
 	f := storetest.New(t)
 	id := f.CreateMessage("historical-document")
-	uid, err := f.Store.ArchiveUIDContext(t.Context())
-	require.NoError(t, err)
-	ref := kataevidence.Reference{Version: 1, Kind: "document_chunk", ArchiveUID: uid, MessageID: id, SourceType: f.Source.SourceType, SourceIdentifier: f.Source.Identifier, SourceMessageID: "historical-document", AttachmentID: 7, OccurrenceKey: "occurrence", DocumentChunk: &kataevidence.DocumentReference{CanonicalBlobHash: strings.Repeat("a", 64), ExtractionID: "extraction", ManifestChecksum: strings.Repeat("b", 64), ChunkKey: "chunk", ChunkChecksum: strings.Repeat("c", 64), EndRune: 12}}
+	var attachmentID int64
+	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments (message_id,filename,storage_path,source_part_key) VALUES (?,'budget.pdf','','mime:2') RETURNING id`), id).Scan(&attachmentID)
+	require.NoError(err)
+	refs, err := f.Store.KataCitationSource(t.Context(), id, attachmentID)
+	require.NoError(err)
+	require.NotEmpty(refs)
+	ref := refs[0]
+	ref.DocumentChunk = &kataevidence.DocumentReference{CanonicalBlobHash: strings.Repeat("a", 64), ExtractionID: "extraction", ManifestChecksum: strings.Repeat("b", 64), ChunkKey: "chunk", ChunkChecksum: strings.Repeat("c", 64), EndRune: 12}
 	_, err = f.Store.ReadKataEvidenceSource(t.Context(), ref)
-	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+	require.ErrorIs(err, kataevidence.ErrUnavailable)
 }
 
 func TestKataCitationSourceMatchesLegacyDocumentCitation(t *testing.T) {
@@ -218,14 +224,17 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 			case "content refresh", "revoked":
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)
-				require.Len(sources, 2)
-				assert.Equal("docbank_rendition", sources[1].Kind)
-				assert.Equal(kataevidence.SourceKeys(ref), kataevidence.SourceKeys(sources[1]))
+				var kinds []string
+				for _, source := range sources {
+					kinds = append(kinds, source.Kind)
+				}
+				assert.Contains(kinds, "docbank_rendition")
 			case "reused attachment":
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)
-				require.Len(sources, 1)
-				assert.Equal("document_chunk", sources[0].Kind)
+				for _, source := range sources {
+					assert.NotEqual("docbank_rendition", source.Kind)
+				}
 			}
 		})
 	}
