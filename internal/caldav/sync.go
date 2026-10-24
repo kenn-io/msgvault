@@ -341,7 +341,7 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 	if err := st.UpdateSourceSyncConfigContext(ctx, src.ID, string(configJSON)); err != nil {
 		return result, err
 	}
-	if err := st.UpdateSourceDisplayNameContext(ctx, src.ID, cal.DisplayName); err != nil {
+	if err := st.UpdateSourceDisplayNameContext(ctx, src.ID, cal.DisplayName); err != nil && !errors.Is(err, store.ErrSourceSettingsInvalid) {
 		return result, err
 	}
 	token := src.SyncCursor.String
