@@ -271,9 +271,8 @@ func outputMessageJSON(w io.Writer, msg *query.MessageDetail) error {
 	if showMessageStripQuoted {
 		msg = readableMessageDetail(msg)
 	}
-	output := messageJSONValue(msg)
 	enc := jsontext.NewEncoder(w, jsontext.WithIndent("  "))
-	return json.MarshalEncode(enc, output, json.Deterministic(true))
+	return json.MarshalEncode(enc, messageJSONValue(msg), json.Deterministic(true))
 }
 
 func formatAddresses(addrs []query.Address) string {
