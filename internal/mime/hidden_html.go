@@ -251,7 +251,9 @@ func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
 		case "mso-hide":
 			state.hidden = state.hidden || value == "all"
 		case "opacity":
-			state.hidden = state.hidden || zeroCSSLength(value)
+			// Browsers clamp negative opacity to zero.
+			number, _, valid := inlineCSSLength(value)
+			state.hidden = state.hidden || valid && number <= 0
 		case "visibility":
 			if !slices.Contains(inheritCSSKeywords, value) {
 				state.invisible = value == "hidden" || value == "collapse"
@@ -371,6 +373,9 @@ func inlineHTMLColor(value string) string {
 			number, err := strconv.ParseFloat(strings.TrimSuffix(channel, "%"), 64)
 			if err != nil || !(number >= 0 && number <= maximum) {
 				return ""
+			}
+			if i == 3 && maximum == 100 {
+				number /= 100
 			}
 			if i < 3 {
 				rgb[i] = int(math.Round(255 * number / maximum))

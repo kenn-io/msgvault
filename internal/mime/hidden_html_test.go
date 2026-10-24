@@ -143,6 +143,8 @@ func TestHTMLHasHiddenText(t *testing.T) {
 		{"font shorthand skips weight", `<div style="font:700 0px Arial">Text</div>`, true},
 		{"translucent background", `<div style="color:white;background:rgba(255,255,255,0.1)">Text</div>`, false},
 		{"relative offscreen", `<div style="position:relative;left:-9999px">Text</div>`, true},
+		{"negative opacity", `<div style="opacity:-1">Text</div>`, true},
+		{"percent alpha background", `<div style="color:white;background:rgba(255,255,255,10%)">Text</div>`, false},
 		{"transparent child background", `<div style="background:white"><span style="color:white;background:transparent">Text</span></div>`, true},
 		{"last color wins", `<div style="color:black;color:white;background:white">Text</div>`, true},
 		{"visible last color", `<div style="color:white;color:black;background:white">Text</div>`, false},
