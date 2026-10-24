@@ -172,6 +172,7 @@ func testImporter(t *testing.T, f *fakeSlack) (*Importer, ImportOptions) {
 	client.disableRateLimits()
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	require.Equal(t, defaultCheckpointMinInterval, imp.checkpointMinInterval)
 	imp.checkpointMinInterval = 0
 	return imp, ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true}
 }
@@ -2548,6 +2549,47 @@ func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {
 }
 
 func TestStandingLimitConvergesThroughThreadDebt(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	// The OLDEST message is a root with more replies than the standing
+	// limit; several newer top-levels sit above it. Newest-first pagination
+	// reaches the root last, so the drain must carry the thread across runs.
+	busyRoot := fakeMsg{TS: ts(0), User: "UME", Text: "busy root"}
+	for i := range 12 {
+		busyRoot.Replies = append(busyRoot.Replies,
+			fakeMsg{TS: ts(i + 1), ThreadTS: busyRoot.TS, User: "UME", Text: "reply " + strconv.Itoa(i)})
+	}
+	conv := &fakeConv{ID: "C30", Name: "steady", Kind: "public", Members: []string{"UME"}, Msgs: []fakeMsg{busyRoot}}
+	for i := range 5 {
+		conv.Msgs = append(conv.Msgs, fakeMsg{TS: ts(100 + i), User: "UME", Text: "top " + strconv.Itoa(i)})
+	}
+	f.convs = []*fakeConv{conv}
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// A standing --limit cron must converge to a complete archive BY
+	// ITSELF: each run makes durable progress (history pages, then reply
+	// drain resumed from the per-thread drained-to ts) — no unlimited run
+	// required, no stall.
+	limited := opts
+	limited.Limit = 4
+	for range 12 {
+		_, err := imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+	var total, distinct int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(18, total, "repeated limited runs must drain the whole archive, thread included")
+	assert.Equal(distinct, total)
+}
+
+func TestImportLimitBoundsThreadRepliesThenConverges(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
