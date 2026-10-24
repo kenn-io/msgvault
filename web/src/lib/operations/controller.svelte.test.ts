@@ -182,7 +182,14 @@ describe('OperationsController', () => {
     expect((controller.snapshot as { historyReadable?: boolean }).historyReadable).toBe(false);
     expect(controller.snapshot.rows).toEqual([]);
     status.resolve(Response.json(statusResponse()));
-    history.resolve(Response.json(runsResponse([run(RUN_ONE, 'visual_embedding', 'visual_attachments', 'partial')])));
+    history.resolve(Response.json(runsResponse([{
+      ...run(RUN_ONE, 'visual_embedding', 'visual_attachments', 'partial'),
+      counters: [
+        { name: 'attempted', unit: 'attachments', value: 3 },
+        { name: 'succeeded', unit: 'attachments', value: 1 },
+        { name: 'failed', unit: 'attachments', value: 2 }
+      ]
+    }])));
     await loading;
 
     const historyRequest = requests.find((request) => new URL(request.url).pathname.endsWith('/runs'))!;
