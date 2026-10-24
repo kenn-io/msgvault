@@ -47,7 +47,8 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 			if d.Outcome == "requested" {
 				assert.Zero(unasked, "due jobs come before unasked files")
 				requested++
-				require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Now().Add(time.Minute)))
+				d.Outcome = "extracted"
+				require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Time{}))
 			} else {
 				require.Equal(25, requested, "poll every due job before planning new files")
 				unasked++
