@@ -1,6 +1,6 @@
 //go:build cgo
 
-package store
+package testutil
 
 /*
 // Use SQLite's stable API without requiring system SQLite headers.
@@ -14,7 +14,7 @@ static void disable_memstatus(void) {
 import "C"
 
 func init() {
-	// Disable allocation statistics before any connection opens to avoid
-	// SQLite's process-wide memory-accounting mutex.
+	// This test-only setting disables allocation statistics before any connection
+	// opens to avoid SQLite's process-wide memory-accounting mutex.
 	C.disable_memstatus()
 }
