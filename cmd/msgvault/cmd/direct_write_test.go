@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestAcquireDirectSQLiteWriteLockSkipsPostgreSQL(t *testing.T) {
@@ -282,12 +283,7 @@ func TestEmbeddingsListReadsMetadataWhenArchiveOwned(t *testing.T) {
 	testCfg := lifecycleTestConfig(dataDir)
 	testCtx := withStoreResolverConfig(t, testCfg)
 
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(
-		err, "open test archive")
-
-	require.NoError(
-		st.InitSchema(), "init test archive")
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 
 	require.NoError(
 		st.Close(), "close test archive")
@@ -363,12 +359,7 @@ func TestBuildCacheFailsFastWhenArchiveOwned(t *testing.T) {
 	testCtx := withStoreResolverConfig(t, testCfg)
 	_ = testCtx
 
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(
-		err, "open test archive")
-
-	require.NoError(
-		st.InitSchema(), "init test archive")
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 
 	require.NoError(
 		st.Close(), "close test archive")

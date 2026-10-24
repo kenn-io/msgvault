@@ -121,10 +121,8 @@ func TestOpenBeeperImporterExplainsFilteredAccountsWithoutBlamingHistoryOnly(t *
 	cfg.Beeper.ExcludeAccounts = []string{"signal"}
 	require.NoError(beeper.SaveToken(cfg.TokensDir(), "synthetic-token"))
 
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
 	require.NoError(err)
 	require.NoError(st.Close())
 

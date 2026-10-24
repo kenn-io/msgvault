@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestBuildCacheMergedHistoryDeletionEligibility(t *testing.T) {
@@ -24,10 +25,7 @@ func TestBuildCacheMergedHistoryDeletionEligibility(t *testing.T) {
 			dir := t.TempDir()
 			dbPath := filepath.Join(dir, "archive.db")
 			analytics := filepath.Join(dir, "analytics")
-			st, err := store.OpenForTest(dbPath)
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			require.NoError(st.InitSchema())
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 			history, err := st.GetOrCreateSource("gmail", "history@example.test")
 			require.NoError(err)
 			live, err := st.GetOrCreateSource("gmail", "live@example.test")

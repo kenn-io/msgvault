@@ -372,9 +372,7 @@ func TestRemoveAccountTypeRejectsSameTypeDisplayCollision(t *testing.T) {
 	assert := assert.New(t)
 
 	tmpDir := t.TempDir()
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	first, err := s.GetOrCreateSource("gmail", "first@example.test")
 	require.NoError(err)
 	second, err := s.GetOrCreateSource("gmail", "second@example.test")
@@ -413,9 +411,7 @@ func TestRemoveAccountMatrixLogoutFailureLeavesSourceAndCredentials(t *testing.T
 	}))
 	t.Cleanup(server.Close)
 
-	s, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := s.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 	require.NoError(err)
 	require.NoError(s.Close())
@@ -451,9 +447,7 @@ func TestRemoveAccountSourceIDDeletesOnlyExactSource(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-	s, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	gmail, err := s.GetOrCreateSource("gmail", "shared@example.test")
 	require.NoError(err)
 	imap, err := s.GetOrCreateSource("imap", "shared@example.test")
@@ -579,9 +573,7 @@ func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"aa/hashA", "hashA")
@@ -606,7 +598,7 @@ func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
-	_, err = os.Stat(filePath)
+	_, err := os.Stat(filePath)
 	assert.True(t, os.IsNotExist(err), "expected attachment file deleted, err = %v", err)
 	assert.FileExists(t, orphanPath, "account removal keeps unrelated orphan files")
 }
@@ -618,9 +610,7 @@ func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	// Both accounts reference the same content_hash/storage_path.
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
@@ -647,7 +637,7 @@ func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
-	_, err = os.Stat(filePath)
+	_, err := os.Stat(filePath)
 	assert.NoError(t, err, "shared attachment file should be preserved")
 }
 
@@ -664,12 +654,10 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	thumbnailHash := fmt.Sprintf("%x", sha256.Sum256(thumbnail))
 	thumbnailPath := thumbnailHash[:2] + "/" + thumbnailHash
 
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a", storagePath, hash)
-	_, err = s.DB().Exec(s.Rebind(`UPDATE attachments SET size = ? WHERE content_hash = ?`), len(content), hash)
+	_, err := s.DB().Exec(s.Rebind(`UPDATE attachments SET size = ? WHERE content_hash = ?`), len(content), hash)
 	require.NoError(err)
 	_, err = s.DB().Exec(s.Rebind(`
 		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
@@ -729,9 +717,7 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"cc/hashA", "hashA")
@@ -785,9 +771,7 @@ func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testin
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"dd/hashA", "hashA")
@@ -829,9 +813,7 @@ func TestRemoveAccountConfirmedDoesNotBypassActiveSyncGuard(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
 
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"ee/hashA", "hashA")
@@ -875,9 +857,7 @@ func TestRemoveAccountCmd_NotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -897,7 +877,7 @@ func TestRemoveAccountCmd_NotFound(t *testing.T) {
 		"remove-account", "nobody@example.com", "--yes",
 	})
 
-	err = root.Execute()
+	err := root.Execute()
 	require.Error(err, "expected error for unknown email")
 	assert.ErrorContains(t, err, "no account found")
 }
@@ -909,11 +889,9 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
-	_, err = s.GetOrCreateSource("gmail", "test@example.com")
+	_, err := s.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err, "create source")
 	_ = s.Close()
 
@@ -950,10 +928,8 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(s.InitSchema())
-	_, err = s.GetOrCreateSource(sourceTypeGmail, "test@example.com")
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
+	_, err := s.GetOrCreateSource(sourceTypeGmail, "test@example.com")
 	require.NoError(err)
 	require.NoError(s.Close())
 	testCfg := &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
@@ -995,9 +971,7 @@ func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedQueryableMessageWithAttachment(t, s)
 	require.NoError(s.Close())
 
@@ -1006,7 +980,7 @@ func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
-	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 
 	engine, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), "", nil)
@@ -1067,9 +1041,7 @@ func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedMessageWithAttachment(t, s, "test@example.com",
 		"thread1", "msg1", "aa/bb/a.pdf", "hash-a")
 	_ = s.Close()
@@ -1083,7 +1055,7 @@ func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
 
-	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 	stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
 	_, err = os.Stat(stateFile)
@@ -1129,11 +1101,9 @@ func TestRemoveAccountCmd_CascadeFailureRestoresCache(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 	attachmentPath := seedAttachmentFile(t, filepath.Join(tmpDir, "attachments"), "aa/bb/a.pdf", "attachment")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedQueryableMessageWithAttachment(t, s)
-	_, err = s.DB().Exec(`
+	_, err := s.DB().Exec(`
 		CREATE TRIGGER abort_source_delete
 		BEFORE DELETE ON sources
 		BEGIN
@@ -1181,11 +1151,9 @@ func TestRemoveAccountCmd_CascadeFailureJoinsRecoveryFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedQueryableMessageWithAttachment(t, s)
-	_, err = s.DB().Exec(`
+	_, err := s.DB().Exec(`
 		CREATE TRIGGER abort_source_delete
 		BEFORE DELETE ON sources
 		BEGIN
@@ -1223,9 +1191,7 @@ func TestRemoveAccountCmd_LockFailureLeavesSourceUntouched(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedQueryableMessageWithAttachment(t, s)
 	require.NoError(s.Close())
 
@@ -1234,7 +1200,7 @@ func TestRemoveAccountCmd_LockFailureLeavesSourceUntouched(t *testing.T) {
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
-	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 
 	statePath := query.CacheStatePath(cfg.AnalyticsDir())
@@ -1264,9 +1230,7 @@ func TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedMessageWithAttachment(t, s, "test@example.com",
 		"thread1", "msg1", "aa/bb/a.pdf", "hash-a")
 	_ = s.Close()
@@ -1280,7 +1244,7 @@ func TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache(t *testing.T) {
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
 
-	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 
 	root := newTestRootCmd()
@@ -1303,11 +1267,9 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
-	_, err = s.GetOrCreateSource("gmail", "dup@example.com")
+	_, err := s.GetOrCreateSource("gmail", "dup@example.com")
 	require.NoError(err, "create gmail source")
 	_, err = s.GetOrCreateSource("mbox", "dup@example.com")
 	require.NoError(err, "create mbox source")
@@ -1367,10 +1329,8 @@ func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	_, err = s.GetOrCreateSource("gmail", "tok@example.com")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := s.GetOrCreateSource("gmail", "tok@example.com")
 	require.NoError(err, "create source")
 	_ = s.Close()
 
@@ -1410,10 +1370,8 @@ func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	_, err = s.GetOrCreateSource("teams", "tok@example.com")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := s.GetOrCreateSource("teams", "tok@example.com")
 	require.NoError(err, "create source")
 	_ = s.Close()
 
@@ -1453,9 +1411,7 @@ func TestRemoveAccountCmd_DiscordDeletesTokenOnlyAfterFinalBotReference(t *testi
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
-	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	first, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
 	require.NoError(err)
 	second, err := st.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
@@ -1497,9 +1453,7 @@ func TestRemoveAccountCmd_DiscordPreservesTokenDuringActiveSync(t *testing.T) {
 
 	require := require.New(t)
 	tmpDir := t.TempDir()
-	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	source, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
 	require.NoError(err)
 	_, err = st.StartSync(source.ID, "discord")
@@ -1532,9 +1486,7 @@ func TestRemoveAccountCmd_DiscordPreservesTokenWhenRemainingBindingCannotResolve
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
-	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	removed, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
 	require.NoError(err)
 	remaining, err := st.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
@@ -1574,9 +1526,7 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	first, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
 	require.NoError(err)
 	require.NoError(st.UpdateSourceOAuthApp(first.ID, sql.NullString{String: "archive", Valid: true}))
@@ -1683,10 +1633,8 @@ func TestRemoveAccountCmd_CirclebackRemovesToken(t *testing.T) {
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	_, err = s.GetOrCreateSource(sourceTypeCircleback, "tok@example.com")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := s.GetOrCreateSource(sourceTypeCircleback, "tok@example.com")
 	require.NoError(err, "create source")
 	require.NoError(s.Close(), "close store")
 
@@ -1722,10 +1670,8 @@ func TestRemoveAccountCmd_RemovesNotionMeetingSource(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource(sourceTypeNotionMeetings, "notion-personal")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := st.GetOrCreateSource(sourceTypeNotionMeetings, "notion-personal")
 	require.NoError(err)
 	require.NoError(st.Close())
 
@@ -1758,10 +1704,8 @@ func TestRemoveAccountCmd_SlackRemovesToken(t *testing.T) {
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	_, err = s.GetOrCreateSource(sourceTypeSlack, "T01:UME")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := s.GetOrCreateSource(sourceTypeSlack, "T01:UME")
 	require.NoError(err, "create source")
 	require.NoError(s.Close(), "close store")
 
@@ -1801,10 +1745,8 @@ func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	_, err = s.GetOrCreateSource("mbox", "imp@example.com")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := s.GetOrCreateSource("mbox", "imp@example.com")
 	require.NoError(err, "create source")
 	_ = s.Close()
 
@@ -1840,9 +1782,7 @@ func TestResolveSource_IMAPDisplayName(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	// Create an IMAP source whose identifier is a URL, display_name is the email.
 	src, err := s.GetOrCreateSource("imap", "imaps://user%40outlook.com@outlook.office365.com:993")
@@ -1867,10 +1807,8 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	_, err = s.GetOrCreateSource("gmail", "eof@example.com")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := s.GetOrCreateSource("gmail", "eof@example.com")
 	require.NoError(err, "create source")
 	_ = s.Close()
 
@@ -1947,9 +1885,7 @@ func TestRemoveAccountCommandStorePreservesSharedGrant(t *testing.T) {
 			token := []byte(`{"access_token":"expired","refresh_token":"example-refresh","expiry":"2000-01-01T00:00:00Z","client_id":"example-client","scopes":["https://www.googleapis.com/auth/gmail.readonly"]}`)
 			const removedEmail, remainingEmail = "user.name@gmail.com", "username@gmail.com"
 			require.NoError(tokenStore.Write(t.Context(), removedEmail, token))
-			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(err)
-			require.NoError(st.InitSchema())
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			removed, err := st.GetOrCreateSource("gmail", removedEmail)
 			require.NoError(err)
 			if shared {
@@ -2004,10 +1940,7 @@ func TestRemoveAccountMatrixPreservesMergedDestinationCredentials(t *testing.T) 
 				_, _ = w.Write([]byte(`{}`))
 			}))
 			t.Cleanup(server.Close)
-			st, err := store.Open(dbPath)
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			require.NoError(st.InitSchema())
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 			destination, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 			require.NoError(err)
 			if merged {
@@ -2059,10 +1992,7 @@ func TestRemoveAccountMatrixFencesMergeDuringLogout(t *testing.T) {
 	assert := assert.New(t)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	destination, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 	require.NoError(err)
 	history, err := st.GetOrCreateSource(sourceTypeMatrix, "@history:example.org")

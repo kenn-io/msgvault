@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestRunRepairListIDsLocalDryRunApplyAndNoop catches a repair command that
@@ -201,9 +202,7 @@ func newListIDRepairArchive(t *testing.T, configs ...*config.Config) listIDRepai
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "archive@example.test")
 	require.NoError(t, err)
 	conversationID, err := st.EnsureConversation(source.ID, "list-id-repair-thread", "List-Id repair")

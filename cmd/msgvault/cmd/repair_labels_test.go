@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestRunRepairLabelsLocalDryRunApplyAndNoop catches a repair command that
@@ -118,9 +119,7 @@ func TestRunRepairLabelsLocalIdentifierScopesByDisplayName(t *testing.T) {
 	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	scoped, err := st.GetOrCreateSource("imap", "imaps://scoped@example.test:993")
 	require.NoError(err)
 	require.NoError(st.UpdateSourceDisplayName(scoped.ID, "scoped@example.test"))

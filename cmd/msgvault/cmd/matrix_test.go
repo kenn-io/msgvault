@@ -157,9 +157,7 @@ func TestAddMatrixRenewsExistingAccountInPlace(t *testing.T) {
 	require.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), matrixsource.Credentials{
 		Homeserver: server.URL, UserID: "@archive:example.org", DeviceID: "OLD", AccessToken: "revoked",
 	}))
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 	require.NoError(err)
 	convID, err := st.EnsureConversation(source.ID, "!room:example.org", "Room")

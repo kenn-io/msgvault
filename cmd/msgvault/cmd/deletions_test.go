@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/microsoft"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
 )
@@ -499,9 +498,7 @@ func TestDeleteStagedRejectsUnsupportedSourceBeforeClaim(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	resetDeleteStagedRoutingGlobals(t)
 
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("slack", "workspace.example.invalid")
 	require.NoError(err)
 	require.NoError(st.Close())
@@ -534,9 +531,7 @@ func TestDeleteStagedOAuthSetupFailureLeavesManifestPending(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	resetDeleteStagedRoutingGlobals(t)
 
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "account@example.invalid")
 	require.NoError(err)
 	require.NoError(st.Close())

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -68,23 +67,14 @@ func TestMuesliHookInstallerRefusesToReplaceFile(t *testing.T) {
 	assert.Equal("synthetic user script", string(data))
 }
 
-func TestMuesliHookBuiltArtifactDispatch(t *testing.T) {
+func testMuesliHookBuiltArtifactDispatch(t *testing.T, binary string) {
+	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 	suffix := ""
 	if runtime.GOOS == "windows" {
 		suffix = ".exe"
 	}
-	binary := filepath.Join("..", "..", "..", "msgvault"+suffix)
-	if _, err := os.Stat(binary); errors.Is(err, os.ErrNotExist) {
-		// CI checkouts may not have a worktree artifact. Build the real CLI
-		// so the executable dispatch regression always runs there too.
-		binary = buildNativeCLI(t)
-	} else {
-		require.NoError(err)
-	}
-	binary, err := filepath.Abs(binary)
-	require.NoError(err)
 	alias := filepath.Join(t.TempDir(), "msgvault-muesli-hook"+suffix)
 	require.NoError(os.Symlink(binary, alias))
 	command := exec.CommandContext(t.Context(), alias, "serve", "--help")

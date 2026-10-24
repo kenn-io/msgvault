@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // mockIngestFunc records IngestRawMessage calls for inspection in tests.
@@ -53,10 +54,7 @@ func openTestStorePst(t *testing.T) *store.Store {
 	t.Helper()
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(t, err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	return st
 }
 

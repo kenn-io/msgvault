@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // seedRankingDivergenceArchive builds a small real archive in which BM25
@@ -39,16 +40,13 @@ func seedRankingDivergenceArchive(t *testing.T) *store.Store {
 func seedRankingDivergenceArchiveIn(t *testing.T, dataDir string) *store.Store {
 	t.Helper()
 	dbPath := filepath.Join(dataDir, "msgvault.db")
-	s, err := store.Open(dbPath)
-	require.NoError(t, err, "open store")
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	require.NoError(t, s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	// A body long enough that BM25's length normalization can tell the two
 	// documents apart, with the query term buried once inside it.
 	filler := strings.Repeat("quarterly figures and other unrelated correspondence text ", 60)
 
-	_, err = s.DB().Exec(`
+	_, err := s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES
 	(1, 1, 'thread-1', 'email_thread'),

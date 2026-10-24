@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
@@ -25,10 +26,7 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
 	analyticsDir := filepath.Join(t.TempDir(), "analytics")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	var edited atomic.Bool
 	var replyRequests atomic.Int64
@@ -80,7 +78,7 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	defer server.Close()
 	imp := slack.NewImporter(st, slack.NewClient(server.URL, "synthetic-token"), "T01")
 	opts := slack.ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true}
-	_, err = imp.Import(context.Background(), opts)
+	_, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 	_, err = buildCacheAuto(dbPath, analyticsDir)
 	require.NoError(err)

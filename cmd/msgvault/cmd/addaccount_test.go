@@ -17,16 +17,14 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestFindGmailSource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
-	s, err := store.Open(tmpDir + "/msgvault.db")
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, tmpDir+"/msgvault.db")
 
 	const email = "user@company.com"
 
@@ -71,9 +69,7 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			tmpDir := t.TempDir()
 			dbPath := filepath.Join(tmpDir, "msgvault.db")
 
-			s, err := store.Open(dbPath)
-			require.NoError(err, "open store")
-			require.NoError(s.InitSchema(), "init schema")
+			s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 			source, err := s.GetOrCreateSource("gmail", "user@acme.com")
 			require.NoError(err, "create source")
 			require.NoError(s.UpdateSourceOAuthApp(source.ID, sql.NullString{String: "acme", Valid: true}), "set oauth_app")
@@ -295,9 +291,7 @@ func TestAddAccount_RebindWithExistingToken(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
 	// Set up DB with a source bound to "old-app"
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := s.GetOrCreateSource("gmail", "user-a@example.com")
 	require.NoError(err, "create source")
 	require.NoError(s.UpdateSourceOAuthApp(source.ID, sql.NullString{
@@ -622,9 +616,7 @@ func TestAddAccount_ForceRebindPreservesBindingOnFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := s.GetOrCreateSource("gmail", "user@acme.com")
 	require.NoError(err, "create source")
 	require.NoError(s.UpdateSourceOAuthApp(source.ID, sql.NullString{
@@ -711,9 +703,7 @@ func TestAddAccount_HeadlessExplicitEmptyOAuthApp(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
 	// Set up DB with a source bound to "acme"
-	s, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := s.GetOrCreateSource("gmail", "user@acme.com")
 	require.NoError(err, "create source")
 	require.NoError(s.UpdateSourceOAuthApp(source.ID, sql.NullString{
