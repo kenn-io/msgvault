@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -58,9 +59,12 @@ func (p Person) Normalized() Person {
 		Anchor:                strings.TrimSpace(p.Anchor),
 		LinkExcludedAddresses: p.LinkExcludedAddresses,
 	}
+	if calevent.IsRoomAttendee(out.Email, false) {
+		out.Email = ""
+	}
 	seenEmails := map[string]bool{out.Email: true}
 	for _, email := range p.OtherEmails {
-		if email = normalizePersonEmail(email); email != "" && !seenEmails[email] {
+		if email = normalizePersonEmail(email); email != "" && !seenEmails[email] && !calevent.IsRoomAttendee(email, false) {
 			seenEmails[email] = true
 			out.OtherEmails = append(out.OtherEmails, email)
 		}

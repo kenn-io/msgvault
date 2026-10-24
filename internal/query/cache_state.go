@@ -46,7 +46,8 @@ import (
 // Version 35 excludes unlinked calendar rooms from derived people and domains.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 35
+// Version 36 adds exact meeting keys for linked copies.
+const CacheSchemaVersion = 36
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

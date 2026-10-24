@@ -112,6 +112,7 @@ func writeRelationshipTimelineFixture(t *testing.T, analyticsDir string, now tim
 			values: `(500::BIGINT, 1::BIGINT), (500::BIGINT, 2::BIGINT)`,
 		},
 		{dir: "owner_participants", file: "owner_participants.parquet", columns: "source_id, participant_id", values: `(1::BIGINT, 1::BIGINT)`},
+		{dir: "meeting_keys", file: "meeting_keys.parquet", columns: "message_id, meeting_key", values: `(0::BIGINT, NULL::VARCHAR)`, empty: true},
 		{dir: "participant_clusters", file: "participant_clusters.parquet", columns: "participant_id, canonical_id", values: clusterRows},
 	}
 	for _, table := range tables {

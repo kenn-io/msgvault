@@ -12,7 +12,7 @@ import (
 func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	_, db := writeRelationshipBaseFixture(t, true)
+	root, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.Exec(`
 		CREATE TEMP TABLE synthetic_temperature_activity AS
 		SELECT *, false AS unsent FROM (VALUES
@@ -50,6 +50,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	query := buildRelationshipTemperatureDailySQL(
 		"synthetic_temperature_activity",
 		time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC),
+		relationshipParquetGlob(root, "meeting_keys"),
 	)
 	err = db.QueryRow(`
 		SELECT sent_count, received_count, meeting_count, email_count,
@@ -69,7 +70,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 
 func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	require := require.New(t)
-	_, db := writeRelationshipBaseFixture(t, true)
+	root, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.Exec(`
 		CREATE TEMP TABLE synthetic_unsent_activity AS
 		SELECT * FROM (VALUES
@@ -80,7 +81,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 			is_author, is_owner, unsent)
 	`)
 	require.NoError(err)
-	query := buildRelationshipTemperatureDailySQL("synthetic_unsent_activity", time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC))
+	query := buildRelationshipTemperatureDailySQL("synthetic_unsent_activity", time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC), relationshipParquetGlob(root, "meeting_keys"))
 	var count int
 	require.NoError(db.QueryRow("SELECT count(*) FROM (" + query + ")").Scan(&count))
 	assert.Zero(t, count, "an owner-authored unsent chat contributes no daily contact activity")

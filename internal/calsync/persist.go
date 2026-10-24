@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/store"
@@ -67,8 +68,14 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 
 	// Organizer → sender, resolved through the email-keyed participant path so
 	// calendar people dedupe with email contacts.
+	organizerRoom := calevent.IsRoomAttendee(ev.Organizer.Email, false)
+	for _, a := range ev.Attendees {
+		if a.Email == ev.Organizer.Email && calevent.IsRoomAttendee(a.Email, a.Resource) {
+			organizerRoom = true
+		}
+	}
 	var senderID int64
-	if ev.Organizer.Email != "" {
+	if ev.Organizer.Email != "" && !organizerRoom {
 		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, emailDomain(ev.Organizer.Email))
 		if err != nil {
 			return 0, fmt.Errorf("organizer participant: %w", err)
@@ -84,13 +91,16 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		if a.Email == "" {
 			continue
 		}
+		attendeeEmails = append(attendeeEmails, a.Email)
+		if calevent.IsRoomAttendee(a.Email, a.Resource) {
+			continue
+		}
 		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, emailDomain(a.Email))
 		if err != nil {
 			return 0, fmt.Errorf("attendee participant: %w", err)
 		}
 		attendeeIDs = append(attendeeIDs, pid)
 		attendeeNames = append(attendeeNames, a.DisplayName)
-		attendeeEmails = append(attendeeEmails, a.Email)
 	}
 
 	// Only the series master (or a standalone event) sets the conversation

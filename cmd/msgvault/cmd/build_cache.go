@@ -569,11 +569,27 @@ func buildCacheDerivedOnly(
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
+	staleness := cacheNeedsBuildLocked(context.Background(), dbPath, analyticsDir)
+	repairRelated := false
+	if staleness.HasRelatedRowDrift {
+		state, err := query.ReadCacheSyncState(analyticsDir)
+		if err != nil {
+			return nil, fmt.Errorf("read meeting refresh boundary: %w", err)
+		}
+		meetings, other, err := inspectMeetingRelatedDrift(context.Background(), dbPath, state.LastRelatedChangeSeq, state.LastMessageID)
+		if err != nil {
+			return nil, err
+		}
+		if meetings && (other || staleness.HasNew) {
+			return nil, ErrDerivedRefreshNeedsAppend
+		}
+		repairRelated = meetings
+	}
 	return refreshDerivedDatasetsOnly(
 		context.Background(),
 		dbPath,
 		analyticsDir,
-		false,
+		repairRelated,
 		builderOverrides...,
 	)
 }
@@ -1280,7 +1296,7 @@ func buildCacheLockedAttempt(
 		// Export their complete population alongside the new message shards.
 		relatedKinds.recipients = true
 	}
-	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments
+	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments || relatedKinds.meetings
 	if hasPreviousState && !fullRebuild && hasSyncRunsTable > 0 &&
 		syncCounters.additions != previousState.LastCacheAdditionCount &&
 		maxID <= previousState.LastMessageID && !repairRelated {
@@ -1324,6 +1340,10 @@ func buildCacheLockedAttempt(
 	}
 	if buildCacheAfterSnapshotHook != nil {
 		buildCacheAfterSnapshotHook()
+	}
+	meetingKeys, err := readMeetingCountKeys(context.Background(), dbPath)
+	if err != nil {
+		return nil, err
 	}
 	var attachmentMIMEColumnCount int
 	if err := sourceSnapshot.QueryRow(`
@@ -1469,6 +1489,13 @@ func buildCacheLockedAttempt(
 	primaryEmailPresence := sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present")
 	if err := runExport(tableOwnerParticipants, copyDataset(tableOwnerParticipants, ownerParticipantsSelectSQL(primaryEmailPresence))); err != nil {
 		return nil, fmt.Errorf("export owner participants: %w", err)
+	}
+
+	if err := stageMeetingKeys(ctx, exportDB, meetingKeys, maxID); err != nil {
+		return nil, err
+	}
+	if err := runExport(tableMeetingKeys, copyDataset(tableMeetingKeys, meetingKeysSelectSQL)); err != nil {
+		return nil, err
 	}
 
 	// Participant clusters: participant_id -> canonical (smallest member)

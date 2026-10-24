@@ -26,13 +26,20 @@ func deriveMeetingLinkKey(content meetingcontent.Content) meetingLinkKey {
 }
 
 func replaceMeetingLinkKey(ctx context.Context, tx *loggedTx, messageID int64, key meetingLinkKey) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_key WHERE message_id = ?`, messageID); err != nil {
-		return fmt.Errorf("clear meeting key: %w", err)
-	}
-	if key.Value != "" || key.ScheduledAt != nil {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_key(message_id,kind,value,calendar_id,scheduled_at) VALUES (?,?,?,?,?)`, messageID, key.Kind, key.Value, key.CalendarID, key.ScheduledAt); err != nil {
-			return fmt.Errorf("write meeting key: %w", err)
+	if key.Value == "" && key.ScheduledAt == nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_key WHERE message_id = ?`, messageID); err != nil {
+			return fmt.Errorf("clear meeting key: %w", err)
 		}
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_key(message_id,kind,value,calendar_id,scheduled_at) VALUES (?,?,?,?,?)
+		ON CONFLICT (message_id) DO UPDATE SET kind=excluded.kind, value=excluded.value,
+		calendar_id=excluded.calendar_id, scheduled_at=excluded.scheduled_at
+		WHERE meeting_link_key.kind IS DISTINCT FROM excluded.kind
+		OR meeting_link_key.value IS DISTINCT FROM excluded.value
+		OR meeting_link_key.calendar_id IS DISTINCT FROM excluded.calendar_id
+		OR meeting_link_key.scheduled_at IS DISTINCT FROM excluded.scheduled_at`, messageID, key.Kind, key.Value, key.CalendarID, key.ScheduledAt); err != nil {
+		return fmt.Errorf("write meeting key: %w", err)
 	}
 	return nil
 }

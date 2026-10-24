@@ -12,17 +12,18 @@ const (
 	directoryBuildRelation = "relationship_build_directory"
 )
 
-func buildRelationshipPeopleSQL(effectiveAt time.Time) string {
+func buildRelationshipPeopleSQL(effectiveAt time.Time, keys string) string {
 	return `
 WITH logical_people AS (
-	SELECT entry_key, source_id, source_type, occurred_at, message_type, attachment_count,
-	       canonical_id
-	FROM ` + logicalBuildRelation + `
+	SELECT l.entry_key, l.source_id, l.source_type, l.occurred_at, l.message_type, l.attachment_count,
+	       l.canonical_id, ` + MeetingKeySQL("mk", "l.message_type", "l.anchor_message_id") + ` AS meeting_key
+	FROM ` + logicalBuildRelation + ` l
+	LEFT JOIN read_parquet('` + quoteSQLString(keys) + `') mk ON mk.message_id = l.anchor_message_id
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(DISTINCT meeting_key)::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -31,7 +32,7 @@ WITH logical_people AS (
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(DISTINCT meeting_key)::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -137,10 +138,10 @@ LEFT JOIN domain_people p USING (domain)
 ORDER BY t.domain`
 }
 
-func buildRelationshipDailySQL() string {
+func buildRelationshipDailySQL(meetingKeys string) string {
 	return fmt.Sprintf(`
 WITH logical_people AS (
-	SELECT entry_key, occurred_at, entry_kind, is_from_me, canonical_id,
+	SELECT entry_key, anchor_message_id, occurred_at, entry_kind, is_from_me, canonical_id,
 	       is_author, is_owner, with_owner
 	FROM `+logicalBuildRelation+`
 	WHERE relation_kind = 1
@@ -161,7 +162,7 @@ WITH logical_people AS (
 	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
 	           ELSE 0::UTINYINT
 	       END AS modality_mask
-	FROM logical_people p
+	FROM (`+DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE with_owner OR entry_kind NOT IN ('event','meeting'))", meetingKeys, "anchor_message_id")+`) p
 	WHERE NOT p.is_owner
 	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
 )
@@ -370,4 +371,23 @@ ORDER BY m.canonical_id`,
 		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("owner_participants")),
 	)
+}
+
+// MeetingKeySQL counts linked transcript copies once and unlinked messages individually.
+func MeetingKeySQL(keys, messageType, messageID string) string {
+	return "CASE WHEN " + messageType + " = 'meeting_transcript' THEN " + meetingIdentityKeySQL(keys, messageID) + " END"
+}
+
+// DeduplicateMeetingSQL keeps one linked occurrence per person. Unlinked
+// calendar entries and transcripts retain their existing individual counts.
+func DeduplicateMeetingSQL(relation, meetingKeys, messageID string) string {
+	return `SELECT p.* FROM ` + relation + ` p
+	LEFT JOIN read_parquet('` + quoteSQLString(meetingKeys) + `') mk ON mk.message_id = p.` + messageID + `
+	QUALIFY p.entry_kind NOT IN ('event','meeting') OR row_number() OVER (
+	    PARTITION BY p.canonical_id, ` + meetingIdentityKeySQL("mk", "p."+messageID) + `
+	    ORDER BY p.occurred_at, p.` + messageID + `) = 1`
+}
+
+func meetingIdentityKeySQL(keys, messageID string) string {
+	return "coalesce(" + keys + ".meeting_key, 'msg:' || CAST(" + messageID + " AS VARCHAR))"
 }

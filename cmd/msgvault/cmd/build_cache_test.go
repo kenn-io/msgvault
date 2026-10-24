@@ -29,6 +29,60 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
+// cacheMeetingTablesSchema mirrors the meeting and calendar tables in internal/store/schema.sql.
+const cacheMeetingTablesSchema = `
+CREATE TABLE calendar_events (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    provider_event_id TEXT NOT NULL DEFAULT '',
+    series_provider_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT '',
+    original_start_at DATETIME,
+    original_start_date TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    all_day BOOLEAN NOT NULL DEFAULT FALSE,
+    start_at DATETIME,
+    end_at DATETIME,
+    start_date TEXT NOT NULL DEFAULT '',
+    end_date TEXT NOT NULL DEFAULT '',
+    event_time_zone TEXT NOT NULL DEFAULT '',
+    calendar_time_zone TEXT NOT NULL DEFAULT '',
+    recurrence_json TEXT NOT NULL DEFAULT '[]',
+    recurrence_end_at DATETIME
+);
+
+CREATE TABLE calendar_event_attendees (
+    message_id INTEGER NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    rsvp TEXT NOT NULL,
+    is_copy_self BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (message_id, ordinal)
+);
+
+CREATE TABLE meeting_link_key (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    calendar_id TEXT NOT NULL DEFAULT '',
+    scheduled_at DATETIME,
+    PRIMARY KEY (message_id)
+);
+
+CREATE TABLE meeting_link_decisions (
+    member_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    target_ical_uid TEXT NOT NULL DEFAULT '',
+    target_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+    occurrence_key TEXT NOT NULL DEFAULT '',
+    decision TEXT NOT NULL CHECK(decision IN ('link', 'split')),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+`
+
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, "")
 	t.Setenv(buildCacheDaemonSubprocessEnv, strconv.Itoa(os.Getppid()))
@@ -84,7 +138,8 @@ func setupTestSQLite(t *testing.T) string {
 	defer func() { _ = db.Close() }()
 
 	// Create schema
-	schema := `
+	schema := cacheMeetingTablesSchema + `
+
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
 		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
 		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
@@ -3031,8 +3086,10 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Create empty database with schema
-	db, _ := sql.Open("sqlite3", dbPath)
-	_, _ = db.Exec(`
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open SQLite fixture")
+	defer func() { _ = db.Close() }()
+	_, err = db.Exec(cacheMeetingTablesSchema + `
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
 		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
 		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
@@ -3066,7 +3123,8 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 			UNIQUE(participant_id)
 		);
 	`)
-	_ = db.Close()
+	require.NoError(err, "create cache fixture schema")
+	require.NoError(db.Close(), "close SQLite fixture")
 
 	result, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache on empty db")
@@ -3305,7 +3363,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 	require.NoError(t, err, "open sqlite")
 	defer func() { _ = db.Close() }()
 
-	schema := `
+	schema := cacheMeetingTablesSchema + `
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
 		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
 		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
