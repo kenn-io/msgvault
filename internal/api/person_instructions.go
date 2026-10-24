@@ -14,11 +14,11 @@ import (
 
 // PersonInstructionStore is the owner-only instruction ledger capability.
 type PersonInstructionStore interface {
-	AddPersonInstructionContext(context.Context, store.PersonInstructionInput) (*store.PersonInstruction, error)
-	GetPersonInstructionContext(context.Context, int64) (*store.PersonInstruction, error)
-	ListPersonInstructionsContext(context.Context, int64, store.PersonInstructionFilter) ([]store.PersonInstruction, error)
-	ListPersonInstructionReviewContext(context.Context, int) ([]store.PersonInstruction, error)
-	DecidePersonInstructionContext(context.Context, store.PersonInstructionDecision) (*store.PersonInstructionDecisionResult, error)
+	AddPersonInstructionContext(ctx context.Context, input store.PersonInstructionInput) (*store.PersonInstruction, error)
+	GetPersonInstructionContext(ctx context.Context, id int64) (*store.PersonInstruction, error)
+	ListPersonInstructionsContext(ctx context.Context, personID int64, filter store.PersonInstructionFilter) ([]store.PersonInstruction, error)
+	ListPersonInstructionReviewContext(ctx context.Context, limit int) ([]store.PersonInstruction, error)
+	DecidePersonInstructionContext(ctx context.Context, decision store.PersonInstructionDecision) (*store.PersonInstructionDecisionResult, error)
 }
 
 var _ PersonInstructionStore = (*store.Store)(nil)
@@ -110,7 +110,7 @@ func (s *Server) handleListPersonInstructions(w http.ResponseWriter, r *http.Req
 	}
 	filter := store.PersonInstructionFilter{IncludeExpired: include}
 	if status := r.URL.Query().Get("status"); status != "" {
-		for _, v := range strings.Split(status, ",") {
+		for v := range strings.SplitSeq(status, ",") {
 			filter.Statuses = append(filter.Statuses, personfacts.InstructionStatus(strings.TrimSpace(v)))
 		}
 	}

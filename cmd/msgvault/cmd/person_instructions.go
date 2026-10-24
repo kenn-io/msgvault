@@ -206,11 +206,11 @@ func newInstructionDecisionCommand(action personfacts.InstructionAction, jsonOut
 			switch follow.Kind {
 			case "save_nickname":
 				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Suggested: save '%s' as a nickname\n", textutil.SanitizeTerminal(follow.Value)); err != nil {
-					return err
+					return fmt.Errorf("write nickname suggestion: %w", err)
 				}
 			case "set_primary_channel":
 				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Suggested: set '%s' as the primary channel\n", textutil.SanitizeTerminal(follow.Value)); err != nil {
-					return err
+					return fmt.Errorf("write primary channel suggestion: %w", err)
 				}
 			}
 		}
@@ -240,7 +240,7 @@ func writeInstructionCLIList(cmd *cobra.Command, body []byte, jsonOutput bool) e
 func writeInstructionCLIRows(cmd *cobra.Command, rows []store.PersonInstruction) error {
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(writer, "ID\tPERSON\tSCOPE\tKIND\tSTATUS\tREVIEW\tVALUE\tTEXT"); err != nil {
-		return err
+		return fmt.Errorf("write instruction table header: %w", err)
 	}
 	for _, row := range rows {
 		scope := row.ScopeKey
@@ -248,8 +248,11 @@ func writeInstructionCLIRows(cmd *cobra.Command, rows []store.PersonInstruction)
 			scope = "person"
 		}
 		if _, err := fmt.Fprintf(writer, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.PersonID, textutil.SanitizeTerminal(scope), row.Kind, row.Status, row.ReviewState, textutil.SanitizeTerminal(row.ValueText), textutil.SanitizeTerminal(row.NormalizedText)); err != nil {
-			return err
+			return fmt.Errorf("write instruction table row %d: %w", row.ID, err)
 		}
 	}
-	return writer.Flush()
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("flush instruction table: %w", err)
+	}
+	return nil
 }
