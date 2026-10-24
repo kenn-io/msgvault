@@ -106,32 +106,19 @@ const documentSearchDelivered = `d.state = 'delivered'
  AND d.mime_type NOT LIKE 'audio/%'
  AND d.mime_type NOT LIKE 'video/%'`
 
-func (s *Store) documentSearchVisible(scope *personscope.Scope) (string, []any) {
-	messageWhere, args := documentSearchMessageWhere(scope)
+func (s *Store) documentSearchVisible() string {
 	// EXISTS checks one visible occurrence per receipt instead of materializing
 	// every occurrence. OFFSET keeps PostgreSQL's lookup correlated to the receipt.
 	return `EXISTS (SELECT 1 FROM attachments a
  JOIN messages m ON m.id = a.message_id
  JOIN conversations cv ON cv.id = m.conversation_id
- WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + messageWhere + ` LIMIT 1 OFFSET 0)`, args
+ WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + LiveMessagesWhere("m", true) + ` LIMIT 1 OFFSET 0)`
 }
 
 // DocumentSearchVersions returns delivered document versions in the visible scope.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, error) {
-	delivers := `SELECT d.content_hash, d.version_id FROM docbank_attachment_deliveries d
- WHERE d.destination_key = ? AND ` + documentSearchDelivered
-	distinct := "DISTINCT"
-	if s.IsPostgreSQL() {
-		// Sort receipts before checking visibility. DISTINCT ON then streams unique
-		// versions. OFFSET prevents PostgreSQL from moving visibility ahead of the sort.
-		delivers += ` ORDER BY d.version_id OFFSET 0`
-		distinct = "DISTINCT ON (d.version_id)"
-	}
-	args := []any{destination}
-	visible, scopeArgs := s.documentSearchVisible(scope)
-	args = append(args, scopeArgs...)
-	query := `SELECT ` + distinct + ` d.version_id FROM (` + delivers + `) d
- WHERE ` + visible + ` ORDER BY d.version_id`
+	with, query, args := s.documentSearchRows(destination, scope, documentSearchDelivered, nil)
+	query = with + ` SELECT d.version_id` + query + ` GROUP BY d.version_id ORDER BY d.version_id`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list document search versions: %w", err)
