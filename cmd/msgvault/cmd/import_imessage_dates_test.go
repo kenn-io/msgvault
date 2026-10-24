@@ -136,6 +136,7 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 
 	st, err = store.Open(dbPath)
 	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
 	_, err = chat.Exec(`UPDATE message SET date = ? WHERE ROWID = 1`, int64(math.MaxInt64))
 	require.NoError(err)
 	summary, err = c.Import(context.Background(), st, src.ID)
