@@ -149,6 +149,28 @@ func count(t *testing.T, st *store.Store, sql string) int {
 	return n
 }
 
+func TestSyncPreservesDisplayNameOnSelectorConflict(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	c, _ := archiveFixture(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSourceContext(t.Context(), "gmail", "Example calendar")
+	requirements.NoError(err)
+	identifier, err := sourceIdentifier("personal", "http://203.0.113.1/home/cal/")
+	requirements.NoError(err)
+	src, err := st.GetOrCreateSourceContext(t.Context(), "caldav", identifier)
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceDisplayNameContext(t.Context(), src.ID, "Personal calendar"))
+
+	result, err := c.Sync(t.Context(), st, syncOpts())
+	requirements.NoError(err)
+	assertions.Equal(1, result.Events)
+	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM calendar_events`))
+	src, err = st.GetOrCreateSourceContext(t.Context(), "caldav", identifier)
+	requirements.NoError(err)
+	assertions.Equal("Personal calendar", src.DisplayName.String)
+	assertions.Equal("t1", sourceToken(t, st))
+}
+
 func TestSyncCanonicalizesDefaultPortForSourceIdentity(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
