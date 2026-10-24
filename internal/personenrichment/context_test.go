@@ -38,7 +38,7 @@ func TestContextSearchContract(t *testing.T) {
 		if !checks.NoError(json.NewDecoder(r.Body).Decode(&payload)) {
 			return
 		}
-		checks.Equal(map[string]any{"query": "name: Alex Example; company: Example Labs"}, payload)
+		assert.Equal(t, map[string]any{"query": "name: Alex Example"}, payload)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"request_id":"req-1","results":[` + strings.Replace(contextPerson, `"https://example.com/alex"`, `"https://example.com/alex","http://example.com/alex"`, 1) + `],"next_cursor":"next-page","key_metadata":{"credits_consumed":10,"credits_remaining":90}}`))
 	}))
@@ -60,6 +60,31 @@ func TestContextSearchContract(t *testing.T) {
 	checks.True(strings.HasPrefix(attempt.Result.Citations[0].Key, "context:"))
 	_, err = provider.Poll(t.Context(), attempt)
 	requirements.Error(err)
+}
+
+func TestContextLongCompanyStaysLocal(t *testing.T) {
+	calls := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var payload map[string]any
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload)) {
+			return
+		}
+		assert.Equal(t, map[string]any{"query": "name: Alex Example"}, payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"request_id":"r","results":[` + contextPerson + `]}`))
+	}))
+	defer server.Close()
+	provider, err := personenrichment.NewContextProvider(contextConfig(server.URL), "test-key", server.Client())
+	require.NoError(t, err)
+	_, err = provider.Start(t.Context(), personenrichment.Request{
+		Identity: personenrichment.Identity{Name: "Alex Example", CurrentCompany: strings.Repeat("x", 500)},
+		Targets:  exaTypedTargets(t),
+	})
+	var failure *personenrichment.ProviderError
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, personenrichment.FailureIdentityRejected, failure.Class)
+	assert.Equal(t, 1, calls)
 }
 
 func TestContextSearchRejectsUnsafeResults(t *testing.T) {
@@ -135,11 +160,11 @@ func TestContextPolicyAndTargets(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(profile.Validate())
 	_, _, err = personenrichment.BuildRequest(personenrichment.RequestInput{
-		PersonID: 1, Names: []personenrichment.IdentityCandidate{{StableID: 1, Value: "Alex Example"}},
-		CurrentCompanies: []personenrichment.IdentityCandidate{{StableID: 1, Value: strings.Repeat("x", 500)}},
+		PersonID: 1, Names: []personenrichment.IdentityCandidate{{StableID: 1, Value: strings.Repeat("界", 495)}},
+		CurrentCompanies: []personenrichment.IdentityCandidate{{StableID: 1, Value: "Example Labs"}},
 		Catalog:          personfacts.Catalog{Targets: []personfacts.TargetDescriptor{location}},
 	}, profile)
-	requirements.ErrorContains(err, "500 characters")
+	require.ErrorContains(t, err, "500 characters")
 	cfg.AllowedIdentifiers = append(cfg.AllowedIdentifiers, personenrichment.IdentifierEmail)
 	requirements.Error(cfg.Validate())
 	cfg = contextConfig("https://api.context.dev/v1/people/search")
@@ -172,7 +197,7 @@ func TestContextInvalidRequestsDoNotSend(t *testing.T) {
 	require.NoError(t, err)
 	for _, identity := range []personenrichment.Identity{
 		{Name: "Alex Example"},
-		{Name: "Alex Example", CurrentCompany: strings.Repeat("x", 500)},
+		{Name: strings.Repeat("界", 495), CurrentCompany: "Example Labs"},
 		{Name: "Alex Example", CurrentCompany: "Example Labs", Email: "alex@example.com"},
 	} {
 		_, err := provider.Start(t.Context(), personenrichment.Request{Identity: identity, Targets: exaTypedTargets(t)})

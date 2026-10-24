@@ -27,7 +27,8 @@ also apply to enrichment results.
 receive: `name`, `email`, `phone`, `current_company`, and
 `public_profile_url`. A field being present locally does not override that list.
 Sixtyfour's allowed list must include both `name` and `current_company`.
-Context.dev accepts exactly those two identifier classes.
+Context.dev requires exactly those two identifier classes; only the name is sent
+in its search query, and the current company is used for local matching.
 
 Results still need to match the person and pass the fact resolver's evidence
 checks. A provider response is a proposed claim, not an instruction to overwrite
@@ -90,11 +91,13 @@ multi-valued education fields, and `system:employment` for the current role.
 Use the exact catalog keys for those fields.
 
 This uses [People Search](https://docs.context.dev/api-reference/people/search),
-not the separate email/profile lookup in People Enrich. It fetches only the
-first page and never follows cursors automatically. A nonempty page costs 10
-Context credits, even when msgvault rejects the candidates; an empty page is
-free. Credits are not reported as a known USD cost. Missing fields remain
-unknown, and ambiguous candidates are rejected.
+not the separate email/profile lookup in People Enrich. Context receives a
+`name: <name>` query. msgvault filters the returned page by exact name and the
+required exact current employer, rejecting an empty page or ambiguous matches.
+It fetches only the first page and never follows cursors automatically. A
+nonempty page costs 10 Context credits, even when msgvault rejects the candidates;
+an empty page is free. Credits are not reported as a known USD cost. Missing
+fields remain unknown.
 Results without safe public profile links use provider-assertion evidence.
 Search returns no per-field confidence or freshness; facts retain conservative
 aggregator evidence scores.

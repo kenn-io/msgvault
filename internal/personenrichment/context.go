@@ -84,7 +84,7 @@ func contextSearchQuery(identity Identity) (string, error) {
 	if identity.Email != "" || identity.Phone != "" || len(identity.PublicProfileURLs) != 0 {
 		return "", errors.New("context search supports name and current company only")
 	}
-	query := "name: " + identity.Name + "; company: " + identity.CurrentCompany
+	query := "name: " + identity.Name
 	if utf8.RuneCountInString(query) > 500 {
 		return "", errors.New("context search query exceeds 500 characters")
 	}
