@@ -160,10 +160,6 @@ type ActivityEvent struct {
 	Persons                          []ActivityEventPerson
 }
 
-func (event ActivityEvent) Ref() string {
-	return string(event.RefKind) + ":" + strconv.FormatInt(event.MessageID, 10)
-}
-
 func (event ActivityEvent) Validate() error {
 	switch {
 	case event.MessageID <= 0:
