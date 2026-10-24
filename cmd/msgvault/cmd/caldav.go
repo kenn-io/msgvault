@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/msgvault/internal/caldav"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
@@ -54,7 +55,7 @@ func newSyncCalDAVCmd() *cobra.Command {
 		if err != nil {
 			return errors.Join(syncErr, fmt.Errorf("write CalDAV sync summary: %w", err))
 		}
-		return syncErr
+		return recordSyncAttempt(cmd.Context(), calevent.CalDAVSourceType, source.Name, syncErr)
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "reconcile a complete calendar snapshot")
 	return addManualSyncCacheFlags(cmd)

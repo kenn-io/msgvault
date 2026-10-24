@@ -33,11 +33,6 @@ type Result struct {
 	Calendars, Events, Skipped int
 	Removed                    int64
 }
-type sourceConfig struct {
-	CalendarID   string `json:"calendar_id"`
-	TimeZone     string `json:"time_zone"`
-	AccountEmail string `json:"account_email,omitempty"`
-}
 
 func sourceIdentifier(name, collection string) (string, error) {
 	u, err := url.Parse(collection)
@@ -61,8 +56,8 @@ func nullString(value string) *sql.NullString {
 }
 
 // Sync discovers and archives the selected calendars. It never writes to the
-// provider. A failed run preserves its checkpoint; the next run requests a
-// full view to reconcile any items persisted before the failure.
+// provider. A failed run preserves its checkpoint; the next run reads a full
+// view and skips events already persisted with matching metadata and times.
 func (c *Client) Sync(ctx context.Context, st *store.Store, opts Options) (Result, error) {
 	configured := make([]*url.URL, len(opts.Calendars))
 	for i, raw := range opts.Calendars {
@@ -136,7 +131,7 @@ type batch struct {
 	retryFull       bool
 }
 
-func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inventory, history map[string]store.MessageMetadataRecord, zone, account string, refresh bool) (batch, error) {
+func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inventory, history map[string]store.MessageMetadataRecord, zone, account string) (batch, error) {
 	b := batch{live: map[string]struct{}{}}
 	accepted := map[string]string{}
 	touched := map[string]bool{}
@@ -193,7 +188,7 @@ func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inve
 			accepted[key] = member.Href
 			b.live[key] = struct{}{}
 			record, exists := inventory[key]
-			if exists && !refresh {
+			if exists {
 				var meta calevent.CalDAVMetadata
 				if err := json.Unmarshal([]byte(record.Metadata.String), &meta); err != nil {
 					return b, fmt.Errorf("CalDAV archived resource metadata: %w", err)
@@ -327,13 +322,11 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 		return result, err
 	}
 	checkpoint.PageToken = src.SyncCursor.String
-	var previous sourceConfig
-	if src.SyncConfig.Valid {
-		if err := json.Unmarshal([]byte(src.SyncConfig.String), &previous); err != nil {
-			return result, fmt.Errorf("CalDAV source config: %w", err)
-		}
-	}
-	current := sourceConfig{CalendarID: ownerEmail, TimeZone: opts.TimeZone, AccountEmail: ownerEmail}
+	current := struct {
+		CalendarID   string `json:"calendar_id"`
+		TimeZone     string `json:"time_zone"`
+		AccountEmail string `json:"account_email,omitempty"`
+	}{CalendarID: ownerEmail, TimeZone: opts.TimeZone, AccountEmail: ownerEmail}
 	configJSON, err := json.Marshal(current)
 	if err != nil {
 		return result, err
@@ -345,17 +338,15 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 		return result, err
 	}
 	token := src.SyncCursor.String
-	refresh := previous != current
-	forceFull := opts.Full || refresh
-	if !refresh {
+	forceFull := opts.Full || src.SyncConfig.String != string(configJSON)
+	if !forceFull {
 		previous, err := base.GetLatestSyncContext(ctx, src.ID, runID)
 		switch {
 		case errors.Is(err, store.ErrSyncRunNotFound):
 		case err != nil:
 			return result, fmt.Errorf("read previous CalDAV sync: %w", err)
 		case previous.Status != store.SyncStatusCompleted:
-			forceFull = true
-			refresh = true // A failed sync may have updated projections before persisting message times.
+			forceFull = true // A delta cannot report an event created and deleted since the failed run.
 		}
 	}
 	if forceFull {
@@ -377,7 +368,7 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 	if err != nil {
 		return result, err
 	}
-	b, err := prepare(ctx, st, plan, inventory, history, opts.TimeZone, ownerEmail, refresh)
+	b, err := prepare(ctx, st, plan, inventory, history, opts.TimeZone, ownerEmail)
 	if err != nil {
 		return result, err
 	}
@@ -491,7 +482,7 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 
 func eventMetadata(item calevent.CalDAVEvent, member carddav.Member, account string) calevent.CalDAVMetadata {
 	e := item.Event
-	return calevent.CalDAVMetadata{EventID: e.ProviderEventID, Href: member.Href, ETag: member.ETag, AccountEmail: account, Status: e.Status, AllDay: e.AllDay}
+	return calevent.CalDAVMetadata{EventID: e.ProviderEventID, Href: member.Href, ETag: member.ETag, AccountEmail: account, TimeZone: e.CalendarTimeZone, Status: e.Status, AllDay: e.AllDay}
 }
 
 func persistEvent(ctx context.Context, st *store.Store, sourceID int64, account string, item calevent.CalDAVEvent, member carddav.Member) error {
