@@ -63,28 +63,30 @@ func TestContextSearchContract(t *testing.T) {
 }
 
 func TestContextLongCompanyStaysLocal(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
 	calls := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		var payload map[string]any
-		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload)) {
+		if !checks.NoError(json.NewDecoder(r.Body).Decode(&payload)) {
 			return
 		}
-		assert.Equal(t, map[string]any{"query": "name: Alex Example"}, payload)
+		checks.Equal(map[string]any{"query": "name: Alex Example"}, payload)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"request_id":"r","results":[` + contextPerson + `]}`))
 	}))
 	defer server.Close()
 	provider, err := personenrichment.NewContextProvider(contextConfig(server.URL), "test-key", server.Client())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = provider.Start(t.Context(), personenrichment.Request{
 		Identity: personenrichment.Identity{Name: "Alex Example", CurrentCompany: strings.Repeat("x", 500)},
 		Targets:  exaTypedTargets(t),
 	})
 	var failure *personenrichment.ProviderError
-	require.ErrorAs(t, err, &failure)
-	assert.Equal(t, personenrichment.FailureIdentityRejected, failure.Class)
-	assert.Equal(t, 1, calls)
+	requirements.ErrorAs(err, &failure)
+	checks.Equal(personenrichment.FailureIdentityRejected, failure.Class)
+	checks.Equal(1, calls)
 }
 
 func TestContextSearchRejectsUnsafeResults(t *testing.T) {
