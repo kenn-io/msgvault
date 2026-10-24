@@ -2229,7 +2229,6 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 func TestMalformedPreferenceDoesNotBlockReadableCards(t *testing.T) {
 	t.Parallel()
 	t.Run("readable cards", func(t *testing.T) {
-		t.Parallel()
 		assert := assert.New(t)
 		require := require.New(t)
 		pref := "abc"
