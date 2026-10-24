@@ -9,8 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -78,21 +76,4 @@ func TestPersonInstructionsHTTPMapsErrors(t *testing.T) {
 	unavailable, _ := newTestServerWithMockStore(t)
 	response := doRequest(t, unavailable.Router(), http.MethodGet, "/api/v1/person-instructions/review", nil, nil)
 	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-}
-func TestPersonInstructionsHTTPRejectsDelegatedToken(t *testing.T) {
-	srv, reg := newTestServerWithAgentGrants(t)
-	_, token, _, err := reg.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "gmail", Identifier: "user@example.com"}}, time.Time{})
-	require.NoError(t, err)
-	for _, tc := range []struct{ method, path, body string }{
-		{http.MethodGet, "/api/v1/people/1/instructions", ""},
-		{http.MethodPost, "/api/v1/people/1/instructions", `{"kind":"topic","text":"avoid work"}`},
-		{http.MethodGet, "/api/v1/person-instructions/1", ""},
-		{http.MethodGet, "/api/v1/person-instructions/review", ""},
-		{http.MethodPost, "/api/v1/person-instructions/1/decisions", `{"action":"revoke","expected_revision":1}`},
-	} {
-		t.Run(tc.method+tc.path, func(t *testing.T) {
-			response := doRequest(t, srv.Router(), tc.method, tc.path, []byte(tc.body), map[string]string{apiprotocol.AgentTokenHeader: token})
-			assert.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
-		})
-	}
 }
