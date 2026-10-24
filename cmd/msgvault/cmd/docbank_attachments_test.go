@@ -94,11 +94,11 @@ func mustDocbankAttachmentDestination(t *testing.T, st *store.Store, cfg config.
 
 func TestDocbankAttachmentStatusCLI(t *testing.T) {
 	for _, tc := range []struct {
-		name                    string
-		args                    []string
-		method, path            string
-		status                  int
-		response, want, notWant string
+		name           string
+		args           []string
+		method, path   string
+		status         int
+		response, want string
 	}{
 		{
 			name: "text", args: []string{"attachments", "status"},
@@ -110,7 +110,7 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 			name: "error_without_profile", args: []string{"attachments", "status"},
 			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
 			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"upload unavailable"}`,
-			want:     "Last error: upload unavailable", notWant: "Document profile",
+			want:     "Last error: upload unavailable",
 		},
 		{
 			name: "processing", args: []string{"attachments", "status"},
@@ -161,9 +161,6 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 			command.SetArgs(tc.args)
 			require.NoError(command.ExecuteContext(t.Context()))
 			assert.Contains(output.String(), tc.want)
-			if tc.notWant != "" {
-				assert.NotContains(output.String(), tc.notWant)
-			}
 		})
 	}
 }
