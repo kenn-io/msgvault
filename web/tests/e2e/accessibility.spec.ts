@@ -21,13 +21,13 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('main', { name: 'Operations' })).toBeVisible();
     await assertNoViolations(page, `Operations workspace ${theme}`);
 
-    await page.getByRole('button', { name: 'Open Document extraction run' }).click();
-    await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Operation archive input changed.');
+    await page.getByRole('button', { name: 'Open CardDAV sync run' }).click();
+    await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('CardDAV sync failed.');
     await assertNoViolations(page, `Operations detail with fixed failure ${theme}`);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'operations', operationRunID: OPERATION_REFERENCES.document
+      workspace: 'operations', operationRunID: OPERATION_REFERENCES.carddav
     }))}`);
     await setKitTheme(page, theme);
     await expect(page.getByRole('region', { name: 'Operation detail focused content' })).toBeVisible();
@@ -39,13 +39,13 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('alert', { name: 'Operation history failure' })).toBeVisible();
     await assertNoViolations(page, `Operations history failure ${theme}`);
 
-    fixture.setOperationConfigured('document_extraction', false);
+    fixture.setOperationConfigured('visual_embedding', false);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(operations);
     await setKitTheme(page, theme);
-    await page.getByRole('button', { name: 'Open Document index status' }).click();
-    await expect(page.getByRole('link', { name: 'Document indexing setup' })).toBeVisible();
-    await assertNoViolations(page, `Operations document setup line ${theme}`);
+    await page.getByRole('button', { name: 'Open Visual attachment status' }).click();
+    await expect(page.getByRole('button', { name: 'Open visual attachment settings' })).toBeVisible();
+    await assertNoViolations(page, `Operations visual setup line ${theme}`);
   });
 }
 

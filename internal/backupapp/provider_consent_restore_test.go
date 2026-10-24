@@ -13,8 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// TestProviderConsentSurvivesRestore guards the restore contract that only
-// document-vector authority is invalidated; people consent stays granted.
+// TestProviderConsentSurvivesRestore guards that people consent stays granted after restore.
 func TestProviderConsentSurvivesRestore(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -66,9 +65,7 @@ func TestProviderConsentSurvivesRestore(t *testing.T) {
 	})
 	require.NoError(err)
 	restoreResult, err := backup.Restore(ctx, repository, app, backup.RestoreOptions{
-		TargetDir:         filepath.Join(t.TempDir(), "restored"),
-		AuxiliaryTarget:   backupapp.NewDocumentAuxiliaryTarget(),
-		BeforePublication: backupapp.InvalidateRestoredDocumentVectors,
+		TargetDir: filepath.Join(t.TempDir(), "restored"),
 	})
 	require.NoError(err)
 	restored, err := store.OpenForTest(restoreResult.DBPath)

@@ -24,21 +24,19 @@ const operationPrivateSentinels = JSON.parse(readFileSync(
 const checkedPublicFixture = operationPublicFixture as unknown as OperationRunsResponse;
 const sourceRun = fixtureRun('source_sync');
 const cardDAVRun = fixtureRun('carddav_sync');
-const documentRun = fixtureRun('document_extraction');
 const visualRun = fixtureRun('visual_embedding');
 const sweepRun = fixtureRun('person_sweep');
 
 export const OPERATION_REFERENCES = {
   source: sourceRun.id,
   carddav: cardDAVRun.id,
-  document: documentRun.id,
   visual: visualRun.id,
   sweep: sweepRun.id
 } as const;
 
 export const OPERATION_PRIVACY_SENTINELS = Object.values(operationPrivateSentinels);
 
-const firstPage = [sourceRun, cardDAVRun, documentRun, visualRun];
+const firstPage = [sourceRun, cardDAVRun, visualRun];
 const secondPage = [sweepRun];
 
 export type InstalledOperations = {
@@ -48,11 +46,10 @@ export type InstalledOperations = {
   readonly operationStatusReads: number;
   conflictNextCardDAV(): void;
   driftNextPage(): void;
-  failNextDocumentStatus(): void;
   failNextHistory(): void;
   holdNextOperationStatus(): () => void;
   rotateReferencesOnNextRefresh(): void;
-  setOperationConfigured(kind: 'document_extraction' | 'visual_embedding', configured: boolean): void;
+  setOperationConfigured(kind: 'visual_embedding', configured: boolean): void;
 };
 
 export async function installOperations(page: Page): Promise<InstalledOperations> {
@@ -63,8 +60,6 @@ export async function installOperations(page: Page): Promise<InstalledOperations
   let statusGate: Promise<void> | undefined;
   let cardDAVConflict = false;
   let pageDrift = false;
-  let documentStatusFailure = false;
-  let documentConfigured = true;
   let historyFailure = false;
   let referencesRotated = false;
   let rotateOnNextRefresh = false;
@@ -97,28 +92,6 @@ export async function installOperations(page: Page): Promise<InstalledOperations
   await page.route('**/api/v1/carddav/books', (route) => route.fulfill({ json: { books: [] } }));
   await page.route('**/api/v1/carddav/conflicts**', (route) => route.fulfill({ json: { conflicts: [] } }));
   await page.route('**/api/v1/carddav/runs**', (route) => route.fulfill({ json: { runs: [] } }));
-  await page.route('**/api/v1/documents/status/current', (route) => {
-    statusRequests.push('/api/v1/documents/status/current');
-    if (documentStatusFailure) {
-      documentStatusFailure = false;
-      return fulfillOperation(route, {
-        error: 'document_status_unavailable', message: 'Document status is unavailable.'
-      }, 503);
-    }
-    return route.fulfill({ json: {
-      status: {
-        profile_exists: true, profile_enabled: true, exact_consent: true,
-        ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
-        terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
-      }
-    } });
-  });
-  await page.route('**/api/v1/documents/vectors/status', (route) => {
-    statusRequests.push('/api/v1/documents/vectors/status');
-    return route.fulfill({ json: {
-      enabled: true, configured: true, status: { coverage: { ready: 7, required: 9 } }
-    } });
-  });
   await page.route('**/api/v1/multimodal/status', (route) => {
     statusRequests.push('/api/v1/multimodal/status');
     return route.fulfill({ json: {
@@ -132,7 +105,7 @@ export async function installOperations(page: Page): Promise<InstalledOperations
     const gate = statusGate;
     statusGate = undefined;
     await gate;
-    return fulfillOperation(route, statusResponse(referencesRotated, documentConfigured, visualConfigured));
+    return fulfillOperation(route, statusResponse(referencesRotated, visualConfigured));
   });
   await page.route('**/api/v1/operations/runs**', async (route) => {
     const url = new URL(route.request().url());
@@ -201,7 +174,6 @@ export async function installOperations(page: Page): Promise<InstalledOperations
     get operationStatusReads(): number { return operationStatusReads; },
     conflictNextCardDAV(): void { cardDAVConflict = true; },
     driftNextPage(): void { pageDrift = true; },
-    failNextDocumentStatus(): void { documentStatusFailure = true; },
     failNextHistory(): void { historyFailure = true; },
     holdNextOperationStatus(): () => void {
       let release!: () => void;
@@ -210,8 +182,7 @@ export async function installOperations(page: Page): Promise<InstalledOperations
     },
     rotateReferencesOnNextRefresh(): void { rotateOnNextRefresh = true; },
     setOperationConfigured(kind, configured): void {
-      if (kind === 'document_extraction') documentConfigured = configured;
-      else visualConfigured = configured;
+      visualConfigured = configured;
     }
   };
 }
@@ -230,8 +201,6 @@ function detailFor(id: string): OperationRunDetail | undefined {
   const related = {
     source_sync: 'listSourceStatus',
     carddav_sync: 'getCardDAVStatus',
-    document_extraction: 'getDocumentIndexStatus',
-    document_embedding: 'getDocumentVectorStatus',
     visual_embedding: 'getVisualAttachmentStatus'
   } as const;
   return {
@@ -249,7 +218,6 @@ function detailFor(id: string): OperationRunDetail | undefined {
 
 function statusResponse(
   rotated = false,
-  documentConfigured = true,
   visualConfigured = true
 ): OperationStatusResponse {
   const visible = (run: OperationRunSummary) => rotated ? rotatedRun(run) : run;
@@ -261,8 +229,6 @@ function statusResponse(
       lane('person_facts', 'person_embedding', undefined, undefined, [], 'unavailable'),
       lane('person_facts', 'person_enrichment'),
       lane('contacts', 'carddav_sync', visible(cardDAVRun), 'getCardDAVStatus', ['carddav_sync']),
-      lane('documents', 'document_extraction', visible(documentRun), 'getDocumentIndexStatus', [], 'available', documentConfigured),
-      lane('documents', 'document_embedding', undefined, 'getDocumentVectorStatus'),
       lane('visual_attachments', 'visual_embedding', visible(visualRun), 'getVisualAttachmentStatus', ['visual_resume'], 'available', visualConfigured)
     ]
   };

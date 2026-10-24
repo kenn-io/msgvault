@@ -197,15 +197,11 @@ func selectorRange(sel Selector) (int, int, error) {
 	switch sel.Kind {
 	case "docbank_rendition":
 		// msgvault reads a transcript a window at a time, so it can't search all of it for a quote.
-		if sel.AttachmentID < 1 || sel.ExtractionID != "" || sel.ChunkKey != "" || sel.Quote != "" {
+		if sel.AttachmentID < 1 || sel.Quote != "" {
 			return 0, 0, ErrInvalidReference
 		}
 	case "message":
-		if sel.AttachmentID != 0 || sel.ExtractionID != "" || sel.ChunkKey != "" {
-			return 0, 0, ErrInvalidReference
-		}
-	case "document_chunk":
-		if sel.AttachmentID < 1 || !validIdentity(sel.ExtractionID) || !validIdentity(sel.ChunkKey) {
+		if sel.AttachmentID != 0 {
 			return 0, 0, ErrInvalidReference
 		}
 	default:
@@ -250,10 +246,6 @@ func setRange(ref Reference, start, end int) Reference {
 		p := *ref.Message
 		p.StartRune, p.EndRune = start, end
 		ref.Message = &p
-	case ref.Kind == "document_chunk" && ref.DocumentChunk != nil:
-		p := *ref.DocumentChunk
-		p.StartRune, p.EndRune = start, end
-		ref.DocumentChunk = &p
 	case ref.Kind == "docbank_rendition" && ref.DocbankRendition != nil:
 		p := *ref.DocbankRendition
 		p.StartRune, p.EndRune = start, end

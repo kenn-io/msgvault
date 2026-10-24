@@ -152,7 +152,6 @@ type Scheduler struct {
 	queuedRuns int
 
 	embed             cronSlot // set via SetEmbedJob
-	documentVector    cronSlot // set via SetDocumentVectorJob
 	visualPostSync    func(context.Context) error
 	visualPostRunning bool
 	visualPostPending bool
@@ -227,7 +226,6 @@ func New(syncFunc SyncFunc) *Scheduler {
 		genericManual:      make(map[string]bool),
 		genericNextManual:  make(map[string]bool),
 		embed:              cronSlot{label: "embed", workLabel: "scheduled embedding", jobName: "embed", announce: true},
-		documentVector:     cronSlot{label: "document vector", workLabel: "scheduled document indexing", jobName: "document-vector"},
 		ctx:                ctx,
 		cancel:             cancel,
 	}
@@ -454,12 +452,6 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 	return s.setCronSlot(&s.embed, run, schedule, runAfterSync)
 }
 
-// SetDocumentVectorJob installs the bounded document-vector convergence job
-// on the same cron/post-sync policy used by message embeddings.
-func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error {
-	return s.setCronSlot(&s.documentVector, job, schedule, runAfterSync)
-}
-
 func (s *Scheduler) setCronSlot(slot *cronSlot, job func(context.Context) error, schedule string, runAfterSync bool) error {
 	// Validate the cron expression before mutating any state so a bad
 	// schedule can't leave the scheduler with a half-removed previous
@@ -652,7 +644,7 @@ func (s *Scheduler) runSync(email string) {
 	if (err != nil && err != ErrDeferUntilNextTrigger) || yielded { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		return
 	}
-	for _, slot := range []*cronSlot{&s.embed, &s.documentVector} {
+	for _, slot := range []*cronSlot{&s.embed} {
 		var postSync func(context.Context) error
 		s.mu.RLock()
 		if slot.runAfterSync && slot.job != nil && !s.stopped {

@@ -118,9 +118,6 @@ import type {
   DiscoverRequest,
   DocbankAttachmentBackfillResponse,
   DocbankAttachmentStatus,
-  DocumentIndexStatusResponse,
-  DocumentSearchResponse,
-  DocumentVectorOperationsResponse,
   DomainSummary,
   EmbeddingStatus,
   Employment,
@@ -156,8 +153,6 @@ import type {
   GetConversationParams,
   GetConversationPathParameters,
   GetDeletionPathParameters,
-  GetDocumentIndexStatusParams,
-  GetDocumentVectorStatusParams,
   GetDomainPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
@@ -411,7 +406,6 @@ import type {
   SchedulerStatusResponse,
   SearchCLIParams,
   SearchChatsParams,
-  SearchDocumentsParams,
   SearchFastResponse,
   SearchIntegrationTasksParams,
   SearchMediaParams,
@@ -1575,55 +1569,6 @@ export const getDeletion = (
   );
 };
 /**
- * @summary Search extracted document attachments
- */
-export const searchDocuments = (
-  params: SearchDocumentsParams,
-  options?: SecondParameter<typeof orvalFetch<DocumentSearchResponse>>,
-) => {
-  return orvalFetch<DocumentSearchResponse>(
-    { url: `/api/v1/documents/search`, method: "GET", params },
-    options,
-  );
-};
-/**
- * @summary Get extracted document index status
- */
-export const getDocumentIndexStatus = (
-  params: GetDocumentIndexStatusParams,
-  options?: SecondParameter<typeof orvalFetch<DocumentIndexStatusResponse>>,
-) => {
-  return orvalFetch<DocumentIndexStatusResponse>(
-    { url: `/api/v1/documents/status`, method: "GET", params },
-    options,
-  );
-};
-/**
- * @summary Get extracted document index status for the selected durable profile
- */
-export const getCurrentDocumentIndexStatus = (
-  options?: SecondParameter<typeof orvalFetch<DocumentIndexStatusResponse>>,
-) => {
-  return orvalFetch<DocumentIndexStatusResponse>(
-    { url: `/api/v1/documents/status/current`, method: "GET" },
-    options,
-  );
-};
-/**
- * @summary Get document vector generation, consent, usage, and failure status
- */
-export const getDocumentVectorStatus = (
-  params?: GetDocumentVectorStatusParams,
-  options?: SecondParameter<
-    typeof orvalFetch<DocumentVectorOperationsResponse>
-  >,
-) => {
-  return orvalFetch<DocumentVectorOperationsResponse>(
-    { url: `/api/v1/documents/vectors/status`, method: "GET", params },
-    options,
-  );
-};
-/**
  * @summary Get one analytical domain
  */
 export const getDomain = (
@@ -2218,7 +2163,7 @@ export const getMCPCapabilities = (
   );
 };
 /**
- * @summary Search recordings and attachments as visible messages
+ * @summary Search recording transcripts and mirrored attachment text as visible messages
  */
 export const searchMedia = (
   params: SearchMediaParams,

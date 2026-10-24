@@ -63,16 +63,16 @@ func loadPersonSweepCursor(
 	)
 	cursor.Key = key
 	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
-		SELECT optimistic_sequence, optimistic_document_key,
-		       reconcile_upper_key, reconcile_after_key, reconcile_document_key,
-		       reconciliation_complete, backstop_document_key, last_backstop_at
+		SELECT optimistic_sequence,
+		       reconcile_upper_key, reconcile_after_key,
+		       reconciliation_complete, last_backstop_at
 		FROM person_sweep_cursors
 		WHERE person_id = ? AND source_lane = ? AND program_fingerprint = ?
 		  AND catalog_fingerprint = ?`), key.PersonID, key.SourceLane,
 		key.ProgramFingerprint, key.CatalogFingerprint).Scan(
-		&cursor.OptimisticSequence, &cursor.OptimisticDocumentKey, &cursor.ReconcileUpperKey,
-		&cursor.ReconcileAfterKey, &cursor.ReconcileDocumentKey, &cursor.ReconciliationComplete,
-		&cursor.BackstopDocumentKey, &lastBackstop)
+		&cursor.OptimisticSequence, &cursor.ReconcileUpperKey,
+		&cursor.ReconcileAfterKey, &cursor.ReconciliationComplete,
+		&lastBackstop)
 	require.NoError(t, err)
 	if lastBackstop.Valid {
 		value := lastBackstop.Time.UTC()
@@ -502,31 +502,6 @@ func TestPersonSweepCursorCASRejectsStaleSequence(t *testing.T) {
 	})
 	requirements.NoError(err)
 	assert.Equal(t, cursors[0], loadPersonSweepCursor(t, f.store, key))
-}
-
-func TestPersonSweepCursorPersistsPartialDocumentProgress(t *testing.T) {
-	checks := assert.New(t)
-	must := require.New(t)
-	f := newPersonSweepJournalFixture(t, true, false)
-	f.insertMessage(t, "document-cursor", "email", f.aliceID,
-		time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC))
-	key := personSweepConversationCursorKey(f.alicePersonID)
-	key.SourceLane = peoplesweep.SourceDocumentText
-	cursors, err := f.store.EnsurePersonSweepCursors(t.Context(), []peoplesweep.CursorKey{key})
-	must.NoError(err)
-	must.Len(cursors, 1)
-	reconcilePersonSweepFixture(t, f, peoplesweep.SourceDocumentText)
-	lease := claimPersonSweepFixture(t, f.store, "worker-a")
-
-	err = f.store.AdvancePersonSweepReconciliation(t.Context(), *lease, peoplesweep.GenerationCursor{
-		Key: key, Mode: peoplesweep.GenerationCursorOptimistic,
-		CursorFrom: cursors[0].OptimisticSequence, CursorThrough: cursors[0].OptimisticSequence,
-		DocumentToKey: "live:00000000000000000002",
-	})
-	must.NoError(err)
-	got := loadPersonSweepCursor(t, f.store, key)
-	checks.Equal(cursors[0].OptimisticSequence, got.OptimisticSequence)
-	checks.Equal("live:00000000000000000002", got.OptimisticDocumentKey)
 }
 
 func TestPersonSweepCursorSeparatesSourceAndFingerprints(t *testing.T) {

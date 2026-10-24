@@ -61,13 +61,8 @@ const (
 	// reassignments.
 	// v3: recipient role edits that cross the authoritative-role boundary are
 	// scope relinks/unlinks; edits within the boundary remain source edits.
-	// v4: source deletion/reimport, scope unlink/relink, and identity
-	// reassignment publish lane-exact document_text changes with the serving
-	// occurrence's attachment and occurrence coordinates. Archives that ran v3
-	// must reinstall both backend trigger sets so document evidence lifecycle
-	// changes can match the canonical document lane instead of only the owning
-	// conversation_text or meeting_text row.
-	migrationPersonSweepChangeTriggers     = "person_sweep_change_triggers_v5"
+	// v6 removes the document text lane.
+	migrationPersonSweepChangeTriggers     = "person_sweep_change_triggers_v6"
 	migrationIdentityMatchSourceSupport    = "identity_match_source_support_v1"
 	migrationCardDAVDisplayNameOwnership   = "carddav_display_name_ownership_v1"
 	migrationCardDAVLocalPublicationOrigin = "carddav_local_publication_origin_v1"

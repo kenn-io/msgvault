@@ -27,7 +27,7 @@ test('operations filters, selection, advertised action, and close work without a
   await page.keyboard.press('Enter');
   for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('documents');
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('visual_attachments');
 
   await tabTo(page, 'Lane:', 120, 'Shift+Tab');
   await page.keyboard.press('Enter');

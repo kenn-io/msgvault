@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -2596,4 +2597,29 @@ trusted_imap_sent_mailboxes = { "imaps://alice@example.com@imap.example.com:993"
 	require.NoError(err)
 	assert.Empty(cfg.Sync.TrustedIMAPSentMailboxes,
 		"unconfigured archives carry no explicit Sent-folder trust")
+}
+
+func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	warnedRemovedDocuments.Store(false)
+	t.Cleanup(func() { warnedRemovedDocuments.Store(false) })
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[attachments.documents]\nenabled = true\nmodel = 'retired'\n"), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	require.NotNil(cfg)
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+	reloaded, err := cfg.ReloadConfigFile(snapshot)
+	require.NoError(err)
+	require.NotNil(reloaded)
+	assert.Contains(logs.String(), "level=WARN")
+	assert.Contains(logs.String(), "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
+	assert.Contains(logs.String(), "for Mistral run docbank processing probe --profile <name> --seeds <dir>")
+	assert.Equal(1, strings.Count(logs.String(), "[attachments.documents]"))
 }

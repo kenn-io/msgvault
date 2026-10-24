@@ -37,7 +37,7 @@ the [archive lifecycle](/guide/) or the [project's origin](introduction.md).
 |---|---|
 | Who sent this, and when? | [Keyword search and filters](usage/searching.md) |
 | How do I search by meaning? | [Semantic and hybrid search](usage/vector-search.md) |
-| How do I search inside attachments? | [Document indexing](usage/document-indexing.md) |
+| How do I search inside attachments? | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
 | Which model settings should I use? | [Recommended configuration](usage/recommended-configuration.md) |
 | What does my archive contain? | [Analytics](usage/analytics.md) and [SQL queries](usage/querying.md) |
 | How can an AI assistant use it? | [MCP](usage/chat.md) and [agent skills](guides/agent-skills.md) |

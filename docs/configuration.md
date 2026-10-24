@@ -72,8 +72,6 @@ values remain in effect. Provider keys alone do not enable processing.
   summaries through the sweep provider.
 - [External enrichment](usage/people-enrichment.md): Exa/SixtyFour policy setup,
   exact consent, request limits, and the persistent suppression key.
-- [Document indexing](usage/document-indexing.md): extraction, document vectors,
-  and separate query consent.
 - [Vector search](usage/vector-search.md): text, person, and visual indexes.
 
 ## People identity scoring
@@ -402,8 +400,8 @@ Daylight saving time changes how a schedule in the affected hour runs:
 
 ## Sections
 
-`msgvault setup providers` writes recommended values for the `[vector]`,
-`[attachments.documents]`, and `[people.sweep]` sections from the API keys in
+`msgvault setup providers` writes recommended values for the `[vector]`
+and `[people.sweep]` sections from the API keys in
 your environment, and `msgvault setup status` reports every lane with its
 provider, model, consent state, and next step. The values it chooses are
 listed in [Recommended Configuration](/docs/usage/recommended-configuration/).
@@ -423,106 +421,6 @@ Setting `loose_attachments = true` prevents new pack files but does not
 convert existing packs. Stop the daemon and run `msgvault unpack-attachments`
 once to materialize their contents as loose files. Backup restore also restores
 attachments loose while this setting is enabled.
-
-### `[attachments.documents]`
-
-Document extraction and local full-text indexing are disabled by default.
-Enabling them does not grant consent or send data. Record consent for the exact
-effective policy before a build can upload a document. Mistral also requires an
-authenticated capability manifest. On `main` after v0.21.0, self-hosted Docling
-uses a configured endpoint without a manifest.
-
-| Key | Default | Description |
-|---|---:|---|
-| `enabled` | `false` | Allow explicit document extraction commands |
-| `provider` | `mistral` | `mistral` or `docling` |
-| `endpoint` | — | Required for Docling: exact HTTP(S) origin with optional port; no trailing slash, path, user information, query, or fragment. Plain HTTP is allowed only for `localhost` and loopback IP addresses; other hosts require HTTPS |
-| `region` | `eu` | Mistral’s pinned EU region; Docling defaults to `operator_network` |
-| `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key; Docling defaults to empty and sends a configured key as `X-Api-Key` |
-| `model` | `mistral-ocr-4-0` | Pinned model; Docling defaults to `docling.serve-v1` |
-| `retention_posture` | `unknown` | Mistral: `standard` or `zdr`; Docling: `operator-controlled` (default) |
-| `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
-| `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
-| `max_pages_per_document` | `500` | Maximum provider units for one document |
-| `max_response_bytes` | `67108864` | Maximum provider response size (64 MiB) |
-| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
-| `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
-| `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
-| `request_timeout` | `5m` | Timeout for each request; Docling defaults to `30s` |
-| `total_timeout` | `10m` | Docling job timeout, positive and at most `24h` |
-| `poll_interval` | `1s` | Docling polling interval, positive and no longer than `total_timeout` |
-| `max_poll_attempts` | `300` | Docling poll limit, between 1 and 10,000. A job that outlasts this or `total_timeout` fails with `provider_timeout` and needs a manual retry |
-| `max_retries` | `3` | Mistral transient retry limit; Docling uses its polling limits |
-| `max_pages_per_run` | `10000` | Conservative provider-unit budget for one run |
-| `max_estimated_cost_usd_per_run` | `50` | Cost-planning ceiling for one run |
-| `estimated_cost_usd_per_1000_units` | `0` | Operator-supplied current price assumption; zero disables cost calculation |
-| `pricing_assumption_on` | — | Date for the price assumption, in `YYYY-MM-DD` form |
-
-Docling uploads original PDF, DOCX, PPTX, XLSX, UTF-8 text, Markdown, CSV, and
-HTML bytes. It verifies sources in bounded memory and does not use the Mistral
-disk spool. Its `max_pages_per_document` bounds returned evidence units before
-any whole-document Markdown fallback. It cannot enforce a pre-upload page
-count for every native format.
-
-Docling’s operator-controlled postures assign responsibility for deployment,
-credentials, model downloads, egress, resource limits, retention, and training
-behavior to you. They are not privacy guarantees. Endpoints off the local
-machine use HTTPS so document bytes and configured API keys have transport
-encryption. See the
-[Docling workflow](usage/document-indexing.md#use-a-self-hosted-docling-service)
-for a minimal configuration and consent commands.
-
-#### CSV conversion
-
-| Key | Default | Description |
-|---|---:|---|
-| `enabled` | `false` | Convert standalone `text/csv` attachments locally to PDF before the authorized PDF upload; disabled conversion leaves raw CSV outside the provider-authorized scope |
-
-CSV conversion is Mistral-only. Docling accepts native CSV and rejects enabled
-CSV conversion. Mistral conversion uses Docbank's default record, cell, cell
-byte, and PDF limits, tightened by the configured original file, response, and
-page ceilings. The
-generated PDF is transient. The archive keeps the original CSV hash and MIME
-type plus the conversion receipt and page, record, and cell provenance. The
-conversion declaration participates in the exact consent fingerprint only when
-enabled.
-
-Provider uploads are manual-only: `msgvault serve` does not schedule document
-extraction. Each `documents build` or `documents resume` displays its upload
-and cost preflight before requiring `--yes`. Mistral receives its capability
-manifest explicitly; Docling uses its configured endpoint and policy. When
-document indexing is enabled, the daemon’s weekly reconciliation and local
-derivative cleanup remain automatic and make no provider requests.
-
-`[attachments.documents.scope]` accepts these fields:
-
-| Field | Default | Meaning |
-|---|---|---|
-| `message_types` | `[]` | Include all supported message sources, or restrict extraction to the listed types |
-| `include_inline` | `false` | Also include inline attachments with an authorized document media type and authoritative role provenance |
-
-Inline scope support is available in v0.21.0. Some mail clients mark
-ordinary document attachments as inline. Set `include_inline = true` to include
-them; other roles remain excluded. This changes the consent fingerprint. Record
-consent again with `consent-mistral --capabilities <manifest> --yes` or
-`consent-docling --yes` for the selected provider before building. Selecting a
-standalone-only profile stops inline search results from serving, including
-results extracted under an earlier profile.
-
-The first release requires
-`[attachments.documents.index].lexical = true` and `store_chunk_text = true`.
-Hosted document embeddings are not enabled by this configuration.
-
-Enable document vectors separately with
-`[attachments.documents.index.embeddings] enabled = true`, an enabled text
-embedding provider, and distinct consents for document text and query text.
-They use `[vector.embed.schedule]` for automatic embedding of already extracted
-document chunks. That schedule never extracts new attachments. Setup enables
-this subtable when both document extraction and a supported text provider are
-selected, but leaves the two consent steps to you.
-
-See [Document Attachment Indexing](/docs/usage/document-indexing/) for the complete
-probe, consent, build, and recovery flow.
 
 ### `[oauth]`
 
@@ -1390,8 +1288,17 @@ Msgvault retains exact filename, message, source, sender,
 and date provenance in the archive. Attachment and message details in CLI,
 HTTP API, and MCP expose `docbank` receipts containing `endpoint`, `folder`,
 `node_id`, `version_id`, and `blob_hash`, so callers can open the corresponding
-Docbank file. List and search views omit these receipts. URL-only attachments are excluded from discovery. Details recover a hashless Slack or Discord attachment's hash from its trusted CAS storage path. The mirror reads these aliases from loose files or retained pack entries and verifies their SHA-256. It sends attachment content and excludes thumbnails from `thumbnail_hash`. Missing or corrupt archive bytes fail only that file. Msgvault's
-own document indexing remains independently available.
+Docbank file. List and search views omit these receipts. URL-only attachments are excluded from discovery. Details recover a hashless Slack or Discord attachment's hash from its trusted CAS storage path. The mirror reads these aliases from loose files or retained pack entries and verifies their SHA-256. It sends attachment content and excludes thumbnails from `thumbnail_hash`. Missing or corrupt archive bytes fail only that file. Docbank processes mirrored documents and supplies their searchable text.
+
+#### Search document text through Docbank (unreleased)
+
+Configure a Docbank rendition profile, such as a Docling profile, and set its name in `[integrations.docbank] document_profile`. Docbank's daemon must support the chosen processor. A Mistral profile needs a Docbank release newer than v0.16.0. Create the five seed files and run `docbank processing probe --profile <name> --seeds <dir>` to write its capability manifest, as [Docbank's Mistral OCR configuration](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#document-ocr-with-mistral) describes. It replaces `msgvault documents probe-mistral`.
+
+Follow the [attachment mirror setup](https://msgvault.io/docs/configuration/#mirror-stored-attachments-to-docbank-unreleased) to review the processing plan and grant consent in Docbank. Msgvault requests that profile for mirrored files. Docbank owns extraction, text, and embeddings. Check processing progress with `msgvault docbank attachments status`.
+
+Search with `msgvault media search "project proposal"`, `GET /api/v1/media/search`, MCP `search_media`, or the Web Everything panel. Add `--person <id>` and `--direction from_person` to the CLI search to scope results to a person.
+
+Remove `[attachments.documents]` from old configuration files. The loader warns and ignores that section with guidance to use `document_profile`. The upgrade drops the local document text, chunk, and consent tables. Snapshots made before the upgrade keep them and still restore; `msgvault backup list` marks them in the `DOCUMENT TEXT` column. Docbank processes the mirrored files again, which incurs OCR charges when using Mistral.
 
 #### Send stored audio to Docbank
 
@@ -2401,37 +2308,6 @@ message_types = ["sms", "mms"]
 # Use stable account identifiers, not numeric source IDs. This keeps a scoped
 # generation usable after a daemon restart.
 # accounts = ["you@work.example"]
-
-[attachments.documents]
-# Hosted extraction is opt-in and requires a separately recorded consent.
-enabled = false
-provider = "mistral"
-region = "eu"
-api_key_env = "MISTRAL_API_KEY"
-model = "mistral-ocr-4-0"
-retention_posture = "zdr"
-training_posture = "opted-out"
-max_file_bytes = 52428800
-max_pages_per_document = 500
-max_response_bytes = 67108864
-max_normalized_chars = 25000000
-max_spool_bytes = 536870912
-min_free_space_bytes = 1073741824
-request_timeout = "5m"
-max_retries = 3
-max_pages_per_run = 10000
-max_estimated_cost_usd_per_run = 50
-# Set both pricing fields together to include a cost estimate in manual build preflight.
-# estimated_cost_usd_per_1000_units = 0.001
-# pricing_assumption_on = "2026-08-17"
-
-[attachments.documents.scope]
-# Empty includes every supported message type.
-message_types = ["email"]
-
-[attachments.documents.index]
-lexical = true
-store_chunk_text = true
 
 [[synctech_sms.sources]]
 name = "phone-backups"

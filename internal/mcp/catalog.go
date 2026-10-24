@@ -43,7 +43,6 @@ type catalogCapabilities struct {
 	semanticSearch  bool
 	vectorInMessage bool
 	similarMessages bool
-	documentSearch  bool
 	mediaSearch     bool
 	people          bool
 	directoryPeople bool
@@ -133,7 +132,6 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
-		documentSearch:  opts.DocumentSearcher != nil,
 		mediaSearch:     opts.MediaSearcher != nil,
 		people:          opts.PeopleBackend != nil,
 		directoryPeople: opts.DirectoryBackend != nil,
@@ -250,7 +248,6 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		querySQLDefinition(),
 		runSavedViewDefinition(nil),
 		searchByDomainsDefinition(nil),
-		searchDocumentsDefinition(nil),
 		searchMediaDefinition(),
 		searchInMessageDefinition(nil, capabilities.vectorInMessage),
 		searchMessageBodiesDefinition(nil),
@@ -373,8 +370,6 @@ func explicitlyConfirmedWriteDefinition(
 func alwaysAvailable(catalogCapabilities) bool { return true }
 
 func similarMessagesAvailable(c catalogCapabilities) bool { return c.similarMessages }
-
-func documentSearchAvailable(c catalogCapabilities) bool { return c.documentSearch }
 
 func peopleAvailable(c catalogCapabilities) bool { return c.people }
 
@@ -905,49 +900,6 @@ func findSimilarMessagesDefinition(_ *handlers) toolDefinition {
 		(*handlers).findSimilarMessages,
 	)
 	definition.availability = similarMessagesAvailable
-	return definition
-}
-
-func searchDocumentsDefinition(_ *handlers) toolDefinition {
-	limit := boundedIntegerSchema("Maximum results to return (default 20, max 100)", 1, 100)
-	limit.Default = jsontext.Value("20")
-	mode := stringSchema("Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider",
-		"auto", "lexical", "semantic", "hybrid")
-	mode.Default = jsontext.Value(`"lexical"`)
-	direction := stringSchema("How the owning message relates to the person",
-		"from_person", "to_person", "group")
-	definition := readDefinition(
-		ToolSearchDocuments,
-		"Search locally indexed content and filenames from standalone document attachments extracted by the configured document provider. Results preserve the exact attachment occurrence, containing message, unit range, excerpt, and provider/model provenance. Paginate with the opaque cursor; restart when the index revision changes.",
-		closedObject(map[string]*jsonschema.Schema{
-			toolArgQuery: stringSchema("Document content or filename query; terms are ANDed"),
-			"source_ids": {
-				Type: schemaTypeArray, Description: "Optional source ID scope",
-				Items: safeIDSchema("Source ID"),
-			},
-			"message_types": {
-				Type: schemaTypeArray, Description: "Optional containing message type scope",
-				Items: stringSchema("Containing message type"),
-			},
-			toolArgAttachmentID:  safeIDSchema("Optional exact attachment occurrence ID"),
-			toolArgMessageID:     safeIDSchema("Optional exact containing message ID"),
-			toolArgPersonID:      safeIDSchema("Optional durable person ID"),
-			toolArgParticipantID: safeIDSchema("Optional observed participant ID; translated through its durable person when bound"),
-			"directions": {
-				Type: schemaTypeArray, Description: "Optional union of from_person, to_person, and group; requires a person reference",
-				Items: direction,
-			},
-			toolArgAfter:      stringSchema("Only messages on or after YYYY-MM-DD"),
-			toolArgBefore:     stringSchema("Only messages before YYYY-MM-DD"),
-			toolArgLimit:      limit,
-			toolArgCursor:     stringSchema("Opaque cursor from the previous page"),
-			toolArgMode:       mode,
-			"candidate_limit": boundedIntegerSchema("Maximum candidates (default/max: lexical 10000; semantic/hybrid 100/1000)", 1, store.MaxLexicalDocumentSearchCandidateLimit),
-		}, toolArgQuery),
-		outputSchemaFor[store.DocumentSearchResponse](),
-		(*handlers).searchDocuments,
-	)
-	definition.availability = documentSearchAvailable
 	return definition
 }
 

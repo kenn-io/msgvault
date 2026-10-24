@@ -181,8 +181,6 @@ func TestOperationStatusReturnsExactRegistryAndNonNullActions(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.Vector.Enabled = true
 	cfg.Vector.People.Enabled = true
-	cfg.Attachments.Documents.Enabled = true
-	cfg.Attachments.Documents.Index.Embeddings.Enabled = true
 	cfg.People.Sweep.Enabled = true
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource("fixture", "synthetic-source")
@@ -196,11 +194,9 @@ func TestOperationStatusReturnsExactRegistryAndNonNullActions(t *testing.T) {
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var body OperationStatusResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	require.Len(body.Lanes, 9)
+	require.Len(body.Lanes, 7)
 	assert.Equal([]operations.Kind{
 		operations.KindCardDAVSync,
-		operations.KindDocumentEmbedding,
-		operations.KindDocumentExtraction,
 		operations.KindMessageEmbedding,
 		operations.KindPersonEmbedding,
 		operations.KindPersonEnrichment,
@@ -208,14 +204,11 @@ func TestOperationStatusReturnsExactRegistryAndNonNullActions(t *testing.T) {
 		operations.KindSourceSync,
 		operations.KindVisualEmbedding,
 	}, []operations.Kind{
-		body.Lanes[0].Kind, body.Lanes[1].Kind, body.Lanes[2].Kind,
-		body.Lanes[3].Kind, body.Lanes[4].Kind, body.Lanes[5].Kind,
-		body.Lanes[6].Kind, body.Lanes[7].Kind, body.Lanes[8].Kind,
+		body.Lanes[0].Kind, body.Lanes[1].Kind, body.Lanes[2].Kind, body.Lanes[3].Kind,
+		body.Lanes[4].Kind, body.Lanes[5].Kind, body.Lanes[6].Kind,
 	})
 	assert.Equal([]operations.Lane{
 		operations.LaneContacts,
-		operations.LaneDocuments,
-		operations.LaneDocuments,
 		operations.LaneMessages,
 		operations.LanePersonFacts,
 		operations.LanePersonFacts,
@@ -223,24 +216,20 @@ func TestOperationStatusReturnsExactRegistryAndNonNullActions(t *testing.T) {
 		operations.LaneMessages,
 		operations.LaneVisualAttachments,
 	}, []operations.Lane{
-		body.Lanes[0].Lane, body.Lanes[1].Lane, body.Lanes[2].Lane,
-		body.Lanes[3].Lane, body.Lanes[4].Lane, body.Lanes[5].Lane,
-		body.Lanes[6].Lane, body.Lanes[7].Lane, body.Lanes[8].Lane,
+		body.Lanes[0].Lane, body.Lanes[1].Lane, body.Lanes[2].Lane, body.Lanes[3].Lane,
+		body.Lanes[4].Lane, body.Lanes[5].Lane, body.Lanes[6].Lane,
 	})
-	assert.Equal([]string{"", "", "", "", "", "", "", "", ""}, []string{
+	assert.Equal([]string{"", "", "", "", "", "", ""}, []string{
 		body.Lanes[0].UnavailableCode, body.Lanes[1].UnavailableCode,
 		body.Lanes[2].UnavailableCode, body.Lanes[3].UnavailableCode,
 		body.Lanes[4].UnavailableCode, body.Lanes[5].UnavailableCode,
-		body.Lanes[6].UnavailableCode, body.Lanes[7].UnavailableCode,
-		body.Lanes[8].UnavailableCode,
+		body.Lanes[6].UnavailableCode,
 	})
 	for _, lane := range body.Lanes {
 		assert.NotNil(lane.SupportedActions, "lane %s", lane.Kind)
 	}
 	assert.Equal([]operations.Kind{
 		operations.KindCardDAVSync,
-		operations.KindDocumentEmbedding,
-		operations.KindDocumentExtraction,
 		operations.KindMessageEmbedding,
 		operations.KindPersonEmbedding,
 		operations.KindPersonEnrichment,
@@ -253,80 +242,19 @@ func TestOperationStatusReturnsExactRegistryAndNonNullActions(t *testing.T) {
 	}
 	assert.False(body.Lanes[0].Configured)
 	assert.True(body.Lanes[1].Configured)
-	assert.False(body.Lanes[2].Configured, "a document config without a durable selected profile is not configured")
-	assert.True(body.Lanes[3].Configured)
+	assert.True(body.Lanes[2].Configured)
+	assert.False(body.Lanes[3].Configured, "external enrichment remains inactive")
 	assert.True(body.Lanes[4].Configured)
-	assert.False(body.Lanes[5].Configured, "external enrichment remains inactive")
-	assert.True(body.Lanes[6].Configured)
-	assert.True(body.Lanes[7].Configured)
-	assert.False(body.Lanes[8].Configured)
+	assert.True(body.Lanes[5].Configured)
+	assert.False(body.Lanes[6].Configured)
 	assert.Equal(operations.RelatedStatusCardDAV, *body.Lanes[0].RelatedStatus)
-	assert.Equal(operations.RelatedStatusDocumentVector, *body.Lanes[1].RelatedStatus)
-	assert.Equal(operations.RelatedStatusDocumentIndex, *body.Lanes[2].RelatedStatus)
+	assert.Nil(body.Lanes[1].RelatedStatus)
+	assert.Nil(body.Lanes[2].RelatedStatus)
 	assert.Nil(body.Lanes[3].RelatedStatus)
 	assert.Nil(body.Lanes[4].RelatedStatus)
-	assert.Nil(body.Lanes[5].RelatedStatus)
-	assert.Nil(body.Lanes[6].RelatedStatus)
-	assert.Equal(operations.RelatedStatusSource, *body.Lanes[7].RelatedStatus)
-	assert.Equal(operations.RelatedStatusVisual, *body.Lanes[8].RelatedStatus)
+	assert.Equal(operations.RelatedStatusSource, *body.Lanes[5].RelatedStatus)
+	assert.Equal(operations.RelatedStatusVisual, *body.Lanes[6].RelatedStatus)
 	assert.NotContains(w.Body.String(), `"supported_actions":null`)
-}
-
-func TestOperationStatusDocumentExtractionConfigurationUsesDurableSelectedScope(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name             string
-		documentsEnabled bool
-		scopeErr         error
-		wantConfigured   bool
-		wantScopeCalls   int
-	}{
-		{
-			name: "durably selected", documentsEnabled: true,
-			wantConfigured: true, wantScopeCalls: 1,
-		},
-		{
-			name: "missing durable target", documentsEnabled: true,
-			scopeErr: store.ErrDocumentIndexStatusScopeUnavailable, wantScopeCalls: 1,
-		},
-		{
-			name: "generic durable scope failure remains retryable", documentsEnabled: true,
-			scopeErr: errors.New("corrupt durable scope record"), wantConfigured: true, wantScopeCalls: 1,
-		},
-		{
-			name: "disabled document configuration", scopeErr: nil,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			server, catalog := newTestServerWithMockStore(t)
-			server.cfg.Attachments.Documents.Enabled = test.documentsEnabled
-			calls := 0
-			catalog.documentCurrentScopeFunc = func(context.Context) (string, []string, error) {
-				calls++
-				return "private-selected-document-profile", []string{"application/pdf"}, test.scopeErr
-			}
-
-			response := doGet(server, "/api/v1/operations/status")
-			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
-			var body OperationStatusResponse
-			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
-			var document *OperationLaneStatus
-			for index := range body.Lanes {
-				if body.Lanes[index].Kind == operations.KindDocumentExtraction {
-					document = &body.Lanes[index]
-					break
-				}
-			}
-			requirements.NotNil(document)
-			assertions.Equal(test.wantConfigured, document.Configured)
-			assertions.Equal(test.wantScopeCalls, calls)
-			assertions.NotContains(response.Body.String(), "private-selected-document-profile")
-		})
-	}
 }
 
 func TestOperationStatusPersonEnrichmentConfiguredRequiresEnabledProviderRuntime(t *testing.T) {
@@ -375,8 +303,8 @@ func TestOperationStatusPersonEnrichmentConfiguredRequiresEnabledProviderRuntime
 			require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 			var body OperationStatusResponse
 			require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-			require.Len(body.Lanes, 9)
-			assert.Equal(test.want, body.Lanes[5].Configured)
+			require.Len(body.Lanes, 7)
+			assert.Equal(test.want, body.Lanes[3].Configured)
 			assert.NotContains(w.Body.String(), "private-provider-name")
 			assert.NotContains(w.Body.String(), personenrichment.ProviderExa)
 		})
@@ -412,7 +340,7 @@ func TestOperationStatusProjectsRealStoreRunsAndDegradesOnlyOneLane(t *testing.T
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var body OperationStatusResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	sourceLane := body.Lanes[7]
+	sourceLane := body.Lanes[5]
 	assert.True(sourceLane.Configured)
 	assert.Equal(operations.HistoryAvailable, sourceLane.HistoryAvailability)
 	require.NotNil(sourceLane.Active)
@@ -434,9 +362,9 @@ func TestOperationStatusProjectsRealStoreRunsAndDegradesOnlyOneLane(t *testing.T
 	require.Equal(http.StatusOK, w.Code)
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(operations.HistoryAvailable, body.Lanes[0].HistoryAvailability)
-	assert.Equal(operations.HistoryUnavailable, body.Lanes[6].HistoryAvailability)
-	assert.Equal("person_sweep_history_unavailable", body.Lanes[6].UnavailableCode)
-	assert.Equal(operations.HistoryAvailable, body.Lanes[7].HistoryAvailability)
+	assert.Equal(operations.HistoryUnavailable, body.Lanes[4].HistoryAvailability)
+	assert.Equal("person_sweep_history_unavailable", body.Lanes[4].UnavailableCode)
+	assert.Equal(operations.HistoryAvailable, body.Lanes[5].HistoryAvailability)
 	assert.NotContains(w.Body.String(), "private person status failure")
 }
 
@@ -466,7 +394,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 	var body OperationStatusResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal([]operations.ActionID{operations.ActionCardDAVSync}, body.Lanes[0].SupportedActions)
-	assert.Equal([]operations.ActionID{operations.ActionVisualBuild}, body.Lanes[8].SupportedActions)
+	assert.Equal([]operations.ActionID{operations.ActionVisualBuild}, body.Lanes[6].SupportedActions)
 	for _, marker := range []string{
 		"987654321", "private-visual-fingerprint", "private-visual-model",
 		"private/visual-format", "123456789", "formats", "generation",
@@ -481,7 +409,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 		}, nil)
 	w = doGet(srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal([]operations.ActionID{operations.ActionVisualResume}, body.Lanes[8].SupportedActions)
+	assert.Equal([]operations.ActionID{operations.ActionVisualResume}, body.Lanes[6].SupportedActions)
 	controller.mu.Lock()
 	controller.cfg.CardDAV.Username = "mismatched-user"
 	controller.mu.Unlock()
@@ -502,7 +430,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 		}, nil)
 	w = doGet(srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal([]operations.ActionID{operations.ActionVisualResume}, body.Lanes[8].SupportedActions)
+	assert.Equal([]operations.ActionID{operations.ActionVisualResume}, body.Lanes[6].SupportedActions)
 
 	srv.SetVisualOperations(func(context.Context, operations.PassScope) error { return nil }, func(context.Context, operations.PassScope) error { return nil },
 		nil, func(context.Context, bool) (visual.Status, error) {
@@ -513,7 +441,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 		}, nil)
 	w = doGet(srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Empty(body.Lanes[8].SupportedActions)
+	assert.Empty(body.Lanes[6].SupportedActions)
 
 	srv.SetVisualOperations(func(context.Context, operations.PassScope) error { return nil }, func(context.Context, operations.PassScope) error { return nil },
 		nil, func(context.Context, bool) (visual.Status, error) {
@@ -521,8 +449,8 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 		}, nil)
 	w = doGet(srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	assert.True(body.Lanes[8].Configured)
-	assert.Empty(body.Lanes[8].SupportedActions)
+	assert.True(body.Lanes[6].Configured)
+	assert.Empty(body.Lanes[6].SupportedActions)
 	assert.NotContains(w.Body.String(), "private visual provider failure")
 
 	activeCardDAV := operationRunForKindFixture(t, operations.KindCardDAVSync, operations.StateRunning)
@@ -566,16 +494,16 @@ func TestOperationStatusBypassesGateAndHandlesNilDependencies(t *testing.T) {
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var body OperationStatusResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	require.Len(body.Lanes, 9)
-	for _, index := range []int{0, 6, 7} {
+	require.Len(body.Lanes, 7)
+	for _, index := range []int{0, 4, 5} {
 		assert.Equal(operations.HistoryUnavailable, body.Lanes[index].HistoryAvailability)
 		assert.Empty(body.Lanes[index].SupportedActions)
 	}
 	assert.NotContains(w.Body.String(), "private-holder-label")
-	assert.False(body.Lanes[5].Configured)
-	assert.Nil(body.Lanes[5].Active)
-	assert.Nil(body.Lanes[5].Latest)
-	assert.Nil(body.Lanes[5].LatestSuccessful)
+	assert.False(body.Lanes[3].Configured)
+	assert.Nil(body.Lanes[3].Active)
+	assert.Nil(body.Lanes[3].Latest)
+	assert.Nil(body.Lanes[3].LatestSuccessful)
 }
 
 func TestOperationRunsPaginatesAndDeclaresUnavailableKinds(t *testing.T) {
@@ -742,7 +670,7 @@ func TestOperationRunsRejectsCursorSnapshotDrift(t *testing.T) {
 		}},
 		{name: "unavailable kinds", next: operations.HistorySnapshot{
 			Runs: []operations.Run{older}, AvailableKinds: []operations.Kind{operations.KindSourceSync},
-			UnavailableKinds: []operations.Kind{operations.KindDocumentEmbedding}, MembershipRevision: 7,
+			UnavailableKinds: []operations.Kind{operations.KindPersonEmbedding}, MembershipRevision: 7,
 		}},
 	}
 	for _, test := range tests {
@@ -1004,12 +932,12 @@ func TestVisualActionsUnavailableDuringActiveRun(t *testing.T) {
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &detail))
 				response = doRequest(t, srv.Router(), http.MethodPost, action.path, action.body, nil)
 				if active {
-					assert.Empty(status.Lanes[8].SupportedActions)
+					assert.Empty(status.Lanes[6].SupportedActions)
 					assert.Empty(detail.SupportedActions)
 					assert.Equal(http.StatusConflict, response.Code)
 					assert.Zero(calls, "an active pass must prevent worker execution")
 				} else {
-					assert.Equal([]operations.ActionID{action.id}, status.Lanes[8].SupportedActions)
+					assert.Equal([]operations.ActionID{action.id}, status.Lanes[6].SupportedActions)
 					assert.Equal([]operations.ActionID{action.id}, detail.SupportedActions)
 					assert.Equal(http.StatusOK, response.Code, response.Body.String())
 					assert.Equal(1, calls)
@@ -1066,8 +994,8 @@ func TestVisualActionsUnavailableWithoutHistory(t *testing.T) {
 				require.Equal(http.StatusOK, response.Code)
 				var status OperationStatusResponse
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-				assert.Equal(operations.HistoryUnavailable, status.Lanes[8].HistoryAvailability)
-				assert.Empty(status.Lanes[8].SupportedActions)
+				assert.Equal(operations.HistoryUnavailable, status.Lanes[6].HistoryAvailability)
+				assert.Empty(status.Lanes[6].SupportedActions)
 
 				response = doGet(srv, "/api/v1/operations/runs/"+ref)
 				require.Equal(http.StatusOK, response.Code)
@@ -1342,7 +1270,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 		assert.Equal(test.unavailable, page.UnavailableKinds)
 	}
 
-	for _, lane := range []operations.Lane{operations.LaneDocuments, operations.LaneVisualAttachments} {
+	for _, lane := range []operations.Lane{operations.LaneVisualAttachments} {
 		w := doGet(srv, "/api/v1/operations/runs?lane="+string(lane))
 		require.Equal(http.StatusOK, w.Code)
 		var page OperationRunsResponse

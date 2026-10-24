@@ -17,7 +17,7 @@ appear in full under Inherited Flags.
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
+| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
@@ -2548,60 +2548,7 @@ msgvault media search "quarterly numbers" --person 7 --direction from_person --l
 
 The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Everything.
 
-Unreleased builds also print a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. A scope with more than 4096 document files returns an attachment error; set `--person` to narrow the scope. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-spoken-words) for the files included in the scope.
-
-## documents
-
-Manage document extraction and local full-text indexing. Mistral operations
-require a private authenticated capability manifest and exact recorded consent.
-On `main` after v0.21.0, self-hosted Docling uses `consent-docling` and needs no
-manifest. Local search and removal operations do not contact the extractor.
-
-```bash
-msgvault documents probe-mistral --fixtures <private-dir> [--validate-only]
-msgvault documents consent-mistral --capabilities <manifest> [--yes]
-msgvault documents consent-docling [--yes]
-msgvault documents build [--capabilities <manifest>] [--limit N] [--full-rebuild] [--yes]
-msgvault documents resume [--capabilities <manifest>] [--limit N] [--yes]
-msgvault documents search <query> [flags]
-msgvault documents status [--capabilities <manifest>] [--json]
-msgvault documents retry [--capabilities <manifest>] --hash <sha256>
-msgvault documents retire <profile-id> [--yes]
-msgvault documents purge-derived --hash <sha256> [--yes]
-```
-
-`--capabilities` is required for Mistral build, resume, status, and retry.
-Docling uses the endpoint and policy selected in configuration. Its build and
-resume commands still require `--yes`, and provider policy changes require
-fresh consent.
-
-`probe-mistral --validate-only` checks the complete synthetic fixture set
-without credentials or network access. An authenticated probe writes the
-manifest to stdout. Run consent and build commands once without `--yes` to
-review their disclosure and preflight.
-
-`documents search` accepts `--source-id`, `--message-type`, `--attachment-id`,
-`--message-id`, `-n`/`--limit`, `--cursor`, and `--json`. Its cursor is opaque
-and bound to a stable index revision; restart pagination after a stale-cursor
-error.
-
-In v0.21.0, build failures include available local causes alongside
-the document hash and reason code. `documents status` lists up to 20 current
-failed documents, including failed replacements in an active rebuild. JSON
-output adds `status.failures` and `status.failures_exhausted`. Each failure has
-`canonical_blob_hash`, `reason_code`, `detail`, and `state`; detail is a bounded
-single line and may be empty for historical failures. Use `documents retry` and
-then build again to obtain fresh diagnostics for an older failure.
-
-To include inline documents, set
-`[attachments.documents.scope].include_inline = true` and record exact consent
-again. The default is false. See the
-[scope configuration](configuration.md#attachmentsdocuments) for the contract.
-
-See [Document Attachment Indexing](/docs/usage/document-indexing/) for fixture
-generation, configuration, privacy boundaries, scheduling, and recovery.
-
----
+Unreleased builds also print a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-spoken-words) for the files included in the scope.
 
 ## tui
 
@@ -2929,7 +2876,7 @@ how Notes interact with search, MCP, and CardDAV.
 Person search accepts `--limit` from 1–100. File lookup defaults to the
 `metadata` lane and 100 results. Its main filters are `--direction`,
 `--filename`, `--mime-family`, `--after`, and `--before`.
-`--lane documents`, `visual`, or `all` requires `--query`; a `--cursor` belongs
+`--lane visual` or `all` requires `--query`; a `--cursor` belongs
 to one lane and cannot be used with `all`. See
 [person search](/docs/usage/people/#find-a-person-by-what-you-remember) and
 [person files](/docs/usage/people/#find-files-related-to-a-person) for index
@@ -3440,7 +3387,7 @@ profile unselected. Restart the daemon when the reported running profile differs
 | `--model` | prompt | Codex model ID available to the signed-in account |
 | `--reasoning-effort` | prompt | Supported effort for the chosen model |
 | `--retention-posture`, `--training-posture` | required | Explicit operator assertions |
-| `--source` | required | Repeatable: `conversation_text`, `meeting_text`, or `document_text` |
+| `--source` | required | Repeatable: `conversation_text` or `meeting_text` |
 | `--source-since` | required | Earliest disclosed date, `YYYY-MM-DD` |
 | `--source-until` | absent | Latest disclosed date, on or after `--source-since` |
 | `--allow-sensitive` | explicit decision required | `true` permits archive evidence; `false` permits only synthetic checks |
@@ -4330,8 +4277,7 @@ The wizard also stores remote URL/API key in `remote` config block so `export-to
 ### setup providers
 
 Configure optional search and people features from the available API keys. The
-command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
-configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
+command reads `VOYAGE_API_KEY` and `OPENAI_API_KEY`. For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
 available loopback Ollama model at `[chat].server`. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
@@ -4343,7 +4289,7 @@ Setup prints a plan, asks once per hosted provider, writes `config.toml`, and
 prints the remaining commands. It onboards a new people-sweep provider through
 the same check and consent gates as `person provider`. Other feature-specific
 consents remain separate. Visual search needs a valid probe manifest before
-setup enables it; document extraction remains manual. See
+setup enables it. Docbank processes mirrored documents. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
 Local people-sweep setup stays pending unless `--allow-sensitive` is supplied.
@@ -4358,10 +4304,7 @@ required by the configured database; setup prints rebuild guidance.
 
 Saved retention and training postures on disabled lanes are preserved unless
 their corresponding posture flags are explicitly supplied. Custom hosted text
-endpoints require explicit configuration of dependent lanes. Document semantic
-search requires both `documents vectors consent --yes` and
-`documents vectors consent --purpose queries --yes`; the latter authorizes
-query-text uploads. The status report tracks the two purposes separately.
+endpoints require explicit configuration of dependent lanes. Search mirrored document text with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or the Web Everything panel. `media search --person <id> --direction from_person` scopes document search to a person. See the [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased).
 
 An existing text model or endpoint is preserved even if the feature is disabled.
 Setup does not replace it when a different key appears. Explicit text and visual
@@ -4373,7 +4316,7 @@ or set provider prices and monetary caps.
 msgvault setup providers --dry-run
 msgvault setup providers
 msgvault setup providers --allow-sensitive
-msgvault setup providers --yes --document-retention zdr --document-training opted-out
+msgvault setup providers --yes
 ```
 
 | Flag                   | Default             | Description                                                                                                                                                                                                       |
@@ -4385,8 +4328,6 @@ msgvault setup providers --yes --document-retention zdr --document-training opte
 | `--yes`                | `false`             | Accept every provider disclosure without prompting. Required to apply a plan with hosted-provider prompts when stdin is not a terminal or `--json` is used. It does not grant the separate sensitive-data opt-in. |
 | `--allow-sensitive`    | `false`             | Allow the people sweep to send sensitive archive excerpts and infer sensitive personal attributes                                                                                                                 |
 | `--dry-run`            | `false`             | Print the plan, the disclosures, and the current lane report without writing                                                                                                                                      |
-| `--document-retention` | `standard`          | Mistral retention posture to record: `standard` or `zdr`                                                                                                                                                          |
-| `--document-training`  | `default-opt-out`   | Mistral training posture to record: `default-opt-out` or `opted-out`                                                                                                                                              |
 | `--retention-posture`  | `provider-declared` | Retention assertion recorded for embedding and inference providers                                                                                                                                                |
 | `--training-posture`   | `provider-declared` | Training assertion recorded for embedding and inference providers                                                                                                                                                 |
 | `--json`               | `false`             | Output the plan, applied flag, follow-ups, and report as JSON                                                                                                                                                     |
@@ -4397,7 +4338,7 @@ configured remote daemon; run it on the daemon host or pass `--local`.
 ### setup status
 
 Report the setup state of each feature (text search, semantic people search,
-visual attachments, documents, document vectors, people sweep, activity
+visual attachments, people sweep, activity
 projection, media policy): state, provider, model, recorded consent, schedule,
 the reason a lane is off, and the command that turns it on. Reads `config.toml`,
 the environment, and the local archive's consent records; never contacts a

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -224,37 +225,6 @@ func TestOpenAIProviderProfileOperationalFieldsExcluded(t *testing.T) {
 	}
 }
 
-func TestProviderFingerprintIncludesEgressPolicy(t *testing.T) {
-	base := validConfig()
-	want, err := base.Profile()
-	require.NoError(t, err)
-
-	for _, mutation := range []struct {
-		name   string
-		mutate func(*peoplesweep.Config)
-	}{
-		{"endpoint", providerMutation(func(p *peoplesweep.ProviderConfig) { p.Endpoint = "https://other.example.test/v1" })},
-		{"model", providerMutation(func(p *peoplesweep.ProviderConfig) { p.Model = "other-model" })},
-		{"key environment", providerMutation(func(p *peoplesweep.ProviderConfig) { p.CredentialEnv = "OTHER_KEY" })},
-		{"retention", providerMutation(func(p *peoplesweep.ProviderConfig) { p.RetentionPosture = "provider-policy" })},
-		{"training", providerMutation(func(p *peoplesweep.ProviderConfig) { p.TrainingPosture = "provider-policy" })},
-		{"sources", providerMutation(func(p *peoplesweep.ProviderConfig) {
-			p.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceDocumentText}
-		})},
-		{"source since", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceSince = "2024-01-01" })},
-		{"source until", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceUntil = "2026-01-01" })},
-		{"sensitive", providerMutation(func(p *peoplesweep.ProviderConfig) { p.AllowSensitive = true })},
-	} {
-		t.Run(mutation.name, func(t *testing.T) {
-			gotConfig := cloneConfig(base)
-			mutation.mutate(&gotConfig)
-			got, profileErr := gotConfig.Profile()
-			require.NoError(t, profileErr)
-			assert.NotEqual(t, want.Fingerprint, got.Fingerprint)
-		})
-	}
-}
-
 func TestProviderFingerprintIncludesProtocolCapabilities(t *testing.T) {
 	newAssert := assert.New
 	newRequire := require.New
@@ -445,6 +415,26 @@ func TestStoredProviderProfilePreservesHistoricalProgramPolicy(t *testing.T) {
 	}
 }
 
+func TestStoredProviderProfilePreservesDocumentTextPolicy(t *testing.T) {
+	for _, sources := range []string{`"conversation_text","document_text","meeting_text"`, `"document_text"`} {
+		t.Run(sources, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			profile, err := validConfig().Profile()
+			require.NoError(err)
+			policy := bytes.Replace(profile.PolicyJSON, []byte(`"conversation_text","meeting_text"`), []byte(sources), 1)
+			require.NoError(json.Unmarshal(policy, &profile))
+			digest := sha256.Sum256(policy)
+			profile.Fingerprint = hex.EncodeToString(digest[:])
+			profile.PolicyJSON = policy
+
+			stored, err := peoplesweep.CanonicalStoredProviderProfile(profile)
+			require.NoError(err)
+			assert.Equal(profile, stored)
+		})
+	}
+}
+
 func TestProviderConfigTOMLValuesUseTaggedOptionalFields(t *testing.T) {
 	assert := assert.New(t)
 	provider := validConfig().Providers["default"]
@@ -497,7 +487,7 @@ func TestProviderProfileFingerprintCoversConsentPolicy(t *testing.T) {
 		{"retention", providerMutation(func(p *peoplesweep.ProviderConfig) { p.RetentionPosture = "provider_policy" })},
 		{"training", providerMutation(func(p *peoplesweep.ProviderConfig) { p.TrainingPosture = "provider_policy" })},
 		{"sources", providerMutation(func(p *peoplesweep.ProviderConfig) {
-			p.AllowedSources = append(p.AllowedSources, peoplesweep.SourceDocumentText)
+			p.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}
 		})},
 		{"source since", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceSince = "2024-01-01" })},
 		{"source until", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceUntil = "2026-01-01" })},
@@ -917,6 +907,48 @@ func TestConfigValidationAcceptsNegotiatedProtocolCapabilities(t *testing.T) {
 			profile, err := configWithProvider(provider).Profile()
 			require.NoError(t, err)
 			require.NoError(t, profile.Validate())
+		})
+	}
+}
+
+func TestRemovedDocumentSourceIsIgnored(t *testing.T) {
+	for name, documentOnly := range map[string]bool{"mixed sources": false, "document only": true} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			peoplesweep.ResetDocumentTextWarningForTest()
+			t.Cleanup(peoplesweep.ResetDocumentTextWarningForTest)
+			var warnings bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&warnings, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			cfg := validConfig()
+			for name, provider := range cfg.Providers {
+				if documentOnly {
+					provider.AllowedSources = nil
+				}
+				provider.AllowedSources = append(provider.AllowedSources, peoplesweep.SourceDocumentText)
+				cfg.Providers[name] = provider
+			}
+			original := cfg
+			original.Providers = maps.Clone(cfg.Providers)
+			cfg.ApplyDefaults()
+			if documentOnly {
+				assert.Contains(warnings.String(), "people sweep disabled because allowed_sources contains only retired sources")
+			} else {
+				original.ApplyDefaults()
+				assert.Equal(1, strings.Count(warnings.String(), "document_text was removed; drop it from allowed_sources"))
+			}
+			require.NoError(cfg.Validate())
+			assert.Equal(!documentOnly, cfg.Enabled)
+			for _, provider := range cfg.Providers {
+				assert.NotContains(provider.AllowedSources, peoplesweep.SourceDocumentText)
+			}
+			if cfg.Enabled {
+				profile, err := cfg.Profile()
+				require.NoError(err)
+				assert.NotContains(profile.AllowedSources, peoplesweep.SourceDocumentText)
+			}
 		})
 	}
 }

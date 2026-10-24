@@ -99,7 +99,6 @@
         <legend>Archive source classes</legend>
         <Checkbox label="Conversation text" checked={allowedSources.includes('conversation_text')} onchange={(checked) => setSource('conversation_text', checked)} />
         <Checkbox label="Meeting text" checked={allowedSources.includes('meeting_text')} onchange={(checked) => setSource('meeting_text', checked)} />
-        <Checkbox label="Document text" checked={allowedSources.includes('document_text')} onchange={(checked) => setSource('document_text', checked)} />
       </fieldset>
       <label>Archive data since (YYYY-MM-DD)<TextInput bind:value={sourceSince} placeholder="YYYY-MM-DD" required block /></label>
       <label>Archive data until (optional, YYYY-MM-DD)<TextInput bind:value={sourceUntil} placeholder="YYYY-MM-DD" block /></label>

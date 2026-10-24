@@ -187,7 +187,7 @@ sends the query text to the configured Docbank service.
   starts; use **Refresh** for current matches. Transient failures offer
   **Retry**. A query or Person filter change retries a refused search.
 
-On unreleased builds, the same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Browser attachment search takes plain words, like recording search. Use `msgvault media search` for attachment queries containing punctuation. An empty block without an error reports no matches in extracted text from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`. The block names the limit and suggests a Person filter to narrow the search. If a Person filter already exceeds the limit, choose one with fewer attachments. Other attachment failures show the API error message, with Retry for transient failures. "More may match" marks other result limits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
+On unreleased builds, the same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Browser attachment search takes plain words, like recording search. Use `msgvault media search` for attachment queries containing punctuation. An empty block without an error reports no matches in extracted text from mirrored attachments. More than 4096 mirrored files excluding images, audio, and video are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. Attachment failures show the API error message, with Retry for transient failures. "More may match" marks result limits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
 
 ## Read messages
 
@@ -431,7 +431,7 @@ and status polling continues while the tab is visible.
 ## Operations
 
 Operations answers two different questions: what is configured and ready now,
-and what happened during a particular run. Its overview groups work into five
+and what happened during a particular run. Its overview groups work into four
 lanes:
 
 | Lane | Work shown |
@@ -439,7 +439,6 @@ lanes:
 | Messages | Source sync and message embeddings |
 | Facts | People sweeps, person embeddings, and external enrichment |
 | Contacts | CardDAV sync |
-| Documents | Document extraction and document embeddings |
 | Attachments | Visual embeddings |
 
 Each lane lists its kinds of work. A row shows the kind's name, a status chip,
@@ -460,19 +459,12 @@ work has ever run.
 An Off row offers **Set up** when Settings can turn the work on. Message
 embeddings, person embeddings, and visual embeddings open Settings on Search
 and focus their setting. Person enrichment opens Person enrichment, and person
-sweeps open People sweep. Document extraction and document embeddings are
-configured in `config.toml` on the daemon host, so their rows say so and link to
-[Document indexing setup](/docs/usage/document-indexing/#configure-the-policy)
-and [Document search setup](/docs/usage/document-indexing/#semantic-and-hybrid-document-search).
-Document embeddings also need semantic search.
+sweeps open People sweep.
 
-Rows link to source status, CardDAV settings, or detailed document and visual
-index status. The latter show coverage and the current prerequisites for
+Rows link to source status, CardDAV settings, or visual index status. The latter show coverage and the current prerequisites for
 processing. The workspace offers **Start CardDAV sync**, **Build visual
 index**, or **Resume visual index** only when the daemon advertises that
-action. Source **Sync now** remains in Sources. Document extraction still
-requires the explicit CLI upload workflow in
-[Document Indexing](/docs/usage/document-indexing/).
+action. Source **Sync now** remains in Sources.
 
 **Refresh operation status** in the page header reloads the status lists every
 five minutes and whenever you select it, and it shows how long ago they were

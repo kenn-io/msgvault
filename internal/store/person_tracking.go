@@ -131,8 +131,7 @@ func (s *Store) setPersonTrackingTx(
 		if err == nil && inserted == 1 {
 			_, err = tx.ExecContext(ctx, `UPDATE person_sweep_cursors
 				SET reconcile_upper_key = '', reconcile_after_key = '',
-				    optimistic_document_key = '', reconcile_document_key = '',
-				    backstop_upper_key = '', backstop_after_key = '', backstop_document_key = '',
+				    backstop_upper_key = '', backstop_after_key = '',
 				    reconciliation_complete = FALSE, last_backstop_at = NULL,
 				    updated_at = ?
 				WHERE person_id = ?`, time.Now().UTC(), personID)

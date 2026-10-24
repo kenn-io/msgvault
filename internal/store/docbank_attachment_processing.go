@@ -40,7 +40,7 @@ type DocbankAttachmentProcessingCursor struct {
 }
 
 func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, cursor *DocbankAttachmentProcessingCursor, n int) ([]DocbankAttachmentProcessing, error) {
-	visible, _ := s.documentSearchVisible(nil)
+	visible := s.documentSearchVisible()
 	processable := documentSearchDelivered + " AND " + visible
 	var result []DocbankAttachmentProcessing
 	for _, unasked := range []bool{false, true} {
@@ -104,7 +104,7 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 }
 
 func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, profile string) (DocbankAttachmentProcessingSummary, error) {
-	visible, _ := s.documentSearchVisible(nil)
+	visible := s.documentSearchVisible()
 	processable := documentSearchDelivered + " AND " + visible
 	result := DocbankAttachmentProcessingSummary{Outcomes: map[string]int64{}}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT COALESCE(p.outcome, ''), COUNT(*)

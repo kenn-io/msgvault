@@ -658,7 +658,7 @@ func TestRunnerFailsClosedBeforeCredentialOrTransport(t *testing.T) {
 			request: func() peoplesweep.StructuredRequest {
 				request := baseRequest
 				request.Sources = []peoplesweep.SourceDescriptor{{
-					Class: peoplesweep.SourceDocumentText, ObservedOn: "2025-08-20",
+					Class: peoplesweep.SourceAttachmentOCR, ObservedOn: "2025-08-20",
 				}}
 				return request
 			}(),
@@ -1082,7 +1082,7 @@ func TestRunnerDoesNotTreatCallerProviderCheckAsSynthetic(t *testing.T) {
 
 	request := structuredTestRequest()
 	request.ProgramID = "provider-check"
-	request.Sources[0].Class = peoplesweep.SourceDocumentText
+	request.Sources[0].Class = peoplesweep.SourceAttachmentOCR
 	prepared, err := peoplesweep.NewPreparedStructuredRequest(request, []byte(`{"prepared":true}`))
 	requirements.NoError(err)
 
