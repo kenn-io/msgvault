@@ -12,6 +12,7 @@ import (
 )
 
 func TestClientListsEveryConversationUnderInstancePath(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +36,7 @@ func TestClientListsEveryConversationUnderInstancePath(t *testing.T) {
 // Remote instances must use HTTPS so the API token never crosses the network
 // in clear text; loopback development instances may use HTTP.
 func TestCanonicalURL(t *testing.T) {
+	t.Parallel()
 	for raw, want := range map[string]string{
 		"HTTPS://CHATWOOT.example.com:443/support/":  "https://chatwoot.example.com/support",
 		"https://chatwoot.example.com:0443/support":  "https://chatwoot.example.com/support",
@@ -54,6 +56,7 @@ func TestCanonicalURL(t *testing.T) {
 		"https://chatwoot.example.com#secret":        "",
 	} {
 		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			got, err := CanonicalURL(raw)
@@ -69,6 +72,7 @@ func TestCanonicalURL(t *testing.T) {
 }
 
 func TestParseSourceIdentifier(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	for _, identifier := range []string{
@@ -87,6 +91,7 @@ func TestParseSourceIdentifier(t *testing.T) {
 }
 
 func TestClientAPIDoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	targetHits := 0
@@ -105,6 +110,7 @@ func TestClientAPIDoesNotFollowRedirects(t *testing.T) {
 }
 
 func TestClientRetriesRateLimitAndReportsNotFound(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++

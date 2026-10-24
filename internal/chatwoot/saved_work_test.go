@@ -19,6 +19,7 @@ import (
 // --limit bounds history only. Capping refreshes would recheck the lowest
 // artifact IDs every run and let later recordings leave their window unread.
 func TestLimitBoundsHistoryNotArtifactRefresh(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	messages := []map[string]any{}
@@ -48,6 +49,7 @@ func TestLimitBoundsHistoryNotArtifactRefresh(t *testing.T) {
 	assert.Len(conversation.Artifacts, 2)
 }
 
+// serial: swaps the package clock now.
 func TestHistoryHandlesSavedArtifactsOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -86,6 +88,7 @@ func TestHistoryHandlesSavedArtifactsOnce(t *testing.T) {
 }
 
 func TestSavedWorkAccessFailuresKeepHealthyProgress(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		count, budget  int
@@ -95,6 +98,7 @@ func TestSavedWorkAccessFailuresKeepHealthyProgress(t *testing.T) {
 		{"budget_full", 1, 7, false, true}, {"failed_batch", 100, 1000, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			api := newContractAPI(t, 1000, nil)
 			for id := int64(1); id <= int64(tc.count+1); id++ {
@@ -143,8 +147,10 @@ func TestSavedWorkAccessFailuresKeepHealthyProgress(t *testing.T) {
 }
 
 func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"checkpoint", "database", "filesystem", "cancellation"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			media := newMediaRefreshServer(t)
 			router := newChatwootMediaRouter(t, media.server)
@@ -222,12 +228,14 @@ func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
 }
 
 func TestSavedArtifactCheckpointPrivateOptOutAndMovedInbox(t *testing.T) {
+	t.Parallel()
 	for _, moved := range []bool{false, true} {
 		name := "private_excluded"
 		if moved {
 			name = "moved_inbox"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			checks, must := assert.New(t), require.New(t)
 			message := chatwootapi.Message(901, 1767225600, nil)
 			message["private"] = !moved

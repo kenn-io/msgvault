@@ -101,6 +101,7 @@ func mediaRefreshOptions(t *testing.T) ImportOptions {
 }
 
 func TestMediaRefreshMetadataOnlyAttachments(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		fileType string
 		waiting  bool
@@ -111,6 +112,7 @@ func TestMediaRefreshMetadataOnlyAttachments(t *testing.T) {
 	} {
 		for _, noMedia := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/no_media=%t", tc.fileType, noMedia), func(t *testing.T) {
+				t.Parallel()
 				assert := assert.New(t)
 				require := require.New(t)
 				message := chatwootapi.Message(601, now().Unix(), nil)
@@ -153,6 +155,7 @@ func readMediaRefreshBytes(t *testing.T, st *store.Store, messageID int64, dir s
 	return refs, payloads
 }
 
+// serial: swaps the package clock now.
 func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testing.T) {
 	for _, tc := range []struct {
 		name                               string
@@ -355,8 +358,10 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 }
 
 func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"replacement_canceled", "first_import_canceled"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			media := newMediaRefreshServer(t)
@@ -427,6 +432,7 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 }
 
 func TestMediaRefreshRecordingRepresentationMigration(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		noMedia     bool
@@ -436,6 +442,7 @@ func TestMediaRefreshRecordingRepresentationMigration(t *testing.T) {
 		{name: "origin_unavailable_with_rotated_signature", rotateQuery: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			media := newMediaRefreshServer(t)
@@ -505,9 +512,11 @@ func TestMediaRefreshRecordingRepresentationMigration(t *testing.T) {
 }
 
 func TestDeferredMediaRetriesAndAccountPolicyDisablesMedia(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"deferred", "disabled", "missing_url"} {
 		disabled := mode == "disabled"
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			media := newMediaRefreshServer(t)
 			router := newChatwootMediaRouter(t, media.server)
@@ -558,6 +567,7 @@ func TestDeferredMediaRetriesAndAccountPolicyDisablesMedia(t *testing.T) {
 }
 
 func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                                   string
 		retained, declared, call, declaredFile bool
@@ -565,6 +575,7 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 		{"initial_chunked", false, false, false, false}, {"replacement_chunked", true, false, false, false}, {"replacement_declared", true, true, false, false}, {"replacement_declared_file", true, false, false, true}, {"replacement_shared_call", true, false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			media := newMediaRefreshServer(t)
 			media.declared = tc.declared
@@ -659,6 +670,7 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 	}
 }
 
+// serial: swaps the package clock now.
 func TestReconcileDoesNotRenewFailedDownload(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	fixed := now
