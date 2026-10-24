@@ -56,6 +56,8 @@ func NewSQLiteTestStoreAt(t *testing.T, dbPath string) *store.Store {
 	template, err := sqliteTemplateBytes()
 	require.NoError(t, err, "build sqlite template")
 
+	require.NotContains(t, dbPath, "://", "NewSQLiteTestStoreAt takes a file path, not a database URL")
+	require.NoFileExists(t, dbPath, "NewSQLiteTestStoreAt clones onto a new path; reopen an existing archive with store.Open")
 	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o700), "create sqlite fixture directory")
 	require.NoError(t, os.WriteFile(dbPath, template, 0o600), "clone sqlite template")
 
@@ -63,7 +65,10 @@ func NewSQLiteTestStoreAt(t *testing.T, dbPath string) *store.Store {
 	require.NoError(t, err, "open store")
 
 	t.Cleanup(func() {
-		_ = st.Close()
+		// A test may close the store early to run a command against the file.
+		if st.DB().Ping() == nil {
+			_ = st.Close()
+		}
 	})
 	assignFreshArchiveUID(t, st)
 

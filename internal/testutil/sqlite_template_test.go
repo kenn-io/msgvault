@@ -29,6 +29,20 @@ func TestNewSQLiteTestStoreAt(t *testing.T) {
 	assert.Equal(t, source.ID, sources[0].ID)
 }
 
+func TestNewSQLiteTestStoreAtToleratesEarlyClose(t *testing.T) {
+	var logged bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	t.Run("closes before cleanup", func(t *testing.T) {
+		st := NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "archive.db"))
+		require.NoError(t, st.Close())
+	})
+
+	assert.NotContains(t, logged.String(), "maintenance failed")
+}
+
 // TestSQLiteFixtureClonesTemplateWithoutReplayingDDL pins the fixture's cost
 // model: the schema is built once per test binary and every later fixture is a
 // copy of that file. A fixture that replayed the DDL would show CREATE
