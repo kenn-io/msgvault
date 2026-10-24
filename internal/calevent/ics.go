@@ -553,7 +553,11 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 			} else {
 				_, zoneEnd := start.ZoneBounds()
 				nominalDuration = days > 0 && !zoneEnd.IsZero()
-				end = start.AddDate(0, 0, days).Add(elapsed)
+				end = start
+				if days > 0 {
+					end = end.AddDate(0, 0, days)
+				}
+				end = end.Add(elapsed)
 			}
 		} else if end.IsZero() {
 			if allDay {
