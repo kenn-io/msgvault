@@ -661,7 +661,7 @@ func (s *Store) observationSuppressionCandidateTx(ctx context.Context, tx *logge
 	candidate.PostRejectionSupport = len(messages)
 	if item.Proposal.Level != personobs.LevelExplicit {
 		for _, edge := range item.Proposal.Premises {
-			if edge.Role != personobs.PremiseRoleSupport && !(item.Proposal.Level == personobs.LevelContradiction && edge.Role == personobs.PremiseRoleCounter) {
+			if edge.Role != personobs.PremiseRoleSupport && (item.Proposal.Level != personobs.LevelContradiction || edge.Role != personobs.PremiseRoleCounter) {
 				continue
 			}
 			p := premises[edge.ID]

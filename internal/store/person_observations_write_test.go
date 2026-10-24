@@ -729,9 +729,10 @@ func TestApplyObservationBatchUsesSupportedEvidenceForSupersessionDate(t *testin
 			require.Len(replacementDetail.Evidence, 2)
 			assert.Equal(personobs.ExclusionReasonNone, replacementDetail.Evidence[0].Exclusion)
 			wantExclusion := personobs.ExclusionReasonNone
-			if exclusion == "list" {
+			switch exclusion {
+			case "list":
 				wantExclusion = personobs.ExclusionReasonList
-			} else if exclusion == "draft" {
+			case "draft":
 				wantExclusion = personobs.ExclusionReasonDraft
 			}
 			assert.Equal(wantExclusion, replacementDetail.Evidence[1].Exclusion)
