@@ -242,6 +242,7 @@ func TestMediaSearchParametersAndAuthorization(t *testing.T) {
 	assert.Equal(http.StatusUnauthorized, w.Code)
 }
 
+// cloneSearchOccurrences creates clones that share the seed's attachment, message, source, and processing key and differ only in occurrence_ref and content_version_id.
 func cloneSearchOccurrences(t *testing.T, f *mediaSearchFixture, ref string, count int) {
 	t.Helper()
 	require := require.New(t)
