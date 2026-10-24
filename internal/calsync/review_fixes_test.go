@@ -2,6 +2,7 @@ package calsync
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -665,4 +666,35 @@ func (r *listEventsRecorder) ListEvents(ctx context.Context, calendarID string, 
 		return nil, r.err
 	}
 	return r.MockAPI.ListEvents(ctx, calendarID, p)
+}
+
+func TestFull_RecipientMembershipIncludesResources(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+	m.FullEvents["primary"] = [][]gcal.Event{{timedEvent("members", "Meeting",
+		gcal.Attendee{Email: "guest@example.org"},
+		gcal.Attendee{Email: "GUEST@example.org", DisplayName: "Guest alias"},
+		gcal.Attendee{Email: "room@example.org", Resource: true},
+		gcal.Attendee{Email: "room@resource.calendar.google.com"})}}
+	m.FullEvents["primary"][0][0].Organizer = gcal.Person{Email: "ORGANIZER@resource.calendar.google.com"}
+	m.FullSyncToken["primary"] = "T1"
+	s, st := newSyncer(t, m, Options{})
+	_, err := s.Full(t.Context())
+	require.NoError(err)
+	src := primarySource(t, st)
+	row, ok := getMsg(t, st, src.ID, "members")
+	require.True(ok)
+	assert.Equal([]string{"guest@example.org", "room@example.org", "room@resource.calendar.google.com"}, recipientEmails(t, st, row.id, "to"))
+	var sender string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT p.email_address FROM messages m JOIN participants p ON p.id=m.sender_id WHERE m.id=?`), row.id).Scan(&sender))
+	assert.Equal("organizer@resource.calendar.google.com", sender)
+	raw, err := st.GetMessageRaw(row.id)
+	require.NoError(err)
+	var archived gcal.Event
+	require.NoError(json.Unmarshal(raw, &archived))
+	require.Len(archived.Attendees, 4)
+	assert.Equal("guest@example.org", archived.Attendees[1].Email)
+	assert.Equal("Guest alias", archived.Attendees[1].DisplayName)
 }

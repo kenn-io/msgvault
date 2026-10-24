@@ -639,8 +639,8 @@ func (s *Syncer) sourceConfigJSON(cal gcal.Calendar) string {
 	})
 }
 
-// emailDomain returns the lowercased domain part of an email, or "".
-func emailDomain(email string) string {
+// EmailDomain returns the lowercased domain part of an email, or "".
+func EmailDomain(email string) string {
 	at := strings.LastIndex(email, "@")
 	if at < 0 || at == len(email)-1 {
 		return ""

@@ -1829,6 +1829,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-beeper",
 		"sync-matrix",
 		"sync-calendar",
+		"sync-caldav",
 		"sync-circleback",
 		"sync-chatwoot",
 		"sync-plaud",

@@ -96,9 +96,15 @@ func decodeGoogleEvent(raw, metadata []byte, calendarZone string) (Event, bool, 
 	} else if len(g.Recurrence) != 0 {
 		e.Kind, e.SeriesProviderID = "series", g.ID
 	}
-	organizerEmail := gcalmodel.NormalizeParticipantEmail(g.Organizer.Email)
+	e.Attendees = buildAttendees(g.Organizer, g.Attendees)
+	return e, true, nil
+}
+
+func buildAttendees(organizer gcalmodel.Person, attendees []gcalmodel.Attendee) []Attendee {
+	var result []Attendee
+	organizerEmail := gcalmodel.NormalizeParticipantEmail(organizer.Email)
 	organizerSeen := false
-	for _, a := range g.Attendees {
+	for _, a := range attendees {
 		email := gcalmodel.NormalizeParticipantEmail(a.Email)
 		if organizerEmail != "" && email == organizerEmail {
 			a.Organizer = true
@@ -120,10 +126,10 @@ func decodeGoogleEvent(raw, metadata []byte, calendarZone string) (Event, bool, 
 		case "needsAction":
 			rsvp = "needs_action"
 		}
-		e.Attendees = append(e.Attendees, Attendee{Email: email, DisplayName: a.DisplayName, Role: role, RSVP: rsvp, IsCopySelf: a.Self})
+		result = append(result, Attendee{Email: email, DisplayName: a.DisplayName, Role: role, RSVP: rsvp, IsCopySelf: a.Self})
 	}
 	if organizerEmail != "" && !organizerSeen {
-		e.Attendees = append(e.Attendees, Attendee{Email: organizerEmail, DisplayName: g.Organizer.DisplayName, Role: "organizer", RSVP: "unknown", IsCopySelf: g.Organizer.Self})
+		result = append(result, Attendee{Email: organizerEmail, DisplayName: organizer.DisplayName, Role: "organizer", RSVP: "unknown", IsCopySelf: organizer.Self})
 	}
-	return e, true, nil
+	return result
 }
