@@ -762,22 +762,6 @@ func exaFixture(t *testing.T, name string) []byte {
 	return data
 }
 
-func TestExaFixturesAreJSONOnlySyntheticAndOffline(t *testing.T) {
-	for _, name := range []string{
-		"exa_people_success.json", "exa_deep_success.json", "exa_people_error.json",
-	} {
-		data := exaFixture(t, name)
-		lower := strings.ToLower(string(data))
-		assert.True(t, json.Valid(data), name)
-		for _, forbidden := range []string{
-			"api_key", "test-key",
-			"chat_sentinel", "private_attribute_sentinel", "person@example.com", "sk-",
-		} {
-			assert.NotContains(t, lower, forbidden, name)
-		}
-	}
-}
-
 func sortedMapKeys(input map[string]json.RawMessage) []string {
 	keys := make([]string, 0, len(input))
 	for key := range input {

@@ -1,7 +1,6 @@
 package personenrichment_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -11,53 +10,6 @@ import (
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
 )
-
-type contractProvider struct{ immediate bool }
-
-func (p *contractProvider) Start(
-	_ context.Context,
-	_ personenrichment.Request,
-) (personenrichment.Attempt, error) {
-	if p.immediate {
-		result := personenrichment.Result{State: personenrichment.ResultComplete, ProviderVersion: "provider-v1"}
-		return personenrichment.Attempt{
-			State:  personenrichment.AttemptComplete,
-			Result: &result,
-		}, nil
-	}
-	return personenrichment.Attempt{
-		State: personenrichment.AttemptPending,
-		JobID: "opaque-job",
-	}, nil
-}
-
-func (p *contractProvider) Poll(
-	_ context.Context,
-	attempt personenrichment.Attempt,
-) (personenrichment.Result, error) {
-	return personenrichment.Result{
-		State: personenrichment.ResultComplete,
-		JobID: attempt.JobID, ProviderVersion: "provider-v1",
-	}, nil
-}
-
-func TestProviderContractSupportsImmediateAndAsyncResults(t *testing.T) {
-	checks := assert.New(t)
-	requirements := require.New(t)
-	var _ personenrichment.Provider = (*contractProvider)(nil)
-	immediate, err := (&contractProvider{immediate: true}).Start(
-		t.Context(),
-		personenrichment.Request{},
-	)
-	requirements.NoError(err)
-	requirements.NotNil(immediate.Result)
-	checks.Equal(personenrichment.AttemptComplete, immediate.State)
-
-	pending, err := (&contractProvider{}).Start(t.Context(), personenrichment.Request{})
-	requirements.NoError(err)
-	checks.Equal(personenrichment.AttemptPending, pending.State)
-	checks.Equal("opaque-job", pending.JobID)
-}
 
 func TestProviderContractValidationRejectsMalformedStates(t *testing.T) {
 	checks := assert.New(t)

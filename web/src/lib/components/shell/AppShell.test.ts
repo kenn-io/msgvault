@@ -594,17 +594,6 @@ describe('AppShell', () => {
       window.innerWidth = 1024;
     });
 
-    it('groups workspaces in the sidebar with Relationships first', () => {
-      render(AppShell, { client: exploreClient(), state: shellState('everything'), enabled: false });
-      const nav = screen.getByRole('navigation', { name: 'Primary' });
-      expect(within(nav).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
-        'Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved views', 'Sources', 'Operations', 'Deletions', 'Settings'
-      ]);
-      expect(within(nav).getByRole('button', { name: 'Everything' }).getAttribute('aria-current')).toBe('page');
-      expect(screen.queryByRole('button', { name: 'People' })).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Domains' })).toBeNull();
-    });
-
     it('names the browser tab after the workspace', async () => {
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;

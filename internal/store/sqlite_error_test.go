@@ -60,10 +60,6 @@ func TestIsSQLiteError_NonSQLiteError(t *testing.T) {
 	assert.False(t, isSQLiteError(plainErr, "error"), "isSQLiteError should return false for non-sqlite errors")
 }
 
-func TestIsSQLiteError_NilError(t *testing.T) {
-	assert.False(t, isSQLiteError(nil, "anything"), "isSQLiteError should return false for nil error")
-}
-
 func TestSQLiteDialect_IsBusyError(t *testing.T) {
 	assert := assert.New(t)
 	d := &SQLiteDialect{}

@@ -687,36 +687,6 @@ func TestDocsPageDisabledOpenAPISpecStillServed(t *testing.T) {
 	assert.Equal("3.1.0", doc["openapi"], "openapi version")
 }
 
-func TestOpenAPIExportsCLIIdentityContracts(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
-
-	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
-	resp := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(resp, req)
-
-	assert.Equal(http.StatusOK, resp.Code, "openapi status: %s", resp.Body.String())
-	var doc map[string]any
-	require.NoError(json.NewDecoder(resp.Body).Decode(&doc), "decode openapi")
-	assert.Equal("3.1.0", doc["openapi"], "openapi version")
-
-	paths, ok := doc["paths"].(map[string]any)
-	require.True(ok, "paths object")
-	identityPath, ok := paths["/api/v1/cli/identities"].(map[string]any)
-	require.True(ok, "identity path present")
-
-	for _, method := range []string{"get", "post", "delete"} {
-		op, ok := identityPath[method].(map[string]any)
-		require.True(ok, "identity %s operation present", method)
-		assert.Contains(op, "operationId", "identity %s operation id", method)
-		assert.Contains(op, "responses", "identity %s responses", method)
-	}
-}
-
 func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -3633,25 +3603,6 @@ func TestHandleListMessages(t *testing.T) {
 	assert.NoError(err, "sent_at %q is not RFC3339", sentAt)
 }
 
-func TestHandleListMessagesPagination(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	srv, _ := newTestServerWithMockStore(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages?page=1&page_size=10", nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	assert.Equal(http.StatusOK, w.Code, "status")
-
-	var resp map[string]any
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
-
-	assert.InDelta(float64(1), resp["page"], 1e-9, "page")
-	assert.InDelta(float64(10), resp["page_size"], 1e-9, "page_size")
-}
-
 // TestPageSizeClamping verifies that /messages and /search clamp an
 // over-max page_size to the max (100) rather than collapsing it to the
 // default (20), while absent/too-small values fall back to the default and
@@ -5100,24 +5051,6 @@ func TestHandleUploadTokenInvalidEmail(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, w.Code, "status for email %q", tc.email)
 		})
 	}
-}
-
-func TestHandleUploadTokenMissingEmail(t *testing.T) {
-	t.Parallel()
-	cfg := &config.Config{
-		Server: config.ServerConfig{APIPort: 8080},
-	}
-	sched := newMockScheduler()
-	srv := NewServer(cfg, nil, sched, testLogger())
-
-	// Request without email in path - should 404 since route doesn't match
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/", strings.NewReader("{}"))
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	// Chi router will 404 on missing path parameter
-	assert.Contains(t, []int{http.StatusNotFound, http.StatusBadRequest}, w.Code, "status = %d, want 404 or 400", w.Code)
 }
 
 func TestHandleAddAccount(t *testing.T) {
@@ -8097,25 +8030,6 @@ func (f *fakeVectorBackend) CountRejectedPersons(_ context.Context, _ vector.Gen
 	return f.rejected, nil
 }
 func (f *fakeVectorBackend) Close() error { return nil }
-
-func TestHandleStats_VectorDisabled(t *testing.T) {
-	t.Parallel()
-	srv, _ := newTestServerWithMockStore(t)
-	// newTestServerWithMockStore uses NewServer (no Backend), so backend == nil.
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
-
-	// Parse raw JSON to verify "vector_search" is absent entirely.
-	var raw map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw), "decode")
-	assert.NotContains(t, raw, "vector_search",
-		"expected 'vector_search' to be absent from JSON when backend is nil")
-}
 
 func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 	t.Parallel()

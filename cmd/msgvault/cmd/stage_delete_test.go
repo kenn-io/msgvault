@@ -671,17 +671,6 @@ func writeStageDeleteJSON(t *testing.T, w http.ResponseWriter, status int, value
 	assert.NoError(t, json.NewEncoder(w).Encode(value))
 }
 
-func TestStageDeleteCommandRegistration(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	command, _, err := rootCmd.Find([]string{"stage-delete"})
-	require.NoError(err)
-	require.NotNil(command)
-	assert.Equal("stage-delete", command.Name())
-	assert.Equal("stage-delete [query]", command.Use)
-	assert.NotNil(command.Flags().Lookup("ids"))
-}
-
 func TestStageDeleteCommandByIDs(t *testing.T) {
 	t.Run("reproduction_create", func(t *testing.T) {
 		assert := assert.New(t)

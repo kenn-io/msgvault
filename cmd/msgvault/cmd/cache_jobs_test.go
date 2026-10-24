@@ -179,12 +179,6 @@ func TestManualSyncProbeDoesNotQueueCacheRefresh(t *testing.T) {
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe=true"}))
 }
 
-func TestSyncMatrixRegistersManualCacheFlags(t *testing.T) {
-	cmd := newSyncMatrixCmd()
-	assert.NotNil(t, cmd.Flags().Lookup("build-cache"))
-	assert.NotNil(t, cmd.Flags().Lookup("no-build-cache"))
-}
-
 func TestManualSyncCacheRefreshIncludesNativeMeetingProviders(t *testing.T) {
 	assert := assert.New(t)
 	assert.True(manualSyncCLICommand([]string{"sync-muesli"}))

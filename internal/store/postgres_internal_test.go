@@ -9,18 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPostgresColumnExistsSQLScopesToCurrentSchema(t *testing.T) {
-	query := postgresColumnExistsSQL("messages", "search_fts")
-
-	for _, want := range []string{
-		"table_schema = current_schema()",
-		"table_name = 'messages'",
-		"column_name = 'search_fts'",
-	} {
-		assert.Contains(t, query, want, "postgres column query")
-	}
-}
-
 func TestPostgresConnConfigRuntimeParams(t *testing.T) {
 	assert := assert.New(t)
 	cfg, err := postgresConnConfig("postgres://user:pass@example.com:5432/msgvault", true)

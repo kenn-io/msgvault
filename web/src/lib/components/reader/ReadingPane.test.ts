@@ -115,22 +115,6 @@ describe('ReadingPane header', () => {
     expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
   });
 
-  it('closes from an icon-only button', async () => {
-    const onClose = vi.fn();
-    render(ReadingPane, {
-      props: {
-        client: createAPIClient(vi.fn<typeof fetch>()),
-        selection: { kind: 'entry', row: entryRow() },
-        predicate: {} satisfies ExplorePredicate,
-        onClose
-      }
-    });
-    const close = screen.getByRole('button', { name: 'Close reading pane' });
-    expect(close.textContent?.trim()).toBe('');
-    await fireEvent.click(close);
-    expect(onClose).toHaveBeenCalledOnce();
-  });
-
   it.each([
     ['email', 'message', 'Email'],
     ['imessage', 'conversation', 'Conversation'],

@@ -7,18 +7,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestLiveMessagesWhere_NoAlias(t *testing.T) {
-	got := store.LiveMessagesWhere("", true)
-	want := "deleted_at IS NULL AND deleted_from_source_at IS NULL"
-	assert.Equal(t, want, got)
-}
-
-func TestLiveMessagesWhere_WithAlias(t *testing.T) {
-	got := store.LiveMessagesWhere("m", true)
-	want := "m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL"
-	assert.Equal(t, want, got)
-}
-
 func TestLiveMessagesWhere_TableDriven(t *testing.T) {
 	cases := []struct {
 		alias                 string

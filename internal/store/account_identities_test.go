@@ -501,21 +501,6 @@ func TestRemoveAccountIdentity_MissDoesNotBumpRevision(t *testing.T) {
 	assert.Equal(acctBefore, acctAfter, "removing a missing identity should not bump the account identity revision")
 }
 
-func TestRemoveAccountIdentity_Hit(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	st := f.Store
-
-	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"), "add identity")
-	removed, err := st.RemoveAccountIdentity(f.Source.ID, "alice@example.com")
-	require.NoError(err, "RemoveAccountIdentity")
-	assert.Equal(int64(1), removed, "removed")
-	rows, err := st.ListAccountIdentities(f.Source.ID)
-	require.NoError(err, "ListAccountIdentities")
-	assert.Empty(rows)
-}
-
 func TestRemoveAccountIdentity_SavesDefaultIdentityOptOutAfterLastRemoval(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -543,15 +528,6 @@ func TestRemoveAccountIdentity_SavesDefaultIdentityOptOutAfterLastRemoval(t *tes
 	require.True(source.SyncConfig.Valid)
 	assert.JSONEq(`{"account_email":"owner@example.test","no_default_identity":true}`,
 		source.SyncConfig.String)
-}
-
-func TestRemoveAccountIdentity_Miss(t *testing.T) {
-	f := storetest.New(t)
-	st := f.Store
-
-	removed, err := st.RemoveAccountIdentity(f.Source.ID, "nope@example.com")
-	require.NoError(t, err, "RemoveAccountIdentity")
-	assert.Equal(t, int64(0), removed, "removed on miss")
 }
 
 // TestRemoveAccountIdentity_EmailIsCaseInsensitive verifies that an

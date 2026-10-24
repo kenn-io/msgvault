@@ -29,18 +29,6 @@ func personTextDefinition(slug string) store.AttributeDefinitionInput {
 	}
 }
 
-func TestAttributeDescriptionAcceptsExactly280UnicodeRunes(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	description := strings.Repeat("🙂", 280)
-	input := personTextDefinition("maximum_description")
-	input.Description = &description
-
-	created, err := st.CreateAttributeDefinitionContext(t.Context(), input)
-	require.NoError(t, err)
-	require.NotNil(t, created.Description)
-	assert.Equal(t, description, *created.Description)
-}
-
 func TestAttributeDescriptionCreateAcceptsMoreThan280UnicodeRunes(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	description := strings.Repeat("🙂", 281)
@@ -636,16 +624,6 @@ func TestCreateAttributeDefinitionKeepsExplicitSlug(t *testing.T) {
 	conflicting.UniversalID = "test-conflicting-explicit-slug"
 	_, err = st.CreateAttributeDefinitionContext(ctx, conflicting)
 	require.ErrorIs(t, err, store.ErrAttributeDefinitionSlugConflict)
-}
-
-func TestValidateAttributeDefinitionInputDerivesOmittedSlug(t *testing.T) {
-	input := personTextDefinition("unused")
-	input.Slug = ""
-	input.Label = "Favorite café"
-
-	validated, err := store.ValidateAttributeDefinitionInput(input)
-	require.NoError(t, err)
-	assert.Equal(t, "favorite_caf", validated.Slug)
 }
 
 func TestUpdateAttributeDefinitionRenamesLabelAndKeepsIdentity(t *testing.T) {

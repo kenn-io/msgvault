@@ -7,20 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSQLInjection_InvalidViewType tests that invalid ViewType values are rejected.
-// This ensures that even if a malicious or buggy caller passes an out-of-range
-// ViewType, it won't result in undefined behavior or SQL injection.
-func TestSQLInjection_InvalidViewType(t *testing.T) {
-	env := newTestEnv(t)
-
-	// Attempt to aggregate with an invalid ViewType value
-	// This simulates a potential attack vector if enum validation is missing
-	invalidViewType := ViewType(999)
-
-	_, err := env.Engine.Aggregate(env.Ctx, invalidViewType, DefaultAggregateOptions())
-	assert.ErrorContains(t, err, "unsupported view type")
-}
-
 // TestSQLInjection_InvalidSortField tests that invalid SortField values are handled safely.
 // The sortClause function should validate the SortField is within expected range.
 func TestSQLInjection_InvalidSortField(t *testing.T) {

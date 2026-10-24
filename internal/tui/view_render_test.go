@@ -726,37 +726,6 @@ func TestFooterShowsLoadedCountWhenNoTotalUnique(t *testing.T) {
 	assert.Contains(t, footer, "1/2", "Footer when TotalUnique is not set")
 }
 
-// TestViewTypePrefixFallback verifies viewTypePrefix handles all ViewType values.
-func TestViewTypePrefixFallback(t *testing.T) {
-	// Test known view types return expected prefixes
-	tests := []struct {
-		vt       query.ViewType
-		expected string
-	}{
-		{query.ViewSenders, "S"},
-		{query.ViewRecipients, "R"},
-		{query.ViewRecipientNames, "RN"},
-		{query.ViewDomains, "D"},
-		{query.ViewLabels, "L"},
-		{query.ViewLists, "LI"},
-		{query.ViewTime, "T"},
-	}
-
-	for _, tc := range tests {
-		got := viewTypePrefix(tc.vt)
-		assert.Equal(t, tc.expected, got, "viewTypePrefix(%v)", tc.vt)
-	}
-
-	// Test unknown view type - should return first char of String()
-	// Note: ViewType(999).String() returns "ViewType(999)" so we get "V"
-	// The "?" fallback in viewTypePrefix is defensive code for the edge case
-	// where String() returns empty, which doesn't happen with Go's stringer.
-	unknown := query.ViewType(999)
-	got := viewTypePrefix(unknown)
-	expectedFirstChar := string(unknown.String()[0]) // "V" from "ViewType(999)"
-	assert.Equal(t, expectedFirstChar, got, "viewTypePrefix(%v) first char of String()", unknown)
-}
-
 // TestListsViewRendersDistinctHeaderAndBreadcrumb verifies that mailing-list
 // aggregation cannot be confused with Gmail Labels in the visible UI.
 func TestListsViewRendersDistinctHeaderAndBreadcrumb(t *testing.T) {

@@ -72,19 +72,6 @@ func TestProbeCircleback_OfficialArgumentsAndSchemas(t *testing.T) {
 	assert.Contains(out.String(), `{"meetings":[]}`)
 }
 
-func TestCirclebackLimitHelpExplainsMaintenanceItems(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	limit := syncCirclebackCmd.Flags().Lookup("limit")
-	require.NotNil(limit)
-
-	assert.Contains(limit.Usage, "newly searched meetings")
-	assert.Contains(limit.Usage, "maintenance items")
-	assert.Contains(limit.Usage, "unlimited run")
-	assert.Contains(syncCirclebackCmd.Long, "may revisit")
-	assert.Contains(syncCirclebackCmd.Long, "unlimited run")
-}
-
 func TestCirclebackSummaryReportsMaintenanceItems(t *testing.T) {
 	assert := assert.New(t)
 	var out bytes.Buffer

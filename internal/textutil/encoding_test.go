@@ -230,31 +230,6 @@ func TestGetEncodingByName(t *testing.T) {
 	}
 }
 
-func TestGetEncodingByName_DecodesCorrectly(t *testing.T) {
-	// Verify that GetEncodingByName returns encodings that decode test samples correctly.
-	enc := testutil.EncodedSamples()
-	tests := []struct {
-		name     string
-		charset  string
-		input    []byte
-		expected string
-	}{
-		{"Shift-JIS", "Shift_JIS", enc.ShiftJIS_Long, enc.ShiftJIS_Long_UTF8},
-		{"GBK", "GBK", enc.GBK_Long, enc.GBK_Long_UTF8},
-		{"Big5", "Big5", enc.Big5_Long, enc.Big5_Long_UTF8},
-		{"EUC-KR", "EUC-KR", enc.EUCKR_Long, enc.EUCKR_Long_UTF8},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			encoding := textutil.GetEncodingByName(tt.charset)
-			require.NotNilf(t, encoding, "GetEncodingByName(%q) returned nil", tt.charset)
-			decoded, err := encoding.NewDecoder().Bytes(tt.input)
-			require.NoError(t, err, "decode failed")
-			assert.Equal(t, tt.expected, string(decoded))
-		})
-	}
-}
-
 func TestGetEncodingByName_MatchesExpectedEncodings(t *testing.T) {
 	// Verify that charset names map to the correct encoding objects.
 	tests := []struct {

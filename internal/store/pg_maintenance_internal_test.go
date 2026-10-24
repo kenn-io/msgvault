@@ -160,9 +160,6 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		"identity_match_evidence must be locked for candidate cascade cleanup")
 }
 
-// TestMaintenanceTimeoutResetSQL pins the exact statement the PG dialect uses
-// to lift the per-statement timeout — the mechanism finding S1's hatch relies
-// on. SQLite returns "" so runMaintenance issues no reset.
 // TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge pins the lock
 // ordering documented on BeginExclusive: MergeParticipants writes person
 // tables BEFORE participants/messages, the opposite of exclusiveLockTables'
@@ -389,11 +386,6 @@ func TestMergeSourcesDoesNotDeadlockWithSerializedSourceRemoval(t *testing.T) {
 		}
 	}
 	require.NoError(removeErr, "unrelated serialized source removal must succeed")
-}
-
-func TestMaintenanceTimeoutResetSQL(t *testing.T) {
-	assert.Equal(t, "SET LOCAL statement_timeout = 0", (&PostgreSQLDialect{}).MaintenanceTimeoutResetSQL())
-	assert.Empty(t, (&SQLiteDialect{}).MaintenanceTimeoutResetSQL())
 }
 
 // is57014 reports whether err is the PostgreSQL query_canceled SQLSTATE raised

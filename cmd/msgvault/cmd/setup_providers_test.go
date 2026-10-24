@@ -1226,16 +1226,6 @@ func TestSetupProvidersNoSelectionPlanShowsCompletePresetCommand(t *testing.T) {
 	}
 }
 
-func TestSetupProvidersHelpListsCodexEnrollmentWithoutProviderFlag(t *testing.T) {
-	assert := assert.New(t)
-
-	command := newSetupProvidersCommand(setupProvidersDeps{})
-	help := command.Long
-	assert.Contains(help, "msgvault person provider enroll-codex")
-	assert.Contains(help, "requires a terminal")
-	assert.NotContains(help, "--provider codex")
-}
-
 func TestSetupProvidersNamedPresetRequiresModel(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

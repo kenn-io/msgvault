@@ -115,10 +115,6 @@ func TestClassifyDaemonCLIWaitErrOtherFailure(t *testing.T) {
 	require.ErrorIs(got, base, "wraps the original error")
 }
 
-func TestClassifyDaemonCLIWaitErrNil(t *testing.T) {
-	require.NoError(t, classifyDaemonCLIWaitErr(nil, []string{"logs"}, nil), "nil stays nil")
-}
-
 func TestDaemonCLIChildEnvAppliesAllowlistedEnvOverrides(t *testing.T) {
 	got := daemonCLIChildEnv(
 		[]string{

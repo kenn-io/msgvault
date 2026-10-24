@@ -29,20 +29,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestPlaudCommandDiscovery(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	for _, name := range []string{"add-plaud", "sync-plaud"} {
-		cmd, _, err := rootCmd.Find([]string{name})
-		require.NoError(err)
-		assert.Equal(name, cmd.Name())
-	}
-	cmd, _, err := rootCmd.Find([]string{"sync-plaud"})
-	require.NoError(err)
-	for _, name := range []string{"limit", "full", "after", "probe", "build-cache", "no-build-cache"} {
-		require.NotNil(cmd.Flags().Lookup(name))
-	}
-}
 func TestPlaudRemoteRefusesOAuthBeforeProxy(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

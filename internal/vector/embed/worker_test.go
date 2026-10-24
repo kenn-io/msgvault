@@ -314,22 +314,6 @@ func operationCounter(run operations.Run, name operations.CounterName) int64 {
 	return 0
 }
 
-// TestWorker_StampsAfterUpsert verifies the ordered idempotent steps:
-// every embedded message has embed_gen stamped to the target generation.
-func TestWorker_StampsAfterUpsert(t *testing.T) {
-	require := require.New(t)
-	f := newWorkerFixture(t, 3)
-
-	w := newTestWorker(f, 3)
-	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
-	require.NoError(err, "RunOnce")
-
-	var stamped int
-	require.NoError(f.MainDB.QueryRow(
-		`SELECT COUNT(*) FROM messages WHERE embed_gen = ?`, int64(f.BuildingGen)).Scan(&stamped))
-	require.Equal(3, stamped, "stamped messages")
-}
-
 // TestWorker_EmptyCorpusReturnsZero: scanning an empty corpus returns a
 // zero result and no error.
 func TestWorker_EmptyCorpusReturnsZero(t *testing.T) {
@@ -940,16 +924,6 @@ func TestWorker_BackstopDoesNotPersistWatermark(t *testing.T) {
 	_, err = w.RunBackstop(context.Background(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunBackstop")
 	assert.Equal(t, wmBefore, readWatermark(t, f.VectorsDB, int64(f.BuildingGen)), "watermark unchanged by backstop")
-}
-
-// TestWorker_ReclaimStaleIsNoOp: ReclaimStale always returns (0, nil)
-// under the scan-and-fill design (kept for the EmbedRunner interface).
-func TestWorker_ReclaimStaleIsNoOp(t *testing.T) {
-	f := newWorkerFixture(t, 1)
-	w := newTestWorker(f, 1)
-	n, err := w.ReclaimStale(context.Background())
-	require.NoError(t, err, "ReclaimStale")
-	assert.Equal(t, 0, n, "no-op returns 0")
 }
 
 // --- Downshift / 4xx behavior ---

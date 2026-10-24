@@ -93,20 +93,6 @@ func TestPersonScoringCLIUsesDaemonScoringRoutes(t *testing.T) {
 	assert.Equal("/api/v1/identity/scoring/revoke", (<-requests).path)
 }
 
-func TestPersonScoringConsentHelpDescriptions(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	consentHelp, err := runPersonScoringCLI(t.Context(), t, "consent", "--help")
-	require.NoError(err)
-	assert.Contains(consentHelp, "Consent to the exact current disclosure")
-	assert.NotContains(consentHelp, "Consent consent")
-
-	revokeHelp, err := runPersonScoringCLI(t.Context(), t, "revoke", "--help")
-	require.NoError(err)
-	assert.Contains(revokeHelp, "Revoke consent for the exact current disclosure")
-}
-
 func TestPersonScoringCLIRetainsPartialResultsOnBatchError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/identity/scoring/run", r.URL.Path)

@@ -1,6 +1,7 @@
 package packcompat_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -113,4 +114,10 @@ func TestFrozenMsgvaultV1Pack(t *testing.T) {
 		assert.Equal(int64(len(want)), size, blob.Name)
 		assert.Equal(want, got, blob.Name)
 	}
+}
+
+type crossReadResolver map[packstore.Hash]packstore.Location
+
+func (r crossReadResolver) Resolve(_ context.Context, hash packstore.Hash) (packstore.Location, error) {
+	return r[hash], nil
 }

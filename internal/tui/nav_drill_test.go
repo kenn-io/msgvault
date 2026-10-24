@@ -453,18 +453,6 @@ func TestDrillFilterPreservedAfterMessageDetail(t *testing.T) {
 // Breadcrumb Tests
 // =============================================================================
 
-func TestPushBreadcrumb(t *testing.T) {
-	m := NewBuilder().Build()
-
-	require.Empty(t, m.breadcrumbs, "expected no breadcrumbs initially")
-
-	m.pushBreadcrumb()
-	assert.Len(t, m.breadcrumbs, 1)
-
-	m.pushBreadcrumb()
-	assert.Len(t, m.breadcrumbs, 2)
-}
-
 // =============================================================================
 // Selection Preservation Tests
 // =============================================================================

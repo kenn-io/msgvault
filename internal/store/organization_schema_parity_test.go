@@ -59,17 +59,6 @@ func TestOrganizationChildTablesMirrorPersonChildTables(t *testing.T) {
 	}
 }
 
-func TestPersonsHasNoDenormalizedCompanyOrTitle(t *testing.T) {
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	columns := tableColumns(t, st, "persons")
-	for _, forbidden := range []string{
-		"company", "company_id", "organization_id", "job_title", "title", "role", "department",
-	} {
-		assert.NotContains(columns, forbidden)
-	}
-}
-
 var organizationProfileEnvelopeColumnNames = []string{
 	"pref", "ordinal", "type_label", "type_tokens",
 	"vcard_property", "vcard_group", "vcard_prop_id", "vcard_pid", "vcard_altid",

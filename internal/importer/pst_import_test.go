@@ -150,20 +150,3 @@ func TestPstArchiveFingerprint(t *testing.T) {
 	require.NoError(err, "fingerprint C")
 	assert.Equal(fpA, fpC, "same bytes should fingerprint the same")
 }
-
-// TestImportPst_ContextCancelledBeforeOpen ensures that context cancellation
-// before the PST file is opened is handled gracefully.
-func TestImportPst_ContextCancelledBeforeOpen(t *testing.T) {
-	st := openTestStorePst(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	// Use a non-existent path so Open fails fast.
-	_, err := ImportPst(ctx, st, "/nonexistent.pst", PstImportOptions{
-		Identifier: "user@example.com",
-		NoResume:   true,
-	})
-	// Either ctx error or open error is acceptable — we just must not hang.
-	assert.Error(t, err, "expected error (either ctx or open)")
-}

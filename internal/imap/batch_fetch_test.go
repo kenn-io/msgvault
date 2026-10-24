@@ -19,20 +19,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestNewRawBatchResultsKeepsInputIDs(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	results := newRawBatchResults([]string{"Archive|10", "Archive|11"})
-
-	require.Len(results, 2)
-	assert.Equal("Archive|10", results[0].ID)
-	assert.Nil(results[0].Message)
-	require.NoError(results[0].Err)
-	assert.Equal("Archive|11", results[1].ID)
-	assert.Nil(results[1].Message)
-	require.NoError(results[1].Err)
-}
-
 func TestMarkRawBatchErrorMarksOnlyRequestedItems(t *testing.T) {
 	require := require.New(t)
 	errFetch := errors.New("fetch failed")

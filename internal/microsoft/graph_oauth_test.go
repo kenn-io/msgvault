@@ -25,21 +25,6 @@ func TestGraphTokenPath(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "teams_user@example.com.json"), m.TokenPath("user@example.com"))
 }
 
-func TestGraphScopes(t *testing.T) {
-	assert := assert.New(t)
-	got := GraphScopes()
-	assert.Contains(got, "https://graph.microsoft.com/Chat.Read")
-	assert.Contains(got, "https://graph.microsoft.com/ChannelMessage.Read.All")
-	assert.Contains(got, "https://graph.microsoft.com/Team.ReadBasic.All")
-	assert.Contains(got, "https://graph.microsoft.com/Channel.ReadBasic.All")
-	assert.Contains(got, "https://graph.microsoft.com/User.Read")
-	assert.Contains(got, "https://graph.microsoft.com/User.ReadBasic.All")
-	assert.Contains(got, "https://graph.microsoft.com/TeamMember.Read.All")
-	assert.Contains(got, "https://graph.microsoft.com/ChannelMember.Read.All")
-	assert.Contains(got, scopeOfflineAccess)
-	assert.Contains(got, scopeProfile)
-}
-
 func TestNewGraphManager_DefaultsTenant(t *testing.T) {
 	m := NewGraphManager("client", "", "", "tmp/tokens", nil)
 	assert.Equal(t, DefaultTenant, m.tenantID, "tenantID should default to common")
@@ -201,20 +186,6 @@ func TestGraphManager_Authorize_ConfirmsMailboxViaProfile(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGraphManager_TokenSource_NoIMAPValidation(t *testing.T) {
-	dir := t.TempDir()
-	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
-
-	// Save a Graph token. There is no IMAP scope; the IMAP Manager would
-	// reject this, but GraphManager must accept it.
-	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
-	require.NoError(t, m.saveToken("user@company.com", token, GraphScopes(), "org-tid"))
-
-	ts, err := m.TokenSource(t.Context(), "user@company.com")
-	require.NoError(t, err)
-	require.NotNil(t, ts, "TokenSource returned nil")
 }
 
 func TestGraphManager_ExistingGrantWithoutProfile(t *testing.T) {

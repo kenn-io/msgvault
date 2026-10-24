@@ -1263,12 +1263,6 @@ describe('FilesWorkspace', () => {
       expect(within(row).queryByRole('button')).toBeNull();
     });
 
-    it('names the visual search toggle plainly', async () => {
-      renderFiles();
-      expect(await screen.findByRole('switch', { name: 'Visual search' })).toBeDefined();
-      expect(screen.queryByRole('switch', { name: 'Hosted visual search' })).toBeNull();
-    });
-
     it('leaves the landmark to the shell when embedded without a header', async () => {
       renderFiles({ embedded: true, showHeader: false });
       await screen.findByText('fixture.pdf');

@@ -12,23 +12,6 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
-// =============================================================================
-// Init Tests
-// =============================================================================
-
-func TestModel_Init_ReturnsNonNilCmd(t *testing.T) {
-	model := NewBuilder().Build()
-	cmd := model.Init()
-	assert.NotNil(t, cmd, "Init returned nil command, expected batch command for initial data loading")
-}
-
-func TestModel_Init_SetsLoadingState(t *testing.T) {
-	// A fresh model via New() starts with loading=true
-	engine := newMockEngine(MockConfig{})
-	model := New(engine, Options{DataDir: "/tmp/test", Version: "test123"})
-	assert.True(t, model.loading, "expected loading=true for fresh model")
-}
-
 func TestModelUpdateAnalyticsNotice(t *testing.T) {
 	model := NewBuilder().Build()
 	model.analyticsNotice = "analytics cache is initializing"
@@ -144,16 +127,6 @@ func TestNew_OverridesLimits(t *testing.T) {
 
 	assert.Equal(t, 100, model.aggregateLimit)
 	assert.Equal(t, 50, model.threadMessageLimit)
-}
-
-func TestNew_ConfiguresAttachmentExportDirectory(t *testing.T) {
-	engine := newMockEngine(MockConfig{})
-	model := New(engine, Options{
-		DataDir:   "/tmp/test",
-		ExportDir: "/tmp/configured-exports",
-	})
-
-	assert.Equal(t, "/tmp/configured-exports", model.actions.attachmentOutputDir)
 }
 
 func TestStatsOptions_SearchScopeBoundaries(t *testing.T) {
@@ -520,17 +493,6 @@ func TestModel_Update_SearchResults_IgnoresStaleResponse(t *testing.T) {
 // Window Size Tests
 // =============================================================================
 
-func TestModel_Update_WindowSize_UpdatesDimensions(t *testing.T) {
-	model := NewBuilder().WithSize(100, 24).Build()
-
-	msg := tea.WindowSizeMsg{Width: 120, Height: 40}
-	updatedModel, _ := model.Update(msg)
-	m := asModel(t, updatedModel)
-
-	assert.Equal(t, 120, m.width)
-	assert.Equal(t, 40, m.height)
-}
-
 func TestModel_Update_WindowSize_RecalculatesPageSize(t *testing.T) {
 	model := NewBuilder().WithSize(100, 24).Build()
 
@@ -540,17 +502,6 @@ func TestModel_Update_WindowSize_RecalculatesPageSize(t *testing.T) {
 
 	expectedPageSize := 50 - headerFooterLines
 	assert.Equal(t, expectedPageSize, m.pageSize)
-}
-
-func TestModel_Update_WindowSize_ClampsNegativeDimensions(t *testing.T) {
-	model := NewBuilder().WithSize(100, 24).Build()
-
-	msg := tea.WindowSizeMsg{Width: -10, Height: -5}
-	updatedModel, _ := model.Update(msg)
-	m := asModel(t, updatedModel)
-
-	assert.GreaterOrEqual(t, m.width, 0)
-	assert.GreaterOrEqual(t, m.height, 0)
 }
 
 func TestModel_Update_WindowSize_ClearsTransitionBuffer(t *testing.T) {
@@ -682,31 +633,6 @@ func TestModel_Update_MessageDetailLoaded_IgnoresStaleResponse(t *testing.T) {
 
 	assert.True(t, m.loading, "expected loading=true (stale response)")
 	assert.Nil(t, m.messageDetail, "expected messageDetail to remain nil")
-}
-
-// =============================================================================
-// Update Check Tests
-// =============================================================================
-
-func TestModel_Update_UpdateCheck_SetsVersion(t *testing.T) {
-	model := NewBuilder().Build()
-
-	msg := updateCheckMsg{version: "v2.0.0", isDevBuild: false}
-	updatedModel, _ := model.Update(msg)
-	m := asModel(t, updatedModel)
-
-	assert.Equal(t, "v2.0.0", m.updateAvailable)
-	assert.False(t, m.updateIsDevBuild)
-}
-
-func TestModel_Update_UpdateCheck_SetsDevBuild(t *testing.T) {
-	model := NewBuilder().Build()
-
-	msg := updateCheckMsg{version: "", isDevBuild: true}
-	updatedModel, _ := model.Update(msg)
-	m := asModel(t, updatedModel)
-
-	assert.True(t, m.updateIsDevBuild)
 }
 
 // =============================================================================

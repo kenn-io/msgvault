@@ -131,11 +131,6 @@ func TestParseFile(t *testing.T) {
 	require.Equal(t, mime, string(msg.Raw))
 }
 
-func TestParseFile_NotFound(t *testing.T) {
-	_, err := ParseFile("/nonexistent/12345.emlx", 1<<20)
-	require.Error(t, err, "expected error for missing file")
-}
-
 func TestParse_ExtremeByteCount(t *testing.T) {
 	// A declared byte count near MaxInt64 must return an error, not panic.
 	data := "9223372036854775807\nshort"

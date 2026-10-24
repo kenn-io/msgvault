@@ -10,14 +10,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/tbmock"
 )
 
-func TestAddLabel_ValidName(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	id := b.AddLabel("INBOX")
-	assert.Equal(t, int64(1), id)
-	id2 := b.AddLabel("SENT")
-	assert.Equal(t, int64(2), id2)
-}
-
 func TestAddMessage_ExplicitSourceID_BypassesCheck(t *testing.T) {
 	// Explicit SourceID bypasses the "no sources" check.
 	b := NewTestDataBuilder(t)

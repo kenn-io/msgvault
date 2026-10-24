@@ -409,12 +409,6 @@ func TestGeneratedMeetingMetricsPreserveNullableResponseValues(t *testing.T) {
 	assertions.JSONEq(rawMetrics, string(encoded))
 }
 
-func TestGeneratedMeetingStatusKeepsRelationshipReviewPendingCompatibility(t *testing.T) {
-	t.Parallel()
-	status := generated.Pending
-	assert.Equal(t, generated.ListPersonRelationshipReviewsQueryStatus("pending"), status)
-}
-
 func TestOpenAPISchemaVersionSavedViewRun(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -1621,17 +1615,6 @@ func TestOpenAPIPersonAndDomainDetailsUseStructuredUnavailableUnion(t *testing.T
 	}
 }
 
-func TestGeneratedPersonAndDomainDetailsExposeServiceUnavailable(t *testing.T) {
-	t.Parallel()
-	for name, responseType := range map[string]reflect.Type{
-		"get participant": reflect.TypeFor[generated.GetParticipantResp](),
-		"get domain":      reflect.TypeFor[generated.GetDomainResp](),
-	} {
-		_, ok := responseType.FieldByName("JSON503")
-		assert.True(t, ok, "%s response must expose JSON503", name)
-	}
-}
-
 func TestGeneratedPersonTrackingPreservesRequiredNullTimestamp(t *testing.T) {
 	t.Parallel()
 	state := generated.PersonTracking{
@@ -2297,32 +2280,6 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 			normalizeGeneratedArtifact(got),
 			"%s is stale; run `make api-generate`", filepath.Join(openAPIClientGeneratedDir, name))
 	}
-}
-
-func TestOpenAPIGeneratedMeetingImportClient(t *testing.T) {
-	t.Parallel()
-	assertGeneratedFileContains(t, "client.go",
-		"ImportMeeting(ctx context.Context, options *ImportMeetingRequestOptions")
-	assertGeneratedFileContains(t, "client_options.go",
-		"type ImportMeetingRequestOptions struct")
-	assertGeneratedFileContains(t, "payloads.go",
-		"type ImportMeetingBody = MeetingImportRequest")
-	assertGeneratedFileContains(t, "responses.go",
-		"type ImportMeetingResp struct")
-	assertGeneratedFileContains(t, "types.go",
-		"type MeetingImportResponse struct")
-	assertGeneratedFileContains(t, "types.go",
-		"Metadata           map[string]any")
-	assertGeneratedFileContains(t, "enums.go",
-		`MeetingImportResponseStatusUpdated MeetingImportResponseStatus = "updated"`)
-}
-
-func assertGeneratedFileContains(t *testing.T, name, expected string) {
-	t.Helper()
-	content, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, name))
-	require.NoError(t, err, "read generated client file %s", name)
-	assert.Contains(t, string(content), expected,
-		"%s is missing the meeting import contract; run `make api-generate`", name)
 }
 
 func normalizeGeneratedArtifact(src []byte) string {

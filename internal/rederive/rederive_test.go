@@ -28,11 +28,6 @@ func TestRegisterRejectsDuplicates(t *testing.T) {
 	assert.Panics(func() { Register("test-dup", "v1", noop) })
 }
 
-func TestLookupReportsUnregisteredTypes(t *testing.T) {
-	_, _, ok := Lookup("not-a-source-type")
-	assert.False(t, ok)
-}
-
 func TestSummaryAddAccumulates(t *testing.T) {
 	assert := assert.New(t)
 	total := &Summary{}

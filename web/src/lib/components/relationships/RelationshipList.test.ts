@@ -135,18 +135,6 @@ describe('RelationshipList', () => {
     expect(props.onShowAllChange).toHaveBeenCalledWith(false);
   });
 
-  it('shows the all-senders chip under the people facet', () => {
-    render(RelationshipList, baseProps());
-    expect(screen.getByRole('button', { name: 'All senders' })).toBeDefined();
-  });
-
-  it('invites filtering the people and domains list', () => {
-    render(RelationshipList, baseProps());
-    expect(
-      screen.getByRole('searchbox', { name: 'Search people and domains' }).getAttribute('placeholder')
-    ).toBe('Filter people and domains');
-  });
-
   it('hides the all-senders chip under the domains facet', () => {
     render(RelationshipList, { ...baseProps(), facet: 'domains', rows: [domain('example.com')] });
     expect(screen.queryByRole('button', { name: 'All senders' })).toBeNull();

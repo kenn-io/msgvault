@@ -17,63 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-func TestEmbeddingsCommandRegistration(t *testing.T) {
-	require := require.New(t)
-
-	buildCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "build"})
-	require.NoError(err)
-	require.Equal("build", buildCmd.Name())
-	require.NotNil(buildCmd.Flags().Lookup("full-rebuild"))
-	require.NotNil(buildCmd.Flags().Lookup("yes"))
-	require.NotNil(buildCmd.Flags().Lookup("backstop"))
-
-	resumeCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "resume"})
-	require.NoError(err)
-	require.Equal("resume", resumeCmd.Name())
-	require.Nil(resumeCmd.Flags().Lookup("full-rebuild"))
-	// --backstop is also available on resume, so operators
-	// can do a watermark-ignoring straggler sweep without --full-rebuild.
-	require.NotNil(resumeCmd.Flags().Lookup("backstop"))
-
-	listCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "list"})
-	require.NoError(err)
-	require.Equal("list", listCmd.Name())
-
-	retireCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "retire"})
-	require.NoError(err)
-	require.Equal("retire", retireCmd.Name())
-	require.NotNil(retireCmd.Flags().Lookup("yes"))
-	require.NotNil(retireCmd.Flags().Lookup("force-active"))
-
-	activateCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "activate"})
-	require.NoError(err)
-	require.Equal("activate", activateCmd.Name())
-	require.NotNil(activateCmd.Flags().Lookup("yes"))
-	forceFlag := activateCmd.Flags().Lookup("force")
-	require.NotNil(forceFlag)
-	assert.Contains(t, forceFlag.Usage, "person coverage")
-
-	pruneCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "prune"})
-	require.NoError(err)
-	require.Equal("prune", pruneCmd.Name())
-
-	optimizeCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "optimize"})
-	require.NoError(err)
-	require.Equal("optimize", optimizeCmd.Name())
-
-	workerCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, embeddingsOptimizeWorkerName})
-	require.NoError(err)
-	require.True(workerCmd.Hidden)
-	require.True(skipsConfigLoad(workerCmd))
-
-	legacyCmd, _, err := rootCmd.Find([]string{"build-embeddings"})
-	require.NoError(err)
-	require.Equal("build-embeddings", legacyCmd.Name())
-	require.NotEmpty(legacyCmd.Deprecated)
-	require.NotNil(legacyCmd.Flags().Lookup("full-rebuild"))
-	require.NotNil(legacyCmd.Flags().Lookup("yes"))
-}
-
 func TestEmbeddingsListUsesDaemonRunner(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

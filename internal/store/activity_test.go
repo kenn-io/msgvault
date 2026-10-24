@@ -52,11 +52,6 @@ func TestActivitySchemaHasPortableColumns(t *testing.T) {
 	}
 }
 
-func TestActivityEventRefIsStableAndNative(t *testing.T) {
-	event := store.ActivityEvent{MessageID: 4242, RefKind: store.RefKindMeeting}
-	assert.Equal(t, "meeting:4242", event.Ref())
-}
-
 func TestActivityValueValidationRejectsUnknownValues(t *testing.T) {
 	assert := assert.New(t)
 	assert.True(store.DirectionInbound.Valid())

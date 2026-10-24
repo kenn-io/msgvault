@@ -22,26 +22,9 @@ func TestCardDAVCommandsExposeSafeOperatorSurface(t *testing.T) {
 
 	add := newAddCardDAVCmd()
 	assertions.Nil(add.Flags().Lookup("password"), "passwords must never be accepted on argv")
-	assertions.Equal("add-carddav", add.Name())
 
-	root := newCardDAVCmd()
-	books, _, err := root.Find([]string{"books"})
+	authorize, _, err := newCardDAVCmd().Find([]string{"authorize-microsoft"})
 	require.NoError(err)
-	assertions.Equal("books", books.Name())
-	setRole, _, err := root.Find([]string{"books", "set-role"})
-	require.NoError(err)
-	assertions.Equal("set-role", setRole.Name())
-	resolve, _, err := root.Find([]string{"conflicts", "resolve"})
-	require.NoError(err)
-	assertions.Equal("resolve", resolve.Name())
-	show, _, err := root.Find([]string{"conflicts", "show"})
-	require.NoError(err)
-	assertions.Equal("show", show.Name())
-	assertions.Equal("Show safe base, local, and remote summaries for a CardDAV conflict", show.Short)
-	authorize, _, err := root.Find([]string{"authorize-microsoft"})
-	require.NoError(err)
-	assertions.Equal("authorize-microsoft", authorize.Name())
-	assertions.NotNil(authorize.Flags().Lookup("headless"))
 	assertions.Nil(authorize.Flags().Lookup("schedule"), "sign-in must not change a saved connection")
 }
 

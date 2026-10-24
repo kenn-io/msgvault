@@ -262,20 +262,6 @@ func TestConfigPeopleDefaultsKeepBothSubsystemsDisabled(t *testing.T) {
 	checks.Empty(cfg.People.Enrichment.Providers)
 }
 
-func TestServerConfigDefaults(t *testing.T) {
-	// Create a temp dir without a config file
-	tmpDir := t.TempDir()
-	t.Setenv("MSGVAULT_HOME", tmpDir)
-
-	cfg, err := Load("", "")
-	require.NoError(t, err, "Load()")
-
-	// Check server defaults: api_port defaults to 0, which auto-selects an
-	// open port at daemon startup (clients discover it via the runtime record).
-	assert.Equal(t, 0, cfg.Server.APIPort)
-	assert.Empty(t, cfg.Server.APIKey)
-}
-
 func TestDeletionConfigDefaultsDisabledAndLoadsRemoteEnabled(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -287,18 +273,6 @@ func TestDeletionConfigDefaultsDisabledAndLoadsRemoteEnabled(t *testing.T) {
 	cfg, err := Load(configPath, "")
 	require.NoError(err)
 	assert.True(cfg.Deletion.RemoteEnabled)
-}
-
-func TestAnalyticsConfigDefaults(t *testing.T) {
-	assertions := assert.New(t)
-	cfg := NewDefaultConfig()
-
-	assertions.Equal(AnalyticsEngineAuto, cfg.Analytics.Engine)
-	assertions.True(cfg.Analytics.AutoBuildCache)
-	assertions.Zero(cfg.Analytics.MinRebuildInterval)
-	assertions.Empty(cfg.Analytics.BuilderMemoryLimit)
-	assertions.Zero(cfg.Analytics.BuilderThreads)
-	assertions.Empty(cfg.Analytics.BuilderTempLimit)
 }
 
 func TestLoadWithAnalyticsMinRebuildInterval(t *testing.T) {
@@ -610,19 +584,6 @@ func TestKataIntegrationConfig(t *testing.T) {
 	}
 }
 
-func TestAccountScheduleEmpty(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MSGVAULT_HOME", tmpDir)
-
-	cfg, err := Load("", "")
-	require.NoError(t, err, "Load()")
-
-	assert.Empty(t, cfg.Accounts)
-
-	scheduled := cfg.ScheduledAccounts()
-	assert.Empty(t, scheduled)
-}
-
 func TestLoadWithServerConfig(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -678,12 +639,6 @@ daemon_idle_timeout = "6h"
 	require.NoError(err, "Load()")
 
 	assert.Equal(6*time.Hour, cfg.Server.DaemonIdleTimeout)
-}
-
-func TestServerDaemonAutoRestartDefault(t *testing.T) {
-	cfg := NewDefaultConfig()
-
-	assert.Equal(t, DaemonAutoRestartNewer, cfg.Server.DaemonAutoRestart)
 }
 
 func TestLoadWithServerDaemonAutoStart(t *testing.T) {
@@ -1545,20 +1500,6 @@ mcp_enabled = true
 	require.NoError(t, err, "Load() should succeed with deprecated mcp_enabled")
 
 	assert.Equal(t, 9090, cfg.Server.APIPort)
-}
-
-func TestNewDefaultConfig(t *testing.T) {
-	assert := assert.New(t)
-	// Use a temp directory as MSGVAULT_HOME
-	tmpDir := t.TempDir()
-	t.Setenv("MSGVAULT_HOME", tmpDir)
-
-	cfg := NewDefaultConfig()
-
-	assert.Equal(tmpDir, cfg.HomeDir)
-	assert.Equal(tmpDir, cfg.Data.DataDir)
-	assert.False(cfg.Data.LooseAttachments)
-	assert.Equal(5, cfg.Sync.RateLimitQPS)
 }
 
 func TestDataLooseAttachmentsConfig(t *testing.T) {

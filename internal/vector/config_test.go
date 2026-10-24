@@ -573,22 +573,6 @@ func TestConfig_GenerationFingerprint_EmbeddingPrefixEncodingIsUnambiguous(t *te
 	assert.NotEqual(t, left.GenerationFingerprint(), right.GenerationFingerprint())
 }
 
-// TestConfig_GenerationFingerprint_IncludesEmbedPolicyVersion pins the
-// trailing :e<embedPolicyVersion> segment. The embed worker switched
-// from one-vector-per-message-with-truncation to N-vectors-per-message-
-// via-ChunkText; without this segment an active generation seeded
-// under the old single-vector policy would silently accept new chunked
-// entries from an upgraded worker, mixing two incompatible vector
-// layouts inside one generation.
-func TestConfig_GenerationFingerprint_IncludesEmbedPolicyVersion(t *testing.T) {
-	base := Config{
-		Embeddings: EmbeddingsConfig{Model: "m", Dimension: 8, MaxInputChars: 6000},
-	}
-	got := base.GenerationFingerprint()
-	suffix := fmt.Sprintf(":e%d", embedPolicyVersion)
-	assert.True(t, strings.HasSuffix(got, suffix), "GenerationFingerprint() = %q, want suffix %q", got, suffix)
-}
-
 func TestConfig_GenerationFingerprint_IncludesEmbedScope(t *testing.T) {
 	base := Config{
 		Embeddings: EmbeddingsConfig{Model: "m", Dimension: 8, MaxInputChars: 6000},

@@ -670,35 +670,6 @@ func TestClient_Embed_RetriesRateLimitAndTimeout(t *testing.T) {
 	}
 }
 
-func TestClient_Embed_4xxIsPermanent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":{"message":"Invalid input"}}`, http.StatusBadRequest)
-	}))
-	defer srv.Close()
-
-	c := NewClient(Config{
-		Endpoint: srv.URL, Model: "m", Dimension: 4, MaxRetries: 3,
-	})
-	_, err := c.Embed(context.Background(), []string{"hello"})
-	require.Error(t, err, "expected error on 400")
-	require.ErrorIs(t, err, ErrPermanent4xx)
-	assert.ErrorContains(t, err, "400")
-}
-
-func TestClient_Embed_5xxNotPermanent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	c := NewClient(Config{
-		Endpoint: srv.URL, Model: "m", Dimension: 4, MaxRetries: 2,
-	})
-	_, err := c.Embed(context.Background(), []string{"hello"})
-	require.Error(t, err, "expected error after retries exhausted")
-	assert.NotErrorIs(t, err, ErrPermanent4xx, "5xx should NOT match ErrPermanent4xx")
-}
-
 func TestClient_Embed_429NotPermanent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "0")

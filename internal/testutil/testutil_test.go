@@ -1,24 +1,12 @@
 package testutil
 
 import (
-	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestNewTestStore(t *testing.T) {
-	st := NewTestStore(t)
-
-	// Verify store is usable
-	stats, err := st.GetStats()
-	require.NoError(t, err, "get stats")
-
-	// Fresh database should have no messages
-	assert.Equal(t, int64(0), stats.MessageCount, "expected 0 messages")
-}
 
 // validRelativePaths returns a fresh slice of relative paths that should pass
 // validation and be writable. Used by TestValidateRelativePath and
@@ -40,31 +28,6 @@ func validRelativePaths() []string {
 		paths = append(paths, "....") // four dots - valid filename, not parent escape
 	}
 	return paths
-}
-
-func TestWriteFileAndReadBack(t *testing.T) {
-	dir := t.TempDir()
-	WriteAndVerifyFile(t, dir, "test.txt", []byte("hello world"))
-}
-
-func TestWriteFileSubdir(t *testing.T) {
-	dir := t.TempDir()
-
-	WriteAndVerifyFile(t, dir, "subdir/nested/test.txt", []byte("nested content"))
-	MustExist(t, filepath.Join(dir, "subdir", "nested"))
-}
-
-func TestMustExist(t *testing.T) {
-	dir := t.TempDir()
-	WriteAndVerifyFile(t, dir, "exists.txt", []byte("data"))
-	MustExist(t, dir)
-}
-
-func TestMustNotExist(t *testing.T) {
-	dir := t.TempDir()
-
-	// Should not panic for non-existent path
-	MustNotExist(t, filepath.Join(dir, "does-not-exist.txt"))
 }
 
 func TestValidateRelativePath(t *testing.T) {

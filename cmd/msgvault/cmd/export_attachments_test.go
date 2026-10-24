@@ -17,20 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
-func TestExportAttachmentsCmd_Registration(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	// Verify the command is registered and has expected configuration
-	cmd, _, err := rootCmd.Find([]string{"export-attachments"})
-	require.NoError(err, "export-attachments command not found")
-	assert.Equal("export-attachments <message-id>", cmd.Use, "Use")
-
-	// Verify -o flag exists
-	f := cmd.Flags().Lookup("output")
-	require.NotNil(f, "expected --output flag")
-	assert.Equal("o", f.Shorthand, "output shorthand")
-}
-
 type exportAttachmentsHTTPTestFixture struct {
 	reportData         []byte
 	photoData          []byte

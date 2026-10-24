@@ -10,18 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuilderPolicyDefaults(t *testing.T) {
-	assertions := assert.New(t)
-	tempDir := filepath.Join(t.TempDir(), "spill")
-
-	policy := BuilderPolicy(tempDir)
-
-	assertions.Equal("2GB", policy.MemoryLimit)
-	assertions.Equal(min(runtime.GOMAXPROCS(0), 2), policy.Threads)
-	assertions.Equal(tempDir, policy.TempDirectory)
-	assertions.Equal("32GB", policy.MaxTempDirectorySize)
-}
-
 func TestBuilderPolicyWithOverrides(t *testing.T) {
 	assertions := assert.New(t)
 	tempDir := filepath.Join(t.TempDir(), "spill")

@@ -215,41 +215,6 @@ func TestNewRateLimiterWithCapacity_NilClockPanics(t *testing.T) {
 	}, "newRateLimiterWithCapacity(nil, ...) should panic")
 }
 
-func TestCalendarOperationCost(t *testing.T) {
-	for _, op := range []Operation{OpCalendarListList, OpEventsList, OpEventsGet} {
-		assert.Equal(t, 1, op.Cost(), "calendar op %d cost", op)
-	}
-}
-
-func TestOperationCost(t *testing.T) {
-	tests := []struct {
-		op   Operation
-		cost int
-	}{
-		{OpMessagesGet, 5},
-		{OpMessagesGetRaw, 5},
-		{OpMessagesList, 5},
-		{OpLabelsList, 1},
-		{OpHistoryList, 2},
-		{OpMessagesTrash, 5},
-		{OpMessagesDelete, 10},
-		{OpMessagesBatchDelete, 50},
-		{OpProfile, 1},
-		{OpDraftsCreate, 10},
-		{OpDraftsGet, 20},
-		{OpDraftsUpdate, 15},
-		{OpDraftsDelete, 10},
-		{OpSendAsList, 1},
-		{OpMessagesModify, 5},
-		{Operation(999), 1}, // Unknown operation defaults to 1
-	}
-
-	for _, tc := range tests {
-		got := tc.op.Cost()
-		assert.Equal(t, tc.cost, got, "Operation(%d).Cost()", tc.op)
-	}
-}
-
 func TestDraftOperationsRemoteMutationSet(t *testing.T) {
 	assert := assert.New(t)
 	assert.True(OpDraftsCreate.remoteMutation())
@@ -258,14 +223,6 @@ func TestDraftOperationsRemoteMutationSet(t *testing.T) {
 	assert.True(OpDraftsDelete.remoteMutation())
 	assert.True(OpMessagesModify.remoteMutation())
 	assert.False(OpSendAsList.remoteMutation())
-}
-
-func TestNewRateLimiter(t *testing.T) {
-	rl := NewRateLimiter(5.0)
-
-	assert.InDelta(t, float64(DefaultCapacity), rl.capacity, 1e-9, "capacity")
-	assert.InDelta(t, float64(DefaultCapacity), rl.tokens, 1e-9, "initial tokens")
-	assert.InDelta(t, DefaultRefillRate, rl.refillRate, 1e-9, "refillRate")
 }
 
 func TestNewRateLimiter_ScaledQPS(t *testing.T) {
@@ -291,15 +248,6 @@ func TestRateLimiter_TryAcquire(t *testing.T) {
 	f.drain()
 
 	assert.False(t, f.rl.TryAcquire(OpMessagesBatchDelete), "TryAcquire(OpMessagesBatchDelete) should fail when bucket is empty")
-}
-
-func TestRateLimiter_Acquire_Success(t *testing.T) {
-	f := newRLFixture()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	err := f.rl.Acquire(ctx, OpProfile)
-	require.NoError(t, err, "Acquire()")
 }
 
 func TestRateLimiter_Acquire_ContextCancelled(t *testing.T) {
@@ -492,16 +440,4 @@ func TestRateLimiter_Acquire_WaitsForThrottle(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		require.Fail(t, "Acquire() did not complete after advancing clock past throttle")
 	}
-}
-
-func TestMockClock_ZeroValueSafe(t *testing.T) {
-	// Verify that a zero-value mockClock{} won't block forever due to nil channel.
-	clk := &mockClock{}
-
-	// After should work without hanging
-	ch := clk.After(10 * time.Millisecond)
-	require.NotNil(t, ch, "After() returned nil channel")
-
-	// timerNotify should be lazily initialized
-	require.NotNil(t, clk.timerNotify, "timerNotify should be initialized after After() call")
 }

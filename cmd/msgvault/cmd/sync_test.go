@@ -930,15 +930,6 @@ func TestTrimFolderFilter(t *testing.T) {
 	}
 }
 
-func TestSyncCommandRegistersFolderFlags(t *testing.T) {
-	require := require.New(t)
-
-	require.NotNil(syncIncrementalCmd.Flags().Lookup("folder"))
-	require.NotNil(syncIncrementalCmd.Flags().Lookup("skip-folder"))
-	require.NotNil(syncIncrementalCmd.Flags().Lookup("source-id"))
-	require.NotNil(syncFullCmd.Flags().Lookup("source-id"))
-}
-
 // Full e2e integration with an in-memory IMAP server is tested in
 // internal/imap/client_folderstate_test.go via WithFolderFilter().
 

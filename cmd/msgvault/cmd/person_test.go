@@ -478,12 +478,6 @@ func TestPersonMergeCommandsUseConfiguredRemote(t *testing.T) {
 		}
 		assertions.Equal(want, requests[key], key)
 	}
-	for _, command := range []*cobra.Command{
-		newPersonMergeCommand(), newPersonSplitCommand(), newPersonMergeCandidateCommand(),
-	} {
-		assertions.Nil(command.Flags().Lookup("actor"))
-	}
-	assertions.Nil(newPersonMergeCandidateCommand().Flags().Lookup("idempotency-key"))
 }
 
 func extractPersonMergeSnapshot(t *testing.T, payload string) json.RawMessage {

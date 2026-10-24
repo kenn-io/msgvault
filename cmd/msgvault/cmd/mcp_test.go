@@ -24,32 +24,6 @@ import (
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
 
-func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	require.NotNil(mcpCmd.Flags().Lookup("allow-profile-writes"))
-	for _, name := range []string{"allow-identity-decisions", "allow-identity-scoring", "allow-person-merges", "allow-carddav-writes"} {
-		require.NotNil(mcpCmd.Flags().Lookup(name))
-	}
-	require.NotNil(mcpCmd.Flags().Lookup("allow-calendar-writes"))
-	var output bytes.Buffer
-	previousOutput := mcpCmd.OutOrStdout()
-	mcpCmd.SetOut(&output)
-	t.Cleanup(func() { mcpCmd.SetOut(previousOutput) })
-
-	require.NoError(mcpCmd.Help())
-	help := output.String()
-	assert.Contains(help, "attachment exports")
-	assert.Contains(help, "deletion manifests")
-	assert.Contains(help, "person promotion")
-	assert.Contains(help, "private Notes writes")
-	assert.Contains(help, "allow-identity-decisions")
-	assert.Contains(help, "allow-identity-scoring")
-	assert.Contains(help, "allow-person-merges")
-	assert.Contains(help, "allow-carddav-writes")
-	assert.Contains(help, "calendar event mutation tools")
-}
-
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

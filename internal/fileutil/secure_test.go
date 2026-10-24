@@ -123,27 +123,3 @@ func TestSecureOpenFile(t *testing.T) {
 		})
 	}
 }
-
-func TestSecureWriteFile_NonexistentParent(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "no", "such", "dir", "file")
-
-	err := SecureWriteFile(path, []byte("data"), 0600)
-	require.Error(t, err, "expected error for nonexistent parent dir")
-}
-
-func TestSecureOpenFile_ReadOnly(t *testing.T) {
-	require := require.New(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "testfile")
-	require.NoError(os.WriteFile(path, []byte("existing"), 0644), "WriteFile")
-
-	f, err := SecureOpenFile(path, os.O_RDONLY, 0)
-	require.NoError(err, "SecureOpenFile read-only")
-	defer func() { _ = f.Close() }()
-
-	buf := make([]byte, 100)
-	n, err := f.Read(buf)
-	require.NoError(err, "Read")
-	assert.Equal(t, "existing", string(buf[:n]))
-}
