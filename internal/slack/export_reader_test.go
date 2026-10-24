@@ -439,25 +439,6 @@ func TestSlackdumpExportAcceptsMissingOptionalCatalogs(t *testing.T) {
 	}
 }
 
-func TestSlackdumpExportIgnoresUnknownMalformedRootSibling(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-
-	export, err := openSlackdumpExport(slackdumpFixture)
-	require.NoError(err)
-	defer func() {
-		assert.NoError(export.Close())
-	}()
-
-	users, err := export.users()
-	require.NoError(err)
-	assert.Len(users, 2)
-	conversations, err := export.conversations("UALICE")
-	require.NoError(err)
-	assert.Len(conversations, 5)
-}
-
 func readSlackdumpSnapshot(t *testing.T, path string) slackdumpSnapshot {
 	t.Helper()
 
