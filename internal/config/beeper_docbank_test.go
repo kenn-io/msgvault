@@ -29,6 +29,7 @@ all_sources_upload_consent = true
 attachment_upload_consent = true
 attachment_folder = "/msgvault/files"
 asr_profile = "voice-asr"
+document_profile = " supplied-transcript "
 reference_consent = true
 reference_origins = ["https://cap.example.test"]
 `
@@ -39,7 +40,7 @@ reference_origins = ["https://cap.example.test"]
 	assert.Equal(DocbankIntegrationConfig{
 		Enabled: true, URL: "http://127.0.0.1:8080",
 		APIKeyEnv: "DOCBANK_TEST_KEY", AllSourcesUploadConsent: true, ASRProfile: "voice-asr",
-		AttachmentUploadConsent: true, AttachmentFolder: "/msgvault/files",
+		AttachmentUploadConsent: true, AttachmentFolder: "/msgvault/files", DocumentProfile: "supplied-transcript",
 		ReferenceConsent: true, ReferenceOrigins: []string{"https://cap.example.test"},
 	}, cfg.Integrations.Docbank)
 	require.NoError(os.WriteFile(path, []byte("[integrations.docbank]\nreference_origins = [\"https://cap.example.test\", \"https://example.test/s/private-token\"]\n"), 0o600))
@@ -102,15 +103,4 @@ func TestDocbankAttachmentMirrorConfigValidation(t *testing.T) {
 			require.NoError(err)
 		})
 	}
-}
-
-func TestDocbankDocumentProfileTrimmed(t *testing.T) {
-	t.Setenv("MSGVAULT_HOME", t.TempDir())
-	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte(`[integrations.docbank]
-document_profile = " supplied-transcript "
-`), 0o600))
-	cfg, err := Load(path, "")
-	require.NoError(t, err)
-	assert.Equal(t, "supplied-transcript", cfg.Integrations.Docbank.DocumentProfile)
 }

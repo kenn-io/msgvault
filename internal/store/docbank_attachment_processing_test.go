@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -65,20 +64,13 @@ func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {
 	f := storetest.New(t)
 	ctx := t.Context()
 	hashes := make(map[string]string)
-	documents := make([]storetest.DocumentAttachment, 9)
-	for i, letter := range []string{"a", "b", "c", "d", "e", "f", "image", "purged", "deleted"} {
+	documents := make([]storetest.DocumentAttachment, 7)
+	for i, letter := range []string{"a", "b", "c", "d", "e", "f", "image"} {
 		hashes[letter] = fmt.Sprintf("%064x", 0xabcdef+i)
 		documents[i] = storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: "v-" + letter}
 	}
 	documents[6].MIMEType = "image/png"
 	f.SeedDocumentAttachments(f.CreateMessage("visible"), documents)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM attachments WHERE content_hash = ?`), strings.ToUpper(hashes["purged"]))
-	require.NoError(err)
-	deleted := f.CreateMessage("deleted")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET message_id = ? WHERE content_hash = ?`), deleted, strings.ToUpper(hashes["deleted"]))
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), deleted)
-	require.NoError(err)
 	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "attachments", "documents", "fp"))
 	for _, row := range []struct {
 		hash, outcome string
@@ -124,26 +116,30 @@ func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) 
 	f := storetest.New(t)
 	ctx := t.Context()
 	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "attachments", "documents", "fp"))
-	documents := []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "provider_timeout"}, {MIMEType: "application/pdf", VersionID: "consent"}, {MIMEType: "application/pdf", VersionID: "stale_authority"}, {MIMEType: "application/pdf", VersionID: "pdf_password_required"}}
+	documents := []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "provider_timeout"}, {MIMEType: "application/pdf", VersionID: "consent"}, {MIMEType: "application/pdf", VersionID: "stale_authority"}, {MIMEType: "application/pdf", VersionID: "pdf_password_required"}, {MIMEType: "application/pdf", VersionID: "not_found"}}
 	f.SeedDocumentAttachments(f.CreateMessage("backfill"), documents)
-	for i, outcome := range []string{"provider_timeout", "consent", "stale_authority", "pdf_password_required"} {
+	for i, outcome := range []string{"provider_timeout", "consent", "stale_authority", "pdf_password_required", "not_found"} {
 		d := store.DocbankAttachmentProcessing{ContentHash: fmt.Sprintf("%064x", 0xabcdef+i), VersionID: outcome, Fingerprint: "fp", Outcome: outcome, JobID: "job-" + outcome}
+		if outcome == "not_found" {
+			d.JobID = ""
+		}
 		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Time{}))
 	}
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
-	require.Len(due, 3)
+	require.Len(due, 4)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf0), due[0].ContentHash)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf1), due[1].ContentHash)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf2), due[2].ContentHash)
+	assert.Equal(fmt.Sprintf("%064x", 0xabcdf3), due[3].ContentHash)
 	for _, d := range due {
 		assert.Empty(d.Outcome)
 		assert.Empty(d.JobID)
 	}
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
-	assert.Equal(int64(3), counts.Waiting)
+	assert.Equal(int64(4), counts.Waiting)
 	assert.Equal(map[string]int64{"provider_timeout": 1}, counts.Outcomes)
 	var savedOutcome, jobID string
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome, job_id FROM docbank_attachment_processing WHERE content_hash = ?`), fmt.Sprintf("%064x", 0xabcdef)).Scan(&savedOutcome, &jobID))

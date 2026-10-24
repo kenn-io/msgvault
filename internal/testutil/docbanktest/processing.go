@@ -13,7 +13,6 @@ import (
 // ProcessingHandler models Docbank's profile, plan, job stream, and status routes.
 // Configure fields between worker passes; request records are guarded by Mu.
 type ProcessingHandler struct {
-	Profiles          int
 	NodeIDs           map[string]int64
 	JobFaults         map[string]int
 	PollFaults        map[string]int
@@ -42,7 +41,6 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.URL.Path {
 	case "/api/v1/processing/profiles":
-		h.Profiles++
 		assert.Equal(h.T, http.MethodGet, r.Method)
 		assert.NoError(h.T, json.MarshalWrite(w, []map[string]any{{"name": "documents", "fingerprint": h.Fingerprint, "rendition": h.Rendition}}))
 	case "/api/v1/processing/plans", "/api/v1/processing/jobs":
@@ -67,10 +65,6 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/processing/plans" {
 			h.Plans = append(h.Plans, version)
 			if status := h.Faults[version]; status != 0 {
-				if status == FaultInvalidReceipt {
-					_, _ = w.Write([]byte(`{}`))
-					return
-				}
 				w.WriteHeader(status)
 				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": h.Reasons[version]}))
 				return
@@ -83,10 +77,6 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			h.Jobs = append(h.Jobs, version)
 			if status := h.JobFaults[version]; status != 0 {
-				if status == FaultInvalidReceipt {
-					_, _ = w.Write([]byte(`{}`))
-					return
-				}
 				w.WriteHeader(status)
 				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": h.Reasons[version]}))
 				return
