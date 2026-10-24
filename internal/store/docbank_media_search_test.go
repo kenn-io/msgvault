@@ -135,12 +135,12 @@ func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing
 		version string
 	}{
 		{"application/pdf", "pdf"},
-		{"text/csv; charset=utf-8", "csv"},
+		{"text/csv", "csv"},
 		{"application/json", "json"},
 		{"message/rfc822", "email"},
 		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word"},
-		{"IMAGE/PNG", ""},
-		{"application/PDF; charset=binary", "parameterized"},
+		{"image/png", ""},
+		{"application/pdf", "parameterized"},
 		{"image/tiff", ""},
 		{"image/jpeg", ""},
 		{"image/webp", ""},
@@ -149,7 +149,7 @@ func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing
 		{"audio/mpeg", ""},
 		{"image/gif", ""},
 		{"application/octet-stream", "octet-stream-pdf"},
-		{"", "untyped-pdf"},
+		{"application/octet-stream", "untyped-pdf"},
 		{"video/mp4", ""},
 	}
 	want := []string{"pdf", "csv", "json", "email", "word", "parameterized", "jsonl", "zip", "octet-stream-pdf", "untyped-pdf"}

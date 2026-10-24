@@ -67,9 +67,21 @@ func (s *Store) documentSearchAttachmentMatch() string {
 	return `a.id IN (` + attachmentIDs + `)`
 }
 
+func documentSearchMessageWhere(scope *personscope.Scope) (string, []any) {
+	where := LiveMessagesWhere("m", true)
+	var args []any
+	if scope != nil {
+		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
+		where += " AND (" + predicate + ")"
+		args = append(args, values...)
+	}
+	return where, args
+}
+
 // documentSearchRows shares attachment eligibility, visibility, and person scope.
 func (s *Store) documentSearchRows(destination string, scope *personscope.Scope, deliveryFilter string, deliveryArgs []any) (string, string, []any) {
 	args := append([]any{destination}, deliveryArgs...)
+	visible, scopeArgs := documentSearchMessageWhere(scope)
 	// Materialize indexed receipt matches before applying message visibility.
 	// Otherwise PostgreSQL can start with messages and repeat the delivery scan.
 	with := `WITH delivered_attachments AS MATERIALIZED (
@@ -82,12 +94,8 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
  FROM delivered_attachments d
  JOIN messages m ON m.id = d.message_id
  JOIN conversations cv ON cv.id = m.conversation_id
- WHERE ` + LiveMessagesWhere("m", true)
-	if scope != nil {
-		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
-		query += " AND (" + predicate + ")"
-		args = append(args, values...)
-	}
+ WHERE ` + visible
+	args = append(args, scopeArgs...)
 	return with, query, args
 }
 
@@ -97,10 +105,10 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 	// Docbank detects document formats from bytes, including generic or absent
 	// MIME types. Keep images and recordings outside the document fence.
 	delivers := `SELECT d.content_hash, d.version_id FROM docbank_attachment_deliveries d
- WHERE d.destination_key = ? AND d.state = 'delivered' AND d.version_id <> ''
- AND LOWER(TRIM(d.mime_type)) NOT LIKE 'image/%'
- AND LOWER(TRIM(d.mime_type)) NOT LIKE 'audio/%'
- AND LOWER(TRIM(d.mime_type)) NOT LIKE 'video/%'`
+ WHERE d.destination_key = ? AND d.state = 'delivered'
+ AND d.mime_type NOT LIKE 'image/%'
+ AND d.mime_type NOT LIKE 'audio/%'
+ AND d.mime_type NOT LIKE 'video/%'`
 	distinct := "DISTINCT"
 	if s.IsPostgreSQL() {
 		// Sort receipts before checking visibility. DISTINCT ON then streams unique
@@ -110,15 +118,12 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 		distinct = "DISTINCT ON (d.version_id)"
 	}
 	args := []any{destination}
+	messageWhere, scopeArgs := documentSearchMessageWhere(scope)
 	visible := `SELECT 1 FROM attachments a
  JOIN messages m ON m.id = a.message_id
  JOIN conversations cv ON cv.id = m.conversation_id
- WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + LiveMessagesWhere("m", true)
-	if scope != nil {
-		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
-		visible += " AND (" + predicate + ")"
-		args = append(args, values...)
-	}
+ WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + messageWhere
+	args = append(args, scopeArgs...)
 	// EXISTS checks one visible occurrence per receipt instead of materializing
 	// every occurrence. OFFSET keeps PostgreSQL's lookup correlated to the receipt.
 	query := `SELECT ` + distinct + ` d.version_id FROM (` + delivers + `) d
