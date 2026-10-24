@@ -268,6 +268,7 @@ func (s *Store) insertPersonFactEvidenceStatusEventsTx(
 	generation personfacts.Generation,
 	changes []personfacts.PreparedEvidenceStatusChange,
 ) error {
+	affectedObservationEvidence := make([]int64, 0, len(changes))
 	for _, change := range changes {
 		evidence, err := s.loadPersonFactEvidenceRowTx(ctx, tx, generation.PersonID, change.EvidenceKey)
 		if err != nil {
@@ -307,8 +308,9 @@ func (s *Store) insertPersonFactEvidenceStatusEventsTx(
 			event.Reason != change.Reason {
 			return personFactCollision("evidence status", change.EvidenceKey)
 		}
+		affectedObservationEvidence = append(affectedObservationEvidence, evidence.ID)
 	}
-	return nil
+	return s.refreshObservationSupportForEvidenceTx(context.WithValue(ctx, observationEventGenerationKey{}, generation.ID), tx, generation.PersonID, affectedObservationEvidence)
 }
 
 func (s *Store) insertPersonFactResolutionTx(

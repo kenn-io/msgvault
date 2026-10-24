@@ -240,6 +240,112 @@ func (s *Store) nextObservationSequenceTx(ctx context.Context, tx *loggedTx, per
 	}
 	return sequence, nil
 }
+
+func (s *Store) observationPremiseAncestorsTx(ctx context.Context, tx *loggedTx, personID int64, roots []int64) ([]int64, []int64, error) {
+	ancestors := map[int64]bool{}
+	for _, rootID := range roots {
+		rows, err := tx.QueryContext(ctx, s.Rebind(`WITH RECURSIVE premise_ancestors(id) AS (
+  SELECT CAST(? AS BIGINT)
+  UNION
+  SELECT edge.premise_id
+  FROM person_observation_premises edge
+  JOIN premise_ancestors ancestor ON edge.derived_id=ancestor.id
+  JOIN person_observations premise ON premise.id=edge.premise_id AND premise.person_id=?
+)
+
+SELECT ancestors.id,
+       EXISTS(SELECT 1 FROM person_observation_evidence evidence WHERE evidence.observation_id=ancestors.id)
+FROM premise_ancestors ancestors
+ORDER BY ancestors.id`), rootID, personID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("find observation premise ancestors: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var hasCitations bool
+			if err := rows.Scan(&id, &hasCitations); err != nil {
+				_ = rows.Close()
+				return nil, nil, fmt.Errorf("read observation premise ancestor: %w", err)
+			}
+			ancestors[id] = ancestors[id] || hasCitations
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, nil, fmt.Errorf("read observation premise ancestors: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, nil, fmt.Errorf("close observation premise ancestors: %w", err)
+		}
+	}
+	ids := make([]int64, 0, len(ancestors))
+	citationIDs := make([]int64, 0, len(ancestors))
+	for id, hasCitations := range ancestors {
+		ids = append(ids, id)
+		if hasCitations {
+			citationIDs = append(citationIDs, id)
+		}
+	}
+	slices.Sort(ids)
+	slices.Sort(citationIDs)
+	return ids, citationIDs, nil
+}
+
+func (s *Store) observationReinforcementPremiseRootsTx(ctx context.Context, tx *loggedTx, personID int64, item PreparedObservation) ([]int64, error) {
+	candidateID := int64(0)
+	autoLookup := item.Proposal.ReinforcesID == nil
+	if item.Proposal.ReinforcesID != nil {
+		candidate, err := s.loadObservationTx(ctx, tx, *item.Proposal.ReinforcesID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if candidate.PersonID != personID || candidate.Level != item.Proposal.Level || candidate.SubjectRef != item.Proposal.SubjectRef || candidate.Status == personobs.StatusRejected {
+			return nil, nil
+		}
+		if candidate.Status == personobs.StatusSuperseded {
+			autoLookup = true
+		} else {
+			candidateID = candidate.ID
+		}
+	}
+	if candidateID == 0 && autoLookup {
+		matches, err := s.queryObservationRows(ctx, tx, `person_id=? AND content_key=? AND status IN ('active','unsupported')`, `id LIMIT 1`, personID, item.ContentKey)
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) > 0 {
+			candidateID = matches[0].ID
+		}
+	}
+	if candidateID == 0 {
+		return nil, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT premise_id FROM person_observation_premises WHERE derived_id=? ORDER BY ordinal`, candidateID)
+	if err != nil {
+		return nil, fmt.Errorf("read reinforcement premise roots: %w", err)
+	}
+	roots := make([]int64, 0)
+	for rows.Next() {
+		var rootID int64
+		if err := rows.Scan(&rootID); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan reinforcement premise root: %w", err)
+		}
+		roots = append(roots, rootID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate reinforcement premise roots: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close reinforcement premise roots: %w", err)
+	}
+	return roots, nil
+}
+
 func (s *Store) loadObservationTx(ctx context.Context, q contextRowsQuerier, id int64) (personobs.Observation, error) {
 	rows, err := s.queryObservationRows(ctx, q, `id=?`, `id`, id)
 	if err != nil {
@@ -409,7 +515,18 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			result.Items = append(result.Items, out)
 			continue
 		}
+		sourcesLive, err := s.observationCitationSourcesLiveTx(ctx, tx, item.Citations)
+		if err != nil {
+			return result, err
+		}
+		if !sourcesLive {
+			out.Outcome = "dropped-invalid"
+			out.Failure = &personobs.ValidationError{Field: "support", Reason: "citation-source-missing"}
+			result.Items = append(result.Items, out)
+			continue
+		}
 		premises := make(map[int64]personobs.Observation, len(item.Proposal.Premises))
+		premiseRoots := make([]int64, 0, len(item.Proposal.Premises))
 		for _, edge := range item.Proposal.Premises {
 			premise, err := s.loadObservationTx(ctx, tx, edge.ID)
 			if err != nil {
@@ -419,10 +536,56 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 				}
 				return result, err
 			}
+			if premise.PersonID == b.PersonID {
+				premiseRoots = append(premiseRoots, premise.ID)
+			}
 			premises[edge.ID] = premise
+		}
+		reinforcementRoots, err := s.observationReinforcementPremiseRootsTx(ctx, tx, b.PersonID, item)
+		if err != nil {
+			return result, err
+		}
+		premiseRoots = append(premiseRoots, reinforcementRoots...)
+		premiseAncestors, citationAncestors, err := s.observationPremiseAncestorsTx(ctx, tx, b.PersonID, premiseRoots)
+		if err != nil {
+			return result, err
+		}
+		premiseAncestorSet := make(map[int64]struct{}, len(premiseAncestors))
+		for _, premiseID := range premiseAncestors {
+			premiseAncestorSet[premiseID] = struct{}{}
+		}
+		changedPremises := make([]int64, 0, len(citationAncestors))
+		for _, premiseID := range citationAncestors {
+			_, changed, err := s.refreshObservationCitationExclusionsTx(ctx, tx, premiseID)
+			if err != nil {
+				return result, err
+			}
+			if changed {
+				changedPremises = append(changedPremises, premiseID)
+			}
+		}
+		if len(changedPremises) > 0 {
+			if err := s.notifyObservationSupportChangedTx(ctx, tx, b.PersonID, changedPremises, "citation-exclusions-changed"); err != nil {
+				return result, err
+			}
+			for _, edge := range item.Proposal.Premises {
+				premise, err := s.loadObservationTx(ctx, tx, edge.ID)
+				if err != nil {
+					return result, err
+				}
+				premises[edge.ID] = premise
+			}
 		}
 		if out.Failure == nil {
 			out.Failure = personobs.ValidateProposal(item.Proposal, premises)
+		}
+		if out.Failure == nil {
+			for _, targetID := range item.Proposal.SupersedesIDs {
+				if _, ok := premiseAncestorSet[targetID]; ok {
+					out.Failure = &personobs.ValidationError{Field: "supersedes_ids", Reason: "supporting-ancestor"}
+					break
+				}
+			}
 		}
 		if out.Failure != nil {
 			out.Outcome = "dropped-invalid"
@@ -644,6 +807,19 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		result.Items = append(result.Items, out)
 	}
 	return result, nil
+}
+
+func (s *Store) observationCitationSourcesLiveTx(ctx context.Context, tx *loggedTx, citations []personobs.Citation) (bool, error) {
+	for _, citation := range citations {
+		var live bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages m WHERE m.id=? AND `+LiveMessagesWhere("m", true)+`)`, citation.Leaf.MessageID).Scan(&live); err != nil {
+			return false, fmt.Errorf("check observation citation source message: %w", err)
+		}
+		if !live {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (s *Store) writeObservationCitationsTx(ctx context.Context, tx *loggedTx, personID, id, generationID int64, item PreparedObservation) error {
@@ -1093,9 +1269,4 @@ func (s *Store) ensureObservationSuppressionLiftEventTx(ctx context.Context, tx 
 		return nil
 	}
 	return s.appendObservationEventTx(ctx, tx, personID, observationID, "suppression-lifted", "system", detail, nil)
-}
-
-// Support propagation replaces this hook in the next store layer.
-func (s *Store) notifyObservationSupportChangedTx(_ context.Context, _ *loggedTx, _ int64, _ []int64, _ string) error {
-	return nil
 }

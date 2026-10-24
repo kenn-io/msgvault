@@ -1240,6 +1240,188 @@ func TestApplyObservationBatchRevalidatesPremiseAfterListExclusionRemoved(t *tes
 	assert.Equal(1, detail.SupportedCount)
 }
 
+func TestApplyObservationBatchRefreshesTransitivePremiseCitationsBeforeValidation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	rootID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	childID := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, "[PERSON] exercises", rootID)
+	proposal := personobs.ProposedObservation{
+		PersonID:     in.PersonID,
+		Level:        personobs.LevelDeductive,
+		Origin:       personobs.OriginReasoning,
+		Kind:         personobs.KindOther,
+		Content:      "[PERSON] has a running routine",
+		ConfidenceBP: 800,
+		Premises:     []personobs.PremiseInput{{ID: childID, Role: personobs.PremiseRoleSupport}},
+	}
+	in.Proposals = []personobs.ProposedObservation{proposal}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+	require.NoError(err)
+	require.Nil(batch.Items[0].Failure)
+
+	root := observationGet(t, f.store, rootID)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET list_id=? WHERE id=?`), "list.example.test", root.Evidence[0].Leaf.MessageID)
+	require.NoError(err)
+
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "reasoner")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal("dropped-invalid", result.Items[0].Outcome)
+	require.NotNil(result.Items[0].Failure)
+	assert.Equal("premise-not-supported", result.Items[0].Failure.Reason)
+	assert.Equal(personobs.StatusActive, observationGet(t, f.store, rootID).Status)
+	assert.Equal(personobs.StatusUnsupported, observationGet(t, f.store, childID).Status)
+}
+
+func TestApplyObservationBatchRejectsSupersedingSupportingAncestor(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	rootID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	childID := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, "[PERSON] exercises", rootID)
+	in.Proposals = []personobs.ProposedObservation{{
+		PersonID:      in.PersonID,
+		Level:         personobs.LevelDeductive,
+		Origin:        personobs.OriginReasoning,
+		Kind:          personobs.KindOther,
+		Content:       "[PERSON] has a running routine",
+		ConfidenceBP:  800,
+		Premises:      []personobs.PremiseInput{{ID: childID, Role: personobs.PremiseRoleSupport}},
+		SupersedesIDs: []int64{rootID},
+	}}
+	result := applyObservationInput(t, f.store, in, generation)
+	require.Len(result.Items, 1)
+	assert.Equal("dropped-invalid", result.Items[0].Outcome)
+	require.NotNil(result.Items[0].Failure)
+	assert.Equal(personobs.StatusActive, observationGet(t, f.store, rootID).Status)
+	assert.Equal(personobs.StatusActive, observationGet(t, f.store, childID).Status)
+	assert.Zero(result.Items[0].ObservationID)
+}
+
+func TestApplyObservationBatchRejectsSupersedingRetainedPremiseAncestor(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		explicitTarget bool
+	}{
+		{name: "explicit reinforcement target", explicitTarget: true},
+		{name: "content-key reinforcement"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f, in, generation := observationBatchFixture(t, "I run")
+			rootID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+
+			independentInput := in
+			independentInput.Proposals = append([]personobs.ProposedObservation(nil), in.Proposals...)
+			independentInput.Proposals[0].Content = "[PERSON] swims"
+			independentID := applyObservationInput(t, f.store, independentInput, generation).Items[0].ObservationID
+			derivedID := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, "[PERSON] exercises", rootID)
+
+			proposal := personobs.ProposedObservation{
+				PersonID:      in.PersonID,
+				Level:         personobs.LevelDeductive,
+				Origin:        personobs.OriginReasoning,
+				Kind:          personobs.KindState,
+				Content:       "[PERSON] exercises",
+				ConfidenceBP:  800,
+				Premises:      []personobs.PremiseInput{{ID: independentID, Role: personobs.PremiseRoleSupport}},
+				SupersedesIDs: []int64{rootID},
+			}
+			if tc.explicitTarget {
+				proposal.ReinforcesID = &derivedID
+			}
+			in.Proposals = []personobs.ProposedObservation{proposal}
+
+			result := applyObservationInput(t, f.store, in, generation)
+			require.Len(result.Items, 1)
+			assert.Equal("dropped-invalid", result.Items[0].Outcome)
+			require.NotNil(result.Items[0].Failure)
+			assert.Equal("supporting-ancestor", result.Items[0].Failure.Reason)
+			assert.Zero(result.Items[0].ObservationID)
+			assert.Equal(personobs.StatusActive, observationGet(t, f.store, rootID).Status)
+			assert.Equal(personobs.StatusActive, observationGet(t, f.store, derivedID).Status)
+			assert.Nil(observationGet(t, f.store, rootID).SupersededByID)
+		})
+	}
+}
+
+func TestApplyObservationBatchRejectsCitationForDeletedMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	targetID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	ref, err := peoplesweep.DecodePersonSweepEvidenceRef(in.Proposals[0].Support[0].Evidence.SourceRef)
+	require.NoError(err)
+
+	candidateInput := in
+	candidateInput.Proposals = append([]personobs.ProposedObservation(nil), in.Proposals...)
+	candidateInput.Proposals[0].Content = "[PERSON] runs every morning"
+	candidateInput.Proposals[0].SupersedesIDs = []int64{targetID}
+	contentKey := personobs.ContentKey(candidateInput.Proposals[0].Level, candidateInput.Proposals[0].SubjectRef, candidateInput.Proposals[0].Content)
+	rejectedAt := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`INSERT INTO person_observation_suppressions(person_id,content_key,reason,actor,rejected_at) VALUES(?,?,'outdated','owner',?)`), in.PersonID, contentKey, rejectedAt)
+	require.NoError(err)
+
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), candidateInput)
+	require.NoError(err)
+	require.Nil(batch.Items[0].Failure)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`DELETE FROM messages WHERE id=?`), ref.MessageID)
+	require.NoError(err)
+
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "extractor")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal("dropped-invalid", result.Items[0].Outcome)
+	require.NotNil(result.Items[0].Failure)
+	assert.Equal("citation-source-missing", result.Items[0].Failure.Reason)
+	assert.Zero(result.Items[0].ObservationID)
+	assert.Equal(personobs.StatusActive, observationGet(t, f.store, targetID).Status)
+	assert.Nil(observationGet(t, f.store, targetID).SupersededByID)
+	var observations, activeSuppressions int
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_observations WHERE person_id=? AND content_key=?`), in.PersonID, contentKey).Scan(&observations))
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_observation_suppressions WHERE person_id=? AND content_key=? AND cleared_at IS NULL`), in.PersonID, contentKey).Scan(&activeSuppressions))
+	assert.Zero(observations)
+	assert.Equal(1, activeSuppressions)
+}
+
+func TestApplyObservationBatchRejectsSoftDeletedCitationSource(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query string
+	}{
+		{name: "dedup-hidden", query: `UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`},
+		{name: "source-deleted", query: `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f, in, generation := observationBatchFixture(t, "I run")
+			batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+			require.NoError(err)
+			require.Nil(batch.Items[0].Failure)
+			ref, err := peoplesweep.DecodePersonSweepEvidenceRef(in.Proposals[0].Support[0].Evidence.SourceRef)
+			require.NoError(err)
+
+			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(tc.query), ref.MessageID)
+			require.NoError(err)
+			result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "extractor")
+			require.NoError(err)
+			require.Len(result.Items, 1)
+			assert.Equal("dropped-invalid", result.Items[0].Outcome)
+			require.NotNil(result.Items[0].Failure)
+			assert.Equal("citation-source-missing", result.Items[0].Failure.Reason)
+			assert.Zero(result.Items[0].ObservationID)
+
+			key := personobs.ContentKey(in.Proposals[0].Level, in.Proposals[0].SubjectRef, in.Proposals[0].Content)
+			var count int
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_observations WHERE person_id=? AND content_key=?`), in.PersonID, key).Scan(&count))
+			assert.Zero(count)
+		})
+	}
+}
+
 func TestApplyObservationBatchDoesNotLiftSuppressionOnUnsupportedExplicitEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
