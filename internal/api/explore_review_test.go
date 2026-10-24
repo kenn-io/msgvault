@@ -1775,6 +1775,7 @@ func newExploreSemanticChatDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 		{dir: "conversations", file: "conversations.parquet", columns: "id, source_conversation_id, title, conversation_type", values: `(700::BIGINT, 'chat', 'Conversation', 'direct_chat'), (701::BIGINT, 'mail', '', 'email')`},
 		{dir: "conversation_participants", file: "conversation_participants.parquet", columns: "conversation_id, participant_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
 		{dir: "owner_participants", file: "owner_participants.parquet", columns: "source_id, participant_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
+		{dir: "meeting_keys", file: "meeting_keys.parquet", columns: "message_id, meeting_key", values: `(0::BIGINT, NULL::VARCHAR)`, empty: true},
 		{dir: "participant_clusters", file: "participant_clusters.parquet", columns: "participant_id, canonical_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
 	}
 	for _, table := range tables {

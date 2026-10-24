@@ -14,7 +14,24 @@ type relatedChangeKinds struct {
 	recipients  bool
 	labels      bool
 	attachments bool
+	meetings    bool
 	other       bool
+}
+
+func inspectMeetingRelatedDrift(ctx context.Context, dbPath string, after, lastMessageID int64) (meetings, other bool, err error) {
+	st, err := store.OpenReadOnlyContext(ctx, dbPath)
+	if err != nil {
+		return false, false, fmt.Errorf("open meeting refresh journal: %w", err)
+	}
+	defer func() { _ = st.Close() }()
+	if err := st.DB().QueryRowContext(ctx, `SELECT
+		count(*) FILTER (WHERE dataset = 'meeting_links') > 0,
+		count(*) FILTER (WHERE dataset <> 'meeting_links') > 0
+		FROM cache_related_change_journal WHERE seq > ? AND message_id <= ?`,
+		after, lastMessageID).Scan(&meetings, &other); err != nil {
+		return false, false, fmt.Errorf("inspect meeting refresh journal: %w", err)
+	}
+	return meetings, other, nil
 }
 
 func inspectRelatedChangeKinds(snapshot *cacheSourceSnapshot, after, through, lastMessageID int64) (relatedChangeKinds, error) {
@@ -23,10 +40,11 @@ func inspectRelatedChangeKinds(snapshot *cacheSourceSnapshot, after, through, la
 		count(*) FILTER (WHERE dataset = 'message_recipients') > 0,
 		count(*) FILTER (WHERE dataset IN ('message_labels', 'labels')) > 0,
 		count(*) FILTER (WHERE dataset = 'attachments') > 0,
+		count(*) FILTER (WHERE dataset = 'meeting_links') > 0,
 		count(*) FILTER (WHERE dataset NOT IN
-			('message_recipients', 'message_labels', 'labels', 'attachments')) > 0
+			('message_recipients', 'message_labels', 'labels', 'attachments', 'meeting_links')) > 0
 		FROM cache_related_change_journal WHERE seq > ? AND seq <= ? AND message_id <= ?`,
-		after, through, lastMessageID).Scan(&kinds.recipients, &kinds.labels, &kinds.attachments, &kinds.other)
+		after, through, lastMessageID).Scan(&kinds.recipients, &kinds.labels, &kinds.attachments, &kinds.meetings, &kinds.other)
 	if err != nil {
 		return relatedChangeKinds{}, fmt.Errorf("inspect related change kinds: %w", err)
 	}

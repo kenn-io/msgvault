@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,12 +22,22 @@ import (
 type meetingLinksTestStore struct {
 	*mockStore
 
-	member   int64
-	event    store.OccurrenceRef
-	decision string
-	ref      store.MeetingLinkRef
-	err      error
-	calls    int
+	refreshes  int
+	refreshErr error
+	postgres   bool
+	member     int64
+	event      store.OccurrenceRef
+	decision   string
+	ref        store.MeetingLinkRef
+	err        error
+	calls      int
+}
+
+func (s *meetingLinksTestStore) IsPostgreSQL() bool { return s.postgres }
+
+func (s *meetingLinksTestStore) RefreshIdentityDatasets(context.Context) (int64, error) {
+	s.refreshes++
+	return 0, s.refreshErr
 }
 
 func (s *meetingLinksTestStore) LinkMeetingContext(_ context.Context, id int64, ref store.OccurrenceRef) error {
@@ -90,6 +102,7 @@ func TestMeetingLinkRoutes(t *testing.T) {
 			requirements := require.New(t)
 			backend.err = tc.err
 			before := backend.calls
+			beforeRefresh := backend.refreshes
 			r := httptest.NewRequest(tc.method, "/api/v1"+tc.path, strings.NewReader(tc.body))
 			r.Header.Set("Content-Type", "application/json")
 			if tc.token == secret {
@@ -102,6 +115,11 @@ func TestMeetingLinkRoutes(t *testing.T) {
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
 			requirements.Equal(tc.status, w.Code, w.Body.String())
+			if tc.status == 200 && tc.method == http.MethodPost {
+				assertions.Equal(beforeRefresh+1, backend.refreshes)
+			} else {
+				assertions.Equal(beforeRefresh, backend.refreshes)
+			}
 			if tc.status >= 400 && tc.err == nil {
 				assertions.Equal(before, backend.calls)
 			}
@@ -112,7 +130,13 @@ func TestMeetingLinkRoutes(t *testing.T) {
 				assertions.Equal(int64(42), backend.member)
 				assertions.Equal(store.OccurrenceRef{MessageID: 81, Key: "20270314T100000Z"}, backend.event)
 				assertions.Equal(tc.name, backend.decision)
-				assertions.JSONEq(tc.body, w.Body.String())
+				var response map[string]any
+				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+				assertions.Equal("ready", response["cache_state"])
+				delete(response, "cache_state")
+				body, err := json.Marshal(response)
+				requirements.NoError(err)
+				assertions.JSONEq(tc.body, string(body))
 			} else if tc.name == "links" {
 				assertions.Equal(int64(42), backend.member)
 				assertions.JSONEq(`{"links":[{"ref":"evt:81","subject":"Planning","start":"2027-03-14T10:00:00Z","end":"2027-03-14T11:00:00Z"}]}`, w.Body.String())
@@ -124,6 +148,53 @@ func TestMeetingLinkRoutes(t *testing.T) {
 				assertions.Equal(want, backend.ref)
 				assertions.JSONEq(`{"suggestions":[{"ref":"evt:81@20270314T100000Z","member_message_id":42,"overlap_minutes":30,"shared_attendees":1,"title_tokens":2,"reasons":["time_overlap","shared_attendees","title_tokens"]}],"unexpandable":[{"message_id":99,"reason":"unsupported recurrence"}]}`, w.Body.String())
 			}
+		})
+	}
+}
+
+func TestMeetingLinkDecisionPostgreSQLSkipsCacheRefresh(t *testing.T) {
+	for _, decision := range []string{"link", "unlink"} {
+		t.Run(decision, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			backend := &meetingLinksTestStore{
+				mockStore: &mockStore{stats: &StoreStats{}},
+				postgres:  true, refreshErr: errors.New("Parquet cache is unavailable on PostgreSQL"),
+			}
+			srv := NewServer(&config.Config{}, backend, nil, testLogger())
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(`{"message_id":42,"event":"evt:81","decision":"`+decision+`"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusOK, response.Code)
+			var body MeetingLinkDecisionResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal("ready", body.CacheState)
+			assert.Equal(1, backend.calls)
+			assert.Equal(int64(42), backend.member)
+			assert.Equal(store.OccurrenceRef{MessageID: 81}, backend.event)
+			assert.Equal(decision, backend.decision)
+			assert.Zero(backend.refreshes)
+		})
+	}
+}
+
+func TestMeetingLinkDecisionReportsStaleCache(t *testing.T) {
+	backend := &meetingLinksTestStore{mockStore: &mockStore{stats: &StoreStats{}}, refreshErr: errors.New("refresh failed")}
+	srv := NewServer(&config.Config{}, backend, nil, testLogger())
+	for _, decision := range []string{"link", "unlink"} {
+		t.Run(decision, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(`{"message_id":42,"event":"evt:81","decision":"`+decision+`"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusOK, response.Code)
+			var body map[string]any
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal("stale", body["cache_state"])
+			assert.Equal(decision, backend.decision)
 		})
 	}
 }

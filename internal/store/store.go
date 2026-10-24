@@ -2327,6 +2327,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("initialize calendar provider observation order: %w", err)
 	}
 
+	if err := s.runOnceMigration(ctx, migrationRoomRecipientsV1, 1, false, s.repairRoomRecipientsContext); err != nil {
+		return fmt.Errorf("repair room recipients: %w", err)
+	}
+
 	// Probe availability through the dialect so it works uniformly for
 	// backends that carry FTS inside their main schema. The probe is a query
 	// like any other and carries ctx: it returns a bool, so a cancellation that

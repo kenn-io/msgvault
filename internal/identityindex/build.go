@@ -149,13 +149,13 @@ func Build(
 		"SELECT * FROM "+logicalBuildRelation); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt)); err != nil {
+	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt, b.base("meeting_keys"))); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL()); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL()); err != nil {
+	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL(b.base("meeting_keys"))); err != nil {
 		return BuildResult{}, err
 	}
 	validationActivity := activity
@@ -212,6 +212,7 @@ var baseIdentityDatasets = []string{
 	"conversation_participants",
 	"owner_participants",
 	"participant_clusters",
+	"meeting_keys",
 	"person_display_names",
 	"attachments",
 }

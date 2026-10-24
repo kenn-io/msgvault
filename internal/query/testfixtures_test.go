@@ -156,6 +156,7 @@ type ParticipantClusterFixture struct {
 
 // TestDataBuilder accumulates typed fixture data and generates Parquet files.
 type TestDataBuilder struct {
+	meetingKeys        []string
 	personDisplayNames []string
 	t                  testing.TB
 	nextMsgID          int64
@@ -784,6 +785,7 @@ func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 		{"conversation_participants", "conversation_participants", "conversation_participants.parquet", conversationParticipantsCols, "(0::BIGINT, 0::BIGINT)", b.conversationParticipantsSQL(), len(b.conversationParticipants) == 0},
 		{datasetOwnerParticipants, datasetOwnerParticipants, datasetOwnerParticipants + ".parquet", ownerParticipantsCols, "(0::BIGINT, 0::BIGINT)", b.ownerParticipantsSQL(), len(b.ownerParticipants) == 0},
 		{datasetParticipantClusters, datasetParticipantClusters, datasetParticipantClusters + ".parquet", participantClustersCols, "(0::BIGINT, 0::BIGINT)", b.participantClustersSQL(), len(b.participantClusters) == 0},
+		{datasetMeetingKeys, datasetMeetingKeys, "meeting_keys.parquet", "message_id, meeting_key", "(0::BIGINT, NULL::VARCHAR)", strings.Join(b.meetingKeys, ","), len(b.meetingKeys) == 0},
 	}
 	for _, a := range auxTables {
 		if a.empty {
@@ -875,6 +877,7 @@ func (b *parquetBuilder) build() (string, func()) {
 	b.ensureParticipantIdentifiersTable()
 	b.ensureOwnerParticipantsTable()
 	b.ensureParticipantClustersTable()
+	b.ensureMeetingKeysTable()
 	b.ensurePersonDisplayNamesTable()
 
 	tmpDir := b.createTempDirs()
@@ -1084,4 +1087,13 @@ func assertDescendingOrder(tb testing.TB, got []AggregateRow) {
 // makeDate creates a time.Time for the given month, day in 2024, UTC, zero time.
 func makeDate(month, day int) time.Time {
 	return time.Date(2024, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+}
+
+func (b *parquetBuilder) ensureMeetingKeysTable() {
+	for _, table := range b.tables {
+		if table.name == datasetMeetingKeys {
+			return
+		}
+	}
+	b.addEmptyTable(datasetMeetingKeys, datasetMeetingKeys, "meeting_keys.parquet", "message_id, meeting_key", "(0::BIGINT, NULL::VARCHAR)")
 }

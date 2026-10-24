@@ -378,7 +378,8 @@ import (
 // 3.25.0 adds archived chat discovery ranked by the best matching name or title.
 // 3.26.0 adds archived calendar occurrence listing.
 // 3.27.0 adds owner meeting link decisions and suggestions.
-const APISchemaVersion = "3.27.0"
+// 3.28.0 adds cache_state to meeting link decision responses.
+const APISchemaVersion = "3.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

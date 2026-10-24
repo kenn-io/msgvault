@@ -156,6 +156,10 @@ func TestCalendarProviderObservationOrderMigration(t *testing.T) {
 	_, newer := calendarFixture(t, st, "newer", strings.ReplaceAll(calendarRaw, "event-example", "newer-event"))
 
 	// Recreate an archive created before the observation-order column and table.
+	if !st.IsPostgreSQL() {
+		_, err := st.db.Exec(`DROP TRIGGER trg_cache_meeting_events_update`)
+		require.NoError(err)
+	}
 	_, err := st.db.Exec(`ALTER TABLE calendar_events DROP COLUMN provider_observation_order`)
 	require.NoError(err)
 	_, err = st.db.Exec(`DROP TABLE calendar_event_observation_clock`)

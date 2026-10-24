@@ -19,6 +19,9 @@ func (c *Client) DecideMeetingLink(ctx context.Context, messageID int64, event, 
 	if response.JSON200 == nil {
 		return errors.New("meeting link decision: empty response")
 	}
+	if response.JSON200.CacheState == "stale" {
+		return errors.New("meeting link decision saved; counts are stale. Run msgvault build-cache to refresh them")
+	}
 	return nil
 }
 

@@ -34,7 +34,12 @@ func TestMeetingLinksClient(t *testing.T) {
 			assertions.Equal(int64(42), body.MessageID)
 			assertions.Equal("evt:81@20270314T100000Z", body.Event)
 			decisions = append(decisions, body.Decision)
-			assertions.NoError(json.MarshalWrite(w, body))
+			assertions.NoError(json.MarshalWrite(w, struct {
+				MessageID  int64  `json:"message_id"`
+				Event      string `json:"event"`
+				Decision   string `json:"decision"`
+				CacheState string `json:"cache_state"`
+			}{body.MessageID, body.Event, body.Decision, "ready"}))
 			return
 		}
 		if r.URL.Path == "/api/v1/meetings/links" {
@@ -91,4 +96,22 @@ func TestMeetingLinksClient(t *testing.T) {
 	links, err = client.MeetingLinks(t.Context(), 43)
 	requirements.NoError(err)
 	assertions.Empty(links)
+}
+
+func TestMeetingDecisionReportsStaleCache(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal("/api/v1/meetings/links/decisions", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"message_id":42,"event":"evt:81","decision":"link","cache_state":"stale"}`))
+		assertions.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(client.Close()) })
+	err = client.DecideMeetingLink(t.Context(), 42, "evt:81", "link")
+	requirements.Error(err)
+	assertions.Contains(err.Error(), "decision saved")
+	assertions.Contains(err.Error(), "counts are stale")
 }
