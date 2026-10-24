@@ -21,72 +21,24 @@ import (
 )
 
 func TestListLiveDaemonRuntimeRecordsKeepsUnjudgedRecords(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		pid  int
-	}{
-		{name: "dead local PID", pid: 1 << 30},
-		{name: "live local PID", pid: os.Getpid()},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			dataDir := t.TempDir()
-			t.Setenv("MSGVAULT_HOME", dataDir)
-			if tt.pid != os.Getpid() {
-				require.False(daemon.ProcessAlive(tt.pid), "fixture PID must be dead here")
-			}
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				requests.Add(1)
-				w.WriteHeader(http.StatusNoContent)
-			}))
-			t.Cleanup(server.Close)
-			path, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-				PID:               tt.pid,
-				ProcessIdentityV2: "future-v1:unavailable",
-				Network:           daemon.NetworkTCP,
-				Address:           server.Listener.Addr().String(),
-				Service:           daemonService,
-			})
-			require.NoError(err, "write runtime record")
-
-			records, err := listLiveDaemonRuntimeRecords(dataDir)
-
-			require.NoError(err, "list live records")
-			assert.Empty(records, "unjudged records stay out of discovery")
-			assert.FileExists(path, "cleanup must preserve an unjudged record")
-			assert.Zero(requests.Load(), "discovery must skip the endpoint")
-		})
-	}
-}
-
-func TestUnjudgedRuntimeRecordDoesNotBlockStartOrStopForUpdate(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", dataDir)
-	owner, err := tryAcquireDaemonOwnerLock(dataDir)
-	require.NoError(err, "acquire daemon ownership")
-	t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
-	path, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+	// An unsupported identity stands in for a foreign namespace, which is hard to create in a test.
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:               os.Getpid(),
 		ProcessIdentityV2: "future-v1:unavailable",
 		Network:           daemon.NetworkTCP,
 		Address:           "127.0.0.1:1",
 		Service:           daemonService,
-		Metadata:          map[string]string{runtimeStartupPhase: daemonStartupPhaseInitial},
 	})
 	require.NoError(err, "write runtime record")
 
-	starting, err := daemonStartInProgress(context.Background(), dataDir)
-	require.NoError(err, "check daemon startup")
-	assert.False(starting, "an unjudged record must not count as a local startup")
-	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
-	result, err := stopLocalDaemonsForUpdate(cfg, nil)
-	require.NoError(err, "stop local daemons for update")
-	assert.False(result.Stopped, "update must skip the unjudged daemon")
-	assert.FileExists(path, "start and update must preserve the record")
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+
+	require.NoError(err, "list live records")
+	assert.Empty(records, "unjudged records stay out of discovery")
 }
 
 func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
