@@ -20,7 +20,7 @@ All notable changes to msgvault, grouped by release.
   for up to 1,000 uncached messages; repeated requests continue using retained
   evidence. Synctech SMS/MMS imports and upgrades preserve unsent state so
   drafts, outbox, failed, and queued sends do not settle loops. They need
-  archive schema version 12 and HTTP API schema 3.25.0.
+  archive schema version 13 and HTTP API schema 3.26.0.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
 - A bad value in a setting only the daemon reads, such as `[integrations.kata] endpoint` or `MSGVAULT_API_PORT`, no longer stops other commands. They print a warning and reach the running daemon, including an older compatible one. `serve`, `daemon start`, `daemon restart`, and saving configuration still reject the file; see [Validation](configuration.md#validation).

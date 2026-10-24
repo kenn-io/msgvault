@@ -31,7 +31,7 @@ appear in full under Inherited Flags.
 ## loops
 
 Show the conversations waiting on a reply, and clear them, through the
-selected daemon. Requires API schema 3.25.0. See [Open loops](usage/open-loops.md)
+selected daemon. Requires API schema 3.26.0. See [Open loops](usage/open-loops.md)
 for the rules.
 
 ```bash
