@@ -120,13 +120,14 @@ type LoopMark struct {
 
 // loopMessageFilterSQL keeps what the archive still holds. A message deleted
 // at the source stays readable here, so it still anchors and settles loops.
+// Draft markers exclude a message unless Sent evidence confirms it went out.
 const loopMessageFilterSQL = `%[1]s.sent_at IS NOT NULL AND %[1]s.deleted_at IS NULL
 	AND COALESCE(%[1]s.message_type, '') NOT IN ('calendar_event', 'meeting_transcript', 'synctech_sms_call')
 	AND COALESCE(%[1]s.is_sent, TRUE)
-	AND NOT (%[1]s.draft_authored OR %[2]s)`
+	AND NOT ((%[1]s.draft_authored OR %[2]s) AND NOT %[3]s)`
 
-func loopLiveMessageSQL(m, src string) string {
-	return fmt.Sprintf(loopMessageFilterSQL, m, draftEvidenceSQL(m, src))
+func (s *Store) loopLiveMessageSQL(m, src string) string {
+	return fmt.Sprintf(loopMessageFilterSQL, m, draftEvidenceSQL(m, src), sentConfirmedSQL(s.dialect, "", m, src))
 }
 
 // loopTimeKey orders instants chronologically on SQLite, whose timestamp
@@ -197,7 +198,7 @@ func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
 		WHERE c.conversation_type IN ('email_thread', 'direct_chat')
-			AND (m.list_id IS NULL OR m.list_id = '') AND ` + loopLiveMessageSQL("m", "src")
+			AND (m.list_id IS NULL OR m.list_id = '') AND ` + s.loopLiveMessageSQL("m", "src")
 	var args []any
 	if q.ConversationID > 0 {
 		query += ` AND m.conversation_id = ?`
@@ -230,7 +231,7 @@ func (s *Store) loopChunk(ctx context.Context, chunk []LoopConversation, owners 
 			SELECT m.id, m.conversation_id,
 				ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY `+s.loopTimeKey("m.sent_at")+` DESC, m.id DESC) AS rn
 			FROM messages m JOIN sources src ON src.id = m.source_id
-			WHERE m.conversation_id IN (%s) AND `+strings.ReplaceAll(loopLiveMessageSQL("m", "src"), "%", "%%")+`
+			WHERE m.conversation_id IN (%s) AND `+strings.ReplaceAll(s.loopLiveMessageSQL("m", "src"), "%", "%%")+`
 		) w WHERE rn <= `+strconv.Itoa(loopFirstMessages),
 		func(rows *loggedRows) error {
 			var r windowRow
@@ -381,7 +382,7 @@ func (s *Store) loopMessagePageQuery(conversationID, after int64, limit int) (st
 	timestamp := s.loopTimeKey("m.sent_at")
 	cursor := s.loopTimeKey("(SELECT sent_at FROM messages WHERE id = ?)")
 	query := `SELECT m.id FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.conversation_id = ? AND ` + loopLiveMessageSQL("m", "src") + `
+		WHERE m.conversation_id = ? AND ` + s.loopLiveMessageSQL("m", "src") + `
 			AND (` + timestamp + ` < ` + cursor + `
 				OR (` + timestamp + ` = ` + cursor + ` AND m.id < ?))
 		ORDER BY ` + timestamp + ` DESC, m.id DESC LIMIT ?`

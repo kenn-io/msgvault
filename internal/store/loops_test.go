@@ -187,6 +187,43 @@ func TestLoopWalkExcludesUnsentReplies(t *testing.T) {
 	assert.Equal([]int64{question}, ids, "the store walk excludes unsent drafts")
 }
 
+func TestLoopWalkKeepsSentCopiesThatRetainDraftEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mark func(f *storetest.Fixture, id int64) error
+	}{
+		{"saved Sent origin", func(f *storetest.Fixture, id int64) error {
+			return f.Store.SetMessageMetadata(id, sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true})
+		}},
+		{"Sent label", func(f *storetest.Fixture, id int64) error {
+			sent := f.EnsureLabels(map[string]string{"SENT": "Sent"}, "system")
+			return f.Store.LinkMessageLabel(id, sent["SENT"])
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			f := storetest.New(t)
+			question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Subject: "Contract", Body: "Can you send it?", SentAt: loopAgo(72 * time.Hour)})
+			reply := f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex}, Body: "Sent it.", SentAt: loopAgo(24 * time.Hour)})
+			draft := f.EnsureLabels(map[string]string{"DRAFT": "Draft"}, "system")
+			requirements.NoError(f.Store.LinkMessageLabel(reply, draft["DRAFT"]))
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET draft_authored = TRUE WHERE id = ?`), reply)
+			requirements.NoError(err)
+			requirements.NoError(tc.mark(f, reply))
+
+			var ids []int64
+			for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{ConversationID: conversationOf(t, f, question)}) {
+				requirements.NoError(err)
+				for m, err := range conv.Walk() {
+					requirements.NoError(err)
+					ids = append(ids, m.ID)
+				}
+			}
+			assert.Equal(t, []int64{reply, question}, ids, "a confirmed sent copy settles the question despite retained draft markers")
+		})
+	}
+}
+
 func TestLoopStoredListIDExcludesLegacyMessages(t *testing.T) {
 	for _, scenario := range []string{"opens question", "settles question"} {
 		t.Run(scenario, func(t *testing.T) {
