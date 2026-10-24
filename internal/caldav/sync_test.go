@@ -32,7 +32,7 @@ type syncFixture struct {
 	raw                     map[string]string
 	reported                map[string]bool
 	deleted                 []string
-	token                   string
+	token, lastToken        string
 	failFetch, invalidToken bool
 	forceGET                bool
 	forceSnapshot           bool
@@ -76,6 +76,7 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 			if !assertions.NoError(xml.Unmarshal(req, &report)) {
 				return
 			}
+			f.lastToken = report.Token
 			var responses strings.Builder
 			for name := range f.raw {
 				if report.Token != "" && f.reported != nil && !f.reported[name] {
@@ -209,6 +210,17 @@ func TestSyncInterruptedFirstSyncResumesRemainingResources(t *testing.T) {
 	third, err := c.Sync(t.Context(), st, syncOpts())
 	requirements.NoError(err)
 	assertions.Zero(third.Events)
+}
+
+func TestSyncUnchangedSettingsSendSavedToken(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	st := testutil.NewTestStore(t)
+	_, err := c.Sync(t.Context(), st, syncOpts())
+	requirements.NoError(err)
+	_, err = c.Sync(t.Context(), st, syncOpts())
+	requirements.NoError(err)
+	assertions.Equal("t1", f.lastToken)
 }
 
 func TestSyncTimeZoneChangeRewritesUnchangedInstants(t *testing.T) {
@@ -795,9 +807,7 @@ func TestSyncCorrectsTimezoneAfterFailedFirstSnapshot(t *testing.T) {
 			}
 			var config string
 			require.NoError(st.DB().QueryRow(`SELECT sync_config FROM sources WHERE source_type='caldav'`).Scan(&config))
-			var stored struct {
-				TimeZone string `json:"time_zone"`
-			}
+			var stored sourceConfig
 			require.NoError(json.Unmarshal([]byte(config), &stored))
 			assert.Equal("UTC", stored.TimeZone)
 
