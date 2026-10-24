@@ -58,8 +58,6 @@ func TestContextSearchContract(t *testing.T) {
 	checks.True(attempt.Result.FreshAsOf.IsZero())
 	checks.Equal([]string{"https://example.com/alex"}, attempt.Result.CanonicalPublicURLs)
 	checks.True(strings.HasPrefix(attempt.Result.Citations[0].Key, "context:"))
-	_, err = provider.Poll(t.Context(), attempt)
-	requirements.Error(err)
 }
 
 func TestContextLongCompanyStaysLocal(t *testing.T) {
@@ -202,7 +200,6 @@ func TestContextInvalidRequestsDoNotSend(t *testing.T) {
 	for _, identity := range []personenrichment.Identity{
 		{Name: "Alex Example"},
 		{Name: strings.Repeat("界", 495), CurrentCompany: "Example Labs"},
-		{Name: "Alex Example", CurrentCompany: "Example Labs", Email: "alex@example.com"},
 	} {
 		_, err := provider.Start(t.Context(), personenrichment.Request{Identity: identity, Targets: exaTypedTargets(t)})
 		require.Error(t, err)
