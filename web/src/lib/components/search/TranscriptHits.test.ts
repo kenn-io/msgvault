@@ -283,8 +283,8 @@ describe('TranscriptHits', () => {
     } }))));
     render(TranscriptHits, { props: { client, query: 'quarterly', supported: true, participantID } });
     await screen.findByText(participantID === undefined
-      ? 'Attachment search supports at most 4096 mirrored versions. Add a Person filter to search attachments.'
-      : 'This Person filter exceeds the attachment-search limit of 4096 mirrored versions. Choose a Person filter with fewer attachments.');
+      ? 'Attachment search supports at most 4096 mirrored files that can hold text. Add a Person filter to search attachments.'
+      : 'This Person filter exceeds the attachment-search limit of 4096 mirrored files that can hold text. Choose a Person filter with fewer attachments.');
     expect(screen.queryByText('No matches in text Docbank has extracted from mirrored attachments.')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });

@@ -196,7 +196,7 @@ func TestSearchDocumentsContract(t *testing.T) {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "\x01quartz\x02", Evidence: []SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}}}
+			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "quartz", Evidence: []SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}}}
 			switch fault {
 			case "node":
 				report.Results[0].NodeID = 0

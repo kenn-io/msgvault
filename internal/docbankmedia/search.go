@@ -166,7 +166,7 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 				return SearchReport{}, ErrInvalidReceipt
 			}
 		}
-		hit.Excerpt = plainSearchExcerpt(hit.Excerpt)
+		hit.Excerpt = strings.ReplaceAll(strings.ReplaceAll(hit.Excerpt, "\x01", ""), "\x02", "")
 	}
 	return report, nil
 }
@@ -233,13 +233,8 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 		if !content {
 			continue
 		}
-		hit.Excerpt = plainSearchExcerpt(hit.Excerpt)
 		results = append(results, hit)
 	}
 	report.Results = results
 	return report, nil
-}
-
-func plainSearchExcerpt(excerpt string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(excerpt, "\x01", ""), "\x02", "")
 }

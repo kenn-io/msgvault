@@ -185,9 +185,13 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 			writeError(w, status, failure.Error, failure.Message)
 			return
 		}
-		response.RecordingsError = &failure
-		response.Results = []MediaSearchResult{}
-		response.Partial = true
+		response = MediaSearchResponse{
+			Attachments:     response.Attachments,
+			RecordingsError: &failure,
+			Results:         []MediaSearchResult{},
+			Coverage:        docbankmedia.SearchCoverage{State: "unknown"},
+			Partial:         true,
+		}
 		s.logger.Warn("search media transcripts", "code", docbankmedia.ErrorCode(err))
 	}
 

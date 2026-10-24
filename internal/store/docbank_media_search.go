@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/msgvault/internal/personscope"
 )
 
@@ -56,28 +57,58 @@ type DocumentSearchOccurrence struct {
 }
 
 // documentSearchRows shares attachment eligibility, visibility, and person scope.
-func documentSearchRows(destination string, scope *personscope.Scope) (string, []any) {
-	args := []any{destination}
+func (s *Store) documentSearchRows(destination string, scope *personscope.Scope, deliveryFilter string, deliveryArgs []any) (string, string, []any) {
+	args := append([]any{destination}, deliveryArgs...)
+	// LOWER on both sides lets SQLite use the existing hash expression index.
+	attachmentIDs := `SELECT matched.id FROM attachments matched
+ WHERE LOWER(matched.content_hash) = LOWER(d.content_hash)
+ UNION ALL SELECT matched.id FROM attachments matched
+ WHERE matched.storage_path = SUBSTR(d.content_hash,1,2) || '/' || d.content_hash
+   AND COALESCE(matched.content_hash,'') = ''`
+	attachmentMatch := `a.id IN (` + attachmentIDs + `)`
+	if s.IsPostgreSQL() {
+		attachmentMatch = `a.id = ANY(ARRAY(` + attachmentIDs + `))`
+	}
+	// Materialize indexed receipt matches before applying message visibility.
+	// Otherwise PostgreSQL can start with messages and repeat the delivery scan.
+	with := `WITH delivered_attachments AS MATERIALIZED (
+ SELECT d.version_id, a.id AS attachment_id, a.message_id, COALESCE(a.filename,'') AS filename
+ FROM docbank_attachment_deliveries d
+ JOIN attachments a ON ` + attachmentMatch + `
+ WHERE d.destination_key = ? AND d.state = 'delivered'
+ AND (` + deliveryFilter + `) AND ` + docbankAttachmentEligibleWhere() + `)`
 	query := `
- FROM attachments a
- JOIN messages m ON m.id = a.message_id
+ FROM delivered_attachments d
+ JOIN messages m ON m.id = d.message_id
  JOIN conversations cv ON cv.id = m.conversation_id
- LEFT JOIN docbank_attachment_deliveries d
-   ON d.destination_key = ? AND d.content_hash = ` + docbankAttachmentHashExpr + `
- WHERE ` + docbankAttachmentEligibleWhere() + ` AND ` + LiveMessagesWhere("m", true)
+ WHERE ` + LiveMessagesWhere("m", true)
 	if scope != nil {
 		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
 		query += " AND (" + predicate + ")"
 		args = append(args, values...)
 	}
-	return query, args
+	return with, query, args
 }
 
-// DocumentSearchVersions returns up to 4096 delivered versions.
+// DocumentSearchVersions returns up to 4096 delivered versions that can hold text.
 // A larger scope returns no versions and reports that the scope limit was exceeded.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
-	query, args := documentSearchRows(destination, scope)
-	query = `SELECT d.version_id` + query + ` AND d.state = 'delivered' AND d.version_id <> '' GROUP BY d.version_id LIMIT 4097`
+	// Docbank indexes text/* natively. Its document providers also extract
+	// registered document formats and OCR images; audio uses recording search.
+	mimePredicates := []string{`LOWER(d.mime_type) LIKE 'text/%'`}
+	var mimeArgs []any
+	mediaTypes := []string{"application/jsonl", "image/jpeg", "image/png", "image/webp", "image/tiff"}
+	for _, format := range document.FormatMetadataCatalog() {
+		if format.Provider && !strings.HasPrefix(format.MediaType, "text/") {
+			mediaTypes = append(mediaTypes, format.MediaType)
+		}
+	}
+	for _, mediaType := range mediaTypes {
+		mimePredicates = append(mimePredicates, `(LOWER(TRIM(d.mime_type)) = ? OR LOWER(TRIM(d.mime_type)) LIKE ?)`)
+		mimeArgs = append(mimeArgs, mediaType, mediaType+";%")
+	}
+	with, query, args := s.documentSearchRows(destination, scope, `d.version_id <> '' AND (`+strings.Join(mimePredicates, " OR ")+`)`, mimeArgs)
+	query = with + ` SELECT d.version_id` + query + ` GROUP BY d.version_id LIMIT 4097`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("list document search versions: %w", err)
@@ -107,20 +138,20 @@ func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination strin
 	if len(versionIDs) == 0 {
 		return result, nil
 	}
-	query, args := documentSearchRows(destination, scope)
-	query = `WITH duplicates AS (
- SELECT d.version_id, a.id AS attachment_id, m.id AS message_id, cv.id AS conversation_id,
- COALESCE(a.filename,'') AS filename, ` + containingTitleMCVSQL + ` AS containing_title,
+	versionArgs := make([]any, len(versionIDs))
+	for i, id := range versionIDs {
+		versionArgs[i] = id
+	}
+	with, query, args := s.documentSearchRows(destination, scope, `d.version_id IN (?`+strings.Repeat(",?", len(versionIDs)-1)+`)`, versionArgs)
+	query = with + `, duplicates AS (
+ SELECT d.version_id, d.attachment_id, m.id AS message_id, cv.id AS conversation_id,
+ d.filename, ` + containingTitleMCVSQL + ` AS containing_title,
  COALESCE(m.sent_at,m.received_at,m.internal_date) AS occurred_at,
- ROW_NUMBER() OVER (PARTITION BY d.version_id, m.id ORDER BY a.id) AS duplicate_rank` + query + `
- AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(versionIDs)-1) + `)
+ ROW_NUMBER() OVER (PARTITION BY d.version_id, m.id ORDER BY d.attachment_id) AS duplicate_rank` + query + `
  ), ranked AS (SELECT *,
  ROW_NUMBER() OVER (PARTITION BY version_id ORDER BY occurred_at DESC NULLS LAST, attachment_id) AS occurrence_rank FROM duplicates WHERE duplicate_rank = 1
  ) SELECT version_id, attachment_id, message_id, conversation_id, filename, containing_title, occurred_at
  FROM ranked WHERE occurrence_rank <= ? ORDER BY occurred_at DESC NULLS LAST, attachment_id`
-	for _, id := range versionIDs {
-		args = append(args, id)
-	}
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {

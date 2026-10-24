@@ -910,7 +910,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 	for _, mid := range []int64{first, second} {
 		require.NoError(t, f.f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "report.pdf", StoragePath: "aa/" + hash, State: "stored"}))
 	}
-	require.NoError(t, f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "00000000-0000-4000-8000-000000000001"}, ""))
+	require.NoError(t, f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "00000000-0000-4000-8000-000000000001"}, ""))
 	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
 	f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "quartz in the PDF", Evidence: []docbankmedia.SearchEvidence{{Kind: "content_blob"}}}}}
 	return first, second
@@ -927,7 +927,7 @@ func TestMediaSearchDocumentsShared(t *testing.T) {
 	hash := strings.Repeat("b", 64)
 	staleDocumentVersion := "00000000-0000-4000-8000-000000000002"
 	require.NoError(f.f.Store.UpsertAttachmentRecord(t.Context(), first, store.AttachmentWrite{ContentHash: hash, Filename: "stale.pdf", StoragePath: "bb/" + hash, State: "stored"}))
-	require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 8, VersionID: staleDocumentVersion}, ""))
+	require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 8, VersionID: staleDocumentVersion}, ""))
 	status, response, raw := searchMediaFor(t, server, query)
 	require.Equal(http.StatusOK, status, raw)
 	require.NotNil(response.Attachments)
@@ -1070,6 +1070,7 @@ func TestMediaSearchDocumentsRecordingFailure(t *testing.T) {
 	}{
 		{"timeout", 0, 0, true, http.StatusOK},
 		{"unavailable", http.StatusServiceUnavailable, 0, false, http.StatusOK},
+		{"late store failure", 0, 0, false, http.StatusOK},
 		{"rejected query", http.StatusBadRequest, 0, false, http.StatusBadRequest},
 		{"both fail", http.StatusServiceUnavailable, http.StatusServiceUnavailable, false, http.StatusServiceUnavailable},
 	} {
@@ -1082,6 +1083,13 @@ func TestMediaSearchDocumentsRecordingFailure(t *testing.T) {
 			f.document(t, server)
 			f.remoteStatus, f.documentStatus = test.recordingStatus, test.documentStatus
 			f.waitForCancel = test.timeout
+			if test.name == "late store failure" {
+				f.report.Truncated = true
+				f.duringSearch = func() {
+					_, err := f.f.Store.DB().Exec(`ALTER TABLE beeper_media_occurrences RENAME TO unavailable_media_occurrences`)
+					assert.NoError(err)
+				}
+			}
 			ctx := t.Context()
 			if test.timeout {
 				var cancel context.CancelFunc
@@ -1105,6 +1113,11 @@ func TestMediaSearchDocumentsRecordingFailure(t *testing.T) {
 			require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
 			require.NotNil(response.Attachments)
 			require.NotNil(response.RecordingsError)
+			assert.Equal(docbankmedia.SearchCoverage{State: "unknown"}, response.Coverage)
+			assert.False(response.Truncated)
+			assert.Zero(response.PendingOccurrences)
+			assert.Zero(response.UnavailableOccurrences)
+			assert.Zero(response.AttributionUnavailable)
 			assert.Empty(response.Results)
 			assert.True(response.Partial)
 			assert.False(response.Attachments.Truncated)
