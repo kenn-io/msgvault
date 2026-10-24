@@ -11,7 +11,7 @@ import (
 )
 
 // EmailFamilyMinAPISchemaVersion is the first API schema with the related-copies route.
-const EmailFamilyMinAPISchemaVersion = "3.26.0"
+const EmailFamilyMinAPISchemaVersion = "3.44.0"
 
 // EmailFamilyContext reads an email's related copies through the owning daemon.
 func (c *Client) EmailFamilyContext(ctx context.Context, id int64) (*store.EmailFamily, error) {

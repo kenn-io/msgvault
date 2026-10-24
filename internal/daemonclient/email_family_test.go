@@ -15,7 +15,7 @@ func TestEmailFamilyClientRejectsOlderDaemon(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.25.0"}`))
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.42.0"}`))
 			return
 		}
 		familyRequests++
@@ -25,6 +25,6 @@ func TestEmailFamilyClientRejectsOlderDaemon(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "fixture-key", AllowInsecure: true})
 	require.NoError(t, err)
 	_, err = client.EmailFamilyContext(t.Context(), 1)
-	require.ErrorContains(t, err, "require daemon API schema 3.26.0 or newer")
+	require.ErrorContains(t, err, "require daemon API schema 3.44.0 or newer")
 	assert.Zero(t, familyRequests)
 }
