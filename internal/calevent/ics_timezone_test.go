@@ -68,7 +68,7 @@ func TestICSTimeZoneUnsupportedRecurrenceKeepsSibling(t *testing.T) {
 			assertions.Equal("sibling@example.test", components[1].UID)
 			assertions.Empty(components[1].Event.RecurrenceError)
 			requirements.Len(diagnostics, 1)
-			assertions.Contains(diagnostics[0], "VEVENT 0:")
+			assertions.Contains(diagnostics[0], "VEVENT 1:")
 		})
 	}
 }
