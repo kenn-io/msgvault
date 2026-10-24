@@ -865,6 +865,7 @@ CREATE TABLE IF NOT EXISTS person_fact_evidence (
     authority         TEXT NOT NULL
                            CHECK (authority IN ('authoritative', 'ordinary', 'aggregator')),
     source_ref        TEXT NOT NULL DEFAULT '',
+    message_id INTEGER,
     source_url        TEXT NOT NULL DEFAULT '',
     subject_person_id INTEGER,
     subject_ref       TEXT NOT NULL DEFAULT '',
@@ -4674,3 +4675,168 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+CREATE TABLE IF NOT EXISTS person_observations (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id             INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    sequence              INTEGER NOT NULL CHECK (sequence > 0),
+    generation_id         INTEGER REFERENCES person_fact_generations(id) ON DELETE SET NULL,
+    level                 TEXT NOT NULL CHECK (level IN ('explicit','deductive','inductive','contradiction')),
+    origin                TEXT NOT NULL CHECK (origin IN ('extraction','owner','reasoning')),
+    kind                  TEXT NOT NULL CHECK (kind IN ('state','event','plan','preference','relationship','pattern','other')),
+    content               TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 500),
+    content_key           TEXT NOT NULL CHECK (length(content_key) = 64 AND content_key NOT GLOB '*[^0-9a-f]*'),
+    normalization_version TEXT NOT NULL CHECK (normalization_version = 'obs-norm-v1'),
+    subject_ref           TEXT NOT NULL DEFAULT '' CHECK (length(subject_ref) <= 64),
+    subject_person_id     INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+    directness            TEXT NOT NULL CHECK (directness IN ('direct-self','direct-other','indirect')),
+    sensitive             INTEGER NOT NULL CHECK (sensitive IN (0,1)),
+    confidence_bp         INTEGER NOT NULL CHECK (confidence_bp BETWEEN 0 AND 1000),
+    valid_from            DATETIME,
+    valid_until           DATETIME,
+    occurs_on             TEXT CHECK (occurs_on IS NULL OR occurs_on GLOB '[0-9][0-9][0-9][0-9]' OR occurs_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]' OR occurs_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    support_flag          TEXT NOT NULL DEFAULT '' CHECK (support_flag IN ('','support_lapsed','contested')),
+    stability             TEXT NOT NULL DEFAULT 'durable' CHECK (stability IN ('fixed','durable','volatile','episodic')),
+    stability_source      TEXT NOT NULL DEFAULT 'program' CHECK (stability_source IN ('program','definition','owner')),
+    target_kind           TEXT,
+    target_key            TEXT,
+    program_fingerprint   TEXT NOT NULL DEFAULT '',
+    status                TEXT NOT NULL CHECK (status IN ('active','unsupported','superseded','rejected')),
+    status_reason         TEXT NOT NULL DEFAULT '' CHECK (status_reason IN (
+                              '', 'evidence-unsupported', 'premises-withdrawn', 'decayed', 'knowledge-update', 'duplicate-merge',
+                              'person-merge-collision', 'owner-rejected', 'owner-superseded')),
+    superseded_by_id      INTEGER REFERENCES person_observations(id) ON DELETE SET NULL,
+    owner_state           TEXT NOT NULL DEFAULT '' CHECK (owner_state IN ('', 'confirmed', 'unsure')),
+    pinned                INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0,1)),
+    mention_count         INTEGER NOT NULL DEFAULT 0 CHECK (mention_count >= 0),
+    first_seen_at         DATETIME,
+    last_seen_at          DATETIME,
+    premise_changed_at    DATETIME,
+    created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (person_id, sequence),
+    CHECK ((target_kind IS NULL) = (target_key IS NULL)),
+    CHECK (valid_from IS NULL OR valid_until IS NULL OR valid_until >= valid_from),
+    -- A non-owner row's generation may later be cascaded to NULL, so only the owner direction is checked.
+    CHECK (origin <> 'owner' OR (generation_id IS NULL AND program_fingerprint = ''))
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_observations_subject_person
+    ON person_observations(subject_person_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_observations_live_key
+    ON person_observations(person_id, content_key) WHERE status IN ('active','unsupported');
+CREATE INDEX IF NOT EXISTS idx_person_observations_person_status
+    ON person_observations(person_id, status, last_seen_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_observations_recheck
+    ON person_observations(person_id, level, id) WHERE premise_changed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_observations_superseded_by
+    ON person_observations(superseded_by_id) WHERE superseded_by_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_observations_generation
+    ON person_observations(generation_id);
+
+CREATE INDEX IF NOT EXISTS idx_person_observations_sequence
+    ON person_observations(person_id, level, status, sequence);
+CREATE INDEX IF NOT EXISTS idx_person_observations_target
+    ON person_observations(person_id, target_kind, target_key) WHERE target_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS person_observation_evidence (
+    observation_id INTEGER NOT NULL REFERENCES person_observations(id) ON DELETE CASCADE,
+    evidence_id INTEGER NOT NULL REFERENCES person_fact_evidence(id) ON DELETE CASCADE,
+    generation_id INTEGER REFERENCES person_fact_generations(id) ON DELETE SET NULL,
+    quote_start INTEGER NOT NULL CHECK (quote_start >= 0),
+    quote_end INTEGER NOT NULL CHECK (quote_end > quote_start),
+    quote_sha256 TEXT NOT NULL CHECK (length(quote_sha256) = 64 AND quote_sha256 NOT GLOB '*[^0-9a-f]*'),
+    exclusion_reason TEXT NOT NULL DEFAULT '' CHECK (exclusion_reason IN ('','draft','hidden_text','list','bot','cold_room','quarantine')),
+    message_id INTEGER NOT NULL,
+    conversation_id INTEGER NOT NULL,
+    conversation_kind TEXT NOT NULL,
+    authored_by_person INTEGER NOT NULL CHECK (authored_by_person IN (0,1)),
+    author_is_owner INTEGER NOT NULL CHECK (author_is_owner IN (0,1)),
+    event_time DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (observation_id, evidence_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_observation_evidence_generation
+    ON person_observation_evidence(generation_id);
+CREATE INDEX IF NOT EXISTS idx_person_observation_evidence_evidence
+    ON person_observation_evidence(evidence_id, observation_id);
+
+CREATE TABLE IF NOT EXISTS person_observation_premises (
+    derived_id INTEGER NOT NULL REFERENCES person_observations(id) ON DELETE CASCADE,
+    premise_id INTEGER NOT NULL REFERENCES person_observations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('support','counter')),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    added_generation_id INTEGER REFERENCES person_fact_generations(id) ON DELETE SET NULL,
+    PRIMARY KEY (derived_id, premise_id),
+    UNIQUE (derived_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_observation_premises_generation
+    ON person_observation_premises(added_generation_id);
+CREATE INDEX IF NOT EXISTS idx_person_observation_premises_premise
+    ON person_observation_premises(premise_id, derived_id);
+
+CREATE TABLE IF NOT EXISTS person_observation_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    observation_id INTEGER NOT NULL REFERENCES person_observations(id) ON DELETE CASCADE,
+    generation_id INTEGER REFERENCES person_fact_generations(id) ON DELETE SET NULL,
+    event TEXT NOT NULL CHECK (event IN (
+        'created','reinforced','superseded','supersede-blocked','unsupported',
+        'restored','duplicate-merged','premise-changed','premise-rechecked',
+        'confirmed','unsure','cleared','rejected','pinned','unpinned',
+        'ended','promoted','sensitivity-changed','merge-moved','rebanded',
+        'premises-appended','suppression-lifted','merge-converted','split-restored',
+        'support-flagged','support-cleared')),
+    actor TEXT NOT NULL,
+    related_observation_id INTEGER,
+    evidence_id INTEGER REFERENCES person_fact_evidence(id) ON DELETE SET NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_observation_events_evidence
+    ON person_observation_events(evidence_id);
+
+CREATE INDEX IF NOT EXISTS idx_person_observation_events_generation
+    ON person_observation_events(generation_id);
+
+CREATE INDEX IF NOT EXISTS idx_person_observation_events_person
+    ON person_observation_events(person_id);
+CREATE INDEX IF NOT EXISTS idx_person_observation_events_observation
+    ON person_observation_events(observation_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS person_observation_suppressions (
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    content_key TEXT NOT NULL CHECK (length(content_key) = 64 AND content_key NOT GLOB '*[^0-9a-f]*'),
+    reason TEXT NOT NULL CHECK (reason IN ('owner-rejected','owner-forgotten','wrong','not_useful','outdated')),
+    actor TEXT NOT NULL,
+    rejected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cleared_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_observation_suppressions_person
+    ON person_observation_suppressions(person_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_observation_suppressions_active
+    ON person_observation_suppressions(person_id, content_key) WHERE cleared_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS person_observation_categories (
+    observation_id INTEGER NOT NULL REFERENCES person_observations(id) ON DELETE CASCADE,
+    category TEXT NOT NULL CHECK (category IN (
+        'health','sexual_orientation_or_sex_life','gender_identity','religion_or_belief',
+        'politics','ethnicity_or_race','trade_union','genetic_or_biometric',
+        'criminal_record','immigration_status','financial_hardship','minors',
+        'finances','legal_proceedings')),
+    source TEXT NOT NULL CHECK (source IN ('model','lexicon','premise','owner')),
+    PRIMARY KEY (observation_id, category)
+);
+
+CREATE TABLE IF NOT EXISTS person_observation_clocks (
+    person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    last_sequence INTEGER NOT NULL DEFAULT 0 CHECK (last_sequence >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_person_observations_layout
+    ON person_observations(person_id, level, status, pinned, sensitive, premise_changed_at);
