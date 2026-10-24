@@ -22,6 +22,7 @@ type slackdumpSnapshot struct {
 }
 
 func TestSlackdumpExportDirectoryAndZIPParity(t *testing.T) {
+	t.Parallel()
 	dirSnapshot := readSlackdumpSnapshot(t, slackdumpFixture)
 	zipSnapshot := readSlackdumpSnapshot(t, zipSlackdumpFixtureReverseOrder(t, slackdumpFixture))
 
@@ -29,6 +30,7 @@ func TestSlackdumpExportDirectoryAndZIPParity(t *testing.T) {
 }
 
 func TestSlackdumpExportReadsUsers(t *testing.T) {
+	t.Parallel()
 	export, err := openSlackdumpExport(slackdumpFixture)
 	require.NoError(t, err)
 	defer func() {
@@ -44,6 +46,7 @@ func TestSlackdumpExportReadsUsers(t *testing.T) {
 }
 
 func TestSlackdumpExportMergesConversationCatalogAndNormalizesDMs(t *testing.T) {
+	t.Parallel()
 	export, err := openSlackdumpExport(slackdumpFixture)
 	require.NoError(t, err)
 	defer func() {
@@ -62,6 +65,7 @@ func TestSlackdumpExportMergesConversationCatalogAndNormalizesDMs(t *testing.T) 
 }
 
 func TestSlackdumpExportOrdersDailyMessagesAndPreservesRawJSON(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -82,6 +86,7 @@ func TestSlackdumpExportOrdersDailyMessagesAndPreservesRawJSON(t *testing.T) {
 }
 
 func TestSlackdumpExportMapsConversationDirectories(t *testing.T) {
+	t.Parallel()
 	export, err := openSlackdumpExport(slackdumpFixture)
 	require.NoError(t, err)
 	defer func() {
@@ -134,6 +139,7 @@ func TestSlackdumpExportMapsConversationDirectories(t *testing.T) {
 }
 
 func TestSlackdumpExportTreatsMissingConversationDirectoryAsEmpty(t *testing.T) {
+	t.Parallel()
 	export, err := openSlackdumpExport(slackdumpFixture)
 	require.NoError(t, err)
 	defer func() {
@@ -146,6 +152,7 @@ func TestSlackdumpExportTreatsMissingConversationDirectoryAsEmpty(t *testing.T) 
 }
 
 func TestSlackdumpExportReadsAttachmentsAcrossLayouts(t *testing.T) {
+	t.Parallel()
 	export, err := openSlackdumpExport(slackdumpFixture)
 	require.NoError(t, err)
 	defer func() {
@@ -182,6 +189,7 @@ func TestSlackdumpExportReadsAttachmentsAcrossLayouts(t *testing.T) {
 }
 
 func TestSlackdumpExportResolvesStandardAttachmentByWorkspaceFileID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -206,6 +214,7 @@ func TestSlackdumpExportResolvesStandardAttachmentByWorkspaceFileID(t *testing.T
 }
 
 func TestSlackdumpExportReportsMissingAttachment(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -225,6 +234,7 @@ func TestSlackdumpExportReportsMissingAttachment(t *testing.T) {
 }
 
 func TestSlackdumpExportBoundsAttachmentReads(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -245,6 +255,7 @@ func TestSlackdumpExportBoundsAttachmentReads(t *testing.T) {
 }
 
 func TestSlackdumpExportDoesNotResolveAttachmentNamesOutsideTheirLayout(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -264,6 +275,7 @@ func TestSlackdumpExportDoesNotResolveAttachmentNamesOutsideTheirLayout(t *testi
 }
 
 func TestSlackdumpExportRejectsAttachmentIDTraversal(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -282,6 +294,7 @@ func TestSlackdumpExportRejectsAttachmentIDTraversal(t *testing.T) {
 }
 
 func TestSlackdumpExportDoesNotFollowAttachmentSymlinkOutsideDirectory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -312,6 +325,7 @@ func TestSlackdumpExportDoesNotFollowAttachmentSymlinkOutsideDirectory(t *testin
 }
 
 func TestSlackdumpSanitizeFilenameMatchesPortableSlackdumpNames(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		want string
@@ -329,6 +343,7 @@ func TestSlackdumpSanitizeFilenameMatchesPortableSlackdumpNames(t *testing.T) {
 }
 
 func TestSlackdumpExportReportsMalformedInputPath(t *testing.T) {
+	t.Parallel()
 	t.Run("malformed required index", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -390,6 +405,7 @@ func TestSlackdumpExportReportsMalformedInputPath(t *testing.T) {
 }
 
 func TestSlackdumpExportAcceptsMissingOptionalCatalogs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		missing string
 		wantIDs []string
@@ -421,24 +437,6 @@ func TestSlackdumpExportAcceptsMissingOptionalCatalogs(t *testing.T) {
 			assert.Equal(t, tt.wantIDs, gotIDs)
 		})
 	}
-}
-
-func TestSlackdumpExportIgnoresUnknownMalformedRootSibling(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	export, err := openSlackdumpExport(slackdumpFixture)
-	require.NoError(err)
-	defer func() {
-		assert.NoError(export.Close())
-	}()
-
-	users, err := export.users()
-	require.NoError(err)
-	assert.Len(users, 2)
-	conversations, err := export.conversations("UALICE")
-	require.NoError(err)
-	assert.Len(conversations, 5)
 }
 
 func readSlackdumpSnapshot(t *testing.T, path string) slackdumpSnapshot {

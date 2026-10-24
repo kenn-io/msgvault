@@ -61,6 +61,7 @@ func requireParkedSweepReply(t *testing.T, imp *Importer, sourceMessageID string
 }
 
 func TestSweepConvergesFloorJustAfterMidnight(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	midnight := time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC)
 	base := midnight.Add(3 * time.Minute)
@@ -83,6 +84,7 @@ func TestSweepConvergesFloorJustAfterMidnight(t *testing.T) {
 }
 
 func TestSweepConvergesFloorExactlyOnMidnight(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	midnight := time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC)
 	base := midnight.Add(-time.Second)
@@ -108,6 +110,7 @@ func TestSweepConvergesFloorExactlyOnMidnight(t *testing.T) {
 }
 
 func TestSweepLimitOneConvergesFromDayBehindBacklog(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	midnight := time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC)
 	base := midnight.Add(-36 * time.Hour)
@@ -131,6 +134,7 @@ func TestSweepLimitOneConvergesFromDayBehindBacklog(t *testing.T) {
 }
 
 func TestSweepLimitOneOverlapHitDoesNotStarveUncertifiedDay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	midnight := time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC)
 	base := midnight.Add(3 * time.Minute)
@@ -178,6 +182,7 @@ func TestSweepLimitOneOverlapHitDoesNotStarveUncertifiedDay(t *testing.T) {
 }
 
 func TestSweepRangeExhaustedAtEntrySkipsFreeOverlapSearch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newFakeSlack(t)
 	imp, opts := testImporter(t, f)
@@ -222,6 +227,7 @@ func TestSweepRangeExhaustedAtEntrySkipsFreeOverlapSearch(t *testing.T) {
 }
 
 func TestSweepRangeFailedFreeOverlapConsumesSharedBudget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newFakeSlack(t)
 	f.failSearch = true
