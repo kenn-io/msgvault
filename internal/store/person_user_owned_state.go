@@ -34,6 +34,17 @@ func (s *Store) personHasUserOwnedStateTx(
 				WHERE person_id = persons.id)
 			OR EXISTS (SELECT 1 FROM carddav_publications
 				WHERE person_id = persons.id)
+			OR EXISTS (SELECT 1 FROM person_instructions instruction
+				WHERE instruction.person_id = persons.id AND (
+					instruction.origin = 'owner'
+					OR instruction.confirmed_at IS NOT NULL
+					OR instruction.adopted = TRUE
+					OR instruction.status IN ('rejected','revoked')
+					OR instruction.review_state = 'unsure'
+				))
+			OR EXISTS (SELECT 1 FROM person_instruction_events instruction_event
+				WHERE instruction_event.person_id = persons.id
+				  AND instruction_event.action IN ('confirm','reject','unsure','adopt','edit','revoke'))
 			OR EXISTS (SELECT 1 FROM person_participants
 				WHERE person_id = persons.id)
 			OR EXISTS (SELECT 1 FROM person_names

@@ -13,7 +13,7 @@ import (
 // Runtime-only consumers require an exact match and never run migrations.
 // TestSchemaVersionContract catches most missed bumps. API, cache and optional
 // vector backend versions are independent.
-const SchemaVersion = 12
+const SchemaVersion = 14
 
 // SchemaVersionContext reads the stored completion marker without migrating.
 // A missing marker identifies a legacy archive and returns zero.
