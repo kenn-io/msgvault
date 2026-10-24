@@ -173,7 +173,17 @@ type GetActivityDayPath struct {
 }
 
 func (g GetActivityDayPath) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.Date, "required"); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if err := runtime.ValidatePattern(g.Date, `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ListDayEntriesPath struct {
@@ -182,7 +192,17 @@ type ListDayEntriesPath struct {
 }
 
 func (l ListDayEntriesPath) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Date, "required"); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if err := runtime.ValidatePattern(l.Date, `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CreateDayEntryPath struct {
@@ -191,7 +211,17 @@ type CreateDayEntryPath struct {
 }
 
 func (c CreateDayEntryPath) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Date, "required"); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if err := runtime.ValidatePattern(c.Date, `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CancelDeletionPath struct {
@@ -611,7 +641,20 @@ type GetPersonActivityDayPath struct {
 }
 
 func (g GetPersonActivityDayPath) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.ID, "gte=1"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(g.Date, "required"); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if err := runtime.ValidatePattern(g.Date, `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ListPersonEmploymentsPath struct {

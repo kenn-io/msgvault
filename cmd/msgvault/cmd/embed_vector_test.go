@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
@@ -361,10 +362,7 @@ func setupVectorFeaturesFixture(
 	testCtx := withTestConfig(t, c)
 	_ = testCtx
 
-	s, err := store.Open(mainPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	require.NoError(t, s.InitSchema())
+	s := testutil.NewSQLiteTestStoreAt(t, mainPath)
 	if c.Vector.People.Enabled {
 		semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
 		require.NoError(t, err)
@@ -382,7 +380,7 @@ func setupVectorFeaturesFixture(
 		RetentionPosture: "standard", TrainingPosture: "opted-out",
 		AllowedMediaTypes: []string{"application/pdf"}, PolicyJSON: []byte(`{"policy":1}`),
 	}
-	_, err = s.EnsureDocumentExtractionProfile(testCtx, profile)
+	_, err := s.EnsureDocumentExtractionProfile(testCtx, profile)
 	require.NoError(t, err)
 	_, err = s.DB().Exec(s.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
 	require.NoError(t, err)
@@ -679,10 +677,7 @@ func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t 
 		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 	}
 
-	mainStore, err := store.Open(mainPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = mainStore.Close() })
-	require.NoError(mainStore.InitSchema())
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
 	semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
 	require.NoError(err)
 	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), semanticProfile)

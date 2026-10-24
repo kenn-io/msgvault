@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -55,10 +56,7 @@ func newEmbeddingProjectionFixture(t *testing.T) *embeddingProjectionFixture {
 	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
 	cfg.Vector.Embeddings.Dimension = 4
 	cfg.Vector.ApplyDefaults()
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "synthetic@example.com")
 	require.NoError(err)
 	cfg.Vector.Embed.Scope.SourceIDs = []int64{source.ID}
@@ -205,10 +203,7 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "msgvault.db"))
-	require.NoError(err)
-	defer func() { _ = st.Close() }()
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
 	source, err := st.GetOrCreateSource("gmail", "synthetic@example.com")
 	require.NoError(err)
 	conversation, err := st.EnsureConversation(source.ID, "synthetic-thread", "Synthetic")

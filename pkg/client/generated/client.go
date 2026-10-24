@@ -371,6 +371,10 @@ type ClientInterface interface {
 	GetRemoteImage(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResponse, error)
 	GetRemoteImageWithResponse(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResp, error)
 
+	// SearchChats Find archived chats by ranked name tokens
+	SearchChats(ctx context.Context, options *SearchChatsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchChatsResponse, error)
+	SearchChatsWithResponse(ctx context.Context, options *SearchChatsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchChatsResp, error)
+
 	// GetConversation Get a bounded containing conversation
 	GetConversation(ctx context.Context, options *GetConversationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetConversationResponse, error)
 	GetConversationWithResponse(ctx context.Context, options *GetConversationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetConversationResp, error)
@@ -566,6 +570,10 @@ type ClientInterface interface {
 	// ImportMuesli Import one recorder-local Muesli meeting
 	ImportMuesli(ctx context.Context, options *ImportMuesliRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMuesliResponseJSON, error)
 	ImportMuesliWithResponse(ctx context.Context, options *ImportMuesliRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMuesliResp, error)
+
+	// ImportMuesliRecording Stream retained audio for an archived Muesli meeting
+	ImportMuesliRecording(ctx context.Context, options *ImportMuesliRecordingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMuesliRecordingResponse, error)
+	ImportMuesliRecordingWithResponse(ctx context.Context, options *ImportMuesliRecordingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMuesliRecordingResp, error)
 
 	// CreateImportJob Start a bounded historical import
 	CreateImportJob(ctx context.Context, options *CreateImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateImportJobResponse, error)
@@ -6362,6 +6370,69 @@ func (c *Client) GetRemoteImage(ctx context.Context, options *GetRemoteImageRequ
 	return responseParser(ctx, resp)
 }
 
+// SearchChats Find archived chats by ranked name tokens
+func (c *Client) SearchChats(ctx context.Context, options *SearchChatsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchChatsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/conversations/search",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchChatsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SearchChatsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SearchChatsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SearchChatsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SearchChatsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/conversations/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetConversation Get a bounded containing conversation
 func (c *Client) GetConversation(ctx context.Context, options *GetConversationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetConversationResponse, error) {
 	var err error
@@ -9422,6 +9493,70 @@ func (c *Client) ImportMuesli(ctx context.Context, options *ImportMuesliRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/import/muesli")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ImportMuesliRecording Stream retained audio for an archived Muesli meeting
+func (c *Client) ImportMuesliRecording(ctx context.Context, options *ImportMuesliRecordingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMuesliRecordingResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/import/muesli/recording",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "audio/mp4",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ImportMuesliRecordingResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ImportMuesliRecordingErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ImportMuesliRecordingErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ImportMuesliRecordingResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ImportMuesliRecordingResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/import/muesli/recording")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

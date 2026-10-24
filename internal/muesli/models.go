@@ -38,27 +38,29 @@ type Participant struct {
 // Meeting is one row of Muesli's meetings table. Text columns hold Muesli's
 // values verbatim; columns an older database lacks are left empty.
 type Meeting struct {
-	ID               int64
-	Title            string
-	StartTime        string
-	EndTime          string
-	CreatedAt        string
-	DurationSeconds  float64
-	Status           string
-	Source           string
-	RawTranscript    string
-	FormattedNotes   string
-	ManualNotes      string
-	WordCount        int64
-	TemplateName     string
-	TemplateKind     string
-	CalendarEventID  string
-	CalendarSource   string
-	CalendarSeriesID string
-	Folder           string // folder path such as "Clients/Acme"
-	FollowUpToID     int64
-	Deleted          bool
-	Participants     []Participant // not suppressed, in Muesli's display order
+	// SavedRecordingPath stays recorder-local; it is never archived or sent.
+	SavedRecordingPath string
+	ID                 int64
+	Title              string
+	StartTime          string
+	EndTime            string
+	CreatedAt          string
+	DurationSeconds    float64
+	Status             string
+	Source             string
+	RawTranscript      string
+	FormattedNotes     string
+	ManualNotes        string
+	WordCount          int64
+	TemplateName       string
+	TemplateKind       string
+	CalendarEventID    string
+	CalendarSource     string
+	CalendarSeriesID   string
+	Folder             string // folder path such as "Clients/Acme"
+	FollowUpToID       int64
+	Deleted            bool
+	Participants       []Participant // not suppressed, in Muesli's display order
 	// ContactsState is how much of Contacts the sync could read.
 	ContactsState ContactsState
 }

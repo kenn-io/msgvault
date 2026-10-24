@@ -16,6 +16,7 @@ import (
 )
 
 func TestClientMediaReadSpansSeveralSyntheticTimeoutIntervals(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		timeoutPerByte time.Duration
@@ -25,6 +26,7 @@ func TestClientMediaReadSpansSeveralSyntheticTimeoutIntervals(t *testing.T) {
 		{name: "body obeys media deadline", timeoutPerByte: time.Second, wantTimeout: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)

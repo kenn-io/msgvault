@@ -102,6 +102,7 @@ func (router *chatwootMediaRouter) observations() ([]string, []string) {
 // Public media hosts follow netguard policy; a private or loopback destination
 // is allowed only on the exact configured Chatwoot origin.
 func TestMediaDestinationPolicy(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, base, target, resolved, want, wantCode string
 	}{
@@ -119,6 +120,7 @@ func TestMediaDestinationPolicy(t *testing.T) {
 		{"non_http_scheme", "https://chatwoot.example.com", "file:///etc/passwd", "", "", "invalid_url"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			c, err := NewClient(tc.base, 9, "synthetic-token")
 			require.NoError(err)
@@ -141,6 +143,7 @@ func TestMediaDestinationPolicy(t *testing.T) {
 }
 
 func TestClientMediaRevalidatesAndPinsEveryRedirect(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	var redirectTarget string
@@ -175,6 +178,7 @@ func TestClientMediaRevalidatesAndPinsEveryRedirect(t *testing.T) {
 }
 
 func TestClientMediaAllowsMappedLoopbackOrigin(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

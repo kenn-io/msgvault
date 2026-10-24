@@ -325,7 +325,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `semantic_search_messages` | Semantic search over preprocessed message subjects and bodies when [vector search](/docs/usage/vector-search/) is configured. Returns scored chunk excerpts; `min_score` filters excerpts, not ranked messages. | `query` (string, required), `mode` (string: `vector`/`hybrid`, default `hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `search_in_message` | Find case-insensitive literal matches within one message body, with raw-body offsets and line numbers. | `id` (int, required), `query` (string, required), `limit` (int), `offset` (int) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
-| `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
+| `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. Returns `data`, `returned`, `offset`, and `has_more`; add `returned` to `offset` to page while `has_more` is true. | `domains` (comma-separated string, required), `limit` (int, default 100, max 500), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
@@ -347,6 +347,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
+| `find_chat` | Find archived chats by whole query tokens in names, aliases, identifiers and titles, ranked by the best matching name. Owner clients only; requires unreleased API schema 3.24.0. Returns archive/provider chat IDs, network labels and bounded match evidence. | `query` (string, required), `limit` (int, default 20, max 100), `source_id` (positive int, optional) |
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
@@ -365,6 +366,16 @@ and, after `published`, repeat the tool call with `fresh=false`. A fresh request
 includes archive writes committed before the request, queuing a follow-up check
 if another build is running. Older daemons omit the tool; a failed restricted
 query never falls back to privileged SQL.
+
+Use `find_chat` before reading a thread when a person's full name finds only
+one network. A query for `Jordan Lee Chen` can also find a chat named `Lee Chen`.
+Call `list_thread(id=result.message_id)` for chronological reading from the
+live archive on SQLite or PostgreSQL. Each result carries the chat's newest
+visible message ID, including when provider identifiers are missing or
+ambiguous. Partial matches are candidates, not proof of shared identity. Discovery uses chat metadata and current saved
+names; message text search keeps its existing query semantics. See
+[chat discovery](../cli-reference.md#find-chat) for matching, ranking and archive
+scope, and the [HTTP contract](../api-server.md#find-archived-chats) for fields.
 
 `search_people` returns `rows`, `total_count`, `next_cursor`, and
 `cache_revision`. A row includes `person_id`, `vcard_uid`, and
@@ -403,7 +414,7 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
 
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and
-cap it at 50. `search_message_bodies`, `semantic_search_messages`, and `list_messages` use this
+cap it at 50. `search_message_bodies`, `semantic_search_messages`, `list_messages`, and `search_by_domains` use this
 `total = -1` shape because they do not run a separate count query.
 `search_metadata` accepts msgvault's local subset of Gmail-like syntax,
 including case-insensitive literal `list:` and `list-id:` List-Id filters.

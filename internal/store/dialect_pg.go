@@ -523,18 +523,13 @@ func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) 
 // Parameters: $1=fromID, $2=toID. Uses LEFT JOIN on message_bodies via a subquery
 // so messages without a body row are still indexed (subject + participants).
 func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
+	envelope := storedFTSEnvelopeSQL("STRING_AGG")
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	return `UPDATE messages m SET search_fts =
-		setweight(to_tsvector('simple', LEFT(COALESCE(m.subject, ''), ` + charCap + `)), 'A') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE(
-			CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-			     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
-			END,
-			(SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
-			''
-		), ` + charCap + `)), 'B') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''), ` + charCap + `)), 'C') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''), ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.subject + `, ` + charCap + `)), 'A') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.fromAddr + `, ` + charCap + `)), 'B') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.toAddrs + `, ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.ccAddrs + `, ` + charCap + `)), 'C') ||
 		setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)), 'D'),
 		indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + `
 	FROM (
@@ -650,6 +645,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
+		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS outgoing_envelope_metadata BYTEA`, "carddav_publications.outgoing_envelope_metadata"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS approved_body_sha256 TEXT`, "carddav_publications.approved_body_sha256"},
@@ -2388,6 +2384,9 @@ var exclusiveLockTables = []string{
 	// mutation, so it belongs to the same exclusive write set.
 	"activity_events", "activity_event_persons", "person_contact_state",
 	"activity_projection_queue",
+	// The chat member queue is trigger-written by message and recipient
+	// mutations; the projection cascades with conversations and participants.
+	"chat_members", "chat_members_dirty", "chat_anchors",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
 	"sync_operations",

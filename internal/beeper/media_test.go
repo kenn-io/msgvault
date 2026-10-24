@@ -298,7 +298,7 @@ func TestPersistAttachmentsPreservesReusedMediaFields(t *testing.T) {
 	// the current payload does not authoritatively replace.
 	require.NoError(err)
 
-	imp.persistAttachments(context.Background(), 0, messageID, &Message{
+	imp.persistAttachments(context.Background(), 0, messageID, "chat", &Message{
 		Attachments: []Attachment{{
 			ID: "mxc://beeper.local/photo1", Type: "audio", MimeType: "audio/ogg",
 			FileName: "voice.ogg", FileSize: 11,
@@ -370,6 +370,13 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	assert.EqualValues(0, sum.AttachmentsDownloaded)
 	assert.EqualValues(1, sum.AttachmentsPending)
 	assert.EqualValues(0, sum.AttachmentsSkipped)
+	require.Len(sum.FailedChats, 1)
+	cf := sum.FailedChats[ch.ID]
+	require.NotNil(cf)
+	assert.EqualValues(1, cf.MediaErrors)
+	assert.Zero(cf.FetchErrors)
+	assert.NotEmpty(cf.LastError)
+	assert.EqualValues(1, sum.Errors)
 
 	var msgCount int
 	require.NoError(st.DB().QueryRow(st.Rebind(
@@ -760,6 +767,13 @@ func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
 	})
 	require.NoError(err)
 	assert.Positive(bsum.Errors, "transient fetch failures must be reported")
+	require.Len(bsum.FailedChats, 1)
+	cf := bsum.FailedChats[ch.ID]
+	require.NotNil(cf)
+	assert.EqualValues(1, cf.MediaErrors)
+	assert.Zero(cf.FetchErrors)
+	assert.NotEmpty(cf.LastError)
+	assert.EqualValues(1, bsum.Errors)
 	assert.EqualValues(0, bsum.AttachmentsDownloaded)
 
 	src, err := st.GetOrCreateSource("beeper", "signal")

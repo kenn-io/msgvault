@@ -21,8 +21,32 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	matrixsource "go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestMatrixSyncAccountsFailIndependently(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	state := testInvocationWithConfig(cfg)
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assert.Equal("sync_failed", event)
+		assert.Equal("matrix", props["sync_source"])
+		events++
+		return nil
+	}}
+	ctx := withInvocation(t.Context(), state)
+	for i, account := range []string{"@first:example.org", "@second:example.org"} {
+		_, err := st.GetOrCreateSource(sourceTypeMatrix, account)
+		require.NoError(err)
+		// Missing credentials fail before any network request.
+		require.Error(runMatrixSync(ctx, st, cfg, "", false, nil, io.Discard))
+		assert.Equal(i+1, events)
+	}
+}
 
 func TestReadMatrixSecretFilePreservesPasswordWhitespace(t *testing.T) {
 	require := require.New(t)
@@ -133,9 +157,7 @@ func TestAddMatrixRenewsExistingAccountInPlace(t *testing.T) {
 	require.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), matrixsource.Credentials{
 		Homeserver: server.URL, UserID: "@archive:example.org", DeviceID: "OLD", AccessToken: "revoked",
 	}))
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 	require.NoError(err)
 	convID, err := st.EnsureConversation(source.ID, "!room:example.org", "Room")

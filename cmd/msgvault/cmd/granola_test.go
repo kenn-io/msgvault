@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -346,4 +347,34 @@ func TestManualGranolaPrevalidatesAllSourcesBeforeImport(t *testing.T) {
 	assert.Zero(constructed, "all selected sources must validate before any client or import starts")
 	_, statErr := os.Stat(testCfg.DatabaseDSN())
 	assert.ErrorIs(statErr, os.ErrNotExist, "invalid configuration must not create or write the archive")
+}
+
+func TestGranolaPartialSyncRecordsOutage(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	server := newGranolaSyncTestServer(t, true, true)
+	installGranolaClientFactory(t, server.URL)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(granola.SourceType, "work")
+	require.NoError(err)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Analytics.AutoBuildCache = false
+	state := testInvocationWithConfig(cfg)
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assert.Equal("sync_failed", event)
+		assert.Equal("granola", props["sync_source"])
+		events++
+		return nil
+	}}
+	ctx := withInvocation(t.Context(), state)
+	src := config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"}
+	require.ErrorContains(runConfiguredGranolaSync(ctx, st, src), "partial Granola sync")
+	assert.Equal(1, events)
+	clean := newGranolaSyncTestServer(t, true, false)
+	installGranolaClientFactory(t, clean.URL)
+	require.NoError(runConfiguredGranolaSync(ctx, st, src))
+	assert.Equal(1, events)
+	installGranolaClientFactory(t, server.URL)
+	require.ErrorContains(runConfiguredGranolaSync(ctx, st, src), "partial Granola sync")
+	assert.Equal(2, events)
 }

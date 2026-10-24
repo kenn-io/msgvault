@@ -277,7 +277,7 @@
     {#if controller.runs.length > 0}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (the overflow region must accept keyboard focus) -->
       <div class="history-scroll" role="region" aria-label="Scrollable CardDAV sync history" tabindex="0">
-        <Table ariaLabel="CardDAV sync history" zebra={false} class="history-table">
+        <Table ariaLabel="CardDAV sync history" zebra={false} class="history-table" unsorted>
           {#snippet header()}
             <TableHeaderCell label="Connection" />
             <TableHeaderCell label="Result" />

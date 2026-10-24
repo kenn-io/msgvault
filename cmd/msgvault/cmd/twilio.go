@@ -158,6 +158,9 @@ var syncTwilioCmd = &cobra.Command{
 With no identifier, sync every configured [[twilio]] source. --limit bounds call
 processing, and a limited run that stops early prints the command that resumes
 it. --after uses a UTC date and implies --full. --probe reports sample counts without printing call evidence.
+Recordings are stored as WAV with a 1 GiB default cap per recording. Configure
+max_media_mb to change the cap. Oversized recordings are skipped; raise the cap
+and run --full to retry them.
 This command does not place calls or enable paid processing.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -248,18 +251,18 @@ func requireTwilioRegistered(st *store.Store, identifier string) (*store.Source,
 func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config.TwilioSource) error {
 	registered, err := requireTwilioRegistered(st, source.Identifier)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, err)
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil
 	}
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
+		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, errors.New("configuration is unavailable"))
 	}
 	client, accountEmail, err := newTwilioSourceClient(source)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, err)
 	}
 	summary, importErr := twilio.NewImporter(st, client).Import(ctx, twilio.ImportOptions{
 		Identifier: source.Identifier, AccountEmail: accountEmail,
@@ -270,6 +273,7 @@ func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config
 			state.logger.Warn("twilio sync diagnostic", "source", source.Identifier, "diagnostic", diagnostic)
 		}
 	}
+	_ = recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, importErr)
 	refreshCtx := context.WithoutCancel(ctx)
 	refresh := func() error { return rebuildTwilioCacheAfterScheduledSync(refreshCtx, "twilio:"+source.Identifier) }
 	if importErr != nil {

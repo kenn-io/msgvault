@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/granola"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type cacheRefreshCirclebackSource struct {
@@ -46,10 +46,7 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	t.Cleanup(func() { _ = st.Close() })
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	organizer := circleback.Attendee{Name: "Alice", Email: "alice@example.com"}
 	source := &cacheRefreshCirclebackSource{meeting: circleback.Meeting{
@@ -140,10 +137,7 @@ func TestCacheNeedsBuild_FailedCirclebackRunWithoutCheckpoint(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	t.Cleanup(func() { _ = st.Close() })
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	organizer := circleback.Attendee{Name: "Alice", Email: "alice@example.com"}
 	source := &cacheRefreshCirclebackSource{meeting: circleback.Meeting{
@@ -266,10 +260,7 @@ func TestCacheNeedsBuild_GranolaRefresh(t *testing.T) {
 	server := httptest.NewServer(api)
 	t.Cleanup(server.Close)
 
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	t.Cleanup(func() { _ = st.Close() })
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	imp := granola.NewImporter(st, granola.NewClient(server.URL, "grn_testkey"))
 	first, err := imp.Import(context.Background(), granola.ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)

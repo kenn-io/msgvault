@@ -72,8 +72,8 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # in both configurations, so test-pg-both runs just these in the shipped-build
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
-NOCGO_LINT_PKGS := ./pkg/archive/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./scripts/contextual-retrieval-eval
+NOCGO_LINT_PKGS := ./pkg/archive/... ./pkg/mcp/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -90,7 +90,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -206,7 +206,7 @@ test-pg: require-test-db
 .PHONY: test-pg-nocgo
 test-pg-nocgo: require-test-db
 	CGO_ENABLED=0 go build ./internal/store ./internal/query ./internal/slack ./internal/discord ./internal/api
-	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive
+	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive ./pkg/mcp
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
@@ -340,15 +340,20 @@ web-check: web-install
 web-test:
 	cd web && bun run test
 
+# Install the locked Chromium revision even when a main-pinned PR workflow
+# supplies an older browser image. Keep other projects' cached browsers.
+web-browser-install: web-install
+	cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium
+
 # test:browser runs everything under web/tests, including tests/e2e specs
 # whose fixtures spawn the repo-root msgvault daemon, so the binary must
 # exist before Playwright starts. Same invariant as web-e2e below.
-web-test-browser: build
+web-test-browser: build web-browser-install
 	cd web && bun run test:browser
 
 # Browser gates use the same digest-pinned Playwright environment as CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.
-web-e2e: build
+web-e2e: build web-browser-install
 	cd web && bun run test:e2e
 
 web-build: web-generate

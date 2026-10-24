@@ -57,7 +57,7 @@
 {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users need to reach the overflow region) -->
   <div class="table-scroll" role="region" aria-label="Scrollable operation history" tabindex="0">
-    <Table ariaLabel="Operation history" zebra={false} class="run-table">
+    <Table ariaLabel="Operation history" zebra={false} class="run-table" unsorted>
       {#snippet header()}
         <TableHeaderCell label="Kind" />
         <TableHeaderCell label="Trigger" />

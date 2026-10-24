@@ -28,6 +28,7 @@ const (
 )
 
 var ErrNotFound = errors.New("chatwoot object not found")
+var ErrUnauthorized = errors.New("chatwoot API HTTP 401")
 var ErrResponseTooLarge = errors.New("chatwoot API response exceeds 32 MiB; a single message must fit within this limit")
 
 // Client has separate authenticated API and credential-free media transports.
@@ -181,6 +182,9 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNotFound
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ErrUnauthorized
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("chatwoot API HTTP %d", resp.StatusCode)

@@ -1,21 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient as createClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import ConversationView from './ConversationView.svelte';
 
 const telemetryEvents: unknown[] = [];
-beforeEach(() => { telemetryEvents.length = 0; });
+const telemetryRequests: Promise<void>[] = [];
+beforeEach(() => { telemetryEvents.length = 0; telemetryRequests.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
-function createAPIClient(fetchFn: typeof fetch) {
-  return createClient(async (input, init) => {
-    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
-      telemetryEvents.push(await (input as Request).json());
-      return Response.json({ status: 'queued' }, { status: 202 });
-    }
-    return fetchFn(input, init);
-  });
-}
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
 function message(id: number, type = 'email') {
   return {
     id,
@@ -339,6 +333,7 @@ describe('ConversationView', () => {
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation network error');
+    await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]));
   });
 
   it('silently ignores AbortError request settlements', async () => {
@@ -363,6 +358,65 @@ describe('ConversationView', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation details are unavailable');
   });
+
+  it('reports each failed body while earlier errors stay expanded', async () => {
+    const client = createAPIClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.includes('/messages/')) return Response.json({ message: 'Body unavailable' }, { status: 500 });
+      return Response.json({ id: 7, anchor_id: 1, messages: [omittedMessage(1), omittedMessage(2)], has_before: false, has_after: false, total: 2 });
+    });
+    render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+    await screen.findByRole('alert');
+    await waitFor(() => expect(telemetryEvents).toHaveLength(1));
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
+    await waitFor(() => expect(telemetryEvents).toEqual([
+      { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
+      { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
+    ]));
+  });
+
+  it.each(['collapsed pending', 'collapse', 'navigate', 'unmount', 'retry'])(
+    'reports body failures only while displayed: %s', async (action) => {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(
+        action === 'collapsed pending' ? 'visible' : 'hidden',
+      );
+      let resolveBody!: (response: Response) => void;
+      const client = createAPIClient(async (input) => {
+        if (new URL((input as Request).url).pathname.includes('/messages/')) {
+          return new Promise<Response>((resolve) => { resolveBody = resolve; });
+        }
+        return Response.json({ id: 7, anchor_id: 1, messages: [omittedMessage(1)], has_before: false, has_after: false, total: 1 });
+      });
+      const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+      await screen.findByText('Loading message…');
+      if (action === 'collapsed pending') await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+      resolveBody(Response.json({ message: 'Body unavailable' }, { status: 500 }));
+      if (action === 'collapsed pending') {
+        await tick();
+        await tick();
+        expect(screen.queryByRole('alert')).toBeNull();
+      } else {
+        await screen.findByRole('alert');
+        if (action === 'collapse' || action === 'retry') {
+          await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+          if (action === 'retry') {
+            await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+            await screen.findByText('Loading message…');
+          }
+        } else if (action === 'navigate') {
+          await view.rerender({ client, conversationId: 8, anchorId: 1 });
+          await screen.findByText('Loading message…');
+        } else if (action === 'unmount') view.unmount();
+      }
+      visibility.mockReturnValue('visible');
+      await fireEvent(document, new Event('visibilitychange'));
+      await fireEvent(window, new Event('focus'));
+      await Promise.all(telemetryRequests);
+      expect(telemetryEvents).toEqual([]);
+      visibility.mockRestore();
+    },
+  );
 
   it('keeps omitted-body messages as snippet cards without fetching their bodies', async () => {
     const requests: Request[] = [];
@@ -408,6 +462,8 @@ describe('ConversationView', () => {
 
     await screen.findByText('Loading message…');
     expect(screen.queryByText('Fetched body 1')).toBeNull();
+    await tick();
+    await Promise.all(telemetryRequests);
     expect(telemetryEvents).toHaveLength(0);
     resolveBody(Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' }));
 
@@ -416,6 +472,8 @@ describe('ConversationView', () => {
     expect(requests).toHaveLength(2);
     expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
     if (trigger !== 'visible') {
+      await tick();
+      await Promise.all(telemetryRequests);
       expect(telemetryEvents).toHaveLength(0);
       if (trigger === 'destroy') view.unmount();
       visibility.mockReturnValue('visible');
@@ -423,6 +481,8 @@ describe('ConversationView', () => {
       else await fireEvent(window, new Event('focus'));
     }
     if (trigger === 'destroy') {
+      await tick();
+      await Promise.all(telemetryRequests);
       expect(telemetryEvents).toHaveLength(0);
     } else {
       await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));

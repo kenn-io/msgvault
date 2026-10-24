@@ -13,17 +13,18 @@ import (
 	"go.kenn.io/kit/atomicfile"
 )
 
-// remoteUploads remembers the digest of each meeting payload a daemon
-// acknowledged, so scheduled rescans upload only new or edited meetings. It is
-// a cache: losing it costs one full re-upload, never archive data.
+// remoteUploads remembers acknowledged meeting payloads and recording hashes,
+// so scheduled rescans only send new or changed data. It is a cache: losing it
+// costs a full re-upload, never archive data.
 type remoteUploads struct {
-	path     string
-	Version  int              `json:"version"`
-	Meetings map[int64]string `json:"meetings"`
-	dirty    bool
+	path       string
+	Version    int               `json:"version"`
+	Meetings   map[int64]string  `json:"meetings"`
+	Recordings map[string]string `json:"recordings"`
+	dirty      bool
 }
 
-const remoteUploadsVersion = 1
+const remoteUploadsVersion = 2
 
 // remoteUploadsPath scopes the record to one database, source, and daemon so
 // pointing the recorder at another archive uploads everything again.
@@ -33,7 +34,10 @@ func remoteUploadsPath(lockDir, canonicalDB, identifier, target string) string {
 }
 
 func loadRemoteUploads(path string) (*remoteUploads, error) {
-	uploads := &remoteUploads{path: path, Version: remoteUploadsVersion, Meetings: map[int64]string{}}
+	uploads := &remoteUploads{
+		path: path, Version: remoteUploadsVersion,
+		Meetings: map[int64]string{}, Recordings: map[string]string{},
+	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return uploads, nil
@@ -42,13 +46,28 @@ func loadRemoteUploads(path string) (*remoteUploads, error) {
 		return nil, fmt.Errorf("read Muesli upload record: %w", err)
 	}
 	var stored remoteUploads
-	if json.Unmarshal(data, &stored) != nil || stored.Version != remoteUploadsVersion || stored.Meetings == nil {
+	if json.Unmarshal(data, &stored) != nil || stored.Meetings == nil {
 		// An unreadable cache only means every meeting is offered again; the
 		// next save replaces it.
 		uploads.dirty = true
 		return uploads, nil //nolint:nilerr // A corrupt cache must not block sync.
 	}
+	if stored.Version == 1 {
+		// Version 1 keyed recording acknowledgements only by Muesli row ID.
+		// A database reset can reuse that ID, so preserve meeting offers but
+		// invalidate every ambiguous recording receipt.
+		uploads.Meetings = stored.Meetings
+		uploads.dirty = true
+		return uploads, nil
+	}
+	if stored.Version != remoteUploadsVersion {
+		uploads.dirty = true
+		return uploads, nil
+	}
 	uploads.Meetings = stored.Meetings
+	if stored.Recordings != nil {
+		uploads.Recordings = stored.Recordings
+	}
 	return uploads, nil
 }
 
@@ -68,6 +87,24 @@ func (u *remoteUploads) acknowledged(id int64, digest string) bool {
 func (u *remoteUploads) record(id int64, digest string) {
 	if u.Meetings[id] != digest {
 		u.Meetings[id] = digest
+		u.dirty = true
+	}
+}
+
+func (u *remoteUploads) recordingAcknowledged(identity, hash string) bool {
+	return u.Recordings[identity] == hash
+}
+
+func (u *remoteUploads) recordRecording(identity, hash string) {
+	if u.Recordings[identity] != hash {
+		u.Recordings[identity] = hash
+		u.dirty = true
+	}
+}
+
+func (u *remoteUploads) forgetRecording(identity string) {
+	if _, ok := u.Recordings[identity]; ok {
+		delete(u.Recordings, identity)
 		u.dirty = true
 	}
 }

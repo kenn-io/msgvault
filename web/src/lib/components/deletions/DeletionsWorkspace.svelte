@@ -384,7 +384,7 @@
     />
   {:else}
     <div class="manifests" class:has-detail={Boolean(detail)} bind:this={manifestsElement}>
-      <Table ariaLabel="Deletion manifests" zebra={false}>
+      <Table ariaLabel="Deletion manifests" zebra={false} unsorted>
         {#snippet header()}
           <TableHeaderCell label="ID" />
           <TableHeaderCell label="Description" />

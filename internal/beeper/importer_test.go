@@ -677,6 +677,12 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.ErrorContains(err, "partial Beeper sync")
 	assert.Positive(sum.FetchErrors, "transient target failure must be recorded as a fetch error")
+	cf := sum.FailedChats["!e2e:beeper.local"]
+	require.NotNil(cf)
+	assert.Positive(cf.FetchErrors)
+	assert.Zero(cf.MediaErrors)
+	assert.Contains(cf.LastError, "400")
+	assert.Equal(cf.FetchErrors, sum.Errors)
 
 	// Healed: the next run re-delivers the reaction event and archives it.
 	f.setMessageGetFailure("m5", false)

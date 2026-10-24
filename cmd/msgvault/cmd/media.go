@@ -40,6 +40,9 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		}
 		if strings.TrimSpace(request.Query) != "" {
 			defer reportSuccessfulCLIAction(command, client, "search_run", "search_type", "text", &result)
+			if len(response.Results) == 0 {
+				defer reportSuccessfulCLIAction(command, client, "search_empty", "search_type", "text", &result)
+			}
 		}
 		if jsonOutput {
 			return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), response, json.Deterministic(true))

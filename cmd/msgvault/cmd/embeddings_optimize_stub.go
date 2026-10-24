@@ -16,3 +16,7 @@ var embeddingsOptimizeCmd = &cobra.Command{
 		return errors.New("SQLite accelerator unavailable without sqlite_vec")
 	},
 }
+
+func runEmbeddingsOptimizeManaged(*cobra.Command, []string, func() error) error {
+	return errors.New("SQLite accelerator unavailable without sqlite_vec")
+}

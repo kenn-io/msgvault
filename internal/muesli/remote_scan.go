@@ -88,7 +88,7 @@ func ScanRemote(ctx context.Context, opts ImportOptions, send RemoteSender) (sum
 		sum.MeetingsProcessed++
 		if err := push.meeting(ctx, meeting); err != nil {
 			sum.Errors++
-			if !errors.Is(err, ErrRemoteValidation) && !errors.Is(err, ErrRemoteTooLarge) {
+			if !errors.Is(err, ErrRemoteValidation) && !errors.Is(err, ErrRemoteTooLarge) && !errors.Is(err, ErrRecordingTooLarge) {
 				return sum, errors.Join(errors.Join(recordErrors...), err)
 			}
 			recordErrors = append(recordErrors, fmt.Errorf("muesli meeting %d: %w", meeting.ID, err))
@@ -132,8 +132,40 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 	if err != nil {
 		return remoteInvalid("meeting", "cannot be encoded as JSON")
 	}
-	if !p.opts.Full && !hasContactReview(r.Meeting) && p.uploads.acknowledged(meeting.ID, digest) {
-		return nil
+	var recording *Recording
+	var recordingErr error
+	if p.opts.Recordings {
+		recording, recordingErr = PrepareRecording(ctx, p.opts.DBPath, meeting.SavedRecordingPath, p.opts.RecordingMaxBytes)
+		if recording != nil {
+			defer func() { _ = recording.Close() }()
+			digest += ":" + recording.Hash
+		} else if meeting.SavedRecordingPath != "" {
+			p.sum.RecordingsSkipped++
+		}
+	}
+	recordingAcknowledged := false
+	recordingIdentity, identityErr := meeting.SourceMessageID()
+	if identityErr != nil {
+		if p.opts.Recordings {
+			return remoteInvalid("meeting", "cannot identify recording acknowledgement")
+		}
+		recordingIdentity = ""
+	}
+	if p.opts.Full && recordingIdentity != "" {
+		// A full resync may be rebuilding an archive that no longer contains
+		// previously acknowledged audio. Invalidate the receipt even when the
+		// local recording is currently unavailable.
+		p.uploads.forgetRecording(recordingIdentity)
+	}
+	if recording != nil {
+		recordingAcknowledged = !p.opts.Full && p.uploads.recordingAcknowledged(recordingIdentity, recording.Hash)
+		if recordingAcknowledged {
+			p.uploads.recordRecording(recordingIdentity, recording.Hash)
+		}
+	}
+	if !p.opts.Full && !hasContactReview(r.Meeting) && p.uploads.acknowledged(meeting.ID, digest) &&
+		(recording == nil || recordingAcknowledged) {
+		return recordingErr
 	}
 	result, err := p.send(ctx, r)
 	if result.SourceID != 0 {
@@ -144,11 +176,31 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 	} else if result.Changed {
 		p.sum.MeetingsUpdated++
 	}
+	if result.Status == "created" && recordingIdentity != "" {
+		p.uploads.forgetRecording(recordingIdentity)
+		recordingAcknowledged = false
+	}
 	if err != nil {
+		// A lost response can hide a successful create. Do not let an old
+		// recording receipt suppress recovery on the next successful scan.
+		if recordingIdentity != "" {
+			p.uploads.forgetRecording(recordingIdentity)
+		}
 		return err
 	}
+	if recording != nil && !recordingAcknowledged {
+		if p.opts.SendRecording == nil {
+			return errors.New("muesli recording transport is unavailable")
+		}
+		upload := RecordingUpload{Source: r.Source, MessageID: result.MessageID, Hash: recording.Hash, Size: recording.Size, MIMEType: recording.MIMEType}
+		if err := p.opts.SendRecording(ctx, upload, recording); err != nil {
+			return err
+		}
+		p.uploads.recordRecording(recordingIdentity, recording.Hash)
+		p.sum.RecordingsStored++
+	}
 	p.uploads.record(meeting.ID, digest)
-	return nil
+	return recordingErr
 }
 
 func hasContactReview(m *RemoteMeeting) bool {

@@ -1096,12 +1096,12 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 	existing = activeExisting
 	appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, src.OAuthApp, src.OAuthApp != "")
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 	}
 
 	client, err := buildClient(ctx, email, appDecision.OAuthApp, false)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 	}
 	defer func() { _ = client.Close() }()
 
@@ -1120,6 +1120,7 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 	} else {
 		_, err = syncer.Incremental(ctx)
 	}
+	_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 	if err != nil {
 		return err
 	}

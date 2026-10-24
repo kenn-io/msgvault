@@ -17,7 +17,7 @@ appear in full under Inherited Flags.
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
+| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
@@ -1294,6 +1294,16 @@ Contacts unless `contacts = false`; the summary reports whether Contacts was
 wait for a later run, and meetings deleted in Muesli stay archived. With no
 identifier, every configured `[[muesli]]` source is synced.
 
+Set `recordings = true` in the source's `[[muesli]]` configuration to archive
+retained M4A and WAV audio as attachments. Recordings are off by default.
+`recording_max_bytes` caps each file at 4 GiB by default. The remote daemon
+also enforces `[server].muesli_recording_max_bytes` (4 GiB by default).
+Oversized recordings report a retryable error; increase both applicable caps
+and sync again. Missing, incomplete or recently written files wait for a later
+sync without failing the meeting import. The summary reports stored and
+deferred recordings. No recording flags are needed for manual sync, watch,
+scheduled sync or the completion hook. See [recording capture](usage/meetings.md#muesli-recordings).
+
 | Flag | Default | Description |
 |---|---|---|
 | `--limit` | `0` | Maximum meetings processed per run (`0` = unlimited) |
@@ -1315,7 +1325,7 @@ Routine imports respect the existing automatic cache-refresh policy. Unchanged
 remote uploads do not request a refresh. A same-host scheduled scan always
 checks the cache, so a build that `min_rebuild_interval` held back after a hook
 or manual import still runs once the interval ends. Cache flags are mutually
-exclusive. Remote transfers are limited to 16 MiB per request, 200 participants,
+exclusive. Remote meeting JSON is limited to 16 MiB per request, 200 participants,
 and 50 distinct identities and 50 enrichment entries per participant. Review-only
 Contacts suggestions that would exceed either limit are dropped, and the meeting
 still imports. Other invalid or oversized records do not prevent later valid
@@ -1326,7 +1336,11 @@ Remote scans read every meeting but upload only those that are new or changed
 since the daemon acknowledged them, plus meetings with pending duplicate-card
 suggestions. The record of acknowledged meetings lives in
 `<data_dir>/muesli-sync` on the recorder. `--full` uploads every meeting, and
-`add-muesli` clears the record.
+`add-muesli` clears the record. Audio streams separately with owner credentials;
+its hash is acknowledged only after attachment storage succeeds. A lost response
+is safe to retry. The daemon never receives the Muesli database or local paths.
+Audio uploads have the daemon's existing 30-minute read deadline; a failed
+transfer is retried from the beginning on the next sync.
 
 Remote sync, watch, and the native hook are available on `main` and are not yet
 released. See [Meeting Transcripts](/docs/usage/meetings/#muesli) for setup and
@@ -1561,7 +1575,9 @@ Sync chats from Beeper Desktop for every registered Beeper account (all
 connected networks). The first run backfills full locally-available history and
 is resumable; later runs are incremental. Per-account failures do not stop the
 run: remaining accounts still sync, the analytics cache is rebuilt for the
-successful ones, and the command exits non-zero listing the failures. Without
+successful ones, and the command exits non-zero listing the failures. When an
+account reports errors, the output lists the chats they belong to (see
+[Failed chats](/docs/usage/beeper/#failed-chats)). Without
 `--account`, the `[beeper]` config `accounts`/`exclude_accounts` filters
 select which registered sources sync. See [Beeper](/docs/usage/beeper/).
 
@@ -1587,6 +1603,8 @@ size cap during `sync-beeper`). Idempotent: attachments are content-addressed.
 If the source message is gone (deleted in Beeper), its pending markers are
 cleared permanently — already-downloaded attachments are kept. Transient fetch
 errors keep the marker and count as still pending, so re-running retries them.
+Recorded errors list the [failed chats](/docs/usage/beeper/#failed-chats) and
+how to retry them.
 
 ```bash
 msgvault backfill-beeper-media
@@ -2324,6 +2342,79 @@ recovery escape hatch because msgvault versions before packed attachment
 support cannot read the packs. The command is local-only and refuses to run
 while a daemon holds pack readers open. With `[remote]` configured, run it on
 the archive host or pass `--local` there to select that host's local archive.
+
+---
+
+## find-chat
+
+Find archived chats when a person's name differs across networks. Available on
+unreleased `main` with daemon API schema 3.24.0 or newer.
+
+```bash
+msgvault find-chat "Jordan Lee Chen"
+msgvault find-chat "Jordan Lee Chen" --json
+msgvault find-chat "Lee Chen" --source-id 2 --limit 50
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--json` | false | Return `results` and `has_more` as JSON |
+| `--limit` | 20 | Maximum results, from 1 to 100 |
+| `--source-id` | all sources | Restrict to one positive archive source ID |
+
+`has_more` means additional ranked candidates exist. Each request returns at most
+100 results; use a more specific name token or `--source-id` to find further candidates.
+
+Discovery matches any whole query token in chat titles, participant names,
+addresses, identifiers, current contact observations, curated person names,
+and archived recipient names. Matching ignores case and normalizes equivalent
+Unicode spellings. Punctuation separates tokens; quotes group shell arguments,
+not a phrase operator. There is no substring, typo, or message-body matching.
+The query must contain 1–16 unique tokens and fit within 256 UTF-8 bytes.
+
+Discovery excludes your own participant names and recipient aliases when a
+confirmed identity or archived provider attribution identifies you on that
+source; unknown ownership stays searchable. Titles remain searchable,
+including titles of chats with yourself.
+
+A name or title with exactly the query's normalized tokens in the same order
+ranks first, followed by the most unique matching tokens within one name or
+title, most recent archived message activity, then conversation ID. Reversed
+token order still matches but is marked `partial`.
+A full-name query can therefore return both `Jordan Lee Chen` and `Lee Chen`.
+These are candidates for inspection; discovery does not establish that they
+are the same person or create identity links.
+
+`Lee Chen` ranks above a group whose separate members match `Jordan`, `Lee`,
+and `Chen`. Match evidence still includes tokens across all matching names.
+
+The table shows archive conversation, message and source IDs, network,
+provider chat ID, match kind, title and bounded matching names in `MATCHED`;
+`…` marks omitted evidence. JSON also includes source provenance, matched
+tokens and up to eight sorted matching names, titles, or identifiers,
+including the name that decided the rank. `evidence_truncated` reports omitted evidence. A Beeper
+network label comes from the source's display label and is `unknown` when that
+label has no network or its suffix equals the account ID after trimming.
+
+Direct chats, groups, channels and Google Chat conversations archived through
+Gmail are eligible when they have archived messages. Messages deleted at the
+provider remain discoverable in the archive; deduplication-hidden messages,
+email threads and empty chats are excluded.
+
+The archive keeps a membership index of each chat's senders and recipient
+aliases, so a search reads chat metadata rather than every message. Imports
+and edits queue the chats they change. The next search applies those changes
+first, so the first search after a large import takes longer. A small limit
+bounds output, not this work. Discovery does not read message bodies.
+Owner credentials are required; delegated agent grants cannot use discovery.
+See the [HTTP contract](api-server.md#find-archived-chats) for result fields.
+
+Each result's `MESSAGE` is the chat's newest visible archived message. Pass
+that ID to `show-message` for details.
+
+```bash
+msgvault show-message 456
+```
 
 ---
 
@@ -4756,13 +4847,17 @@ it leaves raw payloads, downloaded media, and sync cursors in place.
 
 ```bash
 msgvault repair-derived
+msgvault repair-derived --source-type imap
 msgvault repair-derived --source-type beeper
 ```
 
 Repeat `--source-type` or `--identifier` to narrow the source set. A requested
 type that has no re-derivation pass and no source in the archive is an error.
-Source types with a re-derivation pass (`beeper`, `discord`) recompute their
-derived text and metadata. Every source also derives account attribution for
+Sources with retained MIME, including custom email labels such as `outlook`,
+rebuild body text, HTML, body-derived snippets, and search. Provider snippets
+are kept. Beeper and Discord sources also recompute their provider-derived
+text and metadata, and email retained under those labels is repaired from its
+MIME like any other source. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
 them. Source syncs and imports run the same work first, so use this command
 for on-demand repair, file imports you will not run again, or retrying an

@@ -27,15 +27,22 @@ const (
 	wireConfigOffEnv = "MSGVAULT_TELEMETRY_WIRE_CONFIG_OFF"
 )
 
-// An install file the daemon can't create must leave serve running with telemetry off.
-func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
-	assert := assert.New(t)
+// enableTelemetryEnv opts this test in and clears ambient opt-outs. An opted-out
+// in-process reporter disables telemetry for the rest of the test binary.
+func enableTelemetryEnv(t *testing.T) {
+	t.Helper()
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
 	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
 		t.Setenv(name, os.Getenv(name))
 		require.NoError(t, os.Unsetenv(name))
 	}
+}
+
+// An install file the daemon can't create must leave serve running with telemetry off.
+func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
+	assert := assert.New(t)
+	enableTelemetryEnv(t)
 	notDir := filepath.Join(t.TempDir(), "data")
 	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
 	var logs bytes.Buffer
@@ -56,6 +63,11 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 	require := require.New(t)
 	reporter := newReporterOrDisabled(opts, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
+	if os.Getenv("MSGVAULT_OUTCOMES_TEST") != "" {
+		exerciseOutcomes(t, CaptureHandler(reporter, opts.DataDir), reporter)
+		require.NoError(reporter.Close())
+		return
+	}
 	if os.Getenv("MSGVAULT_SESSION_TEST") != "" {
 		h := CaptureHandler(reporter, opts.DataDir)
 		for _, body := range []string{

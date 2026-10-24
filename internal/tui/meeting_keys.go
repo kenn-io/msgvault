@@ -313,6 +313,7 @@ func (m Model) handleMeetingSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			m.restoreMeetingListPagination()
 			return m, nil
 		}
+		m.submittedQuery = queryString
 		m.invalidateMeetingListForSearch()
 		if !m.meetingState.searchSnapshotInvalid && m.meetingState.preSearch == nil {
 			m.meetingState.preSearch = append([]query.MessageSummary(nil), m.meetingState.messages...)

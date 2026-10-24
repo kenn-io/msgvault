@@ -7,6 +7,10 @@ import (
 
 const derivedDataRevisionKey = "derived_data_revision"
 
+// A changed email keeps this receipt until a cache-visible revision commits.
+// One archive-wide receipt covers interrupted repairs across every source.
+const pendingDerivedEmailRevisionKey = "pending_derived_email_revision"
+
 // DerivedDataRevision returns the revision of existing message facts changed
 // by offline re-derivation. Analytics caches stamp this value when they export
 // message and attachment Parquet; a mismatch requires a full rebuild because
@@ -49,6 +53,44 @@ func (s *Store) bumpDerivedDataRevisionContext(ctx context.Context, tx contextSt
 	return nil
 }
 
+func (s *Store) advanceDerivedRevisionWithEmailReceiptContext(ctx context.Context, tx *loggedTx) error {
+	if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key = ?`, pendingDerivedEmailRevisionKey)
+	return err
+}
+
+// MarkMigrationAppliedWithPendingDerivedRevisionContext publishes interrupted
+// email writes before recording a pass whose current rows are unchanged.
+func (s *Store) MarkMigrationAppliedWithPendingDerivedRevisionContext(ctx context.Context, name string) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.publishPendingDerivedEmailRevisionContext(ctx, tx); err != nil {
+			return err
+		}
+		return s.markMigrationAppliedContext(ctx, tx, name, 1)
+	})
+}
+
+// PublishPendingDerivedEmailRevisionContext publishes committed email repairs
+// while leaving a pass with unresolved row errors eligible for retry.
+func (s *Store) PublishPendingDerivedEmailRevisionContext(ctx context.Context) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return s.publishPendingDerivedEmailRevisionContext(ctx, tx)
+	})
+}
+
+func (s *Store) publishPendingDerivedEmailRevisionContext(ctx context.Context, tx *loggedTx) error {
+	pending, err := readArchiveMetadataRevisionContext(ctx, tx, pendingDerivedEmailRevisionKey, "pending email")
+	if err != nil {
+		return err
+	}
+	if pending > 0 {
+		return s.advanceDerivedRevisionWithEmailReceiptContext(ctx, tx)
+	}
+	return nil
+}
+
 // RelatedDerivedRevisionsOnly verifies that every derived revision after the
 // committed cache marker was caused by a journaled child-row mutation.
 func (s *Store) RelatedDerivedRevisionsOnly(ctx context.Context, previous, current int64) (bool, error) {
@@ -73,7 +115,7 @@ func (s *Store) AdvanceDerivedDataRevision() error {
 // AdvanceDerivedDataRevisionContext records partial repairs within ctx.
 func (s *Store) AdvanceDerivedDataRevisionContext(ctx context.Context) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		return s.bumpDerivedDataRevisionContext(ctx, tx)
+		return s.advanceDerivedRevisionWithEmailReceiptContext(ctx, tx)
 	})
 }
 
@@ -88,7 +130,7 @@ func (s *Store) MarkMigrationAppliedWithDerivedDataRevision(name string) error {
 // MarkMigrationAppliedWithDerivedDataRevisionContext records a completed repair within ctx.
 func (s *Store) MarkMigrationAppliedWithDerivedDataRevisionContext(ctx context.Context, name string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
+		if err := s.advanceDerivedRevisionWithEmailReceiptContext(ctx, tx); err != nil {
 			return err
 		}
 		return s.markMigrationAppliedContext(ctx, tx, name, 1)

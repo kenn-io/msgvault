@@ -77,10 +77,19 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 	var queryText string
 	fastPath := !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request)
 	if fastPath {
+		shareFilteredPopulation := len(request.Context.Domains) > 0
+		for _, group := range request.Context.AdditionalDomainGroups {
+			if len(group) > 0 {
+				shareFilteredPopulation = true
+				break
+			}
+		}
 		queryText = buildExploreFastListingSQL(conditions, candidateRankExpression,
-			e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
-		args = append(args, conditionArgs...) // membership rescan
-		args = append(args, conditionArgs...) // total-count scan
+			e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants), shareFilteredPopulation)
+		if !shareFilteredPopulation {
+			args = append(args, conditionArgs...) // membership rescan
+			args = append(args, conditionArgs...) // total-count scan
+		}
 	} else {
 		queryText = buildExploreSQL(conditions, candidateRankExpression,
 			e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
@@ -655,8 +664,8 @@ func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
 //     participant list is its recipients plus its sender
 //     (message_participant_links in sqlAnalyticalEntries);
 //   - a conversation entry aggregates the message-level lists of the chat
-//     messages that pass the same filter conditions ("membership" re-applies
-//     them), plus the conversation's own participant rows. Per-message
+//     messages that pass the same filter conditions ("membership"), plus the
+//     conversation's own participant rows. Per-message
 //     conversation-level lists are constant across a group, so the flattened
 //     concat in the legacy chat arm reduces to this union.
 //
@@ -666,11 +675,21 @@ func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
 // materialize the doubly-referenced CTE with its string columns (both
 // measured slower). Bind order: condition args (filtered), candidate-rank
 // args (classified), limit, offset (page), condition args again (membership),
-// condition args again (total).
+// condition args again (total). Domain-filtered listings instead share the
+// filtered population across all three consumers: repeated recipient and roster
+// membership joins can exhaust the same memory budget. Their condition args
+// are bound once. Listings without domain filters keep scalar rescans to avoid
+// materializing the archive's message strings.
 //
 // Output columns, ordering, and pagination are identical to buildExploreSQL;
 // TestExploreListingFastPathMatchesLegacy pins the equivalence.
-func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string) string {
+func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string, shareFilteredPopulation bool) string {
+	population := "entry_core AS analytical_entries"
+	populationConditions := conditions
+	if shareFilteredPopulation {
+		population = "filtered"
+		populationConditions = "TRUE"
+	}
 	return buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression) +
 		exploreLogicalEntriesCTE(false) + fmt.Sprintf(`
 ), page AS (
@@ -679,7 +698,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     LIMIT ? OFFSET ?
 ), membership AS (
     SELECT source_id, conversation_id, message_id
-    FROM entry_core AS analytical_entries
+    FROM %s
     WHERE (%s) AND (%s)
 ), page_messages AS (
     SELECT p.entry_key, p.anchor_message_id AS message_id
@@ -713,7 +732,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     FROM (
         SELECT source_id, conversation_id,
             %s AS is_chat
-        FROM entry_core AS analytical_entries
+        FROM %s
         WHERE %s
     )
 ), clusters AS (
@@ -770,9 +789,9 @@ FROM page p
 LEFT JOIN page_participant_facts f ON f.entry_key = p.entry_key
 LEFT JOIN message_owner_canon message_owner ON message_owner.message_id = p.anchor_message_id
 ORDER BY p.occurred_at DESC, p.source_id ASC, p.entry_key ASC`,
-		conditions, sqlIsChatPredicate("message_type", "conversation_type"),
+		population, populationConditions, sqlIsChatPredicate("message_type", "conversation_type"),
 		sqlAnalyticalEntriesParticipantLabel("pt"),
-		sqlIsChatPredicate("message_type", "conversation_type"), conditions,
+		sqlIsChatPredicate("message_type", "conversation_type"), population, populationConditions,
 		clustersGlob, ownersGlob)
 }
 

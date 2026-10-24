@@ -274,3 +274,20 @@ func TestCLIAllowlistPersonEnrichmentForwardsOnlyCommandCredentials(t *testing.T
 	checks.False(srv.cliRunEnvAllowedForCommand(digestSuppression, "ENRICHMENT_SUPPRESSION_KEY"))
 	checks.False(srv.cliRunEnvAllowedForCommand([]string{"person", "enrichment", "status"}, "EXA_PRIMARY_KEY"))
 }
+
+func TestCLIAllowlistPersonSweepForwardsCredentialDespiteInvalidDaemonSetting(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.People.Sweep.Enabled = true
+	configureAPIProvider(cfg, completeAPIProvider("PEOPLE_SWEEP_KEY", "active-model"))
+	require.NoError(cfg.Save())
+	latest, err := config.Load(cfg.ConfigFilePath(), "")
+	require.NoError(err)
+	latest.Integrations.Kata.Endpoint = "://invalid"
+	require.NoError(latest.Save())
+
+	srv := &Server{cfg: cfg}
+	require.True(srv.cliRunEnvAllowedForCommand([]string{"person", "sweep", "run"}, "PEOPLE_SWEEP_KEY"))
+}

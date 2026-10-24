@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	stdsync "sync"
 	"syscall"
 	"time"
 
@@ -61,8 +62,9 @@ import (
 )
 
 var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Run msgvault as a daemon with scheduled sync",
+	Use:         "serve",
+	Annotations: map[string]string{strictConfigAnnotation: "required"},
+	Short:       "Run msgvault as a daemon with scheduled sync",
 	Long: `Run msgvault as a long-running daemon that syncs email accounts on schedule.
 
 The daemon runs in the foreground and performs:
@@ -435,6 +437,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and configure scheduler
+	state.syncFailures = &telemetry.SyncFailures{Capture: telemetryReporter.Capture}
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(s, identifier, logger)
@@ -444,7 +447,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("configure CardDAV: %w", err)
 	}
 	cardDAVController.SetConnectionScheduleReconciler(func(name string, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
-		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name)
+		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name, state)
 	})
 	if err := cardDAVController.ReconcileSchedule(ctx); err != nil {
 		return err
@@ -809,7 +812,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Name:     jobName,
 			Schedule: source.Schedule,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-				return runConfiguredMuesliSync(ctx, s, source)
+				return runConfiguredMuesliSync(ctx, s, source, cfg.AttachmentsDir())
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule muesli source", "source", source.Identifier, "error", err)
@@ -866,6 +869,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
+		operationGate:          operationGate,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
@@ -1138,7 +1142,7 @@ func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
 }
 
-func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string) error {
+func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string, state *invocation) error {
 	jobName := api.CardDAVJobNameForConnection(name)
 	if !cardDAVConfig.Enabled || cardDAVConfig.Schedule == "" {
 		sched.RemoveJob(jobName)
@@ -1163,10 +1167,10 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	}
 	if err := sched.AddJob(scheduler.Job{
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
-		Run: func(ctx context.Context) error {
+		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
-			return err
-		},
+			return recordSyncAttempt(ctx, "carddav", name, err)
+		}),
 	}); err != nil {
 		return fmt.Errorf("schedule CardDAV connection %s: %w", name, err)
 	}
@@ -1750,6 +1754,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	operationGate             api.OperationGate
+	embeddingsOptimizeMu      stdsync.Mutex
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -1956,6 +1962,14 @@ func (a *storeAPIAdapter) ConversationExistsContext(ctx context.Context, convers
 	return a.store.ConversationExistsContext(ctx, conversationID)
 }
 
+func (a *storeAPIAdapter) RefreshChatMembersContext(ctx context.Context) error {
+	return a.store.RefreshChatMembersContext(ctx)
+}
+
+func (a *storeAPIAdapter) SearchChatsMetadataContext(ctx context.Context, q store.ChatDiscoveryQuery) (*store.ChatDiscoveryPage, error) {
+	return a.store.SearchChatsMetadataContext(ctx, q)
+}
+
 func (a *storeAPIAdapter) GetConversationWindowContext(
 	ctx context.Context,
 	conversationID, anchorID int64,
@@ -2095,6 +2109,22 @@ func (a *storeAPIAdapter) ImportMeeting(
 		return meetingimport.Result{}, meetingimport.ErrUnavailable
 	}
 	return a.meetingImporter.Import(ctx, req)
+}
+
+// ImportMuesliRecording uses the shared attachment writer; Docbank discovers it
+// through ordinary stored audio classification and attachment journal changes.
+func (a *storeAPIAdapter) ImportMuesliRecording(ctx context.Context, upload muesli.RecordingUpload, input io.Reader, maxBytes int64) (bool, error) {
+	if a == nil || a.store == nil || a.config == nil {
+		return false, errors.New("muesli recording import unavailable")
+	}
+	changed, err := muesli.NewImporter(a.store).ImportRecording(ctx, upload, a.config.AttachmentsDir(), input, maxBytes)
+	if changed && !upload.NoBuildCache {
+		refreshCtx := context.WithoutCancel(a.invocationContext(ctx))
+		if refreshErr := rebuildMuesliCacheAfterScheduledSync(refreshCtx, "muesli"); refreshErr != nil && a.logger != nil {
+			a.logger.Warn("Muesli cache refresh deferred", "error_class", "internal")
+		}
+	}
+	return changed, err
 }
 
 // ImportMuesli receives bounded recorder-local evidence under the API gate.
@@ -2499,6 +2529,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
+		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
+	}
 	if manualSyncCLICommand(req.Args) {
 		defer func() {
 			force, skip := manualSyncCacheFlagValues(req.Args)
@@ -3759,6 +3792,7 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // resource-bounded child. The child owns the cache lock and its DuckDB
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
+	ctx = a.invocationContext(ctx)
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
 		return 0, err
 	}
@@ -4122,6 +4156,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		if scheduledSyncYielded(ctx) {
 			return scheduledSyncYieldResult(ctx, syncErr)
 		}
+		state.syncFailures.Record(ctx, sourceTypeGmail, identifier, syncErr)
 		if syncErr == nil {
 			logger.Info("sync completed",
 				"identifier", identifier,
@@ -4169,6 +4204,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			}
 			return scheduledSyncYieldResult(ctx, errs...)
 		}
+		state.syncFailures.Record(ctx, sourceType, src.Identifier, err)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s (%s): %w", identifier, sourceType, err))
 			continue

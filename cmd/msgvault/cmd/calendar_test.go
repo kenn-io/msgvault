@@ -18,9 +18,43 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
 )
+
+func TestCalendarAccountOutcomes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Analytics.AutoBuildCache = true
+	state := testInvocationWithConfig(cfg)
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assert.Equal("sync_failed", event)
+		assert.Equal(map[string]any{"sync_source": "gcal", "reason": "other"}, props)
+		events++
+		return nil
+	}}
+	ctx := withInvocation(t.Context(), state)
+	src := config.GCalSource{Email: "user@example.com"}
+	setupErr := errors.New("client unavailable")
+	buildClient := func(context.Context, string, string, bool, ...bool) (gcal.API, error) { return nil, setupErr }
+	require.ErrorIs(runConfiguredGCalSyncWithClientBuilder(ctx, st, src, buildClient), setupErr)
+	assert.Equal(1, events, "first-run failure starts one outage")
+	cacheErr := errors.New("cache unavailable")
+	oldBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error { return cacheErr }
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldBuild })
+	client := gcal.NewMockAPI()
+	err := runConfiguredGCalSyncWithClientBuilder(ctx, st, src,
+		func(context.Context, string, string, bool, ...bool) (gcal.API, error) { return client, nil })
+	require.ErrorIs(err, cacheErr)
+	assert.Equal(1, events, "cache maintenance starts no outage")
+	require.ErrorIs(runConfiguredGCalSyncWithClientBuilder(ctx, st, src, buildClient), setupErr)
+	assert.Equal(2, events, "source success clears the outage despite cache failure")
+}
 
 func TestCalendarDateBounds(t *testing.T) {
 	cmd := &cobra.Command{}
@@ -368,9 +402,7 @@ func TestSyncCalendarExplicitDiscoveryWithOnlyRetiredSources(t *testing.T) {
 				HomeDir: dataDir,
 				Data:    config.DataConfig{DataDir: dataDir},
 			}
-			seed, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(err)
-			require.NoError(seed.InitSchema())
+			seed := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			retired, err := seed.GetOrCreateSource(sourceTypeCalendar, "user@example.test/primary")
 			require.NoError(err)
 			require.NoError(seed.UpdateSourceSyncConfig(retired.ID,
@@ -557,10 +589,7 @@ func TestCalendarCommandsRegistered(t *testing.T) {
 func newCalendarDecisionStore(t *testing.T) *store.Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	return st
 }
 

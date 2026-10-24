@@ -487,17 +487,10 @@ func (d *SQLiteDialect) InvalidateFTSForMessage(q querier, messageID int64) erro
 // FTSBackfillBatchSQL returns the SQL to backfill FTS5 for a range of message IDs.
 // Parameters: fromID(?), toID(?)
 func (d *SQLiteDialect) FTSBackfillBatchSQL() string {
+	envelope := storedFTSEnvelopeSQL("GROUP_CONCAT")
 	return `INSERT OR REPLACE INTO messages_fts (rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
-		SELECT m.id, m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''),
-			COALESCE(
-				CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-				     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
-				END,
-				(SELECT GROUP_CONCAT(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
-				''
-			),
-			COALESCE((SELECT GROUP_CONCAT(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''),
-			COALESCE((SELECT GROUP_CONCAT(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), '')
+		SELECT m.id, m.id, ` + envelope.subject + `, COALESCE(mb.body_text, ''), ` +
+		envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + `
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.id >= ? AND m.id < ?`
@@ -1969,6 +1962,7 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
 		{`ALTER TABLE carddav_resources ADD COLUMN owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
+		{`ALTER TABLE carddav_resources ADD COLUMN locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
 		{`ALTER TABLE carddav_publications ADD COLUMN outgoing_envelope_metadata BLOB`, "carddav_publications.outgoing_envelope_metadata"},
 		{`ALTER TABLE carddav_publications ADD COLUMN approved_body_sha256 TEXT`, "carddav_publications.approved_body_sha256"},

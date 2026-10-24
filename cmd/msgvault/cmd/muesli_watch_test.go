@@ -105,6 +105,7 @@ func TestMuesliWatchFailureReasonsDoNotEchoValues(t *testing.T) {
 		{"rejection", &daemonclient.APIError{Status: http.StatusUnprocessableEntity, Message: privateValue}, "registration"},
 		{"validation", fmt.Errorf("%s: %w", privateValue, muesli.ErrRemoteValidation), "validation"},
 		{"size", fmt.Errorf("%s: %w", privateValue, muesli.ErrRemoteTooLarge), "16 MiB"},
+		{"recording size", fmt.Errorf("%s: %w", privateValue, muesli.ErrRecordingTooLarge), "recording_max_bytes"},
 		{"mixed", errors.Join(muesli.ErrRemoteValidation, &daemonclient.APIError{Status: http.StatusUnauthorized, Message: privateValue}), "credentials"},
 		{"local", errors.New(privateValue), "local files"},
 	} {

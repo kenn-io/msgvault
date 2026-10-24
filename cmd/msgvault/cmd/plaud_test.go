@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -171,10 +172,8 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 	cfg.Plaud = []config.PlaudSource{{Identifier: "work", AccountEmail: "replacement@example.com", Endpoint: upstream.URL}}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = plaud.RegisterSource(st, "work", "owner@example.com")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := plaud.RegisterSource(st, "work", "owner@example.com")
 	require.NoError(err)
 	require.NoError(st.Close())
 	owner, err := tryAcquireWriteOwnerLock(cfg.Data.DataDir)
@@ -305,9 +304,7 @@ func retiredPlaudSyncConfig(t *testing.T) *config.Config {
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 	cfg.Plaud = []config.PlaudSource{{Identifier: "history", AccountEmail: "owner@example.com"}}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	retiredPlaudSyncSource(t, st)
 	require.NoError(st.Close())
 	return cfg
@@ -409,10 +406,8 @@ func TestRemovePlaudAccountDeletesOnlyItsToken(t *testing.T) {
 	require := require.New(t)
 	tmp := t.TempDir()
 	cfg := &config.Config{HomeDir: tmp, Data: config.DataConfig{DataDir: tmp}}
-	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource("plaud", "work")
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
+	_, err := st.GetOrCreateSource("plaud", "work")
 	require.NoError(err)
 	require.NoError(st.Close())
 	mgr := plaud.NewManager("", cfg.TokensDir(), nil)
@@ -452,4 +447,18 @@ func TestPlaudManualCacheClassification(t *testing.T) {
 	assert.True(t, manualSyncCLICommand([]string{"sync-plaud", "work"}))
 	assert.False(t, manualSyncCLICommand([]string{"sync-plaud", "work", "--probe"}))
 	assert.False(t, manualSyncCLICommand([]string{"sync-plaud", "work", "--probe=true"}))
+}
+
+func TestPlaudImportRecoveryPrecedesCacheRefresh(t *testing.T) {
+	state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
+	failure := errors.New("provider unavailable")
+	state.syncFailures.Record(t.Context(), sourceTypePlaud, "work", failure)
+	cacheErr := errors.New("cache unavailable")
+	err := finishScheduledPlaudImport(withInvocation(t.Context(), state), "work", &plaud.ImportSummary{}, nil, func(context.Context, string) error { return cacheErr })
+	require.ErrorIs(t, err, cacheErr)
+	assert.Equal(t, 1, events)
+	state.syncFailures.Record(t.Context(), sourceTypePlaud, "work", failure)
+	assert.Equal(t, 2, events, "a successful import recovers the source even when its cache refresh fails")
 }

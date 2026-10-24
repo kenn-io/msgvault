@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
+	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 // invocationOptions is the set of root-owned options that belong to one
@@ -49,6 +50,8 @@ type invocation struct {
 	logger    *slog.Logger
 	logResult *logging.Result
 	sends     *posthog.SendGroup
+
+	syncFailures *telemetry.SyncFailures
 }
 
 type invocationContextKey struct{}
@@ -79,6 +82,13 @@ func invocationFromContext(ctx context.Context) *invocation {
 	}
 	inv, _ := ctx.Value(invocationContextKey{}).(*invocation)
 	return inv
+}
+
+func recordSyncAttempt(ctx context.Context, sourceType, identifier string, err error) error {
+	if state := invocationFromContext(ctx); state != nil {
+		state.syncFailures.Record(ctx, sourceType, identifier, err)
+	}
+	return err
 }
 
 func invocationFromCommand(cmd *cobra.Command) *invocation {

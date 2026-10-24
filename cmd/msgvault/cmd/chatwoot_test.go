@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,9 +20,113 @@ import (
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/chatwootapi"
 )
+
+func TestChatwootInboxesFailIndependently(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
+	var failing atomic.Int64
+	var enumerations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/accounts/9/inboxes":
+			_, _ = fmt.Fprint(w, `{"payload":[{"id":7},{"id":8}]}`)
+		case "/api/v1/accounts/9/agents":
+			_, _ = fmt.Fprint(w, `[]`)
+		case "/api/v1/accounts/9/conversations":
+			enumerations.Add(1)
+			if r.URL.Query().Get("inbox_id") == strconv.FormatInt(failing.Load(), 10) {
+				http.Error(w, "inbox unavailable", http.StatusForbidden)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"data":{"payload":[]}}`)
+		default:
+			assert.Fail("unexpected provider request", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	src := config.ChatwootSource{URL: server.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN"}
+	_, err := registerChatwootProfile(t.Context(), st, src)
+	require.NoError(err)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Analytics.AutoBuildCache = false
+	state := testInvocationWithConfig(cfg)
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assert.Equal("sync_failed", event)
+		assert.Equal("chatwoot", props["sync_source"])
+		events++
+		return nil
+	}}
+	ctx := withInvocation(t.Context(), state)
+	for i, id := range []int64{7, 7, 8, 8, 7} {
+		failing.Store(id)
+		sum, err := importChatwootProfile(ctx, st, src, chatwootRunOptions{}, cfg)
+		require.ErrorContains(err, fmt.Sprintf("inbox %d", id))
+		assert.NotContains(err.Error(), fmt.Sprintf("inbox %d", 15-id))
+		require.NotNil(sum)
+		assert.Equal(2, sum.Sources)
+		if i == 0 {
+			assert.Equal(int32(3), enumerations.Load(), "healthy inbox is listed by activity and enumerated after the failure")
+		}
+		assert.Equal([]int{1, 1, 2, 2, 3}[i], events)
+	}
+}
+
+func TestChatwootPreLoopFailureRecordsOnlySelectedInboxes(t *testing.T) {
+	for _, mode := range []string{"authentication rejected", "all excluded", "missing token"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("/api/v1/accounts/9/inboxes", r.URL.Path)
+				http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			}))
+			t.Cleanup(server.Close)
+			src := config.ChatwootSource{URL: server.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN",
+				Inboxes: []int64{7, 8}, ExcludeInboxes: []int64{8}}
+			want, message := 1, "discover Chatwoot inboxes"
+			switch mode {
+			case "missing token":
+				require.NoError(os.Unsetenv("EXAMPLE_CHATWOOT_TOKEN"))
+				message = "needs EXAMPLE_CHATWOOT_TOKEN in the daemon environment"
+			case "all excluded":
+				src.ExcludeInboxes = []int64{7, 8}
+				want, message = 0, "no included Chatwoot inboxes"
+			}
+			for _, id := range []string{
+				chatwoot.SourceIdentifier(src.URL, 9, 7),
+				chatwoot.SourceIdentifier(src.URL, 9, 8),
+				chatwoot.SourceIdentifier(src.URL, 9, 9),
+				chatwoot.SourceIdentifier(src.URL, 10, 7),
+			} {
+				_, err := st.GetOrCreateSource(chatwoot.SourceType, id)
+				require.NoError(err)
+			}
+			state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+			events := 0
+			state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+				assert.Equal("sync_failed", event)
+				assert.Equal("chatwoot", props["sync_source"])
+				events++
+				return nil
+			}}
+			ctx := withInvocation(t.Context(), state)
+
+			err := runConfiguredChatwootSync(ctx, st, src)
+			require.ErrorContains(err, message)
+			assert.Equal(want, events, "only selected inboxes enter failure")
+		})
+	}
+}
 
 func TestChatwootRegisteredInboxSelection(t *testing.T) {
 	assert := assert.New(t)
@@ -207,45 +313,6 @@ func TestChatwootScheduledJobUsesAccountIdentityAndDefersMediaPacking(t *testing
 	assert.True(fixture.maintenance.packPending.Load(), "new media requests a later pack pass")
 	require.NoError(fixture.maintenance.runPendingPack(context.Background()))
 	assert.NotNil(fixture.packedEntry(hash))
-}
-
-func TestChatwootProfileSyncContinuesAfterInboxFailure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	cfg := config.NewDefaultConfig()
-	cfg.HomeDir = t.TempDir()
-	st := testutil.NewTestStore(t)
-	t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
-	var enumerations atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/accounts/9/agents":
-			_, _ = w.Write([]byte(`[]`))
-		case "/api/v1/accounts/9/conversations":
-			if enumerations.Add(1) == 1 {
-				http.Error(w, "synthetic access failure", http.StatusForbidden)
-				return
-			}
-			_, _ = w.Write([]byte(`{"data":{"payload":[]}}`))
-		case "/api/v1/accounts/9/inboxes":
-			_, _ = w.Write([]byte(`{"payload":[{"id":7},{"id":8}]}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	src := config.ChatwootSource{Identifier: "support", URL: server.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN"}
-	for _, id := range []int64{7, 8} {
-		_, err := st.GetOrCreateSource(chatwoot.SourceType, chatwoot.SourceIdentifier(src.URL, 9, id))
-		require.NoError(err)
-	}
-	sum, err := importChatwootProfile(context.Background(), st, src, chatwootRunOptions{}, cfg)
-	require.ErrorContains(err, "inbox 7")
-	assert.NotContains(err.Error(), "inbox 8")
-	require.NotNil(sum)
-	assert.Equal(2, sum.Sources)
-	assert.Equal(int32(3), enumerations.Load(), "healthy inbox is listed by activity and enumerated after the failure")
 }
 
 func TestChatwootProfileSyncRejectsDisablingArchivedPrivateNotes(t *testing.T) {

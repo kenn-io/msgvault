@@ -25,6 +25,7 @@ import (
 )
 
 func TestParseSyncPageRecognizesEquivalentAbsoluteCollectionHref(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -50,6 +51,7 @@ func TestParseSyncPageRecognizesEquivalentAbsoluteCollectionHref(t *testing.T) {
 }
 
 func TestPullBudgetChargesHTTPErrorBodies(t *testing.T) {
+	t.Parallel()
 	const errorBody = "remote error response body"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -67,6 +69,7 @@ func TestPullBudgetChargesHTTPErrorBodies(t *testing.T) {
 }
 
 func TestPullBudgetChargesPartialBodiesOnResponseLimit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -97,6 +100,7 @@ func TestPullBudgetChargesPartialBodiesOnResponseLimit(t *testing.T) {
 }
 
 func TestPullBudgetChargesRedirectResponseBodies(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -125,6 +129,7 @@ func TestPullBudgetChargesRedirectResponseBodies(t *testing.T) {
 }
 
 func TestIndividualMemberFetchTreatsGoneAsMissing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -145,6 +150,7 @@ func TestIndividualMemberFetchTreatsGoneAsMissing(t *testing.T) {
 }
 
 func TestSyncPageTreatsGoneMemberAsRemoved(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -167,6 +173,7 @@ func TestSyncPageTreatsGoneMemberAsRemoved(t *testing.T) {
 }
 
 func TestSyncContinuesAfterOneBookFailsAndReconcilesPublications(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	var requestedPaths []string
@@ -323,6 +330,7 @@ func writeDAVXML(t *testing.T, w http.ResponseWriter, body string) {
 }
 
 func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +366,7 @@ func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
 }
 
 func TestSyncRecordsExplicitScheduledTrigger(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeDAVXML(t, w, syncResponse("", "token-1"))
@@ -374,6 +383,7 @@ func TestSyncRecordsExplicitScheduledTrigger(t *testing.T) {
 }
 
 func TestSyncCancellationFinishesRunWithUncancelledCleanupContext(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	requestStarted := make(chan struct{})
@@ -405,6 +415,7 @@ func TestSyncCancellationFinishesRunWithUncancelledCleanupContext(t *testing.T) 
 }
 
 func TestSyncActiveClaimPreventsNetworkAndSecondRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	requests := 0
@@ -423,6 +434,7 @@ func TestSyncActiveClaimPreventsNetworkAndSecondRun(t *testing.T) {
 }
 
 func TestSyncTotalFailureRecordsSafeFailedTerminalState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -444,6 +456,7 @@ func TestSyncTotalFailureRecordsSafeFailedTerminalState(t *testing.T) {
 }
 
 func TestSyncFailureProjectionRejectsPrivateMaterial(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	privateErr := errors.New("Authorization: Bearer synthetic-secret BEGIN:VCARD https://private.invalid/dav")
 	finish := cardDAVSyncRunFinish(SyncResult{}, privateErr)
@@ -460,6 +473,7 @@ func TestSyncFailureProjectionRejectsPrivateMaterial(t *testing.T) {
 }
 
 func TestSyncJoinsExecutionAndFinishFailuresWithoutReplay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	requests := 0
@@ -500,6 +514,7 @@ func TestSyncJoinsExecutionAndFinishFailuresWithoutReplay(t *testing.T) {
 }
 
 func TestSyncEmptyTokenReturnsMembersAndAdvancesToken(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -527,6 +542,7 @@ func TestSyncEmptyTokenReturnsMembersAndAdvancesToken(t *testing.T) {
 }
 
 func TestSyncMultigetUsesBatchesOfOneHundred(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -567,6 +583,7 @@ func TestSyncMultigetUsesBatchesOfOneHundred(t *testing.T) {
 }
 
 func TestMultigetMatchesEquivalentAbsoluteHref(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -598,6 +615,7 @@ func TestMultigetMatchesEquivalentAbsoluteHref(t *testing.T) {
 }
 
 func TestMultigetCanonicalizesEquivalentMissingHref(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -630,6 +648,7 @@ func TestMultigetCanonicalizesEquivalentMissingHref(t *testing.T) {
 }
 
 func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -672,6 +691,7 @@ func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {
 }
 
 func TestInitialSyncSendsEmptyTokenAndFallsBackToIndividualGET(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -713,8 +733,10 @@ func TestInitialSyncSendsEmptyTokenAndFallsBackToIndividualGET(t *testing.T) {
 }
 
 func TestSyncFallsBackWhenAdvertisedMultigetIsUnsupported(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{http.StatusMethodNotAllowed, http.StatusNotImplemented} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			reports, gets := 0, 0
@@ -752,6 +774,7 @@ func TestSyncFallsBackWhenAdvertisedMultigetIsUnsupported(t *testing.T) {
 }
 
 func TestSyncMultigetSendsAbsolutePathsNotAbsoluteURIs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -786,6 +809,7 @@ func TestSyncMultigetSendsAbsolutePathsNotAbsoluteURIs(t *testing.T) {
 }
 
 func TestSyncContinuesTruncated507PageAcrossEquivalentCollectionURLs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -823,6 +847,7 @@ func TestSyncContinuesTruncated507PageAcrossEquivalentCollectionURLs(t *testing.
 }
 
 func TestSyncRejectsContinuationTokenCycle(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		events := `<D:response><D:href>/books/personal/</D:href><D:status>HTTP/1.1 507 Insufficient Storage</D:status></D:response>`
 		writeDAVXML(t, w, syncResponse(events, "cycle"))
@@ -835,6 +860,7 @@ func TestSyncRejectsContinuationTokenCycle(t *testing.T) {
 }
 
 func TestSyncReconcilesInvalidSyncTokenOnce(t *testing.T) {
+	t.Parallel()
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := readRequestBody(t, r)
@@ -859,8 +885,10 @@ func TestSyncReconcilesInvalidSyncTokenOnce(t *testing.T) {
 }
 
 func TestManualFullSyncMarksSnapshotAsCompleteReconciliation(t *testing.T) {
+	t.Parallel()
 	for _, supportsSync := range []bool{false, true} {
 		t.Run(fmt.Sprintf("sync-collection=%t", supportsSync), func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -881,8 +909,10 @@ func TestManualFullSyncMarksSnapshotAsCompleteReconciliation(t *testing.T) {
 }
 
 func TestSyncDowngradesUnsupportedSyncCollectionToSnapshot(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{http.StatusMethodNotAllowed, http.StatusNotImplemented} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
 			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body := readRequestBody(t, r)
@@ -905,6 +935,7 @@ func TestSyncDowngradesUnsupportedSyncCollectionToSnapshot(t *testing.T) {
 }
 
 func TestParseRemoteResourceRetainsPhoneEndpoint(t *testing.T) {
+	t.Parallel()
 	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:schemes\r\nFN:Schemes\r\n" +
 		"EMAIL:MAILTO:Alice@Example.test\r\nTEL:TeL:+1-202-555-0100\r\nEND:VCARD\r\n")
 
@@ -915,6 +946,7 @@ func TestParseRemoteResourceRetainsPhoneEndpoint(t *testing.T) {
 }
 
 func TestParseRemoteResourceDecodesTextContactValues(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	body := []byte("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:escaped\r\n" +
 		`FN:Doe\, Jane` + "\r\n" +
@@ -1029,6 +1061,7 @@ func newGoogleLikeState() *googleLikeState {
 }
 
 func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newGoogleLikeState()
@@ -1074,6 +1107,7 @@ func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *tes
 }
 
 func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newGoogleLikeState()
@@ -1109,6 +1143,7 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 }
 
 func TestGoogleInvalidTokenReconcileUsesEnumeratedSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newGoogleLikeState()
@@ -1139,6 +1174,7 @@ func TestGoogleInvalidTokenReconcileUsesEnumeratedSnapshot(t *testing.T) {
 }
 
 func TestIncrementalSyncBadRequestIsNotDowngraded(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	var mu sync.Mutex
@@ -1171,6 +1207,7 @@ func TestIncrementalSyncBadRequestIsNotDowngraded(t *testing.T) {
 }
 
 func TestEnumeratedSnapshotRejectsEmptyMemberListing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newGoogleLikeState()
@@ -1197,6 +1234,7 @@ func TestEnumeratedSnapshotRejectsEmptyMemberListing(t *testing.T) {
 }
 
 func TestEnumeratedSnapshotTreatsTruncatedListingAsTruncatedSnapshot(t *testing.T) {
+	t.Parallel()
 	state := newGoogleLikeState()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "PROPFIND" && r.Header.Get("Depth") == "1" {
@@ -1214,6 +1252,7 @@ func TestEnumeratedSnapshotTreatsTruncatedListingAsTruncatedSnapshot(t *testing.
 }
 
 func TestGoogleSnapshotNeverUsesAddressbookQuery(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newGoogleLikeState()
@@ -1234,6 +1273,7 @@ func TestGoogleSnapshotNeverUsesAddressbookQuery(t *testing.T) {
 	}, state.requests)
 }
 
+// serial: replaces the process-wide slog logger.
 func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1273,6 +1313,7 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 }
 
 func TestEnumeratedSnapshotRejectsListingThatOmitsCollection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newGoogleLikeState()
@@ -1295,6 +1336,7 @@ func TestEnumeratedSnapshotRejectsListingThatOmitsCollection(t *testing.T) {
 }
 
 func TestEnumeratedSnapshotRejectsMemberWithoutETag(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newGoogleLikeState()

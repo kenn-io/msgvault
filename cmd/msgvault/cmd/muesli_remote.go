@@ -184,6 +184,11 @@ func (r *muesliRemoteRun) scan(ctx context.Context, source config.MuesliSource) 
 	opts := muesliImportOptions(source)
 	opts.AccountEmail, _ = source.EffectiveAccountEmail()
 	opts.MeetingID, opts.RemoteTarget, opts.LockDir = r.meetingID, r.cfg.Remote.URL, muesliSyncStateDir(r.cfg)
+	opts.SendRecording = func(ctx context.Context, upload muesli.RecordingUpload, recording *muesli.Recording) error {
+		uploaded = true
+		upload.NoBuildCache = r.skipCache
+		return r.client.ImportMuesliRecording(ctx, upload, recording)
+	}
 	opts.Full, opts.Limit, opts.StartedAfter = syncMuesliFull, syncMuesliLimit, r.after
 	sender := func(ctx context.Context, req muesli.RemoteRequest) (muesli.RemoteResult, error) {
 		uploaded = true
@@ -284,6 +289,9 @@ func muesliWatchFailureReason(err error) string {
 		}
 	}
 	if muesliRecordErrorsOnly(err) {
+		if errors.Is(err, muesli.ErrRecordingTooLarge) {
+			return "a recording exceeds its size cap; increase recording_max_bytes and the daemon muesli_recording_max_bytes, then retry"
+		}
 		if errors.Is(err, muesli.ErrRemoteTooLarge) {
 			return "a meeting exceeds the 16 MiB transfer limit"
 		}
@@ -302,5 +310,5 @@ func muesliRecordErrorsOnly(err error) bool {
 		}
 		return true
 	}
-	return errors.Is(err, muesli.ErrRemoteValidation) || errors.Is(err, muesli.ErrRemoteTooLarge)
+	return errors.Is(err, muesli.ErrRemoteValidation) || errors.Is(err, muesli.ErrRemoteTooLarge) || errors.Is(err, muesli.ErrRecordingTooLarge)
 }

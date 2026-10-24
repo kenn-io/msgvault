@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/cenkalti/backoff/v7"
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
@@ -211,7 +213,7 @@ func APIResponseWithNotFound[R any](
 	}
 	resp, err := request(client)
 	if meta, ok := responseMetadata(resp); ok &&
-		meta.Status == http.StatusNotFound && !responseDecodeError(err) {
+		meta.Status == http.StatusNotFound && !contractDecodeError(err, false) {
 		return zero, notFound(resp)
 	}
 	if err := APIResponseError(resp, err); err != nil {
@@ -283,10 +285,11 @@ func responseError(
 		}
 		return fmt.Errorf("unexpected generated response type %T", resp)
 	}
-	if responseDecodeError(err) {
+	expected := slices.Contains(expectedStatuses, meta.Status)
+	if contractDecodeError(err, expected) {
 		return fmt.Errorf("decode generated response: %w", err)
 	}
-	if !slices.Contains(expectedStatuses, meta.Status) {
+	if !expected {
 		return decodeErrorBody(meta.Status, meta.Body)
 	}
 	if err != nil {
@@ -346,9 +349,22 @@ func responseMetadata(resp any) (responseInfo, bool) {
 	return info, true
 }
 
-func responseDecodeError(err error) bool {
-	var decodeErr *runtime.ResponseDecodeError
-	return errors.As(err, &decodeErr)
+// contractDecodeError reports whether a generated decode failure breaks the
+// API contract. The generated client also decodes error bodies, so a proxy or
+// router error page in plain text fails to decode. Only a success response or
+// a body labelled as JSON is a contract failure; other error bodies go to the
+// raw error decoders.
+func contractDecodeError(err error, successStatus bool) bool {
+	decodeErr, ok := errors.AsType[*runtime.ResponseDecodeError](err)
+	if !ok {
+		return false
+	}
+	if successStatus {
+		return true
+	}
+	mediaType, _, parseErr := mime.ParseMediaType(decodeErr.ContentType)
+	return parseErr == nil &&
+		(mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"))
 }
 
 // DecodeGeneratedSearchBody decodes a generated search response body into the

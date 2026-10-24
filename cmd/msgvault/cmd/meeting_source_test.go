@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/muesli"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -130,9 +129,7 @@ func TestSyncMuesliOutputMatchesBase(t *testing.T) {
 	testCfg.Muesli = []config.MuesliSource{{
 		Identifier: "mac", AccountEmail: "you@example.com", DBPath: path, Contacts: &contacts,
 	}}
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 	_, err = st.GetOrCreateSource(muesli.SourceType, "mac")
 	require.NoError(err)
 	require.NoError(st.Close())
@@ -264,7 +261,7 @@ func TestMeetingProviderErrorsMatchBase(t *testing.T) {
 			`granola source "work" is not registered; run msgvault add-granola work`)
 		require.EqualError(runConfiguredCirclebackSync(ctx, st, config.CirclebackSource{Identifier: "work"}),
 			`circleback source "work" is not registered; run msgvault add-circleback work first`)
-		require.EqualError(runConfiguredMuesliSync(ctx, st, config.MuesliSource{Identifier: "work"}),
+		require.EqualError(runConfiguredMuesliSync(ctx, st, config.MuesliSource{Identifier: "work"}, t.TempDir()),
 			`muesli source "work" is not registered; run msgvault add-muesli work first`)
 		require.EqualError(runConfiguredNotionMeetingsSync(ctx, st, config.NotionMeetingsSource{Identifier: "work", Token: "ntn_test"}),
 			`notion meeting source "work" is not registered; run msgvault add-notion-meetings work first`)

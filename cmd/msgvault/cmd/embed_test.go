@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -471,11 +472,8 @@ VALUES
 // every generation, so the coverage gate refuses activation.
 func seedMainDBWithLiveMessage(t *testing.T, dataDir string) {
 	t.Helper()
-	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	require.NoError(t, err)
-	defer func() { require.NoError(t, s.Close()) }()
-	require.NoError(t, s.InitSchema())
-	_, err = s.DB().Exec(`
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
+	_, err := s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES (1, 1, 1, 'm1', 'email', NULL);
@@ -485,11 +483,8 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 
 func seedMainDBWithScopedFullCoverageMessages(t *testing.T, dataDir string) {
 	t.Helper()
-	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	require.NoError(t, err)
-	defer func() { require.NoError(t, s.Close()) }()
-	require.NoError(t, s.InitSchema())
-	_, err = s.DB().Exec(`
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
+	_, err := s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread'), (2, 1, 'sms_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES

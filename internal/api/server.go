@@ -1180,7 +1180,7 @@ func serveWithProtectiveRequestDeadline(
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost &&
-			(r.URL.Path == meetingImportEndpointPath || r.URL.Path == muesliImportEndpointPath) &&
+			(r.URL.Path == meetingImportEndpointPath || r.URL.Path == muesliImportEndpointPath || r.URL.Path == muesliRecordingEndpointPath) &&
 			s.apiRequestAuthorized(r) {
 			serveMeetingImportWithReadDeadline(w, r, next)
 			return
@@ -1283,6 +1283,7 @@ func isLongDaemonRequest(path string) bool {
 		"/api/v1/cli/deduplicate/plan",
 		meetingImportEndpointPath,
 		muesliImportEndpointPath,
+		muesliRecordingEndpointPath,
 		"/api/v1/cli/identities/discover",
 		"/api/v1/cli/rebuild-fts",
 		"/api/v1/cli/repair-encoding",

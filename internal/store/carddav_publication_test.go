@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -136,6 +137,50 @@ func TestCardDAVPublicationPrepareNoopsWhenMappedSemanticHashMatches(t *testing.
 	require.NoError(err)
 	assert.True(publication.Desired)
 	assert.Empty(publication.PendingOperation)
+}
+
+func TestCardDAVPublicationCommitMarksExistingLocalResourceByOrderingEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, account, book := newCardDAVResourceStore(t)
+	remote := remoteResource(book.CanonicalURL+"published.vcf", "published", "Published",
+		"published@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{remote},
+	})
+	require.NoError(err)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, remote.Href)
+	require.NoError(err)
+	require.False(resource.LocallyPublished)
+	require.NotNil(resource.PersonID)
+
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *resource.PersonID)
+	require.NoError(err)
+	updatedBody := bytes.Replace(remote.RemoteBody, []byte("END:VCARD"), []byte("NOTE:Local edit\r\nEND:VCARD"), 1)
+	updatedHash := remote.SemanticHash + "-updated"
+	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: *resource.PersonID, Desired: true, AddressBookID: book.ID, Href: remote.Href,
+		OutgoingBody: updatedBody, OutgoingSemanticHash: updatedHash, LocalHash: snapshot.Fingerprint,
+	})
+	require.NoError(err)
+	require.Equal(store.CardDAVMutationUpdate, pending.PendingOperation)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_publications SET created_at = ? WHERE person_id = ?`),
+		"2020-01-01 00:00:00", *resource.PersonID)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET created_at = ? WHERE id = ?`),
+		"2020-01-02 00:00:00", resource.ID)
+	require.NoError(err)
+	updated := remote
+	updated.RemoteETag, updated.RemoteBody, updated.SemanticHash = `"two"`, updatedBody, updatedHash
+	require.NoError(st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{
+		Publication: *pending, Remote: updated,
+	}))
+
+	resource, err = st.GetCardDAVResourceContext(t.Context(), book.ID, remote.Href)
+	require.NoError(err)
+	assert.True(resource.LocallyPublished)
 }
 
 func TestCardDAVPublicationRejectsAmbiguousMappedResource(t *testing.T) {

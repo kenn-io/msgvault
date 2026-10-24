@@ -11,6 +11,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestOwnerAttributionParityStoreVersusCache pins the DuckDB owner mirror in
@@ -21,10 +22,7 @@ func TestOwnerAttributionParityStoreVersusCache(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	sourceA, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)

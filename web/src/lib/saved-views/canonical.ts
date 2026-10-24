@@ -12,12 +12,10 @@ import {
   type ExploreURLState
 } from '../explore/models';
 
+import { trimAttributeText } from '../directory/attribute-text';
+
 export type CanonicalState = SavedViewStateEnvelope;
 export const CURRENT_SCHEMA_VERSION = 2;
-
-function trimGoWhitespace(query: string): string {
-  return query.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
-}
 
 // Saved views written before the v2 filter names still use these fields.
 const LEGACY_FILTER_FIELDS: Record<string, ExploreFilterDimension> = {
@@ -26,7 +24,7 @@ const LEGACY_FILTER_FIELDS: Record<string, ExploreFilterDimension> = {
 };
 
 export function canonicalSavedViewState(state: ExploreURLState): CanonicalState {
-  const query = trimGoWhitespace(state.query);
+  const query = trimAttributeText(state.query);
   return {
     ...(query ? { query, search_mode: state.searchMode } : {}),
     filters: state.filters.map((filter) => ({
@@ -53,7 +51,7 @@ function searchMode(saved: CanonicalState): ExploreURLState['searchMode'] {
 
 // Keep trimming and pipe boundaries in step with internal/savedview/service.go and search.IsStandalonePipe.
 function quoteLegacyPipes(query: string): string {
-  query = trimGoWhitespace(query);
+  query = trimAttributeText(query);
   let result = '';
   let quote = '';
   let escaped = false;

@@ -580,6 +580,92 @@ func TestWorker_EmptyMessageSkipMarkedNotReprocessed(t *testing.T) {
 	assert.Equal(t, callsBefore, f.FakeClient.calls, "no re-processing of skip-marked message")
 }
 
+func TestWorker_SkipsInvisibleOnlyContent(t *testing.T) {
+	type message struct {
+		text string
+		html string
+	}
+	type chunk struct {
+		messageID int64
+		index     int
+		start     int
+		end       int
+	}
+	blankWindow := strings.Repeat("\x7f", 8)
+	for _, tc := range []struct {
+		name          string
+		messages      []message
+		stripQuotes   bool
+		maxInputChars int
+		want          [][]string
+		wantSucceeded int
+		wantChunks    []chunk
+	}{
+		{
+			name: "quoted-only then HTML control then visible message",
+			messages: []message{
+				{text: "> quoted text only"},
+				{html: "<p>\x7f</p>"},
+				{text: "visible message"},
+			},
+			stripQuotes:   true,
+			want:          [][]string{{"visible message"}},
+			wantSucceeded: 1,
+			wantChunks:    []chunk{{messageID: 3, index: 0, start: 0, end: 15}},
+		},
+		{
+			name:          "visible windows",
+			messages:      []message{{text: blankWindow + "界abcdefg" + blankWindow + "終hijklmn" + blankWindow}},
+			maxInputChars: 8,
+			want:          [][]string{{"界abcdefg", "終hijklmn"}},
+			wantSucceeded: 1,
+			wantChunks: []chunk{
+				{messageID: 1, index: 0, start: 8, end: 16},
+				{messageID: 1, index: 1, start: 24, end: 32},
+			},
+		},
+		{
+			name:          "only blank windows retained",
+			messages:      []message{{text: strings.Repeat(blankWindow, maxSpansPerMessage+1) + "visible tail"}},
+			maxInputChars: 8,
+			want:          [][]string{},
+			wantSucceeded: 0,
+			wantChunks:    []chunk{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWorkerFixture(t, len(tc.messages))
+			_, err := f.MainDB.Exec(`UPDATE messages SET subject = ''`)
+			require.NoError(t, err)
+			for i, msg := range tc.messages {
+				_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ?, body_html = ? WHERE message_id = ?`, msg.text, msg.html, i+1)
+				require.NoError(t, err)
+			}
+			client, calls := newRecordingOpenAIClient(t, 4)
+			w := newTestWorker(f, 8)
+			w.deps.Client = client
+			w.deps.Preprocess.StripQuotes = tc.stripQuotes
+			w.deps.MaxInputChars = tc.maxInputChars
+			res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, *calls)
+			assert.Equal(t, tc.wantSucceeded, res.Succeeded)
+			assert.Zero(t, countMissing(t, f.MainDB, int64(f.BuildingGen)))
+			rows, err := f.VectorsDB.Query(`SELECT message_id, chunk_index, chunk_char_start, chunk_char_end FROM embeddings WHERE generation_id = ? ORDER BY message_id, chunk_index`, f.BuildingGen)
+			require.NoError(t, err)
+			defer func() { _ = rows.Close() }()
+			chunks := []chunk{}
+			for rows.Next() {
+				var got chunk
+				require.NoError(t, rows.Scan(&got.messageID, &got.index, &got.start, &got.end))
+				chunks = append(chunks, got)
+			}
+			require.NoError(t, rows.Err())
+			assert.Equal(t, tc.wantChunks, chunks)
+		})
+	}
+}
+
 func TestWorker_EmptyMessageDeletesExistingEmbeddingBeforeSkipMark(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

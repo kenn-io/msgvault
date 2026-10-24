@@ -4,6 +4,7 @@
   import type { CliAccountResponse } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter } from '../../explore/models';
+  import { sameFilterID } from '../../explore/models';
 
   let {
     client,
@@ -33,7 +34,7 @@
   const sourceIDs = $derived(filters.filter((f) => f.dimension === 'source').flatMap((f) => f.values));
   const visibleOptions = $derived([
     { value: '', label: 'All accounts' },
-    ...options.filter((o) => sourceIDs.length === 0 || sourceIDs.includes(o.sourceID) || o.value === selected),
+    ...options.filter((o) => sourceIDs.length === 0 || includesSource(o.sourceID) || o.value === selected),
     ...(selected && !loading && !options.some((o) => o.value === selected)
       ? [known.get(selected) ?? { value: selected, label: `${selected} (unavailable)` }]
       : []),
@@ -44,8 +45,12 @@
   $effect(() => {
     if (!selected || sourceIDs.length === 0) return;
     const pick = known.get(selected);
-    if (pick && !sourceIDs.includes(pick.sourceID)) select('');
+    if (pick && !includesSource(pick.sourceID)) select('');
   });
+
+  function includesSource(id: string): boolean {
+    return sourceIDs.some((sourceID) => sameFilterID(sourceID, id));
+  }
 
   // The username of an "imaps://user@host" identifier, or the identifier.
   function sourceMailbox(identifier: string): string {

@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/propagation"
@@ -599,12 +598,6 @@ func TestGeneratedCLIResponseErrorReturnsBareServerMessage(t *testing.T) {
 	}, nil)
 
 	require.EqualError(t, err, "bad account", "CLI error")
-}
-
-func TestGeneratedResponseDecodeErrorDetection(t *testing.T) {
-	err := &runtime.ResponseDecodeError{Err: errors.New("malformed")}
-	assert.True(t, responseDecodeError(err), "decode error")
-	assert.False(t, responseDecodeError(errors.New("other")), "other error")
 }
 
 func TestRunCLICommandTypesDaemonReportedFailures(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 )
 
 func TestProjectConflictContactAllowListsNormalizesAndBoundsFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	long := strings.Repeat("界", 90)
@@ -43,6 +44,7 @@ func TestProjectConflictContactAllowListsNormalizesAndBoundsFields(t *testing.T)
 }
 
 func TestProjectConflictContactTombstoneAndMalformedAreFixed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	deleted := projectConflictContact([]byte("credential=private-secret"), true)
 	assert.Equal(ContactSummary{State: ConflictSideDeleted, Emails: []string{}, Phones: []string{}}, deleted)
@@ -55,6 +57,7 @@ func TestProjectConflictContactTombstoneAndMalformedAreFixed(t *testing.T) {
 }
 
 func TestProjectConflictContactPreservesWhitespaceSeparatorsAndExactDeduplication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	prefix := strings.Repeat("a", 256)
 	raw := "BEGIN:VCARD\r\nVERSION:4.0\r\n" +
@@ -73,6 +76,7 @@ func TestProjectConflictContactPreservesWhitespaceSeparatorsAndExactDeduplicatio
 }
 
 func TestProjectConflictContactIgnoresLaterFNWithoutReportingTruncation(t *testing.T) {
+	t.Parallel()
 	raw := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:First Name\r\nFN:" +
 		strings.Repeat("private-later-name", 40) + "\r\nEND:VCARD\r\n"
 	got := projectConflictContact([]byte(raw), false)

@@ -259,6 +259,8 @@ enabled = true
 
 	require.Len(cfg.Muesli, 1)
 	src := cfg.Muesli[0]
+	assert.False(src.Recordings)
+	assert.Equal(int64(4)<<30, src.EffectiveRecordingMaxBytes())
 	assert.Equal("default", src.Identifier)
 	assert.Equal("you@example.com", src.AccountEmail)
 	home, err := os.UserHomeDir()
@@ -349,4 +351,37 @@ phone_country_code = "UK"
 `), "")
 	require.Error(err)
 	assert.Contains(err.Error(), "phone_country_code")
+}
+
+func TestLoadMuesliRecordingCaps(t *testing.T) {
+	for _, tt := range []struct {
+		name, sourceCap, serverCap string
+		wantError                  bool
+	}{
+		{"configured", "8589934592", "8589934592", false},
+		{"default", "0", "0", false},
+		{"negative source", "-1", "0", true},
+		{"negative server", "0", "-1", true},
+		{"overflow sentinel", "9223372036854775807", "0", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			path := writeMeetingConfig(t, "[server]\nmuesli_recording_max_bytes = "+tt.serverCap+"\n[[muesli]]\naccount_email = \"user@example.com\"\nrecordings = true\nrecording_max_bytes = "+tt.sourceCap+"\n")
+			cfg, err := Load(path, "")
+			if tt.wantError {
+				require.Error(err)
+				return
+			}
+			require.NoError(err)
+			require.Len(cfg.Muesli, 1)
+			assert.True(cfg.Muesli[0].Recordings)
+			want := int64(4) << 30
+			if tt.sourceCap != "0" {
+				want = int64(8) << 30
+			}
+			assert.Equal(want, cfg.Muesli[0].EffectiveRecordingMaxBytes())
+		})
+	}
 }

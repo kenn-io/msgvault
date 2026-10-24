@@ -5151,6 +5151,26 @@ func TestHandleAddAccount(t *testing.T) {
 	assert.Equal("new@gmail.com", sched.addedAccts[0], "scheduler.AddAccount account")
 }
 
+func TestHandleAddAccountReportsRefusedSave(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(tmpDir, "config.toml"),
+		[]byte("[integrations.kata]\nendpoint = '://invalid'\n"), 0o600))
+	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, HomeDir: tmpDir}
+	srv := NewServer(cfg, nil, newMockScheduler(), testLogger())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(`{"email": "new@gmail.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusInternalServerError, w.Code, w.Body.String())
+	require.Contains(w.Body.String(), "refusing to save config")
+	require.Contains(w.Body.String(), "[integrations.kata]")
+	require.Empty(cfg.Accounts)
+}
+
 func TestHandleAddAccountDuplicate(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{
@@ -5650,25 +5670,22 @@ func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
 	var gotAfter, gotBefore *time.Time
 	var gotLimit, gotOffset int
 	engine := &querytest.MockEngine{
-		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
+		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) (query.DomainSearchResult, error) {
 			gotDomains = domains
 			gotAfter = after
 			gotBefore = before
 			gotLimit = limit
 			gotOffset = offset
-			return []query.MessageSummary{
-				{
-					ID:        1,
-					Subject:   "First",
-					FromEmail: "alice@example.com",
-					SentAt:    time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			return query.DomainSearchResult{
+				Messages: []query.MessageSummary{
+					{
+						ID:        1,
+						Subject:   "First",
+						FromEmail: "alice@example.com",
+						SentAt:    time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+					},
 				},
-				{
-					ID:        2,
-					Subject:   "Second",
-					FromEmail: "bob@test.org",
-					SentAt:    time.Date(2024, 1, 16, 10, 30, 0, 0, time.UTC),
-				},
+				HasMore: true,
 			}, nil
 		},
 	}
@@ -5689,7 +5706,7 @@ func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
 	assert.Equal("2024-01-01", gotAfter.Format("2006-01-02"), "after")
 	require.NotNil(gotBefore, "before")
 	assert.Equal("2024-02-01", gotBefore.Format("2006-01-02"), "before")
-	assert.Equal(2, gotLimit, "fetch limit should probe one extra row")
+	assert.Equal(1, gotLimit, "the engine probes for more, so the handler asks for the page size")
 	assert.Equal(3, gotOffset, "offset")
 
 	var resp FilteredMessagesResponse

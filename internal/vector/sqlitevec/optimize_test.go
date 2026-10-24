@@ -5,6 +5,7 @@ package sqlitevec
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -288,7 +289,7 @@ func TestPrepareAcceleratorDetectsConcurrentSourceChange(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrAcceleratorSourceChanged)
+	require.ErrorIs(t, err, ErrAcceleratorSourceChanged)
 }
 
 func TestAcceleratorWorkerCanBeKilledAndRetried(t *testing.T) {
@@ -399,4 +400,86 @@ func TestDropAcceleratorPreservesExactVectors(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, hits, 2)
 	assert.Equal(t, "exact", meta.Accelerator)
+}
+
+// FuzzPrepareAcceleratorBatchPause preserves the committed prefix for every
+// batch size and pause boundary, including a pause after the final batch.
+func FuzzPrepareAcceleratorBatchPause(f *testing.F) {
+	f.Add(uint16(0), uint16(0))
+	f.Add(uint16(1), uint16(511))
+	f.Add(uint16(73), uint16(3))
+	f.Add(uint16(512), uint16(0))
+	f.Add(uint16(65535), uint16(65535))
+	f.Fuzz(func(t *testing.T, rawBatch, rawPause uint16) {
+		backend := openOptimizeBackend(t, 4)
+		generation := seedOptimizeVectors(t, backend, 512, 4)
+		observer, err := Open(t.Context(), Options{Path: backend.path, Dimension: 4})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, observer.Close()) }()
+		batchSize := int(rawBatch)
+		effectiveBatch := batchSize
+		if effectiveBatch == 0 {
+			effectiveBatch = 5000
+		}
+		batchCount := (512 + effectiveBatch - 1) / effectiveBatch
+		pauseAfter := int(rawPause)%batchCount + 1
+		paused := errors.New("pause after committed batch")
+		calls := 0
+		_, err = backend.PrepareAccelerator(t.Context(), generation, OptimizeOptions{
+			BatchSize: batchSize,
+			AfterBatch: func() error {
+				calls++
+				status, err := observer.Accelerator(t.Context(), generation)
+				require.NoError(t, err)
+				require.NotNil(t, status)
+				var copied int64
+				require.NoError(t, observer.db.QueryRow(`SELECT COUNT(*) FROM `+status.TableName).Scan(&copied))
+				require.Equal(t, int64(min(calls*effectiveBatch, 512)), copied)
+				require.Equal(t, copied, status.IndexedCount, "cursor metadata is committed before yielding")
+				if calls == pauseAfter {
+					return paused
+				}
+				return nil
+			},
+		})
+		require.ErrorIs(t, err, paused)
+		plan, err := backend.PrepareAccelerator(t.Context(), generation, OptimizeOptions{BatchSize: batchSize})
+		require.NoError(t, err)
+		assert.False(t, plan.Restarted, "unchanged vectors resume the committed copy")
+		assert.Equal(t, int64(512), plan.IndexedCount)
+		var mismatches int
+		require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM vectors_vec_d4 v
+   WHERE v.generation_id = ? AND NOT EXISTS (SELECT 1 FROM `+plan.TableName+`
+   a WHERE a.rowid = v.embedding_id AND a.embedding = v.embedding)`, generation).Scan(&mismatches))
+		assert.Zero(t, mismatches, "the resumed copy contains every authoritative vector unchanged")
+	})
+}
+
+func TestPrepareAcceleratorValidatesGenerationAfterYield(t *testing.T) {
+	for _, retired := range []bool{false, true} {
+		t.Run(strconv.FormatBool(retired), func(t *testing.T) {
+			backend := openOptimizeBackend(t, 4)
+			generation := seedOptimizeVectors(t, backend, 512, 4)
+			yields := 0
+			_, err := backend.PrepareAccelerator(t.Context(), generation, OptimizeOptions{
+				BatchSize: 512,
+				AfterBatch: func() error {
+					yields++
+					if yields > 1 {
+						return nil
+					}
+					if retired {
+						return backend.RetireGeneration(t.Context(), generation, false)
+					}
+					return backend.Upsert(t.Context(), generation, []vector.Chunk{{MessageID: 1, Vector: []float32{1, 2, 3, 4}}})
+				},
+			})
+			if retired {
+				require.ErrorIs(t, err, vector.ErrGenerationRetired)
+			} else {
+				require.ErrorIs(t, err, ErrAcceleratorSourceChanged)
+			}
+			assert.Equal(t, 1, yields, "do not copy more batches from an invalidated snapshot")
+		})
+	}
 }

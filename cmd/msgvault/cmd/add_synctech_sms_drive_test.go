@@ -322,9 +322,7 @@ func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *test
   <sms address="+15551234567" date="1717214400000" type="1" body="manual sync should enqueue" read="1" status="-1" contact_name="Alice" />
 </smses>`), 0o600), "write backup")
 
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "InitSchema")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	require.NoError(st.Close(), "close store")
 
 	src := config.SynctechSMSSource{
@@ -336,7 +334,7 @@ func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *test
 	}
 	require.NoError(runConfiguredSynctechSMSSource(ctx, src), "runConfiguredSynctechSMSSource")
 
-	st, err = store.Open(cfg.DatabaseDSN())
+	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err, "reopen store")
 	t.Cleanup(func() { _ = st.Close() })
 	source := getSynctechSource(t, st, src.OwnerPhone)
