@@ -1086,7 +1086,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	if metadata.IsDefined("attachments", "documents") && !warnedRemovedDocuments.Swap(true) {
-		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md")
+		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank newer than v0.16.0)")
 	}
 	for _, key := range metadata.Undecoded() {
 		if len(key) > 0 && key[0] == "chatwoot" {

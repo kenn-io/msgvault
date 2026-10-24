@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -62,6 +63,8 @@ var disclosedPacketFieldsV1 = []string{
 }
 
 var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+var warnedDocumentText atomic.Bool
 
 type Protocol string
 type OutputMode string
@@ -277,7 +280,9 @@ func (c *Config) ApplyDefaults() {
 		hadSources := len(provider.AllowedSources) > 0
 		provider.AllowedSources = slices.DeleteFunc(slices.Clone(provider.AllowedSources), func(source SourceClass) bool {
 			if source == SourceDocumentText {
-				slog.Warn("document_text was removed; drop it from allowed_sources", "provider", name)
+				if !warnedDocumentText.Swap(true) {
+					slog.Warn("document_text was removed; drop it from allowed_sources", "provider", name)
+				}
 				return true
 			}
 			return false
