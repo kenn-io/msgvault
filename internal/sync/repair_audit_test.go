@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/calendarfixture"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
@@ -176,6 +177,40 @@ func TestAuditGmailMessagesMarksNonMIMEStoredRawInconclusive(t *testing.T) {
 	require.Len(results, 1)
 	assert.Equal(AuditInconclusive, results[0].Status)
 	assert.Equal(AuditInconclusive, results[0].Fields[AuditFieldRawMIME])
+}
+
+func TestAuditGmailMessagesExcludesExtractedCalendarEvents(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	calendar := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.com\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Planning\r\nORGANIZER:mailto:organizer@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	env.Mock.AddMessage("gmail-invite", calendarfixture.EmailFrom("organizer@example.com", calendar), []string{"INBOX"})
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 10
+	runFullSync(t, env)
+
+	var eventID int64
+	require.NoError(t, env.Store.DB().QueryRow(`SELECT id FROM messages WHERE source_id = ? AND message_type = 'calendar_event'`, source.ID).Scan(&eventID))
+	malformedID := seedRepairRow(t, env.Store, source.ID, "gmail-malformed", "thread-malformed", "malformed")
+	require.NoError(t, env.Store.UpsertMessageRaw(malformedID, []byte("not MIME\x00")))
+
+	for _, tc := range []struct {
+		name     string
+		sourceID int64
+	}{
+		{"one source", source.ID},
+		{"all sources", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			results := collectAudit(t, env.Syncer, tc.sourceID)
+			require.Len(t, results, 1, "only the malformed email should be reported; derived event %d is valid ICS", eventID)
+			assert.Equal(malformedID, results[0].InternalID)
+			assert.Equal(AuditInconclusive, results[0].Status)
+			assert.Equal(AuditInconclusive, results[0].Fields[AuditFieldRawMIME])
+			assert.NotEmpty(results[0].Error)
+		})
+	}
 }
 
 func TestAuditGmailMessagesOmitsCoherentLegacyEvidence(t *testing.T) {
