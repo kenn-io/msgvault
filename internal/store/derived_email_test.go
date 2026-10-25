@@ -36,7 +36,7 @@ func TestUpdateArchivedEmailText(t *testing.T) {
 		require.NoError(err)
 		providerSnippet := sql.NullString{String: "Provider preview", Valid: true}
 		synced, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-			Message: &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "archived", MessageType: "email", Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: providerSnippet},
+			Message:  &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "archived", MessageType: "email", Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: providerSnippet},
 			BodyText: stale, BodyHTML: html,
 		})
 		require.NoError(err)
@@ -70,7 +70,7 @@ func TestUpdateArchivedEmailText(t *testing.T) {
 		current := sql.NullString{String: "Replacement", Valid: true}
 		currentHTML := sql.NullString{String: "<p>Replacement</p>", Valid: true}
 		synced, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-			Message: &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "archived", MessageType: "email", Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: body},
+			Message:  &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "archived", MessageType: "email", Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: body},
 			BodyText: current, BodyHTML: currentHTML,
 			RawMIME: []byte("Content-Type: text/html; charset=UTF-8\r\n\r\n<p>Replacement</p>"),
 			FTS:     &store.FTSDoc{Subject: "Stored subject", Body: current.String},
