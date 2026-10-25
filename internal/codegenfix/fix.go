@@ -128,6 +128,11 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	}
 	// Required strings a response may send empty keep presence but lose their non-empty check.
 	for _, target := range [][3]string{
+		{"Attendee", "Email", "a"},
+		{"Attendee", "DisplayName", "a"},
+		{"CalendarOccurrence", "StartDate", "c"},
+		{"CalendarOccurrence", "EndDate", "c"},
+		{"CalendarOccurrence", "Subject", "c"},
 		{"ExploreCacheUnavailableResponse", "RecoveryAction", "e"},
 		{"Evidence", "Excerpt", "e"},
 		{"ContactCandidate", "DisplayName", "c"},
@@ -136,8 +141,23 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"MessagingRoute", "NetworkLabel", "m"},
 		{"MessagingRoute", "ProviderChatID", "m"},
 		{"PersonMessagingRoutesPage", "AliasReason", "p"},
+		{"CalendarOccurrenceDetail", "StartDate", "c"},
+		{"CalendarOccurrenceDetail", "EndDate", "c"},
+		{"CalendarOccurrenceDetail", "Subject", "c"},
 	} {
 		typeName, field, receiver := target[0], target[1], target[2]
+		if typeName == "Attendee" {
+			// Simple generated validators inspect struct tags instead of each field.
+			typeStart := bytes.Index(result, []byte("type "+typeName+" struct {"))
+			if typeStart < 0 {
+				return nil, fmt.Errorf("generated %s type shape changed", typeName)
+			}
+			typeEnd := bytes.Index(result[typeStart:], []byte("\n}")) + typeStart
+			fieldTag := regexp.MustCompile("(\\b" + field + "\\s+string\\s+`json:\"[^\"]+\") validate:\"required\"")
+			rewrittenType := fieldTag.ReplaceAll(result[typeStart:typeEnd], []byte("$1"))
+			result = append(append(append([]byte(nil), result[:typeStart]...), rewrittenType...), result[typeEnd:]...)
+		}
+
 		shapeErr := fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
 		start := bytes.Index(result, []byte("func ("+receiver+" "+typeName+") Validate() error {"))
 		if start < 0 {

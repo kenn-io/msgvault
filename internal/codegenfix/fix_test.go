@@ -28,10 +28,14 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.Contains(string(got), `typesValidator.Var(f.Grouping, "required,min=1,max=1")`)
 	assertions.NotContains(string(got), exploreCacheRecoveryActionRequiredValidatorBlock())
 	assertions.NotContains(string(got), "typesValidator.Var(e.Excerpt")
+	assertions.NotContains(string(got), `typesValidator.Var(c.StartDate, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(c.EndDate, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(c.Subject, "required")`)
 	assertions.Contains(string(got), "JSON jsontext.Value")
 	assertions.Contains(string(got), dailyNoteDecoyValidatorBlock())
 	assertions.Contains(string(got), dailyNotePersonIDsValidatorBlock("gte=1"))
 	assertions.NotContains(string(got), dailyNotePersonIDsValidatorBlock("omitempty,gte=1"))
+	assertions.Contains(string(got), "DisplayName string `json:\"display_name\"`")
 	again, err := RewriteGeneratedValidators(got)
 	require.NoError(t, err)
 	if !bytes.Equal(got, again) {
@@ -147,7 +151,32 @@ func TestRewriteGeneratedValidatorsRejectsAmbiguousDailyNotePersonIDValidators(t
 }
 
 func generatedValidatorFixture() string {
-	return `type AttributeValue struct {
+	return `type Attendee struct {
+	Email string
+	DisplayName string ` + "`json:\"display_name\" validate:\"required\"`" + `
+}
+func (a Attendee) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+type CalendarOccurrence struct {
+	StartDate string
+	EndDate string
+	Subject string
+}
+func (c CalendarOccurrence) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.StartDate, "required"); err != nil {
+		errors = errors.Append("StartDate", err)
+	}
+	if err := typesValidator.Var(c.EndDate, "required"); err != nil {
+		errors = errors.Append("EndDate", err)
+	}
+	if err := typesValidator.Var(c.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	return errors
+}
+type AttributeValue struct {
 	JSON *struct{}  ` + "`json:\"json,omitempty\"`" + `
 }
 type ExploreCacheUnavailableResponse struct {
@@ -185,7 +214,26 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + `
+type CalendarOccurrenceDetail struct {
+	StartDate string
+	EndDate string
+	Subject string
+}
+func (c CalendarOccurrenceDetail) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.StartDate, "required"); err != nil {
+		errors = errors.Append("StartDate", err)
+	}
+	if err := typesValidator.Var(c.EndDate, "required"); err != nil {
+		errors = errors.Append("EndDate", err)
+	}
+	if err := typesValidator.Var(c.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	return errors
+}
+`
 }
 
 func contactRouteEmptyStringValidatorFixture() string {
