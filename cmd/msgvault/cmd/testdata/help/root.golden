@@ -1,11 +1,9 @@
-msgvault archives email, chat, and meetings for offline search.
-Commands start or reuse a local daemon, or use [remote].url from config.toml.
---local forces the local daemon.
+Archive email, chats, and meetings offline. Use the daemon
+or config.toml's [remote].url; --local forces local.
 
 Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
-  # "id" feeds the commands below
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
@@ -15,10 +13,10 @@ Start here:
   msgvault daemon status
   msgvault setup status --json
 
-Output and exit status:
-  --json prints JSON on stdout (export-messages prints JSON Lines). Progress and
-  logs go to stderr; --log-level=warn quiets routine logs. Exit 0 success, 1 error,
-  130 interrupted. 'msgvault quickstart' has a longer agent guide.
+Output:
+  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
+  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
+  More: msgvault quickstart.
 
 Usage:
   msgvault [command]
@@ -66,6 +64,7 @@ Add and sync sources:
   add-discord            Register Discord guilds for bot-based archival
   add-granola            Register a Granola account and validate its API key
   add-imap               Add an IMAP account
+  add-inline             Authorize an Inline account
   add-matrix             Add a read-only Matrix account as an archive source
   add-muesli             Register a local Muesli meeting database
   add-notion-meetings    Register and validate a Notion AI Meeting Notes source
@@ -80,6 +79,7 @@ Add and sync sources:
   archive-remote-images  Download remote images in archived email (needs consent)
   backfill-beeper-media  Retry pending Beeper attachment downloads
   backfill-discord-media Retry pending Discord attachment downloads
+  backfill-inline-media  Retry eligible Inline attachment downloads
   backfill-slack-media   Retry pending Slack file downloads
   backfill-teams-media   Re-fetch missing Teams inline images for imported messages
   list-folders           List IMAP folders (mailboxes) available for an account
@@ -95,6 +95,7 @@ Add and sync sources:
   sync-discord           Sync registered Discord guild history
   sync-full              Perform a full sync of Gmail accounts
   sync-granola           Sync Granola meeting notes and transcripts
+  sync-inline            Archive Inline chats
   sync-matrix            Sync joined rooms from Matrix
   sync-muesli            Sync meetings from a local Muesli database
   sync-notion-meetings   Sync Notion AI Meeting Notes

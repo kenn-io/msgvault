@@ -101,6 +101,78 @@ func TestSchemaVersionLegacyMarker(t *testing.T) {
 	assert.Equal(store.SchemaVersion, version)
 }
 
+func TestSchemaVersionInlineServiceUpgrade(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		version              int
+		missingInline        bool
+		missingRouteFailures bool
+	}{
+		{name: "legacy6", version: 6, missingInline: true, missingRouteFailures: true},
+		{name: "upstream11", version: 11, missingInline: true},
+		{name: "inline7", version: 7, missingRouteFailures: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			s := testutil.NewTestStore(t)
+			ctx := t.Context()
+			uid, err := s.ArchiveUIDContext(ctx)
+			require.NoError(err)
+
+			// Archives missing the Inline seed or the route-failure table
+			// need setup before runtime readers can open them.
+			if tc.missingInline {
+				_, err = s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
+				require.NoError(err)
+				_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug = 'inline'`)
+				require.NoError(err)
+			}
+			if tc.missingRouteFailures {
+				_, err = s.DB().ExecContext(ctx, `DROP TABLE source_messaging_route_failures`)
+				require.NoError(err)
+			}
+			_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), strconv.Itoa(tc.version))
+			require.NoError(err)
+
+			require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+			version, err := s.SchemaVersionContext(ctx)
+			require.NoError(err)
+			assert.Equal(tc.version, version, "read-only validation must leave the old completion marker alone")
+			if tc.missingInline {
+				_, err = s.ResolveCommunicationServiceContext(ctx, "inline")
+				require.ErrorIs(err, store.ErrServiceNotFound, "read-only validation must not seed the missing service")
+			}
+			if tc.missingRouteFailures {
+				var rows int
+				err = s.DB().QueryRowContext(ctx, `SELECT count(*) FROM source_messaging_route_failures`).Scan(&rows)
+				require.Error(err, "read-only validation must not create the missing route-failure table")
+			}
+
+			require.NoError(s.InitSchemaContext(ctx))
+			require.NoError(s.ValidateSchemaContext(ctx))
+			version, err = s.SchemaVersionContext(ctx)
+			require.NoError(err)
+			assert.Equal(store.SchemaVersion, version)
+			service, err := s.ResolveCommunicationServiceContext(ctx, "inline")
+			require.NoError(err)
+			assert.True(service.IsSystem)
+			assert.Equal(store.ScopePolicyRequired, service.ScopePolicy)
+			var applied int
+			require.NoError(s.DB().QueryRowContext(ctx,
+				`SELECT count(*) FROM applied_migrations WHERE name = 'communication_services_inline_v1'`,
+			).Scan(&applied))
+			assert.Equal(1, applied)
+			var failures int
+			require.NoError(s.DB().QueryRowContext(ctx, `SELECT count(*) FROM source_messaging_route_failures`).Scan(&failures))
+			assert.Zero(failures)
+			again, err := s.ArchiveUIDContext(ctx)
+			require.NoError(err)
+			assert.Equal(uid, again, "setup must preserve the archive identity")
+		})
+	}
+}
+
 func TestSchemaVersionMalformedAndFuture(t *testing.T) {
 	req := require.New(t)
 	check := assert.New(t)
@@ -142,6 +214,7 @@ var (
 		11: "d3b5779bbd283bb4a6ccc932233bdbf7b4ea4d6c2453d43cf011a052a13c1064",
 		12: "77b6d3434f3091970112c2a27f20f8b9e940c0a71b5a16b280d552b3857412b5",
 		13: "c5ccb9e5b3659b94a2d66acfd0cf8ea323e70abb3000f3c5792c10ecf79f85b8",
+		14: "1092127cfc654d884f52634204dee6d04d5c4c9d966fe997263d064c871a21ee",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -157,6 +230,7 @@ var (
 		11: "0a64c9d206531b241d1066d3426dd21f6334d1e2c99468d838b8dac4a794cf70",
 		12: "21a6d84fac2dd2c3c1d04d23e56e6fc977dfb4431a11beed75678274fbdf11b3",
 		13: "da8aa0a2023db284656a471e2640b80ec2be2a5d110136cb8e62f81739a384ac",
+		14: "00ca50153fc0f90dc588225b0ce9b9097caf71dc42a47e73e7d03f2bfc460a93",
 	}
 )
 
