@@ -144,9 +144,11 @@ func TestRenewalAndReleaseContract(t *testing.T) {
 	ready.Operation, ready.RequestID = r.Operation, r.RequestID
 	var out bytes.Buffer
 	// Keeping either the old identity or generation cannot represent a successor.
+	ready.CredentialGeneration = 2
 	requirements.ErrorIs(credentialprovider.WriteResponse(&out, r, ready), credentialprovider.ErrInvalidResponse)
 	assertions.Empty(out.Bytes())
 	ready.CredentialID = uuid.MustParse("66666666-6666-4666-8666-666666666666")
+	ready.CredentialGeneration = 1
 	requirements.ErrorIs(credentialprovider.WriteResponse(&out, r, ready), credentialprovider.ErrInvalidResponse)
 	ready.CredentialGeneration = 2
 	requirements.NoError(credentialprovider.WriteResponse(&out, r, ready))
