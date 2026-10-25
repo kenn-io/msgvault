@@ -1046,6 +1046,10 @@ const messagesAccountIndexDefinition = "ON messages(account_address, account_pat
 // rows without scanning the source; it holds only rows awaiting attribution.
 const messagesAccountPendingIndexDefinition = "ON messages(source_id, id) WHERE " + accountPendingPredicate
 
+// messagesEmailLinkagePendingIndexDefinition does the same for email linkage;
+// it holds only emails whose email_link_keys are not derived yet.
+const messagesEmailLinkagePendingIndexDefinition = "ON messages(source_id, id) WHERE " + emailLinkagePendingPredicate
+
 // The first SQLite index build can take minutes, so log its start and finish.
 func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	const name = "idx_message_recipients_email_from"
@@ -1129,6 +1133,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
 		{"idx_messages_account", messagesAccountIndexDefinition},
 		{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
+		{"idx_messages_email_linkage_pending", messagesEmailLinkagePendingIndexDefinition},
 		{rfc822CanonicalIndexName, s.dialect.RFC822CanonicalIDIndexDefinition()},
 		{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
@@ -1643,6 +1648,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		for _, index := range []struct{ name, definition string }{
 			{"idx_messages_account", messagesAccountIndexDefinition},
 			{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
+			{"idx_messages_email_linkage_pending", messagesEmailLinkagePendingIndexDefinition},
 		} {
 			if _, err := s.db.ExecContext(ctx,
 				`CREATE INDEX IF NOT EXISTS `+index.name+` `+index.definition); err != nil {

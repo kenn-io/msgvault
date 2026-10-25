@@ -1288,20 +1288,40 @@ func (s *Store) deriveAccountAttributionPagesContext(
 	ctx context.Context, sourceID int64, progress func(AccountAttributionRepairSummary),
 	page func(tx *loggedTx, after int64, limit int) ([]int64, error),
 ) (AccountAttributionRepairSummary, error) {
+	scanned, flagged, err := s.derivePagesContext(ctx, sourceID, "derive account attribution", page,
+		func(tx *loggedTx, id int64) (bool, error) {
+			return s.refreshAccountAttributionTx(ctx, tx, id, deliveryInput{})
+		},
+		func(scanned, flagged int64) {
+			if progress != nil {
+				progress(AccountAttributionRepairSummary{Scanned: scanned, Undecodable: flagged})
+			}
+		})
+	return AccountAttributionRepairSummary{Scanned: scanned, Undecodable: flagged}, err
+}
+
+// derivePagesContext runs derive on each ID page returns, a page per shared
+// attribution transaction on sourceID. derive reports whether the row needs
+// a flag in the summary (undecodable, incomplete). progress sees the running
+// totals after each committed page.
+func (s *Store) derivePagesContext(
+	ctx context.Context, sourceID int64, what string,
+	page func(tx *loggedTx, after int64, limit int) ([]int64, error),
+	derive func(tx *loggedTx, id int64) (bool, error),
+	progress func(scanned, flagged int64),
+) (scanned, flagged int64, err error) {
 	limit := accountRepairPageSize
 	if s.accountRepairPageSizeOverride > 0 {
 		limit = s.accountRepairPageSizeOverride
 	}
-	var summary AccountAttributionRepairSummary
 	var after int64
 	for {
 		if err := ctx.Err(); err != nil {
-			return summary, err
+			return scanned, flagged, err
 		}
-		var pageSummary AccountAttributionRepairSummary
-		var last int64
+		var pageScanned, pageFlagged, last int64
 		err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-			pageSummary, last = AccountAttributionRepairSummary{}, 0
+			pageScanned, pageFlagged, last = 0, 0, 0
 			ids, err := page(tx, after, limit)
 			if err != nil {
 				return err
@@ -1310,29 +1330,29 @@ func (s *Store) deriveAccountAttributionPagesContext(
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				malformed, err := s.refreshAccountAttributionTx(ctx, tx, id, deliveryInput{})
+				flag, err := derive(tx, id)
 				if err != nil {
 					return err
 				}
-				pageSummary.Scanned++
-				if malformed {
-					pageSummary.Undecodable++
+				pageScanned++
+				if flag {
+					pageFlagged++
 				}
 				last = id
 			}
 			return nil
 		})
 		if err != nil {
-			return summary, fmt.Errorf("derive account attribution for source %d: %w", sourceID, err)
+			return scanned, flagged, fmt.Errorf("%s for source %d: %w", what, sourceID, err)
 		}
-		if pageSummary.Scanned == 0 {
-			return summary, nil
+		if pageScanned == 0 {
+			return scanned, flagged, nil
 		}
-		summary.Scanned += pageSummary.Scanned
-		summary.Undecodable += pageSummary.Undecodable
+		scanned += pageScanned
+		flagged += pageFlagged
 		after = last
 		if progress != nil {
-			progress(summary)
+			progress(scanned, flagged)
 		}
 	}
 }
