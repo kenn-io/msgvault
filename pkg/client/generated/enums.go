@@ -1210,6 +1210,40 @@ func (m MeetingImportResponseStatus) Validate() error {
 	}
 }
 
+type MeetingLinkDecisionRequestDecision string
+
+const (
+	Link   MeetingLinkDecisionRequestDecision = "link"
+	Unlink MeetingLinkDecisionRequestDecision = "unlink"
+)
+
+// Validate checks if the MeetingLinkDecisionRequestDecision value is valid
+func (m MeetingLinkDecisionRequestDecision) Validate() error {
+	switch m {
+	case Link, Unlink:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingLinkDecisionRequestDecision value, got: %v", m))
+	}
+}
+
+type MeetingLinkDecisionResponseCacheState string
+
+const (
+	MeetingLinkDecisionResponseCacheStateReady MeetingLinkDecisionResponseCacheState = "ready"
+	MeetingLinkDecisionResponseCacheStateStale MeetingLinkDecisionResponseCacheState = "stale"
+)
+
+// Validate checks if the MeetingLinkDecisionResponseCacheState value is valid
+func (m MeetingLinkDecisionResponseCacheState) Validate() error {
+	switch m {
+	case MeetingLinkDecisionResponseCacheStateReady, MeetingLinkDecisionResponseCacheStateStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingLinkDecisionResponseCacheState value, got: %v", m))
+	}
+}
+
 type MeetingScopeRequestDeletion string
 
 const (

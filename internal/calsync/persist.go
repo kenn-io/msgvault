@@ -8,7 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -34,24 +36,25 @@ func buildSourceConfigJSON(c sourceConfig) string {
 // the event facts that don't fit the messages columns (the interval end, all-day
 // flag, status, recurrence rules, series linkage, and source links).
 type eventMetadata struct {
-	Status            string   `json:"status,omitempty"`
-	AllDay            bool     `json:"all_day"`
-	Start             string   `json:"start,omitempty"`
-	End               string   `json:"end,omitempty"`
-	TimeZone          string   `json:"time_zone,omitempty"`
-	Recurrence        []string `json:"recurrence,omitempty"`
-	RecurringEventID  string   `json:"recurring_event_id,omitempty"`
-	OriginalStartTime string   `json:"original_start_time,omitempty"`
-	ICalUID           string   `json:"ical_uid,omitempty"`
-	Sequence          int      `json:"sequence,omitzero"`
-	HTMLLink          string   `json:"html_link,omitempty"`
-	HangoutLink       string   `json:"hangout_link,omitempty"`
-	Transparency      string   `json:"transparency,omitempty"`
-	Visibility        string   `json:"visibility,omitempty"`
-	EventType         string   `json:"event_type,omitempty"`
-	OrganizerEmail    string   `json:"organizer_email,omitempty"`
-	CalendarID        string   `json:"calendar_id,omitempty"`
-	AccountEmail      string   `json:"account_email,omitempty"`
+	Status                    string   `json:"status,omitempty"`
+	AllDay                    bool     `json:"all_day"`
+	Start                     string   `json:"start,omitempty"`
+	End                       string   `json:"end,omitempty"`
+	TimeZone                  string   `json:"time_zone,omitempty"`
+	Recurrence                []string `json:"recurrence,omitempty"`
+	RecurringEventID          string   `json:"recurring_event_id,omitempty"`
+	OriginalStartTime         string   `json:"original_start_time,omitempty"`
+	ICalUID                   string   `json:"ical_uid,omitempty"`
+	ProviderUpdatedAtUnixNano int64    `json:"provider_updated_at_unix_nano,omitzero"`
+	Sequence                  int      `json:"sequence,omitzero"`
+	HTMLLink                  string   `json:"html_link,omitempty"`
+	HangoutLink               string   `json:"hangout_link,omitempty"`
+	Transparency              string   `json:"transparency,omitempty"`
+	Visibility                string   `json:"visibility,omitempty"`
+	EventType                 string   `json:"event_type,omitempty"`
+	OrganizerEmail            string   `json:"organizer_email,omitempty"`
+	CalendarID                string   `json:"calendar_id,omitempty"`
+	AccountEmail              string   `json:"account_email,omitempty"`
 }
 
 // ingestEvent persists a non-cancelled event through the canonical write path
@@ -59,15 +62,21 @@ type eventMetadata struct {
 // via UpsertMessage's ON CONFLICT(source_id, source_message_id).
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
 	smid := deriveSourceMessageID(ev)
-	ev.Organizer.Email = normalizeParticipantEmail(ev.Organizer.Email)
+	ev.Organizer.Email = gcalmodel.NormalizeParticipantEmail(ev.Organizer.Email)
 	for i := range ev.Attendees {
-		ev.Attendees[i].Email = normalizeParticipantEmail(ev.Attendees[i].Email)
+		ev.Attendees[i].Email = gcalmodel.NormalizeParticipantEmail(ev.Attendees[i].Email)
 	}
 
 	// Organizer → sender, resolved through the email-keyed participant path so
 	// calendar people dedupe with email contacts.
+	organizerRoom := calevent.IsRoomAttendee(ev.Organizer.Email, false)
+	for _, a := range ev.Attendees {
+		if a.Email == ev.Organizer.Email && calevent.IsRoomAttendee(a.Email, a.Resource) {
+			organizerRoom = true
+		}
+	}
 	var senderID int64
-	if ev.Organizer.Email != "" {
+	if ev.Organizer.Email != "" && !organizerRoom {
 		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, emailDomain(ev.Organizer.Email))
 		if err != nil {
 			return 0, fmt.Errorf("organizer participant: %w", err)
@@ -83,13 +92,16 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		if a.Email == "" {
 			continue
 		}
+		attendeeEmails = append(attendeeEmails, a.Email)
+		if calevent.IsRoomAttendee(a.Email, a.Resource) {
+			continue
+		}
 		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, emailDomain(a.Email))
 		if err != nil {
 			return 0, fmt.Errorf("attendee participant: %w", err)
 		}
 		attendeeIDs = append(attendeeIDs, pid)
 		attendeeNames = append(attendeeNames, a.DisplayName)
-		attendeeEmails = append(attendeeEmails, a.Email)
 	}
 
 	// Only the series master (or a standalone event) sets the conversation
@@ -195,11 +207,11 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 		return 0, false, fmt.Errorf("lookup existing event: %w", err)
 	}
 	if id, ok := existing[smid]; ok {
-		merged, err := mergeStatusCancelled(s.store, id)
+		merged, err := mergeStatusCancelled(s.store, id, ev)
 		if err != nil {
 			return 0, false, err
 		}
-		if err := s.store.SetMessageMetadata(id, merged); err != nil {
+		if err := s.store.SetCalendarEventProviderMetadata(id, merged); err != nil {
 			return 0, false, fmt.Errorf("flag cancelled metadata: %w", err)
 		}
 		return id, false, nil
@@ -213,9 +225,9 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 	return id, true, nil
 }
 
-// mergeStatusCancelled reads a message's existing metadata, sets status to
-// "cancelled", and returns the merged JSON, preserving all other keys.
-func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, error) {
+// mergeStatusCancelled reads a message's existing metadata, sets status and
+// provider version fields from the cancellation, and preserves other keys.
+func mergeStatusCancelled(st *store.Store, messageID int64, ev gcal.Event) (sql.NullString, error) {
 	existing, err := st.GetMessageMetadata(messageID)
 	if err != nil {
 		return sql.NullString{}, fmt.Errorf("read metadata: %w", err)
@@ -228,6 +240,16 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 		}
 	}
 	m["status"] = gcal.StatusCancelled
+	if ev.Updated.IsZero() {
+		delete(m, "provider_updated_at_unix_nano")
+	} else {
+		m["provider_updated_at_unix_nano"] = ev.Updated.UTC().UnixNano()
+	}
+	if ev.Sequence == 0 {
+		delete(m, "sequence")
+	} else {
+		m["sequence"] = ev.Sequence
+	}
 	b, err := json.Marshal(m, json.Deterministic(true))
 	if err != nil {
 		return sql.NullString{}, fmt.Errorf("marshal merged metadata: %w", err)
@@ -235,16 +257,19 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 	return sql.NullString{String: string(b), Valid: true}, nil
 }
 
-func normalizeParticipantEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
 // deriveSourceMessageID is the idempotency key: a standalone event or series
 // master uses event.id; a recurring instance/exception/cancellation uses
 // recurringEventId|originalStartTime so each occurrence upserts independently
-// and a single cancelled occurrence flags only its own row.
+// and a single cancelled occurrence flags only its own row. An original start
+// that was only resolved from an offset-free dateTime plus timeZone keeps
+// event.id, the key archives held before such values decoded to an instant.
+// Google keeps one original-start representation per occurrence, so this key
+// stays stable across syncs.
 func deriveSourceMessageID(ev gcal.Event) string {
 	if ev.RecurringEventID != "" {
+		if orig := ev.OriginalStartTime; orig.Date == "" && !orig.DateTime.IsZero() && orig.ResolvedFromTimeZone {
+			return ev.ID
+		}
 		if key := originalStartKey(ev.OriginalStartTime); key != "" {
 			return ev.RecurringEventID + "|" + key
 		}
@@ -285,25 +310,30 @@ func eventSentAt(ev gcal.Event) sql.NullTime {
 
 // buildMetadata projects an event into the metadata payload.
 func buildMetadata(ev gcal.Event, cal gcal.Calendar, accountEmail string) eventMetadata {
+	var providerUpdatedAt int64
+	if !ev.Updated.IsZero() {
+		providerUpdatedAt = ev.Updated.UTC().UnixNano()
+	}
 	return eventMetadata{
-		Status:            ev.Status,
-		AllDay:            ev.Start.IsAllDay(),
-		Start:             dateTimeString(ev.Start),
-		End:               dateTimeString(ev.End),
-		TimeZone:          ev.Start.TimeZone,
-		Recurrence:        ev.Recurrence,
-		RecurringEventID:  ev.RecurringEventID,
-		OriginalStartTime: originalStartKey(ev.OriginalStartTime),
-		ICalUID:           ev.ICalUID,
-		Sequence:          ev.Sequence,
-		HTMLLink:          ev.HTMLLink,
-		HangoutLink:       ev.HangoutLink,
-		Transparency:      ev.Transparency,
-		Visibility:        ev.Visibility,
-		EventType:         ev.EventType,
-		OrganizerEmail:    ev.Organizer.Email,
-		CalendarID:        cal.ID,
-		AccountEmail:      accountEmail,
+		Status:                    ev.Status,
+		AllDay:                    ev.Start.IsAllDay(),
+		Start:                     dateTimeString(ev.Start),
+		End:                       dateTimeString(ev.End),
+		TimeZone:                  ev.Start.TimeZone,
+		Recurrence:                ev.Recurrence,
+		RecurringEventID:          ev.RecurringEventID,
+		OriginalStartTime:         originalStartKey(ev.OriginalStartTime),
+		ICalUID:                   ev.ICalUID,
+		ProviderUpdatedAtUnixNano: providerUpdatedAt,
+		Sequence:                  ev.Sequence,
+		HTMLLink:                  ev.HTMLLink,
+		HangoutLink:               ev.HangoutLink,
+		Transparency:              ev.Transparency,
+		Visibility:                ev.Visibility,
+		EventType:                 ev.EventType,
+		OrganizerEmail:            ev.Organizer.Email,
+		CalendarID:                cal.ID,
+		AccountEmail:              accountEmail,
 	}
 }
 

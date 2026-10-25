@@ -219,6 +219,13 @@ func CopySubsetWithOptions(
 		closeAndCleanup()
 		return nil, err
 	}
+	calendarObservationOrders, err := subsetCalendarObservationOrders(tx)
+	if err != nil {
+		_ = tx.Rollback()
+		_, _ = db.Exec("DETACH DATABASE src")
+		closeAndCleanup()
+		return nil, fmt.Errorf("preserve copied calendar observation order: %w", err)
+	}
 
 	// The empty destination's schema initialization already recorded this
 	// migration. Rebuild derived meetings from copied raw, including old sources
@@ -227,6 +234,24 @@ func CopySubsetWithOptions(
 		_ = tx.Rollback()
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarProviderObservationV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied calendar observation migration: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationRoomRecipientsV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied room recipients migration: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -287,6 +312,11 @@ func CopySubsetWithOptions(
 		cleanup()
 		return nil, fmt.Errorf("rebuild copied subset chat members: %w", err)
 	}
+	if err := normalized.restoreSubsetCalendarObservationOrders(context.Background(), calendarObservationOrders); err != nil {
+		_ = normalized.Close()
+		cleanup()
+		return nil, fmt.Errorf("restore copied calendar observation order: %w", err)
+	}
 	// Initial schema creation ledgered the inference migration before any
 	// people existed. Recheck the transferred projection for legacy source
 	// rows without state, preserving every copied positive revision.
@@ -345,6 +375,55 @@ func verifyForeignKeys(db *sql.DB) error {
 		)
 	}
 	return nil
+}
+
+type subsetCalendarObservationOrder struct {
+	messageID int64
+	order     int64
+}
+
+func subsetCalendarObservationOrders(tx *sql.Tx) (orders []subsetCalendarObservationOrder, resultErr error) {
+	hasProjection, err := sourceTableExists(tx, "calendar_events")
+	if err != nil || !hasProjection {
+		return nil, err
+	}
+	hasOrder, err := sourceColumnExists(tx, "calendar_events", "provider_observation_order")
+	if err != nil || !hasOrder {
+		return nil, err
+	}
+	rows, err := tx.Query(`SELECT e.message_id, e.provider_observation_order
+		FROM src.calendar_events e
+		JOIN messages selected ON selected.id = e.message_id
+		ORDER BY e.message_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+	for rows.Next() {
+		var order subsetCalendarObservationOrder
+		if err := rows.Scan(&order.messageID, &order.order); err != nil {
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+	return orders, rows.Err()
+}
+
+func (s *Store) restoreSubsetCalendarObservationOrders(ctx context.Context, orders []subsetCalendarObservationOrder) error {
+	if len(orders) == 0 {
+		return nil
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		for _, order := range orders {
+			if _, err := tx.ExecContext(ctx, `UPDATE calendar_events SET provider_observation_order = ? WHERE message_id = ?`, order.order, order.messageID); err != nil {
+				return fmt.Errorf("restore calendar event %d observation order: %w", order.messageID, err)
+			}
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE calendar_event_observation_clock
+			SET observation_order = (SELECT COALESCE(MAX(provider_observation_order), 0) FROM calendar_events)
+			WHERE singleton = 1`)
+		return err
+	})
 }
 
 // copyData executes INSERT INTO ... SELECT in dependency order.
@@ -969,6 +1048,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("preserve subset draft evidence: %w", err)
 	}
 	result.Labels += preservedLabels
+
+	if present, err := sourceTableExists(tx, "meeting_link_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if _, err := tx.Exec(`INSERT INTO meeting_link_decisions SELECT d.* FROM src.meeting_link_decisions d WHERE d.member_message_id IN (SELECT id FROM messages) AND (d.target_message_id IN (SELECT id FROM messages) OR (d.target_ical_uid <> '' AND EXISTS (SELECT 1 FROM messages m WHERE m.message_type = 'calendar_event' AND CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.ical_uid') END = d.target_ical_uid)))`); err != nil {
+			return nil, fmt.Errorf("copy meeting decisions: %w", err)
+		}
+	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.

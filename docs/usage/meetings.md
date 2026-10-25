@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-20"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -45,6 +45,33 @@ matches. Meetings mode does not offer selection or deletion.
 
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
+
+## Connect notes to calendar events
+
+Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; calendar copies can appear as separate rows.
+
+```bash
+msgvault meetings links 42
+msgvault meetings suggest msg:42
+msgvault meetings link 42 --event evt:100
+msgvault meetings unlink 42 --event evt:100
+```
+
+`suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` selects an event for the note; `unlink` keeps that meeting and its calendar copies apart from the note, including after reimport, and stops a UID match from linking the note again.
+
+Some recurring series or exceptions cannot be fully expanded because their
+recurrence is unsupported, exceeds request bounds, or lacks an original start.
+Plain output warns on stderr and still lists readable candidates. JSON includes
+an `unexpandable` array with each affected calendar entry's message ID and
+reason; check it before treating an empty or partial result as complete.
+
+Copy event references from suggestions or `calendar events --json`. Recurring occurrences use the series message ID and original date or UTC start, such as `evt:100@20270314T100000Z`; a moved occurrence keeps that original key. Independently readable exceptions can use their own `evt:<id>` reference.
+
+Each calendar occurrence is one archived row. A cancellation keeps the fields of its own row, and the series fills in what a cancellation that was never seen omits.
+
+A saved choice follows the event's iCalendar UID and original occurrence time, so if a provider later changes either, for example by turning a one-off event into a series, the link can stop resolving and the event shows up as a suggestion.
+
+These commands require owner access. MCP tools and an event-to-notes meeting record come with the next slice of the [calendar roadmap](https://github.com/kenn-io/msgvault/issues/1200).
 
 ## Export context and read follow-ups
 
@@ -250,6 +277,8 @@ number that already belongs to that person, for example from mail, chat, or a
 promoted profile. The attendee becomes a participant, and the next activity
 update (hourly, or `msgvault activity build`) adds the meeting to the person's
 timeline, relationships, and last-contact information.
+
+Linked copies of one occurrence count once, including across selected sources. A series master stays one calendar item. Imports leave rooms out of people.
 
 Some sources also know that several emails and phone numbers are the same
 human. msgvault links those identities through the source's stable identifier,

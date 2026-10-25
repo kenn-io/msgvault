@@ -3803,6 +3803,11 @@ func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, e
 	return state.IdentityRevision, nil
 }
 
+func (a *storeAPIAdapter) CacheMessageBoundary(context.Context) (int64, error) {
+	state, err := query.ReadCacheSyncState(a.analyticsDir)
+	return state.LastMessageID, err
+}
+
 func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
 	return a.store.GetActiveSyncReadOnly(ctx, sourceID)
 }
