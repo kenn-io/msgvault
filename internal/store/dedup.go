@@ -564,11 +564,23 @@ func (s *Store) MergeDuplicates(
 				WHERE reply_to_message_id = ?`, survivorID, dupID); err != nil {
 				return fmt.Errorf("repoint replies from duplicate %d: %w", dupID, err)
 			}
+			if err := copyMeetingLinkDecisionsTx(ctx, tx, dupID, survivorID); err != nil {
+				return err
+			}
 			if _, err := tx.Exec(softDeleteSQL, batchID, dupID); err != nil {
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
 			}
 		}
 		if result.RawMIMEBackfilled > 0 {
+			if err := s.lockMeetingEvidenceWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
+			if err := s.refreshMeetingProjectionWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
+			if err := s.refreshCalendarEventProjectionWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err
 		}

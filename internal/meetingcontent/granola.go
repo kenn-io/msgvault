@@ -9,6 +9,16 @@ import (
 
 func decodeGranola(fields map[string]jsontext.Value) Content {
 	content := baseRecognizedContent()
+	var owner personWire
+	_ = json.Unmarshal(fields["owner"], &owner)
+	var calendar map[string]jsontext.Value
+	if json.Unmarshal(fields["calendar_event"], &calendar) == nil {
+		id, _ := optionalString(calendar["calendar_event_id"])
+		content.LinkEvidence = LinkEvidence{GoogleEventID: strings.TrimSpace(id), CalendarID: normalizeExplicitEmail(owner.Email)}
+		if at, ok := rawTime(calendar["scheduled_start_time"], false); ok {
+			content.LinkEvidence.ScheduledAt = &at
+		}
+	}
 	content.Summary = decodeStringAliases(fields, "summary_markdown", "summary_text")
 	content.Notes = Section{State: StateUnsupported}
 	content.ActionCoverage = CoverageUnsupported
@@ -19,17 +29,13 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 	if transcript.State == StateAvailable {
 		content.Transcript.Segments = segments
 	}
-	content.SourceParticipants = granolaParticipants(fields)
+	content.SourceParticipants = granolaParticipants(fields, owner, calendar)
 
-	if calendarRaw, ok := fields["calendar_event"]; ok && !isNull(calendarRaw) {
-		var calendar map[string]jsontext.Value
-		if json.Unmarshal(calendarRaw, &calendar) == nil {
-			start, startOK := rawTime(calendar["scheduled_start_time"], false)
-			end, endOK := rawTime(calendar["scheduled_end_time"], false)
-			if startOK && endOK && end.After(start) {
-				setDuration(&content, end.Sub(start).Seconds(), DurationScheduled)
-				return content
-			}
+	if start := content.LinkEvidence.ScheduledAt; start != nil {
+		end, endOK := rawTime(calendar["scheduled_end_time"], false)
+		if endOK && end.After(*start) {
+			setDuration(&content, end.Sub(*start).Seconds(), DurationScheduled)
+			return content
 		}
 	}
 	var starts, ends []time.Time
@@ -123,18 +129,14 @@ func granolaSpeaker(name, diarization, source string) string {
 	return "Them"
 }
 
-func granolaParticipants(fields map[string]jsontext.Value) []Participant {
-	var owner personWire
-	_ = json.Unmarshal(fields["owner"], &owner)
-	var calendar struct {
-		Organiser string `json:"organiser"`
-		Invitees  []struct {
-			Email string `json:"email"`
-		} `json:"invitees"`
+func granolaParticipants(fields map[string]jsontext.Value, owner personWire, calendar map[string]jsontext.Value) []Participant {
+	organiser, _ := optionalString(calendar["organiser"])
+	var invitees []struct {
+		Email string `json:"email"`
 	}
-	_ = json.Unmarshal(fields["calendar_event"], &calendar)
+	_ = json.Unmarshal(calendar["invitees"], &invitees)
 	organizer := owner
-	if email := strings.TrimSpace(calendar.Organiser); email != "" {
+	if email := strings.TrimSpace(organiser); email != "" {
 		organizer = personWire{Email: email}
 		if strings.EqualFold(owner.Email, email) {
 			organizer.Name = owner.Name
@@ -143,7 +145,7 @@ func granolaParticipants(fields map[string]jsontext.Value) []Participant {
 	var attendees []personWire
 	_ = json.Unmarshal(fields["attendees"], &attendees)
 	if len(attendees) == 0 {
-		for _, invitee := range calendar.Invitees {
+		for _, invitee := range invitees {
 			attendees = append(attendees, personWire{Email: invitee.Email})
 		}
 	}
