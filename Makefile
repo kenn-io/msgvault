@@ -340,10 +340,12 @@ web-check: web-install
 web-test:
 	cd web && bun run test
 
-# Install the locked Chromium revision even when a main-pinned PR workflow
-# supplies an older browser image. Keep other projects' cached browsers.
+# Use the remote browser server in CI, or install the locked Chromium locally.
+# Keep other projects' cached browsers.
 web-browser-install: web-install
-	cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium
+	@if [ -z "$$PW_TEST_CONNECT_WS_ENDPOINT" ]; then \
+		cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium; \
+	fi
 
 # test:browser runs everything under web/tests, including tests/e2e specs
 # whose fixtures spawn the repo-root msgvault daemon, so the binary must
@@ -351,7 +353,7 @@ web-browser-install: web-install
 web-test-browser: build web-browser-install
 	cd web && bun run test:browser
 
-# Browser gates use the same digest-pinned Playwright environment as CI.
+# Browser gates use local Chromium or the remote Playwright server in CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.
 web-e2e: build web-browser-install
 	cd web && bun run test:e2e
