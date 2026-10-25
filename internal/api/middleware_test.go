@@ -410,15 +410,24 @@ func TestExistingAPIKeyAuthenticationCompatibility(t *testing.T) {
 	tests := []struct {
 		name    string
 		headers http.Header
+		want    int
 	}{
 		{
 			name:    "X-Api-Key",
 			headers: http.Header{"X-Api-Key": []string{apiKey}},
+			want:    http.StatusOK,
 		},
 		{
 			name:    "bearer authorization",
 			headers: http.Header{"Authorization": []string{"Bearer " + apiKey}},
+			want:    http.StatusOK,
 		},
+		{name: "raw", headers: http.Header{"Authorization": {apiKey}}, want: http.StatusOK},
+		{name: "alias bearer", headers: http.Header{"X-Api-Key": {"Bearer " + apiKey}}, want: http.StatusOK},
+		{name: "lowercase bearer", headers: http.Header{"Authorization": {"bearer " + apiKey}}, want: http.StatusOK},
+		{name: "uppercase bearer", headers: http.Header{"Authorization": {"BEARER " + apiKey}}, want: http.StatusOK},
+		{name: "duplicate raw", headers: http.Header{"Authorization": {apiKey, apiKey}}, want: http.StatusUnauthorized},
+		{name: "duplicate bearer", headers: http.Header{"Authorization": {"Bearer " + apiKey, "Bearer " + apiKey}}, want: http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
@@ -440,7 +449,7 @@ func TestExistingAPIKeyAuthenticationCompatibility(t *testing.T) {
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, req)
 
-			assert.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+			assert.Equal(t, tt.want, resp.Code, resp.Body.String())
 		})
 	}
 }

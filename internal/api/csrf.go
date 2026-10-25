@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -65,7 +66,7 @@ func (s *Server) requestSecurityMiddleware(next http.Handler) http.Handler {
 			scheme: scheme,
 			host:   host,
 		}
-		ctx := context.WithValue(r.Context(), requestSecurityContextKey{}, security)
+		ctx := apiprotocol.WithBrowserOrigin(context.WithValue(r.Context(), requestSecurityContextKey{}, security), scheme+"://"+host)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
