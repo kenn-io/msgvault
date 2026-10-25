@@ -186,7 +186,12 @@ func InstructionExpandsDelivery(text, scopeAddress string) bool {
 	if instructionDeliveryLexicon.MatchString(textWithoutEmailTokens) {
 		return true
 	}
-	for _, token := range instructionDigits.FindAllString(textWithoutEmailTokens, -1) {
+	textForDigitScan := textWithoutEmailTokens
+	if scopeAddress != "" {
+		scopedAddressPattern := regexp.MustCompile(`(^|[^\pL\pN_])` + regexp.QuoteMeta(scopeAddress) + `([^\pL\pN_]|$)`)
+		textForDigitScan = scopedAddressPattern.ReplaceAllString(textForDigitScan, " ")
+	}
+	for _, token := range instructionDigits.FindAllString(textForDigitScan, -1) {
 		if token != strings.TrimPrefix(scopeAddress, "+") {
 			return true
 		}

@@ -91,6 +91,28 @@ func TestInstructionExpandsDeliveryIgnoresDigitsInsideScopedEmail(t *testing.T) 
 	assert.True(t, InstructionExpandsDelivery("avoid alice1234567@example.com and 1234567890", "alice1234567@example.com"))
 }
 
+func TestValidateInstructionTextIgnoresScopedUsernameDigits(t *testing.T) {
+	tests := []struct {
+		name, text, wantReason string
+	}{
+		{name: "scoped username", text: "avoid alice1234567"},
+		{name: "unrelated phone number", text: "avoid alice1234567 and 1234567890", wantReason: "instruction-expands-delivery"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateInstructionText(InstructionText{
+				Kind: InstructionKindOther, Text: tt.text, ScopeAddress: "alice1234567",
+			})
+			if tt.wantReason == "" {
+				assert.Nil(t, err)
+				return
+			}
+			require.NotNil(t, err)
+			assert.Equal(t, tt.wantReason, err.Reason)
+		})
+	}
+}
+
 func TestInstructionExpandsDeliveryIgnoresScopedEmailForLexicon(t *testing.T) {
 	tests := []struct {
 		name, text, scopeAddress string
