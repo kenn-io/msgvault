@@ -2,6 +2,7 @@ package credentialprovider_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -71,7 +72,7 @@ func TestExchangeCancellationStopsDescendants(t *testing.T) {
 		_, err := credentialprovider.Exchange(ctx, []string{executable, "-test.run=^TestProviderProcess$", "--", "parent", listener.Addr().String()}, r)
 		done <- err
 	}()
-	// The grandchild, not its parent, owns this connection. Its EOF proves the
+	// The grandchild, not its parent, owns this connection. Its closure proves the
 	// helper's descendant was stopped, even if it inherited stdout's pipe.
 	conn, err := listener.Accept()
 	requirements.NoError(err)
@@ -88,7 +89,8 @@ func TestExchangeCancellationStopsDescendants(t *testing.T) {
 		requirements.FailNow("helper did not stop")
 	}
 	_, err = conn.Read(ready[:])
-	assertions.ErrorIs(err, io.EOF)
+	assertions.True(errors.Is(err, io.EOF) || errors.Is(err, errConnectionReset),
+		"expected the descendant's connection to close, got %v", err)
 }
 
 // This is the executable peer, not a substitute for Exchange. It reads the real
@@ -125,7 +127,7 @@ func TestProviderProcess(t *testing.T) {
 		os.Exit(0)
 	}
 	if mode == "oversize" {
-		_, _ = io.WriteString(os.Stdout, strings.Repeat(" ", credentialprovider.MaxDocumentBytes+1))
+		_, _ = io.WriteString(os.Stdout, readyJSON+strings.Repeat(" ", credentialprovider.MaxDocumentBytes+1-len(readyJSON)))
 		os.Exit(0)
 	}
 	if mode == "denied" {

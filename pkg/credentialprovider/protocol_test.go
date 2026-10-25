@@ -69,20 +69,23 @@ func TestResponseMustMatchRequest(t *testing.T) {
 	assertions.Equal("synthetic-token", response.Credential.Token)
 	assertions.Equal(5*time.Minute, response.ExpiresAt.Sub(response.IssuedAt))
 	for name, input := range map[string]string{
-		"another endpoint":           strings.Replace(readyJSON, `/messages/mcp`, `/mcp`, 1),
-		"another archive":            strings.Replace(readyJSON, `archive-a`, `archive-b`, 1),
-		"another installation":       strings.Replace(readyJSON, `22222222-2222`, `22222223-2222`, 1),
-		"another approval":           strings.Replace(readyJSON, `33333333-3333`, `33333334-3333`, 1),
-		"another operation":          strings.Replace(readyJSON, `authorize`, `renew`, 1),
-		"another request":            strings.Replace(readyJSON, `11111111-1111`, `11111112-1111`, 1),
-		"extra source":               strings.Replace(readyJSON, `"17",`, `"16","17",`, 1),
-		"different tool":             strings.Replace(readyJSON, `get_stats`, `list_messages`, 1),
-		"empty token":                strings.Replace(readyJSON, `synthetic-token`, ``, 1),
-		"header injection":           strings.Replace(readyJSON, `synthetic-token`, `synthetic\r\nHeader:value`, 1),
-		"expired interval":           strings.Replace(readyJSON, `15:05:00`, `14:59:59`, 1),
-		"denial with secret":         strings.Replace(readyJSON, `"ready"`, `"denied"`, 1),
-		"replay with secret":         strings.Replace(readyJSON, `"ready"`, `"already_issued"`, 1),
-		"renew replay for authorize": strings.Replace(readyJSON, `"ready"`, `"replacement_required"`, 1),
+		"another endpoint":     strings.Replace(readyJSON, `/messages/mcp`, `/mcp`, 1),
+		"another archive":      strings.Replace(readyJSON, `archive-a`, `archive-b`, 1),
+		"another installation": strings.Replace(readyJSON, `22222222-2222`, `22222223-2222`, 1),
+		"another approval":     strings.Replace(readyJSON, `33333333-3333`, `33333334-3333`, 1),
+		"another operation":    strings.Replace(readyJSON, `authorize`, `renew`, 1),
+		"another request":      strings.Replace(readyJSON, `11111111-1111`, `11111112-1111`, 1),
+		"extra source":         strings.Replace(readyJSON, `"17",`, `"16","17",`, 1),
+		"different tool":       strings.Replace(readyJSON, `get_stats`, `list_messages`, 1),
+		"empty token":          strings.Replace(readyJSON, `synthetic-token`, ``, 1),
+		"header injection":     strings.Replace(readyJSON, `synthetic-token`, `synthetic\r\nHeader:value`, 1),
+		"expired interval":     strings.Replace(readyJSON, `15:05:00`, `14:59:59`, 1),
+		"denial with secret":   strings.Replace(readyJSON, `"ready"`, `"denied"`, 1),
+		"replay with secret":   strings.Replace(readyJSON, `"ready"`, `"already_issued"`, 1),
+		"renew replay for authorize": strings.NewReplacer(
+			`"ready"`, `"replacement_required"`,
+			`,"credential":{"type":"bearer","token":"synthetic-token"}`, "",
+		).Replace(readyJSON),
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertions := assert.New(t)
