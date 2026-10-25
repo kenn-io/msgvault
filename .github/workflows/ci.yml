@@ -42,7 +42,9 @@ jobs:
       - name: Install Go
         run: |
           GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
-          curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120 \
+          # A single stalled transfer must leave time for another attempt.
+          curl -fsSL --connect-timeout 30 --max-time 120 \
+            --retry 5 --retry-all-errors --retry-max-time 600 \
             "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
           tar -C /usr/local -xzf go.tar.gz
           rm go.tar.gz
