@@ -437,7 +437,11 @@ func (s *Store) DecidePersonInstructionContext(ctx context.Context, d PersonInst
 					if err != nil && !errors.Is(err, ErrInstructionNotFound) {
 						return err
 					}
-					if old != nil {
+					// Edits can change the proposal's kind. A supersession link is
+					// valid only for the same single-valued kind and scope.
+					if old == nil || !personfacts.SingleValuedInstructionKind(current.Kind) || old.Kind != current.Kind || old.ScopeKey != current.ScopeKey {
+						current.SupersedesID = nil
+					} else {
 						if err := supersedePersonInstructionTx(ctx, tx, old, d.Actor, now); err != nil {
 							return err
 						}
@@ -457,7 +461,7 @@ func (s *Store) DecidePersonInstructionContext(ctx context.Context, d PersonInst
 					}
 				}
 			}
-			updated, err := tx.ExecContext(ctx, `UPDATE person_instructions SET kind=?,original_text=?,normalized_text=?,value_text=?,instruction_key=?,status=?,review_state=?,adopted=?,confirmed_at=?,confirmed_by=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, current.Kind, current.Text, current.NormalizedText, current.ValueText, current.InstructionKey, next.Status, next.ReviewState, next.Adopted, current.ConfirmedAt, current.ConfirmedBy, now, current.ID, d.ExpectedRevision)
+			updated, err := tx.ExecContext(ctx, `UPDATE person_instructions SET kind=?,original_text=?,normalized_text=?,value_text=?,instruction_key=?,status=?,review_state=?,adopted=?,confirmed_at=?,confirmed_by=?,supersedes_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, current.Kind, current.Text, current.NormalizedText, current.ValueText, current.InstructionKey, next.Status, next.ReviewState, next.Adopted, current.ConfirmedAt, current.ConfirmedBy, current.SupersedesID, now, current.ID, d.ExpectedRevision)
 			if err != nil {
 				if s.dialect.IsConflictError(err) {
 					return ErrInstructionDuplicate
