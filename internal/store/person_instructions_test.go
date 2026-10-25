@@ -315,6 +315,65 @@ func TestConfirmProposedWithEditRekeys(t *testing.T) {
 		assert.Equal(key, got)
 	}
 }
+
+func TestConfirmingReplacementEditedToDifferentKindPreservesOriginal(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	original := addTestInstruction(t, st, alice.ID, "Vee")
+	proposal := insertTestPersonInstruction(t, st, alice.ID, personfacts.InstructionKindAddressAs, "Val", "call me Val", personfacts.InstructionStatusProposed)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_instructions SET supersedes_id=? WHERE id=?`), original.ID, proposal)
+	require.NoError(err)
+
+	kind, text, value := personfacts.InstructionKindTopic, "avoid discussing work", ""
+	result, err := st.DecidePersonInstructionContext(t.Context(), store.PersonInstructionDecision{
+		InstructionID: proposal, ExpectedRevision: 1, Action: personfacts.InstructionActionConfirm,
+		Edit: &store.PersonInstructionEdit{Kind: &kind, Text: &text, ValueText: &value}, Actor: "owner",
+	})
+	require.NoError(err)
+	assert.Equal(personfacts.InstructionKindTopic, result.Instruction.Kind)
+	assert.Nil(result.Instruction.SupersedesID)
+
+	unchanged, err := st.GetPersonInstructionContext(t.Context(), original.ID)
+	require.NoError(err)
+	assert.Equal(personfacts.InstructionStatusActive, unchanged.Status)
+	assert.Equal(0, instructionEventCount(t, st, original.ID, "supersede"))
+}
+
+func TestConfirmingReplacementWithDifferentScopePreservesOriginal(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	point, err := st.AddPersonContactPointContext(t.Context(), alice.ID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "alice+work@example.com",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	original, err := st.AddPersonInstructionContext(t.Context(), store.PersonInstructionInput{
+		PersonID: alice.ID, Kind: personfacts.InstructionKindAddressAs, ContactPointID: &point.Envelope.ID,
+		ValueText: "Vee", Text: "call me Vee", Actor: "owner",
+	})
+	require.NoError(err)
+	proposal := insertTestPersonInstruction(t, st, alice.ID, personfacts.InstructionKindAddressAs, "Val", "call me Val", personfacts.InstructionStatusProposed)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_instructions SET supersedes_id=? WHERE id=?`), original.ID, proposal)
+	require.NoError(err)
+
+	text, value := "call me Valerie", "Valerie"
+	result, err := st.DecidePersonInstructionContext(t.Context(), store.PersonInstructionDecision{
+		InstructionID: proposal, ExpectedRevision: 1, Action: personfacts.InstructionActionConfirm,
+		Edit: &store.PersonInstructionEdit{Text: &text, ValueText: &value}, Actor: "owner",
+	})
+	require.NoError(err)
+	assert.Nil(result.Instruction.SupersedesID)
+
+	unchanged, err := st.GetPersonInstructionContext(t.Context(), original.ID)
+	require.NoError(err)
+	assert.Equal(personfacts.InstructionStatusActive, unchanged.Status)
+	assert.Equal(0, instructionEventCount(t, st, original.ID, "supersede"))
+}
+
 func TestSuspendedLeavesOnlyByConfirmOrAdopt(t *testing.T) {
 	for _, action := range []personfacts.InstructionAction{personfacts.InstructionActionConfirm, personfacts.InstructionActionAdopt, personfacts.InstructionActionRevoke, personfacts.InstructionActionUnsure} {
 		t.Run(string(action), func(t *testing.T) {
