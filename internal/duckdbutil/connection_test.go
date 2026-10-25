@@ -2,13 +2,63 @@ package duckdbutil
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBuilderErrorPreservesCause(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	policy := BuilderPolicyWithOverrides(filepath.Join(t.TempDir(), "spill"), BuilderOverrides{
+		MemoryLimit: "1MiB", Threads: 1, MaxTempDirectorySize: "8MB",
+	})
+	db, err := Open(t.Context(), policy)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(db.Close()) })
+	_, oom := db.ExecContext(t.Context(), `CREATE TABLE too_large AS
+		SELECT i, repeat('x', 10000) || i::VARCHAR AS payload FROM range(10000) t(i)`)
+	requirements.Error(oom)
+	requirements.True(IsOutOfMemory(oom))
+	for _, cause := range []error{oom, errors.Join(context.Canceled, oom)} {
+		got := BuilderError(cause, policy)
+		requirements.ErrorIs(got, cause)
+		assertions.Contains(got.Error(), "analytics.builder_memory_limit=1MiB")
+		assertions.Contains(got.Error(), "analytics.builder_threads=1")
+		assertions.Contains(got.Error(), "analytics.builder_temp_limit=8MB")
+		assertions.Contains(got.Error(), "msgvault build-cache")
+		assertions.Same(got, BuilderError(got, BuilderPolicy(t.TempDir())),
+			"nested build paths must retain the actual failing connection's limits")
+	}
+	for _, cause := range []error{nil, context.Canceled, errors.New("unrelated error")} {
+		assertions.Equal(cause, BuilderError(cause, policy))
+	}
+}
+
+func TestBuilderPolicyDefaults(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tempDir := filepath.Join(t.TempDir(), "spill")
+
+	policy := BuilderPolicy(tempDir)
+
+	requirements.True(ValidSize(policy.MemoryLimit))
+	if policy.MemoryLimit != "2GB" {
+		budget, err := strconv.ParseUint(strings.TrimSuffix(policy.MemoryLimit, "B"), 10, 64)
+		requirements.NoError(err)
+		assertions.GreaterOrEqual(budget, uint64(256<<20))
+		assertions.LessOrEqual(budget, uint64(16<<30))
+	}
+	assertions.Equal(min(runtime.GOMAXPROCS(0), 2), policy.Threads)
+	assertions.Equal(tempDir, policy.TempDirectory)
+	assertions.Equal("32GB", policy.MaxTempDirectorySize)
+}
 
 func TestBuilderPolicyWithOverrides(t *testing.T) {
 	assertions := assert.New(t)

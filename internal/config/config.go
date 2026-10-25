@@ -61,7 +61,7 @@ type AnalyticsConfig struct {
 	Engine             string        `toml:"engine"`               // auto, sql, or duckdb
 	AutoBuildCache     bool          `toml:"auto_build_cache"`     // Build stale/missing Parquet cache before using DuckDB
 	MinRebuildInterval time.Duration `toml:"min_rebuild_interval"` // Minimum age before a scheduled sync can rebuild a usable stale cache
-	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
+	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Empty: quarter of available memory, 256MiB–16GiB; 2GB fallback
 	BuilderThreads     int           `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
 	BuilderTempLimit   string        `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
 	QueryMemoryLimit   string        `toml:"query_memory_limit"`   // Optional DuckDB daemon-query memory limit; empty uses the default

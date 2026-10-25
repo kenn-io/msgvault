@@ -1074,7 +1074,7 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `engine` | `auto` | Aggregate engine: `auto` starts with live SQL and switches to DuckDB after cache maintenance succeeds; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
 | `auto_build_cache` | `true` | Refresh a stale or missing Parquet cache automatically at startup, after scheduled or manual syncs, and when a query finds it due; `false` skips automatic builds. An explicit `query --fresh` or sync `--build-cache` can still request one |
 | `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a sync, query, or daemon restart may queue an automatic rebuild. Queries serve the committed snapshot during the interval |
-| `builder_memory_limit` | `2GB` | DuckDB buffer-manager budget for cache builds, such as `4GB` or `512MiB`; total process memory can exceed it |
+| `builder_memory_limit` | Adaptive | DuckDB buffer-manager budget for cache builds; an explicit value such as `16GiB` or `512MiB` replaces the adaptive default. Total process memory can exceed it |
 | `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
 | `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
 | `query_memory_limit` | `512MB` | DuckDB memory limit for daemon aggregate queries; raise it on a large archive |
@@ -1088,6 +1088,15 @@ raising these limits in `config.toml`. Restart the daemon to apply the change,
 then retry the query. The limits cap resource use; they do not reserve memory
 or disk space. Cache builds have separate `builder_*` limits.
 
+On unreleased `main`, the builder defaults to one quarter of currently available
+memory, bounded between `256MiB` and `16GiB`. The latest release uses a fixed
+`2GB` default. Linux builds also account for remaining memory under visible
+cgroup v2 ancestor limits. When host memory cannot be detected, the fallback is
+`2GB`; unsupported or unreadable Linux container limits cap the default at
+`2GB` while retaining any lower headroom already detected. The `256MiB` minimum
+is an attempt budget and can exceed available memory on an exhausted host.
+An explicit `builder_memory_limit` bypasses memory detection.
+
 Start with the builder defaults, including at most two threads. More threads
 can increase peak memory use. DuckDB's memory budget covers its buffer manager;
 native allocations and Go memory add to the process total. A `24GB` budget
@@ -1096,6 +1105,12 @@ Leave room for the daemon, syncs, other applications, and those allocations.
 For a constrained host, lower `builder_memory_limit` and set
 `builder_threads = 1` before raising the memory budget. See
 [DuckDB's memory guidance](https://duckdb.org/docs/stable/guides/performance/oom).
+
+If a cache build exhausts memory or spill space, its error names the effective
+`builder_memory_limit`, `builder_threads`, and `builder_temp_limit`. Check memory
+and free disk space before raising the relevant limit in `config.toml`, then
+retry `msgvault build-cache`. A large archive may need an explicit budget above
+the adaptive cap. Failed builds leave the previously published cache intact.
 
 Builders spill temporary work under the cache staging directory, beside the
 analytics cache. Check free space on that filesystem before increasing

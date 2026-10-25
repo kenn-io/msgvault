@@ -1915,6 +1915,12 @@ msgvault import-emlx <identifier> <mail-dir>
 
 The mail directory should be an Apple Mail mailbox tree containing `.mbox` or `.imapmbox` directories, each with a `Messages/` subdirectory of `.emlx` files. You can also point directly at a single `.mbox` directory. Labels are derived from directory names.
 
+If the import succeeds but its analytics cache refresh fails, the imported
+messages remain saved and searchable. The command exits nonzero; on unreleased
+`main`, its error explicitly says the import completed successfully. Follow the
+cache error's [builder-limit guidance](configuration.md#analytics), then run
+`msgvault build-cache` to refresh analytics without repeating the import.
+
 Apple Mail's `N.partial.emlx` files are also imported. Apple Mail keeps the
 attachments of these messages outside the MIME payload, in a sibling
 `Attachments/N/` directory. The importer restores cached attachments directly

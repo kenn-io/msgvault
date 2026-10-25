@@ -68,6 +68,8 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 	}
 
 	t.Run("full build", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
 		tmp := setupTestSQLite(t)
 		configure(tmp, filepath.Join(tmp, "test.db"))
 		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
@@ -77,16 +79,24 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 			invocationFromContext(testCtx),
 		)
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "memory_limit")
+		requirements.Error(err)
+		assertions.Contains(err.Error(), "memory_limit")
+		assertions.Contains(err.Error(), "analytics.builder_memory_limit=1B")
+		assertions.Contains(err.Error(), "analytics.builder_temp_limit=32GB")
+		assertions.Contains(err.Error(), "analytics.builder_threads=")
+		assertions.Contains(err.Error(), "msgvault build-cache")
 	})
 
 	t.Run("derived refresh", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
 		tmp := setupTestSQLite(t)
 		dbPath := filepath.Join(tmp, "test.db")
 		analyticsDir := filepath.Join(tmp, "analytics")
 		_, err := buildCache(dbPath, analyticsDir, true)
-		require.NoError(t, err)
+		requirements.NoError(err)
+		before, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+		requirements.NoError(err)
 		configure(tmp, dbPath)
 		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
@@ -95,8 +105,15 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 			invocationFromContext(testCtx),
 		)
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "memory_limit")
+		requirements.Error(err)
+		assertions.Contains(err.Error(), "memory_limit")
+		assertions.Contains(err.Error(), "analytics.builder_memory_limit=1B")
+		assertions.Contains(err.Error(), "analytics.builder_temp_limit=32GB")
+		after, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+		requirements.NoError(readErr)
+		assertions.Equal(before, after, "failed refresh must preserve the committed marker")
+		_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+		requirements.NoError(err, "a normal budget must allow retrying the staged build")
 	})
 }
 

@@ -3094,7 +3094,7 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | `engine` | `auto` | Aggregate engine for Web UI, TUI, and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
 | `auto_build_cache` | `true` | Refresh a stale or missing cache at startup, after scheduled or manual syncs, and when a query finds it due; `false` skips automatic builds |
 | `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a sync, query, or daemon restart may queue an automatic rebuild |
-| `builder_memory_limit` | `2GB` | DuckDB memory limit for cache builds, such as `4GB` or `512MiB` |
+| `builder_memory_limit` | Adaptive | DuckDB buffer-manager budget for cache builds; see [builder sizing and overrides](configuration.md#analytics) |
 | `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
 | `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
 | `query_memory_limit` | `512MB` | DuckDB memory limit for daemon aggregate queries; raise it on a large archive |
