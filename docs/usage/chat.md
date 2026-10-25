@@ -188,6 +188,33 @@ Add the following to your Claude Desktop config file:
 
 If `msgvault` is not on your PATH, use the full path to the binary. Restart Claude Desktop after saving the config.
 
+### Native daemon endpoints
+
+On unreleased `main`, connect directly to your running daemon at
+`http://127.0.0.1:8080/mcp` (substitute its configured address and port). Send
+`Authorization: Bearer <owner-api-key>` on every request. The endpoint is
+read-only, including when the daemon enables writes elsewhere.
+
+To connect a trusted client to a separate write-capable catalog on that same
+listener, start:
+
+```sh
+msgvault serve --mcp-allow-writes
+```
+
+Use `/mcp/writes` for that connection, with the same owner bearer key. This
+permits attachment exports, deletion manifests, Saved View management, native
+email tag edits, and managed draft writes. Other write families need their own
+`--mcp-allow-*` flags listed in the [CLI reference](../cli-reference.md#serve).
+Those flags have no effect without `--mcp-allow-writes` and never change `/mcp`.
+Existing client confirmation requirements still apply: clients must obtain
+user approval before confirming. Confirmation-dependent HTTP tools require
+MCP protocol `2026-07-28`; older clients omit those tools.
+
+Native endpoints share the daemon lifecycle and do not create a separate MCP
+discovery record. `msgvault mcp --http` remains available when you need a
+separate listener, inbound key, or `msgvault mcp status` discovery record.
+
 ### Choose a transport for concurrent sessions
 
 A stdio MCP client starts one `msgvault mcp` proxy for each session. Each proxy forwards
@@ -556,8 +583,8 @@ Daemons older than schema 2.28.0 keep the basic MCP catalog and reduced
 semantic guidance. Upgrade them to 2.28.0 or newer to expose full semantic,
 similar-message, and visual search tools.
 
-Configured vector search checks readiness when each request runs, so a listed
-tool can return `vector_initializing`, `vector_init_failed`, or `index_stale`.
+Native MCP starts independently of vector initialization. Each vector call
+checks readiness and can return `vector_initializing`, `vector_init_failed`, or `index_stale`.
 Visual attachment search reports `visual_search_not_ready` while its lane is
 unavailable. MCP startup does not request archive statistics or visual status.
 

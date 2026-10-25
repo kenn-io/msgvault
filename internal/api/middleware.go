@@ -131,7 +131,7 @@ func CORSMiddleware(cfg CORSConfig) func(http.Handler) http.Handler {
 // routes (SPA shell, static assets) keep the web handler's own caching policy.
 func apiCacheControlMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if strings.HasPrefix(r.URL.Path, "/api/") || isNativeMCPPath(r.URL.Path) {
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		next.ServeHTTP(w, r)
@@ -266,12 +266,16 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		}
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		authHeader = r.Header.Get("X-Api-Key")
+	if len(r.Header.Values("Authorization")) > 1 {
+		return requestAuthentication{Mode: AuthModeRequired}
 	}
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		authHeader = authHeader[7:]
+	authHeader := r.Header.Get("Authorization")
+	if credential, ok := apiprotocol.BearerAuthorization(r); ok {
+		authHeader = credential
+	} else if authHeader == "" {
+		authHeader = r.Header.Get("X-Api-Key")
+		// Preserve the ordinary API's legacy key alias, including its Bearer form.
+		authHeader = strings.TrimPrefix(authHeader, "Bearer ")
 	}
 	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.AuthenticationKey()) {
 		return requestAuthentication{

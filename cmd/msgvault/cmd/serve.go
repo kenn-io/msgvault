@@ -295,6 +295,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	var analyticsInit *daemonAnalyticsInitHandle
 	var vectorInit *vectorInitHandle
+	var mcpInitDone <-chan struct{}
 	resourceCleanupSafe := true
 	defer func() {
 		if !resourceCleanupSafe {
@@ -1010,6 +1011,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
 			apiServer, sched, blobStore,
 		)
+		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state, serverErr)
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
@@ -1066,7 +1068,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
-	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate)
+	// Stop the in-process capability probes before draining the API and
+	// releasing resources they may still be reading.
+	var mcpInitErr error
+	if mcpInitDone != nil {
+		select {
+		case <-mcpInitDone:
+		case <-shutdownCtx.Done():
+			mcpInitErr = errors.New("native MCP initialization did not stop during shutdown")
+		}
+	}
+	shutdownErr := errors.Join(mcpInitErr, shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
