@@ -40,8 +40,10 @@ const (
 var ErrInvalidInput = errors.New("novelty: invalid input")
 
 type Params struct {
-	Budget           int
-	RecencyShareBP   int
+	Budget         int
+	RecencyShareBP int
+	// SupportWeightBP is how much a candidate's neighbor support scales its
+	// novelty score: 0 ignores support and 10000 scores unsupported outliers 0.
 	SupportWeightBP  int
 	MinNoveltyBP     int
 	MinCoverageBP    int
@@ -87,6 +89,7 @@ type Input struct {
 	Candidates []Candidate
 	// Vectors and Anchors must be successful MessageVector outputs: unit
 	// message vectors of one shared dimension, rather than raw stored chunks.
+	// Select falls back to recency when any of them is not.
 	Vectors map[int64][]float32
 	Anchors [][]float32
 	// OverlapCap bounds non-mandatory old picks; -1 leaves overlap unlimited.
@@ -103,8 +106,10 @@ type Pick struct {
 }
 
 type Result struct {
-	Mode        Mode
-	Fallback    FallbackReason
+	Mode     Mode
+	Fallback FallbackReason
+	// Picks are in selection order: mandatory items first, then each lane in
+	// turn. Callers that need recency order sort by candidate rank.
 	Picks       []Pick
 	ScoredCount int
 }

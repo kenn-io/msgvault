@@ -62,12 +62,22 @@ func TestSelectNoveltySurfacesUnknownTheme(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal([]string{"0", "1", "2"}, keys(r))
 }
-func TestSelectSupportBeatsIsolatedOutlier(t *testing.T) {
-	in := selectionInput(axis(3, 8), theme(t, 1, 4), theme(t, 1, 5))
-	in.Anchors = [][]float32{axis(0, 8)}
-	in.Params = DefaultParams(1)
-	in.Params.RecencyShareBP = 0
-	assert.Equal(t, []string{"1"}, keys(selectOK(t, in)))
+func TestSelectSupportWeight(t *testing.T) {
+	// Every candidate is equally far from the anchor; only "1" and "2" support
+	// each other, and "0" is the newest.
+	for _, tc := range []struct {
+		weight int
+		want   string
+	}{{0, "0"}, {5000, "1"}, {10000, "1"}} {
+		t.Run(strconv.Itoa(tc.weight), func(t *testing.T) {
+			in := selectionInput(axis(3, 8), theme(t, 1, 4), theme(t, 1, 5))
+			in.Anchors = [][]float32{axis(0, 8)}
+			in.Params = DefaultParams(1)
+			in.Params.RecencyShareBP = 0
+			in.Params.SupportWeightBP = tc.weight
+			assert.Equal(t, []string{tc.want}, keys(selectOK(t, in)))
+		})
+	}
 }
 func TestSelectNothingNewEqualsRecencySet(t *testing.T) {
 	in := selectionInput(theme(t, 0, 4), theme(t, 0, 5), theme(t, 0, 6), theme(t, 0, 7))
@@ -159,6 +169,11 @@ func TestSelectLowCoverageFallsBack(t *testing.T) {
 	assertFallback(t, in, FallbackLowCoverage)
 	assert.Equal(t, 4, selectOK(t, in).ScoredCount)
 }
+func TestSelectNoVectorsFallsBackWithoutCoverageFloor(t *testing.T) {
+	in := selectionInput(nil, nil)
+	in.Params.MinCoverageBP = 0
+	assertFallback(t, in, FallbackLowCoverage)
+}
 func TestSelectWorkLimitFallsBack(t *testing.T) {
 	in := tenAxes()
 	in.Params.MaxWorkUnits = 1
@@ -169,11 +184,17 @@ func TestSelectDimensionMismatchFallsBack(t *testing.T) {
 	in.Vectors[1] = axis(0, 4)
 	assertFallback(t, in, FallbackVectorLoadFailed)
 }
-func TestSelectNonFiniteVectorFallsBack(t *testing.T) {
-	for _, v := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
-		in := tenAxes()
-		in.Vectors[1][0] = v
-		assertFallback(t, in, FallbackVectorLoadFailed)
+func TestSelectInvalidVectorFallsBack(t *testing.T) {
+	for _, v := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1)), 1e20, .5} {
+		t.Run(fmt.Sprint(v), func(t *testing.T) {
+			in := tenAxes()
+			in.Vectors[1][0] = v
+			assertFallback(t, in, FallbackVectorLoadFailed)
+			in = tenAxes()
+			in.Anchors = [][]float32{axis(0, 10)}
+			in.Anchors[0][0] = v
+			assertFallback(t, in, FallbackVectorLoadFailed)
+		})
 	}
 }
 func TestSelectUnscoredStayInRecencyAndFill(t *testing.T) {

@@ -103,6 +103,10 @@ type selector struct {
 
 // Select fills mandatory, recency, novelty, and fill lanes using exact cosine
 // scores. Vector failures preserve the caller's recency behavior.
+//
+// After any scored pick, candidates within DuplicateCosBP of it are dropped
+// from every later lane, so the recency lane keeps the newest distinct
+// messages and Select can return fewer picks than Recency.
 func Select(ctx context.Context, in Input) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -117,7 +121,7 @@ func Select(ctx context.Context, in Input) (Result, error) {
 			if dimension == 0 {
 				dimension = len(v)
 			}
-			if !finiteVector(v, dimension) {
+			if !unitVector(v, dimension) {
 				return Fallback(in, FallbackVectorLoadFailed)
 			}
 		}
@@ -126,11 +130,11 @@ func Select(ctx context.Context, in Input) (Result, error) {
 		if dimension == 0 {
 			dimension = len(v)
 		}
-		if !finiteVector(v, dimension) {
+		if !unitVector(v, dimension) {
 			return Fallback(in, FallbackVectorLoadFailed)
 		}
 	}
-	if len(ordered) > 0 && int64(scored)*10000/int64(len(ordered)) < int64(in.Params.MinCoverageBP) {
+	if scored == 0 || int64(scored)*10000/int64(len(ordered)) < int64(in.Params.MinCoverageBP) {
 		return Fallback(in, FallbackLowCoverage)
 	}
 	// Divide the bound to avoid overflowing the work product.
@@ -232,7 +236,7 @@ func (s *selector) prepare(ctx context.Context, vectors [][]float32) error {
 			}
 		}
 		slices.Sort(values)
-		neighbors[i] = -1000000
+		neighbors[i] = -microOne
 		if len(values) > 0 {
 			top := values[max(0, len(values)-s.in.Params.SupportNeighbors):]
 			var sum int64
@@ -242,13 +246,13 @@ func (s *selector) prepare(ctx context.Context, vectors [][]float32) error {
 			neighbors[i] = sum / int64(len(top))
 		}
 		if len(s.in.Anchors) > 0 {
-			nearest := int64(-1000000)
+			nearest := int64(-microOne)
 			for _, a := range s.in.Anchors {
 				nearest = max(nearest, micro(dot(v, a)))
 			}
-			s.base[i] = clampMicro(1000000 - nearest)
+			s.base[i] = clampMicro(microOne - nearest)
 		} else {
-			s.base[i] = clampMicro(1000000 - neighbors[i])
+			s.base[i] = clampMicro(microOne - neighbors[i])
 		}
 		s.cur[i] = s.base[i]
 	}
@@ -262,14 +266,19 @@ func (s *selector) prepare(ctx context.Context, vectors [][]float32) error {
 		if n > 1 {
 			s.support[i] = rank * 10000 / (n - 1)
 		}
-		s.factor[i] = int64(s.in.Params.SupportWeightBP) + (10000-int64(s.in.Params.SupportWeightBP))*int64(s.support[i])/10000
+		// A novelty score is cur * factor / 10000, where factor scales from
+		// 10000 - SupportWeightBP for the least-supported candidate to 10000.
+		weight := int64(s.in.Params.SupportWeightBP)
+		s.factor[i] = 10000 - weight + weight*int64(s.support[i])/10000
 	}
 	return nil
 }
+
 func (s *selector) feasible(i int) bool {
 	c := s.ordered[i]
 	return !s.picked[i] && !s.blocked[i] && (!c.OverlapOld || c.Mandatory || s.in.OverlapCap < 0 || s.overlap < s.in.OverlapCap)
 }
+
 func (s *selector) pick(i int, lane Lane, score int64) {
 	c := s.ordered[i]
 	p := Pick{Key: c.Key, MessageID: c.MessageID, Lane: lane}
@@ -286,7 +295,7 @@ func (s *selector) pick(i int, lane Lane, score int64) {
 			if index < 0 {
 				continue
 			}
-			distance := clampMicro(1000000 - s.gram[index][j])
+			distance := clampMicro(microOne - s.gram[index][j])
 			if !s.scoredPicked && len(s.in.Anchors) == 0 {
 				s.cur[index] = distance
 			} else {

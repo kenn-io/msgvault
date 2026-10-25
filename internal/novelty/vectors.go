@@ -2,7 +2,13 @@ package novelty
 
 import "math"
 
-const MaxMessageChunks = 4
+// microOne is a cosine or distance of 1.0 in the integer micro units used for
+// scoring, so selection never compares floats.
+const microOne = 1000000
+
+// unitTolerance bounds |‖v‖² − 1| for a vector accepted as unit length. It
+// allows float32 rounding of MessageVector output but rejects raw chunks.
+const unitTolerance = 1e-4
 
 // MessageVector normalizes each of the first maxChunks chunks, then normalizes
 // their mean. Zero chunks are skipped; malformed chunks reject the message.
@@ -46,6 +52,11 @@ func finiteVector(v []float32, dim int) bool {
 	return true
 }
 
+// unitVector reports whether v is a finite unit vector of the given dimension.
+func unitVector(v []float32, dim int) bool {
+	return finiteVector(v, dim) && math.Abs(dot(v, v)-1) <= unitTolerance
+}
+
 func dot(a, b []float32) float64 {
 	var s float64
 	for i, x := range a {
@@ -53,7 +64,9 @@ func dot(a, b []float32) float64 {
 	}
 	return s
 }
+
 func norm32(v []float32) float64 { return math.Sqrt(dot(v, v)) }
+
 func norm64(v []float64) float64 {
 	var s float64
 	for _, x := range v {
@@ -61,5 +74,6 @@ func norm64(v []float64) float64 {
 	}
 	return math.Sqrt(s)
 }
-func micro(x float64) int64    { return int64(math.Round(x * 1e6)) }
-func clampMicro(x int64) int64 { return max(0, min(1000000, x)) }
+
+func micro(x float64) int64    { return int64(math.Round(x * microOne)) }
+func clampMicro(x int64) int64 { return max(0, min(microOne, x)) }
