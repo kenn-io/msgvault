@@ -80,7 +80,7 @@ func TestResponseMustMatchRequest(t *testing.T) {
 		"empty token":          strings.Replace(readyJSON, `synthetic-token`, ``, 1),
 		"header injection":     strings.Replace(readyJSON, `synthetic-token`, `synthetic\r\nHeader:value`, 1),
 		"expired interval":     strings.Replace(readyJSON, `15:05:00`, `14:59:59`, 1),
-		"denial with secret":   strings.Replace(readyJSON, `"ready"`, `"denied"`, 1),
+		"denial with secret":   `{"version":1,"operation":"authorize","request_id":"11111111-1111-4111-8111-111111111111","status":"denied","reason":"delegation_expired","credential":{"type":"bearer","token":"synthetic-token"}}`,
 		"replay with secret":   strings.Replace(readyJSON, `"ready"`, `"already_issued"`, 1),
 		"renew replay for authorize": strings.NewReplacer(
 			`"ready"`, `"replacement_required"`,
