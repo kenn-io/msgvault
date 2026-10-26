@@ -45,15 +45,8 @@ func (s *Server) mountNativeMCP(mux *http.ServeMux) {
 	for index, path := range []string{"/mcp", "/mcp/writes"} {
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			// Require bearer syntax as well as owner API-key mode, including during initialization.
-			credential, bearer := apiprotocol.BearerAuthorization(r)
-			authorized := false
-			if bearer {
-				// The cached classification only accepts the exact "Bearer " prefix.
-				request := r.Clone(r.Context())
-				request.Header.Set("Authorization", "Bearer "+credential)
-				authorized = s.classifyAPIRequestDirect(request).Mode == AuthModeAPIKey
-			}
-			if !authorized {
+			_, bearer := apiprotocol.BearerAuthorization(r)
+			if !bearer || s.requestAuthentication(r).Mode != AuthModeAPIKey {
 				w.Header().Set("WWW-Authenticate", "Bearer")
 				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 				return
