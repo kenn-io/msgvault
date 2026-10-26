@@ -9,7 +9,8 @@ let requests: Request[];
 let stop: () => void;
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  // Session-duration tests must not cross the telemetry reporter's UTC daily reset.
+  vi.useFakeTimers({ now: new Date('2026-01-15T12:00:00Z') });
   now = 0;
   hidden = false;
   requests = [];
