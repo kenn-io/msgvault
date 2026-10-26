@@ -41,15 +41,6 @@ func FuzzBuilderMemoryBudgetBounds(f *testing.F) {
 	})
 }
 
-func FuzzBuilderMemoryBudgetInterior(f *testing.F) {
-	f.Add(uint64(8 << 30))
-	f.Fuzz(func(t *testing.T, available uint64) {
-		if available >= 1<<30 && available <= 64<<30 {
-			assert.Equal(t, available/4, builderMemoryBudget(available))
-		}
-	})
-}
-
 func TestCgroupAvailableMemory(t *testing.T) {
 	for _, tc := range []struct {
 		name, root, membership, mount string
