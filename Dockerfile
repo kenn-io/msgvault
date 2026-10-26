@@ -45,6 +45,8 @@ ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
 # Note: Module path must match go.mod (go.kenn.io/msgvault)
+# posthog.projectKey is the public PostHog ingest key for anonymous telemetry;
+# builds without it send no telemetry.
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
         -o /msgvault-codex-bridge ./cmd/msgvault-codex-bridge \
     && bridge_digest=$(sha256sum /msgvault-codex-bridge | cut -d' ' -f1) \
@@ -55,6 +57,7 @@ RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=${BUILD_DATE} \
+        -X go.kenn.io/kit/telemetry/posthog.projectKey=phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf \
         -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=${bridge_digest}" \
     -o /msgvault \
     ./cmd/msgvault
