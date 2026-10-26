@@ -24,19 +24,7 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 
-### Native MCP
-
-On unreleased `main`, the same listener serves Streamable HTTP MCP at `/mcp`.
-This catalog stays read-only. Start `msgvault serve --mcp-allow-writes` to enable
-an independent `/mcp/writes` catalog. Both endpoints require exactly one
-`Authorization: Bearer <owner-api-key>` header on every request, using the
-server's configured owner key. Session cookies, `X-Api-Key`, delegated agent
-tokens, and remote-client keys do not authorize native MCP. Keyless servers
-never permit native MCP access.
-
-Before MCP initialization completes, authenticated requests receive HTTP 503.
-After initialization, `/mcp/writes` returns HTTP 404 unless enabled. Write-family
-flags and confirmation rules are in the [MCP guide](usage/chat.md#native-daemon-endpoints).
+On unreleased `main`, connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
 ### Filename suggestions
 

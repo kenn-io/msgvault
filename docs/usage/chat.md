@@ -211,6 +211,8 @@ Existing client confirmation requirements still apply: clients must obtain
 user approval before confirming. Confirmation-dependent HTTP tools require
 MCP protocol `2026-07-28`; older clients omit those tools.
 
+The `/mcp` endpoint returns HTTP 503 until startup discovery finishes, which takes at most 30 seconds; after a timeout, it serves a smaller catalog and the daemon log names the missing tools.
+
 Native endpoints share the daemon lifecycle and do not create a separate MCP
 discovery record. `msgvault mcp --http` remains available when you need a
 separate listener, inbound key, or `msgvault mcp status` discovery record.
@@ -583,8 +585,8 @@ Daemons older than schema 2.28.0 keep the basic MCP catalog and reduced
 semantic guidance. Upgrade them to 2.28.0 or newer to expose full semantic,
 similar-message, and visual search tools.
 
-Native MCP starts independently of vector initialization. Each vector call
-checks readiness and can return `vector_initializing`, `vector_init_failed`, or `index_stale`.
+Configured vector search checks readiness when each request runs, so a listed
+tool can return `vector_initializing`, `vector_init_failed`, or `index_stale`.
 Visual attachment search reports `visual_search_not_ready` while its lane is
 unavailable. MCP startup does not request archive statistics or visual status.
 

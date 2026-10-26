@@ -266,16 +266,12 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		}
 	}
 
-	if len(r.Header.Values("Authorization")) > 1 {
-		return requestAuthentication{Mode: AuthModeRequired}
-	}
 	authHeader := r.Header.Get("Authorization")
-	if credential, ok := apiprotocol.BearerAuthorization(r); ok {
-		authHeader = credential
-	} else if authHeader == "" {
+	if authHeader == "" {
 		authHeader = r.Header.Get("X-Api-Key")
-		// Preserve the ordinary API's legacy key alias, including its Bearer form.
-		authHeader = strings.TrimPrefix(authHeader, "Bearer ")
+	}
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		authHeader = authHeader[7:]
 	}
 	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.AuthenticationKey()) {
 		return requestAuthentication{

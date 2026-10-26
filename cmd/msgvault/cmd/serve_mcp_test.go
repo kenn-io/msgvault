@@ -380,6 +380,16 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 }
 
 func TestNativeMCPStartup(t *testing.T) {
+	catalog := func(server *api.Server) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+		request.Header.Set("Authorization", "Bearer owner")
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json, text/event-stream")
+		request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
+		response := httptest.NewRecorder()
+		server.Router().ServeHTTP(response, request)
+		return response
+	}
 	for _, cancelled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "vectors initializing", true: "pre-cancelled"}[cancelled], func(t *testing.T) {
 			assert := assert.New(t)
@@ -391,35 +401,19 @@ func TestNativeMCPStartup(t *testing.T) {
 			defer func() { require.NoError(server.Shutdown(context.Background())) }()
 			cmd := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(cmd)
-			catalog := func() *httptest.ResponseRecorder {
-				request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
-				request.Header.Set("Authorization", "Bearer owner")
-				request.Header.Set("Content-Type", "application/json")
-				request.Header.Set("Accept", "application/json, text/event-stream")
-				request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
-				response := httptest.NewRecorder()
-				server.Router().ServeHTTP(response, request)
-				return response
-			}
-			assert.Equal(http.StatusServiceUnavailable, catalog().Code)
+			assert.Equal(http.StatusServiceUnavailable, catalog(server).Code)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if cancelled {
 				cancel()
 			}
-			serverErr := make(chan error, 1)
-			done := startServeMCP(ctx, cmd, server, &invocation{cfg: cfg}, serverErr)
+			done := startServeMCP(ctx, cmd, server, &invocation{cfg: cfg})
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
 				require.FailNow("MCP initialization did not stop")
 			}
-			select {
-			case err := <-serverErr:
-				require.NoError(err)
-			default:
-			}
-			response := catalog()
+			response := catalog(server)
 			if cancelled {
 				assert.Equal(http.StatusServiceUnavailable, response.Code)
 				return
@@ -431,4 +425,32 @@ func TestNativeMCPStartup(t *testing.T) {
 			assert.Equal(api.VectorStatusInitializing, status)
 		})
 	}
+	t.Run("discovery deadline", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner"}}
+			cfg.Vector.Enabled = true
+			cfg.Vector.Multimodal.Enabled = true
+			logger := slog.New(slog.DiscardHandler)
+			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: logger, VectorCfg: cfg.Vector, VectorStatus: api.VectorStatusInitializing})
+			defer func() { require.NoError(t, server.Shutdown(context.Background())) }()
+			server.SetVectorScopeCheck(func(ctx context.Context) (string, error) {
+				<-ctx.Done()
+				return "", ctx.Err()
+			})
+			cmd := &cobra.Command{Use: "serve"}
+			addServeConfigFlags(cmd)
+			done := startServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg, logger: logger})
+			<-done
+			response := catalog(server)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), `"get_stats"`)
+			assert.NotContains(t, response.Body.String(), `"find_similar_messages"`)
+
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+			request.Header.Set("Authorization", "Bearer owner")
+			response = httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		})
+	})
 }

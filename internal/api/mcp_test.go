@@ -23,8 +23,6 @@ func TestNativeMCPAdmissionAndCatalogs(t *testing.T) {
 		owner, session, remote bool
 	}{
 		{name: "bearer", headers: http.Header{"Authorization": {"Bearer owner"}}, owner: true},
-		{name: "lowercase", headers: http.Header{"Authorization": {"bearer owner"}}, owner: true},
-		{name: "uppercase", headers: http.Header{"Authorization": {"BEARER owner"}}, owner: true},
 		{name: "missing"},
 		{name: "wrong", headers: http.Header{"Authorization": {"Bearer wrong"}}},
 		{name: "raw", headers: http.Header{"Authorization": {"owner"}}},

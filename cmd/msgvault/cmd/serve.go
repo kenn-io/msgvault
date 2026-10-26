@@ -1011,7 +1011,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
 			apiServer, sched, blobStore,
 		)
-		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state, serverErr)
+		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
