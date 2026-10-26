@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-23"
+last_edited: "2026-10-26"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -2224,6 +2224,8 @@ that blocks storage, can also each send one. Each event carries only:
   `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
   `email`, `texts`, or `meetings`. Unknown names are dropped.
 - the msgvault version and commit
+- the distribution channel that built the binary, such as `homebrew` or `kenn`
+  for official downloads; empty for source builds
 - the operating system and CPU architecture
 - a random install ID kept in `telemetry-install.json` in the data directory, and
   the whole hours since it was created
