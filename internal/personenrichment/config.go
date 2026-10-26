@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	ProviderContext   = "context"
 	ProviderExa       = "exa"
 	ProviderSixtyfour = "sixtyfour"
 
@@ -146,6 +147,13 @@ func (c *ProviderConfig) ApplyDefaults() {
 		c.MaxRetries = 5
 	}
 	switch c.Kind {
+	case ProviderContext:
+		if c.Endpoint == "" {
+			c.Endpoint = "https://api.context.dev/v1/people/search"
+		}
+		if c.APIKeyEnv == "" {
+			c.APIKeyEnv = "CONTEXT_DEV_API_KEY"
+		}
 	case ProviderExa:
 		if c.Endpoint == "" {
 			c.Endpoint = defaultExaEndpoint
@@ -188,9 +196,9 @@ func (c ProviderConfig) CredentialEndpoint() (string, error) {
 		return "", err
 	}
 	switch c.Kind {
-	case ProviderExa:
+	case ProviderExa, ProviderContext:
 		if c.PollEndpoint != "" {
-			return "", errors.New("exa poll_endpoint must be empty")
+			return "", fmt.Errorf("%s poll_endpoint must be empty", c.Kind)
 		}
 	case ProviderSixtyfour:
 		pollEndpoint, err := validateHTTPSEndpoint("poll_endpoint", c.PollEndpoint)
@@ -202,7 +210,7 @@ func (c ProviderConfig) CredentialEndpoint() (string, error) {
 			return "", errors.New("sixtyfour endpoint and poll_endpoint must use the same origin")
 		}
 	default:
-		return "", fmt.Errorf("kind must be %q or %q", ProviderExa, ProviderSixtyfour)
+		return "", fmt.Errorf("kind must be %q, %q, or %q", ProviderExa, ProviderSixtyfour, ProviderContext)
 	}
 	return c.Endpoint, nil
 }
@@ -211,8 +219,8 @@ func (c ProviderConfig) validatePolicy(enforceGuaranteedCost bool) error {
 	if c.Name == "" || c.Name != strings.TrimSpace(c.Name) || !providerNamePattern.MatchString(c.Name) {
 		return errors.New("name must be a CLI-safe token using only letters, digits, '.', '_', ':', or '-'")
 	}
-	if c.Kind != ProviderExa && c.Kind != ProviderSixtyfour {
-		return fmt.Errorf("kind must be %q or %q", ProviderExa, ProviderSixtyfour)
+	if c.Kind != ProviderExa && c.Kind != ProviderSixtyfour && c.Kind != ProviderContext {
+		return fmt.Errorf("kind must be %q, %q, or %q", ProviderExa, ProviderSixtyfour, ProviderContext)
 	}
 	if _, err := c.CredentialEndpoint(); err != nil {
 		return err
@@ -263,6 +271,18 @@ func (c ProviderConfig) validatePolicy(enforceGuaranteedCost bool) error {
 	}
 
 	switch c.Kind {
+	case ProviderContext:
+		if c.Mode != "" || c.Tier != "" || c.NumResults != 0 {
+			return errors.New("context mode, tier and num_results must be empty; searches return one page of up to 10 people")
+		}
+		if !allowedIdentifiersHaveNameAndCompany(c.AllowedIdentifiers) {
+			return errors.New("context requires name and current_company identifiers")
+		}
+		for _, identifier := range c.AllowedIdentifiers {
+			if identifier != IdentifierName && identifier != IdentifierCurrentCompany {
+				return errors.New("context supports only name and current_company identifiers")
+			}
+		}
 	case ProviderExa:
 		if c.Mode != "people" && c.Mode != "deep" && c.Mode != "deep-reasoning" {
 			return fmt.Errorf("invalid Exa mode %q", c.Mode)
@@ -280,7 +300,7 @@ func (c ProviderConfig) validatePolicy(enforceGuaranteedCost bool) error {
 		if c.Mode != "" {
 			return errors.New("sixtyfour mode must be empty")
 		}
-		if !sixtyfourAllowedIdentifiersCanBindIdentity(c.AllowedIdentifiers) {
+		if !allowedIdentifiersHaveNameAndCompany(c.AllowedIdentifiers) {
 			return errors.New("sixtyfour allowed_identifiers must include both name and current_company for verified response binding")
 		}
 	}
@@ -332,7 +352,7 @@ func validateTargetKeys(values []string) error {
 	return nil
 }
 
-func sixtyfourAllowedIdentifiersCanBindIdentity(values []IdentifierClass) bool {
+func allowedIdentifiersHaveNameAndCompany(values []IdentifierClass) bool {
 	seen := make(map[IdentifierClass]struct{}, len(values))
 	for _, value := range values {
 		seen[value] = struct{}{}

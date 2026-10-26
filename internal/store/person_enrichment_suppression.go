@@ -675,7 +675,7 @@ func validatePersonEnrichmentSuppressionLookup(
 ) error {
 	kind, _, ok := strings.Cut(lookup.ProviderNamespace, ":")
 	if !ok || !validPersonEnrichmentProviderNamespace(lookup.ProviderNamespace, kind) ||
-		(kind != personenrichment.ProviderExa && kind != personenrichment.ProviderSixtyfour) {
+		(kind != personenrichment.ProviderExa && kind != personenrichment.ProviderSixtyfour && kind != personenrichment.ProviderContext) {
 		return errors.New("person enrichment suppression has invalid provider namespace")
 	}
 	if !validPersonEnrichmentSuppressionClass(lookup.IdentifierClass) {

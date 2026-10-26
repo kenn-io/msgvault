@@ -106,11 +106,14 @@ func validateRequestIdentityForProfile(identity Identity, profile ProviderProfil
 				return fmt.Errorf("exa %s mode requires a public profile URL", profile.Mode)
 			}
 		}
+	case ProviderContext:
+		_, err := contextSearchQuery(identity)
+		return err
 	case ProviderSixtyfour:
 		hasName := identity.Name != ""
 		hasCompany := identity.CurrentCompany != ""
 		if !hasName || !hasCompany {
-			return errors.New("sixtyfour requires name and current company for verified response binding")
+			return fmt.Errorf("%s requires name and current company for verified response binding", profile.Kind)
 		}
 	}
 	return nil

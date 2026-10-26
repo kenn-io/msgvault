@@ -605,7 +605,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_consents_active
 CREATE TABLE IF NOT EXISTS person_enrichment_profiles (
     fingerprint       TEXT PRIMARY KEY,
     provider_name     TEXT NOT NULL,
-    provider_kind     TEXT NOT NULL CHECK (provider_kind IN ('exa', 'sixtyfour')),
+    provider_kind     TEXT NOT NULL CHECK (provider_kind IN ('exa', 'sixtyfour', 'context')),
     provider_namespace TEXT NOT NULL,
     endpoint          TEXT NOT NULL,
     api_key_env       TEXT NOT NULL,

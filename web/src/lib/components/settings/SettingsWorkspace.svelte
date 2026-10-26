@@ -750,7 +750,7 @@
               </p>
               <p class="own-save">{OWN_SAVE_NOTE}</p>
               <div class="provider-list">
-                {#each ['exa', 'sixtyfour'] as kind}
+                {#each ['exa', 'sixtyfour', 'context'] as kind}
                   <PersonEnrichmentProviderCreator
                     {client}
                     kind={kind as ProviderSetting['kind']}

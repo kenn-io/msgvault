@@ -70,8 +70,8 @@ values remain in effect. Provider keys alone do not enable processing.
   providers, budgets, and fact resolution.
 - [Conversation briefs](usage/people-briefs.md): enrolled people and versioned
   summaries through the sweep provider.
-- [External enrichment](usage/people-enrichment.md): Exa/SixtyFour policy setup,
-  exact consent, request limits, and the persistent suppression key.
+- [External enrichment](usage/people-enrichment.md): Exa, SixtyFour, and Context.dev
+  policy setup, exact consent, request limits, and the persistent suppression key.
 - [Document indexing](usage/document-indexing.md): extraction, document vectors,
   and separate query consent.
 - [Vector search](usage/vector-search.md): text, person, and visual indexes.

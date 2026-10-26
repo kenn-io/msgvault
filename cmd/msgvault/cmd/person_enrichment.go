@@ -788,6 +788,10 @@ func newPersonEnrichmentCLIWorker(
 			factories[provider.Name] = func(config personenrichment.ProviderConfig, credential string) (personenrichment.Provider, error) {
 				return personenrichment.NewExaProvider(config, credential, http.DefaultClient)
 			}
+		case personenrichment.ProviderContext:
+			factories[provider.Name] = func(config personenrichment.ProviderConfig, credential string) (personenrichment.Provider, error) {
+				return personenrichment.NewContextProvider(config, credential, http.DefaultClient)
+			}
 		case personenrichment.ProviderSixtyfour:
 			factories[provider.Name] = func(config personenrichment.ProviderConfig, credential string) (personenrichment.Provider, error) {
 				return personenrichment.NewSixtyfourProvider(config, credential, http.DefaultClient)
