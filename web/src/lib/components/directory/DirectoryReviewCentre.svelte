@@ -271,7 +271,7 @@
   }
   .status { color: var(--text-secondary); }
   .loading { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
-  .message { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--accent-red); color: var(--text-secondary); }
+  .message { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--accent-red); border-start-start-radius: 0; border-end-start-radius: 0; color: var(--text-secondary); }
   .queue { position: relative; min-width: 0; }
   .candidate-list { display: grid; gap: var(--space-4); }
   .loading-overlay { position: sticky; z-index: 1; top: var(--space-2); display: flex; align-items: center; justify-content: center; gap: var(--space-2); width: fit-content; margin: 0 auto calc(-1 * var(--space-8)); padding: var(--space-2) var(--space-4); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-pill); background: var(--bg-surface); box-shadow: var(--shadow-sm); color: var(--text-muted); }

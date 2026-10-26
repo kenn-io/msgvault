@@ -78,7 +78,7 @@
   h4 { color: var(--text-primary); font-size: var(--font-size-sm); }
   p, dl { font-size: var(--font-size-sm); color: var(--text-secondary); }
   .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
-  .metric-grid > div { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-left: 2px solid var(--border-strong); background: var(--bg-inset); }
+  .metric-grid > div { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-left: 2px solid var(--border-strong); border-start-start-radius: 0; border-end-start-radius: 0; background: var(--bg-inset); }
   dt { color: var(--text-muted); font-size: var(--font-size-xs); }
   dd { color: var(--text-primary); font-size: var(--font-size-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
   .note { padding-top: var(--space-3); border-top: 1px solid var(--border-muted); color: var(--text-muted); font-size: var(--font-size-xs); line-height: 1.5; }

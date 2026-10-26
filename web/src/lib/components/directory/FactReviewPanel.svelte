@@ -159,6 +159,6 @@
   .name-note { margin: 0; color: var(--text-muted); font-size: var(--font-size-sm); }
   .choose-hint { margin: 0; color: var(--text-secondary); }
   .person-context { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
-  .notices { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--border-strong); color: var(--text-secondary); }
+  .notices { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--border-strong); border-start-start-radius: 0; border-end-start-radius: 0; color: var(--text-secondary); }
   .notices p { margin: 0; }
 </style>
