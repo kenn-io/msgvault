@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-26"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -4953,6 +4953,9 @@ Update msgvault to the latest version.
 ```bash
 msgvault update [flags]
 ```
+
+A Homebrew install reports whether a newer release exists but does not replace
+itself. Run `brew upgrade msgvault` instead.
 
 | Flag | Description |
 |---|---|

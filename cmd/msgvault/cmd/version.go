@@ -12,6 +12,10 @@ var (
 	Version   = "dev"
 	Commit    = "unknown"
 	BuildDate = "unknown"
+	// Distribution names the package manager that owns this binary, such as
+	// "homebrew". Empty for release archives and source builds, which may
+	// replace themselves with `msgvault update`.
+	Distribution = ""
 )
 
 var versionCmd = &cobra.Command{
@@ -24,6 +28,9 @@ var versionCmd = &cobra.Command{
 		fmt.Printf("  built:   %s\n", BuildDate)
 		fmt.Printf("  go:      %s\n", runtime.Version())
 		fmt.Printf("  os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		if Distribution != "" {
+			fmt.Printf("  package: %s\n", Distribution)
+		}
 	},
 }
 

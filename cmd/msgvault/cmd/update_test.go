@@ -292,3 +292,25 @@ func TestRestartDaemonAfterUpdatePassesUsableContext(t *testing.T) {
 	require.NotNil(gotCtx, "readiness wait received a nil context")
 	assert.NoError(gotCtx.Err(), "context usable")
 }
+
+func TestUpdateRefusesToInstallOverHomebrewBuild(t *testing.T) {
+	saved := Distribution
+	Distribution = "homebrew"
+	t.Cleanup(func() { Distribution = saved })
+
+	for _, args := range [][]string{
+		{"update"},
+		{"update", "--yes"},
+		{"update", "--yes", "--force"},
+	} {
+		// Keep a regression from reaching the user's update cache.
+		home := t.TempDir()
+		t.Setenv("MSGVAULT_HOME", home)
+		root := newRootCommand()
+		root.AddCommand(newUpdateCmd())
+		_, _, err := runRoot(t, root, append([]string{"--home", home}, args...)...)
+		require.Error(t, err, "msgvault %v", args)
+		assert.ErrorContains(t, err, "managed by Homebrew", "msgvault %v", args)
+		assert.ErrorContains(t, err, "`brew upgrade msgvault`", "msgvault %v", args)
+	}
+}

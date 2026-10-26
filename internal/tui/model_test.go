@@ -699,6 +699,28 @@ func TestModel_Update_UpdateCheck_SetsVersion(t *testing.T) {
 	assert.False(t, m.updateIsDevBuild)
 }
 
+func TestTitleBarUpdateNoticeNamesUpgradeCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		distribution string
+		want         string
+		notWant      string
+	}{
+		{name: "self-updating build", want: "update: v2.0.0 — msgvault update", notWant: "brew"},
+		{name: "homebrew build", distribution: "homebrew", want: "update: v2.0.0 — brew upgrade msgvault", notWant: "msgvault update"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := NewBuilder().WithSize(140, 24).WithDistribution(tc.distribution).Build()
+			updated, _ := model.Update(updateCheckMsg{version: "v2.0.0"})
+
+			title := stripANSI(asModel(t, updated).buildTitleBar())
+
+			assert.Contains(t, title, tc.want)
+			assert.NotContains(t, title, tc.notWant)
+		})
+	}
+}
+
 func TestModel_Update_UpdateCheck_SetsDevBuild(t *testing.T) {
 	model := NewBuilder().Build()
 
