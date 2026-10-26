@@ -196,7 +196,7 @@ func TestMistralWorkerConvertsCSVAndPublishesThroughStore(t *testing.T) {
 	profile := store.DocumentExtractionProfile{
 		ID: "profile-test", Fingerprint: strings.Repeat("a", 64),
 		Provider: "mistral", Endpoint: "https://api.mistral.ai/v1/ocr",
-		Region: "eu", Model: "mistral-ocr-4-0", RetentionPosture: "standard",
+		Region: "eu", Model: ModelMistralOCR, RetentionPosture: "standard",
 		TrainingPosture: "opted-out", AllowedMediaTypes: []string{"text/csv", "application/pdf"},
 		PolicyJSON: []byte(`{"policy":1}`),
 	}
@@ -752,7 +752,7 @@ func (s *syntheticMistralTransport) RoundTrip(request *http.Request) (*http.Resp
 		pages[i] = map[string]any{"index": i, "markdown": fmt.Sprintf("%s slide %d", s.sentinel, i)}
 	}
 	body, err := json.Marshal(map[string]any{
-		"model": "mistral-ocr-4-0", "pages": pages,
+		"model": ModelMistralOCR, "pages": pages,
 		"usage_info": map[string]any{"pages_processed": s.processed, "doc_size_bytes": s.sourceLen},
 	})
 	if err != nil {

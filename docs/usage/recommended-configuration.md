@@ -49,7 +49,7 @@ conversation briefs.
 | Key present                             | Lanes                                                                           | Model                                                                               | Notes                                                                                                                                                                                  |
 | --------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VOYAGE_API_KEY`                        | text search, semantic people search, visual attachments (after the probe)       | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024)                           | Beeper chats use conversation windows; meetings use speaker turns. Other messages share the generation as individual documents.                                                        |
-| `MISTRAL_API_KEY`                       | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-0`, EU region                                                        | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`.                                                                                            |
+| `MISTRAL_API_KEY`                       | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-1`, EU region                                                        | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`.                                                                                            |
 | `OPENAI_API_KEY`                        | text search only when no Voyage key      | `text-embedding-3-small` (1536)               | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints.                                                     |
 | no key for the feature being configured | loopback Ollama at `[chat].server` when reachable                               | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text uses Ollama only without Voyage or OpenAI keys. Inference uses it without an OpenAI key, even when Voyage or Mistral is configured. The required model must already be installed. |
 
@@ -337,7 +337,7 @@ LANE                                      STATE    PROVIDER  MODEL             C
 Text search (messages, chats, meetings)   on       voyage    voyage-context-4  -        cron */15 * * * *, after each scheduled sync
 Semantic people search                    pending  voyage    voyage-context-4  missing  -
 Visual attachment search                  pending  -         -                 -        -
-Document attachments (...)                pending  mistral   mistral-ocr-4-0   missing  -
+Document attachments (...)                pending  mistral   mistral-ocr-4-1   missing  -
 ```
 
 `pending` means the lane is configured or the key is present but an operator

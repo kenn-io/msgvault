@@ -439,7 +439,7 @@ uses a configured endpoint without a manifest.
 | `endpoint` | — | Required for Docling: exact HTTP(S) origin with optional port; no trailing slash, path, user information, query, or fragment. Plain HTTP is allowed only for `localhost` and loopback IP addresses; other hosts require HTTPS |
 | `region` | `eu` | Mistral’s pinned EU region; Docling defaults to `operator_network` |
 | `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key; Docling defaults to empty and sends a configured key as `X-Api-Key` |
-| `model` | `mistral-ocr-4-0` | Pinned model; Docling defaults to `docling.serve-v1` |
+| `model` | `mistral-ocr-4-1` | Pinned model; Docling defaults to `docling.serve-v1` |
 | `retention_posture` | `unknown` | Mistral: `standard` or `zdr`; Docling: `operator-controlled` (default) |
 | `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
@@ -2424,7 +2424,7 @@ enabled = false
 provider = "mistral"
 region = "eu"
 api_key_env = "MISTRAL_API_KEY"
-model = "mistral-ocr-4-0"
+model = "mistral-ocr-4-1"
 retention_posture = "zdr"
 training_posture = "opted-out"
 max_file_bytes = 52428800
