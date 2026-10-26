@@ -10,9 +10,10 @@ BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 # plain `go build` and `go test`, send no telemetry.
 POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
 
-# Package manager that owns the installed binary, such as homebrew. A binary
-# built with it refuses `msgvault update` and points at the package manager.
-# Empty for release archives and source builds, which may replace themselves.
+# Who distributes the binary; telemetry reports it too. Empty for source
+# builds and "kenn" for official direct downloads, which both replace
+# themselves. A package manager such as homebrew makes `msgvault update`
+# refuse and point at that package manager.
 DISTRIBUTION ?=
 
 # Recursive so a target-specific DISTRIBUTION, as in `homebrew`, takes effect.
@@ -20,6 +21,7 @@ LDFLAGS = -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
           -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
           -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE) \
           -X go.kenn.io/msgvault/cmd/msgvault/cmd.Distribution=$(DISTRIBUTION) \
+          -X go.kenn.io/kit/telemetry/posthog.distribution=$(DISTRIBUTION) \
           -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
 
 LDFLAGS_RELEASE = $(LDFLAGS) -s -w

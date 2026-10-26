@@ -1060,6 +1060,7 @@ func TestHeaderUpdateNoticeNamesUpgradeCommand(t *testing.T) {
 		notWant      string
 	}{
 		{name: "self-updating build", want: "update: v2.0.0 — msgvault update", notWant: "brew"},
+		{name: "official download", distribution: "kenn", want: "update: v2.0.0 — msgvault update", notWant: "brew"},
 		{name: "homebrew build", distribution: "homebrew", want: "update: v2.0.0 — brew upgrade msgvault", notWant: "msgvault update"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

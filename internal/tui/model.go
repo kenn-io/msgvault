@@ -52,8 +52,8 @@ type Options struct {
 	DataDir      string
 	ExportDir    string
 	Version      string
-	// Distribution names the package manager that owns the binary, if any.
-	// The update notice then points at that package manager.
+	// Distribution names who distributes the binary. When a package manager
+	// owns it, the update notice points at that package manager.
 	Distribution string
 
 	// AggregateLimit overrides the maximum number of aggregate rows to load.

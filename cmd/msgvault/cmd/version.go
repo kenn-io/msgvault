@@ -5,6 +5,7 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/update"
 )
 
 // Version information - set via ldflags at build time.
@@ -12,9 +13,10 @@ var (
 	Version   = "dev"
 	Commit    = "unknown"
 	BuildDate = "unknown"
-	// Distribution names the package manager that owns this binary, such as
-	// "homebrew". Empty for release archives and source builds, which may
-	// replace themselves with `msgvault update`.
+	// Distribution names who distributes this binary. Source builds leave it
+	// empty and official direct downloads set "kenn"; both replace themselves
+	// with `msgvault update`. Any other value, such as "homebrew", names the
+	// package manager that owns the binary.
 	Distribution = ""
 )
 
@@ -28,7 +30,7 @@ var versionCmd = &cobra.Command{
 		fmt.Printf("  built:   %s\n", BuildDate)
 		fmt.Printf("  go:      %s\n", runtime.Version())
 		fmt.Printf("  os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
-		if Distribution != "" {
+		if !update.SelfUpdating(Distribution) {
 			fmt.Printf("  package: %s\n", Distribution)
 		}
 	},

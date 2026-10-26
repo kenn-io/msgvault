@@ -43,6 +43,13 @@ func init() {
 	rootCmd.AddCommand(newUpdateCmd())
 }
 
+// checkForUpdate and performUpdate reach GitHub; tests replace them to keep
+// the command's own decisions offline.
+var (
+	checkForUpdate = update.CheckForUpdate
+	performUpdate  = update.PerformUpdate
+)
+
 func runUpdate(cmd *cobra.Command, args []string) error {
 	checkOnly, _ := cmd.Flags().GetBool("check")
 	yes, _ := cmd.Flags().GetBool("yes")
@@ -58,7 +65,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Checking for updates...")
 
-	info, err := update.CheckForUpdate(Version, true)
+	info, err := checkForUpdate(Version, true)
 	if err != nil {
 		return fmt.Errorf("check for updates: %w", err)
 	}
@@ -147,7 +154,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		func(c *config.Config) (updateDaemonStopResult, error) {
 			return stopLocalDaemonsForUpdate(c, invocationFromCommand(cmd).logger)
 		},
-		update.PerformUpdate,
+		performUpdate,
 		func(c *config.Config, result updateDaemonStopResult) error {
 			return restartDaemonAfterUpdate(c, result, installExecutablePath, invocationFromCommand(cmd))
 		},
