@@ -213,6 +213,8 @@ MCP protocol `2026-07-28`; older clients omit those tools.
 
 The `/mcp` endpoint returns HTTP 503 until startup discovery finishes, which takes at most 30 seconds; after a timeout, it serves a smaller catalog and the daemon log names the missing tools.
 
+Unlike the standalone `mcp --http` listener, remote MCP clients share the daemon's per-IP request limit of 10 requests per second with a burst of 20; authenticated same-host callers are exempt.
+
 Native endpoints share the daemon lifecycle and do not create a separate MCP
 discovery record. `msgvault mcp --http` remains available when you need a
 separate listener, inbound key, or `msgvault mcp status` discovery record.

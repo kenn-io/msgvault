@@ -115,67 +115,69 @@ func TestNativeMCPBridge(t *testing.T) {
 		})
 	}
 	t.Run("canceled read drains before shutdown", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		entered, canceled, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
-		unwind, release := context.WithCancel(context.Background())
-		engine := &querytest.MockEngine{ListMessagesFunc: func(ctx context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
-			defer close(exited)
-			close(entered)
-			<-ctx.Done()
-			close(canceled)
-			<-unwind.Done()
-			return nil, ctx.Err()
-		}}
-		cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner", BindAddr: "127.0.0.1"}}
-		server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler), Engine: engine})
-		defer func() { release(); require.NoError(server.Shutdown(context.Background())) }()
-		cmd := &cobra.Command{Use: "serve"}
-		addServeConfigFlags(cmd)
-		require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(err)
-		serving := make(chan error, 1)
-		go func() { serving <- server.StartOnListener(listener) }()
-		require.NoError(server.WaitStarted(t.Context()))
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+listener.Addr().String()+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_messages","arguments":{}}}`))
-		require.NoError(err)
-		request.Header.Set("Authorization", "Bearer owner")
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Accept", "application/json, text/event-stream")
-		request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
-		requested := make(chan error, 1)
-		go func() {
-			response, requestErr := http.DefaultClient.Do(request)
-			if response != nil {
-				assert.NoError(response.Body.Close())
-			}
-			requested <- requestErr
-		}()
-		<-entered
-		cancel()
-		<-canceled
-		require.ErrorIs(<-requested, context.Canceled)
-		shutdown := make(chan error, 1)
-		go func() { shutdown <- server.Shutdown(context.Background()) }()
-		require.ErrorIs(<-serving, http.ErrServerClosed)
-		select {
-		case err := <-shutdown:
+		synctest.Test(t, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			entered, canceled, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			unwind, release := context.WithCancel(context.Background())
+			engine := &querytest.MockEngine{ListMessagesFunc: func(ctx context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
+				defer close(exited)
+				close(entered)
+				<-ctx.Done()
+				close(canceled)
+				<-unwind.Done()
+				return nil, ctx.Err()
+			}}
+			cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner", BindAddr: "127.0.0.1"}}
+			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler), Engine: engine})
+			defer func() { release(); require.NoError(server.Shutdown(context.Background())) }()
+			cmd := &cobra.Command{Use: "serve"}
+			addServeConfigFlags(cmd)
+			require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(err)
-			assert.Fail("shutdown returned while nested read was unwinding")
+			serving := make(chan error, 1)
+			go func() { serving <- server.StartOnListener(listener) }()
+			require.NoError(server.WaitStarted(t.Context()))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+listener.Addr().String()+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_messages","arguments":{}}}`))
+			require.NoError(err)
+			request.Header.Set("Authorization", "Bearer owner")
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
+			requested := make(chan error, 1)
+			go func() {
+				response, requestErr := http.DefaultClient.Do(request)
+				if response != nil {
+					assert.NoError(response.Body.Close())
+				}
+				requested <- requestErr
+			}()
+			<-entered
+			cancel()
+			<-canceled
+			require.ErrorIs(<-requested, context.Canceled)
+			shutdown := make(chan error, 1)
+			go func() { shutdown <- server.Shutdown(context.Background()) }()
+			require.ErrorIs(<-serving, http.ErrServerClosed)
+			select {
+			case err := <-shutdown:
+				require.NoError(err)
+				assert.Fail("shutdown returned while nested read was unwinding")
+				release()
+				return
+			case <-time.After(time.Second):
+			}
 			release()
-			return
-		case <-time.After(time.Second):
-		}
-		release()
-		require.NoError(<-shutdown)
-		select {
-		case <-exited:
-		default:
-			assert.Fail("shutdown did not join the nested handler")
-		}
+			require.NoError(<-shutdown)
+			select {
+			case <-exited:
+			default:
+				assert.Fail("shutdown did not join the nested handler")
+			}
+		})
 	})
 	t.Run("serve cancellation preserves admitted read during drain", func(t *testing.T) {
 		assert := assert.New(t)
