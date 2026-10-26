@@ -876,6 +876,9 @@ func (s *Store) withTx(fn func(tx *loggedTx) error) error {
 // connection acquisition and every context-aware statement in the
 // transaction.
 func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) error {
+	if tx, ok := ctx.Value(calendarResourceTransactionKey{s}).(*loggedTx); ok {
+		return fn(tx)
+	}
 	return s.withTxOptionsContext(ctx, nil, fn)
 }
 
@@ -2306,6 +2309,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
 		return fmt.Errorf("initialize chat members projection: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventDurationV1, 1, false, s.ensureCalendarEventRecurrenceDurationColumn); err != nil {
+		return fmt.Errorf("add calendar event recurrence duration: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
+		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for

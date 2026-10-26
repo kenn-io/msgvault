@@ -807,18 +807,27 @@ func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
 
 	cal, err := f.Store.GetOrCreateSource(sourceTypeCalendar, accountID+"/primary")
 	require.NoError(err, "GetOrCreateSource calendar")
+	calDAV, err := f.Store.GetOrCreateSource(sourceTypeCalDAV, accountID)
+	require.NoError(err, "GetOrCreateSource CalDAV")
 	cfg, err := json.Marshal(map[string]string{
 		"account_email": accountID,
 		"calendar_id":   "primary",
 	})
 	require.NoError(err, "marshal sync_config")
 	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+	calDAVCfg, err := json.Marshal(map[string]string{
+		"account_email": accountID,
+		"calendar_id":   "work",
+	})
+	require.NoError(err, "marshal CalDAV sync_config")
+	require.NoError(f.Store.UpdateSourceSyncConfig(calDAV.ID, string(calDAVCfg)), "UpdateSourceSyncConfig CalDAV")
 
 	scope, err := ResolveEmailAccountFlag(f.Store, accountID)
 	require.NoError(err)
 
 	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
 	assert.NotContains(scope.SourceIDs(), cal.ID, "dedup account scope must not include Calendar sources")
+	assert.NotContains(scope.SourceIDs(), calDAV.ID, "dedup account scope must not include CalDAV sources")
 }
 
 // TestDeduplicateCollectionResolution_MultiSource confirms SourceIDs expands

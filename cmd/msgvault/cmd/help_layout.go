@@ -153,6 +153,7 @@ var topLevelCommandGroups = map[string]string{
 	"sync":                   helpGroupSources,
 	"sync-beeper":            helpGroupSources,
 	"sync-calendar":          helpGroupSources,
+	"sync-caldav":            helpGroupSources,
 	"sync-carddav":           helpGroupSources,
 	"sync-chatwoot":          helpGroupSources,
 	"sync-circleback":        helpGroupSources,

@@ -1751,10 +1751,54 @@ msgvault sync-calendar <name|email> [flags]
 
 ---
 
+## sync-caldav
+
+Archive events from a configured CalDAV connection through the daemon. This is
+unreleased functionality. Set up
+[CalDAV sources](configuration.md#caldav-sources-unreleased) first.
+
+```bash
+msgvault sync-caldav personal
+msgvault sync-caldav personal --full
+```
+
+| Flag | Description |
+|---|---|
+| `--full` | Ignore the saved token and reconcile a complete calendar snapshot |
+| `--build-cache` | Refresh the analytics cache after this sync |
+| `--no-build-cache` | Skip analytics cache refresh after this sync |
+
+The first run discovers calendars and archives their events. Later runs use
+`sync-collection` tokens where supported; other servers use complete snapshots.
+Expired tokens trigger a fresh snapshot. A missing configured calendar is an
+error. Sync makes no provider writes.
+
+Events are searchable `calendar_event` messages, with typed event and attendee
+rows rebuilt from `caldav_ics` raw data. A resource may contain a recurring
+master and its exceptions. Task-only resources advance sync without becoming
+messages. Recurrence stays unexpanded in the archive. Rooms remain typed
+attendees and do not become people.
+
+Raw data keeps the iCalendar payload returned by the server. XML
+`calendar-data` normalizes line endings; GET fallback keeps the returned body
+bytes. Updated resources replace their archived event snapshots. Events removed
+from a resource or deleted upstream retain their last raw data and are marked
+as deleted from the source. Cancelled events carry `status=cancelled`.
+
+---
+
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
+List archived calendar events or control live Google Calendar events through the daemon. These commands are unreleased.
+
+```bash
+msgvault calendar events --from 2027-03-01 --to 2027-04-01
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+```
+
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.26.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
 ID, or an alias from `config.toml`.
 
@@ -1780,9 +1824,9 @@ msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> 
 
 | Flag | Applies to | Contract |
 |---|---|---|
-| `--account` | All | Required OAuth account or configured source name, separate from the target calendar |
-| `--dry-run` | All | Verify live access and return the proposed writes without applying them; availability still reads Google |
-| `--read-only` | All | Reject all mutations |
+| `--account` | Live commands | Required OAuth account or configured source name, separate from the target calendar |
+| `--dry-run` | Live commands | Verify live access and return the proposed writes without applying them; availability still reads Google |
+| `--read-only` | Live commands | Reject all mutations |
 | `--json` | All | Print complete results and archive receipts; dry runs and availability always print JSON |
 | `--send-updates` | Writes | `none` (default), `all`, or `externalOnly` |
 | `--summary`, `--description`, `--location` | Create/update | Omitted update fields are preserved; explicit empty clears |

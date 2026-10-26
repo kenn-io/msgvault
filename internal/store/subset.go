@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -229,6 +230,12 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
 	}
 
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		_, _ = db.Exec("DETACH DATABASE src")
 		closeAndCleanup()
@@ -355,8 +362,10 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		CREATE TEMP TABLE selected_messages AS
 		SELECT id FROM src.messages
 		WHERE %s
+		  AND NOT EXISTS (SELECT 1 FROM src.message_raw r
+		                  WHERE r.message_id = src.messages.id AND r.raw_format = ?)
 		ORDER BY COALESCE(sent_at, received_at, internal_date)
-			DESC, id DESC LIMIT ?`, LiveMessagesWhere("", true)), rowCount); err != nil {
+			DESC, id DESC LIMIT ?`, LiveMessagesWhere("", true)), calevent.CalDAVRawFormat, rowCount); err != nil {
 		return nil, fmt.Errorf("select messages: %w", err)
 	}
 	if _, err := tx.Exec(`CREATE TEMP TABLE selected_message_sources AS

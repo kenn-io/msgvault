@@ -376,7 +376,8 @@ import (
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds authenticated streamed Muesli recording imports.
 // 3.25.0 adds archived chat discovery ranked by the best matching name or title.
-const APISchemaVersion = "3.25.0"
+// 3.26.0 adds archived calendar occurrence listing.
+const APISchemaVersion = "3.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -987,10 +988,13 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
-	// These response properties stay required in JSON, but an empty string is
-	// meaningful for canonical aliases, direct routes, unresolved routes, and
-	// candidates whose saved display name has been cleared.
+	// These response properties stay required in JSON, but allow empty strings.
 	for _, field := range []struct{ schema, property string }{
+		{"Attendee", "email"},
+		{"Attendee", "display_name"},
+		{"CalendarOccurrence", "start_date"},
+		{"CalendarOccurrence", "end_date"},
+		{"CalendarOccurrence", "subject"},
 		{"ContactCandidate", "display_name"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
