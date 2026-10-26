@@ -309,8 +309,7 @@ func TestUpdateRefusesToInstallOverHomebrewBuild(t *testing.T) {
 		root := newRootCommand()
 		root.AddCommand(newUpdateCmd())
 		_, _, err := runRoot(t, root, append([]string{"--home", home}, args...)...)
-		require.Error(t, err, "msgvault %v", args)
-		assert.ErrorContains(t, err, "managed by Homebrew", "msgvault %v", args)
-		assert.ErrorContains(t, err, "`brew upgrade msgvault`", "msgvault %v", args)
+		require.ErrorContains(t, err, "managed by Homebrew", "msgvault %v", args)
+		require.ErrorContains(t, err, "`brew upgrade msgvault`", "msgvault %v", args)
 	}
 }
