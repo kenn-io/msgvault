@@ -56,6 +56,8 @@ jobs:
           CGO_ENABLED: '1'
           # Public PostHog ingest key for anonymous telemetry. Builds without it send no telemetry.
           POSTHOG_PROJECT_KEY: phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
+          # Package manager that owns the binary. Empty: this binary may replace itself.
+          DISTRIBUTION: ''
         run: |
           export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
           COMMIT=$(printf '%s' "$GITHUB_SHA" | cut -c1-8)
@@ -64,7 +66,7 @@ jobs:
           mkdir -p dist
           CGO_ENABLED=0 go build -trimpath -buildvcs=false -o dist/msgvault-codex-bridge ./cmd/msgvault-codex-bridge
           BRIDGE_SHA256=$(sha256sum dist/msgvault-codex-bridge | cut -d' ' -f1)
-          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=${BRIDGE_SHA256} -X go.kenn.io/kit/telemetry/posthog.projectKey=${POSTHOG_PROJECT_KEY} -extldflags '-lstdc++ -lm'"
+          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X go.kenn.io/msgvault/cmd/msgvault/cmd.Distribution=${DISTRIBUTION} -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=${BRIDGE_SHA256} -X go.kenn.io/kit/telemetry/posthog.projectKey=${POSTHOG_PROJECT_KEY} -extldflags '-lstdc++ -lm'"
           go build -tags "fts5 sqlite_vec" -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
 
           echo "--- Binary info ---"

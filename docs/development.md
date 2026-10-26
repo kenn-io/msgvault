@@ -24,7 +24,15 @@ make build-release
 
 # Install to ~/.local/bin or GOPATH
 make install
+
+# Homebrew formula build into $BINDIR (default bin/)
+make homebrew VERSION=1.2.3
 ```
+
+`make homebrew` is the normal build with `DISTRIBUTION=homebrew`, so the binary
+refuses `msgvault update` and points at `brew upgrade msgvault`. It adds the
+`duckdb_use_lib` tag, which links a system `libduckdb`; set `CGO_LDFLAGS` (and
+`CGO_CFLAGS` for headers) when that library is outside the default search path.
 
 ### Windows
 

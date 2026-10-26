@@ -10,12 +10,19 @@ BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 # plain `go build` and `go test`, send no telemetry.
 POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
 
-LDFLAGS := -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
-           -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
-           -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE) \
-           -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
+# Package manager that owns the installed binary, such as homebrew. A binary
+# built with it refuses `msgvault update` and points at the package manager.
+# Empty for release archives and source builds, which may replace themselves.
+DISTRIBUTION ?=
 
-LDFLAGS_RELEASE := $(LDFLAGS) -s -w
+# Recursive so a target-specific DISTRIBUTION, as in `homebrew`, takes effect.
+LDFLAGS = -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
+          -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
+          -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE) \
+          -X go.kenn.io/msgvault/cmd/msgvault/cmd.Distribution=$(DISTRIBUTION) \
+          -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
+
+LDFLAGS_RELEASE = $(LDFLAGS) -s -w
 
 # Default build tags applied to every go build/test/bench invocation.
 # - fts5: enable the SQLite FTS5 full-text search extension
@@ -95,7 +102,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -120,6 +127,26 @@ else
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o msgvault$(GOEXE) ./cmd/msgvault
 endif
 	@chmod +x msgvault$(GOEXE)
+
+# Build the binary a Homebrew formula installs, into $(BINDIR). This is the
+# normal build plus DISTRIBUTION=homebrew, so the binary defers upgrades to
+# `brew upgrade msgvault`. duckdb_use_lib links Homebrew's libduckdb instead of
+# the bundled static library; CGO_CFLAGS and CGO_LDFLAGS from the environment
+# locate it and, where the system lacks it, sqlite3.h.
+BINDIR ?= bin
+HOMEBREW_BUILD_TAGS := $(BUILD_TAGS) duckdb_use_lib
+
+homebrew: DISTRIBUTION = homebrew
+homebrew: web-embed
+	@mkdir -p "$(BINDIR)"
+ifeq ($(shell go env GOOS),linux)
+	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o "$(BINDIR)/msgvault-codex-bridge" ./cmd/msgvault-codex-bridge
+	chmod 755 "$(BINDIR)/msgvault-codex-bridge"
+	@bridge_digest=$$(sha256sum "$(BINDIR)/msgvault-codex-bridge" | cut -d' ' -f1); \
+		CGO_ENABLED=1 go build -trimpath -buildvcs=false -tags "$(HOMEBREW_BUILD_TAGS)" -ldflags="$(LDFLAGS) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$$bridge_digest" -o "$(BINDIR)/msgvault$(GOEXE)" ./cmd/msgvault
+else
+	CGO_ENABLED=1 go build -trimpath -buildvcs=false -tags "$(HOMEBREW_BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o "$(BINDIR)/msgvault$(GOEXE)" ./cmd/msgvault
+endif
 
 # Install to ~/.local/bin, $GOBIN, or $GOPATH/bin
 install: build
@@ -554,6 +581,7 @@ help:
 	@echo ""
 	@echo "  build          - Debug build"
 	@echo "  build-release  - Release build (optimized, stripped)"
+	@echo "  homebrew       - Homebrew formula build into BINDIR (DISTRIBUTION=homebrew, system libduckdb)"
 	@echo "  install        - Install to ~/.local/bin or GOPATH"
 	@echo ""
 	@echo "  test           - Run SQLite tests with automatic CPU/memory scaling (TEST_PROFILE=standard disables)"
