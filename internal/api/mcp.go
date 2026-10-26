@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"errors"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"net/http"
 	"sync"
+
+	"go.kenn.io/msgvault/internal/apiprotocol"
 )
 
 type nativeMCPHandlers struct {
@@ -44,8 +46,14 @@ func (s *Server) mountNativeMCP(mux *http.ServeMux) {
 	for index, path := range []string{"/mcp", "/mcp/writes"} {
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			// Require bearer syntax as well as owner API-key mode, including during initialization.
-			_, bearer := apiprotocol.BearerAuthorization(r)
-			if !bearer || s.requestAuthentication(r).Mode != AuthModeAPIKey {
+			credential, bearer := apiprotocol.BearerAuthorization(r)
+			authorized := false
+			if bearer {
+				request := r.Clone(context.WithValue(r.Context(), requestSecurityContextKey{}, nil))
+				request.Header.Set("Authorization", "Bearer "+credential)
+				authorized = s.requestAuthentication(request).Mode == AuthModeAPIKey
+			}
+			if !authorized {
 				w.Header().Set("WWW-Authenticate", "Bearer")
 				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 				return
