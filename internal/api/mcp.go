@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"sync"
@@ -49,9 +48,10 @@ func (s *Server) mountNativeMCP(mux *http.ServeMux) {
 			credential, bearer := apiprotocol.BearerAuthorization(r)
 			authorized := false
 			if bearer {
-				request := r.Clone(context.WithValue(r.Context(), requestSecurityContextKey{}, nil))
+				// The cached classification only accepts the exact "Bearer " prefix.
+				request := r.Clone(r.Context())
 				request.Header.Set("Authorization", "Bearer "+credential)
-				authorized = s.requestAuthentication(request).Mode == AuthModeAPIKey
+				authorized = s.classifyAPIRequestDirect(request).Mode == AuthModeAPIKey
 			}
 			if !authorized {
 				w.Header().Set("WWW-Authenticate", "Bearer")
