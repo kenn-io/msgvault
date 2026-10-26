@@ -26,6 +26,9 @@ func (t nativeMCPTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithCancel(r.Context())
 	request := r.Clone(ctx)
 	request.Host = "msgvault.internal"
+	// Deliberately treat nested calls as same-host CLI requests and exempt them
+	// from the per-IP rate limit. The outer /mcp request already passed owner-key
+	// authentication and that rate limit with its real address.
 	request.RemoteAddr = "127.0.0.1:0"
 	reader, writer := io.Pipe()
 	ready := make(chan *http.Response, 1)
@@ -94,7 +97,7 @@ func (w *nativeMCPResponse) Write(p []byte) (int, error) {
 func (w *nativeMCPResponse) Flush() { w.WriteHeader(http.StatusOK) }
 
 // startServeMCP discovers capabilities without delaying API or vector startup.
-func startServeMCP(ctx context.Context, cmd *cobra.Command, server *api.Server, state *invocation, serverErr chan<- error) <-chan struct{} {
+func startServeMCP(ctx context.Context, cmd *cobra.Command, server *api.Server, state *invocation) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -102,10 +105,7 @@ func startServeMCP(ctx context.Context, cmd *cobra.Command, server *api.Server, 
 			return
 		}
 		if err := installServeMCP(ctx, cmd, server, state); err != nil && ctx.Err() == nil {
-			select {
-			case serverErr <- fmt.Errorf("install native MCP: %w", err):
-			case <-ctx.Done():
-			}
+			state.logger.Warn("native MCP unavailable", "error", err)
 		}
 	}()
 	return done
@@ -127,7 +127,7 @@ func installServeMCP(ctx context.Context, cmd *cobra.Command, server *api.Server
 	discoveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	opts := daemonMCPServeOptions(discoveryCtx, client, state)
-	if err := discoveryCtx.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		_ = client.Close()
 		return fmt.Errorf("initialize native MCP: %w", err)
 	}

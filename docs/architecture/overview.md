@@ -27,13 +27,7 @@ inference without making a model provider the system of record.
 - SQLite archives have Parquet analytics, packed attachment storage, and
   verifiable backup repositories.
 
-On unreleased `main`, the daemon also owns native MCP handlers at `/mcp` and,
-when enabled, `/mcp/writes`. Each catalog has independent confirmation and
-download state. MCP calls use daemon-backed adapters through the authenticated
-API router in process; nested API operations retain their mutation gate and
-cancellation. The daemon drains HTTP requests before closing MCP resources.
-See [native MCP](../usage/chat.md#native-daemon-endpoints) for authentication
-and write opt-ins. The standalone MCP command can still own a separate listener.
+On unreleased `main`, the daemon also serves [native MCP endpoints](../usage/chat.md#native-daemon-endpoints).
 
 ## Current boundaries
 
