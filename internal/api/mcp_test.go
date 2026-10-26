@@ -131,37 +131,20 @@ func TestNativeMCPEnvelopeDeadlineAndGate(t *testing.T) {
 		})
 		require.NoError(s.InstallMCPHandlers(handler, handler, nil))
 		for _, path := range []string{"/mcp", "/mcp/writes"} {
-			r := httptest.NewRequest(http.MethodPost, path, nil)
-			r.Header.Set("Authorization", "Bearer owner")
-			w := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
-			started := time.Now()
-			s.Router().ServeHTTP(w, r)
-			assert.Equal(http.StatusNoContent, w.Code)
-			require.Len(w.readDeadlines, 1)
-			assert.Equal(started.Add(DaemonLongRequestTimeout), w.readDeadlines[0])
-			require.Len(w.writeDeadlines, 1)
-			assert.True(w.writeDeadlines[0].IsZero(), "native MCP must clear the write ceiling")
+			for _, authorization := range []string{"Bearer owner", "bearer owner"} {
+				r := httptest.NewRequest(http.MethodPost, path, nil)
+				r.Header.Set("Authorization", authorization)
+				w := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+				started := time.Now()
+				s.Router().ServeHTTP(w, r)
+				assert.Equal(http.StatusNoContent, w.Code)
+				require.Len(w.readDeadlines, 1)
+				assert.Equal(started.Add(DaemonLongRequestTimeout), w.readDeadlines[0])
+				require.Len(w.writeDeadlines, 1)
+				assert.True(w.writeDeadlines[0].IsZero(), "native MCP must clear the write ceiling")
+			}
 		}
 	})
-}
-
-func TestNativeMCPLowercaseBearerExecutionPolicy(t *testing.T) {
-	s := NewServerWithOptions(ServerOptions{Logger: slog.New(slog.DiscardHandler), Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}})
-	t.Cleanup(func() { require.NoError(t, s.Shutdown(context.Background())) })
-	require.NoError(t, s.InstallMCPHandlers(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, bounded := r.Context().Deadline()
-		assert.False(t, bounded, "native MCP must preserve the nested CLI execution policy")
-		w.WriteHeader(http.StatusNoContent)
-	}), nil, nil))
-	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	r.Header.Set("Authorization", "bearer owner")
-	w := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
-	s.Router().ServeHTTP(w, r)
-	assert.Equal(t, http.StatusNoContent, w.Code)
-	require.Len(t, w.readDeadlines, 1)
-	assert.False(t, w.readDeadlines[0].IsZero(), "native MCP must bound request reads")
-	require.Len(t, w.writeDeadlines, 1)
-	assert.True(t, w.writeDeadlines[0].IsZero(), "native MCP must clear the write ceiling")
 }
 
 func TestNativeMCPShutdownDrainsBeforeCleanup(t *testing.T) {
