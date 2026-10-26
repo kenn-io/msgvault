@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -586,4 +588,54 @@ func TestPersonPromoteSeedsNameThroughDaemonAdapter(t *testing.T) {
 	get.SetArgs([]string{strconv.FormatInt(person.ID, 10)})
 	require.NoError(get.ExecuteContext(testCtx))
 	assert.Contains(output.String(), "Display name: Alex Example")
+}
+
+func TestPersonPromoteReportsGateHolderWhileWaiting(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	participantID, err := st.EnsureParticipant("queued-promotion@example.com", "Queued Person", "example.com")
+	require.NoError(err)
+	gate := api.NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "person merge")
+	require.True(ok)
+	release = sync.OnceFunc(release)
+	defer release()
+	router := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{}, Store: &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler), OperationGate: gate,
+	}).Router()
+	// Let the real gate produce its timed busy response before releasing it.
+	// The retry then runs the actual promote handler against the test archive.
+	var busy atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, r)
+		if response.Code == http.StatusServiceUnavailable {
+			busy.Store(true)
+			release()
+		}
+		maps.Copy(w.Header(), response.Header())
+		w.WriteHeader(response.Code)
+		_, writeErr := w.Write(response.Body.Bytes())
+		assert.NoError(writeErr)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	savedJSON := personJSON
+	personJSON = true
+	t.Cleanup(func() { personJSON = savedJSON })
+	var output bytes.Buffer
+	promote := &cobra.Command{Use: personPromoteCmd.Use, Args: personPromoteCmd.Args, RunE: personPromoteCmd.RunE}
+	promote.SetOut(&output)
+	promote.SetArgs([]string{strconv.FormatInt(participantID, 10)})
+	stderr := captureStderrDuring(t, func() { require.NoError(promote.ExecuteContext(ctx)) })
+	assert.True(busy.Load())
+	assert.Contains(stderr, "Waiting:")
+	assert.Contains(stderr, "person merge")
+	assert.Contains(stderr, "Ctrl+C to cancel")
+	assert.True(json.Valid(output.Bytes()), "wait notices must leave JSON stdout intact")
+	person, err := st.PersonForParticipants([]int64{participantID})
+	require.NoError(err)
+	require.NotNil(person)
 }

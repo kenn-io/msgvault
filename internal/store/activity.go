@@ -2187,14 +2187,9 @@ func (s *Store) recomputeContactStateTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT ae.occurred_at, ae.message_id, ae.channel, ae.direction,
 		       ae.owner_source_id, ae.owner_address
-		FROM activity_events ae
-		WHERE EXISTS (
-			SELECT 1
-			FROM activity_event_persons aep
-			WHERE aep.message_id = ae.message_id
-			  AND aep.person_id = ?
-			  AND aep.evidence = 'direct'
-		)
+		FROM activity_event_persons aep
+		JOIN activity_events ae ON ae.message_id = aep.message_id
+		WHERE aep.person_id = ? AND aep.evidence = 'direct'
 		ORDER BY ae.occurred_at, ae.message_id
 	`, personID)
 	if err != nil {
@@ -2286,9 +2281,10 @@ func (s *Store) reconcilePersonActivityStateTx(
 }
 
 // reclassifyPersonActivityTx starts from the affected people and indexed
-// participant/message edges. It never constructs an archive-wide counterpart
-// relation. Events whose classification did not change keep their old epoch;
-// the bounded projector backstop advances that stamp after the identity write.
+// participant/message edges and non-member event links. Membership-only events
+// stay outside the identity transaction, even when their old evidence is direct.
+// The bounded projector backstop repairs them from their stale identity epoch,
+// including audience-limit and owner changes affecting other room members.
 func (s *Store) reclassifyPersonActivityTx(
 	ctx context.Context, tx *loggedTx, personIDs []int64, revisions ContactRevisions,
 ) ([]int64, error) {
@@ -2297,8 +2293,8 @@ func (s *Store) reclassifyPersonActivityTx(
 	}
 	placeholders := personMergeSnapshotPlaceholders(len(personIDs))
 	personArgs := personMergeSnapshotIDArgs(personIDs)
-	args := make([]any, 0, len(personIDs)*4)
-	for range 4 {
+	args := make([]any, 0, len(personIDs)*3)
+	for range 3 {
 		args = append(args, personArgs...)
 	}
 	messageIDs, err := personMergeRowIDsTx(ctx, tx, `WITH affected_messages AS (
@@ -2312,15 +2308,10 @@ func (s *Store) reclassifyPersonActivityTx(
 		JOIN message_recipients recipient ON recipient.participant_id = binding.participant_id
 		WHERE binding.person_id IN (`+placeholders+`)
 		UNION
-		SELECT message.id
-		FROM person_participants binding
-		JOIN conversation_participants member ON member.participant_id = binding.participant_id
-		JOIN messages message ON message.conversation_id = member.conversation_id
-		WHERE binding.person_id IN (`+placeholders+`)
-		UNION
 		SELECT link.message_id
 		FROM activity_event_persons link
 		WHERE link.person_id IN (`+placeholders+`)
+		  AND link.role <> 'member'
 	)
 	SELECT event.message_id
 	FROM affected_messages affected
