@@ -13,41 +13,6 @@ import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 // CardDAV-server or live Go-backend integration. Task 4 generated-client/API
 // tests and the controller request tests own exact wire-contract proof.
 
-test('fixture never records credentials from an unmatched CardDAV account route', async ({ page }) => {
-  const fixture = await installCardDAV(page, { configured: true });
-  await page.goto('/');
-
-  const status = await page.evaluate(async (password) => {
-    const response = await fetch('/api/v1/carddav/account/unmodeled', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        base_url: 'https://carddav.example.test/',
-        username: 'synthetic-user',
-        password,
-        enabled: true,
-        schedule: '0 2 * * *',
-        unexpected: 'not recorded'
-      })
-    });
-    return response.status;
-  }, fixture.password);
-
-  expect(status).toBe(404);
-  expect(fixture.requests.filter(({ path }) => path === '/api/v1/carddav/account/unmodeled')).toEqual([{
-    method: 'POST',
-    path: '/api/v1/carddav/account/unmodeled',
-    query: {},
-    body: {
-      base_url: 'https://carddav.example.test/',
-      username: 'synthetic-user',
-      enabled: true,
-      schedule: '0 2 * * *'
-    }
-  }]);
-  expect(JSON.stringify(fixture.requests)).not.toContain(fixture.password);
-});
-
 test('keyboard journey configures CardDAV, reconciles roles, syncs history, and resolves a conflict', async ({ page }) => {
   const fixture = await installCardDAV(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);

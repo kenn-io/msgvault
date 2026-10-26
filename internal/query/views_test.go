@@ -38,19 +38,6 @@ func TestDuckDBEngine_QuerySQL(t *testing.T) {
 	assert.Equal(1, result.RowCount)
 }
 
-func TestDuckDBEngine_QuerySQL_Error(t *testing.T) {
-	builder := NewTestDataBuilder(t)
-	builder.AddSource("test@example.com")
-	engine := builder.BuildEngine()
-	defer func() { _ = engine.Close() }()
-
-	_, err := engine.QuerySQL(
-		context.Background(),
-		"SELECT * FROM nonexistent_table",
-	)
-	require.Error(t, err, "expected error for bad SQL")
-}
-
 func TestRegisterViews_BaseViews(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/importer/mboxzip"
 	"go.kenn.io/msgvault/internal/mbox"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
@@ -399,10 +400,8 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 	}
 
 	// Pre-import the first message.
-	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
-	_, err = importer.ImportMbox(context.Background(), st, mboxFirstOnlyPath, importer.MboxImportOptions{
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
+	_, err := importer.ImportMbox(context.Background(), st, mboxFirstOnlyPath, importer.MboxImportOptions{
 		SourceType:         "hey",
 		Identifier:         "me@hey.com",
 		NoResume:           true,

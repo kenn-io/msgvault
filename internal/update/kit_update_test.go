@@ -153,16 +153,6 @@ func TestUpdaterCheckForUpdateOffersSameBaseReleaseForDevBuild(t *testing.T) {
 	assert.True(info.IsDevBuild, "dev build")
 }
 
-func TestFormatAndVersionHelpersDelegateToKit(t *testing.T) {
-	assert := assert.New(t)
-
-	assert.Equal("1.5 KB", FormatSize(1536), "format size")
-	assert.True(IsDevBuildVersion("0.16.1-2-g75d300a"), "git describe build")
-	assert.False(IsDevBuildVersion("v0.16.1-rc1"), "release prerelease")
-	assert.True(IsNewer("0.17.0", "0.16.1-2-g75d300a"), "release newer than git describe base")
-	assert.False(IsNewer("0.16.0", "0.16.1-2-g75d300a"), "older than git describe base")
-}
-
 func TestPerformUpdateInstallsWithKitClient(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

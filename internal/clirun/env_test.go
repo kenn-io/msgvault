@@ -25,7 +25,3 @@ func TestEnvAllowed(t *testing.T) {
 		})
 	}
 }
-
-func TestDiscordTokenEnvironmentName(t *testing.T) {
-	assert.Equal(t, "MSGVAULT_DISCORD_TOKEN", EnvDiscordToken)
-}

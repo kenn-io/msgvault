@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	pstreader "go.kenn.io/msgvault/internal/pst"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 const pstTestdataDir = "../pst/testdata"
@@ -22,10 +23,7 @@ const pstTestdataDir = "../pst/testdata"
 func openIntegrationStore(t *testing.T) *store.Store {
 	t.Helper()
 	tmp := t.TempDir()
-	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	require.NoError(t, err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
 	return st
 }
 

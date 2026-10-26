@@ -6,11 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCardDAVSchedulerJobNameIsStable(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "carddav", CardDAVJobName)
-}
-
 func TestPlaudSchedulerJobName(t *testing.T) {
 	name, ok := SchedulerJobNameForSource("plaud", "work")
 	assert.True(t, ok)

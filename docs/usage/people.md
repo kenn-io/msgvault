@@ -177,6 +177,8 @@ msgvault person directory --last-contact-after 2026-06-01 --last-contact-before 
 
 `--last-contact-after` and `--last-contact-before` are inclusive. Both accept `YYYY-MM-DD` or RFC3339 timestamps with offsets and fractional seconds. A date alone means midnight UTC, so an upper bound of `2026-07-01` includes the start of that day. The default sort is `last_contact_desc`. Use `last_contact_asc` for oldest contact first or `name` for name order.
 
+Drafts and unsent messages don't set last contact or cadence.
+
 The table shows ID, display name, and last contact in UTC. Missing names and timestamps show `-`. JSON returns the Directory envelope with a `people` array and optional `next_cursor`. It preserves the daemon's fields and omits `last_contact_at` when no timestamp exists.
 
 When output includes `Next cursor`, pass it unchanged with the same date bounds and sort to read the next page. For JSON, use the `next_cursor` value.

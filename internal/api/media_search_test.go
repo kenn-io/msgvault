@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -209,9 +208,8 @@ func TestMediaSearchCompletePopulation(t *testing.T) {
 
 	t.Parallel()
 	f := newMediaSearchFixture(t)
-	for i := range 1001 {
-		f.retained(t, "recording-"+strconv.Itoa(i))
-	}
+	f.retained(t, "seed")
+	cloneSearchOccurrences(t, f, "msgvault:seed", 1000)
 	seed := f.match(t, "beyond-worker-window")
 	f.report.Coverage = docbankmedia.SearchCoverage{State: "incomplete", ScopedDocuments: 1002, CompleteDocuments: 1}
 	status, response, raw := searchMediaFor(t, f.server(true), "q=quarterly+numbers")
@@ -226,8 +224,8 @@ func TestMediaSearchParametersAndAuthorization(t *testing.T) {
 	assert := assert.New(t)
 
 	t.Parallel()
+	f := newMediaSearchFixture(t)
 	for _, query := range []string{"q=words&mode=semantic", "q=words&mode=hybrid", "q=words&mode=invalid", "q=words&limit=101", "q=words&person_id=0", "q=words&participant_id=7&person_id=7", "q=words&direction=from_person", "q=words&person_id=7&direction=invalid", "q=words&person_id=7&direction=", "q=" + url.QueryEscape(strings.Repeat("x", 8193))} {
-		f := newMediaSearchFixture(t)
 		status, _, raw := searchMediaFor(t, f.server(true), query)
 		want := http.StatusBadRequest
 		if strings.Contains(query, "mode=semantic") || strings.Contains(query, "mode=hybrid") {
@@ -239,24 +237,21 @@ func TestMediaSearchParametersAndAuthorization(t *testing.T) {
 		}
 		assert.Empty(f.requests)
 	}
-	f := newMediaSearchFixture(t)
 	w := httptest.NewRecorder()
 	f.server(true).Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=words", nil))
 	assert.Equal(http.StatusUnauthorized, w.Code)
 }
 
-func TestMediaSearchOversizedPopulation(t *testing.T) {
-	assert := assert.New(t)
+// cloneSearchOccurrences creates clones that share the seed's attachment, message, source, and processing key and differ only in occurrence_ref and content_version_id.
+func cloneSearchOccurrences(t *testing.T, f *mediaSearchFixture, ref string, count int) {
+	t.Helper()
 	require := require.New(t)
 
-	t.Parallel()
-	f := newMediaSearchFixture(t)
-	f.retained(t, "seed")
 	// Clone mapped identities to exercise the public fence ceiling without thousands of imports.
 	transaction, err := f.f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
-	for i := range docbankmedia.MaxSearchVersions {
+	for i := range count {
 		_, err := transaction.Exec(f.f.Store.Rebind(`INSERT INTO beeper_media_occurrences (
 			destination_key, occurrence_ref, revision, source_type, source_identifier, source_conversation_id,
 			source_message_id, source_attachment_id, source_part_key, source_sha256, byte_length,
@@ -266,10 +261,19 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 			source_message_id, source_attachment_id, source_part_key, source_sha256, byte_length,
 			occurrence_json, request_filename, request_mime_type, retention_state, vault_uid,
 			source_id, source_version_id, ?, processing_key
-			FROM beeper_media_occurrences WHERE occurrence_ref = 'msgvault:seed'`), fmt.Sprintf("msgvault:copy-%d", i), fmt.Sprintf("content-%d", i))
+			FROM beeper_media_occurrences WHERE occurrence_ref = ?`), fmt.Sprintf("msgvault:copy-%d", i), fmt.Sprintf("content-%d", i), ref)
 		require.NoError(err)
 	}
 	require.NoError(transaction.Commit())
+}
+
+func TestMediaSearchOversizedPopulation(t *testing.T) {
+	assert := assert.New(t)
+
+	t.Parallel()
+	f := newMediaSearchFixture(t)
+	f.retained(t, "seed")
+	cloneSearchOccurrences(t, f, "msgvault:seed", docbankmedia.MaxSearchVersions)
 	status, _, raw := searchMediaFor(t, f.server(true), "q=quarterly+numbers")
 	assert.Equal(http.StatusBadRequest, status, raw)
 	assert.Contains(raw, "media_search_scope_limit")

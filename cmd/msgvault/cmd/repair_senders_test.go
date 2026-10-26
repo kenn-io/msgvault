@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestRepairSendersAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
@@ -50,9 +51,7 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(err, "OpenForTest")
-	require.NoError(st.InitSchema(), "InitSchema")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "archive@example.test")
 	require.NoError(err, "GetOrCreateSource")
 	conversationID, err := st.EnsureConversation(

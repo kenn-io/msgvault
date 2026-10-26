@@ -110,7 +110,7 @@ resolve_asset_ref() {
   return 1
 }
 
-hydrate_branch() {
+hydrate_branch() (
   local branch="$1"
   local target="$2"
   shift 2
@@ -132,13 +132,20 @@ hydrate_branch() {
 
   rm -rf "$target"
   mkdir -p "$target"
-  git -C "$repo_root" archive "$asset_ref" | tar -xf - -C "$target"
+
+  local archive_file
+  archive_file="$(mktemp "${TMPDIR:-/tmp}/msgvault-docs-assets.XXXXXX")"
+  trap 'rm -f "$archive_file"' EXIT
+
+  # Finish producing the archive before tar can close its input early.
+  git -C "$repo_root" archive --format=tar "$asset_ref" >"$archive_file"
+  tar -xf "$archive_file" -C "$target"
 
   if ! has_expected_assets "$target" "$@"; then
     printf 'docs assets not hydrated: %s is missing expected assets\n' "$branch" >&2
     return 1
   fi
-}
+)
 
 hydrate_branch "$static_branch" "$static_target" "${static_assets[@]}"
 hydrate_branch "$generated_branch" "$generated_target" "${generated_assets[@]}"

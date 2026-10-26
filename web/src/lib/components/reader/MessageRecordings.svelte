@@ -224,6 +224,8 @@
     gap: var(--space-2);
     padding-left: var(--space-3);
     border-left: 2px solid var(--border-muted);
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     margin-top: var(--space-2);
     overflow-wrap: break-word;
     color: var(--text-primary);

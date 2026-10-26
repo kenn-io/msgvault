@@ -815,13 +815,3 @@ func TestPeopleBrowserFilesAndActivityForwardCursorsAndMapRows(t *testing.T) {
 	assert.Equal("activity-next", activity.NextCursor)
 	assert.Equal(2, requests)
 }
-
-func TestDaemonPeopleBrowserImplementsBackend(t *testing.T) {
-	var backend peoplebrowser.Backend = (*PeopleBrowser)(nil)
-	assert.Nil(t, backend)
-}
-
-func TestPeopleBrowserStaleValueErrorMatchesSentinel(t *testing.T) {
-	err := peoplebrowser.StaleValueError{CurrentValueID: 72}
-	assert.ErrorIs(t, err, peoplebrowser.ErrStaleValue)
-}

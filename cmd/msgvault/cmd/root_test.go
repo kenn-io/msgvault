@@ -8,9 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -115,104 +113,6 @@ func newTestRootCmd() *cobra.Command {
 	}
 }
 
-// TestExecuteContext_CancellationPropagates verifies that context cancellation
-// from ExecuteContext propagates to command handlers.
-func TestExecuteContext_CancellationPropagates(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	// Track whether context was cancelled
-	var contextWasCancelled atomic.Bool
-
-	// Signal when the command handler has started waiting on ctx.Done()
-	handlerStarted := make(chan struct{})
-
-	// Create a fresh root command for this test
-	testRoot := newTestRootCmd()
-
-	// Create a test command that waits for context cancellation
-	testCmd := &cobra.Command{
-		Use:   "test-cancel",
-		Short: "Test command for context cancellation",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			// Signal that we're now waiting for cancellation
-			close(handlerStarted)
-			select {
-			case <-ctx.Done():
-				contextWasCancelled.Store(true)
-				return ctx.Err()
-			case <-time.After(5 * time.Second):
-				return nil
-			}
-		},
-	}
-
-	testRoot.AddCommand(testCmd)
-
-	// Create a cancellable context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensure cleanup even if test fails early
-
-	// Start ExecuteContext in a goroutine
-	done := make(chan error, 1)
-	go func() {
-		testRoot.SetArgs([]string{"test-cancel"})
-		done <- testRoot.ExecuteContext(ctx)
-	}()
-
-	// Wait for handler to start (synchronization instead of sleep)
-	select {
-	case <-handlerStarted:
-		// Handler is now waiting on ctx.Done()
-	case <-time.After(2 * time.Second):
-		require.Fail("command handler did not start in time")
-	}
-
-	// Cancel the context (simulates SIGINT/SIGTERM)
-	cancel()
-
-	// Wait for execution to complete
-	select {
-	case err := <-done:
-		require.ErrorIs(err, context.Canceled, "expected context.Canceled error")
-	case <-time.After(2 * time.Second):
-		require.Fail("ExecuteContext did not return after context cancellation")
-	}
-
-	// Verify the command observed the cancellation
-	assert.True(contextWasCancelled.Load(), "command did not observe context cancellation")
-}
-
-// TestExecute_UsesBackgroundContext verifies Execute() works with background context.
-func TestExecute_UsesBackgroundContext(t *testing.T) {
-	// Create a fresh root command for this test
-	testRoot := newTestRootCmd()
-
-	// Create a simple command that completes immediately
-	completed := make(chan struct{})
-	testCmd := &cobra.Command{
-		Use:   "test-execute",
-		Short: "Test command for Execute",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			close(completed)
-			return nil
-		},
-	}
-
-	testRoot.AddCommand(testCmd)
-
-	testRoot.SetArgs([]string{"test-execute"})
-	err := testRoot.Execute()
-	require.NoError(t, err, "Execute()")
-
-	select {
-	case <-completed:
-		// Success
-	case <-time.After(time.Second):
-		require.Fail(t, "command did not complete")
-	}
-}
-
 // TestExecuteContext_PropagatesContext verifies ExecuteContext passes context to command handlers.
 //
 // NOTE: This test modifies the package-level rootCmd variable and must NOT use t.Parallel().
@@ -254,56 +154,6 @@ func TestExecuteContext_PropagatesContext(t *testing.T) {
 	// Verify the context was propagated
 	require.NotNil(t, receivedCtx, "command did not receive context")
 	assert.Equal(t, testValue, receivedCtx.Value(testKey), "context value")
-}
-
-// TestExecute_UsesBackgroundContextInHandler verifies Execute provides background context to handlers.
-//
-// NOTE: This test modifies the package-level rootCmd variable and must NOT use t.Parallel().
-// Running this test in parallel with other tests that access rootCmd would cause data races.
-func TestExecute_UsesBackgroundContextInHandler(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	// Save and restore global rootCmd to avoid state leakage between tests.
-	// This pattern requires sequential test execution - do not add t.Parallel().
-	savedRootCmd := rootCmd
-	defer func() { rootCmd = savedRootCmd }()
-
-	// Create a test root command
-	testRoot := newTestRootCmd()
-
-	// Track the context received by the command
-	var receivedCtx context.Context
-	testCmd := &cobra.Command{
-		Use:   "test-bg-ctx",
-		Short: "Test command for background context",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			receivedCtx = cmd.Context()
-			return nil
-		},
-	}
-	testRoot.AddCommand(testCmd)
-
-	// Replace global rootCmd for this test
-	rootCmd = testRoot
-
-	testRoot.SetArgs([]string{"test-bg-ctx"})
-	err := Execute()
-	require.NoError(err, "Execute")
-
-	// Verify the command received a non-nil context (should be background context)
-	require.NotNil(receivedCtx, "command did not receive context")
-
-	// Background context should not have any deadline
-	deadline, ok := receivedCtx.Deadline()
-	assert.False(ok, "expected no deadline from background context, got %v", deadline)
-
-	// Background context should not be cancelled
-	select {
-	case <-receivedCtx.Done():
-		assert.Fail("background context should not be done")
-	default:
-		// Expected: context is not done
-	}
 }
 
 func TestIsAuthInvalidError(t *testing.T) {

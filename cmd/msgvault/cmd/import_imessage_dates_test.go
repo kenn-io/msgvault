@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imessage"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // Exercise the reported path: real chat.db import followed by a full cache build.
@@ -46,10 +47,7 @@ func TestBuildCacheAfterIMessageSentinelDates(t *testing.T) {
 		require.NoError(err)
 	}
 	dbPath := filepath.Join(tmp, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.test", "manual"))
@@ -107,10 +105,7 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = tmp
 	dbPath := cfg.DatabaseDSN()
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.test", "manual"))
@@ -141,6 +136,7 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 
 	st, err = store.Open(dbPath)
 	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
 	_, err = chat.Exec(`UPDATE message SET date = ? WHERE ROWID = 1`, int64(math.MaxInt64))
 	require.NoError(err)
 	summary, err = c.Import(context.Background(), st, src.ID)
@@ -160,10 +156,7 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 
 func TestFinishImessageImportSkipsCacheBuildForPostgres(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	st, err := store.Open(filepath.Join(t.TempDir(), "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "msgvault.db"))
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
 	participantID, err := st.EnsureParticipant("peer@example.test", "Synthetic Person", "example.test")

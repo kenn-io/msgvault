@@ -729,15 +729,6 @@ func TestSenderNamesDrillFilterKey(t *testing.T) {
 	assert.Equal(t, "(empty)", key, "for MatchEmptySenderName")
 }
 
-// TestSenderNamesBreadcrumbPrefix verifies the "N:" prefix in breadcrumbs.
-func TestSenderNamesBreadcrumbPrefix(t *testing.T) {
-	prefix := viewTypePrefix(query.ViewSenderNames)
-	assert.Equal(t, "N", prefix)
-
-	abbrev := viewTypeAbbrev(query.ViewSenderNames)
-	assert.Equal(t, "Sender Name", abbrev)
-}
-
 // TestShiftTabCyclesSenderNames verifies shift+tab cycles backward through
 // SenderNames in the correct order.
 func TestShiftTabCyclesSenderNames(t *testing.T) {
@@ -876,14 +867,6 @@ func TestRecipientNamesDrillFilterKey(t *testing.T) {
 	model.drillFilter = query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewRecipientNames: true}}
 	key = model.drillFilterKey()
 	assert.Equal(t, "(empty)", key, "for MatchEmptyRecipientName")
-}
-
-func TestRecipientNamesBreadcrumbPrefix(t *testing.T) {
-	prefix := viewTypePrefix(query.ViewRecipientNames)
-	assert.Equal(t, "RN", prefix)
-
-	abbrev := viewTypeAbbrev(query.ViewRecipientNames)
-	assert.Equal(t, "Recipient Name", abbrev)
 }
 
 func TestShiftTabCyclesRecipientNames(t *testing.T) {

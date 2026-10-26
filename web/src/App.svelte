@@ -1,11 +1,10 @@
 <script lang="ts">
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
-  import { startBrowserTelemetry } from '@kenn-io/kit-ui/utils/browser-telemetry';
-  import { onDestroy, onMount } from 'svelte';
+  import { startTelemetryReporting, stopTelemetryReporting } from './lib/telemetry/actions';
+  import { onMount } from 'svelte';
   import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
-  import { createSessionAwareAPIClient } from './lib/api/client';
   import { provideKataReadiness } from './lib/kata/kata-ready.svelte';
   import { provideMediaReadiness } from './lib/search/media-ready.svelte';
   import Login from './lib/components/auth/Login.svelte';
@@ -44,9 +43,11 @@
   // read the daemon before the save, so these values win over its result,
   // and a saved search mode keeps it from reconfiguring the open view.
   let savedSinceDefaultsLoad: SavedAppearance = {};
+  let sessions: ReturnType<typeof startSessionReporting> | undefined;
   onMount(() => {
     oauthCallback = receiveGoogleContactsCallback();
     if (!oauthCallback) void session.bootstrap();
+    return () => sessions?.stop();
   });
   // AppShell owns appearance while mounted; the boot and login screens apply
   // the same defaults and stored override so they render in the right theme.
@@ -68,35 +69,22 @@
     savedSinceDefaultsLoad = {};
     void loadBrowserDefaults(generation);
   });
-  // Reporting needs the session, so it runs only while authenticated; kit-ui dedupes by UTC day.
-  $effect(() => {
+  // Register the telemetry transport before child screen effects create the shared reporter.
+  $effect.pre(() => {
     if (session.authMode === undefined || session.authMode === 'required') return;
     const client = session.client;
-    const telemetry = startBrowserTelemetry({
-      route: '/api/v1/telemetry/events',
-      surface: 'web',
-      storageKey: 'msgvault.app-opened.web',
-      post: (route, event, options) =>
-        client.fetch(route, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(event),
-          keepalive: options?.keepalive,
-        }),
-    });
-    return () => telemetry.stop();
+    startTelemetryReporting(client, session.telemetryClient);
+    sessions ??= startSessionReporting(client);
+    sessions.signedIn(true);
+    return () => {
+      sessions?.signedIn(false);
+      stopTelemetryReporting(client);
+    };
   });
   $effect(() => {
     if (oauthCallback || !shellMounted || messageID === undefined) return;
     return startScreenViewReporting(session.client, 'message');
   });
-  let reporter: ReturnType<typeof startSessionReporting> | undefined;
-  $effect(() => {
-    const signedIn = session.authMode !== undefined && session.authMode !== 'required';
-    if (signedIn) reporter ??= startSessionReporting(createSessionAwareAPIClient(fetch, () => session.csrfToken));
-    reporter?.signedIn(signedIn);
-  });
-  onDestroy(() => reporter?.stop());
   async function loadBrowserDefaults(generation: number): Promise<void> {
     try {
       const { data } = await generatedGetSettings(session.client);

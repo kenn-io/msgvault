@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestDeletionStagingEndToEnd(t *testing.T) {
@@ -30,10 +31,7 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
 
-	s, err := store.Open(tmpDir + "/msgvault.db")
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	t.Cleanup(func() { _ = s.Close() })
+	s := testutil.NewSQLiteTestStoreAt(t, tmpDir+"/msgvault.db")
 
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")

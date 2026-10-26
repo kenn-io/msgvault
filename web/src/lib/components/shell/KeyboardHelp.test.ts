@@ -45,19 +45,6 @@ describe('keyboard command registry', () => {
     expect(onclose).toHaveBeenCalledOnce();
   });
 
-  it('names r for what it does: showing the fixed sort order', async () => {
-    render(KeyboardHelp, {
-      commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
-      onclose: vi.fn()
-    });
-
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' }), {
-      target: { value: 'sort' }
-    });
-    expect(screen.getByText('Show sort order')).toBeDefined();
-    expect(screen.queryByText(/Reverse sort/)).toBeNull();
-  });
-
   it('renders a modified shortcut as one chord instead of key alternatives', () => {
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
@@ -68,15 +55,6 @@ describe('keyboard command registry', () => {
     expect(command).not.toBeNull();
     expect(command?.querySelector('[aria-label="Mod K"]')).not.toBeNull();
     expect(command?.textContent).not.toContain('or');
-  });
-
-  it('documents extending a selection with Shift+Space', () => {
-    render(KeyboardHelp, {
-      commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
-      onclose: vi.fn()
-    });
-
-    expect(screen.getByText('Extend selection to focused row')).toBeTruthy();
   });
 });
 

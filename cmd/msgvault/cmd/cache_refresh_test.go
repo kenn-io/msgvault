@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
@@ -33,9 +34,7 @@ func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
 	parent := t.TempDir()
 	dbPath := filepath.Join(parent, "msgvault.db")
 	analyticsDir := filepath.Join(parent, "analytics")
-	st, err := store.Open(dbPath)
-	requirementsForTest.NoError(err)
-	requirementsForTest.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	requirementsForTest.NoError(st.Close())
 	requirementsForTest.NoError(os.MkdirAll(analyticsDir, 0o755))
 	marker, err := json.Marshal(query.CacheSyncState{
@@ -213,10 +212,7 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	st, err := store.Open(dbPath)
-	requirementsForTest.NoError(err)
-	requirementsForTest.NoError(st.InitSchema())
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	requirementsForTest.NoError(os.MkdirAll(analyticsDir, 0o755))
 
 	const revision = int64(42)
@@ -340,9 +336,7 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	require.NoError(st.Close())
 
 	savedCfg := cfg
@@ -355,7 +349,7 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	buildCacheBeforeMessagesExportHook = func() error { return sentinel }
 	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
 
-	err = rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx))
+	err := rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx))
 	require.ErrorIs(err, sentinel)
 	require.ErrorContains(err, "refresh analytics cache")
 }
@@ -377,9 +371,7 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	var logs strings.Builder
 	invocationFromContext(testCtx).logger = slog.New(slog.NewTextHandler(&logs, nil))
 
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(
@@ -497,9 +489,7 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 	analyticsDir := cfg.AnalyticsDir()
 	invocationFromContext(testCtx).logger = testDiscardLogger()
 
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "!mixed:example.org", "direct_chat", "Mixed")
@@ -599,10 +589,7 @@ func TestFailedAutomaticCacheBuildSchedulesRetry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
-	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{
@@ -625,7 +612,7 @@ func TestFailedAutomaticCacheBuildSchedulesRetry(t *testing.T) {
 		retries = append(retries, retry{delay, identifier})
 	}
 
-	err = rebuildCacheNow(testCtx, "muesli", schedule)
+	err := rebuildCacheNow(testCtx, "muesli", schedule)
 	require.ErrorIs(err, sentinel)
 	assert.Equal([]retry{{15 * time.Minute, "muesli"}}, retries,
 		"unchanged scans request no build, so a failure must schedule its own retry")
@@ -868,10 +855,7 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	const identifier = "imaps://user@example.com@imap.example.com:993"
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
@@ -1397,10 +1381,8 @@ func TestRepairEncodingRebuildsCacheWithRegeneratedCalendarSnippet(t *testing.T)
 	_ = testCtx
 
 	dbPath := cfg.DatabaseDSN()
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "initialize schema")
-	_, err = st.DB().Exec(`INSERT INTO sources
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := st.DB().Exec(`INSERT INTO sources
 		(id, source_type, identifier, created_at, updated_at)
 		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now'))`, gcal.SourceType)
 	require.NoError(err, "insert calendar source")
@@ -1444,14 +1426,12 @@ func TestPersonDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	st, err := store.Open(dbPath)
-	requirements.NoError(err)
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	t.Cleanup(func() {
 		if st != nil {
 			_ = st.Close()
 		}
 	})
-	requirements.NoError(st.InitSchema())
 	alice, err := st.EnsureParticipant("alice@example.com", "Alice Observed", "example.com")
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "user@example.com")

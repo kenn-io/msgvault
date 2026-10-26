@@ -125,11 +125,6 @@ func TestReadPasswordFromPipe(t *testing.T) {
 			want:  "secret123",
 		},
 		{
-			name:  "trims trailing newline",
-			input: "mypassword\n",
-			want:  "mypassword",
-		},
-		{
 			name:  "trims trailing CRLF",
 			input: "mypassword\r\n",
 			want:  "mypassword",

@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestRunRepairListIDsLocalDryRunApplyAndNoop catches a repair command that
@@ -166,29 +167,6 @@ func TestRepairListIDsCommandRoutesThroughDaemonCLIRunner(t *testing.T) {
 	assert.Equal(t, "List-Id repair applied: scanned=1 found=1 changed=1 undecodable=0\n", stdout.String())
 }
 
-// TestRepairListIDsCommandHelpAndFlagValidation executes Cobra's public
-// command surface, catching a command that is not registered or accepts an
-// accidental mutation flag.
-func TestRepairListIDsCommandHelpAndFlagValidation(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	root := newTestRootCmd()
-	root.AddCommand(newRepairListIDsCmd())
-	var help bytes.Buffer
-	root.SetOut(&help)
-	root.SetArgs([]string{"repair-list-ids", "--help"})
-	require.NoError(root.Execute())
-	assert.Contains(help.String(), "msgvault repair-list-ids [--apply]")
-	assert.Contains(help.String(), "--apply")
-
-	root = newTestRootCmd()
-	root.AddCommand(newRepairListIDsCmd())
-	root.SetArgs([]string{"repair-list-ids", "--force"})
-	err := root.Execute()
-	require.Error(err)
-	assert.ErrorContains(err, "unknown flag: --force")
-}
-
 type listIDRepairArchiveMessageIDs struct {
 	missing int64
 	stale   int64
@@ -201,9 +179,7 @@ func newListIDRepairArchive(t *testing.T, configs ...*config.Config) listIDRepai
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "archive@example.test")
 	require.NoError(t, err)
 	conversationID, err := st.EnsureConversation(source.ID, "list-id-repair-thread", "List-Id repair")

@@ -33,6 +33,7 @@ func escapedCardData(body []byte) string {
 }
 
 func TestPullConflictBlocksOnlyMappingAndAdvancesBookFence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -122,6 +123,7 @@ func TestPullConflictBlocksOnlyMappingAndAdvancesBookFence(t *testing.T) {
 }
 
 func TestPullConflictCapturesLocalEditAgainstRemoteDelete(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -184,6 +186,7 @@ func TestPullConflictCapturesLocalEditAgainstRemoteDelete(t *testing.T) {
 }
 
 func TestPullConflictCapturesLocalDeleteAgainstRemoteEdit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -249,6 +252,7 @@ func TestPullConflictCapturesLocalDeleteAgainstRemoteEdit(t *testing.T) {
 }
 
 func TestPullAppliesEquivalentConcurrentOutcomesWithoutConflict(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -315,6 +319,7 @@ func TestPullAppliesEquivalentConcurrentOutcomesWithoutConflict(t *testing.T) {
 }
 
 func TestKeepRemoteReimportsSubscribedCardAfterLocalDeleteWithoutPublicationReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -356,6 +361,7 @@ func TestKeepRemoteReimportsSubscribedCardAfterLocalDeleteWithoutPublicationRepl
 }
 
 func TestKeepRemoteRebasesBoundImportedProjectionWithoutPublicationReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -458,6 +464,7 @@ func TestKeepRemoteRebasesBoundImportedProjectionWithoutPublicationReplay(t *tes
 }
 
 func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
+	t.Parallel()
 	removeFormattedName := func(t *testing.T, st *store.Store, personID int64) {
 		t.Helper()
 		names, err := st.ListPersonNamesContext(t.Context(), personID, true)
@@ -545,6 +552,7 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 
@@ -789,6 +797,7 @@ func oversizedConflictCard(uid string) []byte {
 }
 
 func TestConditional412CapturesConflictAndKeepLocalRefetchesCurrentETag(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -859,6 +868,7 @@ func TestConditional412CapturesConflictAndKeepLocalRefetchesCurrentETag(t *testi
 }
 
 func TestSyncSkipsConflictedPublicationAndStillAdvancesToken(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -905,6 +915,7 @@ func TestSyncSkipsConflictedPublicationAndStillAdvancesToken(t *testing.T) {
 }
 
 func TestSyncAbortsPullAfterPendingPublicationRecoveryFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1029,6 +1040,7 @@ func seedUnpublishConflict(
 }
 
 func TestKeepLocalTombstoneTimeoutPersistsIntentAndRecoversWithoutReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1059,6 +1071,7 @@ func TestKeepLocalTombstoneTimeoutPersistsIntentAndRecoversWithoutReplay(t *test
 }
 
 func TestPullTombstoneCompletesTimedOutKeepLocalWithoutDeleteReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1092,6 +1105,7 @@ func TestPullTombstoneCompletesTimedOutKeepLocalWithoutDeleteReplay(t *testing.T
 }
 
 func TestKeepLocalTombstoneDefinitiveRejectionRestoresFence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1117,6 +1131,7 @@ func TestKeepLocalTombstoneDefinitiveRejectionRestoresFence(t *testing.T) {
 }
 
 func TestKeepLocalTombstoneThrottleClearsIntentAndPersistsGate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1143,6 +1158,7 @@ func TestKeepLocalTombstoneThrottleClearsIntentAndPersistsGate(t *testing.T) {
 }
 
 func TestKeepLocalUnpublishConflictRetainsPersonAndClearsPublication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1163,6 +1179,7 @@ func TestKeepLocalUnpublishConflictRetainsPersonAndClearsPublication(t *testing.
 }
 
 func TestPullTombstoneCompletesTimedOutUnpublishAndRetainsPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1203,6 +1220,7 @@ func TestPullTombstoneCompletesTimedOutUnpublishAndRetainsPerson(t *testing.T) {
 }
 
 func TestPullRefreshSupersedesTimedOutTombstoneIntentBeforeFreshDelete(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1249,6 +1267,7 @@ func TestPullRefreshSupersedesTimedOutTombstoneIntentBeforeFreshDelete(t *testin
 }
 
 func TestDirectConflictRefreshDoesNotSupersedePendingTombstoneIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1276,6 +1295,7 @@ func TestDirectConflictRefreshDoesNotSupersedePendingTombstoneIntent(t *testing.
 }
 
 func TestKeepLocalTombstone412RefreshesConflictBeforeExplicitRetry(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1303,6 +1323,7 @@ func TestKeepLocalTombstone412RefreshesConflictBeforeExplicitRetry(t *testing.T)
 }
 
 func TestKeepLocalTombstoneCanonicalCommitHonorsBookFence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1331,6 +1352,7 @@ func TestKeepLocalTombstoneCanonicalCommitHonorsBookFence(t *testing.T) {
 }
 
 func TestOversized412RestoresMappingFenceAndClearsKnownUnappliedIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1366,6 +1388,7 @@ func TestOversized412RestoresMappingFenceAndClearsKnownUnappliedIntent(t *testin
 }
 
 func TestOversizedCreateCollisionCanBeCanceledWithoutDeletingRemote(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	remoteBody := oversizedConflictCard("remote-owner")
@@ -1409,6 +1432,7 @@ func TestOversizedCreateCollisionCanBeCanceledWithoutDeletingRemote(t *testing.T
 }
 
 func TestOversizedAmbiguousRecoveryRebasesAndRetainsReadOnlyIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1461,14 +1485,17 @@ func TestOversizedAmbiguousRecoveryRebasesAndRetainsReadOnlyIntent(t *testing.T)
 }
 
 func TestResolveConflictRejectsChoicesOutsideExactContract(t *testing.T) {
+	t.Parallel()
 	service := &Service{}
 	err := service.ResolveConflict(t.Context(), 1, ResolutionChoice("merge"))
 	require.ErrorIs(t, err, ErrInvalidResolutionChoice)
 }
 
 func TestConditionalDelete412KeepRemoteRevalidatesCanonicalCard(t *testing.T) {
+	t.Parallel()
 	for _, invalid := range []bool{false, true} {
 		t.Run(fmt.Sprintf("invalid=%t", invalid), func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 
@@ -1547,6 +1574,7 @@ func TestConditionalDelete412KeepRemoteRevalidatesCanonicalCard(t *testing.T) {
 }
 
 func TestPullRefreshPreservesUnpublishTombstoneUntilKeepRemoteCancelsIt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1594,6 +1622,7 @@ func TestPullRefreshPreservesUnpublishTombstoneUntilKeepRemoteCancelsIt(t *testi
 }
 
 func TestConditionalDelete412WithCanonicalTombstoneCommitsCleanup(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	fixture := &conflictMutationServer{}
@@ -1617,6 +1646,7 @@ func TestConditionalDelete412WithCanonicalTombstoneCommitsCleanup(t *testing.T) 
 }
 
 func TestAmbiguousUpdateRecoveryCapturesConflictWithoutReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1648,6 +1678,7 @@ func TestAmbiguousUpdateRecoveryCapturesConflictWithoutReplay(t *testing.T) {
 }
 
 func TestKeepLocalRecordsLineMappingSoNextSyncDoesNotDuplicateEmail(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1681,6 +1712,7 @@ func TestKeepLocalRecordsLineMappingSoNextSyncDoesNotDuplicateEmail(t *testing.T
 }
 
 func TestRemoteContactImportPreservesMetadata(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, first, second, value, before, after, next string
 		kind                                            store.ContactAddressKind
@@ -1702,6 +1734,7 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 		{name: "decoded-properties", wantValues: []string{"e1@example.test", "e2b@example.test", "+12025550103"}, before: "EMAIL:e2@example.test", after: "EMAIL;VALUE=uri:MAILTO:e2b@example.test\r\nTEL;VALUE=text:TeL:+12025550103", value: "e2b@example.test", kind: store.ContactAddressEmail, decoded: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			initial := publishedImportCard()
@@ -1826,8 +1859,10 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 }
 
 func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
+	t.Parallel()
 	for _, published := range []bool{false, true} {
 		t.Run(fmt.Sprintf("local rename published=%t", published), func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture, service, st, personID := publishedImportFixture(t)
@@ -1913,8 +1948,10 @@ func (f *mutationFixture) setRemote(body []byte, etag string) {
 }
 
 func TestRemoteEditAcrossPublishedBooksCreatesConflict(t *testing.T) {
+	t.Parallel()
 	for _, merge := range []bool{true, false} {
 		t.Run(fmt.Sprintf("merge=%t", merge), func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			primary := &mutationFixture{body: publishedImportCard(), etag: `"primary-1"`}
@@ -1996,6 +2033,7 @@ func TestRemoteEditAcrossPublishedBooksCreatesConflict(t *testing.T) {
 }
 
 func TestPublishedImportRemoteOwnership(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, before, after string
 		local, conflict     bool
@@ -2016,6 +2054,7 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 		{"legacy-geo", "EMAIL:e2@example.test", "EMAIL:e2b@example.test\r\nGEO:north;west", false, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			initial := publishedImportCard()
@@ -2188,6 +2227,7 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 }
 
 func TestMalformedPreferenceDoesNotBlockReadableCards(t *testing.T) {
+	t.Parallel()
 	t.Run("readable cards", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -2237,6 +2277,7 @@ func TestMalformedPreferenceDoesNotBlockReadableCards(t *testing.T) {
 }
 
 func TestPublishedImportRetainsPreferenceHashBaseline(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	body := bytes.Replace(publishedImportCard(), []byte("EMAIL:e2@example.test"), []byte("EMAIL;PREF=01:e2@example.test"), 1)
@@ -2257,6 +2298,7 @@ func TestPublishedImportRetainsPreferenceHashBaseline(t *testing.T) {
 }
 
 func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		phone, second string
 		distinct      bool
@@ -2272,6 +2314,7 @@ func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
 	} {
 		phone := tc.phone
 		t.Run(phone+"/"+tc.second, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			card := func(uid, phone string) []byte {

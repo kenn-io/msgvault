@@ -54,9 +54,9 @@ func TestServeFlagsOverrideMalformedEnvironment(t *testing.T) { //nolint:paralle
 	}
 }
 
-func TestDaemonSubprocessesPreserveEffectiveServeConfig(t *testing.T) { //nolint:paralleltest // process environment and executable resolver
+func testDaemonSubprocessesPreserveEffectiveServeConfig(t *testing.T, binary string) {
+	t.Helper()
 	requirements := require.New(t)
-	binary := buildNativeCLI(t)
 	savedResolver := daemonCLIExecutableResolver
 	daemonCLIExecutableResolver = func() (string, error) { return binary, nil }
 	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })

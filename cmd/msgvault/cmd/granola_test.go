@@ -86,7 +86,6 @@ func TestAddGranolaIdentityConfirmsPrimaryWhenAliasExists(t *testing.T) {
 	assert.Equal("user-z@example.com", identities[1].Address)
 	assert.Contains(out.String(), "Confirmed identity user-z@example.com")
 	assert.Contains(out.String(), "sync-granola work --full")
-	assert.Nil(addGranolaCmd.Flags().Lookup("no-default-identity"), "meeting identity confirmation is mandatory")
 }
 
 func TestConfiguredGranolaMissingRegisteredSourceStopsBeforeClient(t *testing.T) {

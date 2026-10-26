@@ -13,6 +13,7 @@ import (
 )
 
 func TestCardDAVConnectionBindingsAreIndependent(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	require := require.New(t)
 
@@ -110,6 +111,7 @@ func (f *injectedCredentialPermissionFailure) verifyFile(file *os.File) error {
 }
 
 func TestCardDAVCredentialsRoundTripInPrivateTokenFile(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	require := require.New(t)
 
@@ -138,6 +140,7 @@ func TestCardDAVCredentialsRoundTripInPrivateTokenFile(t *testing.T) {
 }
 
 func TestCardDAVCredentialBindsPasswordToConnectionIdentity(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	require := require.New(t)
 
@@ -157,6 +160,7 @@ func TestCardDAVCredentialBindsPasswordToConnectionIdentity(t *testing.T) {
 }
 
 func TestCardDAVCredentialRejectsLegacyUnboundPassword(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	require.NoError(t, SavePassword(testCredentialTokenDir(home), "synthetic-secret"))
 
@@ -176,6 +180,7 @@ func mustReadCredentialFile(t *testing.T, tokenDir string) []byte {
 }
 
 func TestCardDAVCredentialsRejectExposedTokenFile(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	home := t.TempDir()
@@ -192,6 +197,7 @@ func TestCardDAVCredentialsRejectExposedTokenFile(t *testing.T) {
 }
 
 func TestCardDAVCredentialsRequireUnixTokenMode0600(t *testing.T) {
+	t.Parallel()
 	if os.PathSeparator == '\\' {
 		t.Skip("Windows token privacy is verified from the DACL")
 	}
@@ -205,6 +211,7 @@ func TestCardDAVCredentialsRequireUnixTokenMode0600(t *testing.T) {
 }
 
 func TestCardDAVCredentialsPropagatePermissionBackendFailures(t *testing.T) {
+	t.Parallel()
 	injected := errors.New("injected owner-only permission failure")
 	for _, tc := range []struct {
 		name        string
@@ -214,6 +221,7 @@ func TestCardDAVCredentialsPropagatePermissionBackendFailures(t *testing.T) {
 		{name: "temporary token", permissions: &injectedCredentialPermissionFailure{delegate: nativeCredentialPermissions{}, secureFileCall: 1, secureFileErr: injected}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assertions := assert.New(t)
 			require := require.New(t)
 
@@ -231,6 +239,7 @@ func TestCardDAVCredentialsPropagatePermissionBackendFailures(t *testing.T) {
 }
 
 func TestCardDAVCredentialsCompleteHardeningBeforeReplacingPriorToken(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	home := t.TempDir()
@@ -249,6 +258,7 @@ func TestCardDAVCredentialsCompleteHardeningBeforeReplacingPriorToken(t *testing
 }
 
 func TestCardDAVCredentialsLoadRequiresPermissionBackendVerification(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	require := require.New(t)
 

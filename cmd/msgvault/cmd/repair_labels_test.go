@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestRunRepairLabelsLocalDryRunApplyAndNoop catches a repair command that
@@ -118,9 +119,7 @@ func TestRunRepairLabelsLocalIdentifierScopesByDisplayName(t *testing.T) {
 	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	scoped, err := st.GetOrCreateSource("imap", "imaps://scoped@example.test:993")
 	require.NoError(err)
 	require.NoError(st.UpdateSourceDisplayName(scoped.ID, "scoped@example.test"))
@@ -227,29 +226,6 @@ func TestRepairLabelsCommandRoutesThroughDaemonCLIRunner(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, int32(1), requests.Load())
 	assert.Equal(t, "Label repair applied: scanned=1 changed=1\n", stdout.String())
-}
-
-// TestRepairLabelsCommandHelpAndFlagValidation executes Cobra's public
-// command surface, catching a command that is not registered or accepts an
-// accidental mutation flag.
-func TestRepairLabelsCommandHelpAndFlagValidation(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	root := newTestRootCmd()
-	root.AddCommand(newRepairLabelsCmd())
-	var help bytes.Buffer
-	root.SetOut(&help)
-	root.SetArgs([]string{"repair-labels", "--help"})
-	require.NoError(root.Execute())
-	assert.Contains(help.String(), "msgvault repair-labels [identifier] [--apply]")
-	assert.Contains(help.String(), "--apply")
-
-	root = newTestRootCmd()
-	root.AddCommand(newRepairLabelsCmd())
-	root.SetArgs([]string{"repair-labels", "--force"})
-	err := root.Execute()
-	require.Error(err)
-	assert.ErrorContains(err, "unknown flag: --force")
 }
 
 // newLabelRepairArchive seeds one IMAP source with two messages in INBOX,

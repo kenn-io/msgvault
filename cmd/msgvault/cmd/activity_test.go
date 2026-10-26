@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -38,9 +39,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	cfg.Activity.BatchSize = 1
 	cfg.Activity.MaxDirectCounterparts = 1
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "activity-cli@example.com")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(

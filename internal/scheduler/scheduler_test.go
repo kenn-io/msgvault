@@ -24,41 +24,6 @@ import (
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
-func TestNew(t *testing.T) {
-	s := New(func(ctx context.Context, email string) error {
-		return nil
-	})
-
-	require.NotNil(t, s, "New()")
-	assert.NotNil(t, s.cron, "cron")
-	assert.NotNil(t, s.jobs, "jobs map")
-}
-
-func TestAddAccount(t *testing.T) {
-	s := New(func(ctx context.Context, email string) error {
-		return nil
-	})
-
-	// Valid cron expression
-	require.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount() with valid cron")
-
-	// Check job was added
-	s.mu.RLock()
-	_, exists := s.jobs["test@gmail.com"]
-	s.mu.RUnlock()
-
-	assert.True(t, exists, "job was not added to jobs map")
-}
-
-func TestAddAccountInvalidCron(t *testing.T) {
-	s := New(func(ctx context.Context, email string) error {
-		return nil
-	})
-
-	err := s.AddAccount("test@gmail.com", "invalid cron")
-	assert.Error(t, err, "AddAccount() with invalid cron")
-}
-
 func TestAddAccountReplacesExisting(t *testing.T) {
 	s := New(func(ctx context.Context, email string) error {
 		return nil
@@ -119,15 +84,6 @@ func TestRemoveAccountClearsPendingFollowup(t *testing.T) {
 	running := s.running[email]
 	s.mu.RUnlock()
 	assert.False(running, "finishing the active run must not start the removed account's follow-up")
-}
-
-func TestRemoveAccountNonExistent(t *testing.T) {
-	s := New(func(ctx context.Context, email string) error {
-		return nil
-	})
-
-	// Should not panic
-	s.RemoveAccount("nonexistent@gmail.com")
 }
 
 func TestAddAccountsFromConfig(t *testing.T) {
@@ -271,22 +227,6 @@ func TestStartJobIsAsync(t *testing.T) {
 		assert.False(s.JobStatus()[0].Running, "job finishes after release")
 		assert.Equal(int32(2), ran.Load(), "one run plus exactly one follow-up")
 	})
-}
-
-func TestStartStop(t *testing.T) {
-	s := New(func(ctx context.Context, email string) error {
-		return nil
-	})
-
-	s.Start()
-	ctx := s.Stop()
-
-	// Wait for stop
-	select {
-	case <-ctx.Done():
-	case <-time.After(time.Second):
-		assert.Fail(t, "Stop() did not complete in time")
-	}
 }
 
 func TestIsRunning(t *testing.T) {

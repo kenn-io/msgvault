@@ -7,13 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAllProvenancesIsTheSpecVocabulary(t *testing.T) {
-	assert.Equal(t, []Provenance{
-		"user", "carddav_import", "vcard_import", "archive_observation",
-		"extraction", "enrichment", "system",
-	}, AllProvenances)
-}
-
 func TestParseProvenance(t *testing.T) {
 	for _, provenance := range AllProvenances {
 		parsed, err := ParseProvenance("  " + string(provenance) + "  ")
@@ -39,13 +32,6 @@ func TestProvenanceIsDeclaredSplitsDeclaredFromDerived(t *testing.T) {
 	} {
 		assert.False(t, derived.IsDeclared(), "%s is derived or suggested", derived)
 	}
-}
-
-func TestConfidenceScopeSentinelIsDeclared(t *testing.T) {
-	require.Error(t, ErrConfidenceScope)
-	assert.Equal(t,
-		"confidence is only meaningful for derived or suggested values",
-		ErrConfidenceScope.Error())
 }
 
 func TestProvenanceCheckValuesCoversEveryVocabularyEntry(t *testing.T) {

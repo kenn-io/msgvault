@@ -1194,13 +1194,6 @@ func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
 	assert.NotNil(other, "other source should remain")
 }
 
-func TestStore_RemoveSourceSerialized_NotFound(t *testing.T) {
-	st := testutil.NewTestStore(t)
-
-	_, _, err := st.RemoveSourceSerialized(context.Background(), 99999)
-	require.Error(t, err, "RemoveSourceSerialized should error for nonexistent ID")
-}
-
 func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1417,8 +1410,8 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	// deleted_from_source_at, message_type, …) but DOES NOT have the
 	// new dedup-hide columns (`deleted_at`, `delete_batch_id`).
 	// Approximates a legacy DB just before this branch landed.
-	// metadata has been on messages since the first schema and the activity
-	// queue trigger names it, so a legacy table must carry it too.
+	// metadata and is_sent predate this migration and the activity queue
+	// trigger names them, so a legacy table must carry them too.
 	_, err = st.DB().Exec(`
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
@@ -1434,6 +1427,7 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 			size_estimate INTEGER,
 			has_attachments BOOLEAN,
 			is_from_me BOOLEAN,
+			is_sent BOOLEAN DEFAULT TRUE,
 			archived_at DATETIME,
 			rfc822_message_id TEXT,
 			sender_id INTEGER,

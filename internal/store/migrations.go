@@ -81,7 +81,9 @@ const (
 	// v4: the messages trigger narrowed on both backends to
 	// MessagesActivityColumns with a value-change guard, so embedding and
 	// FTS bookkeeping sweeps no longer requeue the archive.
-	migrationActivityProjectionTriggers = "activity_projection_triggers_v4"
+	// v5: is_sent joined MessagesActivityColumns, and messages projected while
+	// unsent are requeued so the projector retracts them.
+	migrationActivityProjectionTriggers = "activity_projection_triggers_v5"
 	migrationPersonInferenceProviderV2  = "person_inference_provider_v2"
 	migrationPersonSweepCallsV2         = "person_sweep_calls_v2"
 	migrationProviderConsentsV1         = "provider_consents_v1"

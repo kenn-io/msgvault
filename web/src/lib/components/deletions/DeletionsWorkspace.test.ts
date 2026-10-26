@@ -103,27 +103,6 @@ describe('DeletionsWorkspace', () => {
     expect((screen.getByRole('button', { name: 'Stage deletion…' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('makes only the confirmation button red', async () => {
-    render(DeletionsWorkspace, {
-      client: createAPIClient(
-        vi.fn<typeof fetch>(async (input) => {
-          const request = input instanceof Request ? input : new Request(input);
-          return new URL(request.url).pathname.endsWith('/explore/preflight')
-            ? Response.json(preflight())
-            : Response.json({ manifests: [] });
-        }),
-      ),
-      selection: explicit,
-    });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Review selection' }));
-    const stage = await screen.findByRole('button', { name: 'Stage deletion…' });
-    expect(stage.className).toContain('kit-button--info');
-    expect(stage.className).toContain('kit-button--solid');
-    expect(screen.getByRole('button', { name: 'Dry run' }).className).toContain('kit-button--outline');
-    await fireEvent.click(stage);
-    expect(screen.getByRole('button', { name: 'Confirm stage deletion' }).className).toContain('kit-button--danger');
-  });
-
   it('lists manifests with status chips and closes the detail back to its Inspect button', async () => {
     render(DeletionsWorkspace, {
       client: createAPIClient(

@@ -121,14 +121,12 @@ func TestOpenBeeperImporterExplainsFilteredAccountsWithoutBlamingHistoryOnly(t *
 	cfg.Beeper.ExcludeAccounts = []string{"signal"}
 	require.NoError(beeper.SaveToken(cfg.TokensDir(), "synthetic-token"))
 
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
 	require.NoError(err)
 	require.NoError(st.Close())
 
-	importer, accountIDs, dbPath, cleanup, err := openBeeperImporter(nil, testInvocationWithConfig(cfg), false)
+	importer, _, accountIDs, dbPath, cleanup, err := openBeeperImporter(nil, testInvocationWithConfig(cfg), false)
 	if cleanup != nil {
 		cleanup()
 	}
@@ -284,7 +282,7 @@ func TestPrintBeeperSummaryReportsIdentityReplayPending(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 
-	printBeeperSummary(cmd, "telegram", &beeper.ImportSummary{
+	printBeeperSummary(cmd.OutOrStdout(), "telegram", &beeper.ImportSummary{
 		IdentityReplayErrors: 1,
 		Errors:               1,
 	})

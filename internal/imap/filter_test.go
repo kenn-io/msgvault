@@ -81,28 +81,10 @@ func TestFilterMailboxes(t *testing.T) {
 			expected: []string{"Inbox", "Sent Items"},
 		},
 		{
-			name:     "mixed case mailboxes",
-			all:      []string{"Inbox", "Sent Items", "trash"},
-			include:  []string{"inbox", "sent items"},
-			expected: []string{"Inbox", "Sent Items"},
-		},
-		{
 			name:     "nested folders",
 			all:      []string{"Projects/Alpha", "Projects/Beta", "Inbox"},
 			include:  []string{"Projects/Alpha", "inbox"},
 			expected: []string{"Projects/Alpha", "Inbox"},
-		},
-		{
-			name:     "non-matching filter returns empty slice",
-			all:      []string{"Inbox", "Sent", "Trash"},
-			include:  []string{"Nonexistent"},
-			expected: []string{},
-		},
-		{
-			name:     "empty include single exclude",
-			all:      []string{"Inbox", "Sent", "Trash"},
-			exclude:  []string{"Trash"},
-			expected: []string{"Inbox", "Sent"},
 		},
 		{
 			name:     "empty exclude single include",

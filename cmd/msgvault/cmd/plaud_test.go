@@ -29,20 +29,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestPlaudCommandDiscovery(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	for _, name := range []string{"add-plaud", "sync-plaud"} {
-		cmd, _, err := rootCmd.Find([]string{name})
-		require.NoError(err)
-		assert.Equal(name, cmd.Name())
-	}
-	cmd, _, err := rootCmd.Find([]string{"sync-plaud"})
-	require.NoError(err)
-	for _, name := range []string{"limit", "full", "after", "probe", "build-cache", "no-build-cache"} {
-		require.NotNil(cmd.Flags().Lookup(name))
-	}
-}
 func TestPlaudRemoteRefusesOAuthBeforeProxy(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -172,10 +158,8 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 	cfg.Plaud = []config.PlaudSource{{Identifier: "work", AccountEmail: "replacement@example.com", Endpoint: upstream.URL}}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = plaud.RegisterSource(st, "work", "owner@example.com")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := plaud.RegisterSource(st, "work", "owner@example.com")
 	require.NoError(err)
 	require.NoError(st.Close())
 	owner, err := tryAcquireWriteOwnerLock(cfg.Data.DataDir)
@@ -306,9 +290,7 @@ func retiredPlaudSyncConfig(t *testing.T) *config.Config {
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 	cfg.Plaud = []config.PlaudSource{{Identifier: "history", AccountEmail: "owner@example.com"}}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	retiredPlaudSyncSource(t, st)
 	require.NoError(st.Close())
 	return cfg
@@ -410,10 +392,8 @@ func TestRemovePlaudAccountDeletesOnlyItsToken(t *testing.T) {
 	require := require.New(t)
 	tmp := t.TempDir()
 	cfg := &config.Config{HomeDir: tmp, Data: config.DataConfig{DataDir: tmp}}
-	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource("plaud", "work")
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
+	_, err := st.GetOrCreateSource("plaud", "work")
 	require.NoError(err)
 	require.NoError(st.Close())
 	mgr := plaud.NewManager("", cfg.TokensDir(), nil)

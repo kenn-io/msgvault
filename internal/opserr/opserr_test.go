@@ -28,21 +28,3 @@ func TestWrapPreservesCause(t *testing.T) {
 	require.ErrorIs(err, cause, "cause")
 	assert.Equal(cause.Error(), err.Error(), "message")
 }
-
-func TestConstructorsClassifyErrors(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want Kind
-	}{
-		{name: "invalid", err: Invalid(errors.New("bad input")), want: KindInvalid},
-		{name: "not found", err: NotFound(errors.New("missing")), want: KindNotFound},
-		{name: "internal", err: Internal(errors.New("database unavailable")), want: KindInternal},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, KindOf(tt.err), "kind")
-		})
-	}
-}

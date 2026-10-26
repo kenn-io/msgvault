@@ -23,7 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
@@ -43,10 +43,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	require.NoError(err)
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
 	conv, err := st.EnsureConversation(source.ID, "synthetic-thread", "Project plan")

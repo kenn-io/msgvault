@@ -582,10 +582,14 @@
   }
 
   .result-row.active {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .result-row.selected {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }

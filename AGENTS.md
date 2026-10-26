@@ -79,7 +79,8 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
 
 - Use `make build` for a worktree binary. `make install` changes the user's
   installed binary and needs intentional authorization.
-- All `go test` invocations need `-tags "fts5 sqlite_vec"`; prefer `make test`.
+- All `go test` invocations need `-tags "fts5 sqlite_vec"`. Run the packages you
+  changed; `make test` (and CI) runs the full suite.
   PostgreSQL tests use the targets documented in [Development](docs/development.md).
   The PostgreSQL-only library profile is the exception: use `make test-pg-nocgo`,
   which omits native-driver tags and disables CGO.

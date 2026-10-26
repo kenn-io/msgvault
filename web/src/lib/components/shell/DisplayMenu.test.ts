@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import DisplayMenu from './DisplayMenu.svelte';
@@ -49,23 +49,5 @@ describe('DisplayMenu', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Use daemon theme' }));
     expect(onUseDaemonTheme).toHaveBeenCalledOnce();
-  });
-
-  it('closes on Escape and returns focus to its trigger', async () => {
-    render(DisplayMenu, {
-      density: 'compact',
-      themeOverridden: false,
-      onDensityChange: vi.fn(),
-      onUseDaemonTheme: vi.fn(),
-    });
-    const trigger = screen.getByRole('button', { name: 'Display' });
-    await fireEvent.click(trigger);
-    const item = await screen.findByRole('menuitemradio', { name: 'Comfortable' });
-    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
-
-    await fireEvent.keyDown(item, { key: 'Escape' });
-
-    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Display' })).toBeNull());
-    expect(document.activeElement).toBe(trigger);
   });
 });

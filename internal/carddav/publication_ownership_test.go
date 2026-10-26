@@ -12,6 +12,7 @@ import (
 )
 
 func TestPublicationOwnershipFollowsServerReorderingAndPreservesResidue(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{}
@@ -51,6 +52,7 @@ func TestPublicationOwnershipFollowsServerReorderingAndPreservesResidue(t *testi
 }
 
 func TestPublicationOwnershipRejectsAmbiguousDuplicateResponse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	fixture := &mutationFixture{}
 	service, st, personID, _ := seededMutationService(t, fixture)

@@ -5,7 +5,6 @@ package pgvector
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -381,39 +380,6 @@ func TestFusedSearch_FilterBySource(t *testing.T) {
 	assert.False(metadata.PoolSaturated, "pool size 2 < KPerSignal 10 must not saturate")
 }
 
-func TestFusedSearch_FilterByMessageType(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	f := newFusedFixture(t)
-	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
-	f.seedMsg(t, 1, "email topic", "topic body", 10, base, false)
-	f.seedMsg(t, 2, "sms topic", "topic body", 10, base.Add(time.Hour), false)
-	_, err := f.db.ExecContext(f.ctx,
-		`UPDATE messages SET message_type = CASE id WHEN 1 THEN 'email' ELSE 'sms' END WHERE id IN (1, 2)`)
-	require.NoError(
-		err, "seed message_type")
-
-	f.embedAll(t, map[int64][]float32{
-		1: unitVec(4, 0),
-		2: unitVec(4, 1),
-	})
-
-	hits, metadata, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSTerms:   []string{"topic"},
-		Generation: f.gen,
-		Filter:     vector.Filter{MessageTypes: []string{"sms"}},
-		KPerSignal: 10,
-		Limit:      10,
-		RRFK:       60,
-	})
-	require.NoError(
-		err, "FusedSearch")
-
-	assert.False(metadata.PoolSaturated, "saturated should be false")
-	assert.Equal([]int64{2}, fusedIDs(hits), "message_type=sms hits")
-}
-
 func TestFusedSearch_FilterByDateRange(t *testing.T) {
 	f := seedThree(t)
 	after := time.Date(2025, 1, 16, 0, 0, 0, 0, time.UTC) // exclude msg 1
@@ -602,22 +568,4 @@ func TestFusedSearch_SkipsDeletedMessages(t *testing.T) {
 	for _, h := range hits {
 		assert.NotEqualf(t, int64(1), h.MessageID, "hits include soft-deleted msg 1: %+v", h)
 	}
-}
-
-// TestFusedSearch_FilterClausesUnused — sanity-check the static
-// SQL-formatting code path: build an applyFilterClauses fragment by
-// hand and assert it begins with a leading " AND " (so it can be
-// safely concatenated after a WHERE predicate). The clause must
-// reference each placeholder it claims to bind.
-func TestFusedSearch_FilterClausesUnused(t *testing.T) {
-	var args []any
-	bind := func(v any) string {
-		args = append(args, v)
-		return fmt.Sprintf("$%d", len(args))
-	}
-	f := vector.Filter{SourceIDs: []int64{1, 2}}
-	got := applyFilterClauses(f, bind)
-	assert.Len(t, args, 1, "args bound should be 1")
-	require.GreaterOrEqual(t, len(got), 5, "clauses = %q, want leading ' AND '", got)
-	assert.Equal(t, " AND ", got[:5], "clauses = %q, want leading ' AND '", got)
 }

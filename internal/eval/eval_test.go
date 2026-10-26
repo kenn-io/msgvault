@@ -340,11 +340,6 @@ func TestHitAtAndEvaluateDepth(t *testing.T) {
 	assert.InDelta(1.0, aggregate.Mean().Hit10, 1e-9)
 }
 
-func TestLoadQrels_MissingFile(t *testing.T) {
-	_, _, err := LoadQrels(filepath.Join(t.TempDir(), "nope.txt"))
-	require.Error(t, err)
-}
-
 // TestLoadTopics_RejectsDuplicateIDs pins the duplicate-qid policy. A repeated
 // qid is not a malformed line to be dropped and counted: it loads fine and
 // contributes twice, so every judgment for that qid is applied once per

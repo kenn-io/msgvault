@@ -13,6 +13,7 @@ import (
 )
 
 func TestPersistCallClearsRecipientsWhenResolvedPeopleDisappear(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -53,6 +54,7 @@ func TestPersistCallClearsRecipientsWhenResolvedPeopleDisappear(t *testing.T) {
 // The timeline retains historical evidence even when the live call serializer
 // can no longer resolve its employee association or other optional fields.
 func TestCallEvidenceMergesLiveCallOverTimeline(t *testing.T) {
+	t.Parallel()
 	const timeline = `"content_attributes":{"data":{
 		"call_id":501,"call_sid":"CA_synthetic_fallback","call_source":"twilio","call_direction":"inbound",
 		"status":"completed","duration_seconds":31,"accepted_by":{"id":7,"name":"Example Historical Agent"}
@@ -81,6 +83,7 @@ func TestCallEvidenceMergesLiveCallOverTimeline(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var message Message
 			require.NoError(t, json.Unmarshal([]byte(`{`+timeline+`,"call":`+tc.live+`}`), &message))
 			assert.Equal(t, tc.want, callEvidence(message))
@@ -98,6 +101,7 @@ func TestCallEvidenceMergesLiveCallOverTimeline(t *testing.T) {
 		{"live_agent_name_wins", &Call{AcceptedByAgentID: 7, AcceptedByAgentName: "Example Current Agent"}, 7, "Example Current Agent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			message := Message{Call: tc.live, ContentAttributes: map[string]jsontext.Value{
 				"data": jsontext.Value(`{"accepted_by":{"id":7,"name":"Example Historical Agent"}}`),
 			}}

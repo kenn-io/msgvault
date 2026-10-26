@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -120,10 +121,8 @@ func TestDoclingStatusInDaemonRunnerLeavesStartupMigrationsPending(t *testing.T)
 	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(string) bool { return false })
 	// An account exists, but its own address is not confirmed yet. The legacy
 	// identity migration must wait until the account flow confirms it.
-	st, err := store.Open(cfg.DatabaseDSN())
-	requirements.NoError(err)
-	requirements.NoError(st.InitSchema())
-	_, err = st.GetOrCreateSource("gmail", "account@example.com")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource("gmail", "account@example.com")
 	requirements.NoError(err)
 	requirements.NoError(st.Close())
 

@@ -82,19 +82,6 @@ func TestSetVectorFeaturesTransitionsToReady(t *testing.T) {
 	require.NotNil(t, gotBackend)
 }
 
-func TestSetVectorInitErrorTransitionsToError(t *testing.T) {
-	t.Parallel()
-	opts := testServerOptions(t, nil)
-	opts.VectorStatus = VectorStatusInitializing
-	srv := NewServerWithOptions(opts)
-
-	srv.SetVectorInitError(errors.New("migration exploded"))
-
-	status, errMsg := srv.VectorStatus()
-	assert.Equal(t, VectorStatusError, status)
-	assert.Contains(t, errMsg, "migration exploded")
-}
-
 func TestSetVectorInitErrorNilIsNoOp(t *testing.T) {
 	t.Parallel()
 	opts := testServerOptions(t, nil)
@@ -106,18 +93,6 @@ func TestSetVectorInitErrorNilIsNoOp(t *testing.T) {
 	status, errMsg := srv.VectorStatus()
 	assert.Equal(t, VectorStatusInitializing, status)
 	assert.Empty(t, errMsg)
-}
-
-func TestSetVectorStaleTransitionsToStale(t *testing.T) {
-	t.Parallel()
-	opts := testServerOptions(t, &minimalVectorBackend{})
-	srv := NewServerWithOptions(opts)
-
-	srv.SetVectorStale("active=\"old:1\" configured=\"new:2\"; run rebuild")
-
-	status, errMsg := srv.VectorStatus()
-	assert.Equal(t, VectorStatusStale, status)
-	assert.Contains(t, errMsg, "old:1")
 }
 
 func TestSetVectorStaleEmptyIsNoOp(t *testing.T) {

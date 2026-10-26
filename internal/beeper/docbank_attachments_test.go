@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -354,14 +355,21 @@ func TestAttachmentMirrorSourceFaults(t *testing.T) {
 		assert.Zero(r.status().Delivered)
 		require.NoError(os.WriteFile(file, data, 0600))
 		require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
-		before := r.Uploads.Load()
-		require.NoError(r.runBatch(t.Context()))
+		// Corrupt bodies can abort before buffered request headers reach the server.
+		var attempts atomic.Int32
+		ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+			WroteHeaderField: func(key string, _ []string) {
+				if key == "X-Docbank-Blob-Hash" {
+					attempts.Add(1)
+				}
+			},
+		})
+		require.NoError(r.runBatch(ctx))
 		assert.Equal(int64(1), r.status().Delivered)
 		assert.Zero(r.status().Failed)
 		_, ok := r.Uploaded.Load(hash)
 		require.True(ok)
-		// Aborted first-run requests can reach the server late, so only a lower bound is exact.
-		assert.GreaterOrEqual(r.Uploads.Load()-before, int32(2), "corruption starts a fresh upload for the recorded copy")
+		assert.Equal(int32(2), attempts.Load(), "corruption starts a fresh upload for the recorded copy")
 	})
 
 	for _, healthyCopy := range []bool{false, true} {

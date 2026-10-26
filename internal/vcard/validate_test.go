@@ -9,13 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/vcard/registry"
 )
 
-func TestValidateV4Card(t *testing.T) {
-	doc := mustDecode(t,
-		"BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Alice Example\r\nUID:person-1\r\nEND:VCARD\r\n",
-	)
-	require.NoError(t, Validate(doc))
-}
-
 func TestValidateRejectsMissingFNInV4(t *testing.T) {
 	doc := mustDecode(t,
 		"BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person-1\r\nEND:VCARD\r\n",

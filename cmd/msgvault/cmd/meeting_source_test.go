@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/muesli"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -130,9 +129,7 @@ func TestSyncMuesliOutputMatchesBase(t *testing.T) {
 	testCfg.Muesli = []config.MuesliSource{{
 		Identifier: "mac", AccountEmail: "you@example.com", DBPath: path, Contacts: &contacts,
 	}}
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 	_, err = st.GetOrCreateSource(muesli.SourceType, "mac")
 	require.NoError(err)
 	require.NoError(st.Close())

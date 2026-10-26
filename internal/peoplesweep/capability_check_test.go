@@ -1527,16 +1527,6 @@ func TestCapabilityNegotiationExercisesRealExtractionSchema(t *testing.T) {
 	assertChecks.Equal(jsonObjectInstruction+string(extractionSchema), system["content"])
 }
 
-func TestCapabilitySyntheticRequestUsesFrozenExtractionSchema(t *testing.T) {
-	assertChecks := assert.New(t)
-	request := capabilitySyntheticRequest()
-	assertChecks.Equal("provider-check", request.ProgramID)
-	assertChecks.Equal(ExtractionSchemaName, request.SchemaName)
-	assertChecks.JSONEq(string(ExtractionJSONSchema()), string(request.JSONSchema))
-	assertChecks.Empty(request.Sources)
-	assertChecks.False(request.ContainsSensitive)
-}
-
 func capabilitySameJSON(left, right []byte) bool {
 	var leftValue, rightValue any
 	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {

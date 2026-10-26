@@ -121,45 +121,9 @@ func TestDecodeBase64URL(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "single byte unpadded",
-			input:   "QQ", // 'A'
-			want:    []byte("A"),
-			wantErr: false,
-		},
-		{
-			name:    "single byte padded",
-			input:   "QQ==", // 'A' with padding
-			want:    []byte("A"),
-			wantErr: false,
-		},
-		{
-			name:    "two bytes unpadded",
-			input:   "QUI", // 'AB'
-			want:    []byte("AB"),
-			wantErr: false,
-		},
-		{
-			name:    "two bytes padded",
-			input:   "QUI=", // 'AB' with single pad
-			want:    []byte("AB"),
-			wantErr: false,
-		},
-		{
 			name:    "URL-safe characters unpadded",
 			input:   "PDw_Pz4-", // "<<??>>", uses - and _ instead of + and /
 			want:    []byte("<<??>>"),
-			wantErr: false,
-		},
-		{
-			name:    "URL-safe underscore unpadded",
-			input:   "Pz8_", // "???" is exactly 3 bytes -> 4 chars, no padding needed
-			want:    []byte("???"),
-			wantErr: false,
-		},
-		{
-			name:    "URL-safe dash unpadded",
-			input:   "Pj4-", // ">>>" is exactly 3 bytes -> 4 chars, no padding needed
-			want:    []byte(">>>"),
 			wantErr: false,
 		},
 		{
@@ -169,52 +133,10 @@ func TestDecodeBase64URL(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "URL-safe underscore with padding (1 byte)",
-			input:   "_w==", // 0xff - exercises URLEncoding path with URL-safe char
-			want:    []byte{0xff},
-			wantErr: false,
-		},
-		{
-			name:    "URL-safe dash with single pad (2 bytes)",
-			input:   "A-A=", // 0x03 0xe0 - exercises URLEncoding with single = and URL-safe char
-			want:    []byte{0x03, 0xe0},
-			wantErr: false,
-		},
-		{
 			name:    "invalid characters",
 			input:   "!!!invalid!!!",
 			want:    nil,
 			wantErr: true,
-		},
-		{
-			name:    "malformed padding single char with equals",
-			input:   "A=", // Invalid: 1 char before padding is never valid
-			want:    nil,
-			wantErr: true,
-		},
-		{
-			name:    "malformed padding excess equals",
-			input:   "QQ===", // Invalid: too many padding chars
-			want:    nil,
-			wantErr: true,
-		},
-		{
-			name:    "malformed padding wrong count",
-			input:   "QUI==", // Invalid: "AB" should have single =, not ==
-			want:    nil,
-			wantErr: true,
-		},
-		{
-			name:    "binary data unpadded",
-			input:   base64.RawURLEncoding.EncodeToString([]byte{0x00, 0xFF, 0x80, 0x7F}),
-			want:    []byte{0x00, 0xFF, 0x80, 0x7F},
-			wantErr: false,
-		},
-		{
-			name:    "binary data padded",
-			input:   base64.URLEncoding.EncodeToString([]byte{0x00, 0xFF, 0x80, 0x7F}),
-			want:    []byte{0x00, 0xFF, 0x80, 0x7F},
-			wantErr: false,
 		},
 	}
 

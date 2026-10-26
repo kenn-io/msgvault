@@ -709,6 +709,8 @@
   }
 
   .data-row--active {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
@@ -717,6 +719,8 @@
   }
 
   .data-row--selected {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue), inset 0 0 0 1px var(--selected-border);
   }
@@ -733,6 +737,8 @@
   /* The row open in the reading pane shares the app-wide selection
    * language: 2px accent inset bar over the selected surface. */
   .data-row--inspected {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }

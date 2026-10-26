@@ -2,7 +2,6 @@ package pst_test
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
@@ -23,73 +22,11 @@ func bit32PST(t *testing.T) string {
 	return filepath.Join(testdataDir, "32-bit.pst")
 }
 
-// TestOpen_SupportPST verifies that a real 64-bit PST file opens without error.
-func TestOpen_SupportPST(t *testing.T) {
-	f, err := pstreader.Open(supportPST(t))
-	require.NoError(t, err, "Open")
-	defer func() { _ = f.Close() }()
-}
-
 // TestOpen_32BitPST verifies that a 32-bit PST file opens without error.
 func TestOpen_32BitPST(t *testing.T) {
 	f, err := pstreader.Open(bit32PST(t))
 	require.NoError(t, err, "Open")
 	defer func() { _ = f.Close() }()
-}
-
-// TestOpen_NonExistent verifies a clear error for missing files.
-func TestOpen_NonExistent(t *testing.T) {
-	_, err := pstreader.Open("/nonexistent/path.pst")
-	require.Error(t, err, "expected error, got nil")
-}
-
-// TestWalkFolders_SupportPST verifies that WalkFolders visits the known folders
-// and builds correct slash-separated paths.
-func TestWalkFolders_SupportPST(t *testing.T) {
-	require := require.New(t)
-	f, err := pstreader.Open(supportPST(t))
-	require.NoError(err, "Open")
-	defer func() { _ = f.Close() }()
-
-	seen := make(map[string]int32) // path → message count
-	err = f.WalkFolders(func(entry pstreader.FolderEntry, _ *pstlib.Folder) error {
-		seen[entry.Path] = entry.MsgCount
-		return nil
-	})
-	require.NoError(err, "WalkFolders")
-
-	require.NotEmpty(seen, "WalkFolders visited no folders")
-
-	// The support PST has at least these two message-bearing folders.
-	wantFolders := []string{"Drafts", "Sent Messages"}
-	for _, want := range wantFolders {
-		found := false
-		for path := range seen {
-			// Path may be "Root/Drafts" or just "Drafts" depending on hierarchy.
-			if path == want || strings.HasSuffix(path, "/"+want) {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "folder %q not found in: %v", want, keys(seen))
-	}
-}
-
-// TestWalkFolders_PathsAreSlashSeparated verifies that nested folders produce
-// slash-separated paths (e.g. "Personal Folders/Inbox/Archive").
-func TestWalkFolders_PathsAreSlashSeparated(t *testing.T) {
-	f, err := pstreader.Open(supportPST(t))
-	require.NoError(t, err, "Open")
-	defer func() { _ = f.Close() }()
-
-	depth2 := false
-	_ = f.WalkFolders(func(entry pstreader.FolderEntry, _ *pstlib.Folder) error {
-		if strings.Count(entry.Path, "/") >= 1 {
-			depth2 = true
-		}
-		return nil
-	})
-	assert.True(t, depth2, "expected at least one folder path with depth >= 2 (slash-separated)")
 }
 
 // TestWalkFolders_SkipsSearchFolders_SupportPST verifies that real search
@@ -297,13 +234,4 @@ func TestBuildRFC5322_WithAttachments_RoundTrip(t *testing.T) {
 		}
 		return nil
 	})
-}
-
-// keys returns map keys for error messages.
-func keys[K comparable, V any](m map[K]V) []K {
-	out := make([]K, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

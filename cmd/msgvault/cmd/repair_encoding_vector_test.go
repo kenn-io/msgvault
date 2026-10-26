@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -66,18 +66,9 @@ func TestRepairResetEmbeddings_OpensBackendBeforeResettingEmbedGen(t *testing.T)
 	vecPath := filepath.Join(dir, "vectors.db")
 
 	// Real main DB with two live messages, both previously embedded.
-	s, err := store.Open(mainPath)
-	require.NoError(
-		err, "store.Open")
+	s := testutil.NewSQLiteTestStoreAt(t, mainPath)
 
-	// Close the store LAST (registered first → LIFO) so the backend that
-	// borrows s.DB() closes before it, and the open msgvault.db handle does not
-	// block t.TempDir() cleanup on Windows.
-	t.Cleanup(func() { _ = s.Close() })
-	require.NoError(
-		s.InitSchema(), "InitSchema")
-
-	_, err = s.DB().Exec(`
+	_, err := s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
@@ -161,15 +152,9 @@ func TestRepairResetEmbeddings_VectorDisabledStillResets(t *testing.T) {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
 
-	s, err := store.Open(mainPath)
-	require.NoError(
-		err, "store.Open")
+	s := testutil.NewSQLiteTestStoreAt(t, mainPath)
 
-	t.Cleanup(func() { _ = s.Close() })
-	require.NoError(
-		s.InitSchema(), "InitSchema")
-
-	_, err = s.DB().Exec(`
+	_, err := s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen)

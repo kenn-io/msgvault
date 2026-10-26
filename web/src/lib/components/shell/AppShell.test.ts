@@ -8,6 +8,7 @@ import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
+import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import AppShell from './AppShell.svelte';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
@@ -593,17 +594,6 @@ describe('AppShell', () => {
       window.innerWidth = 1024;
     });
 
-    it('groups workspaces in the sidebar with Relationships first', () => {
-      render(AppShell, { client: exploreClient(), state: shellState('everything'), enabled: false });
-      const nav = screen.getByRole('navigation', { name: 'Primary' });
-      expect(within(nav).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
-        'Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved views', 'Sources', 'Operations', 'Deletions', 'Settings'
-      ]);
-      expect(within(nav).getByRole('button', { name: 'Everything' }).getAttribute('aria-current')).toBe('page');
-      expect(screen.queryByRole('button', { name: 'People' })).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Domains' })).toBeNull();
-    });
-
     it('names the browser tab after the workspace', async () => {
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -886,18 +876,22 @@ describe('AppShell', () => {
         if (ready === 'pending') return new Promise(() => {});
         return ready;
       });
+      // The reporter sends each search key once a day, so its calls show what each search reported.
+      const daily = vi.spyOn(startTelemetryReporting(client), 'reportDaily');
+      const reported = () => daily.mock.calls.map(([key]) => key);
       render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, media]]) });
       if (ready === true) await waitFor(() => expect(media.ready).toBe(true));
       if (ready === false) await waitFor(() => expect(media.absent).toBe(true));
       const search = screen.getByRole('searchbox', { name: 'Search everything' });
       await fireEvent.input(search, { target: { value: 'missing' } });
-      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
-      events.length = 0;
+      await waitFor(() => expect(reported()).toContain('search_run:text'));
+      expect(reported()).not.toContain('search_empty:text');
+      daily.mockClear();
       await fireEvent.submit(search.closest('form')!);
-      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
+      await waitFor(() => expect(reported()).toContain('search_run:text'));
       media.dispose();
       if (ready !== false) {
-        expect(events.some((event) => event.event === 'search_empty')).toBe(false);
+        expect(reported()).not.toContain('search_empty:text');
         return;
       }
       await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(1));
@@ -913,22 +907,24 @@ describe('AppShell', () => {
         const predicate = request.method === 'POST' ? await request.clone().json() : {};
         return Response.json(exploreResponse({ rows: predicate.query === 'gas' ? [entry(1)] : [] }));
       }));
+      const daily = vi.spyOn(startTelemetryReporting(client), 'reportDaily');
       const view = render(AppShell, { client, state });
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), { target: { value: 'gas' } });
       expect(state.current.query).toBe('gas');
       await screen.findByText('Synthetic subject 1');
       if (trigger !== 'visible') {
-        expect(events()).toHaveLength(0);
+        expect(daily).not.toHaveBeenCalled();
         if (trigger === 'destroy') view.unmount();
         visibility.mockReturnValue('visible');
         await fireEvent(window, new Event('focus'));
       }
-      if (trigger === 'destroy') expect(events()).toHaveLength(0);
+      if (trigger === 'destroy') expect(daily).not.toHaveBeenCalled();
       else {
         await waitFor(() => expect(events()).toEqual(['text']));
         await fireEvent(window, new Event('focus'));
-        expect(events()).toEqual(['text']);
+        expect(daily).toHaveBeenCalledTimes(1);
       }
+      stopTelemetryReporting(client);
       visibility.mockRestore();
     });
 

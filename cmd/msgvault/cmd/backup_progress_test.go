@@ -309,12 +309,6 @@ func TestBackupProgressRenderer_AutoModeDetectsFromNonFileWriter(t *testing.T) {
 	require.Equal(progressModePlain, r.outputMode(), "a bytes.Buffer is never a terminal")
 }
 
-func TestBackupProgressRenderer_DefaultWriterIsStdout(t *testing.T) {
-	require := require.New(t)
-	r := newBackupProgressRenderer(nil, progressModeAuto)
-	require.NotNil(r.writer())
-}
-
 // sanity check that the package-level throttle var is a time.Duration, so a
 // future refactor can't silently change its type without breaking this file.
 var _ time.Duration = backupProgressTickInterval

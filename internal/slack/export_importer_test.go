@@ -15,6 +15,7 @@ import (
 )
 
 func TestImportSlackdumpPersistsSlackSemantics(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -97,6 +98,7 @@ func TestImportSlackdumpPersistsSlackSemantics(t *testing.T) {
 }
 
 func TestImportSlackdumpRequiresUniqueExportIdentity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		me      string
@@ -130,6 +132,7 @@ func TestImportSlackdumpRequiresUniqueExportIdentity(t *testing.T) {
 }
 
 func TestImportSlackdumpRecordsFailedSync(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -157,6 +160,7 @@ func TestImportSlackdumpRecordsFailedSync(t *testing.T) {
 }
 
 func TestImportSlackdumpLimitDoesNotReadPastCap(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -183,6 +187,7 @@ func TestImportSlackdumpLimitDoesNotReadPastCap(t *testing.T) {
 }
 
 func TestImportSlackdumpMarksMissingConversationRosterUnknown(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	root := copySlackdumpFixture(t)
@@ -204,6 +209,7 @@ func TestImportSlackdumpMarksMissingConversationRosterUnknown(t *testing.T) {
 }
 
 func TestImportSlackdumpUnknownRosterFailsParticipantPolicyClosed(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		catalog string
@@ -246,6 +252,7 @@ func TestImportSlackdumpUnknownRosterFailsParticipantPolicyClosed(t *testing.T) 
 }
 
 func TestImportSlackdumpUsesCatalogMemberCountWithoutRoster(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	root := copySlackdumpFixture(t)
@@ -267,6 +274,7 @@ func TestImportSlackdumpUsesCatalogMemberCountWithoutRoster(t *testing.T) {
 }
 
 func TestImportSlackdumpStoresDirectoryAndZIPAttachments(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		path func(t *testing.T) string
@@ -313,6 +321,7 @@ func TestImportSlackdumpStoresDirectoryAndZIPAttachments(t *testing.T) {
 }
 
 func TestImportSlackdumpStoresPresentEmptyAttachment(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -361,6 +370,7 @@ func TestImportSlackdumpStoresPresentEmptyAttachment(t *testing.T) {
 }
 
 func TestImportSlackdumpAppliesMediaPolicyForExportTeam(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -393,6 +403,7 @@ func TestImportSlackdumpAppliesMediaPolicyForExportTeam(t *testing.T) {
 }
 
 func TestSlackdumpMetadataAttachmentUsesCapturedHTTPURLFallbacks(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		file File
@@ -428,6 +439,7 @@ func TestSlackdumpMetadataAttachmentUsesCapturedHTTPURLFallbacks(t *testing.T) {
 }
 
 func TestImportSlackdumpRerunUpdatesWithoutDuplicates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

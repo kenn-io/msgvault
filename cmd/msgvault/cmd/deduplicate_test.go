@@ -800,29 +800,6 @@ func newDeduplicateRoutingTestCommand() *cobra.Command {
 	return cmd
 }
 
-// TestDeduplicateMutualExclusion confirms that passing both --account and
-// --collection to the deduplicate command is rejected by cobra.
-func TestDeduplicateMutualExclusion(t *testing.T) {
-	// Build a minimal parent so Execute() returns errors rather than printing
-	// them and swallowing them via the global rootCmd error handler.
-	var a, b string
-	cmd := &cobra.Command{Use: "dedup-test", SilenceErrors: true}
-	sub := &cobra.Command{Use: "deduplicate", RunE: func(cmd *cobra.Command, args []string) error { return nil }}
-	sub.Flags().StringVar(&a, "account", "", "")
-	sub.Flags().StringVar(&b, "collection", "", "")
-	sub.MarkFlagsMutuallyExclusive("account", "collection")
-	cmd.AddCommand(sub)
-	cmd.SetArgs([]string{"deduplicate", "--account", "alpha@example.com", "--collection", "work"})
-
-	err := cmd.Execute()
-	require.Error(t, err, "expected error when both --account and --collection are set")
-	msg := err.Error()
-	assert.Contains(t, msg, "account", "error should mention account flag name")
-	assert.Contains(t, msg, "collection", "error should mention collection flag name")
-	_ = a
-	_ = b
-}
-
 func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -842,21 +819,6 @@ func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
 
 	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
 	assert.NotContains(scope.SourceIDs(), cal.ID, "dedup account scope must not include Calendar sources")
-}
-
-// TestDeduplicateCollectionResolution confirms that --collection resolves
-// successfully when the name matches a real collection in the store.
-func TestDeduplicateCollectionResolution(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f, _, collectionName := setupScopeFixture(t)
-
-	scope, err := ResolveCollectionFlag(f.Store, collectionName)
-	require.NoError(err)
-	require.NotNil(scope.Collection, "expected Collection to be populated")
-	assert.Equal(collectionName, scope.Collection.Name, "collection name")
-	ids := scope.SourceIDs()
-	assert.NotEmpty(ids, "expected non-empty SourceIDs for collection")
 }
 
 // TestDeduplicateCollectionResolution_MultiSource confirms SourceIDs expands

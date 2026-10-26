@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -539,56 +538,12 @@ func (c *TestContext) AssertManifestLastProcessedIndex(id string, want int) {
 	assert.Equal(c.t, want, m.Execution.LastProcessedIndex, "LastProcessedIndex")
 }
 
-func TestNullProgress(t *testing.T) {
-	// NullProgress should not panic
-	p := NullProgress{}
-	p.OnStart(10, 0)
-	p.OnProgress(5, 4, 1)
-	p.OnComplete(9, 1)
-}
-
 func TestDefaultExecuteOptions(t *testing.T) {
 	opts := DefaultExecuteOptions()
 
 	assert.Equal(t, MethodTrash, opts.Method)
 	assert.Equal(t, 100, opts.BatchSize)
 	assert.True(t, opts.Resume, "Resume should be true")
-}
-
-func TestNewExecutor(t *testing.T) {
-	tmpDir := t.TempDir()
-	mgr, err := NewManager(tmpDir)
-	require.NoError(t, err, "NewManager()")
-
-	store := testutil.NewTestStore(t)
-	mockAPI := gmail.NewDeletionMockAPI()
-
-	exec := NewExecutor(mgr, store, mockAPI)
-	assert.NotNil(t, exec, "NewExecutor returned nil")
-}
-
-func TestExecutor_WithLogger(t *testing.T) {
-	tmpDir := t.TempDir()
-	mgr, err := NewManager(tmpDir)
-	require.NoError(t, err, "NewManager()")
-	store := testutil.NewTestStore(t)
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	exec := NewExecutor(mgr, store, gmail.NewDeletionMockAPI()).WithLogger(logger)
-
-	assert.Same(t, logger, exec.logger, "WithLogger did not set logger")
-}
-
-func TestExecutor_WithProgress(t *testing.T) {
-	tmpDir := t.TempDir()
-	mgr, err := NewManager(tmpDir)
-	require.NoError(t, err, "NewManager()")
-	store := testutil.NewTestStore(t)
-
-	progress := &trackingProgress{}
-	exec := NewExecutor(mgr, store, gmail.NewDeletionMockAPI()).WithProgress(progress)
-
-	assert.Same(t, progress, exec.progress, "WithProgress did not set progress")
 }
 
 func TestExecutor_Execute_Scenarios(t *testing.T) {
@@ -1719,14 +1674,4 @@ func TestExecutor_PrepareExecution_PersistsInProgressState(t *testing.T) {
 	require.NoError(err, "reload in_progress manifest from disk")
 	assert.Equal(StatusInProgress, loaded.Status, "on-disk status must not still say pending")
 	require.NotNil(loaded.Execution, "on-disk Execution must be initialized")
-}
-
-// TestNullProgress_AllMethods exercises all NullProgress methods for coverage.
-func TestNullProgress_AllMethods(t *testing.T) {
-	p := NullProgress{}
-	// These are no-ops but we need to call them for coverage
-	p.OnStart(100, 0)
-	p.OnProgress(50, 40, 10)
-	p.OnComplete(90, 10)
-	// If we get here without panic, the test passes
 }

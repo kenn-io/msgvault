@@ -150,10 +150,7 @@ func TestScheduledSyncResolvesGmailAliasToCanonicalIdentifier(t *testing.T) {
 	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home},
 		OAuth: config.OAuthConfig{ServiceAccountKey: keyPath}}
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	t.Cleanup(func() { assert.NoError(st.Close()) })
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 
 	canonicalEmail := "reader@example.test"
 	source, err := st.GetOrCreateSource(sourceTypeGmail, canonicalEmail)
