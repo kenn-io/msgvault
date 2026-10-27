@@ -127,6 +127,7 @@ var topLevelCommandGroups = map[string]string{
 	"organization":           helpGroupPeople,
 	"pack-attachments":       helpGroupMaintenance,
 	"person":                 helpGroupPeople,
+	"policy":                 helpGroupMaintenance,
 	"purge-excluded-media":   helpGroupMaintenance,
 	"query":                  helpGroupRead,
 	"quickstart":             helpGroupOperations,

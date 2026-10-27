@@ -69,6 +69,9 @@ Examples:
 				return err
 			}
 			defer cleanup()
+			if _, err := s.ConfigureConversationPolicy(cmd.Context(), cfg.ConversationPolicySettings(), time.Now()); err != nil {
+				return err
+			}
 			sources, err := resolveSlackSyncSources(s, flagTeam)
 			if err != nil {
 				return err
@@ -259,6 +262,9 @@ func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
+	if err := refreshConversationPolicyForSync(ctx, s, currentConversationPolicySettingsSource(state), time.Now()); err != nil {
+		return err
+	}
 	sources, err := resolveSlackSyncSources(s, "")
 	if err != nil {
 		return err

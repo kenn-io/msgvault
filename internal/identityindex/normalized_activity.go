@@ -11,7 +11,7 @@ WITH message_facts AS (
 	SELECT m.id::BIGINT AS message_id, m.conversation_id::BIGINT AS conversation_id,
 	       m.source_id::BIGINT AS source_id, s.source_type::VARCHAR AS source_type,
 	       m.sent_at::TIMESTAMP AS occurred_at, m.message_type::VARCHAR AS message_type,
-	       coalesce(c.conversation_type, '')::VARCHAR AS conversation_type,
+	       coalesce(try_cast(c.conversation_type AS VARCHAR), '') AS conversation_type,
 	       %s AS entry_kind, (%s) AS is_chat,
 	       m.is_from_me::BOOLEAN AS is_from_me, m.attachment_count::INTEGER AS attachment_count,
 	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
@@ -25,8 +25,8 @@ WITH message_facts AS (
 	WHERE year(m.sent_at) = %d
 ), canon AS (
 	SELECT p.id::BIGINT AS participant_id,
-	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
-	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
+	       coalesce(try_cast(c.canonical_id AS BIGINT), p.id::BIGINT) AS canonical_id,
+	       lower(coalesce(try_cast(p.domain AS VARCHAR), '')) AS participant_domain
 	FROM read_parquet('%s') p
 	LEFT JOIN read_parquet('%s') c ON c.participant_id = p.id
 ), owner_canon AS (
@@ -75,7 +75,7 @@ SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        false AS is_conversation_member, false AS is_sender,
        false AS is_author, false AS is_owner, m.occurred_year
 FROM message_facts m`, EntryKindSQL("m.message_type"),
-		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),
+		IsChatSQL("m.message_type", "coalesce(try_cast(c.conversation_type AS VARCHAR), '')"),
 		messages, quoteSQLString(path("sources")),
 		quoteSQLString(path("conversations")), occurredYear,
 		quoteSQLString(path("participants")), quoteSQLString(path("participant_clusters")),
@@ -132,8 +132,8 @@ facts AS NOT MATERIALIZED (SELECT * FROM raw_activity WHERE canonical_id IS NULL
 direct AS NOT MATERIALIZED (SELECT * FROM raw_activity WHERE canonical_id IS NOT NULL),
 canon AS NOT MATERIALIZED (
 	SELECT p.id::BIGINT AS participant_id,
-	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
-	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
+	       coalesce(try_cast(c.canonical_id AS BIGINT), p.id::BIGINT) AS canonical_id,
+	       lower(coalesce(try_cast(p.domain AS VARCHAR), '')) AS participant_domain
 	FROM %[3]s p LEFT JOIN %[4]s c ON c.participant_id = p.id
 ), owner_canon AS NOT MATERIALIZED (
 	SELECT DISTINCT c.canonical_id FROM %[5]s o

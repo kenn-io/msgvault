@@ -145,13 +145,6 @@ func recipientNameExpr(mrAlias, pAlias string) string {
 	)
 }
 
-// sqliteSenderNameExpr hydrates a message summary's FromName with the same
-// per-message display-name preference sender-name aggregation uses: the
-// message's own "from" recipient display_name (mr_from) wins over the
-// participant's sticky name, so drilling into a per-message sender-name bucket
-// shows the same name the bucket was keyed by. Pairs with sqliteSenderJoin.
-var sqliteSenderNameExpr = recipientNameExpr("mr_from", "p_sender")
-
 // sqliteSenderJoin binds a message's first "from" recipient row (mr_from) and
 // the resolved sender participant (p_sender), falling back to the direct
 // m.sender_id participant only when the message has no "from" recipient row.
@@ -233,18 +226,24 @@ func fetchParticipantsForMessageList(ctx context.Context, db store.SQLReader, re
 		placeholders[i] = "?"
 		idToIndex[msg.ID] = i
 	}
+	addressExpr := `COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '')`
+	nameExpr := recipientNameExpr("mr", "p")
+	if tablePrefix == "" {
+		addressExpr = `COALESCE(NULLIF(` + eligibleParticipantEmailExpr("p") + `, ''), NULLIF(` + eligibleParticipantPhoneExpr("p") + `, ''), '')`
+		nameExpr = eligibleRecipientNameExpr("mr", "p")
+	}
 
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.message_id,
 		       mr.recipient_type,
-		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       %s,
 		       %s
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s)
 		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
 		ORDER BY mr.message_id, mr.id
-	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
+	`, addressExpr, nameExpr, tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
 	if err != nil {
 		return err
 	}

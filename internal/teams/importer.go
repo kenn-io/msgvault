@@ -236,12 +236,16 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		// Only the roster's size and read outcome matter to media policy; the
 		// members are resolved below, where their display names are kept too.
 		roster := &memberRoster{memberCount: len(members), err: merr}
+		imp.recordRosterOutcome(convID, roster, sum)
+		if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+			return err
+		}
 		chatComplete := true
 		var toRecips []recipientRef
 		if merr == nil {
 			toRecips = make([]recipientRef, 0, len(members))
 			for _, m := range members {
-				pid, rerr := imp.res.resolveMember(ctx, m)
+				pid, rerr := imp.res.resolveMember(ctx, m, convID)
 				if rerr != nil || pid == 0 {
 					continue
 				}
@@ -254,7 +258,6 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			chatComplete = false
 			sum.Errors++
 		}
-		imp.recordRosterOutcome(convID, roster, sum)
 		chatOpts := opts
 		chatOpts.MediaConversation = attachmentpolicy.Conversation{
 			Type:             conversationType(ch.ChatType),
@@ -315,6 +318,18 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			if t := gm.LastModifiedDateTime.UTC(); t.After(maxTime) {
 				maxTime = t
 			}
+		}
+		// Resolve direct replies after every fetched parent has been persisted;
+		// Graph may return the child first.
+		for i := range msgs {
+			if msgs[i].ReplyToID != "" {
+				if err := imp.store.SetReplyToContext(ctx, sourceID, chatSourceMessageID(ch.ID, msgs[i].ID), chatSourceMessageID(ch.ID, msgs[i].ReplyToID)); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+			return err
 		}
 		truncated := pageTruncated || (opts.Limit > 0 && convCount < len(msgs))
 		if chatComplete && !truncated && !maxTime.IsZero() {
@@ -400,7 +415,7 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			sum.Errors++
 			continue
 		}
-		// Standard channels inherit the team roster, so resolve it once per
+		// Standard channels inherit the team roster, so fetch it once per
 		// team — lazily, since a team of only private channels never needs it —
 		// and mirror it onto every channel conversation the way chats persist
 		// their members. Media policy needs the count, and backfill/purge read
@@ -424,7 +439,7 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			}
 			// Private and shared channels are governed by their own membership,
 			// which can be far smaller — or larger — than the team's, so the
-			// team roster is resolved only for channels that inherit it.
+			// team roster is fetched only for channels that inherit it.
 			var roster *memberRoster
 			if channelHasOwnRoster(ch.MembershipType) {
 				roster = imp.resolveChannelRoster(ctx, team.ID, ch.ID)
@@ -440,12 +455,15 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			if err != nil {
 				return err
 			}
-			for _, pid := range roster.participantIDs {
+			imp.recordRosterOutcome(convID, roster, sum)
+			if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+				return err
+			}
+			for _, pid := range imp.resolveRosterMembers(ctx, convID, roster.members) {
 				if cerr := imp.store.EnsureConversationParticipant(convID, pid, "member"); cerr != nil {
 					sum.Errors++
 				}
 			}
-			imp.recordRosterOutcome(convID, roster, sum)
 
 			prevDelta := state.ChannelDelta(key)
 			var newDelta string
@@ -633,6 +651,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 				}
 			}
 
+			if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+				return err
+			}
 			truncated := channelTruncated || (opts.Limit > 0 && convCount < len(collected))
 			if !truncated && newDelta != "" {
 				state.SetChannelDelta(key, newDelta)
@@ -659,14 +680,13 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 	return nil
 }
 
-// memberRoster is a membership as resolved from Graph: the raw member count
-// media policy evaluates, and the participant IDs to archive on the
-// conversations it governs. A non-nil err means the roster could not be read,
+// memberRoster retains Graph membership for replay at each concrete conversation.
+// Its raw count determines policy before rich participant resolution. A non-nil err means the roster could not be read,
 // which callers must treat as unknown membership rather than as an empty one.
 type memberRoster struct {
-	participantIDs []int64
-	memberCount    int
-	err            error
+	members     []ChatMember
+	memberCount int
+	err         error
 }
 
 // policyCount is the participant count media policy evaluates this roster
@@ -709,13 +729,13 @@ func channelHasOwnRoster(membershipType string) bool {
 	}
 }
 
-// resolveTeamRoster fetches a team's members and resolves them to participants.
+// resolveTeamRoster fetches a team's members without originless identity writes.
 func (imp *Importer) resolveTeamRoster(ctx context.Context, teamID string) *memberRoster {
 	members, err := imp.client.ListTeamMembers(ctx, teamID)
 	if err != nil {
 		return &memberRoster{err: err}
 	}
-	return imp.resolveRosterMembers(ctx, members)
+	return &memberRoster{members: members, memberCount: len(members)}
 }
 
 // resolveChannelRoster fetches the members of a private or shared channel.
@@ -724,7 +744,7 @@ func (imp *Importer) resolveChannelRoster(ctx context.Context, teamID, channelID
 	if err != nil {
 		return &memberRoster{err: err}
 	}
-	return imp.resolveRosterMembers(ctx, members)
+	return &memberRoster{members: members, memberCount: len(members)}
 }
 
 // resolveChatRoster fetches a chat's members.
@@ -733,22 +753,19 @@ func (imp *Importer) resolveChatRoster(ctx context.Context, chatID string) *memb
 	if err != nil {
 		return &memberRoster{err: err}
 	}
-	return imp.resolveRosterMembers(ctx, members)
+	return &memberRoster{members: members, memberCount: len(members)}
 }
 
-func (imp *Importer) resolveRosterMembers(ctx context.Context, members []ChatMember) *memberRoster {
-	roster := &memberRoster{
-		participantIDs: make([]int64, 0, len(members)),
-		memberCount:    len(members),
-	}
+func (imp *Importer) resolveRosterMembers(ctx context.Context, convID int64, members []ChatMember) []int64 {
+	ids := make([]int64, 0, len(members))
 	for _, m := range members {
-		pid, rerr := imp.res.resolveMember(ctx, m)
+		pid, rerr := imp.res.resolveMember(ctx, m, convID)
 		if rerr != nil || pid == 0 {
 			continue
 		}
-		roster.participantIDs = append(roster.participantIDs, pid)
+		ids = append(ids, pid)
 	}
-	return roster
+	return ids
 }
 
 // teamChannels is one team's channel list, which decides whether a channel is
@@ -875,7 +892,11 @@ func (imp *Importer) refreshMembership(
 	if roster.err != nil {
 		return unknownMembership
 	}
-	for _, pid := range roster.participantIDs {
+	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{ref.ConversationID}, time.Now()); err != nil {
+		sum.Errors++
+		return unknownMembership
+	}
+	for _, pid := range imp.resolveRosterMembers(ctx, ref.ConversationID, roster.members) {
 		if cerr := imp.store.EnsureConversationParticipant(ref.ConversationID, pid, "member"); cerr != nil {
 			sum.Errors++
 		}
@@ -902,7 +923,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	}
 	msg, text := mapMessage(gm, convID, sourceID, sourceMessageID)
 	if gm.From != nil {
-		pid, rerr := imp.res.resolve(ctx, identityOf(gm.From))
+		pid, rerr := imp.res.resolve(ctx, identityOf(gm.From), convID)
 		if rerr != nil {
 			return 0, false, rerr
 		}
@@ -998,7 +1019,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		if id == nil {
 			continue
 		}
-		pid, rerr := imp.res.resolve(ctx, id)
+		pid, rerr := imp.res.resolve(ctx, id, convID)
 		if rerr != nil || pid == 0 {
 			continue
 		}
@@ -1012,7 +1033,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 
 	reactions := make([]store.ReactionRef, 0, len(gm.Reactions))
 	for _, rc := range gm.Reactions {
-		pid, _ := imp.res.resolve(ctx, identityOf(rc.User))
+		pid, _ := imp.res.resolve(ctx, identityOf(rc.User), convID)
 		if pid != 0 {
 			reactions = append(reactions, store.ReactionRef{
 				ParticipantID: pid,

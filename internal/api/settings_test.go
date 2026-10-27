@@ -27,8 +27,8 @@ import (
 
 func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, _ := newSettingsTestServer(t, "# keep\n[web]\ntheme = \"dark\"\n"+
 		"[server]\napi_key = \"test-api-key\"\n"+
 		"[vector.embeddings]\ndocument_prefix = \"search_document: \"\nquery_prefix = \"search_query: \"\n"+
@@ -36,42 +36,42 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 		"[integrations.kata]\napi_key = \"kata-secret\"\n"+
 		"[unsupported]\nprivate_value = \"must-not-leak\"\n")
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "test-api-key")
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
-	assertions.NotEmpty(resp.Header().Get("ETag"))
-	assertions.Equal("no-store", resp.Header().Get("Cache-Control"))
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	assertionsT.NotEmpty(resp.Header().Get("ETag"))
+	assertionsT.Equal("no-store", resp.Header().Get("Cache-Control"))
 
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
 	byKey := settingsByKey(body.Settings)
-	requirements.NotNil(byKey["web.theme"].Value)
-	requirements.NotNil(byKey["web.theme"].Value.String)
-	assertions.Equal("dark", *byKey["web.theme"].Value.String)
-	assertions.Equal(&SecretSettingState{Configured: true, Hint: "tes…key"}, byKey["server.api_key"].Secret)
-	assertions.Nil(byKey["server.api_key"].Value)
-	assertions.Equal(&SecretSettingState{Configured: true}, byKey["integrations.tasks.api_key"].Secret)
-	assertions.Equal(&SecretSettingState{Configured: true}, byKey["integrations.kata.api_key"].Secret)
-	assertions.Nil(byKey["integrations.kata.api_key"].Value)
-	requirements.NotNil(byKey["vector.embeddings.api_format"].Value)
-	requirements.NotNil(byKey["vector.embeddings.api_format"].Value.String)
-	assertions.Equal("openai", *byKey["vector.embeddings.api_format"].Value.String)
-	assertions.Equal([]string{"openai", "voyage-contextual"}, byKey["vector.embeddings.api_format"].Options)
-	requirements.NotNil(byKey["vector.embeddings.document_prefix"].Value)
-	requirements.NotNil(byKey["vector.embeddings.document_prefix"].Value.String)
-	assertions.Equal("search_document: ", *byKey["vector.embeddings.document_prefix"].Value.String)
-	requirements.NotNil(byKey["vector.embeddings.query_prefix"].Value)
-	requirements.NotNil(byKey["vector.embeddings.query_prefix"].Value.String)
-	assertions.Equal("search_query: ", *byKey["vector.embeddings.query_prefix"].Value.String)
-	requirements.NotNil(byKey["vector.people.enabled"].Value)
-	requirements.NotNil(byKey["vector.people.enabled"].Value.Boolean)
-	assertions.False(*byKey["vector.people.enabled"].Value.Boolean)
-	requirements.NotNil(byKey["vector.people.retention_posture"].Value)
-	requirements.NotNil(byKey["vector.people.training_posture"].Value)
-	requirements.NotNil(byKey["server.trusted_proxies"].Value)
-	assertions.NotNil(byKey["server.trusted_proxies"].Value.Strings)
-	assertions.NotContains(byKey, "unsupported.private_value")
+	requirementsT.NotNil(byKey["web.theme"].Value)
+	requirementsT.NotNil(byKey["web.theme"].Value.String)
+	assertionsT.Equal("dark", *byKey["web.theme"].Value.String)
+	assertionsT.Equal(&SecretSettingState{Configured: true, Hint: "tes…key"}, byKey["server.api_key"].Secret)
+	assertionsT.Nil(byKey["server.api_key"].Value)
+	assertionsT.Equal(&SecretSettingState{Configured: true}, byKey["integrations.tasks.api_key"].Secret)
+	assertionsT.Equal(&SecretSettingState{Configured: true}, byKey["integrations.kata.api_key"].Secret)
+	assertionsT.Nil(byKey["integrations.kata.api_key"].Value)
+	requirementsT.NotNil(byKey["vector.embeddings.api_format"].Value)
+	requirementsT.NotNil(byKey["vector.embeddings.api_format"].Value.String)
+	assertionsT.Equal("openai", *byKey["vector.embeddings.api_format"].Value.String)
+	assertionsT.Equal([]string{"openai", "voyage-contextual"}, byKey["vector.embeddings.api_format"].Options)
+	requirementsT.NotNil(byKey["vector.embeddings.document_prefix"].Value)
+	requirementsT.NotNil(byKey["vector.embeddings.document_prefix"].Value.String)
+	assertionsT.Equal("search_document: ", *byKey["vector.embeddings.document_prefix"].Value.String)
+	requirementsT.NotNil(byKey["vector.embeddings.query_prefix"].Value)
+	requirementsT.NotNil(byKey["vector.embeddings.query_prefix"].Value.String)
+	assertionsT.Equal("search_query: ", *byKey["vector.embeddings.query_prefix"].Value.String)
+	requirementsT.NotNil(byKey["vector.people.enabled"].Value)
+	requirementsT.NotNil(byKey["vector.people.enabled"].Value.Boolean)
+	assertionsT.False(*byKey["vector.people.enabled"].Value.Boolean)
+	requirementsT.NotNil(byKey["vector.people.retention_posture"].Value)
+	requirementsT.NotNil(byKey["vector.people.training_posture"].Value)
+	requirementsT.NotNil(byKey["server.trusted_proxies"].Value)
+	assertionsT.NotNil(byKey["server.trusted_proxies"].Value.Strings)
+	assertionsT.NotContains(byKey, "unsupported.private_value")
 	for _, setting := range body.Settings {
 		wantRestartRequired := !strings.HasPrefix(setting.Key, "web.") && setting.Key != "carddav.password"
-		assertions.Equal(wantRestartRequired, setting.RestartRequired, setting.Key)
+		assertionsT.Equal(wantRestartRequired, setting.RestartRequired, setting.Key)
 		wantReadOnly := strings.HasPrefix(setting.Key, "server.bind_addr") ||
 			setting.Key == "server.api_port" ||
 			setting.Key == "server.api_key" ||
@@ -84,35 +84,35 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 			setting.Key == "vector.multimodal.api_key_env" ||
 			setting.Key == "vector.multimodal.capabilities_file" ||
 			strings.HasPrefix(setting.Key, "carddav.")
-		assertions.Equal(wantReadOnly, setting.ReadOnly, setting.Key)
+		assertionsT.Equal(wantReadOnly, setting.ReadOnly, setting.Key)
 	}
-	assertions.NotContains(resp.Body.String(), "test-api-key")
-	assertions.NotContains(resp.Body.String(), "task-secret")
-	assertions.NotContains(resp.Body.String(), "kata-secret")
-	assertions.NotContains(resp.Body.String(), "must-not-leak")
+	assertionsT.NotContains(resp.Body.String(), "test-api-key")
+	assertionsT.NotContains(resp.Body.String(), "task-secret")
+	assertionsT.NotContains(resp.Body.String(), "kata-secret")
+	assertionsT.NotContains(resp.Body.String(), "must-not-leak")
 }
 
 func TestGetSettingsIsSelfDescribingAndIncludesSafeCatalog(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, "")
 
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var body struct {
 		Groups   []map[string]any `json:"groups"`
 		Settings []map[string]any `json:"settings"`
 	}
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
-	requirements.NotEmpty(body.Groups, "the daemon must describe category labels for generic clients")
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	requirementsT.NotEmpty(body.Groups, "the daemon must describe category labels for generic clients")
 
 	byKey := make(map[string]map[string]any, len(body.Settings))
 	for _, setting := range body.Settings {
 		key, ok := setting["key"].(string)
-		requirements.True(ok)
-		assertions.NotEmpty(setting["label"], "setting %s must have a stable label", key)
-		assertions.NotEmpty(setting["description"], "setting %s must have a stable description", key)
+		requirementsT.True(ok)
+		assertionsT.NotEmpty(setting["label"], "setting %s must have a stable label", key)
+		assertionsT.NotEmpty(setting["description"], "setting %s must have a stable description", key)
 		byKey[key] = setting
 	}
 	for _, key := range []string{
@@ -141,146 +141,146 @@ func TestGetSettingsIsSelfDescribingAndIncludesSafeCatalog(t *testing.T) {
 		"people.enrichment.enabled", "people.enrichment.schedule", "people.enrichment.batch_size",
 		"people.enrichment.lease_duration",
 	} {
-		assertions.Contains(byKey, key)
+		assertionsT.Contains(byKey, key)
 	}
 	for _, key := range []string{
 		"server.bind_addr", "server.api_port", "server.api_key", "server.allow_insecure", "server.trusted_proxies",
 		"vector.backend", "vector.db_path", "vector.skip_extension_create",
 	} {
 		setting := byKey[key]
-		requirements.NotNil(setting, key)
-		assertions.Equal(true, setting["read_only"], key)
+		requirementsT.NotNil(setting, key)
+		assertionsT.Equal(true, setting["read_only"], key)
 	}
 	for _, key := range []string{"chat.server", "chat.model", "chat.max_results"} {
-		assertions.NotContains(byKey, key, "legacy chat settings have no production consumer")
+		assertionsT.NotContains(byKey, key, "legacy chat settings have no production consumer")
 	}
-	assertions.Equal(map[string]any{"boolean": true}, byKey["server.daemon_auto_start"]["value"])
+	assertionsT.Equal(map[string]any{"boolean": true}, byKey["server.daemon_auto_start"]["value"])
 }
 
 func TestSlackConversationSelectionSettings(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, "")
 
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 	var before SettingsResponse
-	requirements.NoError(json.Unmarshal(get.Body.Bytes(), &before))
+	requirementsT.NoError(json.Unmarshal(get.Body.Bytes(), &before))
 	byKey := settingsByKey(before.Settings)
 	for _, key := range []string{"slack.dms", "slack.group_dms"} {
 		setting, ok := byKey[key]
-		requirements.True(ok, key)
-		requirements.NotNil(setting.Value, key)
-		requirements.NotNil(setting.Value.Boolean, key)
-		assertions.True(*setting.Value.Boolean, key)
-		assertions.True(setting.Inherited, key)
+		requirementsT.True(ok, key)
+		requirementsT.NotNil(setting.Value, key)
+		requirementsT.NotNil(setting.Value.Boolean, key)
+		assertionsT.True(*setting.Value.Boolean, key)
+		assertionsT.True(setting.Inherited, key)
 	}
 
 	patched := patchSettings(t, srv, `{"updates":[`+
 		`{"key":"slack.dms","value":{"boolean":false}},`+
 		`{"key":"slack.group_dms","value":{"boolean":false}}]}`)
-	requirements.Equal(http.StatusOK, patched.Code, patched.Body.String())
+	requirementsT.Equal(http.StatusOK, patched.Code, patched.Body.String())
 	loaded, err := config.Load(path, "")
-	requirements.NoError(err)
-	assertions.False(loaded.Slack.DMsEnabled())
-	assertions.False(loaded.Slack.GroupDMsEnabled())
+	requirementsT.NoError(err)
+	assertionsT.False(loaded.Slack.DMsEnabled())
+	assertionsT.False(loaded.Slack.GroupDMsEnabled())
 
 	get = performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 	var after SettingsResponse
-	requirements.NoError(json.Unmarshal(get.Body.Bytes(), &after))
+	requirementsT.NoError(json.Unmarshal(get.Body.Bytes(), &after))
 	byKey = settingsByKey(after.Settings)
 	for _, key := range []string{"slack.dms", "slack.group_dms"} {
 		setting := byKey[key]
-		requirements.NotNil(setting.Value, key)
-		requirements.NotNil(setting.Value.Boolean, key)
-		assertions.False(*setting.Value.Boolean, key)
-		assertions.False(setting.Inherited, key)
+		requirementsT.NotNil(setting.Value, key)
+		requirementsT.NotNil(setting.Value.Boolean, key)
+		assertionsT.False(*setting.Value.Boolean, key)
+		assertionsT.False(setting.Inherited, key)
 	}
 }
 
 func TestGetSettingsPublishesValidationMetadataFromRegisteredRouter(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, "")
 
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var body struct {
 		Settings []map[string]any `json:"settings"`
 	}
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
 	byKey := make(map[string]map[string]any, len(body.Settings))
 	for _, setting := range body.Settings {
 		key, ok := setting["key"].(string)
-		requirements.True(ok)
+		requirementsT.True(ok)
 		byKey[key] = setting
 	}
 
 	activityBatch, ok := byKey["activity.batch_size"]["validation"].(map[string]any)
-	requirements.True(ok, "activity.batch_size must publish validation metadata")
-	assertions.InDelta(float64(1), activityBatch["minimum"], 0)
-	assertions.InDelta(float64(10_000), activityBatch["maximum"], 0)
+	requirementsT.True(ok, "activity.batch_size must publish validation metadata")
+	assertionsT.InDelta(float64(1), activityBatch["minimum"], 0)
+	assertionsT.InDelta(float64(10_000), activityBatch["maximum"], 0)
 
 	backupLevel, ok := byKey["backup.zstd_level"]["validation"].(map[string]any)
-	requirements.True(ok, "backup.zstd_level must publish validation metadata")
-	assertions.InDelta(float64(0), backupLevel["minimum"], 0, "minimum keeps covering the stored off value for older clients")
-	assertions.InDelta(float64(19), backupLevel["maximum"], 0)
+	requirementsT.True(ok, "backup.zstd_level must publish validation metadata")
+	assertionsT.InDelta(float64(0), backupLevel["minimum"], 0, "minimum keeps covering the stored off value for older clients")
+	assertionsT.InDelta(float64(19), backupLevel["maximum"], 0)
 	backupOff, ok := backupLevel["off"].(map[string]any)
-	requirements.True(ok, "backup.zstd_level must publish zero as its off value")
-	assertions.Equal("0", backupOff["value"])
-	assertions.Equal("Encoder default", backupOff["label"])
-	assertions.InDelta(float64(1), backupOff["on_minimum"], 0)
-	assertions.Nil(backupLevel["hint"], "bounds belong on the control, not in hint text")
+	requirementsT.True(ok, "backup.zstd_level must publish zero as its off value")
+	assertionsT.Equal("0", backupOff["value"])
+	assertionsT.Equal("Encoder default", backupOff["label"])
+	assertionsT.InDelta(float64(1), backupOff["on_minimum"], 0)
+	assertionsT.Nil(backupLevel["hint"], "bounds belong on the control, not in hint text")
 
 	mediaSize, ok := byKey["discord.max_media_mb"]["validation"].(map[string]any)
-	requirements.True(ok, "attachment size controls must publish validation metadata")
-	assertions.InDelta(float64(0), mediaSize["minimum"], 0)
+	requirementsT.True(ok, "attachment size controls must publish validation metadata")
+	assertionsT.InDelta(float64(0), mediaSize["minimum"], 0)
 	mediaOff, ok := mediaSize["off"].(map[string]any)
-	requirements.True(ok, "attachment size controls must publish their provider default as the off state")
-	assertions.Equal("Discord default of 50 MiB", mediaOff["label"])
-	assertions.Equal("50", mediaOff["suggest"])
-	assertions.InDelta(float64(1), mediaOff["on_minimum"], 0)
+	requirementsT.True(ok, "attachment size controls must publish their provider default as the off state")
+	assertionsT.Equal("Discord default of 50 MiB", mediaOff["label"])
+	assertionsT.Equal("50", mediaOff["suggest"])
+	assertionsT.InDelta(float64(1), mediaOff["on_minimum"], 0)
 	chatSize, ok := byKey["beeper.max_media_mb"]["validation"].(map[string]any)
-	requirements.True(ok)
+	requirementsT.True(ok)
 	chatOff, ok := chatSize["off"].(map[string]any)
-	requirements.True(ok)
-	assertions.Equal("Beeper default of 250 MiB", chatOff["label"], "the label follows the shared chat default")
+	requirementsT.True(ok)
+	assertionsT.Equal("Beeper default of 250 MiB", chatOff["label"], "the label follows the shared chat default")
 	retries, ok := byKey["vector.embeddings.max_retries"]["validation"].(map[string]any)
-	requirements.True(ok)
-	assertions.Nil(retries["off"], "a zero that loading rewrites to the default cannot be an off state")
+	requirementsT.True(ok)
+	assertionsT.Nil(retries["off"], "a zero that loading rewrites to the default cannot be an off state")
 
 	embeddingEndpoint, ok := byKey["vector.embeddings.endpoint"]["validation"].(map[string]any)
-	requirements.True(ok, "provider endpoints must publish safe input guidance")
-	assertions.Equal(true, embeddingEndpoint["required"])
-	assertions.Contains(embeddingEndpoint["hint"], "without credentials, query, or fragment")
+	requirementsT.True(ok, "provider endpoints must publish safe input guidance")
+	assertionsT.Equal(true, embeddingEndpoint["required"])
+	assertionsT.Contains(embeddingEndpoint["hint"], "without credentials, query, or fragment")
 
 	activitySchedule, ok := byKey["activity.schedule"]["validation"].(map[string]any)
-	requirements.True(ok, "schedules must identify their accepted format")
-	assertions.Equal("cron", activitySchedule["format"])
-	assertions.NotEqual(true, activitySchedule["required"])
+	requirementsT.True(ok, "schedules must identify their accepted format")
+	assertionsT.Equal("cron", activitySchedule["format"])
+	assertionsT.NotEqual(true, activitySchedule["required"])
 	enrichmentSchedule, ok := byKey["people.enrichment.schedule"]["validation"].(map[string]any)
-	requirements.True(ok)
-	assertions.Equal("cron", enrichmentSchedule["format"])
-	assertions.Equal(true, enrichmentSchedule["required"])
-	assertions.NotEqual(true, byKey["integrations.tasks.endpoint"]["testable"],
+	requirementsT.True(ok)
+	assertionsT.Equal("cron", enrichmentSchedule["format"])
+	assertionsT.Equal(true, enrichmentSchedule["required"])
+	assertionsT.NotEqual(true, byKey["integrations.tasks.endpoint"]["testable"],
 		"the daemon has no provider endpoint test operation")
 }
 
 func TestSettingsCatalogDoesNotPublishGenericMetadataFallbacks(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
+	assertionsT := assert.New(t)
 	for _, definition := range settingsCatalog {
 		_, ok := settingsMetadata[definition.key]
-		assertions.True(ok, "%s needs an intentional label and description", definition.key)
+		assertionsT.True(ok, "%s needs an intentional label and description", definition.key)
 	}
 }
 
 func TestSettingsProviderCredentialsAreWriteOnlyOwnerOnlyAndETagProtected(t *testing.T) { //nolint:paralleltest // t.Setenv writes provider API key variables
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	t.Setenv("TEXT_EMBEDDING_KEY", "environment-secret-must-not-leak")
 	srv, _ := newSettingsTestServer(t, `[vector.embeddings]
 endpoint = "https://embeddings.example.test/v1"
@@ -290,68 +290,68 @@ dimension = 8
 `)
 
 	first := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
-	assertions.NotContains(first.Body.String(), "environment-secret-must-not-leak")
-	assertions.Equal(map[string]any{"configured": true, "source": "environment", "hint": "env…eak"},
+	requirementsT.Equal(http.StatusOK, first.Code, first.Body.String())
+	assertionsT.NotContains(first.Body.String(), "environment-secret-must-not-leak")
+	assertionsT.Equal(map[string]any{"configured": true, "source": "environment", "hint": "env…eak"},
 		rawEmbeddingSecretState(t, first.Body.Bytes()))
 	configETag := first.Header().Get("ETag")
 	credentialETag := first.Header().Get("Credential-Etag")
-	requirements.NotEmpty(configETag)
-	requirements.NotEmpty(credentialETag)
+	requirementsT.NotEmpty(configETag)
+	requirementsT.NotEmpty(credentialETag)
 
 	set := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/provider-credentials/vector.embeddings",
 		[]byte(`{"value":"browser-secret-must-not-leak"}`), credentialETag, "")
-	requirements.Equal(http.StatusOK, set.Code, set.Body.String())
+	requirementsT.Equal(http.StatusOK, set.Code, set.Body.String())
 	var setResponse ProviderCredentialResponse
-	requirements.NoError(json.Unmarshal(set.Body.Bytes(), &setResponse))
-	assertions.True(setResponse.PendingRestart)
-	assertions.NotContains(set.Body.String(), "browser-secret-must-not-leak")
-	assertions.NotContains(set.Body.String(), "environment-secret-must-not-leak")
+	requirementsT.NoError(json.Unmarshal(set.Body.Bytes(), &setResponse))
+	assertionsT.True(setResponse.PendingRestart)
+	assertionsT.NotContains(set.Body.String(), "browser-secret-must-not-leak")
+	assertionsT.NotContains(set.Body.String(), "environment-secret-must-not-leak")
 	storedCredentialETag := set.Header().Get("ETag")
-	assertions.NotEqual(credentialETag, storedCredentialETag)
+	assertionsT.NotEqual(credentialETag, storedCredentialETag)
 
 	stored := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, stored.Code, stored.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "stored", "hint": "bro…eak"},
+	requirementsT.Equal(http.StatusOK, stored.Code, stored.Body.String())
+	assertionsT.Equal(map[string]any{"configured": true, "source": "stored", "hint": "bro…eak"},
 		rawEmbeddingSecretState(t, stored.Body.Bytes()))
-	assertions.Equal(configETag, stored.Header().Get("ETag"), "credential writes must not masquerade as config writes")
-	assertions.Equal(storedCredentialETag, stored.Header().Get("Credential-Etag"))
+	assertionsT.Equal(configETag, stored.Header().Get("ETag"), "credential writes must not masquerade as config writes")
+	assertionsT.Equal(storedCredentialETag, stored.Header().Get("Credential-Etag"))
 
 	credentialPath := filepath.Join(srv.cfg.TokensDir(), "provider-credentials.json")
 	info, err := os.Stat(credentialPath)
-	requirements.NoError(err)
+	requirementsT.NoError(err)
 	if runtime.GOOS != "windows" {
-		assertions.Equal(os.FileMode(0o600), info.Mode().Perm())
+		assertionsT.Equal(os.FileMode(0o600), info.Mode().Perm())
 		dirInfo, statErr := os.Stat(srv.cfg.TokensDir())
-		requirements.NoError(statErr)
-		assertions.Equal(os.FileMode(0o700), dirInfo.Mode().Perm())
+		requirementsT.NoError(statErr)
+		assertionsT.Equal(os.FileMode(0o700), dirInfo.Mode().Perm())
 	}
 	credentialBytes, err := os.ReadFile(credentialPath)
-	requirements.NoError(err)
-	assertions.Contains(string(credentialBytes), "browser-secret-must-not-leak")
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(credentialBytes), "browser-secret-must-not-leak")
 
 	stale := performSettingsRequest(t, srv, http.MethodDelete,
 		"/api/v1/settings/provider-credentials/vector.embeddings", nil, credentialETag, "")
-	assertions.Equal(http.StatusPreconditionFailed, stale.Code, stale.Body.String())
+	assertionsT.Equal(http.StatusPreconditionFailed, stale.Code, stale.Body.String())
 
 	clearResponseRecorder := performSettingsRequest(t, srv, http.MethodDelete,
 		"/api/v1/settings/provider-credentials/vector.embeddings", nil, storedCredentialETag, "")
-	requirements.Equal(http.StatusOK, clearResponseRecorder.Code, clearResponseRecorder.Body.String())
+	requirementsT.Equal(http.StatusOK, clearResponseRecorder.Code, clearResponseRecorder.Body.String())
 	var clearResponse ProviderCredentialResponse
-	requirements.NoError(json.Unmarshal(clearResponseRecorder.Body.Bytes(), &clearResponse))
-	assertions.True(clearResponse.PendingRestart)
+	requirementsT.NoError(json.Unmarshal(clearResponseRecorder.Body.Bytes(), &clearResponse))
+	assertionsT.True(clearResponse.PendingRestart)
 	cleared := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, cleared.Code, cleared.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "environment", "hint": "env…eak"},
+	requirementsT.Equal(http.StatusOK, cleared.Code, cleared.Body.String())
+	assertionsT.Equal(map[string]any{"configured": true, "source": "environment", "hint": "env…eak"},
 		rawEmbeddingSecretState(t, cleared.Body.Bytes()))
-	assertions.NotContains(cleared.Body.String(), "environment-secret-must-not-leak")
+	assertionsT.NotContains(cleared.Body.String(), "environment-secret-must-not-leak")
 }
 
 func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, "")
 	body, err := json.Marshal(map[string]any{"updates": []map[string]any{
 		{"key": "sync.rate_limit_qps", "value": map[string]any{"integer": 12}},
@@ -400,42 +400,42 @@ func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 		{"key": "vector.search.max_page_size_hybrid", "value": map[string]any{"integer": 0}},
 		{"key": "vector.embed.backstop_interval", "value": map[string]any{"string": "12h"}},
 	}})
-	requirements.NoError(err)
+	requirementsT.NoError(err)
 
 	resp := patchSettings(t, srv, string(body))
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var updated SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &updated))
-	assertions.Equal(&SettingValue{Boolean: new(false)}, settingsByKey(updated.Settings)["server.daemon_auto_start"].Value)
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &updated))
+	assertionsT.Equal(&SettingValue{Boolean: new(false)}, settingsByKey(updated.Settings)["server.daemon_auto_start"].Value)
 	loaded, err := config.Load(path, "")
-	requirements.NoError(err)
-	assertions.False(loaded.Server.DaemonAutoStartEnabled())
-	assertions.Equal(12, loaded.Sync.RateLimitQPS)
-	assertions.Equal("debug", loaded.Log.Level)
-	assertions.Equal(int64(250), loaded.Log.SQLSlowMs)
-	assertions.Equal(3, loaded.Analytics.BuilderThreads)
-	assertions.Equal("America/New_York", loaded.Activity.Timezone)
-	assertions.Equal(7, loaded.Backup.ZstdLevel)
-	assertions.Equal([]string{"signal"}, loaded.Beeper.Accounts)
-	assertions.Equal([]string{"whatsapp"}, loaded.Beeper.ExcludeAccounts)
-	assertions.InDelta(8.5, loaded.Beeper.RateLimitQPS, 0.001)
-	assertions.False(loaded.Beeper.MediaEnabled())
-	assertions.Equal("direct", loaded.Beeper.MediaScope)
-	assertions.Equal(5, loaded.Beeper.MediaMaxParticipants)
-	assertions.Equal(80, loaded.Beeper.MaxMediaMB)
-	assertions.Equal("none", loaded.Slack.MediaScope)
-	assertions.Equal(90, loaded.Slack.MaxMediaMB)
-	assertions.True(loaded.Inline.Enabled)
-	assertions.Equal("*/15 * * * *", loaded.Inline.Schedule)
-	requirements.NotNil(loaded.Inline.Media)
-	assertions.False(*loaded.Inline.Media)
-	assertions.Equal("direct", loaded.Inline.MediaScope)
-	assertions.Zero(loaded.Inline.MediaMaxParticipants)
-	assertions.Equal(40, loaded.Inline.MaxMediaMB)
-	assertions.Equal(10, loaded.Discord.MediaMaxParticipants)
-	assertions.Equal(60, loaded.Teams.MaxMediaMB)
-	assertions.False(loaded.Vector.Preprocess.StripQuotesEnabled())
-	assertions.Equal(0, loaded.Vector.Search.MaxPageSizeHybridClamp())
+	requirementsT.NoError(err)
+	assertionsT.False(loaded.Server.DaemonAutoStartEnabled())
+	assertionsT.Equal(12, loaded.Sync.RateLimitQPS)
+	assertionsT.Equal("debug", loaded.Log.Level)
+	assertionsT.Equal(int64(250), loaded.Log.SQLSlowMs)
+	assertionsT.Equal(3, loaded.Analytics.BuilderThreads)
+	assertionsT.Equal("America/New_York", loaded.Activity.Timezone)
+	assertionsT.Equal(7, loaded.Backup.ZstdLevel)
+	assertionsT.Equal([]string{"signal"}, loaded.Beeper.Accounts)
+	assertionsT.Equal([]string{"whatsapp"}, loaded.Beeper.ExcludeAccounts)
+	assertionsT.InDelta(8.5, loaded.Beeper.RateLimitQPS, 0.001)
+	assertionsT.False(loaded.Beeper.MediaEnabled())
+	assertionsT.Equal("direct", loaded.Beeper.MediaScope)
+	assertionsT.Equal(5, loaded.Beeper.MediaMaxParticipants)
+	assertionsT.Equal(80, loaded.Beeper.MaxMediaMB)
+	assertionsT.Equal("none", loaded.Slack.MediaScope)
+	assertionsT.Equal(90, loaded.Slack.MaxMediaMB)
+	assertionsT.True(loaded.Inline.Enabled)
+	assertionsT.Equal("*/15 * * * *", loaded.Inline.Schedule)
+	requirementsT.NotNil(loaded.Inline.Media)
+	assertionsT.False(*loaded.Inline.Media)
+	assertionsT.Equal("direct", loaded.Inline.MediaScope)
+	assertionsT.Zero(loaded.Inline.MediaMaxParticipants)
+	assertionsT.Equal(40, loaded.Inline.MaxMediaMB)
+	assertionsT.Equal(10, loaded.Discord.MediaMaxParticipants)
+	assertionsT.Equal(60, loaded.Teams.MaxMediaMB)
+	assertionsT.False(loaded.Vector.Preprocess.StripQuotesEnabled())
+	assertionsT.Equal(0, loaded.Vector.Search.MaxPageSizeHybridClamp())
 }
 
 func TestPatchSettingsRejectsInvalidAttachmentPolicy(t *testing.T) {
@@ -481,8 +481,8 @@ func TestPatchSettingsRejectsHostAndAuthSettings(t *testing.T) {
 
 func TestPutSettingsPersonEnrichmentProviderPreservesStableNamesAndOrder(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, `[people.enrichment]
 enabled = false
 schedule = "0 * * * *"
@@ -519,7 +519,7 @@ max_requests_per_day = 50
 `)
 
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 	resp := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/person-enrichment/providers/exa-primary", []byte(`{
 "kind":"exa",
@@ -537,21 +537,21 @@ max_requests_per_day = 50
 "max_requests_per_run":20,
 "max_requests_per_day":100
 }`), get.Header().Get("ETag"), "")
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	loaded, err := config.Load(path, "")
-	requirements.NoError(err)
-	requirements.Len(loaded.People.Enrichment.Providers, 2)
-	assertions.Equal("exa-primary", loaded.People.Enrichment.Providers[0].Name)
-	assertions.True(loaded.People.Enrichment.Providers[0].Enabled)
-	assertions.Equal(int64(20), loaded.People.Enrichment.Providers[0].MaxRequestsPerRun)
-	assertions.Equal("sixtyfour-primary", loaded.People.Enrichment.Providers[1].Name)
-	assertions.Equal(int64(50), loaded.People.Enrichment.Providers[1].MaxRequestsPerDay)
+	requirementsT.NoError(err)
+	requirementsT.Len(loaded.People.Enrichment.Providers, 2)
+	assertionsT.Equal("exa-primary", loaded.People.Enrichment.Providers[0].Name)
+	assertionsT.True(loaded.People.Enrichment.Providers[0].Enabled)
+	assertionsT.Equal(int64(20), loaded.People.Enrichment.Providers[0].MaxRequestsPerRun)
+	assertionsT.Equal("sixtyfour-primary", loaded.People.Enrichment.Providers[1].Name)
+	assertionsT.Equal(int64(50), loaded.People.Enrichment.Providers[1].MaxRequestsPerDay)
 }
 
 func TestPatchSettingsFirstEnrichmentEnableGeneratesPrivateSuppressionKey(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, `[people.enrichment]
 enabled = false
 
@@ -571,20 +571,20 @@ max_requests_per_day = 100
 
 	resp := patchSettings(t, srv,
 		`{"updates":[{"key":"people.enrichment.enabled","value":{"boolean":true}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	loaded, err := config.Load(path, "")
-	requirements.NoError(err)
-	assertions.True(loaded.People.Enrichment.Enabled)
-	assertions.NotEmpty(loaded.People.Enrichment.SuppressionKeyEnv)
+	requirementsT.NoError(err)
+	assertionsT.True(loaded.People.Enrichment.Enabled)
+	assertionsT.NotEmpty(loaded.People.Enrichment.SuppressionKeyEnv)
 	credentialBytes, err := os.ReadFile(filepath.Join(loaded.TokensDir(), "provider-credentials.json"))
-	requirements.NoError(err)
+	requirementsT.NoError(err)
 	credentials, err := providercredentials.Read(loaded.TokensDir())
-	requirements.NoError(err)
+	requirementsT.NoError(err)
 	suppressionKey, configured, err := credentials.ResolveSuppression()
-	requirements.NoError(err)
-	requirements.True(configured)
-	assertions.NotContains(resp.Body.String(), suppressionKey)
-	assertions.Greater(len(credentialBytes), 64)
+	requirementsT.NoError(err)
+	requirementsT.True(configured)
+	assertionsT.NotContains(resp.Body.String(), suppressionKey)
+	assertionsT.Greater(len(credentialBytes), 64)
 }
 
 func TestPatchSettingsFirstEnrichmentEnableUsesStoredSuppressionFirst(t *testing.T) { //nolint:paralleltest // process environment
@@ -602,12 +602,12 @@ func TestPatchSettingsFirstEnrichmentEnableUsesStoredSuppressionFirst(t *testing
 		{"invalid stored key with valid environment", "short", environmentKey, http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertionsT := assert.New(t)
+			requirementsT := require.New(t)
 			const environmentName = "MSGVAULT_TEST_SETTINGS_SUPPRESSION_KEY"
 			t.Setenv(environmentName, tc.environment)
 			if tc.environment == "" {
-				require.NoError(os.Unsetenv(environmentName))
+				requirementsT.NoError(os.Unsetenv(environmentName))
 			}
 			srv, path := newSettingsTestServer(t, `[people.enrichment]
 enabled = false
@@ -627,28 +627,28 @@ max_requests_per_run = 10
 max_requests_per_day = 100
 `)
 			credentials, err := providercredentials.Read(srv.cfg.TokensDir())
-			require.NoError(err)
+			requirementsT.NoError(err)
 			if tc.stored != "" {
 				credentials, err = providercredentials.PutSuppression(srv.cfg.TokensDir(), credentials.ETag, tc.stored)
-				require.NoError(err)
+				requirementsT.NoError(err)
 			}
 
 			resp := patchSettings(t, srv,
 				`{"updates":[{"key":"people.enrichment.enabled","value":{"boolean":true}}]}`)
-			require.Equal(tc.wantStatus, resp.Code, resp.Body.String())
+			requirementsT.Equal(tc.wantStatus, resp.Code, resp.Body.String())
 			loaded, err := config.Load(path, "")
-			require.NoError(err)
-			assert.Equal(tc.wantStatus == http.StatusOK, loaded.People.Enrichment.Enabled)
+			requirementsT.NoError(err)
+			assertionsT.Equal(tc.wantStatus == http.StatusOK, loaded.People.Enrichment.Enabled)
 			if tc.wantStatus == http.StatusOK {
 				wantEnvironment := environmentName
 				if tc.stored != "" {
 					wantEnvironment = providercredentials.StoredSuppressionEnvironment
 				}
-				assert.Equal(wantEnvironment, loaded.People.Enrichment.SuppressionKeyEnv)
+				assertionsT.Equal(wantEnvironment, loaded.People.Enrichment.SuppressionKeyEnv)
 			}
 			after, err := providercredentials.Read(srv.cfg.TokensDir())
-			require.NoError(err)
-			assert.Equal(credentials.ETag, after.ETag, "enabling must not replace an existing key or store the environment fallback")
+			requirementsT.NoError(err)
+			assertionsT.Equal(credentials.ETag, after.ETag, "enabling must not replace an existing key or store the environment fallback")
 		})
 	}
 }
@@ -664,8 +664,8 @@ func TestPatchSettingsRejectedFirstEnrichmentEnableLeavesCredentialStoreUnchange
 		{name: "stale config", editorErr: config.ErrConfigConflict, wantStatus: http.StatusPreconditionFailed},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
+			requirementsT := require.New(t)
+			assertionsT := assert.New(t)
 			srv, _ := newSettingsTestServer(t, `[people.enrichment]
 enabled = false
 
@@ -688,19 +688,19 @@ max_requests_per_day = 100
 
 			resp := patchSettings(t, srv,
 				`{"updates":[{"key":"people.enrichment.enabled","value":{"boolean":true}}]}`)
-			assertions.Equal(test.wantStatus, resp.Code, resp.Body.String())
+			assertionsT.Equal(test.wantStatus, resp.Code, resp.Body.String())
 			credentials, err := providercredentials.Read(srv.cfg.TokensDir())
-			requirements.NoError(err)
+			requirementsT.NoError(err)
 			_, configured, err := credentials.ResolveSuppression()
-			requirements.NoError(err)
-			assertions.False(configured)
+			requirementsT.NoError(err)
+			assertionsT.False(configured)
 		})
 	}
 }
 
 func TestSettingsProviderCredentialStoreFailsClosedWhenUnsafeOrCorrupt(t *testing.T) { //nolint:paralleltest // t.Setenv writes provider API key variables
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	t.Setenv("TEXT_EMBEDDING_KEY", "environment-fallback-must-not-be-used")
 	srv, _ := newSettingsTestServer(t, `[vector.embeddings]
 endpoint = "https://embeddings.example.test/v1"
@@ -708,20 +708,20 @@ api_key_env = "TEXT_EMBEDDING_KEY"
 model = "synthetic-model"
 dimension = 8
 `)
-	requirements.NoError(os.MkdirAll(srv.cfg.TokensDir(), 0o700))
+	requirementsT.NoError(os.MkdirAll(srv.cfg.TokensDir(), 0o700))
 	path := filepath.Join(srv.cfg.TokensDir(), "provider-credentials.json")
-	requirements.NoError(os.WriteFile(path, []byte(`{"version":1,"credentials":`), 0o600))
+	requirementsT.NoError(os.WriteFile(path, []byte(`{"version":1,"credentials":`), 0o600))
 
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	assertions.Equal(http.StatusInternalServerError, resp.Code, resp.Body.String())
-	assertions.NotContains(resp.Body.String(), "environment-fallback-must-not-be-used")
-	assertions.NotContains(resp.Body.String(), "provider-credentials.json")
+	assertionsT.Equal(http.StatusInternalServerError, resp.Code, resp.Body.String())
+	assertionsT.NotContains(resp.Body.String(), "environment-fallback-must-not-be-used")
+	assertionsT.NotContains(resp.Body.String(), "provider-credentials.json")
 }
 
 func TestSettingsStoredCredentialIsBoundToEndpointOrigin(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, `[vector.embeddings]
 endpoint = "https://first.example.test/v1"
 api_key_env = "UNSET_TEXT_KEY"
@@ -729,45 +729,45 @@ model = "synthetic-model"
 dimension = 8
 `)
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 	set := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/provider-credentials/vector.embeddings",
 		[]byte(`{"value":"origin-bound-secret"}`), get.Header().Get("Credential-Etag"), "")
-	requirements.Equal(http.StatusOK, set.Code, set.Body.String())
+	requirementsT.Equal(http.StatusOK, set.Code, set.Body.String())
 
 	changed := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"https://second.example.test/v1"}}]}`),
 		get.Header().Get("ETag"), "")
-	requirements.Equal(http.StatusOK, changed.Code, changed.Body.String())
-	assertions.Equal(map[string]any{"configured": false, "source": "none"},
+	requirementsT.Equal(http.StatusOK, changed.Code, changed.Body.String())
+	assertionsT.Equal(map[string]any{"configured": false, "source": "none"},
 		rawEmbeddingSecretState(t, changed.Body.Bytes()))
-	assertions.NotContains(changed.Body.String(), "origin-bound-secret")
+	assertionsT.NotContains(changed.Body.String(), "origin-bound-secret")
 }
 
 func TestPatchSettingsHardensSecretBearingConfigFile(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
+	requirementsT := require.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows owner-only DACL coverage lives in platform-specific config tests")
 	}
 	srv, path := newSettingsTestServer(t, "[server]\napi_key = \"secret\"\n[web]\ntheme = \"system\"\n")
-	requirements.NoError(os.Chmod(path, 0o644))
+	requirementsT.NoError(os.Chmod(path, 0o644))
 
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "secret")
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	patched := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`),
 		resp.Header().Get("ETag"), "secret")
-	requirements.Equal(http.StatusOK, patched.Code, patched.Body.String())
+	requirementsT.Equal(http.StatusOK, patched.Code, patched.Body.String())
 	info, err := os.Stat(path)
-	requirements.NoError(err)
+	requirementsT.NoError(err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
 func TestPatchSettingsPreservesUntouchedMediaPointerAndOpaqueOverrides(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, `[discord]
 media_scope = "all"
 [discord.guilds.G01]
@@ -775,41 +775,41 @@ media = false
 max_media_mb = 30
 `)
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 	var document struct {
 		Settings []map[string]any `json:"settings"`
 	}
-	requirements.NoError(json.Unmarshal(get.Body.Bytes(), &document))
+	requirementsT.NoError(json.Unmarshal(get.Body.Bytes(), &document))
 	for _, setting := range document.Settings {
 		if setting["key"] == "discord.media" {
-			assertions.Equal(true, setting["inherited"], "omitted provider policy must be identified as inherited/default")
-			assertions.Contains(setting["description"], "future", "media policy copy must say it only affects future syncs")
+			assertionsT.Equal(true, setting["inherited"], "omitted provider policy must be identified as inherited/default")
+			assertionsT.Contains(setting["description"], "future", "media policy copy must say it only affects future syncs")
 		}
 		if setting["key"] == "discord.max_media_mb" {
 			validation, ok := setting["validation"].(map[string]any)
-			requirements.True(ok, "discord.max_media_mb must publish its provider default as its off state")
+			requirementsT.True(ok, "discord.max_media_mb must publish its provider default as its off state")
 			off, ok := validation["off"].(map[string]any)
-			requirements.True(ok)
-			assertions.Equal("Discord default of 50 MiB", off["label"])
+			requirementsT.True(ok)
+			assertionsT.Equal("Discord default of 50 MiB", off["label"])
 		}
 	}
 
 	resp := patchSettings(t, srv,
 		`{"updates":[{"key":"discord.media_scope","value":{"string":"direct"}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	loaded, err := config.Load(path, "")
-	requirements.NoError(err)
-	assertions.Nil(loaded.Discord.Media, "untouched provider default must remain omitted")
-	requirements.Contains(loaded.Discord.Guilds, "G01")
-	assertions.NotNil(loaded.Discord.Guilds["G01"].Media)
-	assertions.False(*loaded.Discord.Guilds["G01"].Media)
-	assertions.Equal(30, loaded.Discord.Guilds["G01"].MaxMediaMB)
+	requirementsT.NoError(err)
+	assertionsT.Nil(loaded.Discord.Media, "untouched provider default must remain omitted")
+	requirementsT.Contains(loaded.Discord.Guilds, "G01")
+	assertionsT.NotNil(loaded.Discord.Guilds["G01"].Media)
+	assertionsT.False(*loaded.Discord.Guilds["G01"].Media)
+	assertionsT.Equal(30, loaded.Discord.Guilds["G01"].MaxMediaMB)
 }
 
 func TestSettingsRejectsAndRedactsCredentialBearingEmbeddingEndpoints(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, `[vector.embeddings]
 endpoint = "https://user:legacy-password@embeddings.example.test/v1"
 api_key_env = "TEXT_KEY"
@@ -818,9 +818,9 @@ dimension = 8
 `)
 
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	assertions.Equal(http.StatusInternalServerError, get.Code, get.Body.String())
-	assertions.NotContains(get.Body.String(), "legacy-password")
-	assertions.NotContains(get.Body.String(), "user:")
+	assertionsT.Equal(http.StatusInternalServerError, get.Code, get.Body.String())
+	assertionsT.NotContains(get.Body.String(), "legacy-password")
+	assertionsT.NotContains(get.Body.String(), "user:")
 
 	clean, _ := newSettingsTestServer(t, `[vector.embeddings]
 endpoint = "https://embeddings.example.test/v1"
@@ -829,20 +829,20 @@ model = "synthetic-model"
 dimension = 8
 `)
 	first := performSettingsRequest(t, clean, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
+	requirementsT.Equal(http.StatusOK, first.Code, first.Body.String())
 	patch := performSettingsRequest(t, clean, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"https://user:new-password@other.example.test/v1?api_key=query-secret#fragment-secret"}}]}`),
 		first.Header().Get("ETag"), "")
-	assertions.Equal(http.StatusUnprocessableEntity, patch.Code, patch.Body.String())
+	assertionsT.Equal(http.StatusUnprocessableEntity, patch.Code, patch.Body.String())
 	for _, secret := range []string{"new-password", "query-secret", "fragment-secret", "user:"} {
-		assertions.NotContains(patch.Body.String(), secret)
+		assertionsT.NotContains(patch.Body.String(), secret)
 	}
 }
 
 func TestPatchSettingsExposesCompleteSemanticPersonOptInPolicy(t *testing.T) {
 	t.Parallel()
-	check := assert.New(t)
-	must := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t, "[vector]\n"+
 		"enabled = true\n"+
 		"[vector.embeddings]\n"+
@@ -854,19 +854,19 @@ func TestPatchSettingsExposesCompleteSemanticPersonOptInPolicy(t *testing.T) {
 		{"key":"vector.people.retention_posture","value":{"string":"zero_data_retention"}},
 		{"key":"vector.people.training_posture","value":{"string":"no_training"}}
 	]}`)
-	must.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirementsT.Equal(http.StatusOK, response.Code, response.Body.String())
 
 	got, err := os.ReadFile(path)
-	must.NoError(err)
-	check.Contains(string(got), "people.enabled = true")
-	check.Contains(string(got), `people.retention_posture = "zero_data_retention"`)
-	check.Contains(string(got), `people.training_posture = "no_training"`)
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(got), "people.enabled = true")
+	assertionsT.Contains(string(got), `people.retention_posture = "zero_data_retention"`)
+	assertionsT.Contains(string(got), `people.training_posture = "no_training"`)
 }
 
 func TestGetSettingsExposesReadOnlyCardDAVAccountStateWithoutCredential(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 
 	srv, _ := newSettingsTestServer(t, `[carddav]
 base_url = "https://contacts.example/dav"
@@ -885,39 +885,39 @@ trusted_addresses = ["10.1.2.3"]
 			CanonicalURL: "https://contacts.example/books/alice/personal/",
 		}},
 	})
-	requirements.NoError(err)
-	requirements.NoError(carddav.SaveCredential(srv.cfg.TokensDir(), carddav.Credential{
+	requirementsT.NoError(err)
+	requirementsT.NoError(carddav.SaveCredential(srv.cfg.TokensDir(), carddav.Credential{
 		Password: "must-not-cross-api", BaseURL: srv.cfg.CardDAV.BaseURL,
 		Username: srv.cfg.CardDAV.Username, ConnectionGeneration: account.ConnectionGeneration,
 	}))
 	srv.cardDAV, err = NewCardDAVController(srv.cfg, st, slog.New(slog.DiscardHandler))
-	requirements.NoError(err)
+	requirementsT.NoError(err)
 
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
 	byKey := settingsByKey(body.Settings)
 	for _, key := range []string{"carddav.base_url", "carddav.username", "carddav.schedule", "carddav.enabled", "carddav.password"} {
-		requirements.Contains(byKey, key)
-		assertions.True(byKey[key].ReadOnly, key)
+		requirementsT.Contains(byKey, key)
+		assertionsT.True(byKey[key].ReadOnly, key)
 	}
-	assertions.Equal(&SecretSettingState{Configured: true}, byKey["carddav.password"].Secret)
-	assertions.NotContains(resp.Body.String(), "must-not-cross-api")
-	assertions.NotContains(resp.Body.String(), "10.1.2.3")
-	assertions.NotContains(byKey, "carddav.trusted_origin")
-	assertions.NotContains(byKey, "carddav.trusted_addresses")
+	assertionsT.Equal(&SecretSettingState{Configured: true}, byKey["carddav.password"].Secret)
+	assertionsT.NotContains(resp.Body.String(), "must-not-cross-api")
+	assertionsT.NotContains(resp.Body.String(), "10.1.2.3")
+	assertionsT.NotContains(byKey, "carddav.trusted_origin")
+	assertionsT.NotContains(byKey, "carddav.trusted_addresses")
 
 	patch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"carddav.enabled","value":{"boolean":false}}]}`),
 		resp.Header().Get("ETag"), "")
-	assertions.Equal(http.StatusBadRequest, patch.Code, patch.Body.String())
+	assertionsT.Equal(http.StatusBadRequest, patch.Code, patch.Body.String())
 }
 
 func TestGetSettingsReportsStaleCardDAVCredentialAsNotConfigured(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 
 	srv, _ := newSettingsTestServer(t, `[carddav]
 base_url = "https://contacts.example/dav"
@@ -934,30 +934,30 @@ enabled = true
 		}},
 	}
 	account, _, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), discovery)
-	requirements.NoError(err)
-	requirements.NoError(carddav.SaveCredential(srv.cfg.TokensDir(), carddav.Credential{
+	requirementsT.NoError(err)
+	requirementsT.NoError(carddav.SaveCredential(srv.cfg.TokensDir(), carddav.Credential{
 		Password: "stale-password", BaseURL: srv.cfg.CardDAV.BaseURL,
 		Username: srv.cfg.CardDAV.Username, ConnectionGeneration: account.ConnectionGeneration,
 	}))
 	discovery.CredentialsChanged = true
 	account, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), discovery)
-	requirements.NoError(err)
-	assertions.Equal(int64(2), account.ConnectionGeneration)
+	requirementsT.NoError(err)
+	assertionsT.Equal(int64(2), account.ConnectionGeneration)
 	srv.cardDAV, err = NewCardDAVController(srv.cfg, st, slog.New(slog.DiscardHandler))
-	requirements.NoError(err)
+	requirementsT.NoError(err)
 
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
-	assertions.Equal(&SecretSettingState{Configured: false}, settingsByKey(body.Settings)["carddav.password"].Secret)
-	assertions.NotContains(resp.Body.String(), "stale-password")
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	assertionsT.Equal(&SecretSettingState{Configured: false}, settingsByKey(body.Settings)["carddav.password"].Secret)
+	assertionsT.NotContains(resp.Body.String(), "stale-password")
 }
 
 func TestPatchSettingsSelectsVoyageContextualEmbeddingFormat(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t, "[vector.embeddings]\n"+
 		"endpoint = \"https://api.voyageai.com/v1\"\n"+
 		"model = \"text-embedding-test\"\n"+
@@ -965,17 +965,17 @@ func TestPatchSettingsSelectsVoyageContextualEmbeddingFormat(t *testing.T) {
 
 	resp := patchSettings(t, srv,
 		`{"updates":[{"key":"vector.embeddings.api_format","value":{"string":"voyage-contextual"}},{"key":"vector.embeddings.model","value":{"string":"voyage-context-4"}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Contains(string(got), `api_format = "voyage-contextual"`)
-	assertions.Contains(string(got), `model = "voyage-context-4"`)
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(got), `api_format = "voyage-contextual"`)
+	assertionsT.Contains(string(got), `model = "voyage-context-4"`)
 }
 
 func TestGetSettingsExposesMultimodalPolicyWithoutCredentialState(t *testing.T) { //nolint:paralleltest // t.Setenv writes provider API key variables
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	t.Setenv("SYNTHETIC_VOYAGE_KEY", "synthetic-key-value")
 	srv, _ := newSettingsTestServer(t, `[vector.multimodal]
 enabled = true
@@ -984,65 +984,65 @@ include_images = false
 include_video = true
 `)
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
 	byKey := settingsByKey(body.Settings)
-	requirements.NotNil(byKey["vector.multimodal.enabled"].Value.Boolean)
-	assertions.True(*byKey["vector.multimodal.enabled"].Value.Boolean)
-	requirements.NotNil(byKey["vector.multimodal.include_images"].Value.Boolean)
-	assertions.False(*byKey["vector.multimodal.include_images"].Value.Boolean)
-	requirements.NotNil(byKey["vector.multimodal.include_video"].Value.Boolean)
-	assertions.True(*byKey["vector.multimodal.include_video"].Value.Boolean)
-	assertions.True(byKey["vector.multimodal.api_key_env"].ReadOnly)
-	assertions.NotContains(resp.Body.String(), "synthetic-key-value")
+	requirementsT.NotNil(byKey["vector.multimodal.enabled"].Value.Boolean)
+	assertionsT.True(*byKey["vector.multimodal.enabled"].Value.Boolean)
+	requirementsT.NotNil(byKey["vector.multimodal.include_images"].Value.Boolean)
+	assertionsT.False(*byKey["vector.multimodal.include_images"].Value.Boolean)
+	requirementsT.NotNil(byKey["vector.multimodal.include_video"].Value.Boolean)
+	assertionsT.True(*byKey["vector.multimodal.include_video"].Value.Boolean)
+	assertionsT.True(byKey["vector.multimodal.api_key_env"].ReadOnly)
+	assertionsT.NotContains(resp.Body.String(), "synthetic-key-value")
 }
 
 func TestPatchSettingsRequiresMatchingETag(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, "[web]\ntheme = \"system\"\n")
 
 	missing := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`), "", "")
-	assertions.Equal(http.StatusPreconditionRequired, missing.Code, missing.Body.String())
+	assertionsT.Equal(http.StatusPreconditionRequired, missing.Code, missing.Body.String())
 
 	mismatch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`), "\"sha256-stale\"", "")
-	assertions.Equal(http.StatusPreconditionFailed, mismatch.Code, mismatch.Body.String())
+	assertionsT.Equal(http.StatusPreconditionFailed, mismatch.Code, mismatch.Body.String())
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assertions.Equal("[web]\ntheme = \"system\"\n", string(got))
+	assertionsT.Equal("[web]\ntheme = \"system\"\n", string(got))
 }
 
 func TestPatchSettingsPreservesFileAndReturnsNewETag(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t, "# operator comment\n[unknown]\nkeep = true\n\n"+
 		"[web]\ntheme = \"system\" # display\n")
 	if runtime.GOOS != "windows" {
-		requirements.NoError(os.Chmod(path, 0o640))
+		requirementsT.NoError(os.Chmod(path, 0o640))
 	}
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	etag := get.Header().Get("ETag")
 
 	patch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`), etag, "")
-	requirements.Equal(http.StatusOK, patch.Code, patch.Body.String())
-	assertions.NotEqual(etag, patch.Header().Get("ETag"))
+	requirementsT.Equal(http.StatusOK, patch.Code, patch.Body.String())
+	assertionsT.NotEqual(etag, patch.Header().Get("ETag"))
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Equal("# operator comment\n[unknown]\nkeep = true\n\n[web]\ntheme = \"dark\" # display\n", string(got))
+	requirementsT.NoError(err)
+	assertionsT.Equal("# operator comment\n[unknown]\nkeep = true\n\n[web]\ntheme = \"dark\" # display\n", string(got))
 	if runtime.GOOS != "windows" {
 		// Settings publication hardens the entire secret-bearing config to
 		// owner-only. Windows security lives in the DACL, which
 		// the config package's own Windows tests verify; Stat mode bits there
 		// are synthetic.
 		info, err := os.Stat(path)
-		requirements.NoError(err)
-		assertions.Equal(os.FileMode(0o600), info.Mode().Perm())
+		requirementsT.NoError(err)
+		assertionsT.Equal(os.FileMode(0o600), info.Mode().Perm())
 	}
 }
 
@@ -1086,7 +1086,7 @@ func TestPatchSettingsValidatesWholeCandidateAndRejectsUnknownKeys(t *testing.T)
 
 func TestPatchSettingsRejectsHostManagedServerAPIKeyUpdates(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
+	assertionsT := assert.New(t)
 	requests := []string{
 		`{"updates":[{"key":"server.api_key","value":{"string":"new-key"}}]}`,
 		`{"updates":[{"key":"server.api_key","secret":{"action":"set","value":"new-key"}}]}`,
@@ -1098,37 +1098,37 @@ func TestPatchSettingsRejectsHostManagedServerAPIKeyUpdates(t *testing.T) {
 		resp := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 			[]byte(request), get.Header().Get("ETag"), "old-key")
 
-		assertions.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
-		assertions.Contains(resp.Body.String(), "host-managed")
-		assertions.NotContains(resp.Body.String(), "new-key")
+		assertionsT.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
+		assertionsT.Contains(resp.Body.String(), "host-managed")
+		assertionsT.NotContains(resp.Body.String(), "new-key")
 		got, err := os.ReadFile(path)
 		require.NoError(t, err)
-		assertions.Equal("[server]\napi_key = \"old-key\"\n", string(got))
+		assertionsT.Equal("[server]\napi_key = \"old-key\"\n", string(got))
 	}
 }
 
 func TestPatchSettingsClearsTaskAPIKeyWhenEndpointOriginChanges(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t,
 		"[integrations.tasks]\nendpoint = \"https://tasks.example.com/api\"\napi_key = \"task-secret\"\n")
 
 	resp := patchSettings(t, srv,
 		`{"updates":[{"key":"integrations.tasks.endpoint","value":{"string":"https://elsewhere.example.net/api"}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
-	assertions.Contains(string(got), "api_key = \"\"")
-	assertions.NotContains(string(got), "task-secret")
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
+	assertionsT.Contains(string(got), "api_key = \"\"")
+	assertionsT.NotContains(string(got), "task-secret")
 
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
 	byKey := settingsByKey(body.Settings)
-	assertions.Equal(&SecretSettingState{Configured: false}, byKey["integrations.tasks.api_key"].Secret)
-	assertions.True(body.PendingRestart)
+	assertionsT.Equal(&SecretSettingState{Configured: false}, byKey["integrations.tasks.api_key"].Secret)
+	assertionsT.True(body.PendingRestart)
 }
 
 func TestPatchSettingsKataConfig(t *testing.T) {
@@ -1144,8 +1144,8 @@ func TestPatchSettingsKataConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertionsT := assert.New(t)
+			requirementsT := require.New(t)
 			srv, path := newSettingsTestServer(t,
 				"[integrations.tasks]\napi_key = 'task-secret'\n"+
 					"[integrations.kata]\nendpoint = 'https://kata.example.com'\napi_key = 'kata-secret'\n")
@@ -1156,26 +1156,26 @@ func TestPatchSettingsKataConfig(t *testing.T) {
 				updates += fmt.Sprintf(`,{"key":"integrations.kata.api_key","secret":{"action":"set","value":%q}}`, tt.replacement)
 			}
 			resp := patchSettings(t, srv, `{"updates":[`+updates+`]}`)
-			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+			requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 			cfg, err := config.Load(path, "")
-			require.NoError(err)
-			assert.Equal(config.TaskIntegrationConfig{
+			requirementsT.NoError(err)
+			assertionsT.Equal(config.TaskIntegrationConfig{
 				Enabled: true, Endpoint: tt.endpoint, APIKey: tt.wantKey, DefaultProject: "people",
 			}, cfg.Integrations.Kata)
-			assert.Equal("task-secret", cfg.Integrations.Tasks.APIKey)
+			assertionsT.Equal("task-secret", cfg.Integrations.Tasks.APIKey)
 			var body SettingsResponse
-			require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
-			assert.True(body.PendingRestart)
-			assert.NotContains(resp.Body.String(), "kata-secret")
-			assert.NotContains(resp.Body.String(), "task-secret")
+			requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+			assertionsT.True(body.PendingRestart)
+			assertionsT.NotContains(resp.Body.String(), "kata-secret")
+			assertionsT.NotContains(resp.Body.String(), "task-secret")
 		})
 	}
 }
 
 func TestPatchSettingsKeepsNewTaskAPIKeyProvidedWithEndpointChange(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t,
 		"[integrations.tasks]\nendpoint = \"https://tasks.example.com/api\"\napi_key = \"task-secret\"\n")
 
@@ -1183,16 +1183,16 @@ func TestPatchSettingsKeepsNewTaskAPIKeyProvidedWithEndpointChange(t *testing.T)
 		`{"updates":[`+
 			`{"key":"integrations.tasks.endpoint","value":{"string":"https://elsewhere.example.net/api"}},`+
 			`{"key":"integrations.tasks.api_key","secret":{"action":"set","value":"rotated-secret"}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
-	assertions.Contains(string(got), "api_key = \"rotated-secret\"")
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
+	assertionsT.Contains(string(got), "api_key = \"rotated-secret\"")
 
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
-	assertions.Equal(&SecretSettingState{Configured: true, Hint: "rot…ret"},
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	assertionsT.Equal(&SecretSettingState{Configured: true, Hint: "rot…ret"},
 		settingsByKey(body.Settings)["integrations.tasks.api_key"].Secret)
 }
 
@@ -1207,22 +1207,22 @@ func TestPatchSettingsRetainsTaskAPIKeyWhenEndpointOriginIsUnchanged(t *testing.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
+			assertionsT := assert.New(t)
+			requirementsT := require.New(t)
 			srv, path := newSettingsTestServer(t,
 				"[integrations.tasks]\nendpoint = \"https://tasks.example.com/api\"\napi_key = \"task-secret\"\n")
 
 			resp := patchSettings(t, srv, fmt.Sprintf(
 				`{"updates":[{"key":"integrations.tasks.endpoint","value":{"string":%q}}]}`, tt.endpoint))
-			requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+			requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 			got, err := os.ReadFile(path)
-			requirements.NoError(err)
-			assertions.Contains(string(got), "api_key = \"task-secret\"")
+			requirementsT.NoError(err)
+			assertionsT.Contains(string(got), "api_key = \"task-secret\"")
 
 			var body SettingsResponse
-			requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
-			assertions.Equal(&SecretSettingState{Configured: true},
+			requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+			assertionsT.Equal(&SecretSettingState{Configured: true},
 				settingsByKey(body.Settings)["integrations.tasks.api_key"].Secret)
 		})
 	}
@@ -1230,105 +1230,105 @@ func TestPatchSettingsRetainsTaskAPIKeyWhenEndpointOriginIsUnchanged(t *testing.
 
 func TestPatchSettingsEndpointChangeWithoutStoredCredentialAddsNoKey(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t,
 		"[integrations.tasks]\nendpoint = \"https://tasks.example.com/api\"\n")
 
 	resp := patchSettings(t, srv,
 		`{"updates":[{"key":"integrations.tasks.endpoint","value":{"string":"https://elsewhere.example.net/api"}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
-	assertions.NotContains(string(got), "api_key")
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
+	assertionsT.NotContains(string(got), "api_key")
 }
 
 func TestPatchSettingsRetainsEmbeddingsAPIKeyEnvWhenEndpointOriginChanges(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t,
 		"[vector.embeddings]\nendpoint = \"https://embed.example.com/v1\"\napi_key_env = \"MSGVAULT_EMBED_API_KEY\"\n")
 
 	resp := patchSettings(t, srv,
 		`{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"https://elsewhere.example.net/v1"}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Contains(string(got), "endpoint = \"https://elsewhere.example.net/v1\"")
-	assertions.Contains(string(got), "api_key_env = \"MSGVAULT_EMBED_API_KEY\"")
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(got), "endpoint = \"https://elsewhere.example.net/v1\"")
+	assertionsT.Contains(string(got), "api_key_env = \"MSGVAULT_EMBED_API_KEY\"")
 
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
 	byKey := settingsByKey(body.Settings)
-	requirements.NotNil(byKey["vector.embeddings.api_key_env"].Value)
-	requirements.NotNil(byKey["vector.embeddings.api_key_env"].Value.String)
-	assertions.Equal("MSGVAULT_EMBED_API_KEY", *byKey["vector.embeddings.api_key_env"].Value.String)
+	requirementsT.NotNil(byKey["vector.embeddings.api_key_env"].Value)
+	requirementsT.NotNil(byKey["vector.embeddings.api_key_env"].Value.String)
+	assertionsT.Equal("MSGVAULT_EMBED_API_KEY", *byKey["vector.embeddings.api_key_env"].Value.String)
 }
 
 func TestPatchSettingsRetainsMultimodalAPIKeyEnvWhenEndpointOriginChanges(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t,
 		"[vector.multimodal]\nendpoint = \"https://api.voyageai.com/v1\"\n"+
 			"api_key_env = \"SYNTHETIC_VOYAGE_KEY\"\n")
 
 	resp := patchSettings(t, srv,
 		`{"updates":[{"key":"vector.multimodal.endpoint","value":{"string":"https://voyage.example.test/v1"}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Contains(string(got), `endpoint = "https://voyage.example.test/v1"`)
-	assertions.Contains(string(got), `api_key_env = "SYNTHETIC_VOYAGE_KEY"`)
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(got), `endpoint = "https://voyage.example.test/v1"`)
+	assertionsT.Contains(string(got), `api_key_env = "SYNTHETIC_VOYAGE_KEY"`)
 
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
 	keySetting := settingsByKey(body.Settings)["vector.multimodal.api_key_env"]
-	requirements.NotNil(keySetting.Value)
-	requirements.NotNil(keySetting.Value.String)
-	assertions.Equal("SYNTHETIC_VOYAGE_KEY", *keySetting.Value.String)
+	requirementsT.NotNil(keySetting.Value)
+	requirementsT.NotNil(keySetting.Value.String)
+	assertionsT.Equal("SYNTHETIC_VOYAGE_KEY", *keySetting.Value.String)
 }
 
 func TestPatchSettingsEditableChangeSucceedsWhileReadOnlySettingIsConfigured(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t, "[web]\ntheme = \"system\"\n"+
 		"[vector.embeddings]\napi_key_env = \"MSGVAULT_EMBED_API_KEY\"\n")
 
 	resp := patchSettings(t, srv, `{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`)
-	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
 
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Contains(string(got), "theme = \"dark\"")
-	assertions.Contains(string(got), "api_key_env = \"MSGVAULT_EMBED_API_KEY\"")
+	requirementsT.NoError(err)
+	assertionsT.Contains(string(got), "theme = \"dark\"")
+	assertionsT.Contains(string(got), "api_key_env = \"MSGVAULT_EMBED_API_KEY\"")
 
 	var body SettingsResponse
-	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
-	assertions.True(settingsByKey(body.Settings)["vector.embeddings.api_key_env"].ReadOnly)
+	requirementsT.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	assertionsT.True(settingsByKey(body.Settings)["vector.embeddings.api_key_env"].ReadOnly)
 }
 
 func TestPatchSettingsRejectsEmbeddingsAPIKeyEnvUpdates(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	before := "[vector.embeddings]\nendpoint = \"https://embed.example.com/v1\"\napi_key_env = \"MSGVAULT_EMBED_API_KEY\"\n"
 	srv, path := newSettingsTestServer(t, before)
 
 	resp := patchSettings(t, srv,
 		`{"updates":[{"key":"vector.embeddings.api_key_env","value":{"string":"AWS_SECRET_ACCESS_KEY"}}]}`)
-	requirements.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
-	assertions.Contains(resp.Body.String(), "host-managed")
+	requirementsT.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
+	assertionsT.Contains(resp.Body.String(), "host-managed")
 
 	got, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Equal(before, string(got))
+	requirementsT.NoError(err)
+	assertionsT.Equal(before, string(got))
 }
 
 func TestSettingsErrorsAreNotCached(t *testing.T) {
@@ -1383,33 +1383,33 @@ func TestPatchSettingsClassifiesFilesystemFailureAsServerError(t *testing.T) {
 
 func TestPatchSettingsMarksRestartPendingWhenPublishedWriteReturnsError(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t, "[server]\ndaemon_idle_timeout = \"15m\"\n")
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	srv.settingsConfigEditor = func(configPath, ifMatch string, edits []config.Edit) (config.ConfigFile, error) {
-		requirements.Equal(path, configPath)
-		requirements.Equal(get.Header().Get("ETag"), ifMatch)
-		requirements.Len(edits, 1)
-		requirements.NoError(os.WriteFile(path, []byte("[server]\ndaemon_idle_timeout = \"1h\"\n"), 0o600))
+		requirementsT.Equal(path, configPath)
+		requirementsT.Equal(get.Header().Get("ETag"), ifMatch)
+		requirementsT.Len(edits, 1)
+		requirementsT.NoError(os.WriteFile(path, []byte("[server]\ndaemon_idle_timeout = \"1h\"\n"), 0o600))
 		return config.ConfigFile{}, fmt.Errorf("%w: cleanup failed", config.ErrConfigChanged)
 	}
 
 	patch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"server.daemon_idle_timeout","value":{"string":"1h"}}]}`),
 		get.Header().Get("ETag"), "")
-	assertions.Equal(http.StatusInternalServerError, patch.Code, patch.Body.String())
+	assertionsT.Equal(http.StatusInternalServerError, patch.Code, patch.Body.String())
 
 	after := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, after.Code, after.Body.String())
+	requirementsT.Equal(http.StatusOK, after.Code, after.Body.String())
 	var persisted SettingsResponse
-	requirements.NoError(json.Unmarshal(after.Body.Bytes(), &persisted))
-	assertions.True(persisted.PendingRestart)
+	requirementsT.NoError(json.Unmarshal(after.Body.Bytes(), &persisted))
+	assertionsT.True(persisted.PendingRestart)
 }
 
 func TestPatchSettingsMarksRestartPendingBeforeLoadingCommittedSnapshot(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, "[server]\ndaemon_idle_timeout = \"15m\"\n")
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	srv.settingsConfigEditor = func(string, string, []config.Edit) (config.ConfigFile, error) {
@@ -1425,8 +1425,8 @@ func TestPatchSettingsMarksRestartPendingBeforeLoadingCommittedSnapshot(t *testi
 	patch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"server.daemon_idle_timeout","value":{"string":"1h"}}]}`),
 		get.Header().Get("ETag"), "")
-	assertions.Equal(http.StatusInternalServerError, patch.Code, patch.Body.String())
-	assertions.True(srv.settingsPendingRestart.Load())
+	assertionsT.Equal(http.StatusInternalServerError, patch.Code, patch.Body.String())
+	assertionsT.True(srv.settingsPendingRestart.Load())
 }
 
 func TestPatchSettingsPrefersChangedOutcomeOverConflictClassification(t *testing.T) {
@@ -1445,50 +1445,50 @@ func TestPatchSettingsPrefersChangedOutcomeOverConflictClassification(t *testing
 
 func TestSettingsOpenAPIContract(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	doc := OpenAPIDocument()
-	requirements.NotNil(doc.Paths[settingsPath])
+	requirementsT.NotNil(doc.Paths[settingsPath])
 	get := doc.Paths[settingsPath].Get
 	patch := doc.Paths[settingsPath].Patch
-	requirements.NotNil(get)
-	requirements.NotNil(patch)
-	assertions.Contains(get.Responses["200"].Headers, "ETag")
-	requirements.Len(patch.Parameters, 1)
-	assertions.Equal("If-Match", patch.Parameters[0].Name)
-	assertions.Equal("header", patch.Parameters[0].In)
-	assertions.True(patch.Parameters[0].Required)
+	requirementsT.NotNil(get)
+	requirementsT.NotNil(patch)
+	assertionsT.Contains(get.Responses["200"].Headers, "ETag")
+	requirementsT.Len(patch.Parameters, 1)
+	assertionsT.Equal("If-Match", patch.Parameters[0].Name)
+	assertionsT.Equal("header", patch.Parameters[0].In)
+	assertionsT.True(patch.Parameters[0].Required)
 	for _, status := range []string{"400", "409", "412", "422", "428"} {
-		assertions.Contains(patch.Responses, status)
+		assertionsT.Contains(patch.Responses, status)
 	}
-	assertions.Equal(APISchemaVersion, doc.Info.Version)
+	assertionsT.Equal(APISchemaVersion, doc.Info.Version)
 
 	settingValue := doc.Components.Schemas.Map()["SettingValue"]
-	requirements.NotNil(settingValue)
-	assertions.Len(settingValue.OneOf, 5)
-	assertions.Empty(settingValue.Properties)
+	requirementsT.NotNil(settingValue)
+	assertionsT.Len(settingValue.OneOf, 5)
+	assertionsT.Empty(settingValue.Properties)
 	for _, arm := range settingValue.OneOf {
-		assertions.Len(arm.Required, 1)
-		assertions.Equal([]string{arm.Required[0]}, arm.Required)
-		assertions.Equal(false, arm.AdditionalProperties)
+		assertionsT.Len(arm.Required, 1)
+		assertionsT.Equal([]string{arm.Required[0]}, arm.Required)
+		assertionsT.Equal(false, arm.AdditionalProperties)
 	}
 	setting := doc.Components.Schemas.Map()["Setting"]
-	requirements.NotNil(setting)
-	assertions.ElementsMatch([]any{
+	requirementsT.NotNil(setting)
+	assertionsT.ElementsMatch([]any{
 		"browser", "server", "archive", "search", "sources", "attachments", "enrichment", "integrations",
 		"sync", "logging", "activity", "backup",
 	}, setting.Properties["group"].Enum)
 	for _, group := range settingsGroups {
-		assertions.NotContains(legacySettingsGroupIDs, group.ID, "legacy IDs are compatibility-only")
+		assertionsT.NotContains(legacySettingsGroupIDs, group.ID, "legacy IDs are compatibility-only")
 	}
-	assertions.NotNil(setting.Properties["section"], "settings publish their section for sectioned groups")
-	assertions.ElementsMatch([]any{"string", "integer", "number", "boolean", "string_array", "secret"}, setting.Properties["kind"].Enum)
+	assertionsT.NotNil(setting.Properties["section"], "settings publish their section for sectioned groups")
+	assertionsT.ElementsMatch([]any{"string", "integer", "number", "boolean", "string_array", "secret"}, setting.Properties["kind"].Enum)
 	patchRequest := doc.Components.Schemas.Map()["SettingsPatchRequest"]
-	requirements.NotNil(patchRequest)
-	assertions.False(patchRequest.Properties["updates"].Nullable)
+	requirementsT.NotNil(patchRequest)
+	assertionsT.False(patchRequest.Properties["updates"].Nullable)
 	settingsResponse := doc.Components.Schemas.Map()["SettingsResponse"]
-	requirements.NotNil(settingsResponse)
-	assertions.False(settingsResponse.Properties["groups"].Nullable)
+	requirementsT.NotNil(settingsResponse)
+	assertionsT.False(settingsResponse.Properties["groups"].Nullable)
 }
 
 func newSettingsTestServer(t *testing.T, content string) (*Server, string) {
@@ -1584,70 +1584,70 @@ func storeVectorEmbeddingsCredential(t *testing.T, srv *Server, value string) st
 
 func TestPatchSettingsSeversStoredCredentialOnlyWhenEndpointOriginChanges(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, settingsStoredVectorConfig)
 	storeVectorEmbeddingsCredential(t, srv, "origin-bound-secret")
 
 	samePath := patchSettings(t, srv,
 		`{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"https://first.example.test/v2"}}]}`)
-	requirements.Equal(http.StatusOK, samePath.Code, samePath.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "stored", "hint": "ori…ret"},
+	requirementsT.Equal(http.StatusOK, samePath.Code, samePath.Body.String())
+	assertionsT.Equal(map[string]any{"configured": true, "source": "stored", "hint": "ori…ret"},
 		rawEmbeddingSecretState(t, samePath.Body.Bytes()))
 	retained, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
-	assertions.True(retained.Stored(providercredentials.VectorEmbeddingsID))
+	requirementsT.NoError(err)
+	assertionsT.True(retained.Stored(providercredentials.VectorEmbeddingsID))
 
 	moved := patchSettings(t, srv,
 		`{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"https://second.example.test/v1"}}]}`)
-	requirements.Equal(http.StatusOK, moved.Code, moved.Body.String())
-	assertions.Equal(map[string]any{"configured": false, "source": "none"},
+	requirementsT.Equal(http.StatusOK, moved.Code, moved.Body.String())
+	assertionsT.Equal(map[string]any{"configured": false, "source": "none"},
 		rawEmbeddingSecretState(t, moved.Body.Bytes()))
-	assertions.NotContains(moved.Body.String(), "origin-bound-secret")
+	assertionsT.NotContains(moved.Body.String(), "origin-bound-secret")
 	severed, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
-	assertions.False(severed.Stored(providercredentials.VectorEmbeddingsID))
-	assertions.Equal(severed.ETag, moved.Header().Get("Credential-Etag"))
+	requirementsT.NoError(err)
+	assertionsT.False(severed.Stored(providercredentials.VectorEmbeddingsID))
+	assertionsT.Equal(severed.ETag, moved.Header().Get("Credential-Etag"))
 
 	after := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, after.Code, after.Body.String())
-	assertions.Equal(map[string]any{"configured": false, "source": "none"},
+	requirementsT.Equal(http.StatusOK, after.Code, after.Body.String())
+	assertionsT.Equal(map[string]any{"configured": false, "source": "none"},
 		rawEmbeddingSecretState(t, after.Body.Bytes()))
 	credentialBytes, err := os.ReadFile(filepath.Join(srv.cfg.TokensDir(), providercredentials.Filename))
-	requirements.NoError(err)
-	assertions.NotContains(string(credentialBytes), "origin-bound-secret")
+	requirementsT.NoError(err)
+	assertionsT.NotContains(string(credentialBytes), "origin-bound-secret")
 }
 
 func TestDeleteProviderCredentialOutlivesConfiguredProvider(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, settingsStoredVectorConfig)
 	credentialETag := storeVectorEmbeddingsCredential(t, srv, "orphaned-secret")
 
-	requirements.NoError(os.WriteFile(path, []byte("[analytics]\nengine = \"auto\"\n"), 0o600))
+	requirementsT.NoError(os.WriteFile(path, []byte("[analytics]\nengine = \"auto\"\n"), 0o600))
 
 	deleted := performSettingsRequest(t, srv, http.MethodDelete,
 		"/api/v1/settings/provider-credentials/vector.embeddings", nil, credentialETag, "")
-	requirements.Equal(http.StatusOK, deleted.Code, deleted.Body.String())
+	requirementsT.Equal(http.StatusOK, deleted.Code, deleted.Body.String())
 	var response ProviderCredentialResponse
-	requirements.NoError(json.Unmarshal(deleted.Body.Bytes(), &response))
-	assertions.Equal(SecretSettingState{Configured: false, Source: "none"}, response.State)
+	requirementsT.NoError(json.Unmarshal(deleted.Body.Bytes(), &response))
+	assertionsT.Equal(SecretSettingState{Configured: false, Source: "none"}, response.State)
 	remaining, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
-	assertions.False(remaining.Stored(providercredentials.VectorEmbeddingsID))
-	assertions.Equal(remaining.ETag, deleted.Header().Get("ETag"))
+	requirementsT.NoError(err)
+	assertionsT.False(remaining.Stored(providercredentials.VectorEmbeddingsID))
+	assertionsT.Equal(remaining.ETag, deleted.Header().Get("ETag"))
 
 	missing := performSettingsRequest(t, srv, http.MethodDelete,
 		"/api/v1/settings/provider-credentials/vector.embeddings", nil, remaining.ETag, "")
-	assertions.Equal(http.StatusNotFound, missing.Code, missing.Body.String())
-	assertions.Contains(missing.Body.String(), "credential_not_found")
+	assertionsT.Equal(http.StatusNotFound, missing.Code, missing.Body.String())
+	assertionsT.Contains(missing.Body.String(), "credential_not_found")
 }
 
 func TestPutPersonEnrichmentProviderSeversStoredCredentialWhenOriginChanges(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, `[people.enrichment]
 enabled = false
 suppression_key_env = "SUPPRESSION_KEY"
@@ -1667,12 +1667,12 @@ max_requests_per_run = 10
 max_requests_per_day = 100
 `)
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 	credentialID := providercredentials.PersonEnrichmentID("exa-primary")
 	set := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/provider-credentials/"+url.PathEscape(credentialID),
 		[]byte(`{"value":"exa-origin-secret"}`), get.Header().Get("Credential-Etag"), "")
-	requirements.Equal(http.StatusOK, set.Code, set.Body.String())
+	requirementsT.Equal(http.StatusOK, set.Code, set.Body.String())
 
 	providerUpdate := func(endpoint string) []byte {
 		return []byte(`{"kind":"exa","enabled":false,"endpoint":"` + endpoint + `","mode":"people",` +
@@ -1684,33 +1684,33 @@ max_requests_per_day = 100
 	samePath := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/person-enrichment/providers/exa-primary",
 		providerUpdate("https://api.exa.example/v2/search"), get.Header().Get("ETag"), "")
-	requirements.Equal(http.StatusOK, samePath.Code, samePath.Body.String())
+	requirementsT.Equal(http.StatusOK, samePath.Code, samePath.Body.String())
 	var retainedResponse SettingsResponse
-	requirements.NoError(json.Unmarshal(samePath.Body.Bytes(), &retainedResponse))
-	requirements.Len(retainedResponse.PersonEnrichmentProviders, 1)
-	assertions.Equal(&SecretSettingState{Configured: true, Source: "stored", Hint: "exa…ret"},
+	requirementsT.NoError(json.Unmarshal(samePath.Body.Bytes(), &retainedResponse))
+	requirementsT.Len(retainedResponse.PersonEnrichmentProviders, 1)
+	assertionsT.Equal(&SecretSettingState{Configured: true, Source: "stored", Hint: "exa…ret"},
 		retainedResponse.PersonEnrichmentProviders[0].Credential)
 
 	moved := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/person-enrichment/providers/exa-primary",
 		providerUpdate("https://elsewhere.example/search"), samePath.Header().Get("ETag"), "")
-	requirements.Equal(http.StatusOK, moved.Code, moved.Body.String())
+	requirementsT.Equal(http.StatusOK, moved.Code, moved.Body.String())
 	var severedResponse SettingsResponse
-	requirements.NoError(json.Unmarshal(moved.Body.Bytes(), &severedResponse))
-	requirements.Len(severedResponse.PersonEnrichmentProviders, 1)
-	assertions.Equal(&SecretSettingState{Configured: false, Source: "none"},
+	requirementsT.NoError(json.Unmarshal(moved.Body.Bytes(), &severedResponse))
+	requirementsT.Len(severedResponse.PersonEnrichmentProviders, 1)
+	assertionsT.Equal(&SecretSettingState{Configured: false, Source: "none"},
 		severedResponse.PersonEnrichmentProviders[0].Credential)
-	assertions.NotContains(moved.Body.String(), "exa-origin-secret")
+	assertionsT.NotContains(moved.Body.String(), "exa-origin-secret")
 	severed, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
-	assertions.False(severed.Stored(credentialID))
-	assertions.Equal(severed.ETag, moved.Header().Get("Credential-Etag"))
+	requirementsT.NoError(err)
+	assertionsT.False(severed.Stored(credentialID))
+	assertionsT.Equal(severed.ETag, moved.Header().Get("Credential-Etag"))
 }
 
 func TestPutPersonEnrichmentProviderRollsBackConfigWhenCredentialCleanupConflicts(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	const before = `[people.enrichment]
 enabled = false
 
@@ -1730,12 +1730,12 @@ max_requests_per_day = 100
 `
 	srv, path := newSettingsTestServer(t, before)
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 	credentialID := providercredentials.PersonEnrichmentID("exa-primary")
 	set := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/provider-credentials/"+url.PathEscape(credentialID),
 		[]byte(`{"value":"origin-bound-secret"}`), get.Header().Get("Credential-Etag"), "")
-	requirements.Equal(http.StatusOK, set.Code, set.Body.String())
+	requirementsT.Equal(http.StatusOK, set.Code, set.Body.String())
 	srv.settingsCredentialDeleter = func(
 		string, providercredentials.Snapshot, []string,
 	) (providercredentials.Snapshot, error) {
@@ -1750,26 +1750,26 @@ max_requests_per_day = 100
 	conflict := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/person-enrichment/providers/exa-primary",
 		update, get.Header().Get("ETag"), "")
-	assertions.Equal(http.StatusPreconditionFailed, conflict.Code, conflict.Body.String())
+	assertionsT.Equal(http.StatusPreconditionFailed, conflict.Code, conflict.Body.String())
 
 	written, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.Equal(before, string(written))
+	requirementsT.NoError(err)
+	assertionsT.Equal(before, string(written))
 	credentials, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
+	requirementsT.NoError(err)
 	value, state, err := credentials.Resolve(
 		credentialID, "https://api.exa.example/search", "", nil,
 	)
-	requirements.NoError(err)
-	assertions.Equal("origin-bound-secret", value)
-	assertions.True(state.Configured)
-	assertions.False(srv.settingsPendingRestart.Load())
+	requirementsT.NoError(err)
+	assertionsT.Equal("origin-bound-secret", value)
+	assertionsT.True(state.Configured)
+	assertionsT.False(srv.settingsPendingRestart.Load())
 }
 
 func TestPatchSettingsRemovesStaleStoredCredentialOnLaterWrite(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, settingsStoredVectorConfig)
 	storeVectorEmbeddingsCredential(t, srv, "stale-origin-secret")
 
@@ -1777,24 +1777,24 @@ func TestPatchSettingsRemovesStaleStoredCredentialOnLaterWrite(t *testing.T) {
 	// interrupted cleanup or a host edit of config.toml.
 	moved := strings.Replace(settingsStoredVectorConfig,
 		"https://first.example.test/v1", "https://second.example.test/v1", 1)
-	requirements.NoError(os.WriteFile(path, []byte(moved), 0o600))
+	requirementsT.NoError(os.WriteFile(path, []byte(moved), 0o600))
 
 	before := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, before.Code, before.Body.String())
-	assertions.Equal(map[string]any{"configured": false, "source": "none"},
+	requirementsT.Equal(http.StatusOK, before.Code, before.Body.String())
+	assertionsT.Equal(map[string]any{"configured": false, "source": "none"},
 		rawEmbeddingSecretState(t, before.Body.Bytes()))
 	stale, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
-	requirements.True(stale.Stored(providercredentials.VectorEmbeddingsID))
+	requirementsT.NoError(err)
+	requirementsT.True(stale.Stored(providercredentials.VectorEmbeddingsID))
 
 	unrelated := patchSettings(t, srv,
 		`{"updates":[{"key":"log.level","value":{"string":"debug"}}]}`)
-	requirements.Equal(http.StatusOK, unrelated.Code, unrelated.Body.String())
-	assertions.NotContains(unrelated.Body.String(), "stale-origin-secret")
+	requirementsT.Equal(http.StatusOK, unrelated.Code, unrelated.Body.String())
+	assertionsT.NotContains(unrelated.Body.String(), "stale-origin-secret")
 	severed, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
-	assertions.False(severed.Stored(providercredentials.VectorEmbeddingsID))
-	assertions.Equal(severed.ETag, unrelated.Header().Get("Credential-Etag"))
+	requirementsT.NoError(err)
+	assertionsT.False(severed.Stored(providercredentials.VectorEmbeddingsID))
+	assertionsT.Equal(severed.ETag, unrelated.Header().Get("Credential-Etag"))
 }
 
 func TestPatchSettingsCredentialConflictCanFollowCommittedSlackPolicy(t *testing.T) {
@@ -1834,8 +1834,8 @@ func TestPatchSettingsCredentialConflictCanFollowCommittedSlackPolicy(t *testing
 
 func TestPatchSettingsRemovesStaleNamedProviderCredentialsAfterHostEdit(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	const initial = `[people.enrichment]
 enabled = false
 
@@ -1867,17 +1867,17 @@ max_requests_per_day = 100
 `
 	srv, path := newSettingsTestServer(t, initial)
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 	removedID := providercredentials.PersonEnrichmentID("removed-provider")
 	movedID := providercredentials.PersonEnrichmentID("moved-provider")
 	stored := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/provider-credentials/"+url.PathEscape(removedID),
 		[]byte(`{"value":"removed-provider-secret"}`), get.Header().Get("Credential-Etag"), "")
-	requirements.Equal(http.StatusOK, stored.Code, stored.Body.String())
+	requirementsT.Equal(http.StatusOK, stored.Code, stored.Body.String())
 	stored = performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/provider-credentials/"+url.PathEscape(movedID),
 		[]byte(`{"value":"moved-provider-secret"}`), stored.Header().Get("ETag"), "")
-	requirements.Equal(http.StatusOK, stored.Code, stored.Body.String())
+	requirementsT.Equal(http.StatusOK, stored.Code, stored.Body.String())
 
 	const hostEdited = `[people.enrichment]
 enabled = false
@@ -1895,29 +1895,29 @@ refresh_interval = "24h"
 max_requests_per_run = 10
 max_requests_per_day = 100
 `
-	requirements.NoError(os.WriteFile(path, []byte(hostEdited), 0o600))
+	requirementsT.NoError(os.WriteFile(path, []byte(hostEdited), 0o600))
 	stale, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
-	requirements.True(stale.Stored(removedID))
-	requirements.True(stale.Stored(movedID))
+	requirementsT.NoError(err)
+	requirementsT.True(stale.Stored(removedID))
+	requirementsT.True(stale.Stored(movedID))
 
 	unrelated := patchSettings(t, srv,
 		`{"updates":[{"key":"log.level","value":{"string":"debug"}}]}`)
-	requirements.Equal(http.StatusOK, unrelated.Code, unrelated.Body.String())
+	requirementsT.Equal(http.StatusOK, unrelated.Code, unrelated.Body.String())
 	cleaned, err := providercredentials.Read(srv.cfg.TokensDir())
-	requirements.NoError(err)
-	assertions.False(cleaned.Stored(removedID))
-	assertions.False(cleaned.Stored(movedID))
-	assertions.Equal(cleaned.ETag, unrelated.Header().Get("Credential-Etag"))
+	requirementsT.NoError(err)
+	assertionsT.False(cleaned.Stored(removedID))
+	assertionsT.False(cleaned.Stored(movedID))
+	assertionsT.Equal(cleaned.ETag, unrelated.Header().Get("Credential-Etag"))
 }
 
 func TestPutPersonEnrichmentProviderRequiresValidKindEvenWhenDisabled(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, path := newSettingsTestServer(t, "[people.enrichment]\nenabled = false\n")
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
 
 	for _, kind := range []string{"", "other"} {
 		body := []byte(`{"kind":"` + kind + `","enabled":false,"endpoint":"https://api.exa.example/search",` +
@@ -1927,18 +1927,18 @@ func TestPutPersonEnrichmentProviderRequiresValidKindEvenWhenDisabled(t *testing
 			`"max_retries":5,"max_requests_per_run":20,"max_requests_per_day":100}`)
 		rejected := performSettingsRequest(t, srv, http.MethodPut,
 			"/api/v1/settings/person-enrichment/providers/new-provider", body, get.Header().Get("ETag"), "")
-		assertions.Equal(http.StatusUnprocessableEntity, rejected.Code, rejected.Body.String())
-		assertions.Contains(rejected.Body.String(), "validation_failed")
+		assertionsT.Equal(http.StatusUnprocessableEntity, rejected.Code, rejected.Body.String())
+		assertionsT.Contains(rejected.Body.String(), "validation_failed")
 	}
 	written, err := os.ReadFile(path)
-	requirements.NoError(err)
-	assertions.NotContains(string(written), "new-provider")
+	requirementsT.NoError(err)
+	assertionsT.NotContains(string(written), "new-provider")
 }
 
 func TestSettingsReadsAndRepairsInvalidDisabledPersonEnrichmentProvider(t *testing.T) {
 	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, `[people.enrichment]
 enabled = false
 
@@ -1958,13 +1958,13 @@ max_requests_per_day = 100
 `)
 
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
-	assertions.NotContains(get.Body.String(), "token=example-credential")
+	requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
+	assertionsT.NotContains(get.Body.String(), "token=example-credential")
 	var before SettingsResponse
-	requirements.NoError(json.Unmarshal(get.Body.Bytes(), &before))
-	requirements.Len(before.PersonEnrichmentProviders, 1)
-	assertions.Empty(before.PersonEnrichmentProviders[0].Endpoint)
-	assertions.Nil(before.PersonEnrichmentProviders[0].Credential)
+	requirementsT.NoError(json.Unmarshal(get.Body.Bytes(), &before))
+	requirementsT.Len(before.PersonEnrichmentProviders, 1)
+	assertionsT.Empty(before.PersonEnrichmentProviders[0].Endpoint)
+	assertionsT.Nil(before.PersonEnrichmentProviders[0].Credential)
 
 	repaired := performSettingsRequest(t, srv, http.MethodPut,
 		"/api/v1/settings/person-enrichment/providers/exa-primary", []byte(`{
@@ -1983,17 +1983,17 @@ max_requests_per_day = 100
 "max_requests_per_run":10,
 "max_requests_per_day":100
 }`), get.Header().Get("ETag"), "")
-	requirements.Equal(http.StatusOK, repaired.Code, repaired.Body.String())
+	requirementsT.Equal(http.StatusOK, repaired.Code, repaired.Body.String())
 	var after SettingsResponse
-	requirements.NoError(json.Unmarshal(repaired.Body.Bytes(), &after))
-	requirements.Len(after.PersonEnrichmentProviders, 1)
-	assertions.Equal("https://api.exa.example/search", after.PersonEnrichmentProviders[0].Endpoint)
-	assertions.NotNil(after.PersonEnrichmentProviders[0].Credential)
+	requirementsT.NoError(json.Unmarshal(repaired.Body.Bytes(), &after))
+	requirementsT.Len(after.PersonEnrichmentProviders, 1)
+	assertionsT.Equal("https://api.exa.example/search", after.PersonEnrichmentProviders[0].Endpoint)
+	assertionsT.NotNil(after.PersonEnrichmentProviders[0].Credential)
 }
 
 func TestSettingsSectionsAreConsistentWithTheirGroups(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
+	assertionsT := assert.New(t)
 	groupsByID := make(map[string]SettingGroup, len(settingsGroups))
 	for _, group := range settingsGroups {
 		groupsByID[group.ID] = group
@@ -2001,19 +2001,19 @@ func TestSettingsSectionsAreConsistentWithTheirGroups(t *testing.T) {
 	populated := make(map[string]map[string]bool)
 	for _, definition := range settingsCatalog {
 		group, ok := groupsByID[definition.group]
-		if !assertions.True(ok, "%s uses undeclared group %q", definition.key, definition.group) {
+		if !assertionsT.True(ok, "%s uses undeclared group %q", definition.key, definition.group) {
 			continue
 		}
 		section := metadataForSetting(definition.key).section
 		if len(group.Sections) == 0 {
-			assertions.Empty(section, "%s names a section but group %q has none", definition.key, group.ID)
+			assertionsT.Empty(section, "%s names a section but group %q has none", definition.key, group.ID)
 			continue
 		}
 		known := false
 		for _, candidate := range group.Sections {
 			known = known || candidate.ID == section
 		}
-		assertions.True(known, "%s names section %q that group %q does not declare", definition.key, section, group.ID)
+		assertionsT.True(known, "%s names section %q that group %q does not declare", definition.key, section, group.ID)
 		if populated[group.ID] == nil {
 			populated[group.ID] = make(map[string]bool)
 		}
@@ -2021,111 +2021,111 @@ func TestSettingsSectionsAreConsistentWithTheirGroups(t *testing.T) {
 	}
 	for _, group := range settingsGroups {
 		for _, section := range group.Sections {
-			assertions.True(populated[group.ID][section.ID], "section %s/%s has no settings", group.ID, section.ID)
+			assertionsT.True(populated[group.ID][section.ID], "section %s/%s has no settings", group.ID, section.ID)
 		}
 	}
 }
 
 func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	requirements.NoError(validateSettingBounds("backup.zstd_level", 0), "the off value sits outside the on range")
-	requirements.NoError(validateSettingBounds("backup.zstd_level", 19))
-	requirements.Error(validateSettingBounds("backup.zstd_level", 20))
-	requirements.Error(validateSettingBounds("backup.zstd_level", -1))
-	requirements.NoError(validateSettingBounds("discord.max_media_mb", 0))
-	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.0))
-	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", 0.05), "on values start at 0.1; PATCH raises smaller rates")
-	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.5))
-	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", -1.0))
-	requirements.Error(validateSettingBounds("sync.rate_limit_qps", 0), "settings without an off value keep their minimum")
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
+	requirementsT.NoError(validateSettingBounds("backup.zstd_level", 0), "the off value sits outside the on range")
+	requirementsT.NoError(validateSettingBounds("backup.zstd_level", 19))
+	requirementsT.Error(validateSettingBounds("backup.zstd_level", 20))
+	requirementsT.Error(validateSettingBounds("backup.zstd_level", -1))
+	requirementsT.NoError(validateSettingBounds("discord.max_media_mb", 0))
+	requirementsT.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.0))
+	requirementsT.Error(validateSettingBounds("beeper.rate_limit_qps", 0.05), "on values start at 0.1; PATCH raises smaller rates")
+	requirementsT.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.5))
+	requirementsT.Error(validateSettingBounds("beeper.rate_limit_qps", -1.0))
+	requirementsT.Error(validateSettingBounds("sync.rate_limit_qps", 0), "settings without an off value keep their minimum")
 	for key, validation := range settingsValidation {
 		if validation.Off == nil || validation.Off.OnMinimum == nil {
 			continue
 		}
-		requirements.NotNil(validation.Minimum, "%s: minimum must stay published for clients that ignore off", key)
+		requirementsT.NotNil(validation.Minimum, "%s: minimum must stay published for clients that ignore off", key)
 		off, err := strconv.ParseFloat(validation.Off.text(), 64)
-		requirements.NoError(err, key)
-		assertions.LessOrEqual(*validation.Minimum, off, "%s: minimum must include the off value", key)
-		assertions.Greater(*validation.Off.OnMinimum, off, "%s: the on range must exclude the off value", key)
+		requirementsT.NoError(err, key)
+		assertionsT.LessOrEqual(*validation.Minimum, off, "%s: minimum must include the off value", key)
+		assertionsT.Greater(*validation.Off.OnMinimum, off, "%s: the on range must exclude the off value", key)
 	}
 	for key, validation := range settingsValidation {
 		if validation.Off == nil {
 			continue
 		}
-		assertions.NotEmpty(validation.Off.Label, "%s off state needs a label", key)
-		assertions.NotContains(strings.ToLower(validation.Hint), " 0 ", "%s hint must not restate its off value", key)
+		assertionsT.NotEmpty(validation.Off.Label, "%s off state needs a label", key)
+		assertionsT.NotContains(strings.ToLower(validation.Hint), " 0 ", "%s hint must not restate its off value", key)
 	}
 }
 
 func TestSettingsPatchEnforcesRequiredAndCronFormat(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
+	assertionsT := assert.New(t)
 	srv, _ := newSettingsTestServer(t, "[people.enrichment]\nschedule = \"*/15 * * * *\"\n")
 
 	empty := patchSettings(t, srv, `{"updates":[{"key":"people.enrichment.schedule","value":{"string":""}}]}`)
-	assertions.Equal(http.StatusUnprocessableEntity, empty.Code, empty.Body.String())
+	assertionsT.Equal(http.StatusUnprocessableEntity, empty.Code, empty.Body.String())
 
 	invalid := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"0 25 * * *"}}]}`)
-	assertions.Equal(http.StatusUnprocessableEntity, invalid.Code, invalid.Body.String())
+	assertionsT.Equal(http.StatusUnprocessableEntity, invalid.Code, invalid.Body.String())
 
 	off := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":""}}]}`)
-	assertions.Equal(http.StatusOK, off.Code, off.Body.String())
+	assertionsT.Equal(http.StatusOK, off.Code, off.Body.String())
 
 	valid := patchSettings(t, srv, `{"updates":[{"key":"people.enrichment.schedule","value":{"string":"0 4 * * mon-fri"}}]}`)
-	assertions.Equal(http.StatusOK, valid.Code, valid.Body.String())
+	assertionsT.Equal(http.StatusOK, valid.Code, valid.Body.String())
 
 	zoned := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"CRON_TZ=Europe/Berlin 0 4 * * *"}}]}`)
-	assertions.Equal(http.StatusOK, zoned.Code, zoned.Body.String())
+	assertionsT.Equal(http.StatusOK, zoned.Code, zoned.Body.String())
 
 	emptyList := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"0 3 * * ,"}}]}`)
-	assertions.Equal(http.StatusUnprocessableEntity, emptyList.Code, emptyList.Body.String())
+	assertionsT.Equal(http.StatusUnprocessableEntity, emptyList.Code, emptyList.Body.String())
 }
 
 func TestSettingsPatchTrimsCronSchedules(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t, "[beeper]\nschedule = \"0 2 * * *\"\n")
 
 	padded := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"  0 3 * * *  "}}]}`)
-	requirements.Equal(http.StatusOK, padded.Code, padded.Body.String())
-	assertions.Equal("0 3 * * *", currentSettingString(t, srv, "beeper.schedule"))
+	requirementsT.Equal(http.StatusOK, padded.Code, padded.Body.String())
+	assertionsT.Equal("0 3 * * *", currentSettingString(t, srv, "beeper.schedule"))
 
 	blank := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"   "}}]}`)
-	requirements.Equal(http.StatusOK, blank.Code, blank.Body.String())
-	assertions.Empty(currentSettingString(t, srv, "beeper.schedule"))
+	requirementsT.Equal(http.StatusOK, blank.Code, blank.Body.String())
+	assertionsT.Empty(currentSettingString(t, srv, "beeper.schedule"))
 
 	zoneOnly := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"CRON_TZ=UTC"}}]}`)
-	requirements.Equal(http.StatusOK, zoneOnly.Code, zoneOnly.Body.String())
-	assertions.Empty(currentSettingString(t, srv, "beeper.schedule"), "a zone with no fields is no schedule")
+	requirementsT.Equal(http.StatusOK, zoneOnly.Code, zoneOnly.Body.String())
+	assertionsT.Empty(currentSettingString(t, srv, "beeper.schedule"), "a zone with no fields is no schedule")
 
 	cfg, err := config.Load(path, "")
-	requirements.NoError(err)
-	assertions.Empty(cfg.Beeper.Schedule)
+	requirementsT.NoError(err)
+	assertionsT.Empty(cfg.Beeper.Schedule)
 }
 
 func TestSettingsPatchRaisesRatesBelowTheOnMinimum(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertionsT := assert.New(t)
+	requirementsT := require.New(t)
 	srv, path := newSettingsTestServer(t, "[beeper]\nrate_limit_qps = 5\n")
 
 	small := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":0.05}}]}`)
-	requirements.Equal(http.StatusOK, small.Code, small.Body.String())
+	requirementsT.Equal(http.StatusOK, small.Code, small.Body.String())
 	cfg, err := config.Load(path, "")
-	requirements.NoError(err)
-	assertions.InDelta(0.1, cfg.Beeper.RateLimitQPS, 1e-9, "a positive rate below the on minimum is raised, not rejected")
+	requirementsT.NoError(err)
+	assertionsT.InDelta(0.1, cfg.Beeper.RateLimitQPS, 1e-9, "a positive rate below the on minimum is raised, not rejected")
 
 	off := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":0}}]}`)
-	requirements.Equal(http.StatusOK, off.Code, off.Body.String())
+	requirementsT.Equal(http.StatusOK, off.Code, off.Body.String())
 	cfg, err = config.Load(path, "")
-	requirements.NoError(err)
-	assertions.Zero(cfg.Beeper.RateLimitQPS, "zero stays the off value")
+	requirementsT.NoError(err)
+	assertionsT.Zero(cfg.Beeper.RateLimitQPS, "zero stays the off value")
 
 	negative := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":-1}}]}`)
-	assertions.Equal(http.StatusUnprocessableEntity, negative.Code, negative.Body.String())
+	assertionsT.Equal(http.StatusUnprocessableEntity, negative.Code, negative.Body.String())
 }
 
 func currentSettingString(t *testing.T, srv *Server, key string) string {
@@ -2143,28 +2143,28 @@ func currentSettingString(t *testing.T, srv *Server, key string) string {
 
 func TestSettingsBoundHintsLiveOnTheControl(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
+	assertionsT := assert.New(t)
 	for key, validation := range settingsValidation {
 		hint := strings.ToLower(validation.Hint)
 		for _, phrase := range []string{"at least", "or more", " to ", "between"} {
-			assertions.NotContains(hint, phrase, "%s spells out a bound in text; use minimum, maximum, or off", key)
+			assertionsT.NotContains(hint, phrase, "%s spells out a bound in text; use minimum, maximum, or off", key)
 		}
 		if validation.Format != "" {
-			assertions.Empty(validation.Hint, "%s has a format; the control explains the syntax", key)
+			assertionsT.Empty(validation.Hint, "%s has a format; the control explains the syntax", key)
 		}
 	}
 }
 
 func TestSettingsHintsDoNotRepeatDescriptions(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
+	assertionsT := assert.New(t)
 	for key, validation := range settingsValidation {
 		hint := strings.TrimSpace(validation.Hint)
 		if hint == "" {
 			continue
 		}
 		description := metadataForSetting(key).description
-		assertions.NotContains(strings.ToLower(description), strings.ToLower(strings.TrimSuffix(hint, ".")),
+		assertionsT.NotContains(strings.ToLower(description), strings.ToLower(strings.TrimSuffix(hint, ".")),
 			"%s repeats its hint inside its description", key)
 	}
 }
@@ -2187,5 +2187,27 @@ func TestSecretHint(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, secretHint(tc.value))
 		})
+	}
+}
+
+func TestSettingsPatchPreservesConversationPolicy(t *testing.T) {
+	requirementsT := require.New(t)
+	assertionsT := assert.New(t)
+
+	for _, body := range []string{"", "[beeper]\nmax_participants=0\n[slack]\nmax_participants=17\n[discord]\nmax_participants=25\n[teams]\nmax_participants=31\n[conversation_policy]\nactivity_window_days=13\n[[conversation_policy.overrides]]\nsource_type='slack'\nsource_identifier='T_EXAMPLE:U_EXAMPLE'\nconversation_id='room'\ntier='cold'\n"} {
+		srv, path := newSettingsTestServer(t, body)
+		before, err := config.Load(path, "")
+		requirementsT.NoError(err)
+		get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+		requirementsT.Equal(http.StatusOK, get.Code, get.Body.String())
+		resp := patchSettings(t, srv, `{"updates":[{"key":"beeper.media_max_participants","value":{"integer":12}},{"key":"web.theme","value":{"string":"dark"}}]}`)
+		requirementsT.Equal(http.StatusOK, resp.Code, resp.Body.String())
+		after, err := config.Load(path, "")
+		requirementsT.NoError(err)
+		assertionsT.Equal(before.ConversationPolicySettings(), after.ConversationPolicySettings())
+		if body == "" {
+			assertionsT.Equal(20, after.Beeper.MaxParticipants)
+			assertionsT.Equal(180, after.ConversationPolicy.ActivityWindowDays)
+		}
 	}
 }

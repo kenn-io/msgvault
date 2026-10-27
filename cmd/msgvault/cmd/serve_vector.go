@@ -565,6 +565,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		// Same database handle as the main store: pgvector embeddings
 		// live alongside messages, so there is no separate vectors.db.
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
+			PolicyStore: mainStore,
 			DB:          mainDB,
 			Dimension:   vecCfg.Embeddings.Dimension,
 			BuildScope:  vecCfg.Embed.Scope.BuildScope(),
@@ -596,6 +597,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
+			PolicyStore:     mainStore,
 			Path:            vecPath,
 			MainPath:        mainPath,
 			Dimension:       vecCfg.Embeddings.Dimension,
@@ -806,6 +808,10 @@ func newVisualRuntime(
 		return nil, errors.New("selected vector backend has no visual lane")
 	}
 	if building, err := mainStore.BuildingVisualGeneration(ctx); err == nil && building.Fingerprint != fingerprint {
+		// Revoke publication authority before enumerating tokens for deletion.
+		if err := mainStore.RetireVisualGeneration(ctx, building.ID); err != nil {
+			return nil, err
+		}
 		tokens, tokenErr := mainStore.ListVisualGenerationTokens(ctx, building.ID)
 		if tokenErr != nil {
 			return nil, tokenErr
@@ -815,9 +821,6 @@ func newVisualRuntime(
 			vectorTokens[i] = visual.VectorToken(token)
 		}
 		if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
-			return nil, err
-		}
-		if err := mainStore.RetireVisualGeneration(ctx, building.ID); err != nil {
 			return nil, err
 		}
 		// The abandoned generation is never revisited; a consumer left

@@ -14,30 +14,14 @@ import (
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
 func newFilterTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	require := require.New(t)
-	db, err := sql.Open("sqlite3", ":memory:")
-	require.NoError(err, "open")
-	t.Cleanup(func() { _ = db.Close() })
-
-	schema := `
-CREATE TABLE participants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email_address TEXT,
-    phone_number TEXT,
-    domain TEXT
-);
-CREATE TABLE labels (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT
-);
-`
-	_, err = db.Exec(schema)
-	require.NoError(err, "schema")
+	db := testutil.NewSQLiteTestStore(t).DB()
 	participants := []string{
 		"alice@example.com",
 		"bob@example.com",

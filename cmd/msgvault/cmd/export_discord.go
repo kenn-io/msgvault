@@ -80,7 +80,11 @@ func runExportDiscord(
 		return usageErr(cmd, fmt.Errorf("unsupported --format %q (expected json)", opts.Format))
 	}
 
-	st, cleanup, err := deps.openStore()
+	open := deps.openReadStore
+	if open == nil {
+		open = deps.openStore
+	}
+	st, cleanup, err := open()
 	if err != nil {
 		return err
 	}

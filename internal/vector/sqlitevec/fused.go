@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -28,6 +27,12 @@ var _ vector.FusingBackend = (*Backend)(nil)
 // FusedSearch uses the bounded accelerator path when a ready Vec1 index is
 // available, otherwise it retains the exact fused query.
 func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, vector.SearchMetadata, error) {
+	release, err := b.acquirePolicyPublication(ctx, nil)
+	if err != nil {
+		return nil, vector.SearchMetadata{}, err
+	}
+	defer release()
+
 	metadata := vector.SearchMetadata{}
 	if len(req.QueryVec) > 0 {
 		vectorHits, searchMeta, err := b.searchAccelerator(
@@ -388,8 +393,16 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
               WHERE m.subject IS NULL OR m.subject NOT LIKE sp.value ESCAPE '\'))
 	   %s
 	   %s`,
-		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
+		b.liveMessageWhere("m"), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL+"\n"+filenameSQL)
+	embeddingFreshSQL := ""
+	if b.policyStore != nil {
+		embeddingFreshSQL = `AND EXISTS (
+			SELECT 1 FROM messages m
+			 WHERE m.id = ve.message_id
+			   AND ve.embedding_revision = m.embedding_revision
+		)`
+	}
 	var accountArgs []any
 	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {
 		name := fmt.Sprintf("account_scope_%d", len(accountArgs))
@@ -431,9 +444,10 @@ WITH
      WHERE :query_vec IS NOT NULL
        AND v.generation_id = :gen
        AND v.embedding_id IN (
-            SELECT embedding_id FROM vec.embeddings
-             WHERE generation_id = :gen
-               AND message_id IN (SELECT id FROM filtered)
+            SELECT ve.embedding_id FROM vec.embeddings ve
+             WHERE ve.generation_id = :gen
+               AND ve.message_id IN (SELECT id FROM filtered)
+               %s
        )
        AND v.embedding MATCH :query_vec
        AND k = %d
@@ -462,7 +476,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
   FROM fused
  ORDER BY rrf_score DESC, message_id ASC
  LIMIT :limit
-`, filterWhere, kPlus1, req.KPerSignal, vecTable, currentChunkK, req.KPerSignal)
+	`, filterWhere, kPlus1, req.KPerSignal, vecTable, embeddingFreshSQL, currentChunkK, req.KPerSignal)
 	}
 
 	var queryVecArg any

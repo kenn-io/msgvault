@@ -476,7 +476,11 @@ func (s *Store) ListAccountIdentitiesContext(
 	ctx context.Context,
 	sourceID int64,
 ) ([]AccountIdentity, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return listAccountIdentitiesWith(ctx, s.db, sourceID)
+}
+
+func listAccountIdentitiesWith(ctx context.Context, q chunkQuerier, sourceID int64) ([]AccountIdentity, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT source_id, address, source_signal, confirmed_at
 		FROM account_identities
 		WHERE source_id = ?

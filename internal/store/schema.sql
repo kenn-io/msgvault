@@ -1084,7 +1084,7 @@ CREATE TABLE IF NOT EXISTS person_fact_evidence_status_events (
     supported      INTEGER NOT NULL CHECK (supported IN (0, 1)),
     reason         TEXT NOT NULL CHECK (reason IN (
                        'source-deleted', 'source-edited', 'scope-unlinked',
-                       'identity-reassigned', 'source-reimported', 'scope-relinked')),
+                       'identity-reassigned', 'source-reimported', 'scope-relinked', 'conversation-cold', 'conversation-full')),
     created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(person_id, generation_id, evidence_key, source_version)
 );
@@ -1485,6 +1485,14 @@ CREATE TABLE IF NOT EXISTS messages (
     -- finds work via (embed_gen IS NULL OR embed_gen <> <target>) and
     -- stamps this column after a successful upsert (or skip).
     embed_gen INTEGER,
+
+    -- Revision of the source and contextual inputs used to build a vector.
+    -- Unlike embed_gen, this does not name a single generation: rebuilding a
+    -- second generation must not invalidate a still-current active vector.
+    -- Input changes advance it while clearing embed_gen; each generation's
+    -- vector rows retain the revision they published and search requires an
+    -- exact match.
+    embedding_revision INTEGER NOT NULL DEFAULT 0,
 
     -- Content-change watermark, maintained ENTIRELY by the database (triggers
     -- created by EnsureTriggers), never by application write paths. Unlike
@@ -3397,7 +3405,7 @@ CREATE INDEX IF NOT EXISTS idx_participant_observations_provider_user
 CREATE UNIQUE INDEX IF NOT EXISTS idx_participant_observations_identity
     ON participant_contact_observations(
         participant_id, source_id, address_kind, service_id, scope_kind, scope_value,
-        normalized_value
+        normalized_value, COALESCE(provider_user_id, ''), COALESCE(source_ref, '')
     ) WHERE active_until IS NULL AND superseded_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS identity_match_candidates (
@@ -4674,3 +4682,19 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Live conversation policy. Supported chat rooms require initialized state.
+CREATE TABLE IF NOT EXISTS conversation_policy (
+ conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+ effective_tier TEXT NOT NULL DEFAULT 'full' CHECK (effective_tier IN ('full','cold','stub','skip')),
+ override_tier TEXT CHECK (override_tier IN ('full','cold','stub','skip')),
+ last_activity_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS participant_contact_observation_conversations (
+ observation_id INTEGER NOT NULL REFERENCES participant_contact_observations(id) ON DELETE CASCADE,
+ conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+ PRIMARY KEY (observation_id, conversation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_participant_observation_conversations_conversation
+ ON participant_contact_observation_conversations(conversation_id, observation_id);

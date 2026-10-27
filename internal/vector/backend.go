@@ -161,14 +161,19 @@ type Generation struct {
 // text identified by SourceBasis and are stored for debugging only — search
 // results do not currently surface "which chunk matched".
 type Chunk struct {
-	MessageID      int64
-	ChunkIndex     int
-	Vector         []float32
-	SourceCharLen  int
-	ChunkCharStart int
-	ChunkCharEnd   int
-	SourceBasis    SourceBasis
-	Truncated      bool
+	MessageID  int64
+	ChunkIndex int
+	Vector     []float32
+	// EmbeddingRevision is the message-input revision captured before this
+	// vector was built. Search compares it with the live archive revision so a
+	// still-valid active-generation vector remains visible during a rebuild of
+	// another generation.
+	EmbeddingRevision int64
+	SourceCharLen     int
+	ChunkCharStart    int
+	ChunkCharEnd      int
+	SourceBasis       SourceBasis
+	Truncated         bool
 }
 
 // Filter carries the structured filters pushed into both signal CTEs
@@ -465,6 +470,13 @@ type OrphanEmbeddingPruner interface {
 	PruneOrphanEmbeddings(ctx context.Context) (int64, error)
 }
 
+// IneligibleEmbeddingPruner reconciles message/context vectors against current
+// archive policy across every generation. Counts are generation/message pairs.
+// Call without holding a policy fence; the backend owns each bounded batch.
+type IneligibleEmbeddingPruner interface {
+	PruneIneligibleEmbeddings(ctx context.Context) (int64, error)
+}
+
 // FilteredCoverageBatchSize is the maximum number of canonical message IDs a
 // filtered coverage backend accepts per call. Coverage callers page at this
 // boundary so neither SQL bind arrays nor cross-database JSON blobs grow with
@@ -518,4 +530,45 @@ type FusedHit struct {
 	BM25Score      float64 // math.NaN() if missing
 	VectorScore    float64 // math.NaN() if missing
 	SubjectBoosted bool
+}
+
+// ScopePublicationMessageIDs includes preserved members as well as new chunks.
+func ScopePublicationMessageIDs(scopes []DocumentScopePublication) []int64 {
+	seen := make(map[int64]bool)
+	var ids []int64
+	add := func(id int64) {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, scope := range scopes {
+		for _, doc := range scope.Documents {
+			for _, id := range doc.Members {
+				add(id)
+			}
+		}
+		for _, chunk := range scope.Chunks {
+			add(chunk.MessageID)
+		}
+	}
+	return ids
+}
+
+// IneligiblePersonPruner reconciles all generations against current semantic
+// input versions. The backend owns and releases W for each bounded batch.
+type IneligiblePersonPruner interface {
+	PruneIneligiblePersons(ctx context.Context) (int64, error)
+}
+
+// IneligibleDocumentPruner reconciles all document generations against current
+// Full owner support and exact publication incarnations in bounded W batches.
+type IneligibleDocumentPruner interface {
+	PruneIneligibleDocuments(ctx context.Context) (int64, error)
+}
+
+// IneligibleVisualPruner reconciles current and pending visual tokens in every
+// generation, retaining current eligible publications and releasing W per batch.
+type IneligibleVisualPruner interface {
+	PruneIneligibleVisuals(ctx context.Context) (int64, error)
 }

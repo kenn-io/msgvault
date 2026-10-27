@@ -371,7 +371,7 @@ func (s *Store) AttachmentConversationMembershipContext(ctx context.Context, mes
 	record := decodeMembershipRecord(metadata)
 	return ConversationMembership{
 		Conversation:   conversation,
-		RosterArchived: record.counted && !record.unknown,
+		RosterArchived: record.counted && !record.unknown && !record.repairPending,
 	}, err
 }
 
@@ -418,9 +418,10 @@ const (
 // present at once: a count read earlier stays for reference while the unknown
 // marker says the latest read failed and the roster is unresolved.
 type membershipRecord struct {
-	memberCount int
-	counted     bool
-	unknown     bool
+	memberCount   int
+	counted       bool
+	unknown       bool
+	repairPending bool
 }
 
 func decodeMembershipRecord(metadata string) membershipRecord {
@@ -428,13 +429,17 @@ func decodeMembershipRecord(metadata string) membershipRecord {
 		return membershipRecord{}
 	}
 	var stored struct {
-		MemberCount        *int `json:"member_count"`
-		MemberCountUnknown bool `json:"member_count_unknown"`
+		MemberCount         *int `json:"member_count"`
+		MemberCountUnknown  bool `json:"member_count_unknown"`
+		RosterRepairPending bool `json:"roster_repair_pending"`
 	}
 	if err := json.Unmarshal([]byte(metadata), &stored); err != nil {
 		return membershipRecord{}
 	}
-	record := membershipRecord{unknown: stored.MemberCountUnknown}
+	record := membershipRecord{
+		unknown:       stored.MemberCountUnknown,
+		repairPending: stored.RosterRepairPending,
+	}
 	if stored.MemberCount != nil {
 		record.memberCount, record.counted = *stored.MemberCount, true
 	}
@@ -480,7 +485,7 @@ func policyParticipantCount(
 	sourceType string, observed int, metadata string, policy attachmentpolicy.Policy,
 ) int {
 	record := decodeMembershipRecord(metadata)
-	if policy.MaxParticipants > 0 && (!record.counted || record.unknown) {
+	if policy.MaxParticipants > 0 && (!record.counted || record.unknown || record.repairPending) {
 		return policy.MaxParticipants + 1
 	}
 	return attachmentPolicyParticipantCount(sourceType, observed, metadata)

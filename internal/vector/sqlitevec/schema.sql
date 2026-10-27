@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
     chunk_char_end   INTEGER NOT NULL DEFAULT 0,
     source_basis     INTEGER NOT NULL DEFAULT 0,
     truncated        INTEGER NOT NULL DEFAULT 0,
+    embedding_revision INTEGER NOT NULL DEFAULT 0,
     UNIQUE (generation_id, message_id, chunk_index)
 );
 CREATE INDEX IF NOT EXISTS idx_embeddings_msg ON embeddings(message_id);

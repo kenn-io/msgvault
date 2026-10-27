@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -92,88 +93,45 @@ func (r *participantResolver) displayName(userID string) string {
 	return ""
 }
 
-// resolveID resolves a Slack user ID to a participant ID, creating the
-// participant if needed. Unknown IDs (Slack Connect guests, departed users
-// missing from users.list) resolve by bare identifier with no display name.
-func (r *participantResolver) resolveID(ctx context.Context, userID string) (int64, error) {
+// resolveID uses fetched directory metadata only after live room admission.
+func (r *participantResolver) resolveID(ctx context.Context, userID string, room int64) (int64, error) {
 	if userID == "" {
 		return 0, nil
 	}
-	if pid, ok := r.rich[userID]; ok {
-		return pid, nil
+	u := r.users[userID]
+	email := ""
+	if !u.IsBot && strings.Contains(u.Profile.Email, "@") {
+		email = u.Profile.Email
 	}
-	if pid, ok := r.fallback[userID]; ok {
-		return pid, nil
-	}
-	u, known := r.users[userID]
-	if known && strings.Contains(u.Profile.Email, "@") && !u.IsBot {
-		pid, err := r.byEmail(ctx, u.Profile.Email, u.DisplayName())
-		if err != nil {
-			return 0, err
-		}
-		if err := r.recordRich(ctx, userID, pid); err != nil {
-			return 0, err
-		}
-		return pid, nil
-	}
-	name := ""
-	if known {
-		name = u.DisplayName()
-	}
-	pid, err := r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, r.identifierValue(userID), name)
-	if err != nil {
-		return 0, err
-	}
-	r.fallback[userID] = pid
-	return pid, nil
+	return r.resolveIdentity(ctx, room, userID, u.DisplayName(), email)
 }
 
-// recordRich persists the Slack user ID as an identifier of the email-based
-// participant, so later runs resolve bare sightings to the same person. A
-// prior weak (bare-ID) owner is the same Slack user seen with less metadata:
-// its history is merged into the rich participant rather than left split.
-func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64) error {
-	value := r.identifierValue(userID)
-	prev, _, err := r.store.ParticipantByIdentifierContext(ctx, participantIdentifierType, value)
-	if err != nil {
-		return err
-	}
-	if prev != 0 && prev != pid {
-		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
-			return err
-		}
-	}
-	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, value); err != nil {
-		return err
-	}
-	r.rich[userID] = pid
-	delete(r.fallback, userID)
-	return nil
-}
-
-// resolveBot resolves a bot sender (bot_id + optional username). Bots never
-// dedup by email; they are namespaced by bot ID.
-func (r *participantResolver) resolveBot(ctx context.Context, botID, username string) (int64, error) {
+func (r *participantResolver) resolveBot(ctx context.Context, botID, username string, room int64) (int64, error) {
 	if botID == "" {
 		return 0, nil
 	}
-	key := "bot:" + botID
-	if pid, ok := r.fallback[key]; ok {
-		return pid, nil
+	return r.resolveIdentity(ctx, room, "bot:"+botID, username, "")
+}
+
+func (r *participantResolver) resolveIdentity(ctx context.Context, room int64, key, name, email string) (int64, error) {
+	input := store.ConversationParticipantIdentity{IdentifierType: participantIdentifierType, IdentifierValue: r.identifierValue(key), DisplayName: name, Email: email}
+	result, err := r.store.ResolveConversationParticipantContext(ctx, room, input)
+	if errors.Is(err, store.ErrConversationPolicyStale) || errors.Is(err, store.ErrPersonBindingConflict) {
+		pid, fallbackErr := r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, input.IdentifierValue, "")
+		if fallbackErr == nil {
+			r.fallback[key] = pid
+		}
+		return pid, fallbackErr
 	}
-	pid, err := r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, r.identifierValue(key), username)
 	if err != nil {
 		return 0, err
 	}
-	r.fallback[key] = pid
-	return pid, nil
-}
-
-func (r *participantResolver) byEmail(ctx context.Context, email, displayName string) (int64, error) {
-	email = strings.ToLower(email)
-	domain := ""
-	if at := strings.LastIndex(email, "@"); at >= 0 {
-		domain = email[at+1:]
+	// A cached PID is never admission authority. Publish only committed results.
+	if email != "" {
+		r.rich[key] = result.ParticipantID
+		delete(r.fallback, key)
+	} else {
+		r.fallback[key] = result.ParticipantID
 	}
-	return r.store.EnsureParticipantContext(ctx, email, displayName, domain)
+	return result.ParticipantID, nil
 }

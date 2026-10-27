@@ -51,6 +51,30 @@ func TestRelationshipActivityMatchesLegacyRowSet(t *testing.T) {
 	assertions.Zero(normalizedDifferences)
 }
 
+func TestSparseRelationshipActivityCastsLegacyParquetIdentityTypes(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	replaceRelationshipParquet(t, db, root, "participants", `
+		SELECT * FROM (VALUES
+			(1::BIGINT, 'owner@example.test'::VARCHAR, 1::BIGINT, 'Owner'::VARCHAR, ''::VARCHAR),
+			(2::BIGINT, 'bob@example.test'::VARCHAR, 42::BIGINT, 'Bob'::VARCHAR, ''::VARCHAR),
+			(3::BIGINT, 'alias@example.test'::VARCHAR, 42::BIGINT, 'Bob Alias'::VARCHAR, ''::VARCHAR),
+			(4::BIGINT, 'member@example.test'::VARCHAR, 17::BIGINT, 'Member'::VARCHAR, ''::VARCHAR)
+		) AS t(id, email_address, domain, display_name, phone_number)`)
+	replaceRelationshipParquet(t, db, root, "participant_clusters", `
+		SELECT * FROM (VALUES
+			(2::BIGINT, '2'::VARCHAR),
+			(3::BIGINT, '2'::VARCHAR)
+		) AS t(participant_id, canonical_id)`)
+	path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
+	query := buildSparseRelationshipActivitySQL(
+		path, readParquetRelation([]string{path("messages")}, true), 2026)
+	var count int64
+	err := db.QueryRow(`SELECT count(*) FROM (` + query + `)
+		WHERE canonical_id = 2 AND participant_domain = '42'`).Scan(&count)
+	require.NoError(t, err)
+	assert.Positive(t, count)
+}
+
 func TestRelationshipActivityYearQueryExcludesOffYearEdgesUnderLowMemory(t *testing.T) {
 	type activityRow struct {
 		messageID            int64

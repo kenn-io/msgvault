@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/eval"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -522,4 +523,52 @@ func TestEvalJSONOutputIsDeterministic(t *testing.T) {
 	_, inner, found := strings.Cut(text, `"a"`)
 	require.True(t, found)
 	assert.Less(t, strings.Index(inner, `"b"`), strings.Index(inner, `"y"`))
+}
+
+func TestRunEvalRejectsHostedColdTopics(t *testing.T) {
+	for _, query := range []string{"renewal include:cold", "renewal | notice include:cold"} {
+		t.Run(query, func(t *testing.T) {
+			cmd, _ := prepareEvalRerankRun(t, "batched", 1)
+			require.NoError(t, os.WriteFile(evalTopics, []byte("q1\t"+query+"\n"), 0600))
+			recorder := &evalRerankRecorder{}
+			err := runEvalWithRerankerFactory(cmd, nil, recorder.makeReranker)
+			require.ErrorContains(t, err, "include:cold")
+			assert.Zero(t, recorder.factoryCalls, "cold topics must be rejected before hosted scorer creation")
+			assert.Empty(t, recorder.requests)
+		})
+	}
+}
+
+type evalRerankFunc func(context.Context, rerank.Request) (rerank.Result, error)
+
+func (f evalRerankFunc) Rerank(ctx context.Context, request rerank.Request) (rerank.Result, error) {
+	return f(ctx, request)
+}
+
+func TestEvalRerankRevalidatesCandidatesBeforeEachDispatch(t *testing.T) {
+	for _, initiallyCold := range []bool{true, false} {
+		t.Run(fmt.Sprintf("initiallyCold=%t", initiallyCold), func(t *testing.T) {
+			s := seedRankingDivergenceArchive(t)
+			if initiallyCold {
+				require.NoError(t, s.SetConversationPolicyOverride(t.Context(), 1, "thread-1", conversationpolicy.Cold))
+			}
+			calls := 0
+			scorer := evalRerankFunc(func(_ context.Context, _ rerank.Request) (rerank.Result, error) {
+				calls++
+				require.NoError(t, s.SetConversationPolicyOverride(t.Context(), 1, "thread-1", conversationpolicy.Cold))
+				return rerank.Result{Scores: []float64{1, 0}, Usage: rerank.Usage{Complete: true}}, nil
+			})
+			report := newEvalRerankReport(evalRerankOptions{Shapes: []string{"batched", "per-candidate"}, Top: 2})
+			report.scorers = map[string]evalReranker{"batched": scorer, "per-candidate": scorer}
+			err := report.scoreRanking(t.Context(), s, map[string]evalHit{"one": {MessageID: 1}, "two": {MessageID: 2}},
+				"fts", eval.Topic{ID: "q1", Query: "renewal"}, []string{"one", "two"}, map[string]struct{}{"one": {}}, eval.Cutoffs{}, 0)
+			require.Error(t, err, "a cold candidate must prevent the next hosted dispatch")
+			wantCalls := 1
+			if initiallyCold {
+				wantCalls = 0
+			}
+			assert.Equal(t, wantCalls, calls)
+			assert.False(t, report.Complete)
+		})
+	}
 }

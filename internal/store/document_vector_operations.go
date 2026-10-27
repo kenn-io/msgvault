@@ -195,7 +195,7 @@ func (s *Store) checkpointDocumentVectorBuild(ctx context.Context, generationID 
 		return errors.New("document vector build checkpoint time is required")
 	}
 	var lifecycleErr error
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		state, currentTarget, found, err := s.lockDocumentVectorGenerationIfExists(q, generationID)
 		if err != nil {

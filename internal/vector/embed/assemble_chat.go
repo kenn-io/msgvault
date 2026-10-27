@@ -203,6 +203,7 @@ func (a ChatWindowAssembler) document(
 	for _, member := range members {
 		versions = append(versions, SourceVersion{
 			MessageID: member.row.ID, LastModified: member.row.LastModified,
+			EmbeddingRevision: member.row.EmbeddingRevision,
 		})
 		for i, span := range member.chunks {
 			chunks = append(chunks, OwnedChunk{
@@ -302,7 +303,7 @@ func chatDocumentRevision(
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%d\x00%s\x00", key, header,
 		metadata.ConversationID, metadata.Digest)
 	for _, version := range versions {
-		_, _ = fmt.Fprintf(h, "%d\x00", version.MessageID)
+		_, _ = fmt.Fprintf(h, "%d\x00%d\x00", version.MessageID, version.EmbeddingRevision)
 	}
 	for _, chunk := range chunks {
 		_, _ = fmt.Fprintf(h, "%d\x00%d\x00%d\x00%d\x00%d\x00%t\x00%s\x00",

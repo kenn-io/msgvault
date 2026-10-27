@@ -1030,7 +1030,7 @@ func (s *Store) AuthorizeAttemptPoll(
 	if token.AttemptID <= 0 {
 		return errors.New("person enrichment poll authorization requires an active attempt")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
@@ -1097,7 +1097,7 @@ func (s *Store) AuthorizeAttemptDispatch(
 		return errors.New("person enrichment dispatch authorization requires an active attempt")
 	}
 	staleRevision := false
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
@@ -2118,7 +2118,9 @@ func (s *Store) LoadRequestInput(
 		}
 	}
 	participantRows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.display_name, p.email_address, p.phone_number, p.created_at
+		SELECT p.id, CASE WHEN `+FullParticipantNameWhere("p.id", "p.display_name")+` THEN p.display_name END,
+ CASE WHEN `+FullParticipantValueWhere("p.id", "'email'", "p.email_address")+` THEN p.email_address END,
+ CASE WHEN `+FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")+` THEN p.phone_number END, p.created_at
 		FROM person_participants pp
 		JOIN participants p ON p.id = pp.participant_id
 		WHERE pp.person_id = ? ORDER BY p.id`, person.ID)
@@ -2176,7 +2178,7 @@ func (s *Store) LoadRequestInput(
 			input.Phones = append(input.Phones, candidate)
 		case ContactAddressURL:
 			input.PublicProfileURLs = append(input.PublicProfileURLs, candidate)
-		case ContactAddressUsername, ContactAddressIMPP, ContactAddressSocial,
+		case ContactAddressDisplayName, ContactAddressUsername, ContactAddressIMPP, ContactAddressSocial,
 			ContactAddressCalendar, ContactAddressContactURI, ContactAddressOrgDirectory,
 			ContactAddressLanguage, ContactAddressProviderIdentity:
 			// These classes are not one of the approved enrichment identity primitives.

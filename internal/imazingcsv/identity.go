@@ -22,9 +22,10 @@ const (
 )
 
 type participantIdentity struct {
-	Kind        identityKind
-	Value       string
-	DisplayName string
+	Kind          identityKind
+	Value         string
+	OriginalValue string
+	DisplayName   string
 }
 
 func (identity participantIdentity) key() string {
@@ -37,15 +38,22 @@ func normalizeIdentity(value, displayName string) (participantIdentity, error) {
 		return participantIdentity{}, errors.New("identity is empty")
 	}
 	if phone, err := textimport.NormalizePhone(trimmed); err == nil {
-		return participantIdentity{Kind: identityPhone, Value: phone, DisplayName: strings.TrimSpace(displayName)}, nil
+		return participantIdentity{
+			Kind: identityPhone, Value: phone, OriginalValue: trimmed,
+			DisplayName: strings.TrimSpace(displayName),
+		}, nil
 	}
 	if address, err := mail.ParseAddress(trimmed); err == nil &&
 		strings.Contains(address.Address, "@") && strings.EqualFold(address.Address, trimmed) {
 		return participantIdentity{
-			Kind: identityEmail, Value: strings.ToLower(address.Address), DisplayName: strings.TrimSpace(displayName),
+			Kind: identityEmail, Value: strings.ToLower(address.Address), OriginalValue: address.Address,
+			DisplayName: strings.TrimSpace(displayName),
 		}, nil
 	}
-	return participantIdentity{Kind: identityOpaque, Value: trimmed, DisplayName: strings.TrimSpace(displayName)}, nil
+	return participantIdentity{
+		Kind: identityOpaque, Value: trimmed, OriginalValue: trimmed,
+		DisplayName: strings.TrimSpace(displayName),
+	}, nil
 }
 
 func syntheticIdentity(sourceIdentifier, chatKey, category, displayName string) participantIdentity {

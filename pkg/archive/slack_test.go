@@ -166,7 +166,13 @@ func exerciseSlackReplacement(t *testing.T, runtime *archive.Archive) {
 	assertFromMe(t, runtime, "CSELECTED:"+peer.rootTS, false)
 	require.NoError(runtime.PurgeChannel(t.Context(), sourceID, "CSELECTED"))
 	searchIDs(t, runtime, "telescope", 0)
-	searchIDs(t, runtime, "observatory", 1)
+	searchIDs(t, runtime, "observatory", 0)
+	var retained int
+	require.NoError(runtime.Store().DB().QueryRowContext(t.Context(),
+		runtime.Store().Rebind("SELECT COUNT(*) FROM messages WHERE source_message_id = ?"),
+		"1704110400.000001",
+	).Scan(&retained))
+	assert.Equal(1, retained, "purging the imported channel leaves the unrelated unknown-size room archived")
 	for _, id := range retainedIDs {
 		response := httptest.NewRecorder()
 		archiveAPI(t, runtime).Handler(func(http.ResponseWriter, *http.Request, archive.Operation) bool { return true }).ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))

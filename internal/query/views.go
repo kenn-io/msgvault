@@ -123,9 +123,13 @@ func buildViewSQL(def viewDef, probedCols map[string]bool) string {
 		selectClause += ", " + strings.Join(extra, ", ")
 	}
 
+	filter := ""
+	if def.name == datasetMessages && probedCols["conversation_tier"] {
+		filter = " WHERE conversation_tier='full'"
+	}
 	return fmt.Sprintf(
-		"CREATE OR REPLACE VIEW %s AS %s FROM read_parquet('%s'%s)",
-		def.name, selectClause, escaped, hiveOpt,
+		"CREATE OR REPLACE VIEW %s AS %s FROM read_parquet('%s'%s)%s",
+		def.name, selectClause, escaped, hiveOpt, filter,
 	)
 }
 
@@ -537,7 +541,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.source_message_id,
 		m.conversation_id,
 		COALESCE(c.source_conversation_id, '') AS source_conversation_id,
-		COALESCE(c.conversation_type, '') AS conversation_type,
+		COALESCE(CAST(c.conversation_type AS VARCHAR), '') AS conversation_type,
 		COALESCE(c.title, '') AS conversation_title,
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,
@@ -600,7 +604,7 @@ SELECT
     m.source_message_id,
     m.conversation_id,
     COALESCE(c.source_conversation_id, '') AS source_conversation_id,
-    COALESCE(c.conversation_type, '') AS conversation_type,
+    COALESCE(CAST(c.conversation_type AS VARCHAR), '') AS conversation_type,
     COALESCE(c.title, '') AS conversation_title,
     COALESCE(m.message_type, '') AS message_type,
     m.list_id,

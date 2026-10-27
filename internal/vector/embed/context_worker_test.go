@@ -387,6 +387,36 @@ func TestContextWorker_FirstTickPublishesEachScopeOnce(t *testing.T) {
 	assert.Zero(t, f.missing())
 }
 
+func TestContextWorkerPublishesVectorsAtCurrentEmbeddingRevision(t *testing.T) {
+	f := newContextWorkerFixture(t, nil)
+	messageID := f.seed("beeper", f.chatID, time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), "revision-sensitive chat body")
+	var revision int64
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(),
+		f.store.Rebind(`SELECT embedding_revision FROM messages WHERE id = ?`), messageID).Scan(&revision))
+	require.Positive(t, revision, "the fixture body write must advance the embedding input revision")
+
+	result, err := f.run()
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged)
+	count, err := f.backend.EmbeddedMessageCountForSnapshot(t.Context(), f.gen, []int64{messageID})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+	beforeDocuments := f.client.Documents()
+	require.NoError(t, f.store.UpsertMessageBody(messageID,
+		sql.NullString{String: "revision-sensitive changed chat body", Valid: true}, sql.NullString{}))
+
+	result, err = f.run()
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged)
+	assert.Equal(t, beforeDocuments+1, f.client.Documents(),
+		"a changed input revision must rebuild vectors even when rendered document text is unchanged")
+	count, err = f.backend.EmbeddedMessageCountForSnapshot(t.Context(), f.gen, []int64{messageID})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count, "published vectors must match the stamped input revision")
+}
+
 func TestContextWorker_BuildScopeNeverSubmitsExcludedBody(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1284,20 +1314,23 @@ func TestContextWorker_UnchangedRevisionFencesDelayedPublication(t *testing.T) {
 		racePublisher = &contextFenceRacePublisher{DocumentPublisher: deps.Publisher}
 		deps.Publisher = racePublisher
 	})
-	id := f.seed("email", f.chatID, time.Now().UTC(), "revision a")
+	at := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	f.seed("beeper", f.chatID, at, "revision a")
 	_, err := f.run()
 	require.NoError(t, err)
-	initial, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", id))
+	initialDocuments, err := f.backend.ListDocumentsForScope(t.Context(), f.gen,
+		fmt.Sprintf("chat:%d:2026-08-08", f.chatID))
 	require.NoError(t, err)
+	require.Len(t, initialDocuments, 1)
+	initial := initialDocuments[0]
 	initialCalls := f.client.Calls()
 	initialWatermark := f.progress().ChangeSequence
 
-	require.NoError(t, f.store.UpsertMessageBody(id,
-		sql.NullString{String: "revision b", Valid: true}, sql.NullString{}))
+	f.seed("beeper", f.chatID, at.Add(time.Minute), "revision b")
 	snapshot, err := BeginSourceSnapshot(t.Context(), f.store)
 	require.NoError(t, err)
 	staleDocuments, err := f.worker.deps.Assembler.AssembleScopes(t.Context(), snapshot,
-		[]AffectedScope{{Kind: "email", MessageID: id}})
+		[]AffectedScope{chatDayContextScope(f.chatID, at).selector})
 	require.NoError(t, err)
 	staleSequence := snapshot.SourceSequence()
 	require.NoError(t, snapshot.Close())
@@ -1313,13 +1346,12 @@ func TestContextWorker_UnchangedRevisionFencesDelayedPublication(t *testing.T) {
 		staleDocuments, staleVectors, make([]bool, len(staleDocuments)))
 	require.NoError(t, err)
 
-	require.NoError(t, f.store.UpsertMessageBody(id,
-		sql.NullString{String: "revision a", Valid: true}, sql.NullString{}))
+	require.NoError(t, f.store.MarkMessageDeleted(f.sourceID, fmt.Sprintf("beeper-%d", f.sequence)))
 	latestSequence := latestContextSequence(t, f.store)
 	require.Greater(t, latestSequence, staleSequence)
 	racePublisher.beforeFence = func() error {
 		return racePublisher.PublishScope(t.Context(), f.gen,
-			fmt.Sprintf("message:%d", id), staleSequence, stalePublications, staleChunks)
+			initial.Key, staleSequence, stalePublications, staleChunks)
 	}
 
 	_, err = f.run()
@@ -2125,6 +2157,42 @@ func TestContextWorker_DocumentTooLargeLeavesOnlyItsScopeUncovered(t *testing.T)
 	bad, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", badID))
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, bad.State)
+}
+
+func TestContextWorker_ReplacementGenerationRejectionPreservesActiveVectors(t *testing.T) {
+	f := newContextWorkerFixture(t, nil)
+	messageID := f.seed("beeper", f.chatID, time.Now().UTC(), "reject-replacement-document")
+	_, err := f.run()
+	require.NoError(t, err)
+	assert.Zero(t, f.missing())
+	var beforeRevision int64
+	require.NoError(t, f.store.DB().QueryRow(
+		`SELECT embedding_revision FROM messages WHERE id = ?`, messageID).Scan(&beforeRevision))
+	beforeHits, err := f.backend.Search(t.Context(), f.gen, []float32{1, 1, 3, 4}, 10, vector.Filter{})
+	require.NoError(t, err)
+	require.Len(t, beforeHits, 1)
+	assert.Equal(t, messageID, beforeHits[0].MessageID)
+	require.NoError(t, f.backend.ActivateGeneration(t.Context(), f.gen, true))
+
+	building, err := f.backend.CreateGeneration(t.Context(), "synthetic-replacement", 4, "synthetic-replacement:4")
+	require.NoError(t, err)
+	f.client.rejectText = "reject-replacement-document"
+	result, err := f.worker.RunOnce(t.Context(), building, testEmbeddingPassScope())
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.False(t, result.Contextual.Converged,
+		"the replacement generation must remain uncovered while its provider rejects the document")
+
+	var afterRevision int64
+	require.NoError(t, f.store.DB().QueryRow(
+		`SELECT embedding_revision FROM messages WHERE id = ?`, messageID).Scan(&afterRevision))
+	assert.Equal(t, beforeRevision, afterRevision,
+		"a rejected unchanged document only needs its replacement coverage cleared")
+	afterHits, err := f.backend.Search(t.Context(), f.gen, []float32{1, 1, 3, 4}, 10, vector.Filter{})
+	require.NoError(t, err)
+	require.Len(t, afterHits, 1,
+		"reconciling a replacement generation must preserve the current generation's still-valid vectors")
+	assert.Equal(t, messageID, afterHits[0].MessageID)
 }
 
 func TestContextWorker_TokenDenseDocumentTruncatesInsteadOfBlockingActivation(t *testing.T) {

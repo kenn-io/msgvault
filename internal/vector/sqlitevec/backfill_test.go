@@ -99,6 +99,8 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 		err, "reopen main rw")
 
 	defer func() { _ = s.Close() }()
+	_, err = s.DB().Exec(`UPDATE messages SET embedding_revision = 1, embed_gen = NULL WHERE id = 1`)
+	require.NoError(err, "simulate the pre-backfill revision baseline")
 	_, err = s.DB().Exec(`CREATE TRIGGER zz_fail_backfill_mark
 		BEFORE INSERT ON applied_migrations
 		WHEN NEW.name = '` + embedGenBackfillMigration + `'
@@ -122,6 +124,10 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	_, isNull := embedGenOf(t, s.DB(), 1)
 	assert.True(isNull,
 		"embed_gen must be rolled back to NULL when the ledger mark fails (atomic)")
+	var revision int64
+	require.NoError(s.DB().QueryRow(`SELECT embedding_revision FROM messages WHERE id = 1`).Scan(&revision))
+	assert.Equal(int64(1), revision,
+		"revision baseline restoration must roll back with the failed backfill")
 	assert.False(backfillLedgerMarked(t, s.DB()),
 		"ledger must stay unmarked when the backfill tx rolls back")
 
@@ -142,6 +148,8 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 
 	_, isNull = embedGenOf(t, s.DB(), 1)
 	assert.False(isNull, "embed_gen stamped after clean re-Open")
+	require.NoError(s.DB().QueryRow(`SELECT embedding_revision FROM messages WHERE id = 1`).Scan(&revision))
+	assert.Zero(revision, "revision baseline restored when the clean backfill commits")
 	assert.True(backfillLedgerMarked(t, s.DB()),
 		"ledger marked after clean re-Open")
 }
@@ -180,6 +188,60 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_BothPresentOnSuccess(t *testing.T) 
 	assert.Positive(v, "embed_gen references the active generation")
 	assert.True(backfillLedgerMarked(t, s.DB()),
 		"ledger marked after successful backfill")
+}
+
+func TestBackfillEmbedGenPreservesLegacyCurrentVector(t *testing.T) {
+	require := require.New(t)
+	assertions := assert.New(t)
+	require.NoError(RegisterExtension())
+	ctx := context.Background()
+	mainPath, vecPath := seedEmbeddedMain(ctx, t)
+
+	s, err := store.Open(mainPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = s.Close() })
+	// Simulate the store's upgrade baseline: legacy messages with no embed_gen
+	// stamp are advanced to revision 1 even though their current active vectors
+	// still carry revision 0.
+	_, err = s.DB().Exec(`UPDATE messages SET embedding_revision = 1, embed_gen = NULL WHERE id = 1`)
+	require.NoError(err)
+	_, err = s.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
+	require.NoError(err)
+
+	b, err := Open(ctx, Options{
+		PolicyStore: s, Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB(),
+	})
+	require.NoError(err)
+	t.Cleanup(func() { _ = b.Close() })
+
+	var messageRevision int64
+	require.NoError(s.DB().QueryRow(`SELECT embedding_revision FROM messages WHERE id = 1`).Scan(&messageRevision))
+	assertions.Zero(messageRevision, "a current legacy vector restores the artificial baseline revision")
+	gen, isNull := embedGenOf(t, s.DB(), 1)
+	assertions.False(isNull, "the current legacy vector must be marked covered")
+	active, err := b.ActiveGeneration(ctx)
+	require.NoError(err)
+	assertions.Equal(int64(active.ID), gen)
+	hits, err := b.Search(ctx, active.ID, []float32{0, 0, 0, 1}, 10, vector.Filter{})
+	require.NoError(err)
+	require.Len(hits, 1, "the legacy vector remains searchable")
+	assertions.Equal(int64(1), hits[0].MessageID)
+
+	// A real post-upgrade input change advances past the artificial baseline.
+	// Its old revision-zero vector must remain hidden and eligible for rebuild.
+	_, err = s.DB().Exec(`UPDATE messages SET embedding_revision = 2, embed_gen = NULL WHERE id = 1`)
+	require.NoError(err)
+	_, err = s.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
+	require.NoError(err)
+	require.NoError(b.BackfillEmbedGenForUpgrade(ctx))
+	_, isNull = embedGenOf(t, s.DB(), 1)
+	assertions.True(isNull, "a vector older than a real input revision stays uncovered")
+	hits, err = b.Search(ctx, active.ID, []float32{0, 0, 0, 1}, 10, vector.Filter{})
+	require.NoError(err)
+	assertions.Empty(hits, "a vector older than a real input revision stays hidden from search")
+	stats, err := b.Stats(ctx, active.ID)
+	require.NoError(err)
+	assertions.Equal(int64(1), stats.PendingCount, "the mismatched vector remains eligible for a backstop rebuild")
 }
 
 // TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the SQLite
@@ -264,8 +326,10 @@ VALUES (1, 1, 1, 'm1', 'email'), (2, 1, 1, 'm2', 'email');
 	require.NoError(
 		rw.Close(), "close rw backend")
 
-	// Simulate the upgrade: embed_gen NULL everywhere, ledger cleared.
-	_, err = s.DB().Exec(`UPDATE messages SET embed_gen = NULL`)
+	// Simulate the store baseline: legacy messages have a NULL embed_gen and
+	// revision 1 before vector backfill reconciles current vectors. The pending
+	// row for msg 1 must keep that revision so its stale vector stays hidden.
+	_, err = s.DB().Exec(`UPDATE messages SET embed_gen = NULL, embedding_revision = 1`)
 	require.NoError(
 		err, "reset embed_gen")
 
@@ -276,7 +340,7 @@ VALUES (1, 1, 1, 'm1', 'email'), (2, 1, 1, 'm2', 'email');
 	// Writable Open runs the backfill (which consults pending) then drops the
 	// table.
 	b, err := Open(ctx, Options{
-		Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB(),
+		PolicyStore: s, Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB(),
 	})
 	require.NoError(
 		err, "writable Open (runs backfill)")
@@ -291,6 +355,16 @@ VALUES (1, 1, 1, 'm1', 'email'), (2, 1, 1, 'm2', 'email');
 	v2, isNull2 := embedGenOf(t, s.DB(), 2)
 	assert.False(isNull2, "msg 2 (no pending row) must be stamped")
 	assert.Equal(int64(gen), v2, "msg 2 embed_gen = active")
+	var revision1, revision2 int64
+	require.NoError(s.DB().QueryRow(`SELECT embedding_revision FROM messages WHERE id = 1`).Scan(&revision1))
+	require.NoError(s.DB().QueryRow(`SELECT embedding_revision FROM messages WHERE id = 2`).Scan(&revision2))
+	assert.Equal(int64(1), revision1, "a pending re-embed retains the baseline revision to hide its stale vector")
+	assert.Zero(revision2, "a current legacy vector restores the artificial baseline revision")
+	hits, err := b.Search(ctx, gen, []float32{0, 0, 0, 1}, 10, vector.Filter{})
+	require.NoError(err)
+	require.Len(hits, 1)
+	assert.Equal(int64(2), hits[0].MessageID,
+		"the pending stale vector stays hidden while the other current legacy vector remains searchable")
 
 	// The dead pending_embeddings table is dropped after the backfill consumed
 	// its signal.
