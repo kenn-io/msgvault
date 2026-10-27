@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -451,4 +454,100 @@ func mapKeysAny(values map[string]any) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func TestPersonFactContestsHTTPEmptyAndMissing(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, _, personID, _ := newPersonFactAPIFixtureWithoutClaims(t)
+	response := doRequest(t, srv.Router(), http.MethodGet,
+		fmt.Sprintf("/api/v1/people/%d/fact-contests", personID), nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Equal("no-store", response.Header().Get("Cache-Control"))
+	assertions.JSONEq(`{"contests":[]}`, response.Body.String())
+	missing := doRequest(t, srv.Router(), http.MethodGet,
+		"/api/v1/people/999999999/fact-contests", nil, nil)
+	assertions.Equal(http.StatusNotFound, missing.Code)
+}
+
+func TestPersonFactContestsHTTPIncludesClaimsAndEvidence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGeneration(t, st, personID, target, "contest-first", `"chat"`)
+	applyPersonFactAPIGeneration(t, st, personID, target, "contest-second", `"email"`)
+	response := doRequest(t, srv.Router(), http.MethodGet,
+		fmt.Sprintf("/api/v1/people/%d/fact-contests", personID), nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body PersonFactContestsResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Contests, 1)
+	requirements.Len(body.Contests[0].Claims, 2)
+	assertions.Equal(target.Revision, body.Contests[0].ResolutionRevision)
+	for _, claim := range body.Contests[0].Claims {
+		assertions.Equal(personfacts.DecisionAmbiguousRetained, claim.Decision.Action)
+		requirements.Len(claim.Evidence, 1)
+		assertions.True(claim.Evidence[0].Supported)
+	}
+}
+
+func TestPersonFactContestsRejectsRestrictedCredentials(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	_, st, personID, _ := newPersonFactAPIFixtureWithoutClaims(t)
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true, RemoteClients: []config.RemoteClientConfig{{ClientID: "synthetic-reader", APIKey: "synthetic-reader-key"}}}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
+	registry := agentgrant.NewRegistry()
+	srv.agentGrants = registry
+	_, secret, _, err := registry.Issue("synthetic-reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "synthetic@example.test"}}, time.Time{})
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		header, key string
+		status      int
+	}{
+		{"X-Api-Key", "synthetic-reader-key", http.StatusForbidden},
+		{apiprotocol.AgentTokenHeader, secret, http.StatusUnauthorized},
+	} {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/people/%d/fact-contests", personID), nil)
+		req.Header.Set(tc.header, tc.key)
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, req)
+		assertions.Equal(tc.status, response.Code, response.Body.String())
+	}
+}
+
+func TestPersonFactContestsHTTPSensitiveOptIn(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, personID, _ := newPersonFactAPIFixtureWithoutClaims(t)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
+	requirements.NoError(err)
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
+	requirements.NoError(err)
+	var target personfacts.TargetDescriptor
+	for _, item := range catalog.Targets {
+		if item.Slug == store.AttributeSlugPrimaryChannel {
+			target = item
+		}
+	}
+	requirements.True(target.Sensitive)
+	// Permit sensitive targets for both generations.
+	subject := personID
+	claims := []personfacts.ProposedClaim{}
+	for _, value := range []string{`"chat"`, `"email"`} {
+		claims = append(claims, personfacts.ProposedClaim{Target: target, Relation: personfacts.RelationSupport, SubmittedValue: json.RawMessage(value), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: personID, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/" + strings.Trim(value, `"`), SubjectPersonID: &subject, SubjectRef: "synthetic-person", SourceVersion: "source-v1", EventTime: personFactAPINow, RecordedTime: personFactAPINow, IdentityScore: 990}}})
+	}
+	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{PersonID: personID, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "sensitive", End: "end"}}, ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: personFactAPINow, Policy: personfacts.PolicyContext{AllowSensitive: true, ProviderPolicyFingerprint: "fixture"}, Claims: claims}, nil)
+	requirements.NoError(err)
+	path := fmt.Sprintf("/api/v1/people/%d/fact-contests", personID)
+	response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+	requirements.Equal(http.StatusOK, response.Code)
+	assertions.JSONEq(`{"contests":[]}`, response.Body.String())
+	response = doRequest(t, srv.Router(), http.MethodGet, path+"?include_sensitive=true", nil, nil)
+	requirements.Equal(http.StatusOK, response.Code)
+	var body PersonFactContestsResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Contests, 1)
+	assertions.True(body.Contests[0].Target.Sensitive)
 }

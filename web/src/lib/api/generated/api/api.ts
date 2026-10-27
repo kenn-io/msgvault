@@ -256,6 +256,8 @@ import type {
   ListPersonEmploymentsPathParameters,
   ListPersonFactClaimsParams,
   ListPersonFactClaimsPathParameters,
+  ListPersonFactContestsParams,
+  ListPersonFactContestsPathParameters,
   ListPersonFactDecisionsParams,
   ListPersonFactDecisionsPathParameters,
   ListPersonFactEvidenceParams,
@@ -347,6 +349,7 @@ import type {
   PersonDaysPage,
   PersonEnrichmentProviderUpdate,
   PersonFactClaimsResponse,
+  PersonFactContestsResponse,
   PersonFactDecisionsResponse,
   PersonFactEvidenceResponse,
   PersonFactEvidenceStatusEventsResponse,
@@ -3235,6 +3238,23 @@ export const listPersonFactClaims = (
   return orvalFetch<PersonFactClaimsResponse>(
     {
       url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-claims`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary List contested person facts
+ */
+export const listPersonFactContests = (
+  { id }: ListPersonFactContestsPathParameters,
+  params?: ListPersonFactContestsParams,
+  options?: SecondParameter<typeof orvalFetch<PersonFactContestsResponse>>,
+) => {
+  return orvalFetch<PersonFactContestsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-contests`,
       method: "GET",
       params,
     },

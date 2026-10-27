@@ -19,6 +19,7 @@ import (
 type PersonFactStore interface {
 	BuildPersonFactCatalogContext(ctx context.Context, includeSensitive bool) (personfacts.Catalog, error)
 	GetPersonContext(ctx context.Context, personID int64) (*store.Person, error)
+	ListPersonFactContestsContext(ctx context.Context, personID int64, includeSensitive bool) ([]store.PersonFactContest, error)
 	ListPersonFactEvidenceContext(
 		ctx context.Context, personID int64, filter personfacts.EvidenceFilter,
 	) ([]personfacts.Evidence, error)
@@ -157,7 +158,42 @@ type SetPersonFactPinRequest struct {
 	Pinned bool `json:"pinned"`
 }
 
+type PersonFactContestCurrent struct {
+	Value      string    `json:"value"`
+	ActiveFrom time.Time `json:"active_from"`
+	Declared   bool      `json:"declared"`
+}
+
+type PersonFactContestClaim struct {
+	ClaimKey   string                    `json:"claim_key"`
+	Relation   personfacts.ClaimRelation `json:"relation"`
+	Value      string                    `json:"value"`
+	ValidFrom  *time.Time                `json:"valid_from,omitzero" nullable:"false"`
+	ValidUntil *time.Time                `json:"valid_until,omitzero" nullable:"false"`
+	Decision   PersonFactDecision        `json:"decision"`
+	Evidence   []PersonFactEvidence      `json:"evidence"`
+}
+
+type PersonFactContest struct {
+	Target             personfacts.TargetDescriptor `json:"target"`
+	ResolvedAt         time.Time                    `json:"resolved_at"`
+	ResolutionRevision string                       `json:"resolution_revision"`
+	Current            []PersonFactContestCurrent   `json:"current"`
+	Claims             []PersonFactContestClaim     `json:"claims"`
+}
+
+type PersonFactContestsResponse struct {
+	Contests []PersonFactContest `json:"contests"`
+}
+
 func (s *Server) registerPersonFactRoutes(api huma.API) {
+	contests := rawAPIV1Operation("listPersonFactContests", http.MethodGet, "/people/{id}/fact-contests", "List contested person facts")
+	addPersonIDParameter(&contests)
+	contests.Parameters = append(contests.Parameters, queryBooleanParam("include_sensitive", "Include sensitive targets"))
+	contests.Responses = jsonResponsesFor[PersonFactContestsResponse](api)
+	addErrorResponses(api, contests.Responses, http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, contests, s.handleListPersonFactContests)
+
 	catalog := rawAPIV1Operation("listPersonFactTargets", http.MethodGet,
 		"/person-fact-targets", "List eligible automatic person fact targets")
 	catalog.Parameters = append(catalog.Parameters,
@@ -236,6 +272,45 @@ func personFactHistoryOperation(operationID, path, summary string) huma.Operatio
 		queryIntegerParam(limitParam, "Maximum rows to return (default 50, max 200)"),
 		queryIntegerParam("offset", "Zero-based row offset"))
 	return operation
+}
+
+func (s *Server) handleListPersonFactContests(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	facts, personID, ok := s.personFactRequestStore(w, r)
+	if !ok {
+		return
+	}
+	includeSensitive, _, err := queryBool(r, "include_sensitive")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	contests, err := facts.ListPersonFactContestsContext(r.Context(), personID, includeSensitive)
+	if err != nil {
+		s.writePersonFactError(w, err)
+		return
+	}
+	response := PersonFactContestsResponse{Contests: make([]PersonFactContest, 0, len(contests))}
+	for _, item := range contests {
+		contest := PersonFactContest{Target: item.Target, ResolvedAt: item.ResolvedAt, ResolutionRevision: item.ResolutionRevision, Current: []PersonFactContestCurrent{}, Claims: []PersonFactContestClaim{}}
+		for _, current := range item.Current {
+			contest.Current = append(contest.Current, PersonFactContestCurrent{Value: string(current.Normalized.JSON), ActiveFrom: current.ActiveFrom, Declared: current.Declared})
+		}
+		for _, entry := range item.Claims {
+			claim := PersonFactContestClaim{ClaimKey: entry.Claim.ClaimKey, Relation: entry.Claim.Claim.Relation, ValidFrom: entry.Claim.Claim.ValidFrom, ValidUntil: entry.Claim.Claim.ValidUntil, Decision: personFactDecisionDTO(entry.Decision), Evidence: []PersonFactEvidence{}}
+			if entry.Claim.Normalized != nil {
+				claim.Value = string(entry.Claim.Normalized.JSON)
+			} else {
+				claim.Value = string(entry.Claim.Claim.SubmittedValue)
+			}
+			for _, evidence := range entry.Evidence {
+				claim.Evidence = append(claim.Evidence, personFactEvidenceDTO(evidence))
+			}
+			contest.Claims = append(contest.Claims, claim)
+		}
+		response.Contests = append(response.Contests, contest)
+	}
+	writePersonFactDiagnostic(w, response)
 }
 
 func (s *Server) handleListPersonFactTargets(w http.ResponseWriter, r *http.Request) {

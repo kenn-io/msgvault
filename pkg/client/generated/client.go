@@ -927,6 +927,10 @@ type ClientInterface interface {
 	ListPersonFactClaims(ctx context.Context, options *ListPersonFactClaimsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactClaimsResponse, error)
 	ListPersonFactClaimsWithResponse(ctx context.Context, options *ListPersonFactClaimsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactClaimsResp, error)
 
+	// ListPersonFactContests List contested person facts
+	ListPersonFactContests(ctx context.Context, options *ListPersonFactContestsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactContestsResponse, error)
+	ListPersonFactContestsWithResponse(ctx context.Context, options *ListPersonFactContestsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactContestsResp, error)
+
 	// ListPersonFactDecisions List immutable person fact decisions
 	ListPersonFactDecisions(ctx context.Context, options *ListPersonFactDecisionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactDecisionsResponse, error)
 	ListPersonFactDecisionsWithResponse(ctx context.Context, options *ListPersonFactDecisionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactDecisionsResp, error)
@@ -15043,6 +15047,69 @@ func (c *Client) ListPersonFactClaims(ctx context.Context, options *ListPersonFa
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/fact-claims")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonFactContests List contested person facts
+func (c *Client) ListPersonFactContests(ctx context.Context, options *ListPersonFactContestsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFactContestsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/fact-contests",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonFactContestsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonFactContestsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonFactContestsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonFactContestsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonFactContestsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/fact-contests")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
