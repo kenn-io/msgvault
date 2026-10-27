@@ -13,7 +13,7 @@ jobs:
   run:
     uses: kenn-io/msgvault/.github/workflows/ci.yml@main
 
-  ci-gate:
+  gate:
     name: CI gate
     needs: run
     if: always()
