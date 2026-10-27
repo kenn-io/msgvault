@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/media"
@@ -116,7 +118,7 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 		{name: "50", pages: 50},
 		{name: "51", pages: 51},
 		{name: "NFC truncation", pages: 51, unicode: true},
-		{name: "owner encrypted", pages: 1, encrypted: true},
+		{name: "owner encrypted", pages: 51, encrypted: true},
 		{name: "later unknown submission", pages: 51, unknownSubmission: true},
 		{name: "checkpoint load failure", pages: 51, loadFailure: true},
 		{name: "checkpoint save failure", pages: 51, saveFailure: true},
@@ -128,11 +130,16 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 			pages := test.pages
 			content := doclingPDFPages(t, pages)
 			if test.encrypted {
-				var err error
-				content, err = mediatest.EncryptedPDF("", "synthetic-owner", 128)
+				var encrypted bytes.Buffer
+				err := api.Encrypt(bytes.NewReader(content), &encrypted, model.NewAESConfiguration("", "synthetic-owner", 128))
 				requirements.NoError(err)
-				_, err = media.CountPDFPages(content)
-				requirements.Error(err)
+				content = encrypted.Bytes()
+				pageCount, err := api.PageCount(bytes.NewReader(content), model.NewDefaultConfiguration())
+				requirements.NoError(err, "owner-encrypted PDF opens with an empty user password")
+				requirements.Equal(51, pageCount)
+				countedPages, err := media.CountPDFPages(content)
+				requirements.NoError(err)
+				requirements.Equal(int64(51), countedPages)
 			}
 			var selections []string
 			server := doclingRangeTestServer(t, pages, &selections, func(w http.ResponseWriter, first int) bool {
@@ -206,8 +213,11 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 				return
 			}
 			requirements.NoError(err)
-			if pages == 50 || test.encrypted {
+			if pages == 50 {
 				assertions.Equal([]string{""}, selections)
+			}
+			if test.encrypted {
+				assertions.Equal([]string{"1,50", "51,51"}, selections)
 			}
 			requirements.NotNil(catalog.publication)
 			if test.unicode {
