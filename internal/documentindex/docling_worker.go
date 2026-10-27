@@ -257,13 +257,10 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 	ranged := false
 	if route.Format.ID == "pdf" {
 		pages, inspectErr := media.CountPDFPages(content)
-		if inspectErr != nil {
-			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, inspectErr))
-		}
-		if pages > int64(w.config.Documents.MaxPagesPerDocument) {
+		if inspectErr == nil && pages > int64(w.config.Documents.MaxPagesPerDocument) {
 			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, ocr.NewPreparationError(fmt.Sprintf("Docling PDF has %d pages; max_pages_per_document is %d", pages, w.config.Documents.MaxPagesPerDocument), nil)))
 		}
-		if pages > doclingPDFRangePages {
+		if inspectErr == nil && pages > doclingPDFRangePages {
 			ranged = true
 			source, err = w.renderPageRanges(workCtx, content, candidate, route.Format, claim, int(pages), &accounting)
 		}

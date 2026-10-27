@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"unicode/utf8"
 )
 
 // DocumentExtractionRange is unpublished text from one successful PDF selection.
@@ -17,7 +16,6 @@ type DocumentExtractionRange struct {
 	TotalPages       int
 	Evidence         []byte
 	EvidenceChecksum string
-	Markdown         string
 	CharCount        int
 }
 
@@ -29,7 +27,7 @@ func (s *Store) LoadDocumentExtractionRanges(ctx context.Context, claim Document
 	if maxBytes <= 0 {
 		return nil, errors.New("invalid document range byte bound")
 	}
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT first_page,last_page,total_pages,evidence,evidence_checksum,markdown,char_count FROM document_extraction_ranges WHERE extraction_id = ? ORDER BY first_page`), claim.ExtractionID)
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT first_page,last_page,total_pages,evidence,evidence_checksum,char_count FROM document_extraction_ranges WHERE extraction_id = ? ORDER BY first_page`), claim.ExtractionID)
 	if err != nil {
 		return nil, fmt.Errorf("load document ranges: %w", err)
 	}
@@ -38,10 +36,10 @@ func (s *Store) LoadDocumentExtractionRanges(ctx context.Context, claim Document
 	var size int64
 	for rows.Next() {
 		var r DocumentExtractionRange
-		if err := rows.Scan(&r.FirstPage, &r.LastPage, &r.TotalPages, &r.Evidence, &r.EvidenceChecksum, &r.Markdown, &r.CharCount); err != nil {
+		if err := rows.Scan(&r.FirstPage, &r.LastPage, &r.TotalPages, &r.Evidence, &r.EvidenceChecksum, &r.CharCount); err != nil {
 			return nil, err
 		}
-		size += int64(len(r.Evidence) + len(r.Markdown))
+		size += int64(len(r.Evidence))
 		if size > maxBytes {
 			return nil, ErrDocumentRangeBytes
 		}
@@ -52,7 +50,7 @@ func (s *Store) LoadDocumentExtractionRanges(ctx context.Context, claim Document
 
 func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentExtractionClaim, r DocumentExtractionRange, maxBytes int64) error {
 	digest := sha256.Sum256(r.Evidence)
-	if r.FirstPage < 1 || r.LastPage < r.FirstPage || r.TotalPages < r.LastPage || len(r.Evidence) == 0 || hex.EncodeToString(digest[:]) != r.EvidenceChecksum || !utf8.ValidString(r.Markdown) || r.CharCount < utf8.RuneCountInString(r.Markdown) || maxBytes <= 0 {
+	if r.FirstPage < 1 || r.LastPage < r.FirstPage || r.TotalPages < r.LastPage || len(r.Evidence) == 0 || hex.EncodeToString(digest[:]) != r.EvidenceChecksum || r.CharCount < 0 || maxBytes <= 0 {
 		return errors.New("invalid document range checkpoint")
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -73,11 +71,11 @@ func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentE
 		if err := q.QueryRow(`SELECT COALESCE(SUM(payload_bytes),0) FROM document_extraction_ranges WHERE extraction_id = ? AND first_page != ?`, claim.ExtractionID, r.FirstPage).Scan(&size); err != nil {
 			return err
 		}
-		payloadBytes := int64(len(r.Evidence) + len(r.Markdown))
+		payloadBytes := int64(len(r.Evidence))
 		if size+payloadBytes > maxBytes {
 			return ErrDocumentRangeBytes
 		}
-		_, err = q.Exec(`INSERT INTO document_extraction_ranges (extraction_id,first_page,last_page,total_pages,evidence,evidence_checksum,markdown,char_count,payload_bytes) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (extraction_id,first_page) DO NOTHING`, claim.ExtractionID, r.FirstPage, r.LastPage, r.TotalPages, string(r.Evidence), r.EvidenceChecksum, r.Markdown, r.CharCount, payloadBytes)
+		_, err = q.Exec(`INSERT INTO document_extraction_ranges (extraction_id,first_page,last_page,total_pages,evidence,evidence_checksum,char_count,payload_bytes) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (extraction_id,first_page) DO NOTHING`, claim.ExtractionID, r.FirstPage, r.LastPage, r.TotalPages, string(r.Evidence), r.EvidenceChecksum, r.CharCount, payloadBytes)
 		return err
 	})
 }

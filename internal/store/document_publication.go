@@ -291,8 +291,8 @@ func (s *Store) ClaimDocumentExtraction(
 		}
 		if precedingID != "" {
 			if _, err := q.Exec(`INSERT INTO document_extraction_ranges
-                (extraction_id, first_page, last_page, total_pages, evidence, evidence_checksum, markdown, char_count, payload_bytes)
-                SELECT ?, first_page, last_page, total_pages, evidence, evidence_checksum, markdown, char_count, payload_bytes
+                (extraction_id, first_page, last_page, total_pages, evidence, evidence_checksum, char_count, payload_bytes)
+                SELECT ?, first_page, last_page, total_pages, evidence, evidence_checksum, char_count, payload_bytes
                 FROM document_extraction_ranges WHERE extraction_id = ?`, input.ExtractionID, precedingID); err != nil {
 				return fmt.Errorf("transfer PDF range checkpoints: %w", err)
 			}

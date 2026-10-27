@@ -49,7 +49,7 @@ function documentIndexStatusResponse() {
     status: {
       profile_exists: true, profile_enabled: true, exact_consent: true,
       ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
-      terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
+      terminal_owners: 0, stored_plaintext_chunks: 12, stored_plaintext_ranges: 0, provider_requests: 2
     }
   };
 }

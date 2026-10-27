@@ -4691,7 +4691,6 @@ CREATE TABLE IF NOT EXISTS document_extraction_ranges (
     total_pages INTEGER NOT NULL CHECK (total_pages >= last_page),
     evidence TEXT NOT NULL,
     evidence_checksum TEXT NOT NULL,
-    markdown TEXT NOT NULL,
     char_count BIGINT NOT NULL CHECK (char_count >= 0),
     payload_bytes BIGINT NOT NULL CHECK (payload_bytes > 0),
     PRIMARY KEY (extraction_id, first_page)

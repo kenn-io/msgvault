@@ -17,7 +17,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/store"
@@ -78,19 +77,7 @@ func TestDoclingStatusDisclosesFailedRangePlaintext(t *testing.T) {
 		LeaseOwner: "range-status-worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
 	})
 	requirements.NoError(err)
-	source := document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete, Family: "pdf", UnitKind: document.EvidenceUnitPage}
-	for page := 1; page <= 50; page++ {
-		source.Units = append(source.Units, document.SourceEvidenceUnitV1{Order: page - 1, Text: "saved sentinel", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: int64(page), End: int64(page)}})
-	}
-	policy, err := document.NewEvidencePolicy(10000)
-	requirements.NoError(err)
-	evidence, err := document.NormalizeEvidenceV1(source, policy)
-	requirements.NoError(err)
-	encoded, checksum, err := document.MarshalNormalizedEvidenceV1(evidence)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.SaveDocumentExtractionRange(ctx, claim, store.DocumentExtractionRange{
-		FirstPage: 1, LastPage: 50, TotalPages: 51, Evidence: encoded, EvidenceChecksum: checksum, CharCount: 50 * len("saved sentinel"),
-	}, documentsConfig.MaxResponseBytes))
+	requirements.NoError(f.Store.SaveDocumentExtractionRange(ctx, claim, storetest.DocumentRangeCheckpoint(t), documentsConfig.MaxResponseBytes))
 	requirements.NoError(f.Store.FailDocumentExtraction(ctx, store.DocumentExtractionFailure{
 		Claim: claim, ReasonCode: "provider_timeout", RetryAt: time.Now().UTC().Add(time.Minute),
 	}))

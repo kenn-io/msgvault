@@ -37,9 +37,9 @@ below explain each provider’s consent and build workflow.
 
 The provider receives complete original bytes for each directly authorized format.
 Msgvault keeps the containing-message links, normalized text, text chunks,
-indexes, consent records, and backups locally. Raw provider JSON remains
-transient. Successful Docling PDF ranges retain canonical evidence and Markdown
-needed for fallback in local checkpoints, including after a later range fails.
+indexes, consent records, and backups locally. Msgvault does not retain the full raw provider JSON or Markdown response.
+Successful Docling PDF ranges retain normalized page units in local checkpoints,
+including after a later range fails.
 Publication or `documents purge-derived` removes these checkpoints; otherwise
 weekly cleanup does, as described under Docling retries.
 
@@ -248,7 +248,7 @@ The existing whole-document page cap still applies. A 600-page PDF needs
 to lower peak memory; memory scaling with page count is an inference, not a
 measured guarantee.
 
-Successful ranges save canonical evidence and Markdown needed for fallback in the local
+Successful ranges save normalized page units in the local
 archive database. These checkpoints survive failures and daemon restarts.
 The latest failed attempt keeps them while its source remains live and its profile is the current target. Publication
 removes them. `msgvault documents purge-derived --hash <sha256> --yes`
@@ -257,13 +257,13 @@ after no live message contains the PDF, its profile stops being the target, or a
 checkpoints, the weekly `msgvault serve` cleanup deletes them once they have gone
 seven days without changes. Without `serve`, they stay until publication or purge.
 Backups made before removal can
-still contain that plaintext. Existing Docling users must review the updated
-disclosure and run `msgvault documents consent-docling --yes` again before building.
+still contain that plaintext.
 Retry and resume submit only missing ranges. A full rebuild starts fresh.
 Nothing becomes searchable until every range succeeds and one transaction
 publishes the combined document. Complete mappings preserve original page
 numbers, including blank pages. If any range needs Markdown fallback, every
 range's Markdown is joined in page order as one document without page claims.
+Degraded ranges stay in memory for the current run and are resent on retry.
 Partial-success results are rejected and never checkpointed. Checkpoints
 contain unpublished plaintext and are disclosed in full backups.
 

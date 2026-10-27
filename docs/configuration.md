@@ -444,7 +444,7 @@ uses a configured endpoint without a manifest.
 | `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
 | `max_pages_per_document` | `500` | Maximum provider units for one document |
-| `max_response_bytes` | `67108864` | Maximum provider response size and aggregate Docling range checkpoint bytes, including Markdown and canonical evidence (64 MiB) |
+| `max_response_bytes` | `67108864` | Maximum provider response size and aggregate Docling range checkpoint bytes, including canonical normalized evidence (64 MiB) |
 | `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
 | `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
 | `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
@@ -471,8 +471,7 @@ a cap of at least 600. Successful ranges remain in the archive after failure;
 retry and resume reuse them across daemon restarts. Publication or
 `documents purge-derived` removes checkpoints; source removal leaves them for the
 weekly seven-day `serve` cleanup. Earlier backups can retain them. Full rebuilds
-start fresh. Existing Docling users must record
-consent again for checkpoint Markdown retention.
+start fresh.
 See [Docling extraction](usage/document-indexing.md#use-a-self-hosted-docling-service) for
 checkpoint plaintext, Markdown fallback, and retry behavior.
 

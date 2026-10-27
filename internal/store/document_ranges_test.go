@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -23,7 +22,7 @@ func TestDocumentRangesSurviveRetryAndFenceWrites(t *testing.T) {
 	})
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
 	requirements.NoError(err)
-	checkpoint := documentRangeCheckpoint(t)
+	checkpoint := storetest.DocumentRangeCheckpoint(t)
 	requirements.ErrorIs(f.Store.SaveDocumentExtractionRange(t.Context(), claim, checkpoint, 1), store.ErrDocumentRangeBytes)
 	requirements.NoError(f.Store.SaveDocumentExtractionRange(t.Context(), claim, checkpoint, 1<<20))
 	stale := claim
@@ -85,7 +84,7 @@ func TestDocumentRangesCleanup(t *testing.T) {
 			input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{ExtractionID: "range-gc", ProfileID: profile.ID, CanonicalBlobHash: hash, ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1})
 			claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
 			requirements.NoError(err)
-			checkpoint := documentRangeCheckpoint(t)
+			checkpoint := storetest.DocumentRangeCheckpoint(t)
 			requirements.NoError(f.Store.SaveDocumentExtractionRange(t.Context(), claim, checkpoint, 1<<20))
 			requirements.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{Claim: claim, ReasonCode: "provider_timeout", Terminal: true}))
 			_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Hour), 100)
@@ -165,19 +164,4 @@ func TestDocumentRangesCleanup(t *testing.T) {
 			assertions.Zero(count, "published replacement makes old terminal ranges collectible")
 		})
 	}
-}
-
-func documentRangeCheckpoint(t *testing.T) store.DocumentExtractionRange {
-	t.Helper()
-	source := document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete, Family: "pdf", UnitKind: document.EvidenceUnitPage}
-	for page := 1; page <= 50; page++ {
-		source.Units = append(source.Units, document.SourceEvidenceUnitV1{Order: page - 1, Text: "saved sentinel", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: int64(page), End: int64(page)}})
-	}
-	policy, err := document.NewEvidencePolicy(10000)
-	require.NoError(t, err)
-	normalized, err := document.NormalizeEvidenceV1(source, policy)
-	require.NoError(t, err)
-	encoded, checksum, err := document.MarshalNormalizedEvidenceV1(normalized)
-	require.NoError(t, err)
-	return store.DocumentExtractionRange{FirstPage: 1, LastPage: 50, TotalPages: 51, Evidence: encoded, EvidenceChecksum: checksum, Markdown: "", CharCount: 50 * len("saved sentinel")}
 }

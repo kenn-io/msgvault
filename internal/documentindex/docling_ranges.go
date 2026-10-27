@@ -39,6 +39,7 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 		checkpoint, ok := saved[first]
 		var units []document.SourceUnit
 		var fallback bool
+		var rangeMarkdown string
 		if !ok {
 			upload, authorization, err := w.authorizeUpload(content, candidate, format, claim)
 			if err != nil {
@@ -51,6 +52,9 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 			}{claim.ExtractionID, first, last, authorization.CapabilityRecordChecksum})
 			if err != nil {
 				return document.SourceDocument{}, err
+			}
+			if requests, ok := ctx.Value(doclingRequestAccountingKey{}).(*doclingRequestAccounting); ok {
+				requests.submitted.Store(false)
 			}
 			started := time.Now()
 			rendered, err := w.provider.RenderPageRange(ctx, upload, authorization, docling.PageRange{First: int64(first), Last: int64(last)})
@@ -77,30 +81,26 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 			if err != nil {
 				return document.SourceDocument{}, fmt.Errorf("encode range evidence: %w", err)
 			}
-			checkpoint = store.DocumentExtractionRange{FirstPage: first, LastPage: last, TotalPages: pages, Evidence: encoded, EvidenceChecksum: checksum, Markdown: string(rendered.ProviderMarkdown)}
+			checkpoint = store.DocumentExtractionRange{FirstPage: first, LastPage: last, TotalPages: pages, Evidence: encoded, EvidenceChecksum: checksum}
 			// Docbank validates fresh page selections. Ignore selection omissions
 			// when choosing between its page mapping and Markdown fallback.
 			fallback = doclingRangeDegraded(evidence, checkpoint)
 			for _, unit := range evidence.Units {
 				fallback = fallback || len(unit.Omissions) > 0
 			}
-			if !fallback {
-				rendered.Evidence.Completeness = document.EvidenceComplete
-			}
-			rangeSource, err := doclingSourceDocument(rendered)
-			if err != nil {
-				return document.SourceDocument{}, err
-			}
-			units, fallback = rangeSource.Units, rangeSource.UnitKind != "page"
-			if !fallback {
-				checkpoint.Markdown = ""
-			}
-			checkpoint.CharCount = utf8.RuneCountInString(checkpoint.Markdown)
-			for _, unit := range evidence.Units {
-				checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
-			}
-			if err := w.catalog.SaveDocumentExtractionRange(ctx, claim, checkpoint, w.config.Documents.MaxResponseBytes); err != nil {
-				return document.SourceDocument{}, fmt.Errorf("%w: %w", errDocumentRangeCheckpoint, err)
+			if fallback {
+				rangeMarkdown = string(rendered.ProviderMarkdown)
+			} else {
+				units, _, err = doclingRangeUnits(checkpoint)
+				if err != nil {
+					return document.SourceDocument{}, err
+				}
+				for _, unit := range evidence.Units {
+					checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
+				}
+				if err := w.catalog.SaveDocumentExtractionRange(ctx, claim, checkpoint, w.config.Documents.MaxResponseBytes); err != nil {
+					return document.SourceDocument{}, fmt.Errorf("%w: %w", errDocumentRangeCheckpoint, err)
+				}
 			}
 		} else {
 			units, fallback, err = doclingRangeUnits(checkpoint)
@@ -110,7 +110,6 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 		}
 		degraded = degraded || fallback
 		source.Units = append(source.Units, units...)
-		rangeMarkdown := checkpoint.Markdown
 		if strings.TrimSpace(rangeMarkdown) == "" {
 			if fallback {
 				return document.SourceDocument{}, errors.New("docling range has no bounded Markdown fallback")
@@ -145,7 +144,11 @@ func doclingRangeUnits(r store.DocumentExtractionRange) ([]document.SourceUnit, 
 	if err != nil || checksum != r.EvidenceChecksum || !bytes.Equal(canonical, r.Evidence) {
 		return nil, false, errors.New("invalid canonical document range evidence")
 	}
-	return doclingEvidenceRangeUnits(evidence, r)
+	units, degraded, err := doclingEvidenceRangeUnits(evidence, r)
+	if degraded {
+		return nil, true, errors.New("docling range checkpoint has degraded evidence")
+	}
+	return units, false, err
 }
 
 func doclingEvidenceRangeUnits(evidence document.NormalizedEvidenceV1, r store.DocumentExtractionRange) ([]document.SourceUnit, bool, error) {

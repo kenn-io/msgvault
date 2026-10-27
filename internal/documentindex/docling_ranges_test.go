@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -46,13 +47,17 @@ func doclingPDFPages(t *testing.T, pages int) []byte {
 
 func TestDoclingWorkerPageRanges(t *testing.T) {
 	for _, test := range []struct {
-		name                     string
-		pages, cap               int
-		loadFailure, saveFailure bool
-		corruption               string
+		name                                  string
+		pages, cap                            int
+		loadFailure, saveFailure              bool
+		unicode, encrypted, unknownSubmission bool
+		corruption                            string
 	}{
 		{name: "50", pages: 50},
 		{name: "51", pages: 51},
+		{name: "Unicode resume budget", pages: 51, unicode: true},
+		{name: "owner encrypted", pages: 1, encrypted: true},
+		{name: "later unknown submission", pages: 51, unknownSubmission: true},
 		{name: "corrupt checkpoint", pages: 51, corruption: "evidence"},
 		{name: "corrupt checksum", pages: 51, corruption: "checksum"},
 		{name: "checkpoint load failure", pages: 51, loadFailure: true},
@@ -64,6 +69,13 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 			requirements := require.New(t)
 			pages := test.pages
 			content := doclingPDFPages(t, pages)
+			if test.encrypted {
+				var err error
+				content, err = mediatest.EncryptedPDF("", "synthetic-owner", 128)
+				requirements.NoError(err)
+				_, err = media.CountPDFPages(content)
+				requirements.Error(err)
+			}
 			var selections []string
 			var first, last int
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +101,10 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 							return
 						}
 					}
+					if test.unknownSubmission && first == 51 {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
 					_, err := io.WriteString(w, `{"task_id":"range-job","task_type":"convert","task_status":"success"}`)
 					assertions.NoError(err)
 				case "/v1/result/range-job":
@@ -106,7 +122,11 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 					for page := first; page <= last; page++ {
 						registry[strconv.Itoa(page)] = map[string]any{}
 						if page != 2 {
-							texts = append(texts, map[string]any{"text": fmt.Sprintf("page %d sentinel", page), "prov": []any{map[string]any{"page_no": page}}})
+							text := fmt.Sprintf("page %d sentinel", page)
+							if test.unicode {
+								text = "Cafe\u0301"
+							}
+							texts = append(texts, map[string]any{"text": text, "prov": []any{map[string]any{"page_no": page}}})
 						}
 					}
 					doc["pages"], doc["texts"] = registry, texts
@@ -118,6 +138,9 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 			defer server.Close()
 			c := doclingTestConfig()
 			c.Endpoint = server.URL
+			if test.unicode {
+				c.MaxNormalizedChars = 4
+			}
 			if test.cap > 0 {
 				c.MaxPagesPerDocument = test.cap
 			}
@@ -148,6 +171,16 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 				selections = nil
 			}
 			result, err := worker.ProcessCandidate(t.Context(), candidate)
+			if test.unknownSubmission {
+				requirements.Error(err)
+				requirements.NotNil(catalog.failure)
+				assertions.Equal("provider_interrupted", result.FailureReasonCode)
+				assertions.False(catalog.failure.Terminal)
+				assertions.False(catalog.failure.RetryAt.IsZero())
+				assertions.Equal(3, catalog.failure.RequestCount)
+				assertions.Zero(catalog.failure.RetryCount)
+				return
+			}
 			if test.corruption != "" {
 				requirements.ErrorContains(err, "invalid canonical document range evidence")
 				assertions.Nil(catalog.publication)
@@ -181,6 +214,22 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 				assertions.Equal([]string{""}, selections)
 			}
 			requirements.NotNil(catalog.publication)
+			if test.unicode {
+				fresh := catalog.publication.Units
+				catalog.ranges = catalog.ranges[:1]
+				catalog.publication = nil
+				_, err = worker.ProcessCandidate(t.Context(), candidate)
+				requirements.NoError(err)
+				requirements.NotNil(catalog.publication)
+				assertions.Equal(fresh, catalog.publication.Units)
+				assertions.Equal("Café", catalog.publication.Units[0].Text)
+				return
+			}
+			if test.encrypted {
+				assertions.Equal([]string{""}, selections)
+				assertions.NotEmpty(catalog.publication.Units)
+				return
+			}
 			assertions.Equal(pages, result.Units)
 			assertions.Empty(catalog.publication.Units[1].Text)
 			assertions.Equal(fmt.Sprintf("page %d sentinel", pages), catalog.publication.Units[pages-1].Text)
@@ -448,18 +497,17 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NotNil(catalog.publication)
 			assertions.Equal([]string{"1,50", "51,51"}, selections)
-			requirements.Len(catalog.ranges, 2)
-			assertions.Empty(catalog.ranges[0].Markdown)
+			if test.degrade {
+				requirements.Len(catalog.ranges, 1)
+			} else {
+				requirements.Len(catalog.ranges, 2)
+			}
 			if test.blankFirst {
 				assertions.Zero(catalog.ranges[0].CharCount)
 			} else {
 				assertions.Equal(2641, catalog.ranges[0].CharCount)
 			}
-			if test.degrade {
-				assertions.Equal("range 51..51 Markdown sentinel", catalog.ranges[1].Markdown)
-				assertions.Equal(83, catalog.ranges[1].CharCount)
-			} else {
-				assertions.Empty(catalog.ranges[1].Markdown)
+			if !test.degrade {
 				assertions.Equal(53, catalog.ranges[1].CharCount)
 			}
 			if test.degrade {
@@ -472,6 +520,15 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 					assertions.Contains(catalog.publication.Units[0].Text, "page 50 sentinel")
 					assertions.Contains(catalog.publication.Units[0].Text, "range 51..51 Markdown sentinel")
 				}
+			}
+			if test.degrade {
+				fresh := catalog.publication.Units
+				catalog.publication = nil
+				_, err = worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))})
+				requirements.NoError(err)
+				requirements.NotNil(catalog.publication)
+				assertions.Equal(fresh, catalog.publication.Units)
+				assertions.Equal([]string{"1,50", "51,51", "51,51"}, selections)
 			}
 			if test.truncated {
 				assertions.True(result.Truncated)
