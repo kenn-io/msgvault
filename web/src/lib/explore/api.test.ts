@@ -149,6 +149,19 @@ describe('ExploreAPI routing', () => {
     });
   });
 
+  it('preserves full-text warnings in entry and grouped results', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {},
+      warnings: ['OR was matched as a literal word; use " | " between alternatives.']
+    }));
+    const api = createExploreAPI(createAPIClient(fetchFn));
+    const predicate = { query: 'alpha OR beta', search_mode: 'full_text' as const, filters: [], presentation: 'table' as const, limit: 500 };
+    const entries = await api.explore(predicate);
+    const groups = await api.groups(predicate, 'source');
+    expect(entries.status === 'ready' && entries.result.warnings).toHaveLength(1);
+    expect(groups.status === 'ready' && groups.result.warnings).toHaveLength(1);
+  });
+
   it('preserves the declared active-only deletion scope for entry and grouped results', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

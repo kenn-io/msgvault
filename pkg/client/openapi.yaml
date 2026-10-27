@@ -3525,6 +3525,10 @@ components:
         total_count:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - query
         - messages
@@ -5495,6 +5499,10 @@ components:
         total_count:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - rows
         - total_count
@@ -5571,6 +5579,10 @@ components:
         total_count:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - rows
         - cache_revision
@@ -14411,6 +14423,10 @@ components:
         total_count:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - query
         - messages
@@ -14468,6 +14484,10 @@ components:
         total:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - query
         - total

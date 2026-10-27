@@ -9214,3 +9214,25 @@ func TestHandleSearchPipeLiteralModes(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.True(t, called)
 }
+
+func TestSearchLiteralORWarning(t *testing.T) {
+	srv, _ := newTestServerWithMockStore(t)
+	for _, tc := range []struct {
+		query string
+		warn  bool
+	}{
+		{"from:@a.example OR from:@b.example", true},
+		{`"OR"`, false},
+		{"or", false},
+		{"WORD", false},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/search?q="+url.QueryEscape(tc.query), nil))
+			require.Equal(t, http.StatusOK, w.Code)
+			var result SearchResult
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&result))
+			assert.Equal(t, tc.warn, len(result.Warnings) > 0)
+		})
+	}
+}

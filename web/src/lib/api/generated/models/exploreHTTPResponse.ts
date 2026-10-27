@@ -13,5 +13,6 @@ export interface ExploreHTTPResponse {
   search_deletion_scope?: string;
   search_provenance: SearchProvenance;
   total_count?: number;
+  warnings?: string[];
   [key: string]: unknown;
 }

@@ -151,6 +151,9 @@ Examples:
 		}
 		if searchMode == "fts" {
 			parsed := search.ParseOR(queryStr)
+			for _, warning := range search.LiteralORWarnings(queryStr) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Warning:", warning)
+			}
 			parsed.MessageTypes = append(parsed.MessageTypes, searchMessageTypes...)
 			if parsed.IsEmpty() && searchAccount == "" && searchCollection == "" {
 				return errors.New("empty search query")
