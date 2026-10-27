@@ -18,6 +18,29 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.DB().Exec("DROP TABLE document_extraction_ranges")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='14' WHERE key='schema_version'")
+	require.NoError(err)
+	require.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "run setup")
+	version, err := f.Store.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(14, version)
+	var count int
+	require.Error(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
+	version, err = f.Store.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(store.SchemaVersion, version)
+	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	assert.Zero(count)
+}
+
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

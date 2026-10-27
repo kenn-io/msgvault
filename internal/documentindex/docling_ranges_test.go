@@ -353,15 +353,13 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 
 func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 	for _, test := range []struct {
-		name                                                                              string
-		degrade, missing, rebase, truncated, blankFirst, structuredFirst, missingFallback bool
+		name                                                             string
+		degrade, truncated, blankFirst, structuredFirst, missingFallback bool
 	}{
 		{name: "Markdown from all ranges", degrade: true},
 		{name: "blank range before degraded range", degrade: true, blankFirst: true},
 		{name: "structured text before degraded range", degrade: true, structuredFirst: true},
 		{name: "degraded range without Markdown", degrade: true, missingFallback: true},
-		{name: "missing page", missing: true},
-		{name: "rebased page", rebase: true},
 		{name: "truncate after complete coverage", truncated: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -409,15 +407,8 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 					registry := map[string]any{}
 					texts := []any{}
 					for page := first; page <= last; page++ {
-						if test.missing && page == 2 {
-							continue
-						}
-						number := page
-						if test.rebase && first == 51 {
-							number = 1
-						}
-						registry[strconv.Itoa(number)] = map[string]any{}
-						texts = append(texts, map[string]any{"text": fmt.Sprintf("page %d %s", page, strings.Repeat("sentinel ", 5)), "prov": []any{map[string]any{"page_no": number}}})
+						registry[strconv.Itoa(page)] = map[string]any{}
+						texts = append(texts, map[string]any{"text": fmt.Sprintf("page %d %s", page, strings.Repeat("sentinel ", 5)), "prov": []any{map[string]any{"page_no": page}}})
 					}
 					doc["pages"], doc["texts"] = registry, texts
 					if test.blankFirst && first == 1 {
@@ -448,15 +439,10 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 			requirements.NoError(err)
 			digest := sha256.Sum256(content)
 			result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))})
-			if test.missing || test.rebase || test.missingFallback {
+			if test.missingFallback {
 				requirements.Error(err)
 				assertions.Nil(catalog.publication)
-				if test.missingFallback {
-					assertions.Len(catalog.ranges, 1, "retry must request the degraded range again")
-				}
-				if test.missing {
-					assertions.Empty(catalog.ranges)
-				}
+				assertions.Len(catalog.ranges, 1, "retry must request the degraded range again")
 				return
 			}
 			requirements.NoError(err)

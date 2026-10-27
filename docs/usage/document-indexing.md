@@ -250,10 +250,10 @@ measured guarantee.
 
 Successful ranges save canonical evidence and Markdown needed for fallback in the local
 archive database. These checkpoints survive failures and daemon restarts.
-The latest failed attempt keeps them while its source remains live. Publication
+The latest failed attempt keeps them while its source remains live and its profile is the current target. Publication
 removes them. `msgvault documents purge-derived --hash <sha256> --yes`
 removes them immediately. Removing the source or message leaves them for cleanup:
-after no live message contains the PDF, or a newer attempt replaces the
+after no live message contains the PDF, its profile stops being the target, or a newer attempt replaces the
 checkpoints, the weekly `msgvault serve` cleanup deletes them once they have gone
 seven days without changes. Without `serve`, they stay until publication or purge.
 Backups made before removal can

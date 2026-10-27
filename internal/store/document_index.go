@@ -905,8 +905,8 @@ func (s *Store) CompleteDocumentExtractionRebuild(ctx context.Context, rebuildID
 // GarbageCollectDocumentDerivatives removes bounded stale extraction
 // revisions. Superseded revisions are eligible after the recovery cutoff.
 // Current owners and terminal suppression records stay while their source is
-// live, except superseded attempts with staged ranges. Active staging leases
-// are never collected.
+// live, except staged ranges from superseded attempts or profiles that are no
+// longer the target. Active staging leases are never collected.
 func (s *Store) GarbageCollectDocumentDerivatives(
 	ctx context.Context,
 	before time.Time,
@@ -935,6 +935,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 			  ))
               AND NOT (
                   EXISTS (SELECT 1 FROM document_extraction_ranges r WHERE r.extraction_id = e.id)
+                  AND EXISTS (SELECT 1 FROM document_index_state WHERE singleton = 1 AND target_profile_id = e.profile_id)
                   AND NOT EXISTS (SELECT 1 FROM document_extractions newer
                       WHERE newer.profile_id = e.profile_id AND newer.canonical_blob_hash = e.canonical_blob_hash
                         AND newer.extraction_input_key = e.extraction_input_key

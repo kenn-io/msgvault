@@ -78,13 +78,20 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 				return document.SourceDocument{}, fmt.Errorf("encode range evidence: %w", err)
 			}
 			checkpoint = store.DocumentExtractionRange{FirstPage: first, LastPage: last, TotalPages: pages, Evidence: encoded, EvidenceChecksum: checksum, Markdown: string(rendered.ProviderMarkdown)}
-			// Validate before saving so an incomplete selection can be retried.
-			units, fallback, err = doclingEvidenceRangeUnits(evidence, checkpoint)
+			// Docbank validates fresh page selections. Ignore selection omissions
+			// when choosing between its page mapping and Markdown fallback.
+			fallback = doclingRangeDegraded(evidence, checkpoint)
+			for _, unit := range evidence.Units {
+				fallback = fallback || len(unit.Omissions) > 0
+			}
+			if !fallback {
+				rendered.Evidence.Completeness = document.EvidenceComplete
+			}
+			rangeSource, err := doclingSourceDocument(rendered)
 			if err != nil {
 				return document.SourceDocument{}, err
-			} else if fallback && strings.TrimSpace(checkpoint.Markdown) == "" {
-				return document.SourceDocument{}, errors.New("docling range has no bounded Markdown fallback")
 			}
+			units, fallback = rangeSource.Units, rangeSource.UnitKind != "page"
 			if !fallback {
 				checkpoint.Markdown = ""
 			}
@@ -142,16 +149,7 @@ func doclingRangeUnits(r store.DocumentExtractionRange) ([]document.SourceUnit, 
 }
 
 func doclingEvidenceRangeUnits(evidence document.NormalizedEvidenceV1, r store.DocumentExtractionRange) ([]document.SourceUnit, bool, error) {
-	degraded := evidence.UnitKind != document.EvidenceUnitPage || evidence.Family != "pdf"
-	for _, omission := range evidence.Omissions {
-		if omission.Kind == document.EvidenceOmissionField && omission.Field == "page_range" {
-			continue
-		}
-		if omission.Kind == document.EvidenceOmissionUnit && omission.Reason == "pages precede the requested range" && omission.Locator != nil && omission.Locator.Start == 1 && omission.Locator.End == int64(r.FirstPage-1) {
-			continue
-		}
-		degraded = true
-	}
+	degraded := doclingRangeDegraded(evidence, r)
 	if degraded {
 		return nil, true, nil
 	}
@@ -164,10 +162,22 @@ func doclingEvidenceRangeUnits(evidence document.NormalizedEvidenceV1, r store.D
 		if unit.Locator.Kind != document.EvidenceLocatorPage || unit.Locator.Start != page || unit.Locator.End != page {
 			return nil, false, errors.New("docling range has invalid original page locators")
 		}
-		if len(unit.Omissions) > 0 {
-			degraded = true
-		}
+		degraded = degraded || len(unit.Omissions) > 0
 		units = append(units, document.SourceUnit{Index: int(page) - 1, Markdown: unit.Text})
 	}
 	return units, degraded, nil
+}
+
+func doclingRangeDegraded(evidence document.NormalizedEvidenceV1, r store.DocumentExtractionRange) bool {
+	degraded := evidence.UnitKind != document.EvidenceUnitPage || evidence.Family != "pdf"
+	for _, omission := range evidence.Omissions {
+		if omission.Kind == document.EvidenceOmissionField && omission.Field == "page_range" {
+			continue
+		}
+		if omission.Kind == document.EvidenceOmissionUnit && omission.Reason == "pages precede the requested range" && omission.Locator != nil && omission.Locator.Start == 1 && omission.Locator.End == int64(r.FirstPage-1) {
+			continue
+		}
+		degraded = true
+	}
+	return degraded
 }

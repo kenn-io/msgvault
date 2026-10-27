@@ -76,7 +76,7 @@ func TestDocumentRangesSurviveRetryAndFenceWrites(t *testing.T) {
 }
 
 func TestDocumentRangesCleanup(t *testing.T) {
-	for _, action := range []string{"superseding rebuild", "purge-derived", "source removed"} {
+	for _, action := range []string{"superseding rebuild", "purge-derived", "source removed", "target changed"} {
 		t.Run(action, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -93,6 +93,29 @@ func TestDocumentRangesCleanup(t *testing.T) {
 			var count int
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 			assertions.Equal(1, count, "retain the latest unfinished live ranges")
+			if action == "target changed" {
+				other := profile
+				other.ID = "range-new-target"
+				other.Fingerprint = strings.Repeat("f", 64)
+				_, err = f.Store.EnsureDocumentExtractionProfile(t.Context(), other)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+					ProfileID: other.ID, ProfileFingerprint: other.Fingerprint,
+					RetentionPosture: other.RetentionPosture, TrainingPosture: other.TrainingPosture,
+				}))
+				cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour)
+				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+				assertions.Equal(1, count, "old profiles keep the ordinary recovery window")
+				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
+				requirements.NoError(err)
+				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+				assertions.Zero(count, "collect checkpoints after their profile stops being the target")
+				return
+			}
 			if action == "purge-derived" {
 				purged, err := f.Store.PurgeDocumentDerivedByHash(t.Context(), hash)
 				requirements.NoError(err)
