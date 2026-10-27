@@ -137,6 +137,7 @@ PG_SHIPPED_ONLY_PKGS := \
 	./internal/imessage \
 	./internal/importer \
 	./internal/importer/mboxzip \
+	./internal/inline \
 	./internal/kataevidence \
 	./internal/kataissues \
 	./internal/matrix \
