@@ -27,7 +27,7 @@ Search and read:
   list-domains  List top sender domains by message count
   list-labels   List all labels with message counts
   list-senders  List top senders by message count
-  media         Search recording transcripts
+  media         Search transcripts and mirrored document text
   meetings      Read archived meeting context, actions, and metrics
   query         Run a SQL query against the analytics cache
   search        Search messages using Gmail-like query syntax

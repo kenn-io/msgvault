@@ -7408,8 +7408,58 @@ components:
         strongest_excerpt:
           type: string
       type: object
+    MediaAttachmentResult:
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        containing_title:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        conversation_id:
+          format: int64
+          type: integer
+        excerpt:
+          type: string
+        filename:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        message_id:
+          format: int64
+          type: integer
+        occurred_at:
+          format: date-time
+          type: string
+      required:
+        - message_id
+        - conversation_id
+        - attachment_id
+        - filename
+        - containing_title
+        - excerpt
+      type: object
+    MediaAttachmentSearch:
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorResponse"
+        results:
+          items:
+            $ref: "#/components/schemas/MediaAttachmentResult"
+          type: array
+        truncated:
+          type: boolean
+      required:
+        - results
+        - truncated
+      type: object
     MediaSearchResponse:
       properties:
+        attachments:
+          $ref: "#/components/schemas/MediaAttachmentSearch"
         attribution_unavailable:
           description: Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
           format: int64
@@ -7422,6 +7472,8 @@ components:
         pending_occurrences:
           format: int64
           type: integer
+        recordings_error:
+          $ref: "#/components/schemas/ErrorResponse"
         results:
           items:
             $ref: "#/components/schemas/MediaSearchResult"
@@ -16342,7 +16394,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.26.0
+  version: 3.27.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -23610,7 +23662,7 @@ paths:
     get:
       operationId: searchMedia
       parameters:
-        - description: Spoken words to find in transcripts
+        - description: Words to find in recordings and attachments
           in: query
           name: q
           required: true
@@ -23709,7 +23761,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Search source-selected transcripts as visible messages
+      summary: Search recordings and attachments as visible messages
       tags:
         - API
   /api/v1/media/search/status:

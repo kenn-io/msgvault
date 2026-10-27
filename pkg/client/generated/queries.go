@@ -624,7 +624,7 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 }
 
 type SearchMediaQuery struct {
-	// Q Spoken words to find in transcripts
+	// Q Words to find in recordings and attachments
 	Q string `json:"q" validate:"required"`
 
 	// Mode Lexical mode; semantic and hybrid are unavailable

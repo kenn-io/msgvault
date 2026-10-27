@@ -7240,7 +7240,54 @@ type MatchSummary struct {
 	StrongestExcerpt  *string  `json:"strongest_excerpt,omitzero"`
 }
 
+type MediaAttachmentResult struct {
+	AttachmentID    int64      `json:"attachment_id"`
+	ContainingTitle string     `json:"containing_title" validate:"omitempty"`
+	ConversationID  int64      `json:"conversation_id"`
+	Excerpt         string     `json:"excerpt" validate:"required"`
+	Filename        string     `json:"filename" validate:"omitempty"`
+	MessageID       int64      `json:"message_id"`
+	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
+}
+
+func (m MediaAttachmentResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MediaAttachmentSearch struct {
+	ErrorData *ErrorResponse          `json:"error,omitempty"`
+	Results   []MediaAttachmentResult `json:"results" validate:"required"`
+	Truncated bool                    `json:"truncated"`
+}
+
+func (m MediaAttachmentSearch) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.ErrorData != nil {
+		if v, ok := any(m.ErrorData).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ErrorData", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
+	for i, item := range m.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MediaSearchResponse struct {
+	Attachments *MediaAttachmentSearch `json:"attachments,omitempty"`
+
 	// AttributionUnavailable Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
 	AttributionUnavailable int64          `json:"attribution_unavailable"`
 	Coverage               SearchCoverage `json:"coverage"`
@@ -7248,6 +7295,7 @@ type MediaSearchResponse struct {
 	// Partial Coverage or occurrence attribution is incomplete, even with no matching excerpts
 	Partial                bool                `json:"partial"`
 	PendingOccurrences     int64               `json:"pending_occurrences"`
+	RecordingsError        *ErrorResponse      `json:"recordings_error,omitempty"`
 	Results                []MediaSearchResult `json:"results" validate:"required"`
 	Truncated              bool                `json:"truncated"`
 	UnavailableOccurrences int64               `json:"unavailable_occurrences"`
@@ -7255,9 +7303,23 @@ type MediaSearchResponse struct {
 
 func (m MediaSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if m.Attachments != nil {
+		if v, ok := any(m.Attachments).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Attachments", err)
+			}
+		}
+	}
 	if v, ok := any(m.Coverage).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Coverage", err)
+		}
+	}
+	if m.RecordingsError != nil {
+		if v, ok := any(m.RecordingsError).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RecordingsError", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(m.Results, "required"); err != nil {

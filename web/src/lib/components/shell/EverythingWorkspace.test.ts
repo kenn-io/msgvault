@@ -85,7 +85,7 @@ describe('EverythingWorkspace', () => {
     const view = renderRecordingShell(createAPIClient(fetchFn), state);
     try {
       const link = await screen.findByRole('link', { name: 'Team chat' });
-      await screen.findByText('Could not load this recording message.');
+      await screen.findByText('Could not load this message.');
       await waitFor(() => expect(telemetryEvents.filter(e => e.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]));
       messageStatus = 200;
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -99,7 +99,7 @@ describe('EverythingWorkspace', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
       messageStatus = 404;
       await fireEvent.click(await screen.findByRole('link', { name: 'Team chat' }));
-      await screen.findByText('This recording message is no longer available.');
+      await screen.findByText('This message is no longer available.');
       await waitFor(() => expect(telemetryEvents.filter(e => e.event === 'error_shown')).toEqual([
         { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
         { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },

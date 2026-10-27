@@ -190,3 +190,53 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchDocumentsContract(t *testing.T) {
+	for _, fault := range []string{"content evidence", "content blob", "node name", "full name page", "mixed", "foreign vault", "unknown evidence", "mixed unknown evidence"} {
+		t.Run(fault, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "found \x01quartz\x02 here", Evidence: []SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}}}
+			switch fault {
+			case "content blob":
+				report.Results[0].Evidence[0].Kind = "content_blob"
+			case "node name", "full name page":
+				report.Results[0].Evidence[0].Kind = "node_name"
+				report.Truncated = fault == "full name page"
+			case "mixed":
+				report.Results[0].Evidence = append(report.Results[0].Evidence, SearchEvidence{Kind: "node_name"})
+			case "foreign vault":
+				report.Results[0].VaultUID = "00000000-0000-4000-8000-000000000020"
+			case "unknown evidence":
+				report.Results[0].Evidence[0].Kind = "unknown"
+			case "mixed unknown evidence":
+				report.Results[0].Evidence = append(report.Results[0].Evidence, SearchEvidence{Kind: "unknown"})
+			}
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request SearchRequest
+				if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+					return
+				}
+				assert.Equal([]string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}, request.Fence.ContentVersionIDs)
+				_ = json.NewEncoder(w).Encode(report)
+			}))
+			defer remote.Close()
+			client, err := NewClient(remote.URL, nil)
+			require.NoError(err)
+			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: 1, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}}})
+			switch fault {
+			case "foreign vault", "unknown evidence", "mixed unknown evidence":
+				require.ErrorIs(err, ErrInvalidReceipt)
+				return
+			}
+			if fault == "node name" || fault == "full name page" {
+				require.NoError(err)
+				assert.Empty(got.Results)
+				assert.Equal(fault == "full name page", got.Truncated)
+				return
+			}
+			require.NoError(err)
+			assert.Equal("found quartz here", got.Results[0].Excerpt)
+		})
+	}
+}

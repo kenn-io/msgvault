@@ -378,7 +378,8 @@ import (
 // 3.25.0 adds archived chat discovery ranked by the best matching name or title.
 // 3.26.0 adds bounded search-aware deletion resolution with an explicit
 // max_results cap and matched_count for skipped matches.
-const APISchemaVersion = "3.26.0"
+// 3.27.0 adds optional attachment text results and recording errors in media search.
+const APISchemaVersion = "3.27.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -994,6 +995,8 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	// candidates whose saved display name has been cleared.
 	for _, field := range []struct{ schema, property string }{
 		{"ContactCandidate", "display_name"},
+		{"MediaAttachmentResult", "filename"},
+		{"MediaAttachmentResult", "containing_title"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},

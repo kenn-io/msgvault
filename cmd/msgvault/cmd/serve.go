@@ -902,13 +902,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	schedAdapter := &schedulerAdapter{scheduler: sched, media: mediaSched}
 
-	docbankAttachments, err := newDocbankAttachmentReader(ctx, s, cfg.Integrations.Docbank)
-	if err != nil {
-		logger.Warn("Attachment mirror status unavailable", "error", err)
-	}
 	messageRecordings, err := newMessageRecordingReader(ctx, s, cfg.Integrations.Docbank)
 	if err != nil {
 		logger.Warn("Message transcripts unavailable", "error", err)
+	}
+	docbankAttachments, err := newDocbankAttachmentReader(ctx, s, cfg.Integrations.Docbank, messageRecordings.Client)
+	if err != nil {
+		logger.Warn("Attachment mirror status unavailable", "error", err)
 	}
 
 	// Create and start API server
