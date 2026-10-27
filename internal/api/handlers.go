@@ -3913,8 +3913,9 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_query", "Query parameter 'q' is required")
 		return
 	}
+	const bodyScope = "body"
 	scope := r.URL.Query().Get("scope")
-	if scope != "" && scope != "body" {
+	if scope != "" && scope != bodyScope {
 		writeError(w, http.StatusBadRequest, "invalid_scope", "Invalid search scope. Must be 'body' or omitted")
 		return
 	}
@@ -3924,12 +3925,12 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	q := search.ParseWithOR(queryStr, scope != "body")
+	q := search.ParseWithOR(queryStr, scope != bodyScope)
 	if err := q.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return
 	}
-	if scope == "body" && len(q.TextTerms) == 0 {
+	if scope == bodyScope && len(q.TextTerms) == 0 {
 		writeError(w, http.StatusBadRequest, "missing_free_text",
 			"Body-scoped search requires at least one free-text term")
 		return
@@ -3943,7 +3944,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	// Exact body-only search rejects view filters whose exact MessageFilter
 	// semantics cannot be preserved through search.Query. Generic Deep search
 	// below keeps the complete filter independent from user-entered operators.
-	if scope == "body" && (filter.Sender != "" || filter.SenderName != "" ||
+	if scope == bodyScope && (filter.Sender != "" || filter.SenderName != "" ||
 		filter.Recipient != "" || filter.RecipientName != "" ||
 		filter.Domain != "" || filter.Label != "" ||
 		filter.TimeRange.Period != "" || filter.HasEmptyTargets() ||
@@ -3970,7 +3971,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	var messages []query.MessageSummary
 	var totalCount int64
 	var stats *query.TotalStats
-	if scope == "body" {
+	if scope == bodyScope {
 		merged := query.MergeFilterIntoQuery(q, filter)
 		if filter.HideDeletedFromSource {
 			merged.DeletionScope = search.DeletionScopeActive
@@ -4011,11 +4012,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		if s.writeIfContextError(w, err) {
 			return
 		}
-		if scope == "body" && errors.Is(err, query.ErrMessageBodySearchInvalidQuery) {
+		if scope == bodyScope && errors.Is(err, query.ErrMessageBodySearchInvalidQuery) {
 			writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 			return
 		}
-		if scope == "body" && (errors.Is(err, query.ErrMessageBodySearchUnavailable) ||
+		if scope == bodyScope && (errors.Is(err, query.ErrMessageBodySearchUnavailable) ||
 			errors.Is(err, query.ErrMessageBodySearchIndexStale)) {
 			writeError(w, http.StatusServiceUnavailable, "body_search_index_unavailable", err.Error())
 			return
@@ -4029,7 +4030,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		messages = messages[:limit]
 	}
-	if scope == "body" {
+	if scope == bodyScope {
 		if hasMore || (offset > 0 && len(messages) == 0) {
 			totalCount = -1
 		} else {
@@ -4044,7 +4045,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 	var bodyContexts []BodySearchContext
-	if scope == "body" {
+	if scope == bodyScope {
 		bodyContexts = make([]BodySearchContext, len(messages))
 		for i, message := range messages {
 			bodyContexts[i] = toBodySearchContext(message)
@@ -4052,7 +4053,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var warnings []string
-	if scope != "body" {
+	if scope != bodyScope {
 		warnings = search.LiteralORWarnings(queryStr)
 	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
