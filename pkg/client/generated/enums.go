@@ -2937,6 +2937,24 @@ func (t TelemetryEventResponseStatus) Validate() error {
 	}
 }
 
+type WhoKnowsResponseLimits string
+
+const (
+	DeclaredTruncated WhoKnowsResponseLimits = "declared_truncated"
+	PartialIndex      WhoKnowsResponseLimits = "partial_index"
+	PoolFull          WhoKnowsResponseLimits = "pool_full"
+)
+
+// Validate checks if the WhoKnowsResponseLimits value is valid
+func (w WhoKnowsResponseLimits) Validate() error {
+	switch w {
+	case DeclaredTruncated, PartialIndex, PoolFull:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid WhoKnowsResponseLimits value, got: %v", w))
+	}
+}
+
 type ListOperationRunsQueryKind string
 
 const (

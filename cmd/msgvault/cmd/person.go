@@ -775,7 +775,7 @@ func init() {
 		personMergeCmd, personSplitCmd, personMergeHistoryCmd, personMergeShowCmd,
 		personMergeCandidateCmd, personNotesCmd,
 		newPersonFilesCommand(defaultPersonFilesCommandDeps()), personSearchCmd,
-		newPersonFactsCommand(), newPersonDirectoryCommand(), newPersonIdentitiesCommand())
+		newPersonWhoKnowsCommand(), newPersonFactsCommand(), newPersonDirectoryCommand(), newPersonIdentitiesCommand())
 	for _, command := range []*cobra.Command{
 		personPromoteCmd, personGetCmd, personListCmd, personSetDisplayNameCmd,
 		personTrackCmd, personUntrackCmd,

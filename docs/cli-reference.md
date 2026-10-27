@@ -2465,7 +2465,7 @@ the archive host or pass `--local` there to select that host's local archive.
 ## find-chat
 
 Find archived chats when a person's name differs across networks. Available on
-unreleased `main` with daemon API schema 3.24.0 or newer.
+unreleased `main` with daemon API schema 3.25.0 or newer.
 
 ```bash
 msgvault find-chat "Jordan Lee Chen"
@@ -3084,6 +3084,25 @@ scope exceeding the bounds returns `filename_scope_too_large`. The command
 reports those errors rather than retrying an ordinary or unscoped search. See
 [filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
 and the [API contract](api-server.md#filename-suggestions).
+
+### person who-knows
+
+On unreleased `main`, find the people who wrote about a topic. Search operators in the topic are refused. Matched declared topics print as `declared: ...`. Needs a daemon with API schema 3.28.0 or newer.
+
+```bash
+msgvault person who-knows <topic words...> [flags]
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--limit` | `10` | Saved people, 1-50 |
+| `--evidence` | `3` | Citations per person, 1-10 |
+| `--min-score` | `0.5` | Lowest cosine similarity a message needs to count, above 0 and at most 1. The default is not calibrated for real embedding models; adjust it |
+| `--after`, `--before` | none | RFC3339 or YYYY-MM-DD; after is inclusive, before is exclusive. They narrow messages only; declared topics have no date |
+| `--json` | false | Return the API JSON |
+
+See [topic search](usage/people.md#find-who-knows-about-a-topic) for scoring
+and exclusions.
 
 ### person track, provider, sweep, and facts
 

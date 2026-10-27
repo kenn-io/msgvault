@@ -4,6 +4,7 @@ package sqlitevec
 
 import (
 	"database/sql"
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -91,6 +92,13 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 		require.NoError(t, readyErr)
 		assert.True(t, ready, "generation %d accelerator remains ready", generation)
 	}
+
+	// Message 1's unit vectors remain. A left-out unit vector orthogonal to
+	// the query scores 0, so a current range bounds it near 0, not 1.
+	bound, err := backend.UnretrievedCosineBound(t.Context(),
+		vector.Generation{ID: active, Dimension: 4}, unitVec(4, 0), 1-math.Sqrt2)
+	require.NoError(t, err)
+	assert.InDelta(t, 0, bound, 1e-3, "pruning keeps the vector length range current")
 
 	pruned, err = pruner.PruneOrphanEmbeddings(t.Context())
 	require.NoError(t, err)
