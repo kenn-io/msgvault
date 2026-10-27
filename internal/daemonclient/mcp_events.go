@@ -28,15 +28,18 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, opti
 	// Never expose request URLs, response bodies or driver diagnostics. The
 	// error body admits only a fixed code/reason pair from the service boundary.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return &mcpevents.Error{Code: mcpevents.CodeForbidden, Reason: "owner_required"}
-		}
+		// A typed reason survives on any status, so an owner whose
+		// subscription is gone sees subscription_unavailable rather than a
+		// credential failure. Untyped auth failures are owner_required.
 		var wire mcpevents.Error
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 4097))
 		if readErr == nil && len(data) <= 4096 && json.Unmarshal(data, &wire) == nil {
 			if safe, ok := mcpevents.SafeError(wire.Code, wire.Reason); ok {
 				return safe
 			}
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return &mcpevents.Error{Code: mcpevents.CodeForbidden, Reason: "owner_required"}
 		}
 		return &mcpevents.Error{Code: mcpevents.CodeUnavailable, Reason: "events_unavailable"}
 	}

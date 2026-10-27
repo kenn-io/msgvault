@@ -78,6 +78,9 @@ func TestMCPEventsErrorsNeverExposeDaemonDiagnostics(t *testing.T) {
 		reason       string
 	}{
 		{"auth", "private daemon diagnostic", 401, -32024, "owner_required"},
+		{"forbidden without a typed body", "private daemon diagnostic", 403, -32024, "owner_required"},
+		{"forbidden with an unsafe reason", "{\"code\":-32024,\"reason\":\"private daemon diagnostic\"}", 403, -32024, "owner_required"},
+		{"typed forbidden", "{\"code\":-32024,\"reason\":\"subscription_unavailable\"}", 403, -32024, "subscription_unavailable"},
 		{"safe", "{\"code\":-32602,\"reason\":\"unknown_scope\"}", 400, -32602, "unknown_scope"},
 		{"unsafe reason", "{\"code\":-32602,\"reason\":\"https://private.example/secret\"}", 400, mcpevents.CodeUnavailable, "events_unavailable"},
 		{"invalid JSON", "private daemon diagnostic", 500, mcpevents.CodeUnavailable, "events_unavailable"},
