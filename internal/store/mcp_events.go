@@ -104,7 +104,22 @@ func mcpSafeError(err error) error {
 const mcpTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
 func mcpTime(t time.Time) string { return t.UTC().Format(mcpTimeLayout) }
-
+func mcpParseTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse event timestamp: %w", err)
+	}
+	return t, nil
+}
+func mcpOptionalTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return mcpTime(t)
+}
 func mcpOptionalID(id int64) any {
 	if id == 0 {
 		return nil
@@ -194,6 +209,13 @@ func mcpNewRuntime(cfg MCPEventsConfig) (*mcpRuntime, string) {
 	sum := sha256.Sum256(data)
 	r.fingerprint = hex.EncodeToString(sum[:])
 	return r, r.fingerprint
+}
+
+func mcpEventRetention(runtime *mcpRuntime) time.Duration {
+	if runtime == nil || runtime.config.Retention <= 0 {
+		return 7 * 24 * time.Hour
+	}
+	return runtime.config.Retention
 }
 
 func (s *Store) mcpIdentityFence(ctx context.Context, tx contextQuerier) error {
@@ -310,6 +332,15 @@ func (s *Store) mcpChangeCaptureTx(ctx context.Context, tx *sql.Tx, runtime *mcp
 	// the gap. Delivery checks require a current-epoch cursor, so nothing is
 	// sent from the old epoch in the meantime.
 	return clock, nil
+}
+
+// mcpCaptureCurrent reports whether the stored capture state still matches
+// this process's enabled configuration. A library or CLI writer can turn
+// capture off for the archive while a daemon keeps running; the daemon must
+// then stop activating and delivering until it restarts and reconfigures.
+func (s *Store) mcpCaptureCurrent(clock MCPEventClock) bool {
+	r := s.mcpRoot().mcpConfig.Load()
+	return r != nil && r.config.Enabled && clock.enabled && clock.fingerprint == r.fingerprint
 }
 
 // Events control transactions use the raw driver only inside this boundary,
