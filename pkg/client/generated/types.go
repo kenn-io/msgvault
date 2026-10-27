@@ -13533,7 +13533,7 @@ type RelationshipCalendarDay struct {
 	Email        int64                        `json:"email"`
 	Level        RelationshipCalendarDayLevel `json:"level" validate:"required"`
 	Meetings     int64                        `json:"meetings"`
-	ModalityMask int32                        `json:"modality_mask" validate:"gte=0"`
+	ModalityMask int32                        `json:"modality_mask" validate:"gte=0,lte=255"`
 	Received     int64                        `json:"received"`
 	Sent         int64                        `json:"sent"`
 	Total        int64                        `json:"total"`
@@ -13549,7 +13549,7 @@ func (r RelationshipCalendarDay) Validate() error {
 			errors = errors.Append("Level", err)
 		}
 	}
-	if err := typesValidator.Var(r.ModalityMask, "gte=0"); err != nil {
+	if err := typesValidator.Var(r.ModalityMask, "gte=0,lte=255"); err != nil {
 		errors = errors.Append("ModalityMask", err)
 	}
 	if len(errors) == 0 {

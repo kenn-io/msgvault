@@ -13476,6 +13476,7 @@ components:
           type: integer
         modality_mask:
           format: int32
+          maximum: 255
           minimum: 0
           type: integer
         received:
