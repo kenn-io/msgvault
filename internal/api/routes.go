@@ -15,6 +15,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -28,7 +29,6 @@ const (
 )
 
 const (
-	queryParamLocation   = "query"
 	apiKeySecurityScheme = "apiKey"
 	cliRouteTag          = "CLI"
 )
@@ -209,6 +209,12 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeDelegated {
+		if op := ctx.Operation(); op != nil && mcpEventsOperationIDs[op.OperationID] {
+			ctx.SetHeader("Content-Type", applicationJSONMediaType)
+			ctx.SetStatus(http.StatusForbidden)
+			_ = marshalAPIJSON(ctx.BodyWriter(), MCPEventsErrorResponse{Error: "mcp_events_error", Message: "owner_required", Code: mcpevents.CodeForbidden, Reason: "owner_required"})
+			return
+		}
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
 			permission, err := agentReadPermission(op.OperationID, auth.Grant)
 			if err != nil {
@@ -310,6 +316,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerSettingsRoutes(apiV1)
 	s.registerCardDAVRoutes(apiV1)
 	s.registerSavedViewRoutes(apiV1)
+	s.registerMCPEventsRoutes(apiV1)
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
