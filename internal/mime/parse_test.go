@@ -682,7 +682,6 @@ func TestMessage_GetBodyText(t *testing.T) {
 	}
 }
 
-
 // TestParse_MinimalMessage tests our Parse wrapper with a minimal valid message.
 // This verifies our wrapper works, not enmime's parsing logic.
 func TestParse_MinimalMessage(t *testing.T) {
