@@ -3220,6 +3220,12 @@ func (a *storeAPIAdapter) BuildPersonFactCatalogContext(
 	return a.store.BuildPersonFactCatalogContext(ctx, includeSensitive)
 }
 
+func (a *storeAPIAdapter) ListPersonFactContestsContext(
+	ctx context.Context, personID int64, includeSensitive bool,
+) ([]store.PersonFactContest, error) {
+	return a.store.ListPersonFactContestsContext(ctx, personID, includeSensitive)
+}
+
 func (a *storeAPIAdapter) ListPersonFactEvidenceContext(
 	ctx context.Context, personID int64, filter personfacts.EvidenceFilter,
 ) ([]personfacts.Evidence, error) {

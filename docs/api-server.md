@@ -160,6 +160,8 @@ The API publishes its generated OpenAPI contract at `/openapi.json`.
 opening an archive. OpenAPI `info.version` is the **API schema version**;
 it is separate from the binary release version. The current schema is **3.27.0**.
 
+Schema 3.27.0 adds the owner-only contested person facts report.
+
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
