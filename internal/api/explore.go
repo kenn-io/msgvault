@@ -108,6 +108,7 @@ type ExploreHTTPRequest struct {
 }
 
 type ExploreHTTPResponse struct {
+	Warnings               []string               `json:"warnings,omitempty"`
 	Rows                   []query.EntryRow       `json:"rows"`
 	TotalCount             *int64                 `json:"total_count,omitzero" nullable:"false"`
 	CacheRevision          string                 `json:"cache_revision"`
@@ -143,6 +144,7 @@ type ExploreGroupsHTTPRequest struct {
 }
 
 type ExploreGroupsHTTPResponse struct {
+	Warnings            []string                `json:"warnings,omitempty"`
 	Rows                []query.ExploreGroupRow `json:"rows"`
 	TotalCount          int64                   `json:"total_count"`
 	CacheRevision       string                  `json:"cache_revision"`
@@ -356,6 +358,9 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID,
 		SearchDeletionScope: prepared.searchDeletionScope,
 	}
+	if prepared.request.SearchMode == exploreSearchModeFullText {
+		response.Warnings = search.LiteralORWarnings(prepared.request.Query)
+	}
 	response.CandidatePoolSaturated = searchSpec.CandidatePoolSaturated
 	if snapshotID != "" && s.exploreState != nil {
 		if snapshot, found := s.exploreState.snapshot(snapshotID, exploreSnapshotRequestHash(prepared.request)); found {
@@ -524,6 +529,9 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	response := ExploreGroupsHTTPResponse{Rows: result.Rows, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision, SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID, SearchDeletionScope: searchDeletionScope}
+	if request.SearchMode == exploreSearchModeFullText {
+		response.Warnings = search.LiteralORWarnings(request.Query)
+	}
 	if next := offset + len(result.Rows); next < int(result.TotalCount) {
 		response.NextCursor = s.encodeExploreCursor(exploreCursor{
 			Offset: next, Request: requestHash, Revision: result.CacheRevision,

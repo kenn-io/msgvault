@@ -703,6 +703,10 @@
   </ContextBar>
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
 
+  {#each loader.result?.warnings ?? [] as warning}
+    <p class="scope-note" role="status">{warning}</p>
+  {/each}
+
   {#if loader.result?.candidatePoolSaturated}
     <div class="search-limit" role="status">
       <p>

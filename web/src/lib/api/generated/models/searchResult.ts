@@ -10,5 +10,6 @@ export interface SearchResult {
   page_size: number;
   query: string;
   total: number;
+  warnings?: string[];
   [key: string]: unknown;
 }

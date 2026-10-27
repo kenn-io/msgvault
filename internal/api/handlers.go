@@ -281,6 +281,7 @@ type GmailIDsResponse struct {
 }
 
 type DeepSearchResponse struct {
+	Warnings     []string            `json:"warnings,omitempty"`
 	IndexState   string              `json:"index_state,omitempty"`
 	Query        string              `json:"query"`
 	Scope        string              `json:"scope,omitempty"`
@@ -370,6 +371,7 @@ func attachmentInfoFromStore(att store.APIAttachment) AttachmentInfo {
 
 // SearchResult represents search results.
 type SearchResult struct {
+	Warnings   []string         `json:"warnings,omitempty"`
 	IndexState string           `json:"index_state,omitempty"`
 	Query      string           `json:"query"`
 	Total      int64            `json:"total"`
@@ -1013,6 +1015,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchResult{
+		Warnings:   search.LiteralORWarnings(searchText),
 		IndexState: agentIndexState(r),
 		Query:      searchText,
 		Total:      total,
@@ -2201,6 +2204,7 @@ type TotalStatsResponse struct {
 
 // SearchFastResponse represents fast search results with stats.
 type SearchFastResponse struct {
+	Warnings         []string            `json:"warnings,omitempty"`
 	IndexState       string              `json:"index_state,omitempty"`
 	Query            string              `json:"query"`
 	Messages         []MessageSummary    `json:"messages"`
@@ -3884,6 +3888,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchFastResponse{
+		Warnings:         search.LiteralORWarnings(queryStr),
 		IndexState:       indexState,
 		Query:            queryStr,
 		Messages:         summaries,
@@ -4046,7 +4051,12 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var warnings []string
+	if scope != "body" {
+		warnings = search.LiteralORWarnings(queryStr)
+	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
+		Warnings:     warnings,
 		IndexState:   agentIndexState(r),
 		Query:        queryStr,
 		Scope:        scope,

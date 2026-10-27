@@ -655,3 +655,25 @@ func TestParseConversationIDRejectsNonPositiveAndInvalidValues(t *testing.T) {
 		})
 	}
 }
+
+func TestLiteralORWarnings(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		warn  bool
+	}{
+		{"from:@a.example OR from:@b.example", true},
+		{"OR", true},
+		{"alpha | OR", true},
+		{`"OR"`, false},
+		{`'OR'`, false},
+		{`"OR`, false},
+		{"or", false},
+		{"WORD", false},
+		{"from:OR", false},
+		{`subject:"OR"`, false},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			assert.Equal(t, tc.warn, len(LiteralORWarnings(tc.query)) > 0)
+		})
+	}
+}

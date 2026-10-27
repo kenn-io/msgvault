@@ -4331,3 +4331,23 @@ func TestStageDeletionPipeORUsesSearch(t *testing.T) {
 		})
 	}
 }
+
+func TestMetadataSearchLiteralORWarning(t *testing.T) {
+	h := newTestHandlers(&querytest.MockEngine{})
+	for _, tc := range []struct {
+		query string
+		warn  bool
+	}{
+		{"from:@a.example OR from:@b.example", true},
+		{`"OR"`, false},
+		{"or", false},
+		{"WORD", false},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			for _, handler := range []toolHandler{h.searchMetadata, h.searchMessages} {
+				result := runTool[searchMetadataResponse](t, "search_metadata", handler, map[string]any{"query": tc.query})
+				assert.Equal(t, tc.warn, len(result.Warnings) > 0)
+			}
+		})
+	}
+}

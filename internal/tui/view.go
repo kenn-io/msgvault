@@ -7,6 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/update"
 )
@@ -466,6 +467,11 @@ func (m Model) aggregateTableView() string {
 	} else if m.loading && m.analyticsNotice != "" {
 		infoContent = " " + m.analyticsNotice
 	}
+	if !m.inlineSearchActive && m.searchMode != searchModeSemantic {
+		if warnings := search.LiteralORWarnings(m.searchQuery); len(warnings) > 0 {
+			infoContent = " " + warnings[0]
+		}
+	}
 	sb.WriteString(m.renderInfoLine(infoContent, m.isLoading()))
 
 	// Overlay modal if active
@@ -672,6 +678,14 @@ func (m Model) messageListView() string {
 			infoContent += " [Deep]"
 		case searchModeSemantic:
 			infoContent += " [Semantic: active messages only]"
+		}
+	}
+	if !m.inlineSearchActive && m.searchMode != searchModeSemantic {
+		if warnings := search.LiteralORWarnings(m.searchQuery); len(warnings) > 0 {
+			infoContent = " " + warnings[0]
+			if m.searchTotalCount >= 0 {
+				infoContent += fmt.Sprintf(" (%d results)", m.searchTotalCount)
+			}
 		}
 	}
 	sb.WriteString(m.renderInfoLine(infoContent, m.isLoading()))
