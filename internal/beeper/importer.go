@@ -530,8 +530,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			sum.Stopped = true
 		}
 	}
+	// Roster repairs back off per room, so a chat whose messages failed to
+	// fetch must not hold up membership repair for every quiet room.
 	optionalWorkStopped := false
-	if !sum.Stopped && sum.FetchErrors == 0 {
+	if !sum.Stopped {
 		optionalWorkStopped, err = imp.repairQuietRosters(ctx, syncID, src.ID, opts, state, chats)
 		if err != nil {
 			return sum, err

@@ -338,6 +338,68 @@ func TestQuietRosterStatsBudgetExpiryCompletesMessageSync(t *testing.T) {
 	assertions.True(src.LastSyncAt.Time.After(staleSourceSync), "the budget-expired sync must advance the stale source timestamp")
 }
 
+func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite function to slow quiet-roster writes")
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	quiet := mediaChat()
+	f.addChat(quiet)
+	active := mediaChat()
+	active.ID = "!active-slow-roster:beeper.local"
+	active.LastActivity = time.Now().UTC()
+	active.Msgs = nil
+	f.addChat(active)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	st.DB().SetMaxOpenConns(1)
+	opts := ImportOptions{AccountID: "signal", NoMedia: true}
+	_, err := imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = '{}'
+		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID)
+	requirements.NoError(err)
+	f.mu.Lock()
+	quiet.Participants = append(quiet.Participants, map[string]any{
+		"id": "@signal_bob:beeper.local", "fullName": "Bob",
+	})
+	f.mu.Unlock()
+
+	oldTimeout := routeProbeTimeout
+	routeProbeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { routeProbeTimeout = oldTimeout })
+	conn, err := st.DB().Conn(t.Context())
+	requirements.NoError(err)
+	err = conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		requirements.True(ok, "driver connection is SQLite")
+		return sqliteConn.RegisterFunc("slow_quiet_roster_write", func() int {
+			time.Sleep(4 * routeProbeTimeout)
+			return 0
+		}, false)
+	})
+	requirements.NoError(err)
+	requirements.NoError(conn.Close())
+	_, err = st.DB().Exec(`CREATE TRIGGER slow_quiet_roster_write
+		AFTER INSERT ON conversation_participants
+		BEGIN
+			SELECT slow_quiet_roster_write();
+		END`)
+	requirements.NoError(err)
+	defer func() {
+		_, dropErr := st.DB().Exec(`DROP TRIGGER IF EXISTS slow_quiet_roster_write`)
+		requirements.NoError(dropErr)
+	}()
+
+	_, err = imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
+	requirements.NoError(err)
+	assertions.Empty(ids, "the probe timeout bounds the provider request, not the roster writes")
+	assertions.Len(rosterMembers(t, st, source.ID, quiet.ID), 3)
+}
+
 func TestImportStopsBeforeStaleRederivationWhenBudgetIsSpent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

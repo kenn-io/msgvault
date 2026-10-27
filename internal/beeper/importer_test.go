@@ -202,11 +202,26 @@ func TestImporterColdPolicyActiveRosterRepairAfterFailure(t *testing.T) {
 	release := installQuietRosterReplacementFailure(t, st)
 
 	_, err = imp.Import(t.Context(), opts)
-	requirements.Error(err, "the provider membership update must fail at participant replacement")
+	requirements.NoError(err, "a failed optional roster write must not fail completed message work")
+	run, err := st.GetLastSuccessfulSync(source.ID)
+	requirements.NoError(err)
+	failures, err := st.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	requirements.NoError(err)
+	requirements.Len(failures, 1, "the failed repair stays visible on the completed run")
+	assertions.Equal(quiet.ID, failures[0].SourceMessageID)
+	assertions.Equal("beeper_roster_repair_failed", failures[0].ErrorKind)
+	assertions.NotEmpty(latestBeeperState(t, imp).Chats[quiet.ID].RosterRetryAfter, "the failed room backs off")
 	ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
 	requirements.NoError(err)
 	assertions.Equal([]string{quiet.ID}, ids,
 		"a committed member count must not hide a roster whose participant replacement failed")
+
+	f.resetRequests()
+	_, err = imp.Import(t.Context(), opts)
+	requirements.NoError(err, "a persistent write failure must not fail later syncs")
+	assertions.False(slices.ContainsFunc(f.requests(), func(req string) bool {
+		return strings.SplitN(req, "?", 2)[0] == "/v1/chats/"+quiet.ID
+	}), "the backed-off room is not retried on the next sync")
 
 	release()
 	f.appendMsg(quiet.ID, fakeMsg{
@@ -220,6 +235,37 @@ func TestImporterColdPolicyActiveRosterRepairAfterFailure(t *testing.T) {
 	assertions.Empty(ids, "the next run must finish the pending quiet-room repair")
 	assertions.Equal(conversationpolicy.Full, coldPolicyTier(t, st, quiet.ID))
 	assertions.Len(rosterMembers(t, st, source.ID, quiet.ID), 3)
+}
+
+func TestQuietRosterRepairRunsDespiteMessageFetchErrors(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	quiet := mediaChat()
+	f.addChat(quiet)
+	active := mediaChat()
+	active.ID = "!active-fetch-error:beeper.local"
+	active.LastActivity = time.Now().UTC()
+	active.Msgs = nil
+	f.addChat(active)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := ImportOptions{AccountID: "signal", NoMedia: true}
+	_, err := imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = '{}'
+		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID)
+	requirements.NoError(err)
+	f.setMessageListFailure(active.ID, true)
+
+	summary, err := imp.Import(t.Context(), opts)
+	var partial *PartialSyncError
+	requirements.ErrorAs(err, &partial, "the active chat's page failure keeps the run partial")
+	assertions.Positive(summary.FetchErrors)
+	ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
+	requirements.NoError(err)
+	assertions.Empty(ids, "a message fetch error in one chat must not hold up quiet-room roster repair")
 }
 
 func installQuietRosterReplacementFailure(t *testing.T, st *store.Store) func() {
