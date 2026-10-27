@@ -514,7 +514,7 @@ func (s *Store) AdoptGmailDraftObservationContext(
 		adopted.CurrentMessageID = messageID
 		adopted.CurrentReceipt = observed
 		adopted.Revision++
-		return nil
+		return s.appendDraftEventTx(ctx, tx, draftKindGmail, draftID, "updated")
 	})
 	if err != nil {
 		return GmailDraft{}, err

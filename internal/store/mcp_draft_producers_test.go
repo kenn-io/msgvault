@@ -85,6 +85,31 @@ func TestMCPDraftProducerGmailOnlyConfirmedTransitions(t *testing.T) {
 	assertDraftTransitions(t, f, "gmail", draft.DraftID)
 }
 
+// Recovery and external edits adopt a new Gmail message at a new revision.
+// Subscribers see that as an update; re-observing the same message is quiet.
+func TestMCPDraftProducerGmailAdoptionRecordsUpdate(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+
+	f := draftProducerFixture(t, "gmail")
+	ctx := t.Context()
+	receipt := store.GmailDraftReceipt{SourceID: f.Source.ID, GmailDraftID: "provider-draft", GmailMessageID: "draft-message-1", ThreadID: "draft-conversation"}
+	draft, err := f.Store.PersistGmailDraftContext(ctx, receipt, nil, draftMessageBuild(f, receipt.GmailMessageID, "first"))
+	require.NoError(err)
+	observed := receipt
+	observed.GmailMessageID = "draft-message-observed"
+	adopted, err := f.Store.AdoptGmailDraftObservationContext(ctx, draft.DraftID, 1, observed, nil, draftMessageBuild(f, observed.GmailMessageID, "observed"))
+	require.NoError(err)
+	_, err = f.Store.AdoptGmailDraftObservationContext(ctx, draft.DraftID, adopted.Revision, observed, nil, draftMessageBuild(f, observed.GmailMessageID, "observed"))
+	require.NoError(err)
+
+	events := readProducerEvents(t, f.Store, "msgvault.draft_changed")
+	require.Len(events, 2)
+	assert.Equal("updated", events[1].kind)
+	assert.Equal(int64(2), producerPayloadInt64(t, events[1], "revision"))
+	assert.Equal(adopted.CurrentMessageID, events[1].messageID)
+}
+
 func TestMCPDraftProducerIMAPOnlyConfirmedTransitions(t *testing.T) {
 	require := Require.New(t)
 	assert := Assert.New(t)
