@@ -39,6 +39,12 @@ func TestMCPCalendarProducerComparesScheduledState(t *testing.T) {
 	assert := Assert.New(t)
 
 	f, persister := calendarProducerFixture(t)
+	// Calendar rows are messages too; enabling message_archived proves they
+	// report only calendar changes.
+	enableProducerEvents(t, f.Store,
+		store.MCPEventCapability{Family: "msgvault.calendar_event_changed", SourceType: "gcal", Kinds: []string{"created", "updated", "cancelled"}},
+		store.MCPEventCapability{Family: "msgvault.message_archived", SourceType: "gcal", Kinds: []string{"message"}},
+	)
 	states := []struct {
 		metadata  string
 		changedAt time.Time
