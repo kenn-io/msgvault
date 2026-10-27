@@ -96,6 +96,42 @@ func TestMCPEventsPruningOnlyReportsGapsForSubscriptionsThatLoseTheirOwnEvents(t
 	assert.Equal(int64(2), gap.Control.Cursor.Seq)
 }
 
+// Pruning an event the subscription filters out loses nothing it would
+// deliver. The cursor moves to the floor and the next delivery sends the
+// recent matching event instead of resetting to the head as a gap.
+func TestMCPEventsPruningIgnoresEventsTheSubscriptionExcludes(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	cfg := mcpStoreConfig()
+	cfg.Retention = 9 * 24 * time.Hour
+	clock, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
+	require.NoError(err)
+	_, sub := activateMCPConversationSubscription(t, f, 1, f.ConvID, now)
+
+	// The owner's own message is excluded because include_from_me is false.
+	f.InsertMCPConversationEvent(clock.Epoch, 1, f.ConvID, now.Add(-8*24*time.Hour))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_log SET from_me=TRUE WHERE seq=1`))
+	require.NoError(err)
+	f.InsertMCPConversationEvent(clock.Epoch, 2, f.ConvID, now)
+
+	require.NoError(f.Store.PruneMCPEvents(t.Context(), now, 7*24*time.Hour))
+
+	kept, err := f.Store.GetMCPSubscription(t.Context(), sub.ID)
+	require.NoError(err)
+	require.NotNil(kept)
+	assert.NotEqual("gap_pending", kept.LastOutcome)
+	assert.Equal(int64(1), kept.CursorSeq)
+	delivery, err := f.Store.PrepareMCPDelivery(t.Context(), sub.ID, sub.Generation, now, func(store.MCPSubscription, store.MCPEvent) ([]byte, error) {
+		return []byte(`{"eventId":"synthetic"}`), nil
+	})
+	require.NoError(err)
+	require.NotNil(delivery)
+	assert.Nil(delivery.Control, "an excluded event is not a gap")
+	assert.Equal(int64(2), delivery.Event.Seq)
+}
+
 // An expired subscription keeps its cursor through pruning. A later sweep no
 // longer sees the deleted event, so it must not mistake the lost scope for a
 // quiet one; renewal within grace reports the truncation.

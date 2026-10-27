@@ -980,12 +980,65 @@ func (s *Store) pruneExpiredMCPEventsTx(ctx context.Context, tx *sql.Tx, clock M
 // mcpScopeEventThroughFloorSQL matches an event in an UPDATE target
 // subscription's selection scope after its cursor and at or below the floor
 // bound by the single placeholder.
-const mcpScopeEventThroughFloorSQL = `EXISTS (
- SELECT 1 FROM mcp_event_log event
- WHERE event.epoch=mcp_event_subscriptions.cursor_epoch AND event.family=mcp_event_subscriptions.name
- AND event.scope_kind=mcp_event_subscriptions.scope_kind AND event.scope_id=mcp_event_subscriptions.scope_id
- AND event.seq>mcp_event_subscriptions.cursor_seq AND event.seq<=?
-)`
+// mcpPruneLosesEventTx reports whether pruning through floor deletes an
+// occurrence this subscription would still deliver: its pending receipt, or
+// an event in its scope that passes the same filters as delivery.
+func (s *Store) mcpPruneLosesEventTx(ctx context.Context, tx *sql.Tx, sub *MCPSubscription, floor int64) (bool, error) {
+	if sub.PendingSeq > 0 && sub.PendingSeq <= floor {
+		return true, nil
+	}
+	rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT `+mcpEventColumns+` FROM mcp_event_log WHERE epoch=? AND family=? AND scope_kind=? AND scope_id=? AND seq>? AND seq<=? ORDER BY seq`), sub.CursorEpoch, sub.Name, sub.ScopeKind, sub.ScopeID, sub.CursorSeq, floor)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		event, err := scanMCPEvent(rows)
+		if err != nil {
+			return false, err
+		}
+		if mcpEventMatches(*sub, event) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// mcpPruneCursorsTx runs before retention deletes events through floor.
+func (s *Store) mcpPruneCursorsTx(ctx context.Context, tx *sql.Tx, epoch, floor int64, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT `+mcpSubscriptionColumns+` FROM mcp_event_subscriptions WHERE state='active' AND cursor_epoch=? AND cursor_seq<?`), epoch, floor)
+	if err != nil {
+		return err
+	}
+	var subs []*MCPSubscription
+	for rows.Next() {
+		sub, err := scanMCPSubscription(rows)
+		if err != nil {
+			_ = rows.Close()
+			return err
+		}
+		subs = append(subs, sub)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, sub := range subs {
+		lost, err := s.mcpPruneLosesEventTx(ctx, tx, sub, floor)
+		if err != nil {
+			return err
+		}
+		switch {
+		case lost:
+			_, err = tx.ExecContext(ctx, s.Rebind(`UPDATE mcp_event_subscriptions SET last_outcome='gap_pending',updated_at=? WHERE id=?`), mcpTime(now), sub.ID)
+		case sub.LastOutcome != "gap_pending":
+			_, err = tx.ExecContext(ctx, s.Rebind(`UPDATE mcp_event_subscriptions SET cursor_seq=? WHERE id=?`), floor, sub.ID)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (s *Store) pruneMCPEventsTx(ctx context.Context, tx *sql.Tx, clock MCPEventClock, now time.Time, retention time.Duration) (MCPEventClock, error) {
 	if retention <= 0 {
@@ -1000,21 +1053,17 @@ func (s *Store) pruneMCPEventsTx(ctx context.Context, tx *sql.Tx, clock MCPEvent
 	if deleted.Valid && deleted.Int64 > floor {
 		floor = deleted.Int64
 	}
-	// A cursor advances only past events in its own scope, so a cursor below
-	// the floor has lost data only when its scope or pending receipt has an
-	// event at or below the floor. Those subscriptions stay active with the
-	// cursor untouched: the next PrepareMCPDelivery sees it below the floor,
-	// resets to the head and reports a gap to the receiver. The loss is marked
-	// because a later sweep, which no longer sees the deleted event, would
-	// otherwise take the subscription for a quiet one and move its cursor.
-	if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE mcp_event_subscriptions SET last_outcome='gap_pending',updated_at=? WHERE state='active' AND cursor_epoch=? AND cursor_seq<? AND (pending_seq<=? OR `+mcpScopeEventThroughFloorSQL+`)`), mcpTime(now), clock.Epoch, floor, floor, floor); err != nil {
-		return clock, err
-	}
-	// Quiet active scopes lost nothing; move their cursors to the floor so
-	// renewal and delivery do not report truncation. Expired subscriptions
-	// keep their cursors: a loss is not recorded on them, and a later sweep
-	// could no longer see the deleted event.
-	if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE mcp_event_subscriptions SET cursor_seq=? WHERE state='active' AND cursor_epoch=? AND cursor_seq<? AND last_outcome<>'gap_pending' AND (pending_seq IS NULL OR pending_seq>?) AND NOT `+mcpScopeEventThroughFloorSQL), floor, clock.Epoch, floor, floor, floor); err != nil {
+	// A subscription below the floor has lost data only when its pending
+	// receipt or an event it would deliver is at or below the floor. Those
+	// stay active with the cursor untouched: the next PrepareMCPDelivery sees
+	// it below the floor, resets to the head and reports a gap. The loss is
+	// marked because a later sweep, which no longer sees the deleted event,
+	// would otherwise take the subscription for a quiet one. Every other
+	// active cursor moves to the floor, so renewal and delivery do not report
+	// truncation for events the subscription filters out. Expired
+	// subscriptions keep their cursors: a loss is not recorded on them, and a
+	// later sweep could no longer see the deleted event.
+	if err := s.mcpPruneCursorsTx(ctx, tx, clock.Epoch, floor, now); err != nil {
 		return clock, err
 	}
 	if _, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM mcp_event_log WHERE recorded_at<?`), cutoff); err != nil {
