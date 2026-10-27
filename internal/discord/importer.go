@@ -286,7 +286,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	// membership this run's media policy is about to be evaluated against, so
 	// purge and retry selection later reach the same verdict sync did.
 	floor := guildFloor{}
-	if media != nil {
+	if media != nil || opts.MediaPolicy.MaxParticipants > 0 {
 		floor = imp.guildParticipantFloor(ctx, opts, summary)
 		// The floor is guild-wide, so its outcome lands on every conversation of
 		// the guild before staging rewrites this run's containers: purge and
