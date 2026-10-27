@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"sync"
@@ -99,10 +102,43 @@ func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
 		}
 		t.Skipf("user/PID namespaces unavailable: %v\n%s", daemonPIDNamespaceProbe.err, daemonPIDNamespaceProbe.output)
 	}
-	cmd := exec.CommandContext(ctx, bwrap, append(args, os.Args[0], "-test.run=^TestDaemonRuntimePIDNamespaceHelper$", "-test.v")...) //nolint:gosec // Bubblewrap comes from LookPath; the test binary and flags are controlled here.
+	helperArgs := append([]string{"--info-fd", "3", "--block-fd", "4"}, args...)
+	cmd := exec.CommandContext(ctx, bwrap, append(helperArgs, os.Args[0], "-test.run=^TestDaemonRuntimePIDNamespaceHelper$", "-test.v")...) //nolint:gosec // Bubblewrap comes from LookPath; the test binary and flags are controlled here.
 	cmd.Env = append(os.Environ(), "MSGVAULT_HOME="+dataDir, "MSGVAULT_TEST_PIDNS="+mode)
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "namespace helper (%s):\n%s", mode, output)
+	infoRead, infoWrite, err := os.Pipe()
+	require.NoError(t, err)
+	defer func() { _ = infoRead.Close() }()
+	defer func() { _ = infoWrite.Close() }()
+	blockRead, blockWrite, err := os.Pipe()
+	require.NoError(t, err)
+	defer func() { _ = blockRead.Close() }()
+	defer func() { _ = blockWrite.Close() }()
+	cmd.ExtraFiles = []*os.File{infoWrite, blockRead}
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	require.NoError(t, cmd.Start())
+	defer func() {
+		if cmd.ProcessState == nil {
+			cancel()
+			_ = cmd.Wait()
+		}
+	}()
+	require.NoError(t, infoWrite.Close())
+	require.NoError(t, blockRead.Close())
+	var info struct {
+		ChildPID int `json:"child-pid"`
+	}
+	require.NoError(t, json.NewDecoder(infoRead).Decode(&info))
+	// Keep the namespace inode allocated after the helper exits. Otherwise
+	// Linux can reuse it for the sibling, making the stale record look local.
+	namespace, err := os.Open(fmt.Sprintf("/proc/%d/ns/pid", info.ChildPID))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, namespace.Close()) })
+	_, err = blockWrite.Write([]byte{1})
+	require.NoError(t, err)
+	err = cmd.Wait()
+	require.NoError(t, err, "namespace helper (%s):\n%s", mode, &output)
 }
 
 func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
