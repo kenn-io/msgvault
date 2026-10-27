@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -110,6 +111,41 @@ func TestInitSchemaBackfillsHiddenHTMLText(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT hidden_text_present FROM messages WHERE id = ?`), ids[1]).Scan(&hidden))
 	assert.False(hidden, "completed backfill runs once")
+}
+
+func TestInitSchemaResumesHiddenTextBackfill(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	ids := make([]int64, 0, 2)
+	for _, name := range []string{"committed-batch", "after-cursor"} {
+		id := f.CreateMessage(name)
+		ids = append(ids, id)
+		_, err := f.Store.DB().Exec(f.Store.Rebind(
+			`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (?, ?, ?)`),
+			id, "Archived text", `<div hidden>Hidden text</div>`)
+		require.NoError(err)
+	}
+	// An interrupted run committed the batch ending at the first message.
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET hidden_text_present = FALSE`))
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		"messages_hidden_text_backfill_v1")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO archive_metadata (key, value) VALUES (?, ?)`),
+		"hidden_text_backfill_cursor", strconv.FormatInt(ids[0], 10))
+	require.NoError(err)
+
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	for i, id := range ids {
+		var hidden bool
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+			`SELECT hidden_text_present FROM messages WHERE id = ?`), id).Scan(&hidden))
+		assert.Equal(i == 1, hidden, "the resumed walk starts after the cursor")
+	}
+	var cursors int
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT COUNT(*) FROM archive_metadata WHERE key = ?`), "hidden_text_backfill_cursor").Scan(&cursors))
+	assert.Equal(0, cursors, "a completed walk clears its cursor")
 }
 
 func TestUpdateMessageDerivedTextHiddenTextPresent(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
@@ -108,17 +109,39 @@ const (
 	migrationChatMembers                    = "chat_members_v1"
 )
 
+// hiddenTextBackfillCursorKey is the archive_metadata key holding the last
+// message ID the hidden text backfill committed, so an interrupted run resumes.
+const hiddenTextBackfillCursorKey = "hidden_text_backfill_cursor"
+
 // backfillMessagesHiddenText walks message IDs in bounded transactions. Bodies
 // are fetched by primary key, and only non-empty HTML reaches the detector.
-// content_changed_at stays unchanged; PostgreSQL's blanket last_modified and
-// embedding triggers still run on flag updates.
+// Each batch commits its last ID with its flags, and the next run continues
+// after it. content_changed_at stays unchanged; PostgreSQL's blanket
+// last_modified and embedding triggers still run on flag updates.
 func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
 	const batchSize = 1000
-	query := `SELECT id FROM messages ORDER BY id LIMIT ?`
-	args := []any{batchSize}
+	var afterID int64
+	var cursorValue string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key = ?`,
+		hiddenTextBackfillCursorKey).Scan(&cursorValue)
+	haveCursor := err == nil
+	if haveCursor {
+		if afterID, err = strconv.ParseInt(cursorValue, 10, 64); err != nil {
+			return fmt.Errorf("parse hidden text backfill cursor %q: %w", cursorValue, err)
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read hidden text backfill cursor: %w", err)
+	}
 	started, lastLog := time.Now(), time.Now()
 	var checked, flagged int64
 	for {
+		// The first batch has no lower bound, since zero and negative IDs are legal.
+		query := `SELECT id FROM messages ORDER BY id LIMIT ?`
+		args := []any{batchSize}
+		if haveCursor {
+			query = `SELECT id FROM messages WHERE id > ? ORDER BY id LIMIT ?`
+			args = []any{afterID, batchSize}
+		}
 		var ids []int64
 		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 			rows, err := tx.QueryContext(ctx, query, args...)
@@ -161,6 +184,19 @@ func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
 					return fmt.Errorf("backfill hidden text flag %d: %w", id, err)
 				}
 			}
+			if len(ids) < batchSize {
+				// The walk is complete; the migration ledger records it from here.
+				if _, err := tx.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key = ?`,
+					hiddenTextBackfillCursorKey); err != nil {
+					return fmt.Errorf("clear hidden text backfill cursor: %w", err)
+				}
+				return nil
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata (key, value) VALUES (?, ?)
+				ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+				hiddenTextBackfillCursorKey, strconv.FormatInt(ids[len(ids)-1], 10)); err != nil {
+				return fmt.Errorf("save hidden text backfill cursor: %w", err)
+			}
 			return nil
 		}); err != nil {
 			return err
@@ -174,17 +210,16 @@ func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
 			}
 			return nil
 		}
+		afterID, haveCursor = ids[len(ids)-1], true
 		// Time-throttled so a small archive logs nothing during startup.
 		if time.Since(lastLog) >= 30*time.Second {
 			slog.Info("backfilling hidden text flags",
 				slog.Int64("checked", checked),
 				slog.Int64("flagged", flagged),
-				slog.Int64("checked_to_id", ids[len(ids)-1]),
+				slog.Int64("checked_to_id", afterID),
 				slog.Duration("elapsed", time.Since(started)))
 			lastLog = time.Now()
 		}
-		query = `SELECT id FROM messages WHERE id > ? ORDER BY id LIMIT ?`
-		args = []any{ids[len(ids)-1], batchSize}
 	}
 }
 
