@@ -247,7 +247,7 @@ const kataLookupMinAPISchemaVersion = "3.12.0"
 const kataDocbankMinAPISchemaVersion = "3.13.0"
 
 // mcpEventsMinAPISchemaVersion adds owner-only native MCP Events.
-const mcpEventsMinAPISchemaVersion = "3.26.0"
+const mcpEventsMinAPISchemaVersion = "3.27.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
