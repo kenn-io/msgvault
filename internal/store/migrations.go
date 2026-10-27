@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
@@ -115,6 +116,8 @@ func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
 	const batchSize = 1000
 	query := `SELECT id FROM messages ORDER BY id LIMIT ?`
 	args := []any{batchSize}
+	started, lastLog := time.Now(), time.Now()
+	var checked, flagged int64
 	for {
 		var ids []int64
 		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
@@ -148,9 +151,11 @@ func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
 				if err != nil {
 					return fmt.Errorf("read hidden text backfill body %d: %w", id, err)
 				}
+				checked++
 				if !mime.HTMLHasHiddenText(bodyHTML) {
 					continue
 				}
+				flagged++
 				if _, err := tx.ExecContext(ctx, `UPDATE messages SET hidden_text_present = TRUE
 					WHERE id = ? AND hidden_text_present = FALSE`, id); err != nil {
 					return fmt.Errorf("backfill hidden text flag %d: %w", id, err)
@@ -161,7 +166,22 @@ func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
 			return err
 		}
 		if len(ids) < batchSize {
+			if time.Since(started) >= 30*time.Second {
+				slog.Info("backfilled hidden text flags",
+					slog.Int64("checked", checked),
+					slog.Int64("flagged", flagged),
+					slog.Duration("elapsed", time.Since(started)))
+			}
 			return nil
+		}
+		// Time-throttled so a small archive logs nothing during startup.
+		if time.Since(lastLog) >= 30*time.Second {
+			slog.Info("backfilling hidden text flags",
+				slog.Int64("checked", checked),
+				slog.Int64("flagged", flagged),
+				slog.Int64("checked_to_id", ids[len(ids)-1]),
+				slog.Duration("elapsed", time.Since(started)))
+			lastLog = time.Now()
 		}
 		query = `SELECT id FROM messages WHERE id > ? ORDER BY id LIMIT ?`
 		args = []any{ids[len(ids)-1], batchSize}
