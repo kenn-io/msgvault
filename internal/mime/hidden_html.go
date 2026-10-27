@@ -25,7 +25,7 @@ func HTMLHasHiddenText(rawHTML string) bool {
 		return false
 	}
 	doc, err := html.Parse(strings.NewReader(rawHTML))
-	return err != nil || htmlHasHiddenText(doc, htmlTextState{})
+	return err != nil || htmlHasHiddenText(doc, htmlTextState{}, inlineStyles{})
 }
 
 // htmlTextState is what an element passes to its descendants. Hidden covers the whole subtree;
@@ -35,9 +35,9 @@ type htmlTextState struct {
 	color, background       string
 }
 
-func htmlHasHiddenText(node *html.Node, state htmlTextState) bool {
+func htmlHasHiddenText(node *html.Node, state htmlTextState, styles inlineStyles) bool {
 	if node.Type == html.ElementNode {
-		state = hiddenHTMLElement(node, state)
+		state = hiddenHTMLElement(node, state, styles)
 	}
 	if state.hidden || state.invisible || state.tiny || state.color == "transparent" || state.color != "" && state.color == state.background {
 		if node.Type == html.TextNode && readableHTMLText(node.Data) && node.Parent != nil && node.Parent.Data != "style" && node.Parent.Data != "script" {
@@ -53,7 +53,7 @@ func htmlHasHiddenText(node *html.Node, state htmlTextState) bool {
 		}
 	}
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		if htmlHasHiddenText(child, state) {
+		if htmlHasHiddenText(child, state, styles) {
 			return true
 		}
 	}
@@ -64,7 +64,7 @@ func readableHTMLText(value string) bool {
 	return strings.ContainsFunc(value, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) })
 }
 
-func inlineHTMLStyle(node *html.Node) map[string]string {
+func inlineHTMLStyle(node *html.Node, styles inlineStyles) map[string]string {
 	style := make(map[string]string)
 	important := make(map[string]bool)
 	for _, attr := range node.Attr {
@@ -80,73 +80,101 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 			}
 		}
 	}
-	// The last valid declaration wins, and an important one beats normal ones.
-	apply := func(name, value string, isImportant bool) {
-		if value == "" || important[name] && !isImportant {
-			return
-		}
-		important[name] = isImportant
-		style[name] = value
-	}
 	for _, attr := range node.Attr {
 		if attr.Key != "style" || len(attr.Val) > maxInlineStyleBytes {
 			continue
 		}
-		for _, declaration := range inlineHTMLDeclarations(attr.Val) {
-			// Decode escapes after parsing so an escaped ";" or "!" stays a value character.
-			name := strings.ToLower(decodeInlineCSSEscapes(declaration.Property))
-			value := strings.ToLower(declaration.Value)
-			// Douceur misses "! important" with whitespace after the bang or an escaped keyword.
-			isImportant := declaration.Important
-			if bang := strings.LastIndex(value, "!"); bang > 0 && value[bang-1] != '\\' && strings.TrimSpace(decodeInlineCSSEscapes(value[bang+1:])) == "important" {
-				isImportant, value = true, value[:bang]
+		// The last valid declaration wins, and an important one beats normal ones.
+		for _, declaration := range styles.parse(attr.Val) {
+			if important[declaration.name] && !declaration.important {
+				continue
 			}
-			value = strings.TrimSpace(strings.ToLower(decodeInlineCSSEscapes(value)))
-			// The shorthand also resets the image, to none unless it names one.
-			if name == "background" {
-				shorthandImage := "none"
-				if strings.Contains(value, "url(") || strings.Contains(value, "gradient(") {
-					shorthandImage = "image"
-				}
-				apply("background-image", shorthandImage, isImportant)
-				name = "background-color"
-			}
-			if name == "background-image" {
-				if value != "none" && value != "initial" && !slices.Contains(inheritCSSKeywords, value) {
-					value = "image"
-				} else {
-					value = "none"
-				}
-			}
-			if name == "font" {
-				name, value = "font-size", fontShorthandSize(value)
-			}
-			if name == "color" || name == "background-color" {
-				switch {
-				case name == "background-color" && value == "unknown":
-				case name == "color" && (value == "currentcolor" || slices.Contains(inheritCSSKeywords, value)):
-					// The parent's color shows through, so an earlier declaration no longer applies.
-				case slices.Contains(inheritCSSKeywords, value) || value == "initial":
-					// A CSS-wide keyword replaces an earlier background or color with one that adds no color.
-					value = "transparent"
-					if name == "color" {
-						value = "initial"
-					}
-				default:
-					parsed := inlineHTMLColor(value)
-					// A shorthand with an image, gradient, or color this check can't read still sets a background.
-					if parsed == "" && name == "background-color" && strings.ContainsAny(value, "( ") {
-						parsed = "unknown"
-					}
-					value = parsed
-				}
-			} else if !validInlineCSSValue(name, value) {
-				value = ""
-			}
-			apply(name, value, isImportant)
+			important[declaration.name] = declaration.important
+			style[declaration.name] = declaration.value
 		}
 	}
 	return style
+}
+
+// inlineDeclaration is a style declaration with escapes, shorthands, and invalid values resolved.
+type inlineDeclaration struct {
+	name, value string
+	important   bool
+}
+
+// inlineStyles caches parsed style attributes for one document, since email repeats the same
+// style on many elements.
+type inlineStyles map[string][]inlineDeclaration
+
+func (styles inlineStyles) parse(style string) []inlineDeclaration {
+	if declarations, ok := styles[style]; ok {
+		return declarations
+	}
+	var declarations []inlineDeclaration
+	add := func(name, value string, isImportant bool) {
+		if value != "" {
+			declarations = append(declarations, inlineDeclaration{name, value, isImportant})
+		}
+	}
+	for _, declaration := range inlineHTMLDeclarations(style) {
+		// Decode escapes after parsing so an escaped ";" or "!" stays a value character.
+		name := strings.ToLower(decodeInlineCSSEscapes(declaration.Property))
+		value := strings.ToLower(declaration.Value)
+		// Douceur misses "! important" with whitespace after the bang or an escaped keyword.
+		isImportant := declaration.Important
+		if bang := strings.LastIndex(value, "!"); bang > 0 && value[bang-1] != '\\' && strings.TrimSpace(decodeInlineCSSEscapes(value[bang+1:])) == "important" {
+			isImportant, value = true, value[:bang]
+		}
+		value = strings.TrimSpace(strings.ToLower(decodeInlineCSSEscapes(value)))
+		// The shorthand also resets the image, to none unless it names one.
+		if name == "background" {
+			shorthandImage := "none"
+			if strings.Contains(value, "url(") || strings.Contains(value, "gradient(") {
+				shorthandImage = "image"
+			}
+			add("background-image", shorthandImage, isImportant)
+			name = "background-color"
+		}
+		if name == "background-image" {
+			switch {
+			case value == "none" || value == "initial" || slices.Contains(inheritCSSKeywords, value):
+				value = "none"
+			case strings.Contains(value, "(") && strings.HasSuffix(value, ")"):
+				value = "image"
+			default:
+				// Browsers ignore a value that names no image, keeping the earlier one.
+				value = ""
+			}
+		}
+		if name == "font" {
+			name, value = "font-size", fontShorthandSize(value)
+		}
+		if name == "color" || name == "background-color" {
+			switch {
+			case name == "background-color" && value == "unknown":
+			case name == "color" && (value == "currentcolor" || slices.Contains(inheritCSSKeywords, value)):
+				// The parent's color shows through, so an earlier declaration no longer applies.
+			case slices.Contains(inheritCSSKeywords, value) || value == "initial":
+				// A CSS-wide keyword replaces an earlier background or color with one that adds no color.
+				value = "transparent"
+				if name == "color" {
+					value = "initial"
+				}
+			default:
+				parsed := inlineHTMLColor(value)
+				// A shorthand with an image, gradient, or color this check can't read still sets a background.
+				if parsed == "" && name == "background-color" && strings.ContainsAny(value, "( ") {
+					parsed = "unknown"
+				}
+				value = parsed
+			}
+		} else if !validInlineCSSValue(name, value) {
+			value = ""
+		}
+		add(name, value, isImportant)
+	}
+	styles[style] = declarations
+	return declarations
 }
 
 // maxInlineStyleBytes bounds the CSS parser's work on one attribute, which grows quadratically
@@ -210,15 +238,16 @@ func fontShorthandSize(value string) string {
 	return ""
 }
 
-// inlineCSSValues lists the keywords each checked property accepts. <length> also admits lengths and functions.
+// inlineCSSValues lists the keywords each checked property accepts. <length> also admits lengths and
+// functions, <length+> only lengths that are not negative, and <number> numbers and percentages.
 var inlineCSSValues = map[string]string{
 	"display":     "none block inline inline-block flex inline-flex grid inline-grid table inline-table table-row table-cell table-row-group table-header-group table-footer-group table-column table-column-group table-caption list-item contents flow-root -webkit-box",
 	"visibility":  "visible hidden collapse",
 	"mso-hide":    "all none",
-	"opacity":     "<length>",
-	"font-size":   "<length> xx-small x-small small medium large x-large xx-large xxx-large smaller larger",
-	"height":      "<length> auto",
-	"max-height":  "<length> none",
+	"opacity":     "<number>",
+	"font-size":   "<length+> xx-small x-small small medium large x-large xx-large xxx-large smaller larger",
+	"height":      "<length+> auto",
+	"max-height":  "<length+> none",
 	"overflow":    "visible hidden clip scroll auto",
 	"overflow-y":  "visible hidden clip scroll auto",
 	"position":    "static relative absolute fixed sticky",
@@ -238,8 +267,20 @@ func validInlineCSSValue(property, value string) bool {
 	if !checked || value == "initial" || slices.Contains(strings.Fields(keywords), value) || slices.Contains(inheritCSSKeywords, value) {
 		return true
 	}
-	_, _, length := inlineCSSLength(value)
-	return strings.HasPrefix(keywords, "<length>") && (length || strings.HasSuffix(value, ")"))
+	if strings.HasSuffix(value, ")") {
+		return strings.HasPrefix(keywords, "<")
+	}
+	number, unit, length := inlineCSSLength(value)
+	switch strings.Fields(keywords)[0] {
+	case "<length>":
+		return length
+	case "<length+>":
+		return length && number >= 0
+	case "<number>":
+		return length && (unit == "" || unit == "%")
+	default:
+		return false
+	}
 }
 
 var inlineCSSEscape = regexp.MustCompile(`\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\r\n\f])?|[^\r\n\f])`)
@@ -257,12 +298,12 @@ func decodeInlineCSSEscapes(value string) string {
 	})
 }
 
-func hiddenHTMLElement(node *html.Node, state htmlTextState) htmlTextState {
+func hiddenHTMLElement(node *html.Node, state htmlTextState, styles inlineStyles) htmlTextState {
 	for _, attr := range node.Attr {
 		state.hidden = state.hidden || attr.Key == "hidden" || attr.Key == "style" && len(attr.Val) > maxInlineStyleBytes
 	}
 	var clipped, zeroHeight, positioned, offscreen, image bool
-	for property, value := range inlineHTMLStyle(node) {
+	for property, value := range inlineHTMLStyle(node, styles) {
 		switch property {
 		case "color":
 			switch {
