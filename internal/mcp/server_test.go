@@ -4247,6 +4247,21 @@ func TestMCPHTTPServerMountsProtectedEndpoint(t *testing.T) {
 	stdlibServer.Handler.ServeHTTP(authorized, authorizedRequest)
 	checks.Equal(http.StatusMethodNotAllowed, authorized.Code)
 	checks.Equal(http.MethodPost, authorized.Header().Get("Allow"))
+
+	must := require.New(t)
+	live := httptest.NewServer(stdlibServer.Handler)
+	defer live.Close()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, live.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+	must.NoError(err)
+	request.Host = "archive.example"
+	request.Header.Set("Authorization", "Bearer test-api-key")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
+	response, err := live.Client().Do(request)
+	must.NoError(err)
+	defer func() { must.NoError(response.Body.Close()) }()
+	checks.Equal(http.StatusForbidden, response.StatusCode)
 }
 
 func TestGetMessagePreservesBrowserURLAndRelatedID(t *testing.T) {

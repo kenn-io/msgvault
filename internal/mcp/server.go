@@ -11,11 +11,11 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -524,12 +524,25 @@ func newMCPHTTPServerWithPolicy(
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	handler, closeHandler := newHTTPHandlerWithPolicy(opts, httpOpts, policy, false)
+	stdlibServer.RegisterOnShutdown(closeHandler)
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", handler)
+	stdlibServer.Handler = mux
+	return stdlibServer
+}
+
+// NewHTTPHandler embeds MCP behind daemon authentication and origin checks; close after draining.
+func NewHTTPHandler(opts ServeOptions, httpOpts HTTPOptions) (http.Handler, func()) {
+	return newHTTPHandlerWithPolicy(opts, httpOpts, newHTTPInvocationPolicy(), true)
+}
+
+func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *invocationPolicy, daemonAuthenticated bool) (http.Handler, func()) {
 	if opts.downloads == nil {
 		opts.downloads = &downloadCache{}
 	}
-	stdlibServer.RegisterOnShutdown(opts.downloads.close)
 	confirmations := newConfirmationChallenges()
-	stdlibServer.RegisterOnShutdown(confirmations.close)
+	closeHandler := func() { opts.downloads.close(); confirmations.close() }
 	// HTTP is stateless: bind confirmations to this listener's authenticated
 	// principal, not the retired Mcp-Session-Id header. The challenge store is
 	// private to this listener, including when it intentionally has no API key.
@@ -555,24 +568,17 @@ func newMCPHTTPServerWithPolicy(
 			return server
 		},
 		&sdkmcp.StreamableHTTPOptions{
+			DisableLocalhostProtection:   daemonAuthenticated,
 			Stateless:                    true,
 			JSONResponse:                 true,
 			PropagateRequestCancellation: true,
-			// The visual search tool carries a query image of up to
-			// visual.MaxQueryImageBytes as base64 inside the JSON-RPC body;
-			// a smaller cap rejects valid images at the transport before the
-			// handler can see them. 2 MiB covers every other tool's payload
-			// plus the JSON envelope.
+			// Allow base64 visual.MaxQueryImageBytes plus 2 MiB for other
+			// tool payloads and JSON framing.
 			MaxRequestBodyBytes: (visual.MaxQueryImageBytes*4)/3 + 2<<20,
 		},
 	)
-	mux := http.NewServeMux()
-	protected := http.NewCrossOriginProtection().Handler(
-		bearerAuthHandler(httpOpts.APIKey, httpServer),
-	)
-	mux.Handle("/mcp", noStoreHandler(protected))
-	stdlibServer.Handler = mux
-	return stdlibServer
+	protected := http.NewCrossOriginProtection().Handler(bearerAuthHandler(httpOpts.APIKey, httpServer))
+	return noStoreHandler(protected), closeHandler
 }
 
 type noStoreResponseWriter struct {
@@ -607,14 +613,11 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 
 	expected := sha256.Sum256([]byte(apiKey))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		values := r.Header.Values("Authorization")
+		credential, valid := apiprotocol.BearerAuthorization(r)
 		authorized := false
-		if len(values) == 1 {
-			scheme, credential, found := strings.Cut(values[0], " ")
-			if found && credential != "" && strings.EqualFold(scheme, "Bearer") {
-				supplied := sha256.Sum256([]byte(credential))
-				authorized = subtle.ConstantTimeCompare(expected[:], supplied[:]) == 1
-			}
+		if valid {
+			supplied := sha256.Sum256([]byte(credential))
+			authorized = subtle.ConstantTimeCompare(expected[:], supplied[:]) == 1
 		}
 
 		if !authorized {

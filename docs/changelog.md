@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `msgvault serve` now provides native `/mcp` and `/mcp/writes` endpoints, with writes enabled through `--mcp-allow-writes` and the other `--mcp-allow-*` flags. See [native daemon endpoints](usage/chat.md#native-daemon-endpoints).
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).

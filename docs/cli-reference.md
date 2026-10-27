@@ -4428,6 +4428,25 @@ for environment-only deployment and persisted API keys.
 msgvault serve --bind 0.0.0.0 --port 8080
 ```
 
+On unreleased `main`, `/mcp` serves the read-only MCP catalog on this listener
+with the configured owner bearer key. Native MCP never permits keyless access.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--mcp-allow-writes` | `false` | Enable the independent `/mcp/writes` catalog; `/mcp` stays read-only. |
+| `--mcp-allow-profile-writes` | `false` | Enable profile promotion, display-name and Notes writes. |
+| `--mcp-allow-identity-decisions` | `false` | Enable confirmed identity match accept/reject calls. |
+| `--mcp-allow-identity-scoring` | `false` | Enable confirmed manual scoring using the fixed Jev provider. |
+| `--mcp-allow-person-merges` | `false` | Enable confirmed local person merges. |
+| `--mcp-allow-carddav-writes` | `false` | Enable confirmed CardDAV publication and sync. |
+| `--mcp-allow-calendar-writes` | `false` | Enable calendar mutations. |
+| `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
+| `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
+
+Every family flag also requires `--mcp-allow-writes`. These are process flags;
+auto-started local daemons default to read-only. See the
+[MCP guide](usage/chat.md#native-daemon-endpoints) for client setup and confirmation.
+
 ---
 
 ## setup
