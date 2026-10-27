@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -104,6 +105,13 @@ const mcpTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
 func mcpTime(t time.Time) string { return t.UTC().Format(mcpTimeLayout) }
 
+func mcpOptionalID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
+
 func (s *Store) mcpRoot() *Store {
 	if s.mcpBase != nil {
 		return s.mcpBase
@@ -118,6 +126,8 @@ func (s *Store) captureMCPEnabled() bool {
 	r := s.mcpRoot().mcpConfig.Load()
 	return r != nil && r.config.Enabled
 }
+
+func (s *Store) ingestContext() IngestContext { return s.mcpIngest }
 
 // WithIngestContext returns an immutable view sharing the archive pool and
 // Events configuration. It preserves any existing sync-generation fence.
@@ -431,6 +441,72 @@ func (s *Store) validateMCPEventScope(ctx context.Context, db SQLReader, r *mcpR
 		}
 	}
 	return sourceType, sourceID, nil
+}
+
+// appendMCPEventTx runs after the complete archive mutation under the outer
+// identity, sync-generation and Events clock fences. It never does network I/O.
+func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MCPEvent) error {
+	if !s.captureMCPEnabled() || s.mcpIngest.Mode != IngestLive {
+		return nil
+	}
+	tx := logged.Tx
+	var sourceType string
+	if err := logged.QueryRowContext(ctx, `SELECT source_type FROM sources WHERE id=?`, event.SourceID).Scan(&sourceType); err != nil {
+		return mcpSafeError(err)
+	}
+	r := s.mcpRoot().mcpConfig.Load()
+	if !r.kinds[event.Family+"\x00"+sourceType][event.Kind] {
+		return nil
+	}
+	var object map[string]jsontext.Value
+	if err := json.Unmarshal(event.Data, &object); err != nil || object == nil {
+		return mcpStoreError("invalid_event_data")
+	}
+	var head int64
+	if err := tx.QueryRowContext(ctx, `SELECT head_seq,capture_epoch FROM mcp_event_clock WHERE singleton=1`).Scan(&head, &event.Epoch); err != nil {
+		return mcpSafeError(err)
+	}
+	newReference := false
+	if event.MessageID > 0 {
+		err := logged.QueryRowContext(ctx, `SELECT reference_seq FROM mcp_event_message_refs WHERE message_id=?`, event.MessageID).Scan(&event.MessageReferenceSeq)
+		if errors.Is(err, sql.ErrNoRows) {
+			event.MessageReferenceSeq = head + 1
+			newReference = true
+		} else if err != nil {
+			return mcpSafeError(err)
+		}
+	}
+	if event.Family == "msgvault.draft_changed" || event.Family == "msgvault.kata_issue_filed" || event.Family == "msgvault.attachment_processed" {
+		var exists bool
+		err := logged.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mcp_event_log WHERE family=? AND scope_kind=? AND scope_id=? AND item_key=?)`, event.Family, event.ScopeKind, event.ScopeID, event.ItemKey).Scan(&exists)
+		if err != nil {
+			return mcpSafeError(err)
+		}
+		if exists {
+			return nil
+		}
+	}
+	if err := tx.QueryRowContext(ctx, `UPDATE mcp_event_clock SET head_seq=head_seq+1 WHERE singleton=1 RETURNING head_seq`).Scan(&event.Seq); err != nil {
+		return mcpSafeError(err)
+	}
+	if newReference {
+		if _, err := logged.ExecContext(ctx, `INSERT INTO mcp_event_message_refs (message_id,reference_seq) VALUES (?,?)`, event.MessageID, event.MessageReferenceSeq); err != nil {
+			return mcpSafeError(err)
+		}
+	}
+	event.RecordedAt = time.Now().UTC()
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = s.mcpIngest.ObservedAt
+		if event.OccurredAt.IsZero() {
+			event.OccurredAt = event.RecordedAt
+		}
+	}
+	_, err := logged.ExecContext(ctx, `INSERT INTO mcp_event_log (seq,epoch,family,kind,scope_kind,scope_id,item_key,message_id,message_reference_seq,conversation_id,source_id,attachment_id,from_me,occurred_at,recorded_at,data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, event.Seq, event.Epoch, event.Family, event.Kind, event.ScopeKind, event.ScopeID, event.ItemKey, mcpOptionalID(event.MessageID), mcpOptionalID(event.MessageReferenceSeq), event.ConversationID, event.SourceID, mcpOptionalID(event.AttachmentID), event.FromMe, mcpTime(event.OccurredAt), mcpTime(event.RecordedAt), string(event.Data))
+	if err != nil {
+		return mcpSafeError(err)
+	}
+	logged.mcpEventsWritten = true
+	return nil
 }
 
 // Source cleanup uses stored source IDs, independently of archive rows that

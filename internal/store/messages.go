@@ -1465,7 +1465,7 @@ type bodylessMessageJournalState struct {
 	deleted        bool
 }
 
-func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
+func upsertMessageWith(q querier, d Dialect, msg *Message, inserted ...*bool) (int64, error) {
 	journalCandidate := isBodylessMessageJournalCandidate(msg)
 	var prior bodylessMessageJournalState
 	if journalCandidate {
@@ -1487,7 +1487,7 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 			return 0, fmt.Errorf("read bodyless message journal state: %w", err)
 		}
 	}
-	sql := upsertMessageSQL(d.Now())
+	upsertSQL := upsertMessageSQL(d.Now())
 	sourceIsFromMe := msg.IsFromMe && !msg.IdentityDerivedIsFromMe
 	identityIsFromMe := msg.IsFromMe && msg.IdentityDerivedIsFromMe
 	args := []any{
@@ -1503,25 +1503,45 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats,
 	}
 
-	// Use RETURNING to avoid an extra SELECT per message when supported.
+	// The insertion outcome belongs to the write, rather than an earlier
+	// existence read. Events-enabled transactions hold the global clock fence.
 	var id int64
-	err := q.QueryRow(sql+"\n\t\tRETURNING id\n\t", args...).Scan(&id)
-
-	if err != nil {
-		// SQLite < 3.35 does not support RETURNING. Fall back to an Exec + SELECT.
-		if !d.IsReturningError(err) {
+	var insertedRow bool
+	if len(inserted) > 0 {
+		*inserted[0] = false
+		insertSQL := strings.Split(upsertSQL, "ON CONFLICT(source_id, source_message_id)")[0] + "ON CONFLICT(source_id, source_message_id) DO NOTHING RETURNING id"
+		var newID int64
+		err := q.QueryRow(insertSQL, args[:len(args)-2]...).Scan(&newID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return 0, err
 		}
-
-		if _, execErr := q.Exec(sql, args...); execErr != nil {
-			return 0, execErr
+		if err == nil {
+			*inserted[0] = true
+			insertedRow = true
+			id = newID
 		}
+	}
 
-		if err := q.QueryRow(
-			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
-			msg.SourceID, msg.SourceMessageID,
-		).Scan(&id); err != nil {
-			return 0, err
+	if !insertedRow {
+		// Use RETURNING to avoid an extra SELECT per message when supported.
+		err := q.QueryRow(upsertSQL+"\n\t\tRETURNING id\n\t", args...).Scan(&id)
+
+		if err != nil {
+			// SQLite < 3.35 does not support RETURNING. Fall back to an Exec + SELECT.
+			if !d.IsReturningError(err) {
+				return 0, err
+			}
+
+			if _, execErr := q.Exec(upsertSQL, args...); execErr != nil {
+				return 0, execErr
+			}
+
+			if err := q.QueryRow(
+				`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
+				msg.SourceID, msg.SourceMessageID,
+			).Scan(&id); err != nil {
+				return 0, err
+			}
 		}
 	}
 	if journalCandidate && needsBodylessMessageJournal(prior, msg) {
@@ -2195,7 +2215,7 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 		}
 		return nil
 	}
-	messageID, err := s.persistMessageWithParticipantsTransaction(
+	messageID, err := s.WithIngestContext(IngestContext{Mode: IngestUnknown}).persistMessageWithParticipantsTransaction(
 		ctx, attributionLock{Sources: []int64{expected.SourceID}},
 		beforeParticipants, participants, build, prepare, afterPersist,
 	)
@@ -2343,12 +2363,22 @@ func (s *Store) persistMessageWithParticipantsTx(
 	if err := s.requireSyncSource(data.Message.SourceID); err != nil {
 		return 0, err
 	}
-	id, err := s.persistMessageWith(ctx, tx, data)
+	var inserted bool
+	var outcome []*bool
+	if s.captureMCPEnabled() && s.ingestContext().Mode == IngestLive {
+		outcome = []*bool{&inserted}
+	}
+	id, err := s.persistMessageWith(ctx, tx, data, outcome...)
 	if err != nil {
 		return 0, err
 	}
 	if afterPersist != nil {
 		if err := afterPersist(ctx, tx, data, id); err != nil {
+			return 0, err
+		}
+	}
+	if inserted && data.Message.MessageType != messageTypeCalendarEvent {
+		if err := s.appendArchivedMessageTx(ctx, tx, id); err != nil {
 			return 0, err
 		}
 	}
@@ -2360,6 +2390,7 @@ func (s *Store) persistMessageWith(
 	ctx context.Context,
 	tx *loggedTx,
 	data *MessagePersistData,
+	inserted ...*bool,
 ) (int64, error) {
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
@@ -2393,7 +2424,7 @@ func (s *Store) persistMessageWith(
 		message = &messageCopy
 	}
 
-	messageID, err := upsertMessageWith(q, s.dialect, message)
+	messageID, err := upsertMessageWith(q, s.dialect, message, inserted...)
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
 	}
@@ -6109,6 +6140,9 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // ReplaceReactionsContext honors cancellation during ReplaceReactions.
 func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, reactions []ReactionRef) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
 			return err
 		}
@@ -6343,8 +6377,7 @@ func (s *Store) replaceMessageAttachmentsWhereContext(ctx context.Context,
 }
 
 func (s *Store) replaceMessageAttachmentsWhereTx(
-	tx *loggedTx, messageID int64, deleteWhere string,
-	refs []AttachmentRef, deleteArgs ...any,
+	tx *loggedTx, messageID int64, deleteWhere string, refs []AttachmentRef, deleteArgs ...any,
 ) error {
 	return s.replaceMessageAttachmentsWhereTxContext(context.Background(), tx, messageID, deleteWhere, refs, deleteArgs...)
 }
