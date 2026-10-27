@@ -112,6 +112,8 @@ func TestDocumentRangesCleanup(t *testing.T) {
 				requirements.NoError(err)
 				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 				assertions.Zero(count, "collect checkpoints after their profile stops being the target")
+				requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM document_extractions WHERE id = ? AND state = 'terminal'"), claim.ExtractionID).Scan(&count))
+				assertions.Equal(1, count, "retain terminal suppression while the source is live")
 				return
 			}
 			if action == "purge-derived" {
@@ -149,6 +151,8 @@ func TestDocumentRangesCleanup(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 			assertions.Zero(count, "published replacement makes old terminal ranges collectible")
+			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM document_extractions WHERE id = ? AND state = 'terminal'"), claim.ExtractionID).Scan(&count))
+			assertions.Equal(1, count, "retain terminal suppression while the source is live")
 		})
 	}
 }

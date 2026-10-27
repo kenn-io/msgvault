@@ -905,8 +905,9 @@ func (s *Store) CompleteDocumentExtractionRebuild(ctx context.Context, rebuildID
 // GarbageCollectDocumentDerivatives removes bounded stale extraction
 // revisions. Superseded revisions are eligible after the recovery cutoff.
 // Current owners and terminal suppression records stay while their source is
-// live, except staged ranges from superseded attempts or profiles that are no
-// longer the target. Active staging leases are never collected.
+// live. Range checkpoints from superseded attempts or profiles that are no
+// longer the target are collected separately with the same cutoff and bound.
+// Active staging leases are never collected.
 func (s *Store) GarbageCollectDocumentDerivatives(
 	ctx context.Context,
 	before time.Time,
@@ -917,6 +918,25 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 	}
 	result := DocumentDerivativeGCResult{}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		_, err := tx.Exec(`
+			DELETE FROM document_extraction_ranges WHERE extraction_id IN (
+			    SELECT e.id FROM document_extractions e
+			    WHERE e.updated_at < ?
+			      AND (e.state != 'staging' OR e.lease_until IS NULL OR e.lease_until < `+s.dialect.Now()+`)
+			      AND EXISTS (SELECT 1 FROM document_extraction_ranges r WHERE r.extraction_id = e.id)
+			      AND (
+			          NOT EXISTS (SELECT 1 FROM document_index_state WHERE singleton = 1 AND target_profile_id = e.profile_id)
+			          OR EXISTS (SELECT 1 FROM document_extractions newer
+			              WHERE newer.profile_id = e.profile_id AND newer.canonical_blob_hash = e.canonical_blob_hash
+			                AND newer.extraction_input_key = e.extraction_input_key
+			                AND (newer.created_at > e.created_at OR (newer.created_at = e.created_at AND newer.id > e.id)))
+			      )
+			    ORDER BY e.updated_at, e.id
+			    LIMIT ?
+			)`, before.UTC(), limit)
+		if err != nil {
+			return fmt.Errorf("delete stale document extraction ranges: %w", err)
+		}
 		rows, err := tx.Query(`
 			SELECT e.id, e.state,
 			       CASE WHEN h.extraction_id IS NULL THEN FALSE ELSE TRUE END
@@ -924,27 +944,13 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 			LEFT JOIN document_extraction_heads h ON h.extraction_id = e.id
 			WHERE e.updated_at < ?
 			  AND (e.state != 'staging' OR e.lease_until IS NULL OR e.lease_until < `+s.dialect.Now()+`)
-			  AND ((h.extraction_id IS NULL AND (e.state != 'terminal' OR EXISTS (
-			      SELECT 1 FROM document_extraction_ranges r WHERE r.extraction_id = e.id
-			  ))) OR NOT EXISTS (
+			  AND ((h.extraction_id IS NULL AND e.state != 'terminal') OR NOT EXISTS (
 			      SELECT 1 FROM document_occurrences o
 			      JOIN messages m ON m.id = o.message_id
 			      WHERE o.canonical_blob_hash = e.canonical_blob_hash
 			        AND `+documentRoleScopeSQL("o", "(SELECT include_inline FROM document_extraction_profiles WHERE id = e.profile_id)")+`
 			        AND `+LiveMessagesWhere("m", true)+`
 			  ))
-              AND NOT (
-                  EXISTS (SELECT 1 FROM document_extraction_ranges r WHERE r.extraction_id = e.id)
-                  AND EXISTS (SELECT 1 FROM document_index_state WHERE singleton = 1 AND target_profile_id = e.profile_id)
-                  AND NOT EXISTS (SELECT 1 FROM document_extractions newer
-                      WHERE newer.profile_id = e.profile_id AND newer.canonical_blob_hash = e.canonical_blob_hash
-                        AND newer.extraction_input_key = e.extraction_input_key
-                        AND (newer.created_at > e.created_at OR (newer.created_at = e.created_at AND newer.id > e.id)))
-                  AND EXISTS (SELECT 1 FROM document_occurrences o JOIN messages m ON m.id = o.message_id
-                      WHERE o.canonical_blob_hash = e.canonical_blob_hash
-                        AND `+documentRoleScopeSQL("o", "(SELECT include_inline FROM document_extraction_profiles WHERE id = e.profile_id)")+`
-                        AND `+LiveMessagesWhere("m", true)+`)
-              )
 			ORDER BY e.updated_at, e.id
 			LIMIT ?`, before.UTC(), limit)
 		if err != nil {
