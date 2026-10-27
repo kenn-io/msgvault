@@ -640,3 +640,43 @@ func TestSubscribeTimesActivationAfterTheGate(t *testing.T) {
 	Assert.False(t, row.VerifiedAt.Before(released), "verification time %s must not precede the gate release %s", row.VerifiedAt, released)
 	Assert.True(t, row.ExpiresAt.After(released), "expiry %s must follow the gate release %s", row.ExpiresAt, released)
 }
+
+// Reconciliation reads subscriptions before it compares their expiry with the
+// clock, so a row can look expired just after a renewal committed. Expiry is a
+// Store transition that bumps the generation; reconciliation must not cancel
+// an idle worker on the snapshot's deadline alone.
+func TestReconcileLeavesExpiryToTheStore(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	s, f, req := eventService(t)
+	result, err := s.Subscribe(t.Context(), s.principal, req)
+	require.NoError(err)
+	row, err := s.st.GetMCPSubscription(t.Context(), result.ID)
+	require.NoError(err)
+	// An idle worker for the current generation; reconciliation alone decides
+	// whether it is cancelled.
+	workerCtx, cancelWorker := context.WithCancel(t.Context())
+	w := &worker{generation: row.Generation, cancel: cancelWorker, done: make(chan struct{}), wake: make(chan struct{}, 1), deliveryWake: make(chan struct{}, 1)}
+	go func() {
+		defer close(w.done)
+		<-workerCtx.Done()
+	}()
+	t.Cleanup(func() {
+		cancelWorker()
+		<-w.done
+	})
+	s.workersMu.Lock()
+	s.workers[result.ID] = w
+	s.workersMu.Unlock()
+
+	// The snapshot sees a deadline in the past while the row is still active.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_subscriptions SET expires_at=? WHERE id=?`), time.Now().UTC().Add(-time.Minute).Format("2006-01-02T15:04:05.000000000Z"), result.ID)
+	require.NoError(err)
+	require.NoError(s.reconcileWithPriority(t.Context(), false))
+
+	s.workersMu.Lock()
+	kept := s.workers[result.ID]
+	s.workersMu.Unlock()
+	assert.Same(w, kept, "reconcile must not cancel a worker on a snapshot deadline")
+	assert.NoError(workerCtx.Err())
+}

@@ -109,11 +109,14 @@ func (s *Service) reconcileWithPriority(ctx context.Context, priority bool) erro
 		return safeStoreError(err)
 	}
 	active := make(map[string]int64)
-	now := time.Now()
 	for _, row := range rows {
-		if row.State == "active" && now.Before(row.ExpiresAt) || row.State == "stopped" && row.StopReason == "scope_removed" && row.LastOutcome == "terminate_pending" {
-			// A purge stopped the second kind in its own transaction; it
-			// keeps a worker only long enough to send its terminated envelope.
+		// Expiry is left to the Store: its transition bumps the generation,
+		// and a worker's next delivery check performs it. Comparing this
+		// snapshot's deadline with the clock could cancel a subscription that
+		// was renewed after the snapshot was read. A purge stops the second
+		// kind in its own transaction; it keeps a worker only long enough to
+		// send its terminated envelope.
+		if row.State == "active" || row.State == "stopped" && row.StopReason == "scope_removed" && row.LastOutcome == "terminate_pending" {
 			active[row.ID] = row.Generation
 		}
 	}
