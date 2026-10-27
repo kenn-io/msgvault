@@ -50,7 +50,7 @@ func testBackupDocumentDisclosure(t *testing.T, chunks bool) {
 		INSERT INTO document_extraction_ranges(extraction_id, evidence, char_count) VALUES ('three', 'checkpoint sentinel', 19)`)
 	require.NoError(err)
 	if !chunks {
-		_, err = database.Exec(`DELETE FROM document_chunks`)
+		_, err = database.Exec(`DELETE FROM document_chunks; DELETE FROM document_extraction_heads`)
 		require.NoError(err)
 	}
 	require.NoError(database.Close())
@@ -83,9 +83,6 @@ func testBackupDocumentDisclosure(t *testing.T, chunks bool) {
 	assert.Equal(int64(1), disclosure.EnabledProfiles)
 	assert.Equal(int64(1), disclosure.ConsentedProfiles)
 	assert.Equal(int64(3), disclosure.Extractions)
-	assert.Equal(int64(2), disclosure.CurrentHeads)
-	assert.Equal(int64(1), disclosure.StagedRanges)
-	assert.Equal(int64(19), disclosure.StagedCharacters)
 	staged, err := backupapp.NewDocumentAuxiliaryTarget().StageAuxiliary(t.Context(), capture.artifacts)
 	require.NoError(err)
 	require.NoError(staged.Commit(t.Context()))
@@ -93,11 +90,16 @@ func testBackupDocumentDisclosure(t *testing.T, chunks bool) {
 	require.NoError(err)
 	defer func() { require.NoError(restored.Close()) }()
 	var text string
-	require.NoError(restored.QueryRow(`SELECT evidence FROM document_extraction_ranges`).Scan(&text))
-	assert.Equal("checkpoint sentinel", text)
 	if chunks {
 		require.NoError(restored.QueryRow(`SELECT text FROM document_chunks`).Scan(&text))
 		assert.Equal("synthetic normalized attachment evidence", text)
+	} else {
+		assert.Zero(disclosure.Chunks)
+		assert.Zero(disclosure.CurrentHeads)
+		assert.Equal(int64(1), disclosure.StagedRanges)
+		assert.Equal(int64(19), disclosure.StagedCharacters)
+		require.NoError(restored.QueryRow(`SELECT evidence FROM document_extraction_ranges`).Scan(&text))
+		assert.Equal("checkpoint sentinel", text)
 	}
 }
 

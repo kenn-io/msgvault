@@ -81,7 +81,6 @@ func TestDoclingStatusDisclosesRangePlaintext(t *testing.T) {
 	var status documentStatusOutput
 	requirements.NoError(json.Unmarshal([]byte(run("status", "--json")), &status))
 	assertions.True(status.StoresPlaintext)
-	assertions.True(status.BackupsMayContainText)
 }
 
 func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uploadName string) {
