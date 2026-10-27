@@ -146,6 +146,7 @@ type DocumentIndexStatusResponse struct {
 
 type DocumentDerivativeGCResult struct {
 	ExtractionsRemoved  int `json:"extractions_removed"`
+	RangesRemoved       int `json:"ranges_removed"`
 	CurrentHeadsRemoved int `json:"current_heads_removed"`
 }
 
@@ -918,7 +919,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 	}
 	result := DocumentDerivativeGCResult{}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		_, err := tx.Exec(`
+		deletedRanges, err := tx.Exec(`
 			DELETE FROM document_extraction_ranges WHERE extraction_id IN (
 			    SELECT e.id FROM document_extractions e
 			    WHERE e.updated_at < ?
@@ -937,6 +938,11 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 		if err != nil {
 			return fmt.Errorf("delete stale document extraction ranges: %w", err)
 		}
+		rangesRemoved, err := deletedRanges.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read stale document extraction range delete count: %w", err)
+		}
+		result.RangesRemoved = int(rangesRemoved)
 		rows, err := tx.Query(`
 			SELECT e.id, e.state,
 			       CASE WHEN h.extraction_id IS NULL THEN FALSE ELSE TRUE END
@@ -944,7 +950,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 			LEFT JOIN document_extraction_heads h ON h.extraction_id = e.id
 			WHERE e.updated_at < ?
 			  AND (e.state != 'staging' OR e.lease_until IS NULL OR e.lease_until < `+s.dialect.Now()+`)
-			  AND ((h.extraction_id IS NULL AND e.state != 'terminal') OR NOT EXISTS (
+			  AND ((h.extraction_id IS NULL AND e.state != 'terminal' AND NOT EXISTS (SELECT 1 FROM document_extraction_ranges r WHERE r.extraction_id = e.id)) OR NOT EXISTS (
 			      SELECT 1 FROM document_occurrences o
 			      JOIN messages m ON m.id = o.message_id
 			      WHERE o.canonical_blob_hash = e.canonical_blob_hash

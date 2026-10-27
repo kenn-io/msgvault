@@ -78,7 +78,7 @@ func TestDocumentRangesSurviveRetryAndFenceWrites(t *testing.T) {
 }
 
 func TestDocumentRangesCleanup(t *testing.T) {
-	for _, action := range []string{"superseding rebuild", "purge-derived", "source removed", "target changed"} {
+	for _, action := range []string{"superseding rebuild", "purge-derived", "source removed", "target changed", "retryable failure"} {
 		t.Run(action, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -89,7 +89,21 @@ func TestDocumentRangesCleanup(t *testing.T) {
 			requirements.NoError(err)
 			checkpoint := storetest.DocumentRangeCheckpoint(t)
 			requirements.NoError(f.Store.SaveDocumentExtractionRange(t.Context(), claim, checkpoint, 1<<20))
-			requirements.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{Claim: claim, ReasonCode: "provider_timeout", Terminal: true}))
+			failure := store.DocumentExtractionFailure{Claim: claim, ReasonCode: "provider_timeout", Terminal: action != "retryable failure"}
+			if action == "retryable failure" {
+				failure.RetryAt = time.Now().UTC().Add(time.Minute)
+			}
+			requirements.NoError(f.Store.FailDocumentExtraction(t.Context(), failure))
+			if action == "retryable failure" {
+				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
+				requirements.NoError(err)
+				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(-7*24*time.Hour), 100)
+				requirements.NoError(err)
+				var count int
+				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+				assertions.Equal(1, count, "retain checkpoints for the latest retryable attempt on the live target")
+				return
+			}
 			_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Hour), 100)
 			requirements.NoError(err)
 			var count int
@@ -108,8 +122,10 @@ func TestDocumentRangesCleanup(t *testing.T) {
 				cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour)
 				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
 				requirements.NoError(err)
-				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
+				collected, err := f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
 				requirements.NoError(err)
+				assertions.Equal(1, collected.RangesRemoved)
+				assertions.Zero(collected.ExtractionsRemoved)
 				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 				assertions.Zero(count, "collect checkpoints after their profile stops being the target")
 				requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM document_extractions WHERE id = ? AND state = 'terminal'"), claim.ExtractionID).Scan(&count))

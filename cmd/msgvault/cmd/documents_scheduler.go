@@ -65,7 +65,7 @@ func configureDocumentReconcileJob(
 				if gcErr != nil {
 					return fmt.Errorf("garbage collect document derivatives: %w", gcErr)
 				}
-				if result.ExtractionsRemoved < documentDerivativeGCBatch {
+				if result.ExtractionsRemoved < documentDerivativeGCBatch && result.RangesRemoved < documentDerivativeGCBatch {
 					return nil
 				}
 			}
