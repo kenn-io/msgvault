@@ -3107,6 +3107,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person facts evidence-status <person-id>` | Inspect changes to evidence support |
 | `person facts claims <person-id>` | Inspect proposed values |
 | `person facts decisions <person-id>` | Inspect resolver decisions |
+| `person facts contested <person-id> [--include-sensitive] [--json]` | Report contested facts and supported evidence |
 | `person facts pins <person-id>` | List fields protected from automatic replacement |
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |

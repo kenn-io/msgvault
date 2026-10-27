@@ -9,14 +9,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/personfacts"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -363,4 +367,72 @@ func runPersonFactsCommand(ctx context.Context, t *testing.T, args ...string) (s
 
 func outputIndex(output, value string) int {
 	return strings.Index(output, value)
+}
+
+func TestPersonFactsContestedReadsRealAPI(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	participant, err := st.EnsureParticipantByIdentifier("email", "contest-cli@example.test", "Contest Fixture")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	requirements.NoError(err)
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)})
+	server := httptest.NewServer(srv.Router())
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	empty, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10))
+	requirements.NoError(err)
+	assertions.Contains(empty, "No contested facts.")
+	output, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--json", "--include-sensitive")
+	requirements.NoError(err)
+	assertions.JSONEq(`[]`, output)
+}
+
+func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	participant, err := st.EnsureParticipantByIdentifier("email", "contest-report@example.test", "Contest Fixture")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	requirements.NoError(err)
+	_, err = st.SetPersonTrackingContext(t.Context(), person.ID, true)
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
+	requirements.NoError(err)
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
+	requirements.NoError(err)
+	var target personfacts.TargetDescriptor
+	for _, item := range catalog.Targets {
+		if item.Slug == store.AttributeSlugPrimaryChannel {
+			target = item
+		}
+	}
+	requirements.NotEmpty(target.Key)
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	claims := []personfacts.ProposedClaim{}
+	for _, value := range []string{`"chat"`, `"email"`} {
+		claims = append(claims, personfacts.ProposedClaim{Target: target, Relation: personfacts.RelationSupport, SubmittedValue: json.RawMessage(value), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: person.ID, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/" + strings.Trim(value, `"`), SubjectPersonID: &person.ID, SubjectRef: "synthetic-person", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}}})
+	}
+	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{PersonID: person.ID, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "one", End: "two"}}, ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now, Policy: personfacts.PolicyContext{AllowSensitive: true, ProviderPolicyFingerprint: "fixture"}, Claims: claims}, nil)
+	requirements.NoError(err)
+	definition, err := st.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, store.AttributeSlugPrimaryChannel)
+	requirements.NoError(err)
+	description := "Updated preferred channel description"
+	descriptionUpdate := &description
+	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{Description: &descriptionUpdate})
+	requirements.NoError(err)
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)})
+	server := httptest.NewServer(srv.Router())
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	defaultOutput, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10))
+	requirements.NoError(err)
+	assertions.Contains(defaultOutput, "No contested facts.")
+	output, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--include-sensitive")
+	requirements.NoError(err)
+	for _, expected := range []string{"primary_channel", "chat", "email", "competing-tie", "https://example.test/chat", "2026-08-22", "Definition changed since resolution"} {
+		assertions.Contains(output, expected)
+	}
 }
