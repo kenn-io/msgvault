@@ -84,8 +84,8 @@ The relationship index has four datasets.
 
 This is the only large dataset. Its ordinary grain is one row per
 `(message_id, canonical_id, participant_domain)`. Duplicate aliases at that
-grain merge every Boolean flag with `bool_or`. A message with no valid direct
-or conversation-member edge receives one nullable-identity sentinel row.
+grain merge every Boolean flag with `bool_or`. Each message also receives one
+nullable-identity sentinel row.
 That row retains the message facts needed for filter-before-chat-grouping and
 is excluded from identity and domain fan-out.
 
@@ -101,6 +101,7 @@ Message columns:
 - `entry_kind`
 - `is_chat`
 - `is_from_me`
+- `unsent`
 - `attachment_count`
 - deletion state
 
@@ -120,6 +121,10 @@ readable.
 
 Owner rows remain in this dataset. They are excluded from returned people but
 are required to decide whether a meeting includes the owner.
+
+Explore retains unsent rows for lookup. Contact summaries, relationship
+ranking, calendars, temperature, timelines, and inbox summaries use sent
+activity, so drafts leave last-contact dates and sent totals unchanged.
 
 The query layer excludes nullable-identity sentinels, then performs a second
 deduplication to `(message_id, canonical_id)` when computing people. It again
@@ -253,6 +258,12 @@ from committed base Parquet. The conversation-participant SHA fingerprint is
 retained so a membership change on an old conversation is detected even when
 no message was added.
 
+Sent-state changes on covered messages trigger an activity rebuild from retained
+base Parquet. If new messages arrive too, `ModeAppendRepair` rebuilds activity
+from retained and appended shards. Before choosing append mode, the builder
+rechecks the covered unsent IDs inside its pinned source snapshot, so a draft
+sent after the initial staleness check cannot leave old activity behind.
+
 Account-identity add/remove changes and participant merges are different:
 `is_from_me` is baked into base message Parquet during export, and a merge may
 also repoint `messages.sender_id`. Account-identity revision drift therefore
@@ -283,6 +294,15 @@ be recorded before this change is approved for merge.
 The four relationship datasets are staged and validated as one immutable
 generation. The cache marker is atomically replaced last and identifies the
 generation and its source/identity/conversation-participant revisions.
+
+The marker's `UnsentFingerprint` hashes the sorted exportable unsent message IDs
+through `LastMessageID`. Full staleness checks compare that set with the archive,
+including changes to existing messages when no new mail arrives. Scheduled
+post-sync refresh checks indexed drift first. When that drift already requires
+a build, the minimum rebuild interval can defer the full sent-status scan too.
+With clean indexed state, preflight scans sent status before applying the interval.
+Request-time marker checks read the committed publication without scanning the
+archive-wide unsent set.
 
 There is no durable publication journal and no in-daemon repair workflow. An
 interruption before marker replacement leaves readers on the old generation.

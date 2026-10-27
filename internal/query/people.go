@@ -343,7 +343,11 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		return nil, err
 	}
 	conditions, args := buildExploreConditions(request.Explore)
-	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions,
+	conditions, err = e.sentIdentityConditions(conditions)
+	if err != nil {
+		return nil, err
+	}
+	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs,
 		e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
@@ -527,36 +531,9 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 // matched entry projects exactID as its person_id, so the aggregates and the
 // participants join downstream still key on the requested row.
 //
-// Three shapes, cheapest applicable first:
-//
-//  1. Exact-ID lookup with no analytical conditions (the person-detail
-//     endpoint): membership is resolved with semi-joins against the raw
-//     link tables, never touching logical_entries.participant_ids —
-//     unnesting that column forces the analytical_entries view to assemble
-//     per-message participant lists for the entire archive, which dominated
-//     person-detail latency. Equivalence with the fan-out shape: a non-chat
-//     entry is one message whose participants are its recipients plus its
-//     sender (the view's message_participant_links); a conversation entry's
-//     participants are the message-level participants of the group's chat
-//     messages plus the conversation's own participant rows. conversation_id
-//     is globally unique and NOT NULL, so matching it alone reproduces the
-//     (source_id, conversation_id) grouping exactly.
-//  2. Exact-ID lookup with conditions: logical entries whose
-//     relationship_activity edges carry the cluster's canonical ID, filtered
-//     inside the analytical context. The semi-join shape cannot be used
-//     because a conversation entry's membership must only reflect messages
-//     inside the filtered context — which the classified branch of
-//     sqlActivityEntryEdges preserves.
-//  3. Listing/search: direct relationship_activity edges per entry, each
-//     baking the alias-merged canonical ID, so a linked identity aggregates
-//     as ONE row keyed by its canonical ID — matching the ranked
-//     relationships list instead of splitting cluster members into partial
-//     rows. The UNION inside sqlActivityEntryEdges dedups to one
-//     (entry, canonical) row, so an entry listing several raw members of one
-//     cluster (e.g. cc'ing a contact's work and personal addresses) is never
-//     double-counted. The clusters/canon CTEs remain only for the caller's
-//     label, search-match, and identifier subqueries.
-func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob string) (string, []any) {
+// Exact-ID lookup uses relationship activity edges within the analytical context.
+// Listing/search aggregates edges by canonical ID, so linked aliases count once.
+func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (string, []any) {
 	if exactID == nil {
 		return fmt.Sprintf(`
 ), clusters AS (
@@ -572,64 +549,33 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 	if len(memberIDs) == 0 {
 		memberIDs = []int64{*exactID}
 	}
-	if conditions != "true" {
-		// Membership resolves through relationship_activity's baked
-		// canonical_id rather than list_contains over aggregated member
-		// lists; the classified branch inside sqlActivityEntryEdges keeps a
-		// chat entry's membership scoped to the filtered context exactly as
-		// the aggregated lists did. The IN over memberIDs (never empty here)
-		// matches the cluster whichever alias the caller requested: every
-		// edge bakes the cluster's canonical ID, which is itself one of the
-		// resolved members. memberList binds twice — once per UNION branch.
-		memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
-		args := make([]any, 0, len(memberIDs)*2+1)
-		args = append(args, *exactID)
-		for range 2 {
-			for _, memberID := range memberIDs {
-				args = append(args, memberID)
-			}
+	// Membership resolves through relationship_activity's baked
+	// canonical_id rather than list_contains over aggregated member
+	// lists; the classified branch inside sqlActivityEntryEdges keeps a
+	// chat entry's membership scoped to the filtered context exactly as
+	// the aggregated lists did. The IN over memberIDs (never empty here)
+	// matches the cluster whichever alias the caller requested: every
+	// edge bakes the cluster's canonical ID, which is itself one of the
+	// resolved members. memberList binds twice — once per UNION branch.
+	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
+	args := make([]any, 0, len(memberIDs)*2+1)
+	args = append(args, *exactID)
+	for range 2 {
+		for _, memberID := range memberIDs {
+			args = append(args, memberID)
 		}
-		return `
+	}
+	return `
 ), person_entries AS (
 	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
 	FROM logical_entries
 	WHERE entry_key IN (
 		SELECT edge.entry_key FROM (` +
-			sqlActivityEntryEdges("a.canonical_id AS person_id",
-				"a.is_direct AND a.canonical_id IN "+memberList,
-				"(a.is_direct OR a.is_conversation_member) AND a.canonical_id IN "+memberList) + `
+		sqlActivityEntryEdges("a.canonical_id AS person_id",
+			"a.is_direct AND a.canonical_id IN "+memberList,
+			"(a.is_direct OR a.is_conversation_member) AND a.canonical_id IN "+memberList) + `
 		) AS edge
 	)`, args
-	}
-	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
-	args := make([]any, 0, len(memberIDs)*3+1)
-	for range 3 {
-		for _, memberID := range memberIDs {
-			args = append(args, memberID)
-		}
-	}
-	args = append(args, *exactID)
-	return `
-), person_message_ids AS (
-	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id IN ` + memberList + `
-	UNION
-	SELECT m.id AS message_id FROM messages m WHERE m.sender_id IN ` + memberList + `
-), person_chat_conversation_ids AS (
-	SELECT cp.conversation_id FROM conversation_participants cp WHERE cp.participant_id IN ` + memberList + `
-	UNION
-	SELECT m.conversation_id
-	FROM person_message_ids pm
-	JOIN messages m ON m.id = pm.message_id
-	LEFT JOIN conversations c ON c.id = m.conversation_id
-	WHERE ` + sqlIsChatPredicate("m.message_type", "COALESCE(c.conversation_type, '')") + `
-), person_entries AS (
-	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
-	FROM logical_entries le
-	WHERE (le.entry_kind <> 'conversation'
-	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
-	   OR (le.entry_kind = 'conversation'
-	       AND le.conversation_id IN (SELECT conversation_id FROM person_chat_conversation_ids))`,
-		args
 }
 
 func (e *DuckDBEngine) SearchDomains(ctx context.Context, request DomainSearchRequest) (*DomainSearchResponse, error) {
@@ -689,6 +635,10 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 		return nil, err
 	}
 	conditions, args := buildExploreConditions(request.Explore)
+	conditions, err = e.sentIdentityConditions(conditions)
+	if err != nil {
+		return nil, err
+	}
 	domainWhere := []string{"domain <> ''"}
 	if exactDomain != "" {
 		domainWhere = append(domainWhere, "domain = ?")

@@ -41,9 +41,10 @@ import (
 // Version 31 adds the message account_address and account_path projection.
 // Version 32 marks merged archive-only messages so deletion preflight counts
 // only messages that can still be deleted from their source.
+// Version 33 flags unsent messages in the relationship activity dataset.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 32
+const CacheSchemaVersion = 33
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
@@ -106,6 +107,7 @@ type CacheSyncState struct {
 	// fields are mutable and bake into cache datasets that incremental builds
 	// otherwise never revisit; this fingerprint detects that drift.
 	ConversationTypesFingerprint string                          `json:"conversation_types_fingerprint,omitempty"`
+	UnsentFingerprint            string                          `json:"unsent_fingerprint,omitempty"`
 	Stats                        identityindex.CacheStatsSummary `json:"stats"`
 }
 

@@ -78,7 +78,7 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 			}
 			path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
 			_, err = db.Exec("CREATE TEMP TABLE sparse AS " + buildSparseRelationshipActivitySQL(
-				path, readParquetRelation([]string{path("messages")}, true), 2026))
+				path, readParquetRelation([]string{path("messages")}, true), readParquetRelation([]string{path("message_recipients")}, false), 2026, ""))
 			requirements.NoError(err)
 			base := func(dataset string) string { return readParquetRelation([]string{path(dataset)}, false) }
 			full := ExpandedActivityRelation("sparse", base("conversation_participants"),
@@ -150,7 +150,7 @@ func FuzzGroupBuildExpansionBounded(f *testing.F) {
 		}
 		path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
 		_, err = db.Exec("CREATE TEMP TABLE sparse AS " + buildSparseRelationshipActivitySQL(
-			path, readParquetRelation([]string{path("messages")}, true), 2026))
+			path, readParquetRelation([]string{path("messages")}, true), readParquetRelation([]string{path("message_recipients")}, false), 2026, ""))
 		requirements.NoError(err)
 		base := func(dataset string) string { return readParquetRelation([]string{path(dataset)}, false) }
 		bounded := buildActivityRelation("sparse", base("conversation_participants"),
@@ -175,7 +175,7 @@ func TestExpandedActivityFiltersReachParquet(t *testing.T) {
 		startDate: "2023-12-31 22:00:00", messageType: "whatsapp", conversationType: "group_chat",
 	})
 	path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
-	writeRelationshipParquet(t, db, root, DatasetActivity, "("+buildSparseRelationshipActivitySQL(path, readParquetRelation([]string{path("messages")}, true), 2023)+") UNION ALL ("+buildSparseRelationshipActivitySQL(path, readParquetRelation([]string{path("messages")}, true), 2024)+")")
+	writeRelationshipParquet(t, db, root, DatasetActivity, "("+buildSparseRelationshipActivitySQL(path, readParquetRelation([]string{path("messages")}, true), readParquetRelation([]string{path("message_recipients")}, false), 2023, "")+") UNION ALL ("+buildSparseRelationshipActivitySQL(path, readParquetRelation([]string{path("messages")}, true), readParquetRelation([]string{path("message_recipients")}, false), 2024, "")+")")
 	relation := ExpandedActivityRelation(
 		readParquetRelation([]string{filepath.Join(root, DatasetActivity, "*.parquet")}, false),
 		readParquetRelation([]string{path("conversation_participants")}, false),
@@ -226,6 +226,77 @@ func TestExpandedActivityFiltersReachParquet(t *testing.T) {
 			var count int64
 			requirements.NoError(db.QueryRow("SELECT count(*) FROM " + relation + " WHERE " + tc.predicate).Scan(&count))
 			assertions.Equal(tc.want, count)
+		})
+	}
+}
+
+func TestBuildUnsentTailKeepsSentAnchor(t *testing.T) {
+	for _, tc := range []struct {
+		name, sourceType, messageType, conversationType, recipientFilter string
+		draftOnlyRecipient                                               bool
+	}{
+		{"mms", "synctech_sms", "mms", "direct_chat", "true", false},
+		{"email", "gmail", "email", "email_thread", "true", true},
+		{"group_chat", "beeper", "beeper", "group_chat", "participant_id <> 3", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			root, db := writeRelationshipBaseFixture(t, true)
+			writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+				firstMessageID: 1, messageCount: 2, memberCount: 3,
+				startDate: "2026-07-01", messageType: tc.messageType, conversationType: tc.conversationType,
+			})
+			// The group-chat member with ID 3 appears only in the conversation roster.
+			replaceRelationshipParquet(t, db, root, "sources", fmt.Sprintf(`
+				SELECT 1::BIGINT AS id, 'owner@example.test'::VARCHAR AS account_email, '%s'::VARCHAR AS source_type`, tc.sourceType))
+			_, err := db.Exec(`CREATE TEMP TABLE messages_with_draft AS SELECT * REPLACE (
+				CASE WHEN id = 1 THEN TIMESTAMP '2026-07-01' ELSE TIMESTAMP '2026-07-20' END AS sent_at,
+				CASE WHEN id = 1 THEN 2::BIGINT ELSE 1::BIGINT END AS sender_id,
+				(id = 2) AS is_from_me
+			) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
+			require.NoError(err)
+			replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM messages_with_draft")
+			replaceRelationshipParquet(t, db, root, "message_recipients", `
+				SELECT * FROM (VALUES
+					(1::BIGINT, 2::BIGINT, 'from'), (1::BIGINT, 1::BIGINT, 'to'), (1::BIGINT, 3::BIGINT, 'to'),
+					(2::BIGINT, 1::BIGINT, 'from'), (2::BIGINT, 2::BIGINT, 'to'), (2::BIGINT, 3::BIGINT, 'to')
+				) AS t(message_id, participant_id, recipient_type) WHERE `+tc.recipientFilter)
+			if tc.draftOnlyRecipient {
+				_, err = db.Exec(`CREATE TEMP TABLE draft_participants AS
+					SELECT * FROM read_parquet(?) UNION ALL
+					SELECT 4::BIGINT, 'carol@draft.example', 'draft.example', 'Carol Example', ''`, parquetDatasetGlob(root, "participants"))
+				require.NoError(err)
+				replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM draft_participants")
+				_, err = db.Exec(`CREATE TEMP TABLE draft_recipients AS
+					SELECT * FROM read_parquet(?) UNION ALL SELECT 2::BIGINT, 4::BIGINT, 'to'`, parquetDatasetGlob(root, "message_recipients"))
+				require.NoError(err)
+				replaceRelationshipParquet(t, db, root, "message_recipients", "SELECT * FROM draft_recipients")
+			}
+			_, err = Build(context.Background(), db, BuildOptions{
+				Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
+				UnsentMessages: "(SELECT 2::BIGINT AS message_id)",
+			})
+			require.NoError(err)
+			var messageID int64
+			var occurredAt time.Time
+			var fromMe bool
+			require.NoError(db.QueryRow(logicalActivitySQL(relationshipParquetGlob(root, DatasetActivity), "true")+
+				" SELECT anchor_message_id, occurred_at, is_from_me FROM logical_units").Scan(&messageID, &occurredAt, &fromMe))
+			assert.Equal(int64(1), messageID)
+			assert.Equal(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), occurredAt.UTC())
+			assert.False(fromMe)
+			var people int
+			require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE last_at = TIMESTAMP '2026-07-01'`,
+				relationshipParquetGlob(root, DatasetPeople)).Scan(&people))
+			assert.Equal(3, people, "only sent activity contributes contact dates")
+			if tc.draftOnlyRecipient {
+				var draftPeople, draftDomains int
+				require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE canonical_id = 4`, relationshipParquetGlob(root, DatasetPeople)).Scan(&draftPeople))
+				assert.Zero(draftPeople, "draft-only Carol is absent from the people dataset")
+				require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE domain = 'draft.example'`, relationshipParquetGlob(root, DatasetDomains)).Scan(&draftDomains))
+				assert.Zero(draftDomains, "draft-only domains are absent from the domain dataset")
+			}
 		})
 	}
 }

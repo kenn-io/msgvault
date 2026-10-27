@@ -426,7 +426,7 @@ func (s *Store) FinishIMAPDraftRemovalContext(ctx context.Context, draftID strin
 			finished.Pending = nil
 			return nil
 		}
-		if err := imapDrafts.clearPendingTx(ctx, s, tx, draftID, revision); err != nil {
+		if err := s.finishIMAPDraftEditTx(ctx, tx, draft); err != nil {
 			return err
 		}
 		finished = draft
@@ -437,6 +437,17 @@ func (s *Store) FinishIMAPDraftRemovalContext(ctx context.Context, draftID strin
 		return IMAPDraft{}, err
 	}
 	return finished, nil
+}
+
+// finishIMAPDraftEditTx clears edit cleanup evidence. An edit's original is
+// always an unsent snapshot, so a copy surviving in another mailbox keeps
+// that status once the draft record stops referencing it.
+func (s *Store) finishIMAPDraftEditTx(ctx context.Context, tx *loggedTx, draft IMAPDraft) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET is_sent = FALSE WHERE id = ?`,
+		draft.Pending.OriginalMessageID); err != nil {
+		return fmt.Errorf("keep replaced IMAP draft %q unsent: %w", draft.DraftID, err)
+	}
+	return imapDrafts.clearPendingTx(ctx, s, tx, draft.DraftID, draft.Revision)
 }
 
 func ptrTimeNow() *time.Time {

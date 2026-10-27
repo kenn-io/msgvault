@@ -67,6 +67,8 @@ type DuckDBEngine struct {
 	// method via acquireQuerySlot; cheap PK/detail lookups are not gated so
 	// they are never starved behind a slow aggregate.
 	querySem *semaphore.Weighted
+	// Archive-only engines execute raw SQL without analytics contact lookups.
+	archiveOnly bool
 
 	// optionalCols tracks which columns exist in each Parquet table's schema.
 	// Used to gracefully handle stale cache files that lack newer columns
@@ -77,9 +79,11 @@ type DuckDBEngine struct {
 	// have the analytics cache rebuilt underneath it by build-cache/sync. When
 	// that happens the column set can change, so optionalCols is re-probed on
 	// demand (see ensureFreshOptionalCols) rather than only at construction.
-	optColsMu    sync.RWMutex
-	optionalCols map[string]map[string]bool
-	cacheFP      string // fingerprint of the Parquet cache at last probe
+	cacheRefreshMu   sync.Mutex // Serializes refreshes without blocking optional-column readers.
+	optColsMu        sync.RWMutex
+	optionalCols     map[string]map[string]bool
+	cacheFP          string // fingerprint of the Parquet cache at last probe
+	unsentRefreshErr error  // contact reads fail until the exclusion set can reload
 
 	// Memoized readiness validation for the per-query path (see
 	// validateCommittedCache): the raw commit-marker bytes and the shard stat
@@ -152,7 +156,7 @@ func NewArchiveDuckDBEngine(ctx context.Context, analyticsDir string, opts ...Du
 	if err != nil {
 		return nil, fmt.Errorf("resolve analytics directory: %w", err)
 	}
-	engine, err := newDuckDBEngine(ctx, analyticsDir, "", nil, opts...)
+	engine, err := newDuckDBEngine(ctx, analyticsDir, "", nil, true, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -184,10 +188,10 @@ func NewArchiveDuckDBEngine(ctx context.Context, analyticsDir string, opts ...Du
 // If sqliteDB is nil, Search will fall back to LIKE queries and body extraction
 // from raw MIME may be slower.
 func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, opts ...DuckDBOptions) (*DuckDBEngine, error) {
-	return newDuckDBEngine(context.Background(), analyticsDir, sqlitePath, sqliteDB, opts...)
+	return newDuckDBEngine(context.Background(), analyticsDir, sqlitePath, sqliteDB, false, opts...)
 }
 
-func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string, sqliteDB *sql.DB, opts ...DuckDBOptions) (*DuckDBEngine, error) {
+func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string, sqliteDB *sql.DB, archiveOnly bool, opts ...DuckDBOptions) (*DuckDBEngine, error) {
 	var opt DuckDBOptions
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -256,6 +260,7 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 		tempDirectory:                tempDirectory,
 		ownTempDirectory:             ownTempDirectory,
 		querySem:                     semaphore.NewWeighted(duckDBQueryConcurrency),
+		archiveOnly:                  archiveOnly,
 		disableLegacyAnalyticalViews: opt.DisableLegacyAnalyticalViews,
 	}
 	var releaseInitialCacheRead func()
@@ -303,6 +308,11 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 	}
 	if len(missing) > 0 {
 		log.Printf("[warn] Parquet cache missing columns %v — run 'msgvault build-cache --full-rebuild' to update", missing)
+	}
+	if !engine.archiveOnly {
+		if err := refreshUnsentMessageIDs(ctx, db, analyticsDir); err != nil {
+			return nil, errors.Join(err, engine.Close())
+		}
 	}
 	// Register SQL views over Parquet files for raw SQL access.
 	// Pass the already-probed optionalCols to avoid a redundant schema probe.
@@ -641,9 +651,12 @@ func (e *DuckDBEngine) ensureFreshOptionalCols(ctx context.Context, fp string) e
 		return ctx.Err()
 	}
 
-	e.optColsMu.Lock()
-	defer e.optColsMu.Unlock()
-	if fp == e.cacheFP { // another goroutine refreshed while we waited
+	e.cacheRefreshMu.Lock()
+	defer e.cacheRefreshMu.Unlock()
+	e.optColsMu.RLock()
+	unchanged = fp == e.cacheFP
+	e.optColsMu.RUnlock()
+	if unchanged { // another goroutine refreshed while we waited
 		return ctx.Err()
 	}
 
@@ -652,6 +665,17 @@ func (e *DuckDBEngine) ensureFreshOptionalCols(ctx context.Context, fp string) e
 	})
 	if err != nil {
 		return err
+	}
+	if !e.archiveOnly {
+		err = refreshUnsentMessageIDs(ctx, e.db, e.analyticsDir)
+	}
+	e.optColsMu.Lock()
+	e.unsentRefreshErr = err
+	e.optionalCols = newCols
+	e.optColsMu.Unlock()
+	if err != nil {
+		log.Printf("[warn] refresh contact exclusions after analytics cache change: %v", err)
+		return ctx.Err()
 	}
 	if !e.disableLegacyAnalyticalViews {
 		if err := RegisterViewsWithColumns(ctx, e.db, e.analyticsDir, newCols); err != nil {
@@ -669,8 +693,9 @@ func (e *DuckDBEngine) ensureFreshOptionalCols(ctx context.Context, fp string) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	e.optionalCols = newCols
+	e.optColsMu.Lock()
 	e.cacheFP = fp
+	e.optColsMu.Unlock()
 	log.Printf("[info] analytics cache changed — re-probed Parquet optional columns")
 	return nil
 }

@@ -9,6 +9,8 @@ import (
 // ExploreRequest is the canonical modality-neutral analytical request. The
 // API layer validates the finite grouping/sort catalog before constructing it.
 type ExploreRequest struct {
+	// SentOnly excludes unsent messages before grouping for contact activity timelines.
+	SentOnly     bool         `json:"-"`
 	Context      Context      `json:"context"`
 	Search       SearchSpec   `json:"search"`
 	Grouping     []GroupSpec  `json:"grouping,omitempty"`
