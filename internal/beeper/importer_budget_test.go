@@ -375,7 +375,10 @@ func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
 		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
 		requirements.True(ok, "driver connection is SQLite")
 		return sqliteConn.RegisterFunc("slow_quiet_roster_write", func() int {
-			time.Sleep(4 * routeProbeTimeout)
+			// Hold the roster write open past the probe deadline it must outlast.
+			timer := time.NewTimer(4 * routeProbeTimeout)
+			defer timer.Stop()
+			<-timer.C
 			return 0
 		}, false)
 	})
