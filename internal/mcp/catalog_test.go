@@ -477,6 +477,18 @@ func TestCatalogSchemas(t *testing.T) {
 		{ToolSearchInMessage, "id"},
 	} {
 		property := toolInputProperty(t, tools[field.tool], field.name)
+		if field.tool == ToolGetMessage && field.name == "id" {
+			require := require.New(t)
+			alternatives, ok := property["anyOf"].([]any)
+			require.True(ok)
+			require.Len(alternatives, 2)
+			stringID, ok := alternatives[1].(map[string]any)
+			require.True(ok)
+			checks.Equal("string", stringID["type"])
+			checks.Equal("^[1-9][0-9]*$", stringID["pattern"])
+			property, ok = alternatives[0].(map[string]any)
+			require.True(ok)
+		}
 		checks.Equal("integer", property["type"], "%s.%s type", field.tool, field.name)
 		checks.InDelta(1, property["minimum"], 0, "%s.%s minimum", field.tool, field.name)
 		checks.InDelta(jsonSafeIntegerMax, property["maximum"], 0, "%s.%s maximum", field.tool, field.name)
