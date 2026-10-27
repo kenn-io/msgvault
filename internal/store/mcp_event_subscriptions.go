@@ -1004,22 +1004,27 @@ func (s *Store) mcpPruneLosesEventTx(ctx context.Context, tx *sql.Tx, sub *MCPSu
 	return false, rows.Err()
 }
 
-// mcpPruneCursorsTx runs before retention deletes events through floor.
-func (s *Store) mcpPruneCursorsTx(ctx context.Context, tx *sql.Tx, epoch, floor int64, now time.Time) error {
+func (s *Store) mcpActiveCursorsBelowTx(ctx context.Context, tx *sql.Tx, epoch, floor int64) ([]*MCPSubscription, error) {
 	rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT `+mcpSubscriptionColumns+` FROM mcp_event_subscriptions WHERE state='active' AND cursor_epoch=? AND cursor_seq<?`), epoch, floor)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 	var subs []*MCPSubscription
 	for rows.Next() {
 		sub, err := scanMCPSubscription(rows)
 		if err != nil {
-			_ = rows.Close()
-			return err
+			return nil, err
 		}
 		subs = append(subs, sub)
 	}
-	if err := rows.Close(); err != nil {
+	return subs, rows.Err()
+}
+
+// mcpPruneCursorsTx runs before retention deletes events through floor.
+func (s *Store) mcpPruneCursorsTx(ctx context.Context, tx *sql.Tx, epoch, floor int64, now time.Time) error {
+	subs, err := s.mcpActiveCursorsBelowTx(ctx, tx, epoch, floor)
+	if err != nil {
 		return err
 	}
 	for _, sub := range subs {
