@@ -216,7 +216,7 @@ func TestExpandedActivityFiltersReachParquet(t *testing.T) {
 						strings.Contains(projections, "message_id") &&
 						(strings.Contains(projections, "source_type") || strings.Contains(tc.predicate, "canonical_id")) {
 						scans++
-						assertions.Contains(fmt.Sprint(n.ExtraInfo["Filters"]), tc.filter)
+						assert.Contains(t, strings.ReplaceAll(fmt.Sprint(n.ExtraInfo["Filters"]), " ", ""), tc.filter)
 					}
 					visit(n.Children)
 				}

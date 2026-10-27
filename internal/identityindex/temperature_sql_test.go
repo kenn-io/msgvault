@@ -130,7 +130,7 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 
 	func() {
 		rows, err := db.Query(query + ` SELECT canonical_id,
-			CAST(to_json(list_transform(annual_temperatures, x -> x.year)) AS VARCHAR)
+			CAST(to_json(list_transform(annual_temperatures, lambda x: x.year)) AS VARCHAR)
 			FROM annual_rollups ORDER BY canonical_id`)
 		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()
