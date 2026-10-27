@@ -64,6 +64,13 @@ make docs-check
 The Zensical project lives here. The build puts documentation under `/docs/`
 and copies the static marketing site to `/`. `make docs-check` runs source
 validation, builds that actual layout, and checks the output and redirects.
+
+Website pages must never paint before their fonts load. The build embeds
+`website/fonts/` in the published `styles/site.css` and inlines
+`website/hold-first-paint.js` after each page's charset, so link website fonts
+only from `styles/site.css` as `url("/fonts/<name>.woff2")`. The docs pages
+use the system font stacks in `stylesheets/extra.css`. CI loads every built
+page in Firefox and Chromium and fails if one paints early.
 Use `make docs-serve` to inspect it at `http://127.0.0.1:8000`.
 
 Every public page has a Markdown companion. The build copies documentation

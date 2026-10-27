@@ -16,7 +16,7 @@ mv "$site_dir/docs/sitemap.xml" "$site_dir/sitemap.xml"
 # The marketing and guide tiers ship as static files from website/; the
 # zensical docs tier lives under /docs/.
 website_dir="$repo_root/website"
-for entry in index.html index.md guide guide.md llms.txt favicon.svg assets fonts scripts styles; do
+for entry in index.html index.md guide guide.md llms.txt favicon.svg assets scripts styles; do
   source_path="$website_dir/$entry"
   if [[ ! -e "$source_path" ]]; then
     printf 'missing website source: %s\n' "$entry" >&2
@@ -24,6 +24,16 @@ for entry in index.html index.md guide guide.md llms.txt favicon.svg assets font
   fi
   cp -R "$source_path" "$site_dir/$entry"
 done
+
+if command -v python3 >/dev/null 2>&1; then
+  python_bin="python3"
+else
+  python_bin="python"
+fi
+
+# Embed the fonts in the stylesheet and inline the first-paint hold script so
+# website pages never paint in a fallback face.
+"$python_bin" "$script_dir/scripts/embed_website_assets.py" --website "$website_dir" --site "$site_dir"
 
 # Local credential/secret artifacts that must never enter the published site.
 # Keep in sync with credential_globs in docs/zensical-docs.sh and
@@ -68,10 +78,5 @@ find "$site_dir" -depth "${prune_expr[@]}" -exec rm -rf {} +
 
 # Fail the build if anything slipped past the prune. This is the same
 # inventory gate check-docs.sh runs; here it guards every deployment.
-if command -v python3 >/dev/null 2>&1; then
-  python_bin="python3"
-else
-  python_bin="python"
-fi
 "$python_bin" -c "import sys; sys.path.insert(0, '$script_dir/scripts'); \
 import check_built_site; check_built_site.check_public_site_file_inventory()"

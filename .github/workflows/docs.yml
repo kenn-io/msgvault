@@ -32,3 +32,9 @@ jobs:
 
       - name: Check documentation
         run: make docs-check
+
+      # docs-check builds the complete public site into docs/site.
+      - name: Check first paint
+        uses: kenn-io/actions/first-paint@ee1ddcce6a620e49ba96f613bb8d113e0193b4f6 # first-paint, kenn-io/actions#6
+        with:
+          dist: docs/site
