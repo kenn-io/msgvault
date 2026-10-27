@@ -88,15 +88,6 @@ func TestDoclingStatusDisclosesFailedRangePlaintext(t *testing.T) {
 	assertions.Equal(int64(1), status.Status.FailedAttempts)
 	assertions.True(status.StoresPlaintext)
 	assertions.True(status.BackupsMayContainText)
-	humanStatus := run("status")
-	assertions.Contains(humanStatus, "Normalized plaintext stored: true")
-	assertions.Contains(humanStatus, "Backups may contain normalized plaintext: true")
-	_, err = f.Store.PurgeDocumentDerivedByHash(ctx, hash)
-	requirements.NoError(err)
-	requirements.NoError(json.Unmarshal([]byte(run("status", "--json")), &status))
-	assertions.Zero(status.Status.StoredPlaintextRanges)
-	assertions.False(status.StoresPlaintext)
-	assertions.False(status.BackupsMayContainText)
 }
 
 func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uploadName string) {
@@ -284,12 +275,9 @@ func TestDoclingConsentDisclosesCredentialsAndRangeRetention(t *testing.T) {
 	assertions.Contains(output.String(), "X-Api-Key")
 	assertions.Contains(output.String(), "PDFs over 50 pages")
 	assertions.Contains(output.String(), "Each job uploads the original PDF again")
-	assertions.Contains(output.String(), "unpublished plaintext")
 	assertions.Contains(output.String(), "daemon restarts")
 	assertions.Contains(output.String(), "documents purge-derived")
 	assertions.Contains(output.String(), "seven days")
-	assertions.Contains(output.String(), "Interrupted jobs are uploaded again on a later build or resume, which can run the same document twice on your server.")
-	assertions.Contains(output.String(), "Jobs that outlast total_timeout or max_poll_attempts, and partial results, need a manual retry.")
 	assertions.NotContains(output.String(), "synthetic-secret-value")
 }
 

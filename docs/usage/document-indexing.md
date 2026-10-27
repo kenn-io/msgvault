@@ -37,11 +37,10 @@ below explain each provider’s consent and build workflow.
 
 The provider receives complete original bytes for each directly authorized format.
 Msgvault keeps the containing-message links, normalized text, text chunks,
-indexes, consent records, and backups locally. Msgvault does not retain the full raw provider JSON or Markdown response.
-Successful Docling PDF ranges retain normalized page units in local checkpoints,
-including after a later range fails.
-Publication or `documents purge-derived` removes these checkpoints; otherwise
-weekly cleanup does, as described under Docling retries.
+indexes, consent records, and backups locally. It does not retain the full raw
+provider JSON or Markdown response. Successful Docling PDF ranges keep
+normalized page units in local checkpoints until publication, `documents
+purge-derived`, or the weekly cleanup described under Docling retries.
 
 For Mistral, eligible CSV attachments use a local conversion step when enabled.
 Msgvault retains the CSV source hash and `text/csv` occurrence identity, then sends only
@@ -248,30 +247,29 @@ The existing whole-document page cap still applies. A 600-page PDF needs
 to lower peak memory; memory scaling with page count is an inference, not a
 measured guarantee.
 
-Successful ranges save normalized page units in the local
-archive database. These checkpoints survive failures and daemon restarts.
-The latest failed attempt keeps them while its source remains live and its profile is the current target. Publication
-removes them. `msgvault documents purge-derived --hash <sha256> --yes`
-removes them immediately. Removing the source or message leaves them for cleanup:
-after no live message contains the PDF, its profile stops being the target, or a newer attempt replaces the
-checkpoints, the weekly `msgvault serve` cleanup deletes them once they have gone
-seven days without changes. Without `serve`, they stay until publication or purge.
-Backups made before removal can
-still contain that plaintext.
-Retry and resume submit only missing ranges. A full rebuild starts fresh.
+Successful ranges save normalized page units in the local archive database, so
+retry and resume submit only missing ranges, even after a daemon restart. A full
+rebuild starts fresh. Publication removes these checkpoints, and
+`msgvault documents purge-derived --hash <sha256> --yes` removes them
+immediately. Removing the source or message does not: after no live message
+contains the PDF, its profile stops being the target, or a newer attempt
+replaces the checkpoints, the weekly `msgvault serve` cleanup deletes them once
+they have gone seven days without changes. Without `serve`, they stay until
+publication or purge. Backups made before removal can still contain that
+plaintext.
+
 Nothing becomes searchable until every range succeeds and one transaction
 publishes the combined document. Complete mappings preserve original page
 numbers, including blank pages. If any range needs Markdown fallback, every
 range's Markdown is joined in page order as one document without page claims.
 Degraded ranges stay in memory for the current run and are resent on retry.
-Partial-success results are rejected and never checkpointed. Checkpoints
-contain unpublished plaintext and are disclosed in full backups.
+Partial-success results are rejected and never checkpointed.
 
 A job that is still running when `total_timeout` or `max_poll_attempts` runs
 out fails with `provider_timeout` and does not retry on its own. Docling Serve
 keeps working on a job after msgvault stops waiting, so automatic resubmission
-would stack duplicate work on your server. A manual retry resends the missing range and reuses successful checkpoints.
-For a single-job document, raise the limit if needed, record consent, and reset it. Partial
+would stack duplicate work on your server. Raise the limit if the document
+needs more time, record consent for the changed policy, and reset it. Partial
 results and other permanent failures use the same explicit reset:
 
 ```bash

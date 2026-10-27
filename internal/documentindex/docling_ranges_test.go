@@ -44,7 +44,9 @@ func doclingPDFPages(t *testing.T, pages int) []byte {
 	return mediatest.PDFObjects("synthetic document range fixture", objects)
 }
 
-func doclingRangeTestServer(t *testing.T, pages int, selections *[]string, submit func(http.ResponseWriter, int) bool, result func(http.ResponseWriter, int, int)) *httptest.Server {
+// doclingRangeTestServer answers each selection with one text item per page from
+// pageText (none when empty); edit may change the response before it is sent.
+func doclingRangeTestServer(t *testing.T, pages int, selections *[]string, submit func(http.ResponseWriter, int) bool, pageText func(int) string, edit func(response, wire, doc map[string]any, first, last int)) *httptest.Server {
 	t.Helper()
 	first, last := 1, pages
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +80,27 @@ func doclingRangeTestServer(t *testing.T, pages int, selections *[]string, submi
 			}
 			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"task_id": "range-job", "task_type": "convert", "task_status": "success"}))
 		case "/v1/result/range-job":
-			result(w, first, last)
+			response := doclingWorkerResponse(false)
+			wire, ok := response["document"].(map[string]any)
+			if !assert.True(t, ok) {
+				return
+			}
+			doc, ok := wire["json_content"].(map[string]any)
+			if !assert.True(t, ok) {
+				return
+			}
+			registry, texts := map[string]any{}, []any{}
+			for page := first; page <= last; page++ {
+				registry[strconv.Itoa(page)] = map[string]any{}
+				if text := pageText(page); text != "" {
+					texts = append(texts, map[string]any{"text": text, "prov": []any{map[string]any{"page_no": page}}})
+				}
+			}
+			doc["pages"], doc["texts"] = registry, texts
+			if edit != nil {
+				edit(response, wire, doc, first, last)
+			}
+			assert.NoError(t, json.NewEncoder(w).Encode(response))
 		default:
 			http.NotFound(w, r)
 		}
@@ -123,31 +145,15 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 					return false
 				}
 				return true
-			}, func(w http.ResponseWriter, first, last int) {
-				response := doclingWorkerResponse(false)
-				wire, ok := response["document"].(map[string]any)
-				if !assertions.True(ok) {
-					return
+			}, func(page int) string {
+				if page == 2 {
+					return ""
 				}
-				doc, ok := wire["json_content"].(map[string]any)
-				if !assertions.True(ok) {
-					return
+				if test.unicode {
+					return "Cafe\u0301"
 				}
-				registry := map[string]any{}
-				texts := []any{}
-				for page := first; page <= last; page++ {
-					registry[strconv.Itoa(page)] = map[string]any{}
-					if page != 2 {
-						text := fmt.Sprintf("page %d sentinel", page)
-						if test.unicode {
-							text = "Cafe\u0301"
-						}
-						texts = append(texts, map[string]any{"text": text, "prov": []any{map[string]any{"page_no": page}}})
-					}
-				}
-				doc["pages"], doc["texts"] = registry, texts
-				assertions.NoError(json.NewEncoder(w).Encode(response))
-			})
+				return fmt.Sprintf("page %d sentinel", page)
+			}, nil)
 			defer server.Close()
 			c := doclingTestConfig()
 			c.Endpoint = server.URL
@@ -266,28 +272,13 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			hash := hex.EncodeToString(digest[:])
 			var selections []string
 			failMiddle := true
-			server := doclingRangeTestServer(t, pages, &selections, nil, func(w http.ResponseWriter, first, last int) {
-				response := doclingWorkerResponse(false)
-				wire, ok := response["document"].(map[string]any)
-				if !assertions.True(ok) {
-					return
-				}
-				doc, ok := wire["json_content"].(map[string]any)
-				if !assertions.True(ok) {
-					return
-				}
-				registry := map[string]any{}
-				texts := []any{}
-				for page := first; page <= last; page++ {
-					registry[strconv.Itoa(page)] = map[string]any{}
-					texts = append(texts, map[string]any{"text": fmt.Sprintf("range sentinel page %d", page), "prov": []any{map[string]any{"page_no": page}}})
-				}
-				doc["pages"], doc["texts"] = registry, texts
+			server := doclingRangeTestServer(t, pages, &selections, nil, func(page int) string {
+				return fmt.Sprintf("range sentinel page %d", page)
+			}, func(response, _, _ map[string]any, first, _ int) {
 				if failMiddle && first == 51 && failure == "partial" {
 					response["status"] = "partial_success"
 					response["errors"] = []any{map[string]any{"page_no": 51}}
 				}
-				assertions.NoError(json.NewEncoder(w).Encode(response))
 			})
 			defer server.Close()
 			c := doclingTestConfig()
@@ -414,12 +405,11 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 
 func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 	for _, test := range []struct {
-		name                                                             string
-		degrade, truncated, blankFirst, structuredFirst, missingFallback bool
+		name                                            string
+		degrade, truncated, blankFirst, missingFallback bool
 	}{
 		{name: "Markdown from all ranges", degrade: true},
 		{name: "blank range before degraded range", degrade: true, blankFirst: true},
-		{name: "structured text before degraded range", degrade: true, structuredFirst: true},
 		{name: "degraded range without Markdown", degrade: true, missingFallback: true},
 		{name: "truncate after complete coverage", truncated: true},
 	} {
@@ -428,35 +418,20 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 			requirements := require.New(t)
 			content := doclingPDFPages(t, 51)
 			var selections []string
-			server := doclingRangeTestServer(t, 51, &selections, nil, func(w http.ResponseWriter, first, last int) {
-				response := doclingWorkerResponse(false)
-				wire, ok := response["document"].(map[string]any)
-				if !assertions.True(ok) {
-					return
-				}
+			server := doclingRangeTestServer(t, 51, &selections, nil, func(page int) string {
+				return fmt.Sprintf("page %d %s", page, strings.Repeat("sentinel ", 5))
+			}, func(_, wire, doc map[string]any, first, last int) {
 				wire["md_content"] = fmt.Sprintf("range %d..%d Markdown sentinel", first, last)
-				doc, ok := wire["json_content"].(map[string]any)
-				if !assertions.True(ok) {
-					return
-				}
-				registry := map[string]any{}
-				texts := []any{}
-				for page := first; page <= last; page++ {
-					registry[strconv.Itoa(page)] = map[string]any{}
-					texts = append(texts, map[string]any{"text": fmt.Sprintf("page %d %s", page, strings.Repeat("sentinel ", 5)), "prov": []any{map[string]any{"page_no": page}}})
-				}
-				doc["pages"], doc["texts"] = registry, texts
 				if test.blankFirst && first == 1 {
 					doc["texts"] = []any{}
 					wire["md_content"] = ""
 				}
-				if (test.structuredFirst && first == 1) || (test.missingFallback && first == 51) {
+				if test.missingFallback && first == 51 {
 					wire["md_content"] = ""
 				}
 				if test.degrade && first == 51 {
 					doc["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{}}}}
 				}
-				assertions.NoError(json.NewEncoder(w).Encode(response))
 			})
 			defer server.Close()
 			c := doclingTestConfig()

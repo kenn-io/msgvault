@@ -57,6 +57,7 @@ type doclingRequestAccountingKey struct{}
 type doclingRequestAccounting struct {
 	requests  atomic.Int64
 	retries   atomic.Int64
+	uploads   atomic.Int64
 	submitted atomic.Bool
 
 	mu                 sync.Mutex
@@ -65,7 +66,8 @@ type doclingRequestAccounting struct {
 
 // Count a retry only when the same route is called again after a transient
 // response or transport error. Repeated status polls after a successful
-// response are normal async job progress, not retries.
+// response are normal async job progress, not retries. Each first submission
+// uploads the source once.
 func (a *doclingRequestAccounting) before(request *http.Request) {
 	a.requests.Add(1)
 	key := request.Method + "\x00" + request.URL.EscapedPath()
@@ -73,6 +75,8 @@ func (a *doclingRequestAccounting) before(request *http.Request) {
 	if a.retryableResponses[key] {
 		a.retries.Add(1)
 		delete(a.retryableResponses, key)
+	} else if request.Method == http.MethodPost {
+		a.uploads.Add(1)
 	}
 	a.mu.Unlock()
 }
@@ -241,7 +245,7 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		}
 		terminal, reason := classifyDoclingFailure(cause)
 		failure := store.DocumentExtractionFailure{Claim: claim, ReasonCode: reason, Detail: documentFailureDetail(cause), Terminal: terminal,
-			UploadCount: accounting.Uploads, RequestCount: accounting.Requests, RetryCount: accounting.Retries, ProviderLatencyMS: requestLatencyMillis(accounting.Latency)}
+			UploadCount: int(requests.uploads.Load()), RequestCount: accounting.Requests, RetryCount: accounting.Retries, ProviderLatencyMS: requestLatencyMillis(accounting.Latency)}
 		if !terminal {
 			failure.RetryAt = time.Now().UTC().Add(w.config.RetryDelay)
 		}
@@ -273,9 +277,6 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		started := time.Now()
 		var rendered document.RenditionResult
 		rendered, err = document.RenderRendition(workCtx, w.provider, upload, authorization)
-		if requests.requests.Load() > 0 {
-			accounting.Uploads = 1
-		}
 		accounting.Latency = time.Since(started)
 		if err == nil {
 			accounting.Requests = int(rendered.Receipt.Usage.Requests)
@@ -297,8 +298,7 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		return result, fail(err)
 	}
 	accounting.ReturnedModel = w.descriptor.ID
-	accounting.Requests = max(accounting.Requests, int(requests.requests.Load()))
-	accounting.Retries = max(accounting.Retries, int(requests.retries.Load()))
+	accounting.Uploads = int(requests.uploads.Load())
 	normalized, err := document.NormalizeDocument(source, w.normalization)
 	if err != nil {
 		return result, fail(err)

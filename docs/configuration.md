@@ -464,16 +464,11 @@ disk spool. Its `max_pages_per_document` bounds returned evidence units before
 any whole-document Markdown fallback. It cannot enforce a pre-upload page
 count for every native format.
 
-For Docling, PDFs over 50 pages run in consecutive 50-page jobs. Each job uploads
-the original PDF and gets its own `total_timeout` and `max_poll_attempts`.
-`max_pages_per_document` still limits the whole file, so a 600-page PDF requires
-a cap of at least 600. Successful ranges remain in the archive after failure;
-retry and resume reuse them across daemon restarts. Publication or
-`documents purge-derived` removes checkpoints; source removal leaves them for the
-weekly seven-day `serve` cleanup. Earlier backups can retain them. Full rebuilds
-start fresh.
-See [Docling extraction](usage/document-indexing.md#use-a-self-hosted-docling-service) for
-checkpoint plaintext, Markdown fallback, and retry behavior.
+For Docling, PDFs over 50 pages run in consecutive 50-page jobs. Each job gets
+its own `total_timeout` and `max_poll_attempts`, while `max_pages_per_document`
+still limits the whole file. See
+[Docling extraction](usage/document-indexing.md#use-a-self-hosted-docling-service)
+for range checkpoints and retry behavior.
 
 Docling’s operator-controlled postures assign responsibility for deployment,
 credentials, model downloads, egress, resource limits, retention, and training

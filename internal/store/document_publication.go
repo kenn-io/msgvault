@@ -218,11 +218,10 @@ func (s *Store) ClaimDocumentExtraction(
 		var precedingID string
 		if err := q.QueryRow(`SELECT COALESCE((SELECT id FROM document_extractions
             WHERE profile_id = ? AND canonical_blob_hash = ? AND extraction_input_key = ?
-              AND source_media_type = 'application/pdf' AND source_media_type = ?
               AND COALESCE(rebuild_id, '') = ?
               AND state IN ('staging', 'tombstoned', 'terminal')
             ORDER BY created_at DESC, id DESC LIMIT 1), '')`, input.ProfileID,
-			input.CanonicalBlobHash, input.ExtractionInputKey, input.OccurrenceMIMEType, input.RebuildID).Scan(&precedingID); err != nil {
+			input.CanonicalBlobHash, input.ExtractionInputKey, input.RebuildID).Scan(&precedingID); err != nil {
 			return fmt.Errorf("find preceding PDF range attempt: %w", err)
 		}
 		createdAt, err := documentAttemptCreatedAt(q, input)

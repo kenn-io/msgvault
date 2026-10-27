@@ -24,9 +24,6 @@ var ErrDocumentRangeBytes = errors.New("document range checkpoints exceed max_re
 // LoadDocumentExtractionRanges bounds stored bytes; the worker validates
 // canonical evidence and its checksum before use.
 func (s *Store) LoadDocumentExtractionRanges(ctx context.Context, claim DocumentExtractionClaim, maxBytes int64) ([]DocumentExtractionRange, error) {
-	if maxBytes <= 0 {
-		return nil, errors.New("invalid document range byte bound")
-	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT first_page,last_page,total_pages,evidence,evidence_checksum,char_count FROM document_extraction_ranges WHERE extraction_id = ? ORDER BY first_page`), claim.ExtractionID)
 	if err != nil {
 		return nil, fmt.Errorf("load document ranges: %w", err)
@@ -50,7 +47,7 @@ func (s *Store) LoadDocumentExtractionRanges(ctx context.Context, claim Document
 
 func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentExtractionClaim, r DocumentExtractionRange, maxBytes int64) error {
 	digest := sha256.Sum256(r.Evidence)
-	if r.FirstPage < 1 || r.LastPage < r.FirstPage || r.TotalPages < r.LastPage || len(r.Evidence) == 0 || hex.EncodeToString(digest[:]) != r.EvidenceChecksum || r.CharCount < 0 || maxBytes <= 0 {
+	if hex.EncodeToString(digest[:]) != r.EvidenceChecksum {
 		return errors.New("invalid document range checkpoint")
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -67,12 +64,8 @@ func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentE
 		if count != 1 {
 			return ErrDocumentExtractionFenceLost
 		}
-		byteLength := "LENGTH(CAST(evidence AS BLOB))"
-		if s.IsPostgreSQL() {
-			byteLength = "OCTET_LENGTH(evidence)"
-		}
 		var size int64
-		if err := q.QueryRow(`SELECT COALESCE(SUM(`+byteLength+`),0) FROM document_extraction_ranges WHERE extraction_id = ? AND first_page != ?`, claim.ExtractionID, r.FirstPage).Scan(&size); err != nil {
+		if err := q.QueryRow(`SELECT COALESCE(SUM(OCTET_LENGTH(evidence)),0) FROM document_extraction_ranges WHERE extraction_id = ? AND first_page != ?`, claim.ExtractionID, r.FirstPage).Scan(&size); err != nil {
 			return err
 		}
 		if size+int64(len(r.Evidence)) > maxBytes {

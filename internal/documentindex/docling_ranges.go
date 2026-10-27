@@ -55,13 +55,9 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 			}
 			requests, _ := ctx.Value(doclingRequestAccountingKey{}).(*doclingRequestAccounting)
 			requests.submitted.Store(false)
-			before := requests.requests.Load()
 			started := time.Now()
 			rendered, err := w.provider.RenderPageRange(ctx, upload, authorization, docling.PageRange{First: int64(first), Last: int64(last)})
 			accounting.Latency += time.Since(started)
-			if requests.requests.Load() > before {
-				accounting.Uploads++
-			}
 			if err != nil {
 				return document.SourceDocument{}, fmt.Errorf("render Docling page range: %w", err)
 			}
@@ -121,12 +117,8 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 	}
 	accounting.UnitsProcessed = pages
 	if degraded {
-		combined := strings.Join(markdown, "\n\n")
-		if strings.TrimSpace(combined) == "" {
-			return document.SourceDocument{}, errors.New("docling ranges have no bounded Markdown fallback")
-		}
 		source.UnitKind = "document"
-		source.Units = []document.SourceUnit{{Index: 0, Markdown: combined}}
+		source.Units = []document.SourceUnit{{Index: 0, Markdown: strings.Join(markdown, "\n\n")}}
 	}
 	return source, nil
 }

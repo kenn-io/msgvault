@@ -131,7 +131,7 @@ func printDoclingConsentDisclosure(w io.Writer, c *documentindex.DocumentsConfig
 	_, _ = fmt.Fprintln(w, "- Interrupted jobs are uploaded again on a later build or resume, which can run the same document twice on your server. Jobs that outlast total_timeout or max_poll_attempts, and partial results, need a manual retry.")
 	_, _ = fmt.Fprintln(w, "- Normalized plaintext units and chunks are stored in the local archive database and may be included in disclosed full backups.")
 	_, _ = fmt.Fprintln(w, "- Successful PDF ranges keep normalized page units in the local archive after a failure so retry and resume reuse them across daemon restarts. Publication removes them, and \"msgvault documents purge-derived --hash <sha256> --yes\" removes them immediately. Otherwise, once no live message contains the PDF, its profile stops being the target, or a newer attempt replaces them, the weekly \"msgvault serve\" cleanup deletes them after seven days without changes; without \"serve\" they stay until publication or purge. A full rebuild starts fresh; partial results are retried explicitly.")
-	_, _ = fmt.Fprintln(w, "- Range checkpoints contain unpublished plaintext and may be included in disclosed full backups, which can retain it after archive cleanup. Raw provider JSON and full provider Markdown are transient. Document text embeddings require separate consent.")
+	_, _ = fmt.Fprintln(w, "- Raw provider JSON and full provider Markdown are transient. This consent does not enable document text embeddings; their provider and consents are separate.")
 }
 
 func documentConsentCommand(provider string) string {
