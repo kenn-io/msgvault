@@ -15,7 +15,6 @@ const (
 	Cold                      Tier = "cold"
 	Stub                      Tier = "stub"
 	Skip                      Tier = "skip"
-	DefaultMaxParticipants         = 20
 	DefaultActivityWindowDays      = 180
 )
 

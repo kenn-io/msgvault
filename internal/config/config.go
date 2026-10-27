@@ -914,11 +914,11 @@ func NewDefaultConfig() *Config {
 		SynctechSMS:        SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:               []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
-		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, MaxParticipants: conversationpolicy.DefaultMaxParticipants},
-		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, MaxParticipants: conversationpolicy.DefaultMaxParticipants},
+		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Inline:  InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, MaxParticipants: conversationpolicy.DefaultMaxParticipants},
-		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, MaxParticipants: conversationpolicy.DefaultMaxParticipants},
+		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()

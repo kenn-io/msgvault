@@ -787,9 +787,11 @@ This release adds settings and inspection only. Every effective tier remains
 `stub` and `skip` settings are rejected until retention and purge support ships.
 Saving a `cold` override does not yet hide messages or remove vectors.
 
-Beeper, Slack (including Slackdump imports), Discord and Teams each accept
-`max_participants`, default `20`. An explicit `0` disables automatic cold
-classification. This setting is separate from `media_max_participants` and
+Automatic classification is off by default. To turn it on for Beeper, Slack
+(including Slackdump imports), Discord or Teams, set that provider's
+`max_participants` to the largest room you want kept `full`, such as `20`.
+Omitting the key or setting `0` keeps every room `full` unless an override
+says otherwise. This setting is separate from `media_max_participants` and
 `max_media_mb`, which continue to govern attachments.
 
 ```toml

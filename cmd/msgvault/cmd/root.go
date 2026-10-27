@@ -38,8 +38,6 @@ Start here:
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
-  msgvault list-senders -n 20 --json
-  msgvault stats
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json

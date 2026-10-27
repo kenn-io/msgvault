@@ -55,7 +55,7 @@ type conversationPolicyView struct {
 }
 
 func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
-	cmd := &cobra.Command{Use: "policy", Short: "Inspect staged conversation tiers and overrides"}
+	cmd := &cobra.Command{Use: "policy", Short: "Inspect room tiers and overrides"}
 	cmd.AddCommand(&cobra.Command{
 		Use: "list", Short: "List rooms, effective tiers and staged overrides as JSON", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
