@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -45,6 +44,47 @@ func doclingPDFPages(t *testing.T, pages int) []byte {
 	return mediatest.PDFObjects("synthetic document range fixture", objects)
 }
 
+func doclingRangeTestServer(t *testing.T, pages int, selections *[]string, submit func(http.ResponseWriter, int) bool, result func(http.ResponseWriter, int, int)) *httptest.Server {
+	t.Helper()
+	first, last := 1, pages
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/convert/file/async":
+			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+			if !assert.NoError(t, r.ParseMultipartForm(2<<20)) { // #nosec G120 -- MaxBytesReader bounds this synthetic upload.
+				return
+			}
+			defer func() { assert.NoError(t, r.MultipartForm.RemoveAll()) }()
+			selected := r.MultipartForm.Value["page_range"]
+			*selections = append(*selections, strings.Join(selected, ","))
+			first, last = 1, pages
+			if len(selected) != 0 {
+				if !assert.Len(t, selected, 2) {
+					return
+				}
+				var err error
+				first, err = strconv.Atoi(selected[0])
+				if !assert.NoError(t, err) {
+					return
+				}
+				last, err = strconv.Atoi(selected[1])
+				if !assert.NoError(t, err) {
+					return
+				}
+			}
+			if submit != nil && !submit(w, first) {
+				return
+			}
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"task_id": "range-job", "task_type": "convert", "task_status": "success"}))
+		case "/v1/result/range-job":
+			result(w, first, last)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
 func TestDoclingWorkerPageRanges(t *testing.T) {
 	for _, test := range []struct {
 		name                                  string
@@ -77,64 +117,37 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 				requirements.Error(err)
 			}
 			var selections []string
-			var first, last int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/v1/convert/file/async":
-					r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-					if !assertions.NoError(r.ParseMultipartForm(2 << 20)) { // #nosec G120 -- MaxBytesReader bounds this synthetic upload.
-						return
-					}
-					defer func() { assertions.NoError(r.MultipartForm.RemoveAll()) }()
-					selected := r.MultipartForm.Value["page_range"]
-					selections = append(selections, strings.Join(selected, ","))
-					first, last = 1, pages
-					if len(selected) == 2 {
-						var err error
-						first, err = strconv.Atoi(selected[0])
-						if !assertions.NoError(err) {
-							return
-						}
-						last, err = strconv.Atoi(selected[1])
-						if !assertions.NoError(err) {
-							return
-						}
-					}
-					if test.unknownSubmission && first == 51 {
-						w.WriteHeader(http.StatusServiceUnavailable)
-						return
-					}
-					_, err := io.WriteString(w, `{"task_id":"range-job","task_type":"convert","task_status":"success"}`)
-					assertions.NoError(err)
-				case "/v1/result/range-job":
-					response := doclingWorkerResponse(false)
-					wire, ok := response["document"].(map[string]any)
-					if !assertions.True(ok) {
-						return
-					}
-					doc, ok := wire["json_content"].(map[string]any)
-					if !assertions.True(ok) {
-						return
-					}
-					registry := map[string]any{}
-					texts := []any{}
-					for page := first; page <= last; page++ {
-						registry[strconv.Itoa(page)] = map[string]any{}
-						if page != 2 {
-							text := fmt.Sprintf("page %d sentinel", page)
-							if test.unicode {
-								text = "Cafe\u0301"
-							}
-							texts = append(texts, map[string]any{"text": text, "prov": []any{map[string]any{"page_no": page}}})
-						}
-					}
-					doc["pages"], doc["texts"] = registry, texts
-					assertions.NoError(json.NewEncoder(w).Encode(response))
-				default:
-					http.NotFound(w, r)
+			server := doclingRangeTestServer(t, pages, &selections, func(w http.ResponseWriter, first int) bool {
+				if test.unknownSubmission && first == 51 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return false
 				}
-			}))
+				return true
+			}, func(w http.ResponseWriter, first, last int) {
+				response := doclingWorkerResponse(false)
+				wire, ok := response["document"].(map[string]any)
+				if !assertions.True(ok) {
+					return
+				}
+				doc, ok := wire["json_content"].(map[string]any)
+				if !assertions.True(ok) {
+					return
+				}
+				registry := map[string]any{}
+				texts := []any{}
+				for page := first; page <= last; page++ {
+					registry[strconv.Itoa(page)] = map[string]any{}
+					if page != 2 {
+						text := fmt.Sprintf("page %d sentinel", page)
+						if test.unicode {
+							text = "Cafe\u0301"
+						}
+						texts = append(texts, map[string]any{"text": text, "prov": []any{map[string]any{"page_no": page}}})
+					}
+				}
+				doc["pages"], doc["texts"] = registry, texts
+				assertions.NoError(json.NewEncoder(w).Encode(response))
+			})
 			defer server.Close()
 			c := doclingTestConfig()
 			c.Endpoint = server.URL
@@ -178,6 +191,7 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 				assertions.False(catalog.failure.Terminal)
 				assertions.False(catalog.failure.RetryAt.IsZero())
 				assertions.Equal(3, catalog.failure.RequestCount)
+				assertions.Equal(2, catalog.failure.UploadCount)
 				assertions.Zero(catalog.failure.RetryCount)
 				return
 			}
@@ -238,67 +252,43 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 }
 
 func TestDoclingRangesResumeAfterReopen(t *testing.T) {
-	for _, failure := range []string{"partial", "checkpoint save failure", "checkpoint limit"} {
+	for _, failure := range []string{"complete", "partial", "checkpoint save failure", "checkpoint limit"} {
 		t.Run(failure, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			f := storetest.New(t)
-			content := doclingPDFPages(t, 600)
+			pages := 600
+			if failure == "complete" || failure == "partial" {
+				pages = 120
+			}
+			content := doclingPDFPages(t, pages)
 			digest := sha256.Sum256(content)
 			hash := hex.EncodeToString(digest[:])
 			var selections []string
-			first, last := 0, 0
 			failMiddle := true
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/v1/convert/file/async":
-					r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-					if !assertions.NoError(r.ParseMultipartForm(2 << 20)) { // #nosec G120 -- MaxBytesReader bounds this synthetic upload.
-						return
-					}
-					defer func() { assertions.NoError(r.MultipartForm.RemoveAll()) }()
-					selected := r.MultipartForm.Value["page_range"]
-					if !assertions.Len(selected, 2) {
-						return
-					}
-					var err error
-					first, err = strconv.Atoi(selected[0])
-					if !assertions.NoError(err) {
-						return
-					}
-					last, err = strconv.Atoi(selected[1])
-					if !assertions.NoError(err) {
-						return
-					}
-					selections = append(selections, strings.Join(selected, ","))
-					assertions.NoError(json.NewEncoder(w).Encode(map[string]any{"task_id": "resume-job", "task_type": "convert", "task_status": "success"}))
-				case "/v1/result/resume-job":
-					response := doclingWorkerResponse(false)
-					wire, ok := response["document"].(map[string]any)
-					if !assertions.True(ok) {
-						return
-					}
-					doc, ok := wire["json_content"].(map[string]any)
-					if !assertions.True(ok) {
-						return
-					}
-					registry := map[string]any{}
-					texts := []any{}
-					for page := first; page <= last; page++ {
-						registry[strconv.Itoa(page)] = map[string]any{}
-						texts = append(texts, map[string]any{"text": fmt.Sprintf("range sentinel page %d", page), "prov": []any{map[string]any{"page_no": page}}})
-					}
-					doc["pages"], doc["texts"] = registry, texts
-					if failMiddle && first == 51 && failure == "partial" {
-						response["status"] = "partial_success"
-						response["errors"] = []any{map[string]any{"page_no": 51}}
-					}
-					assertions.NoError(json.NewEncoder(w).Encode(response))
-				default:
-					http.NotFound(w, r)
+			server := doclingRangeTestServer(t, pages, &selections, nil, func(w http.ResponseWriter, first, last int) {
+				response := doclingWorkerResponse(false)
+				wire, ok := response["document"].(map[string]any)
+				if !assertions.True(ok) {
+					return
 				}
-			}))
+				doc, ok := wire["json_content"].(map[string]any)
+				if !assertions.True(ok) {
+					return
+				}
+				registry := map[string]any{}
+				texts := []any{}
+				for page := first; page <= last; page++ {
+					registry[strconv.Itoa(page)] = map[string]any{}
+					texts = append(texts, map[string]any{"text": fmt.Sprintf("range sentinel page %d", page), "prov": []any{map[string]any{"page_no": page}}})
+				}
+				doc["pages"], doc["texts"] = registry, texts
+				if failMiddle && first == 51 && failure == "partial" {
+					response["status"] = "partial_success"
+					response["errors"] = []any{map[string]any{"page_no": 51}}
+				}
+				assertions.NoError(json.NewEncoder(w).Encode(response))
+			})
 			defer server.Close()
 			c := doclingTestConfig()
 			c.Endpoint = server.URL
@@ -336,6 +326,14 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 			}
 			worker, err := NewDoclingWorker(catalog, &workerOpener{content: content}, provider, config)
 			requirements.NoError(err)
+			if failure == "complete" {
+				_, err := worker.ProcessCandidate(t.Context(), candidate)
+				requirements.NoError(err)
+				status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
+				requirements.NoError(err)
+				assertions.Equal(int64(3*len(content)), status.VerifiedUploadBytes)
+				return
+			}
 			failed, err := worker.ProcessCandidate(t.Context(), candidate)
 			requirements.Error(err)
 			var saved int
@@ -350,6 +348,9 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 				return
 			}
 			assertions.Equal(1, saved)
+			beforeResume, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
+			requirements.NoError(err)
+			assertions.Equal(int64(2*len(content)), beforeResume.VerifiedUploadBytes)
 			if !f.Store.IsPostgreSQL() {
 				var sequence int
 				var name, path string
@@ -385,14 +386,25 @@ func TestDoclingRangesResumeAfterReopen(t *testing.T) {
 				result, err = worker.ProcessCandidate(t.Context(), candidate)
 				requirements.NoError(err)
 			}
-			assertions.Equal(600, result.Units)
-			assertions.Equal([]string{"1,50", "51,100", "51,100", "101,150", "151,200", "201,250", "251,300", "301,350", "351,400", "401,450", "451,500", "501,550", "551,600"}, selections)
+			assertions.Equal(pages, result.Units)
+			afterResume, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
+			requirements.NoError(err)
+			if pages == 120 {
+				assertions.Equal(int64(2*len(content)), afterResume.VerifiedUploadBytes-beforeResume.VerifiedUploadBytes)
+				assertions.Equal([]string{"1,50", "51,100", "51,100", "101,120"}, selections)
+			} else {
+				assertions.Equal([]string{"1,50", "51,100", "51,100", "101,150", "151,200", "201,250", "251,300", "301,350", "351,400", "401,450", "451,500", "501,550", "551,600"}, selections)
+			}
 			var heads int
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_heads").Scan(&heads))
 			assertions.Equal(1, heads)
 			var requests int
 			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT request_count FROM document_extractions WHERE id = ?"), result.ExtractionID).Scan(&requests))
-			assertions.Equal(22, requests)
+			if pages == 120 {
+				assertions.Equal(4, requests)
+			} else {
+				assertions.Equal(22, requests)
+			}
 			search, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "sentinel"})
 			requirements.NoError(err)
 			assertions.NotEmpty(search.Results)
@@ -415,66 +427,37 @@ func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			content := doclingPDFPages(t, 51)
-			first, last := 0, 0
 			var selections []string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/v1/convert/file/async":
-					r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-					if !assertions.NoError(r.ParseMultipartForm(2 << 20)) { // #nosec G120 -- MaxBytesReader bounds this synthetic upload.
-						return
-					}
-					defer func() { assertions.NoError(r.MultipartForm.RemoveAll()) }()
-					selected := r.MultipartForm.Value["page_range"]
-					if !assertions.Len(selected, 2) {
-						return
-					}
-					var err error
-					first, err = strconv.Atoi(selected[0])
-					if !assertions.NoError(err) {
-						return
-					}
-					last, err = strconv.Atoi(selected[1])
-					if !assertions.NoError(err) {
-						return
-					}
-					selections = append(selections, strings.Join(selected, ","))
-					_, err = io.WriteString(w, `{"task_id":"coverage-job","task_type":"convert","task_status":"success"}`)
-					assertions.NoError(err)
-				case "/v1/result/coverage-job":
-					response := doclingWorkerResponse(false)
-					wire, ok := response["document"].(map[string]any)
-					if !assertions.True(ok) {
-						return
-					}
-					wire["md_content"] = fmt.Sprintf("range %d..%d Markdown sentinel", first, last)
-					doc, ok := wire["json_content"].(map[string]any)
-					if !assertions.True(ok) {
-						return
-					}
-					registry := map[string]any{}
-					texts := []any{}
-					for page := first; page <= last; page++ {
-						registry[strconv.Itoa(page)] = map[string]any{}
-						texts = append(texts, map[string]any{"text": fmt.Sprintf("page %d %s", page, strings.Repeat("sentinel ", 5)), "prov": []any{map[string]any{"page_no": page}}})
-					}
-					doc["pages"], doc["texts"] = registry, texts
-					if test.blankFirst && first == 1 {
-						doc["texts"] = []any{}
-						wire["md_content"] = ""
-					}
-					if (test.structuredFirst && first == 1) || (test.missingFallback && first == 51) {
-						wire["md_content"] = ""
-					}
-					if test.degrade && first == 51 {
-						doc["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{}}}}
-					}
-					assertions.NoError(json.NewEncoder(w).Encode(response))
-				default:
-					http.NotFound(w, r)
+			server := doclingRangeTestServer(t, 51, &selections, nil, func(w http.ResponseWriter, first, last int) {
+				response := doclingWorkerResponse(false)
+				wire, ok := response["document"].(map[string]any)
+				if !assertions.True(ok) {
+					return
 				}
-			}))
+				wire["md_content"] = fmt.Sprintf("range %d..%d Markdown sentinel", first, last)
+				doc, ok := wire["json_content"].(map[string]any)
+				if !assertions.True(ok) {
+					return
+				}
+				registry := map[string]any{}
+				texts := []any{}
+				for page := first; page <= last; page++ {
+					registry[strconv.Itoa(page)] = map[string]any{}
+					texts = append(texts, map[string]any{"text": fmt.Sprintf("page %d %s", page, strings.Repeat("sentinel ", 5)), "prov": []any{map[string]any{"page_no": page}}})
+				}
+				doc["pages"], doc["texts"] = registry, texts
+				if test.blankFirst && first == 1 {
+					doc["texts"] = []any{}
+					wire["md_content"] = ""
+				}
+				if (test.structuredFirst && first == 1) || (test.missingFallback && first == 51) {
+					wire["md_content"] = ""
+				}
+				if test.degrade && first == 51 {
+					doc["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{}}}}
+				}
+				assertions.NoError(json.NewEncoder(w).Encode(response))
+			})
 			defer server.Close()
 			c := doclingTestConfig()
 			c.Endpoint = server.URL

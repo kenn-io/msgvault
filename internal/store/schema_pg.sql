@@ -3409,6 +3409,7 @@ CREATE TABLE IF NOT EXISTS document_extractions (
     lease_until           TIMESTAMPTZ,
     attempt_count         INTEGER NOT NULL DEFAULT 0,
     request_count         INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+    upload_count          INTEGER NOT NULL DEFAULT 0 CHECK (upload_count >= 0),
     retry_count           INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count),
     provider_latency_ms   BIGINT NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0),
     next_retry_at         TIMESTAMPTZ,
@@ -4245,6 +4246,5 @@ CREATE TABLE IF NOT EXISTS document_extraction_ranges (
     evidence TEXT NOT NULL,
     evidence_checksum TEXT NOT NULL,
     char_count BIGINT NOT NULL CHECK (char_count >= 0),
-    payload_bytes BIGINT NOT NULL CHECK (payload_bytes > 0),
     PRIMARY KEY (extraction_id, first_page)
 );

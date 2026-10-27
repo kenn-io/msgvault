@@ -288,6 +288,8 @@ func TestDoclingConsentDisclosesCredentialsAndRangeRetention(t *testing.T) {
 	assertions.Contains(output.String(), "daemon restarts")
 	assertions.Contains(output.String(), "documents purge-derived")
 	assertions.Contains(output.String(), "seven days")
+	assertions.Contains(output.String(), "Interrupted jobs are uploaded again on a later build or resume, which can run the same document twice on your server.")
+	assertions.Contains(output.String(), "Jobs that outlast total_timeout or max_poll_attempts, and partial results, need a manual retry.")
 	assertions.NotContains(output.String(), "synthetic-secret-value")
 }
 

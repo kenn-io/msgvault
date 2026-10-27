@@ -53,12 +53,15 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 			if err != nil {
 				return document.SourceDocument{}, err
 			}
-			if requests, ok := ctx.Value(doclingRequestAccountingKey{}).(*doclingRequestAccounting); ok {
-				requests.submitted.Store(false)
-			}
+			requests, _ := ctx.Value(doclingRequestAccountingKey{}).(*doclingRequestAccounting)
+			requests.submitted.Store(false)
+			before := requests.requests.Load()
 			started := time.Now()
 			rendered, err := w.provider.RenderPageRange(ctx, upload, authorization, docling.PageRange{First: int64(first), Last: int64(last)})
 			accounting.Latency += time.Since(started)
+			if requests.requests.Load() > before {
+				accounting.Uploads++
+			}
 			if err != nil {
 				return document.SourceDocument{}, fmt.Errorf("render Docling page range: %w", err)
 			}
@@ -82,19 +85,13 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 				return document.SourceDocument{}, fmt.Errorf("encode range evidence: %w", err)
 			}
 			checkpoint = store.DocumentExtractionRange{FirstPage: first, LastPage: last, TotalPages: pages, Evidence: encoded, EvidenceChecksum: checksum}
-			// Docbank validates fresh page selections. Ignore selection omissions
-			// when choosing between its page mapping and Markdown fallback.
-			fallback = doclingRangeDegraded(evidence, checkpoint)
-			for _, unit := range evidence.Units {
-				fallback = fallback || len(unit.Omissions) > 0
+			units, fallback, err = doclingEvidenceRangeUnits(evidence, checkpoint)
+			if err != nil {
+				return document.SourceDocument{}, err
 			}
 			if fallback {
 				rangeMarkdown = string(rendered.ProviderMarkdown)
 			} else {
-				units, _, err = doclingRangeUnits(checkpoint)
-				if err != nil {
-					return document.SourceDocument{}, err
-				}
 				for _, unit := range evidence.Units {
 					checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
 				}
@@ -103,7 +100,7 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 				}
 			}
 		} else {
-			units, fallback, err = doclingRangeUnits(checkpoint)
+			units, err = doclingRangeUnits(checkpoint)
 			if err != nil {
 				return document.SourceDocument{}, err
 			}
@@ -134,21 +131,21 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 	return source, nil
 }
 
-func doclingRangeUnits(r store.DocumentExtractionRange) ([]document.SourceUnit, bool, error) {
+func doclingRangeUnits(r store.DocumentExtractionRange) ([]document.SourceUnit, error) {
 	var evidence document.NormalizedEvidenceV1
 	if err := json.Unmarshal(r.Evidence, &evidence); err != nil {
-		return nil, false, fmt.Errorf("decode document range evidence: %w", err)
+		return nil, fmt.Errorf("decode document range evidence: %w", err)
 	}
 	// Revalidate canonical structure before consuming a durable checkpoint.
 	canonical, checksum, err := document.MarshalNormalizedEvidenceV1(evidence)
 	if err != nil || checksum != r.EvidenceChecksum || !bytes.Equal(canonical, r.Evidence) {
-		return nil, false, errors.New("invalid canonical document range evidence")
+		return nil, errors.New("invalid canonical document range evidence")
 	}
 	units, degraded, err := doclingEvidenceRangeUnits(evidence, r)
 	if degraded {
-		return nil, true, errors.New("docling range checkpoint has degraded evidence")
+		return nil, errors.New("docling range checkpoint has degraded evidence")
 	}
-	return units, false, err
+	return units, err
 }
 
 func doclingEvidenceRangeUnits(evidence document.NormalizedEvidenceV1, r store.DocumentExtractionRange) ([]document.SourceUnit, bool, error) {
@@ -174,7 +171,7 @@ func doclingEvidenceRangeUnits(evidence document.NormalizedEvidenceV1, r store.D
 func doclingRangeDegraded(evidence document.NormalizedEvidenceV1, r store.DocumentExtractionRange) bool {
 	degraded := evidence.UnitKind != document.EvidenceUnitPage || evidence.Family != "pdf"
 	for _, omission := range evidence.Omissions {
-		if omission.Kind == document.EvidenceOmissionField && omission.Field == "page_range" {
+		if omission.Kind == document.EvidenceOmissionField && omission.Field == docling.PageRangeOmissionField {
 			continue
 		}
 		if omission.Kind == document.EvidenceOmissionUnit && omission.Reason == "pages precede the requested range" && omission.Locator != nil && omission.Locator.Start == 1 && omission.Locator.End == int64(r.FirstPage-1) {

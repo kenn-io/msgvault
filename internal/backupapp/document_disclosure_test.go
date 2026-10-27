@@ -49,8 +49,8 @@ func TestBackupManifestDisclosesAndRestoresDocumentPlaintext(t *testing.T) {
 			if stagedRanges {
 				// Backup treats evidence as opaque bytes; only its stored character count is disclosed.
 				_, err = database.DB().Exec(`INSERT INTO document_extraction_ranges
-			(extraction_id, first_page, last_page, total_pages, evidence, evidence_checksum, markdown, char_count, payload_bytes)
-		VALUES ('three', 1, 50, 51, 'checkpoint sentinel', 'synthetic checksum', '', 19, 19)`)
+			(extraction_id, first_page, last_page, total_pages, evidence, evidence_checksum, char_count)
+		VALUES ('three', 1, 50, 51, 'checkpoint sentinel', 'synthetic checksum', 19)`)
 			} else {
 				_, err = database.DB().Exec(`INSERT INTO document_chunks
 			(extraction_id, chunk_key, ordinal, text, heading_path, first_unit_index, last_unit_index, checksum, char_count)

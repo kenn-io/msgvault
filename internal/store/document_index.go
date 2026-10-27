@@ -586,7 +586,7 @@ func (s *Store) GetDocumentIndexStatus(ctx context.Context, profileID string) (D
 		       (SELECT COALESCE(SUM(request_count), 0) FROM document_extractions WHERE profile_id = ?),
 		       (SELECT COALESCE(SUM(retry_count), 0) FROM document_extractions WHERE profile_id = ?),
 		       (SELECT COALESCE(SUM(provider_latency_ms), 0) FROM document_extractions WHERE profile_id = ?),
-		       (SELECT COALESCE(SUM(CASE WHEN e.request_count > 0 THEN COALESCE(c.pdf_bytes, e.local_bytes) ELSE 0 END), 0)
+		       (SELECT COALESCE(SUM(e.upload_count * COALESCE(c.pdf_bytes, e.local_bytes)), 0)
 		        FROM document_extractions e
 		        LEFT JOIN document_extraction_conversions c ON c.extraction_id = e.id
 		        WHERE e.profile_id = ?),

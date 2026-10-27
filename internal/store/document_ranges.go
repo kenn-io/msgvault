@@ -67,15 +67,18 @@ func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentE
 		if count != 1 {
 			return ErrDocumentExtractionFenceLost
 		}
+		byteLength := "LENGTH(CAST(evidence AS BLOB))"
+		if s.IsPostgreSQL() {
+			byteLength = "OCTET_LENGTH(evidence)"
+		}
 		var size int64
-		if err := q.QueryRow(`SELECT COALESCE(SUM(payload_bytes),0) FROM document_extraction_ranges WHERE extraction_id = ? AND first_page != ?`, claim.ExtractionID, r.FirstPage).Scan(&size); err != nil {
+		if err := q.QueryRow(`SELECT COALESCE(SUM(`+byteLength+`),0) FROM document_extraction_ranges WHERE extraction_id = ? AND first_page != ?`, claim.ExtractionID, r.FirstPage).Scan(&size); err != nil {
 			return err
 		}
-		payloadBytes := int64(len(r.Evidence))
-		if size+payloadBytes > maxBytes {
+		if size+int64(len(r.Evidence)) > maxBytes {
 			return ErrDocumentRangeBytes
 		}
-		_, err = q.Exec(`INSERT INTO document_extraction_ranges (extraction_id,first_page,last_page,total_pages,evidence,evidence_checksum,char_count,payload_bytes) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (extraction_id,first_page) DO NOTHING`, claim.ExtractionID, r.FirstPage, r.LastPage, r.TotalPages, string(r.Evidence), r.EvidenceChecksum, r.CharCount, payloadBytes)
+		_, err = q.Exec(`INSERT INTO document_extraction_ranges (extraction_id,first_page,last_page,total_pages,evidence,evidence_checksum,char_count) VALUES (?,?,?,?,?,?,?) ON CONFLICT (extraction_id,first_page) DO NOTHING`, claim.ExtractionID, r.FirstPage, r.LastPage, r.TotalPages, string(r.Evidence), r.EvidenceChecksum, r.CharCount)
 		return err
 	})
 }

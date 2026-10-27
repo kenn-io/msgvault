@@ -400,6 +400,7 @@ func TestMistralWorkerPublishesOnlyNormalizedDerivatives(t *testing.T) {
 	assert.NotContains(catalog.publication.Units[0].Text, "private")
 	assert.Equal([]string{"Invoice"}, catalog.publication.Chunks[0].HeadingPath)
 	assert.Equal(1, catalog.publication.RequestCount)
+	assert.Equal(1, catalog.publication.UploadCount)
 	assert.Zero(catalog.publication.RetryCount)
 	assert.Positive(catalog.publication.ProviderLatencyMS)
 	assert.Equal(1, result.Units)

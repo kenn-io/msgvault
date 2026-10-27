@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,19 @@ func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec("DROP TABLE document_extraction_ranges")
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "pre-range-upload", ProfileID: profile.ID, CanonicalBlobHash: hash,
+		ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
+	})
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_timeout", Terminal: true, RequestCount: 2, UploadCount: 1,
+	}))
+	_, err = f.Store.DB().Exec("ALTER TABLE document_extractions DROP COLUMN upload_count")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("DROP TABLE document_extraction_ranges")
 	require.NoError(err)
 	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='14' WHERE key='schema_version'")
 	require.NoError(err)
@@ -39,6 +52,9 @@ func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
 	assert.Equal(store.SchemaVersion, version)
 	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 	assert.Zero(count)
+	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
+	require.NoError(err)
+	assert.Equal(int64(128), status.VerifiedUploadBytes)
 }
 
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {

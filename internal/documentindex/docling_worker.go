@@ -241,7 +241,7 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		}
 		terminal, reason := classifyDoclingFailure(cause)
 		failure := store.DocumentExtractionFailure{Claim: claim, ReasonCode: reason, Detail: documentFailureDetail(cause), Terminal: terminal,
-			RequestCount: accounting.Requests, RetryCount: accounting.Retries, ProviderLatencyMS: requestLatencyMillis(accounting.Latency)}
+			UploadCount: accounting.Uploads, RequestCount: accounting.Requests, RetryCount: accounting.Retries, ProviderLatencyMS: requestLatencyMillis(accounting.Latency)}
 		if !terminal {
 			failure.RetryAt = time.Now().UTC().Add(w.config.RetryDelay)
 		}
@@ -273,6 +273,9 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		started := time.Now()
 		var rendered document.RenditionResult
 		rendered, err = document.RenderRendition(workCtx, w.provider, upload, authorization)
+		if requests.requests.Load() > 0 {
+			accounting.Uploads = 1
+		}
 		accounting.Latency = time.Since(started)
 		if err == nil {
 			accounting.Requests = int(rendered.Receipt.Usage.Requests)
