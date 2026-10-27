@@ -188,6 +188,8 @@ Schema 3.30.0 adds `hidden_text_present` to message details and search rows. It 
 
 Schema 3.42.0 adds `imessage.media_max_participants` and `imessage.max_media_mb` to the settings catalog and updates.
 
+Schema 3.27.0 adds the owner-only contested person facts report.
+
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.

@@ -560,6 +560,9 @@ func TestPersonFactOpenAPIOperationsContainNoReviewMutation(t *testing.T) {
 		"/api/v1/people/{id}/fact-claims": {
 			http.MethodGet: "listPersonFactClaims",
 		},
+		"/api/v1/people/{id}/fact-contests": {
+			http.MethodGet: "listPersonFactContests",
+		},
 		"/api/v1/people/{id}/fact-decisions": {
 			http.MethodGet: "listPersonFactDecisions",
 		},
@@ -600,6 +603,7 @@ func TestPersonFactOpenAPIHistoryCollectionsAreNonNullable(t *testing.T) {
 			"PersonFactEvidenceResponse":             "evidence",
 			"PersonFactEvidenceStatusEventsResponse": "events",
 			"PersonFactClaimsResponse":               "claims",
+			"PersonFactContestsResponse":             "contests",
 			"PersonFactDecisionsResponse":            "decisions",
 		} {
 			schema := document.Components.Schemas.Map()[schemaName]
