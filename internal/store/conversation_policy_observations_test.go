@@ -176,16 +176,18 @@ func TestParticipantMergeDoesNotPromoteColdProviderBinding(t *testing.T) {
 }
 
 func TestParticipantMergePreservesIdenticalColdProviderBinding(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	s, source, _, firstCold, _ := policyObservationFixture(t)
 	secondCold, err := s.EnsureConversation(source, "second-cold", "Second cold room")
-	require.NoError(t, err)
-	require.NoError(t, s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Cold))
-	require.NoError(t, s.SetConversationPolicyOverride(t.Context(), source, "second-cold", conversationpolicy.Cold))
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Cold))
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "second-cold", conversationpolicy.Cold))
 
 	first, err := s.EnsureParticipantByIdentifier("beeper", "synthetic-cold-merge-first", "First")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	second, err := s.EnsureParticipantByIdentifier("beeper", "synthetic-cold-merge-second", "Second")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	providerID := "provider:shared-cold-user"
 	sourceRef := "beeper:synthetic-account:user"
 
@@ -193,80 +195,82 @@ func TestParticipantMergePreservesIdenticalColdProviderBinding(t *testing.T) {
 	firstInput.ProviderUserID = &providerID
 	firstInput.Envelope.SourceRef = &sourceRef
 	firstObservation, err := s.RecordContactObservationContext(t.Context(), first, firstInput)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	secondInput := policyObservationInput(source, &secondCold)
 	secondInput.ProviderUserID = &providerID
 	secondInput.Envelope.SourceRef = &sourceRef
 	_, err = s.RecordContactObservationContext(t.Context(), second, secondInput)
-	require.NoError(t, err)
+	requirements.NoError(err)
 
-	require.NoError(t, s.MergeParticipantsContext(t.Context(), second, first))
+	requirements.NoError(s.MergeParticipantsContext(t.Context(), second, first))
 	current, err := s.ListParticipantObservationsContext(t.Context(), first, true)
-	require.NoError(t, err)
-	require.Len(t, current, 1, "identical provider evidence should collapse after the merge")
-	require.NotNil(t, current[0].ProviderUserID)
-	assert.Equal(t, providerID, *current[0].ProviderUserID,
+	requirements.NoError(err)
+	requirements.Len(current, 1, "identical provider evidence should collapse after the merge")
+	requirements.NotNil(current[0].ProviderUserID)
+	assertions.Equal(providerID, *current[0].ProviderUserID,
 		"the binding must stay recorded while both supporting rooms are Cold")
-	assert.Equal(t, []int64{firstCold, secondCold}, policyObservationSupport(t, s, current[0].Envelope.ID))
+	assertions.Equal([]int64{firstCold, secondCold}, policyObservationSupport(t, s, current[0].Envelope.ID))
 
 	eligible, err := s.ObservationFullEligibleContext(t.Context(), current[0].Envelope.ID)
-	require.NoError(t, err)
-	assert.False(t, eligible)
-	require.NoError(t, s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Full))
+	requirements.NoError(err)
+	assertions.False(eligible)
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Full))
 	eligible, err = s.ObservationFullEligibleContext(t.Context(), current[0].Envelope.ID)
-	require.NoError(t, err)
-	assert.True(t, eligible,
+	requirements.NoError(err)
+	assertions.True(eligible,
 		"promoting the survivor's original room must restore the preserved provider binding")
 	byProvider, err := s.FindObservationsByProviderUserIDContext(t.Context(), providerID, 0)
-	require.NoError(t, err)
-	require.Len(t, byProvider, 1)
-	assert.Equal(t, first, byProvider[0].ParticipantID)
-	assert.Equal(t, firstObservation.Observation.Envelope.ID, byProvider[0].Envelope.ID)
+	requirements.NoError(err)
+	requirements.Len(byProvider, 1)
+	assertions.Equal(first, byProvider[0].ParticipantID)
+	assertions.Equal(firstObservation.Observation.Envelope.ID, byProvider[0].Envelope.ID)
 }
 
 func TestProviderBindingEnrichmentReconcilesExistingObservationConflict(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	s, source, full, _, _ := policyObservationFixture(t)
 	left, err := s.EnsureParticipantByIdentifier("beeper", "synthetic-enrichment-left", "Left")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	right, err := s.EnsureParticipantByIdentifier("beeper", "synthetic-enrichment-right", "Right")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	providerID := "provider:enriched-user"
 
 	leftInput := policyObservationInput(source, &full)
 	leftInput.ProviderUserID = &providerID
 	leftInput.Envelope.SourceRef = new("beeper:synthetic-account:left")
 	_, err = s.RecordContactObservationContext(t.Context(), left, leftInput)
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	rightInput := policyObservationInput(source, &full)
 	rightInput.ProviderUserID = nil
 	rightInput.Envelope.SourceRef = new("beeper:synthetic-account:right")
 	rightObservation, err := s.RecordContactObservationContext(t.Context(), right, rightInput)
-	require.NoError(t, err)
-	assert.Nil(t, rightObservation.Observation.ProviderUserID)
+	requirements.NoError(err)
+	assertions.Nil(rightObservation.Observation.ProviderUserID)
 	candidates, err := s.ListIdentityMatchCandidatesContext(t.Context(), nil, 10, 0)
-	require.NoError(t, err)
-	require.Len(t, candidates, 1)
-	assert.Equal(t, store.IdentityMatchStateConflict, candidates[0].State)
+	requirements.NoError(err)
+	requirements.Len(candidates, 1)
+	assertions.Equal(store.IdentityMatchStateConflict, candidates[0].State)
 	beforeRevision, err := s.ParticipantIdentifierRevisionContext(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	rightInput.ProviderUserID = &providerID
 	enriched, err := s.RecordContactObservationContext(t.Context(), right, rightInput)
-	require.NoError(t, err)
-	assert.False(t, enriched.Created)
-	assert.Equal(t, rightObservation.Observation.Envelope.ID, enriched.Observation.Envelope.ID)
-	require.NotNil(t, enriched.Observation.ProviderUserID)
-	assert.Equal(t, providerID, *enriched.Observation.ProviderUserID)
+	requirements.NoError(err)
+	assertions.False(enriched.Created)
+	assertions.Equal(rightObservation.Observation.Envelope.ID, enriched.Observation.Envelope.ID)
+	requirements.NotNil(enriched.Observation.ProviderUserID)
+	assertions.Equal(providerID, *enriched.Observation.ProviderUserID)
 	afterRevision, err := s.ParticipantIdentifierRevisionContext(t.Context())
-	require.NoError(t, err)
-	assert.Greater(t, afterRevision, beforeRevision,
+	requirements.NoError(err)
+	assertions.Greater(afterRevision, beforeRevision,
 		"changing a provider binding must advance the participant projection revision")
 
 	candidates, err = s.ListIdentityMatchCandidatesContext(t.Context(), nil, 10, 0)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, candidate := range candidates {
-		assert.NotEqual(t, store.IdentityMatchStateConflict, candidate.State,
+		assertions.NotEqual(store.IdentityMatchStateConflict, candidate.State,
 			"the old address conflict must be reconciled when both observations acquire the same provider ID")
 	}
 }
@@ -924,16 +928,18 @@ func TestConversationPolicyObservationSourceMerge(t *testing.T) {
 }
 
 func TestConversationPolicyObservationSourceMergePreservesScopedBindings(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	s, from, _, _, participantID := policyObservationFixture(t)
 	s.DB().SetMaxOpenConns(4)
 	into, err := s.GetOrCreateSource("beeper", "merge-scoped-destination")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	fromRoom, err := s.EnsureConversation(from, "scoped-source-room", "Scoped source room")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	intoRoom, err := s.EnsureConversation(into.ID, "scoped-destination-room", "Scoped destination room")
-	require.NoError(t, err)
-	require.NoError(t, s.SetConversationPolicyOverride(t.Context(), from, "scoped-source-room", conversationpolicy.Full))
-	require.NoError(t, s.SetConversationPolicyOverride(t.Context(), into.ID, "scoped-destination-room", conversationpolicy.Full))
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), from, "scoped-source-room", conversationpolicy.Full))
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), into.ID, "scoped-destination-room", conversationpolicy.Full))
 
 	for _, binding := range []struct {
 		providerID string
@@ -954,23 +960,23 @@ func TestConversationPolicyObservationSourceMergePreservesScopedBindings(t *test
 			},
 		}
 		_, err = s.RecordContactObservationContext(t.Context(), participantID, input)
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}
 
 	_, err = s.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	current, err := s.ListParticipantObservationsContext(t.Context(), participantID, true)
-	require.NoError(t, err)
-	require.Len(t, current, 2,
+	requirements.NoError(err)
+	requirements.Len(current, 2,
 		"the current identity index must allow separately scoped provider bindings after source merge")
 	providers := make([]string, 0, len(current))
 	for _, observation := range current {
-		require.NotNil(t, observation.ProviderUserID)
+		requirements.NotNil(observation.ProviderUserID)
 		providers = append(providers, *observation.ProviderUserID)
-		require.NotNil(t, observation.SourceID)
-		assert.Equal(t, into.ID, *observation.SourceID)
+		requirements.NotNil(observation.SourceID)
+		assertions.Equal(into.ID, *observation.SourceID)
 	}
-	assert.ElementsMatch(t, []string{"provider:scoped-left", "provider:scoped-right"}, providers)
+	assertions.ElementsMatch([]string{"provider:scoped-left", "provider:scoped-right"}, providers)
 }
 
 func TestConversationPolicyObservationScoringRequiresBothFullSides(t *testing.T) {
