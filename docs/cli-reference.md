@@ -2155,6 +2155,10 @@ msgvault import-imessage
 
 Reads from `~/Library/Messages/chat.db` by default. This is a read-only operation.
 
+Eligible attachments referenced by `chat.db` are copied into the archive. See
+[Text Messages](/docs/usage/text-messages/#import-imessage) for limits,
+copied trees, and voice notes.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--db-path` | `~/Library/Messages/chat.db` | Path to chat.db |
@@ -2163,6 +2167,12 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--me` | — | Your phone/email for recipient tracking |
 | `--contacts` | — | Path to contacts `.vcf` file for display-name backfill |
+| `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
+| `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
+| `--max-media-mb` | `0` | Skip files larger than this many MiB; `0` uses `max_media_mb` from `[imessage]` (default 250) |
+
+The participant limit and the default size cap come from `[imessage]` in
+[Configuration](/docs/configuration/#imessage).
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
 

@@ -337,6 +337,8 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("teams.media_scope", settingsGroupAttachments, []string{"all", "direct", "none"}, func(c *config.Config) string { return effectiveMediaScope(c.Teams.MediaScope) }),
 	intSetting("teams.media_max_participants", settingsGroupAttachments, func(c *config.Config) int { return c.Teams.MediaMaxParticipants }),
 	intSetting("teams.max_media_mb", settingsGroupAttachments, func(c *config.Config) int { return c.Teams.MaxMediaMB }),
+	intSetting("imessage.media_max_participants", settingsGroupAttachments, func(c *config.Config) int { return c.IMessage.MediaMaxParticipants }),
+	intSetting("imessage.max_media_mb", settingsGroupAttachments, func(c *config.Config) int { return c.IMessage.MaxMediaMB }),
 	stringSetting("activity.timezone", "archive", nil, func(c *config.Config) string { return c.Activity.Timezone }),
 	intSetting("activity.max_direct_counterparts", "archive", func(c *config.Config) int { return c.Activity.MaxDirectCounterparts }),
 	intSetting("activity.batch_size", "archive", func(c *config.Config) int { return c.Activity.BatchSize }),
@@ -999,6 +1001,7 @@ func validateSettingUpdate(key string, value any, options []string) error {
 	case "log.sql_slow_ms", "beeper.media_max_participants", "beeper.max_media_mb",
 		"slack.media_max_participants", "slack.max_media_mb", "inline.media_max_participants", "inline.max_media_mb", "discord.media_max_participants",
 		"discord.max_media_mb", "teams.media_max_participants", "teams.max_media_mb",
+		"imessage.media_max_participants", "imessage.max_media_mb",
 		"vector.search.max_page_size_hybrid":
 		integer, ok := value.(int)
 		if !ok || integer < 0 {

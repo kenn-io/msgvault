@@ -10,6 +10,8 @@ All notable changes to msgvault, grouped by release.
 
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
+- `import-imessage` copies available local attachments into the archive and reports unavailable and skipped ones in its summary. `--messages-root` selects a copied Messages folder, and `--no-attachments` skips the copy. Voice notes (`.caf`) are kept but not transcribed.
+- `import-imessage` reads its media limits from a new `[imessage]` config table (`media_max_participants`, `max_media_mb`), and `--max-media-mb` overrides the size cap for one run.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - MCP [`stage_deletion`](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) stages every eligible query match through local or remote daemons, with skipped counts and a 100,000-match limit, instead of stopping at 500 metadata or 100 full-text matches.
 - On Windows, a keyed daemon's first start no longer fails with `provider credential DACL permits inherited access` when a client is polling at the same moment.
