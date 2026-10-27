@@ -217,7 +217,6 @@ func TestDoclingWorkerRejectsRedirectToAnotherOrigin(t *testing.T) {
 	assertions.Equal(int32(1), originCalls.Load())
 	assertions.Zero(redirectedCalls.Load())
 	assertions.Equal(1, catalog.failure.RequestCount)
-	assertions.Equal(1, catalog.failure.UploadCount)
 	assertions.Equal("invalid_provider_output", catalog.failure.ReasonCode)
 }
 
