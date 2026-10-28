@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -142,55 +143,64 @@ func TestMCPEventsSourceRemovalDoesNotDeadlockCaptureOffWriter(t *testing.T) {
 	assert.NoError(err)
 }
 
-// CardDAV discovery replacement opens its own transaction. With capture on,
-// fenced writers such as a book-role change take the identity fence before the
-// discovery lock, so a replacement that changes the account identity must take
-// identity first too, or the two deadlock. The writer here issues the fenced
-// writer's lock statements in that order.
+// CardDAV discovery replacement opens its own transaction. Fenced writers such
+// as a book-role change on a capturing handle take the identity fence before
+// the discovery lock, so a replacement that changes the account identity must
+// take identity first too, whatever its own handle's capture setting, or the
+// two deadlock across processes. The writer here issues the fenced writer's
+// lock statements in that order.
 func TestMCPEventsCardDAVDiscoveryTakesIdentityBeforeDiscoveryLock(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	_, err := st.ConfigureMCPEvents(ctx, MCPEventsConfig{
-		Enabled: true, Principal: "owner:synthetic",
-		Capabilities: []MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}},
-	})
-	require.NoError(err)
-	discovery := func(username string) CardDAVDiscoveryInput {
-		return CardDAVDiscoveryInput{
-			BaseURL: "https://contacts.example/dav", Username: username,
-			PrincipalURL: "https://contacts.example/principal/" + username + "/",
-			HomeURL:      "https://contacts.example/books/" + username + "/",
-			Books: []CardDAVDiscoveredBook{{
-				CanonicalURL: "https://contacts.example/books/" + username + "/personal/",
-				DisplayName:  "Personal", SupportsSyncCollection: true, SupportsMultiget: true,
-			}},
-		}
-	}
-	_, _, err = st.ReplaceCardDAVDiscoveryContext(ctx, discovery("user-a"))
-	require.NoError(err)
+	for _, capture := range []bool{true, false} {
+		t.Run(fmt.Sprintf("capture=%t", capture), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			cfg := MCPEventsConfig{}
+			if capture {
+				cfg = MCPEventsConfig{
+					Enabled: true, Principal: "owner:synthetic",
+					Capabilities: []MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}},
+				}
+			}
+			_, err := st.ConfigureMCPEvents(ctx, cfg)
+			require.NoError(err)
+			discovery := func(username string) CardDAVDiscoveryInput {
+				return CardDAVDiscoveryInput{
+					BaseURL: "https://contacts.example/dav", Username: username,
+					PrincipalURL: "https://contacts.example/principal/" + username + "/",
+					HomeURL:      "https://contacts.example/books/" + username + "/",
+					Books: []CardDAVDiscoveredBook{{
+						CanonicalURL: "https://contacts.example/books/" + username + "/personal/",
+						DisplayName:  "Personal", SupportsSyncCollection: true, SupportsMultiget: true,
+					}},
+				}
+			}
+			_, _, err = st.ReplaceCardDAVDiscoveryContext(ctx, discovery("user-a"))
+			require.NoError(err)
 
-	writer, err := st.DB().BeginTx(ctx, nil)
-	require.NoError(err)
-	defer func() { _ = writer.Rollback() }()
-	var writerPID int
-	require.NoError(writer.QueryRowContext(ctx, `SELECT pg_backend_pid() FROM archive_metadata WHERE key=$1 FOR UPDATE`, identityRevisionKey).Scan(&writerPID))
+			writer, err := st.DB().BeginTx(ctx, nil)
+			require.NoError(err)
+			defer func() { _ = writer.Rollback() }()
+			var writerPID int
+			require.NoError(writer.QueryRowContext(ctx, `SELECT pg_backend_pid() FROM archive_metadata WHERE key=$1 FOR UPDATE`, identityRevisionKey).Scan(&writerPID))
 
-	replaced := make(chan error, 1)
-	go func() {
-		_, _, err := st.ReplaceCardDAVDiscoveryContext(ctx, discovery("user-b"))
-		replaced <- err
-	}()
-	waitForPGBlockedQuery(ctx, t, st, writerPID, "%")
-	_, err = writer.ExecContext(ctx, `SELECT singleton FROM carddav_discovery_lock WHERE singleton = 1 FOR UPDATE`)
-	require.NoError(err, "the fenced writer must not deadlock with discovery replacement")
-	require.NoError(writer.Commit())
-	select {
-	case err = <-replaced:
-	case <-ctx.Done():
-		require.FailNow("discovery replacement did not finish")
+			replaced := make(chan error, 1)
+			go func() {
+				_, _, err := st.ReplaceCardDAVDiscoveryContext(ctx, discovery("user-b"))
+				replaced <- err
+			}()
+			waitForPGBlockedQuery(ctx, t, st, writerPID, "%")
+			_, err = writer.ExecContext(ctx, `SELECT singleton FROM carddav_discovery_lock WHERE singleton = 1 FOR UPDATE`)
+			require.NoError(err, "the fenced writer must not deadlock with discovery replacement")
+			require.NoError(writer.Commit())
+			select {
+			case err = <-replaced:
+			case <-ctx.Done():
+				require.FailNow("discovery replacement did not finish")
+			}
+			assert.NoError(err)
+		})
 	}
-	assert.NoError(err)
 }

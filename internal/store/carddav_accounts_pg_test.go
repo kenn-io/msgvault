@@ -43,15 +43,18 @@ func TestPostgreSQLCardDAVDiscoveryReplacementsSerializeCompleteSnapshots(t *tes
 			errs <- replaceErr
 		}()
 	}
+	// Replacements take the identity fence before the discovery lock, so the
+	// first waits on the discovery lock and the second on the fence.
 	var blockedWriters int
 	require.Eventually(func() bool {
 		err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*)
 			FROM pg_stat_activity
 			WHERE cardinality(pg_blocking_pids(pid)) > 0
-			  AND POSITION('carddav_discovery_lock' IN query) > 0`).Scan(&blockedWriters)
+			  AND (POSITION('carddav_discovery_lock' IN query) > 0
+			       OR POSITION('FROM archive_metadata WHERE key=' IN query) > 0)`).Scan(&blockedWriters)
 		return err == nil && blockedWriters == 2
 	}, 5*time.Second, 10*time.Millisecond,
-		"both replacement connections must wait on the singleton discovery lock")
+		"both replacement connections must wait behind the discovery lock")
 	require.NoError(blocker.Commit())
 	require.NoError(<-errs)
 	require.NoError(<-errs)
