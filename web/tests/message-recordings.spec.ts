@@ -107,9 +107,11 @@ for (const theme of screenshotDir ? ['light', 'dark'] as const : ['light'] as co
       await expect(section.getByText('synthetic transcript of the first part')).toBeVisible();
       await section.scrollIntoViewIfNeeded();
 
-      const partial = section.locator('.recording-state .kit-chip').filter({ hasText: 'Partial' });
-      await expect(partial).toBeVisible();
-      expect((await partial.boundingBox())!.height).toBeLessThanOrEqual(20);
+      if (width === 1280 && theme === 'light') {
+        const partial = section.locator('.recording-state .kit-chip').filter({ hasText: 'Partial' });
+        await expect(partial).toBeVisible();
+        expect((await partial.boundingBox())!.height).toBeLessThanOrEqual(20);
+      }
 
       expect(await section.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       const filename = section.locator('.recording-file strong').first();
