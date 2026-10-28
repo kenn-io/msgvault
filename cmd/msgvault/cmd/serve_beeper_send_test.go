@@ -18,8 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestBeeperSend(t *testing.T) {
@@ -27,7 +29,7 @@ func TestBeeperSend(t *testing.T) {
 		name, code                                                                                                       string
 		status, replyStatus                                                                                              int
 		disabled, unarchived, file, relative, directory, reply, wrongReply, grant, wrongSource, draftOnly, uploadFailure bool
-		merged, changedReply, padded, body                                                                               bool
+		merged, changedReply, padded, body, uploadError                                                                  bool
 	}{
 		{name: "accepted", code: "accepted"},
 		{name: "padded chat", code: "accepted", padded: true},
@@ -37,6 +39,7 @@ func TestBeeperSend(t *testing.T) {
 		{name: "missing reply", code: "invalid_reply_target", reply: true, file: true, replyStatus: 404},
 		{name: "changed reply", code: "invalid_reply_target", reply: true, file: true, changedReply: true},
 		{name: "disabled", code: "send_disabled", disabled: true},
+		{name: "send grant disabled", code: "send_disabled", grant: true, disabled: true},
 		{name: "unknown", code: "remote_unknown", status: 500},
 		{name: "rejected", code: "provider_rejected", status: 409},
 		{name: "not archived", code: "chat_not_archived", unarchived: true},
@@ -46,6 +49,7 @@ func TestBeeperSend(t *testing.T) {
 		{name: "agent file", code: "not_permitted", grant: true, file: true},
 		{name: "file only", code: "accepted", file: true},
 		{name: "relative file", code: "accepted", file: true, relative: true},
+		{name: "upload error payload", code: "provider_rejected", file: true, uploadError: true},
 		{name: "upload failure", code: "provider_unavailable", file: true, uploadFailure: true},
 		{name: "directory", code: "invalid_args", file: true, directory: true},
 		{name: "upload rejected", code: "provider_rejected", file: true, uploadFailure: true, status: 413},
@@ -81,6 +85,10 @@ func TestBeeperSend(t *testing.T) {
 					}
 					_, _ = fmt.Fprintf(w, `{"id":%q,"accountID":%q,"merge":%s}`, beeperDraftTestChat, f.source.Identifier, merge)
 				case r.URL.Path == "/v1/assets/upload":
+					if tc.uploadError {
+						_, _ = io.WriteString(w, `{"error":"file too large"}`)
+						return
+					}
 					if tc.uploadFailure {
 						status := tc.status
 						if status == 0 {
@@ -168,7 +176,7 @@ func TestBeeperSend(t *testing.T) {
 			} else {
 				assertBeeperDraftCode(t, err, tc.code)
 			}
-			if tc.code == "accepted" || tc.code == "remote_unknown" || (tc.code == "provider_rejected" && !tc.uploadFailure) {
+			if tc.code == "accepted" || tc.code == "remote_unknown" || (tc.code == "provider_rejected" && !tc.uploadFailure && !tc.uploadError) {
 				assert.Equal(t, tc.code, output.Status)
 			} else {
 				assert.Empty(t, output.Status)
@@ -190,7 +198,7 @@ func TestBeeperSend(t *testing.T) {
 				if tc.file {
 					expected = append(expected, "POST /v1/assets/upload")
 				}
-				if !tc.uploadFailure {
+				if !tc.uploadFailure && !tc.uploadError {
 					expected = append(expected, "POST /v1/chats/"+beeperDraftTestChat+"/messages")
 				}
 				assert.Equal(t, expected, requests)
@@ -223,4 +231,41 @@ func TestBeeperSendTextOutput(t *testing.T) {
 
 func TestBeeperSendPreRequestFailure(t *testing.T) {
 	assert.Equal(t, "provider_unavailable", beeperSendFailureCode(errors.New("token unavailable"), true))
+}
+
+func TestBeeperSendReplyArchiveUnavailable(t *testing.T) {
+	testutil.SkipIfPostgres(t, "local read fault injection alters SQLite tables")
+	f := newBeeperDraftFixture(t)
+	f.adapter.beeperSendPolicy = []config.GmailDraftSource{{SourceID: f.source.ID, Enabled: true}}
+	conversation, err := f.store.EnsureConversationWithType(f.source.ID, beeperDraftTestChat, "direct", "Example chat")
+	require.NoError(t, err)
+	id, err := f.store.UpsertMessage(&store.Message{SourceID: f.source.ID, SourceMessageID: "original", ConversationID: conversation, MessageType: "beeper"})
+	require.NoError(t, err)
+	_, err = f.store.GetMessageContext(t.Context(), id)
+	require.NoError(t, err)
+
+	// Only the message detail read needs this table; source and chat lookups still work.
+	_, err = f.store.DB().Exec("ALTER TABLE message_bodies RENAME TO fault_message_bodies")
+	require.NoError(t, err)
+	_, err = f.store.GetMessageContext(t.Context(), id)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, sql.ErrNoRows)
+
+	err = f.adapter.runCLISendMessage(t.Context(), api.CLIRunRequest{Args: []string{
+		"send-message", "--source-id", strconv.FormatInt(f.source.ID, 10),
+		"--to", beeperDraftTestChat, "--body", "hello", "--reply-to", strconv.FormatInt(id, 10),
+	}}, nil)
+
+	_, restoreErr := f.store.DB().Exec("ALTER TABLE fault_message_bodies RENAME TO message_bodies")
+	require.NoError(t, restoreErr)
+	_, lookupErr := f.store.GetMessageContext(t.Context(), id)
+	require.NoError(t, lookupErr)
+	requests, patches := f.beeper.counts()
+	assert.Equal(t, 1, requests, "only the live chat lookup should run")
+	assert.Zero(t, patches)
+	assertBeeperDraftCode(t, err, "provider_unavailable")
+}
+
+func TestBeeperSendRedirectFailureCode(t *testing.T) {
+	assert.Equal(t, "provider_rejected", beeperSendFailureCode(&beeper.WriteError{Status: http.StatusTemporaryRedirect}, true))
 }
