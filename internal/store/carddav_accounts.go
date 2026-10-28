@@ -124,6 +124,15 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 		}
 	}()
 	logged := &loggedTx{Tx: tx, rebind: s.Rebind}
+	// This transaction runs outside the write fences. With Events capture on,
+	// fenced writers such as SetCardDAVBookRolesContext take the identity
+	// fence before the discovery lock; an identity change below takes the
+	// identity lock too, so take it first here to keep one order.
+	if s.captureMCPEnabled() {
+		if err := s.mcpIdentityFence(ctx, tx); err != nil {
+			return nil, nil, mcpSafeError(err)
+		}
+	}
 	if err := lockCardDAVDiscoveryReplacement(ctx, tx, s.Rebind, s.IsPostgreSQL()); err != nil {
 		return nil, nil, err
 	}
