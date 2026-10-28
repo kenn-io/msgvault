@@ -9,7 +9,10 @@ export interface RelationshipCalendarDay {
   email: number;
   level: RelationshipCalendarDayLevel;
   meetings: number;
-  /** @minimum 0 */
+  /**
+   * @minimum 0
+   * @maximum 255
+   */
   modality_mask: number;
   received: number;
   sent: number;
