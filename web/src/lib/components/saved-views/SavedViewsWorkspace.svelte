@@ -308,6 +308,11 @@
 {/if}
 
 <style>
+  .saved-views > p { margin: 0; }
+  .saved-views > :global(.page-header) {
+    margin-bottom: calc(var(--space-5) - var(--space-4));
+  }
+
   .saved-views {
     display: flex;
     width: 100%;

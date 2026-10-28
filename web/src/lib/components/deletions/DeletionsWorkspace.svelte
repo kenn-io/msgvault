@@ -507,6 +507,11 @@
 {/if}
 
 <style>
+  .deletions > p { margin: 0; }
+  .deletions > :global(.page-header) {
+    margin-bottom: calc(var(--space-5) - var(--space-4));
+  }
+
   .deletions {
     display: flex;
     min-height: 0;

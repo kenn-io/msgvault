@@ -376,6 +376,10 @@
 {/if}
 
 <style>
+  .directory-workspace > :global(.page-header) {
+    margin-bottom: calc(var(--space-5) - var(--space-4));
+  }
+
   .directory-workspace { padding: var(--space-5) var(--page-gutter) var(--space-4); display: grid; gap: var(--space-4); flex: 1; min-height: 0; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; }
   .directory-controls { display: grid; gap: var(--space-2); min-width: 0; }
   .directory-toolbar, .filter-chips { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; min-width: 0; }

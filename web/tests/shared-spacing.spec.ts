@@ -12,14 +12,30 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Relationships', exact: true })).toBeVisible();
 });
 
-test('landing header divider meets the content boundary', async ({ page }) => {
-  const gap = await page.locator('.page-header').evaluate((element) => {
-    const band = getComputedStyle(element, '::before');
-    const divider = element.getBoundingClientRect().bottom - Number.parseFloat(band.bottom);
-    return document.querySelector('.hub-body')!.getBoundingClientRect().top - divider;
-  });
-  expect(gap).toBe(0);
-  await expect(page.getByRole('grid', { name: 'Relationship results' })).toBeVisible();
+test('every page header divider meets the next visible content boundary', async ({ page }) => {
+  await page.route('**/api/v1/people**', (route) => route.fulfill({ json: { people: [], total_count: 0 } }));
+  await page.route('**/api/v1/operations**', (route) => route.fulfill({ json: { runs: [], total_count: 0 } }));
+  await page.route('**/api/v1/sources**', (route) => route.fulfill({ json: { sources: [] } }));
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
+    id: 1, name: 'Synthetic saved view', schema_version: 2, revision: 1, canonical_state: {},
+    created_at: row.occurred_at, updated_at: row.occurred_at
+  }] } }));
+  const gaps: Record<string, number> = {};
+  for (const label of ['Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved views', 'Sources', 'Operations', 'Deletions', 'Settings']) {
+    await selectWorkspace(page, label);
+    if (label === 'Sources') await expect(page.getByText('No archived sources are available.')).toBeVisible();
+    if (label === 'Saved views') await expect(page.getByText('Synthetic saved view', { exact: true })).toBeVisible();
+    if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
+    gaps[label] = await page.locator('.page-header').evaluate((element) => {
+      const divider = element.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(element, '::before').bottom);
+      const owner = element.parentElement!;
+      let next = element.nextElementSibling;
+      if (!next) next = owner.nextElementSibling;
+      while (next && next.getBoundingClientRect().height === 0) next = next.nextElementSibling;
+      return next!.getBoundingClientRect().top - divider;
+    });
+  }
+  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, 0])));
 });
 
 test('reader, selection, and dialog share inset edges', async ({ page }) => {
@@ -168,4 +184,32 @@ test('overflowing settings keep controls clear of the themed scrollbar', async (
     return document.querySelector('.kit-settings')!.getBoundingClientRect().top - element.getBoundingClientRect().bottom + Number.parseFloat(band.bottom);
   });
   expect(gap).toBe(0);
+});
+
+test.describe('touch reading', () => {
+  test.use({ isMobile: true, hasTouch: true, viewport: { width: 620, height: 900 } });
+
+  test('body and recording transcript share the reading size in one card', async ({ page }) => {
+    await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+      rows: [{ ...row, message_type: 'beeper', conversation_type: 'direct_chat', conversation_id: 11, anchor_message_id: 1 }],
+      total_count: 1, cache_revision: 'reading-size', search_provenance: {}
+    } }));
+    await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
+      id: 11, anchor_id: 1, has_before: false, has_after: false, total: 1,
+      messages: [{ id: 1, conversation_id: 11, subject: row.title, message_type: 'beeper',
+        from: 'Example Person', to: [], sent_at: row.occurred_at, body: 'A synthetic voice note body.',
+        attachments: [{ id: 1, filename: 'Voice-note.ogg', mime_type: 'audio/ogg', size_bytes: 2048, stored: false }] }]
+    } }));
+    await page.route('**/api/v1/messages/1/recordings', (route) => route.fulfill({ json: {
+      message_id: 1, recordings: [{ attachment_id: 1, filename: 'Voice-note.ogg', size_bytes: 2048, state: 'ready',
+        transcript: { origin: 'generated', units: [{ text: 'A synthetic voice note transcript.' }] } }]
+    } }));
+    await selectWorkspace(page, 'Everything');
+    await page.getByText(row.title, { exact: true }).click();
+    const card = page.locator('.message-card');
+    await expect(card.locator('.card-body pre')).toHaveText('A synthetic voice note body.');
+    await expect(card.locator('.transcript')).toContainText('A synthetic voice note transcript.');
+    await expect(card.locator('.card-body pre')).toHaveCSS('font-size', '14px');
+    await expect(card.locator('.transcript')).toHaveCSS('font-size', '14px');
+  });
 });

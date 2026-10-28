@@ -307,8 +307,4 @@
   h3 { font-size: var(--font-size-md); } h4, small { color: var(--text-muted); font-size: var(--font-size-sm); }
   ul { padding-left: var(--space-5); }
   .section-error { margin: 0; padding: var(--space-3); border-radius: var(--radius-sm); background: var(--bg-inset); color: var(--text-secondary); }
-  @media (max-width: 640px) {
-    .person-detail { padding: var(--pane-pad-y) var(--pane-pad-x); }
-    .panel-shell { padding: var(--pane-pad-y) var(--pane-pad-x); }
-  }
 </style>
