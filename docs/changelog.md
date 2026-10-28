@@ -26,6 +26,8 @@ All notable changes to msgvault, grouped by release.
   computes evidence for up to 1,000 uncached messages; repeated requests
   continue using retained evidence. They need archive schema version 17 and
   HTTP API schema 3.29.0.
+- The Directory person page shows that person's open loops in a read-only
+  card, with a Check more action when coverage is incomplete.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - MCP [`stage_deletion`](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) stages every eligible query match through local or remote daemons, with skipped counts and a 100,000-match limit, instead of stopping at 500 metadata or 100 full-text matches.

@@ -17,6 +17,7 @@
   import RelationshipsTab from './RelationshipsTab.svelte';
   import PersonTrackingControl from './PersonTrackingControl.svelte';
   import PersonBriefCard from './PersonBriefCard.svelte';
+  import PersonOpenLoops from './PersonOpenLoops.svelte';
   import PersonAgenda from './PersonAgenda.svelte';
   import CardDAVPublicationControl from './CardDAVPublicationControl.svelte';
   import PersonRecordActions from './PersonRecordActions.svelte';
@@ -192,6 +193,7 @@
         <div class="tab-body">
     {#if activeTab === 'overview'}
       <PersonBriefCard {client} {personID} {onAnnounce} />
+      <PersonOpenLoops {client} {personID} />
       <PersonAgenda {client} {personID} {onAnnounce} />
       <AttributeSummary
         groups={profileController?.attributes?.attributes ?? bundle.attributes?.attributes ?? []}
