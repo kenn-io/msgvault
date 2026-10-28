@@ -309,10 +309,6 @@
 
 <style>
   .saved-views > p { margin: 0; }
-  .saved-views > :global(.page-header) {
-    margin-bottom: calc(var(--space-5) - var(--space-4));
-  }
-
   .saved-views {
     display: flex;
     width: 100%;
@@ -403,6 +399,9 @@
     list-style: none;
   }
   .summary li {
+    display: inline-flex;
+    min-height: var(--chip-min-height);
+    align-items: center;
     padding: 0 var(--chip-pad-x);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm);

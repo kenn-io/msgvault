@@ -213,6 +213,7 @@
 
   .chip {
     display: inline-flex;
+    min-height: var(--chip-min-height);
     max-width: 100%;
     align-items: center;
     gap: var(--space-1);

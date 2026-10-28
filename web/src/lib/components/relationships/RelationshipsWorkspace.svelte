@@ -722,7 +722,7 @@
   }
 
   .hub-header {
-    padding: var(--space-5) var(--page-gutter) 0;
+    padding: var(--space-5) var(--page-gutter) var(--field-gap);
   }
 
   .hub-body {

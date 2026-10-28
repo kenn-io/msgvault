@@ -29,7 +29,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--control-gap);
-    margin-bottom: var(--space-5);
+    margin-bottom: calc(var(--space-5) - var(--field-gap));
   }
 
   .page-header::before {
