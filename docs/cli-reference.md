@@ -433,6 +433,7 @@ stores the Gmail draft and its `DRAFT` label after a confirmed response.
 
 On unreleased `main`, send text, one local file, or both into an existing
 archived Beeper chat. Sending happens immediately and is disabled by default.
+The sent message appears in the msgvault archive after the next Beeper sync.
 The daemon owner enables each source in config.toml, then restarts the daemon:
 
 ```toml

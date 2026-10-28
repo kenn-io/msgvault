@@ -142,6 +142,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 		if accountSet == sourceIDSet || len(intent.To) != 1 || len(intent.File) > 1 || fromSet || subjectSet || len(intent.Cc)+len(intent.Bcc) != 0 || intent.ConversationID != 0 {
 			return invalidDraftComposeArgs("send-message requires one source, one --to, and at most one --file; no email or conversation flags")
 		}
+		intent.To[0] = strings.TrimSpace(intent.To[0])
 		if bodySet || len(intent.File) == 0 {
 			if err := validBeeperDraftBody(intent.Body); err != nil {
 				return invalidDraftComposeArgs("%s", err)

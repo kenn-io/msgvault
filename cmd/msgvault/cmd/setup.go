@@ -23,7 +23,7 @@ import (
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Run first-time setup; 'setup status' shows enabled features",
+	Short: "Run first-time setup",
 	Long: `Interactive setup wizard to configure msgvault for first use.
 
 This command helps you:

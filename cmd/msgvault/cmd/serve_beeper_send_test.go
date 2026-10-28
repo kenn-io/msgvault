@@ -27,9 +27,11 @@ func TestBeeperSend(t *testing.T) {
 		name, code                                                                                                       string
 		status                                                                                                           int
 		disabled, unarchived, file, relative, directory, reply, wrongReply, grant, wrongSource, draftOnly, uploadFailure bool
-		merged, changedReply                                                                                             bool
+		merged, changedReply, padded, body                                                                               bool
 	}{
 		{name: "accepted", code: "accepted"},
+		{name: "padded chat", code: "accepted", padded: true},
+		{name: "text and file", code: "accepted", file: true, body: true},
 		{name: "merged chat", code: "not_supported", file: true, merged: true},
 		{name: "changed reply", code: "invalid_reply_target", reply: true, file: true, changedReply: true},
 		{name: "disabled", code: "send_disabled", disabled: true},
@@ -86,9 +88,11 @@ func TestBeeperSend(t *testing.T) {
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 					if tc.file {
 						assert.Equal(t, map[string]any{"uploadID": "upload-1"}, body["attachment"])
-						assert.NotContains(t, body, "text")
-					} else {
+					}
+					if !tc.file || tc.body {
 						assert.Equal(t, "hello", body["text"])
+					} else {
+						assert.NotContains(t, body, "text")
 					}
 					if tc.reply {
 						assert.Equal(t, "original", body["replyToMessageID"])
@@ -106,6 +110,9 @@ func TestBeeperSend(t *testing.T) {
 			if tc.unarchived {
 				chat = "!missing:beeper.local"
 			}
+			if tc.padded {
+				chat = " \t" + chat + " \n"
+			}
 			args := []string{"send-message", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", chat, "--json"}
 			req := api.CLIRunRequest{}
 			if tc.file {
@@ -119,7 +126,8 @@ func TestBeeperSend(t *testing.T) {
 					path = filepath.Base(path)
 				}
 				args = append(args, "--file", path)
-			} else {
+			}
+			if !tc.file || tc.body {
 				args = append(args, "--body", "hello")
 			}
 			if tc.reply {

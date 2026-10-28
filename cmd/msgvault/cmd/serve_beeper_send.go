@@ -55,18 +55,18 @@ func (a *storeAPIAdapter) runCLISendMessage(ctx context.Context, req api.CLIRunR
 			}
 			path = filepath.Join(req.Cwd, path)
 		}
-		file, err = os.Open(path)
-		if err != nil {
-			return draftReplyError("invalid_args", err)
-		}
-		defer func() { _ = file.Close() }()
-		info, err := file.Stat()
+		info, err := os.Stat(path)
 		if err != nil {
 			return draftReplyError("invalid_args", err)
 		}
 		if !info.Mode().IsRegular() {
 			return draftReplyError("invalid_args", errors.New("attachment must be a regular file"))
 		}
+		file, err = os.Open(path)
+		if err != nil {
+			return draftReplyError("invalid_args", err)
+		}
+		defer func() { _ = file.Close() }()
 		output.FileName = filepath.Base(path)
 	}
 	chats, err := a.store.ConversationMetadataBatchContext(ctx, source.ID, intent.To)
@@ -105,9 +105,9 @@ func (a *storeAPIAdapter) runCLISendMessage(ctx context.Context, req api.CLIRunR
 		}
 	}
 	receipt, err := client.SendMessage(ctx, output.ChatID, params)
-	output.Status = "accepted"
 	stream := cliStreamStdout
 	if err == nil {
+		output.Status = "accepted"
 		output.ChatID, output.PendingMessageID = receipt.ChatID, receipt.PendingMessageID
 	} else {
 		output.Status = beeperSendFailureCode(err, true)

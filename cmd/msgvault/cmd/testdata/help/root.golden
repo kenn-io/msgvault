@@ -33,7 +33,7 @@ Search and read:
   search        Search messages using Gmail-like query syntax
   show-message  Show full message details
   show-thread   Show a message's thread in chronological order
-  stats         Show archive totals
+  stats         Show archive message, thread, attachment and account totals
   tui           Open the interactive terminal UI
 
 Export:
@@ -188,7 +188,7 @@ Setup, daemon, and integrations:
   openapi      Print the msgvault OpenAPI schema
   quickstart   Print a quickstart guide for AI agents
   serve        Run msgvault as a daemon with scheduled sync
-  setup        Run first-time setup; 'setup status' shows enabled features
+  setup        Run first-time setup
   skills       Manage agent skills for coding assistants
   update       Update msgvault to the latest version
   version      Print version information
