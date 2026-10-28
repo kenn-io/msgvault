@@ -913,15 +913,16 @@ func (s *Store) withTxOptionsContext(
 	return s.withTxLockedContext(ctx, opts, nil, fn)
 }
 
-// withTxLockedContext runs preFence after BEGIN and before the sync-generation
-// fence, so locks that must precede sync_runs are taken first.
-func (s *Store) withTxLockedContext(
+// mcpFenceAttempts bounds retries of a writer whose fences lost a
+// serialization race before its work ran.
+const mcpFenceAttempts = 3
+
+// beginFencedTx opens a transaction and takes every fence that must precede
+// the caller's work. On error the transaction is already rolled back.
+func (s *Store) beginFencedTx(
 	ctx context.Context, opts *sql.TxOptions,
-	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
-) error {
-	start := time.Now()
-	slog.Debug("sql tx begin")
-	eventsRuntime := s.mcpRoot().mcpConfig.Load()
+	preFence func(*loggedTx) error, eventsRuntime *mcpRuntime,
+) (*loggedTx, error) {
 	fenceEvents := (opts == nil || !opts.ReadOnly) && eventsRuntime != nil
 	var tx *loggedTx
 	var err error
@@ -936,25 +937,48 @@ func (s *Store) withTxLockedContext(
 			level = slog.LevelDebug
 		}
 		slog.Log(ctx, level, "sql tx begin failed", "error", err.Error())
-		return fmt.Errorf("begin tx: %w", err)
+		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	if preFence != nil {
 		if err := preFence(tx); err != nil {
 			_ = tx.Rollback()
-			return err
+			return nil, err
 		}
 	}
 	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
 			_ = tx.Rollback()
-			return err
+			return nil, err
 		}
 	}
 	if fenceEvents {
 		if err := s.mcpFenceWriterTx(ctx, tx.Tx, eventsRuntime); err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("fence Events capture: %w", err)
+			return nil, fmt.Errorf("fence Events capture: %w", err)
 		}
+	}
+	return tx, nil
+}
+
+// withTxLockedContext runs preFence after BEGIN and before the sync-generation
+// fence, so locks that must precede sync_runs are taken first.
+func (s *Store) withTxLockedContext(
+	ctx context.Context, opts *sql.TxOptions,
+	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
+) error {
+	start := time.Now()
+	slog.Debug("sql tx begin")
+	eventsRuntime := s.mcpRoot().mcpConfig.Load()
+	tx, err := s.beginFencedTx(ctx, opts, preFence, eventsRuntime)
+	// A REPEATABLE READ writer takes its snapshot before it waits on the
+	// Events fences, so a writer that held them can make its clock update
+	// fail serialization. The caller's work has not run yet; retry in a
+	// fresh transaction rather than report another write's conflict.
+	for attempt := 1; err != nil && attempt < mcpFenceAttempts && eventsRuntime != nil && s.dialect.IsSerializationFailureError(err); attempt++ {
+		tx, err = s.beginFencedTx(ctx, opts, preFence, eventsRuntime)
+	}
+	if err != nil {
+		return err
 	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
