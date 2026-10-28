@@ -13,11 +13,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/netip"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.kenn.io/msgvault/internal/netguard"
@@ -173,6 +175,10 @@ func (w *webhookClient) request(ctx context.Context, callback, id, eventID strin
 	if len(body) > 262144 {
 		return nil, invalid("payload_too_large")
 	}
+	// guardWaiting counts guard checks still in progress, and gotConn records
+	// whether the request ever held a connection. Both are request-local.
+	var guardWaiting atomic.Int32
+	var gotConn atomic.Bool
 	if dialGuard != nil {
 		guardCtx, cancelGuard := context.WithCancel(ctx)
 		defer cancelGuard()
@@ -180,11 +186,14 @@ func (w *webhookClient) request(ctx context.Context, callback, id, eventID strin
 			if err := guardCtx.Err(); err != nil {
 				return err
 			}
+			guardWaiting.Add(1)
+			defer guardWaiting.Add(-1)
 			if err := dialGuard(guardCtx); err != nil {
 				return &dialRefusedError{err: err}
 			}
 			return nil
 		})
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { gotConn.Store(true) }})
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, callback, bytes.NewReader(body))
 	if err != nil {
@@ -206,6 +215,11 @@ func (w *webhookClient) request(ctx context.Context, callback, id, eventID strin
 		// on that dial, so a refusal here means this request sent nothing.
 		if refused, ok := errors.AsType[*dialRefusedError](err); ok {
 			return nil, &dialRefusedError{err: callbackError(refused.err)}
+		}
+		// A client timeout can fire while the guard still waits on a busy
+		// archive gate. No connection existed, so nothing was sent.
+		if !gotConn.Load() && guardWaiting.Load() > 0 {
+			return nil, &dialRefusedError{err: callbackError(err)}
 		}
 		return nil, callbackError(err)
 	}

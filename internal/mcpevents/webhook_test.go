@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -327,5 +328,47 @@ func TestDialGuardWaitEndsWithRequest(t *testing.T) {
 		require.ErrorIs(err, context.Canceled)
 	case <-time.After(10 * time.Second):
 		require.FailNow("dial guard kept waiting after its request ended")
+	}
+}
+
+// A client timeout that fires while the dial guard still waits on the archive
+// gate sent nothing, so it must not cost a delivery attempt. A timeout after
+// the guard allowed the dial is an ordinary transport failure.
+func TestClientTimeoutDuringDialGuardSendsNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		guardWaits  bool
+		wantRefused bool
+	}{
+		{"guard still waiting", true, true},
+		{"dial after guard allowed it", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := Require.New(t)
+			assert := Assert.New(t)
+			w := tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) { rw.WriteHeader(http.StatusNoContent) })
+			w.client.Timeout = 200 * time.Millisecond
+			w.dial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			guard := func(ctx context.Context) error {
+				if tc.guardWaits {
+					// Stands in for a wait on a busy archive gate.
+					<-ctx.Done()
+					return ctx.Err()
+				}
+				return nil
+			}
+			var err error
+			select {
+			case err = <-postInBackground(t.Context(), w, guard):
+			case <-time.After(10 * time.Second):
+				require.FailNow("request did not time out")
+			}
+			require.Error(err)
+			_, refused := errors.AsType[*dialRefusedError](err)
+			assert.Equal(tc.wantRefused, refused)
+		})
 	}
 }
