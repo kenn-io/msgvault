@@ -5655,3 +5655,28 @@ func TestCopySubsetPreservesSelectedMessageEligibility(t *testing.T) {
 		})
 	}
 }
+
+func TestCopySubsetRepairsCopiedSynctechSendState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	require.NoError(source.InitSchema())
+	_, err = source.DB().Exec(`UPDATE sources SET source_type = 'synctech_sms' WHERE id = 1`)
+	require.NoError(err)
+	_, err = source.DB().Exec(`UPDATE messages SET message_type = 'sms', is_sent = TRUE WHERE id = 1`)
+	require.NoError(err)
+	require.NoError(source.UpsertMessageRawWithFormat(1, []byte(`{"Type":3}`), "synctech_sms_xml_json"))
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	var isSent bool
+	require.NoError(destination.DB().QueryRow(`SELECT is_sent FROM messages WHERE id = 1`).Scan(&isSent))
+	assert.False(isSent, "the copied draft is repaired after the source migration ledger is copied")
+}
