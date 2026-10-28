@@ -36,6 +36,7 @@ var (
 	calAddAll        bool
 	calAddMinRole    string
 	calAddCalendars  []string
+	calAddMicrosoft  bool
 	calSyncOAuthApp  string
 	calSyncFull      bool
 	calSyncLimit     int
@@ -61,6 +62,12 @@ func newAddCalendarCmd() *cobra.Command {
 	runLocal := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
+			if calAddMicrosoft {
+				if err := preflightAddCalendarMicrosoft(cmd, args[0]); err != nil {
+					return err
+				}
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
 			return runAddCalendarHTTP(cmd, args)
 		}
 		return runLocal(cmd, args)
@@ -71,12 +78,13 @@ func newAddCalendarCmd() *cobra.Command {
 func newAddCalendarLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-calendar <email>",
-		Short: "Authorize Google Calendar and register its calendars",
+		Short: "Authorize and register Google or Microsoft calendars",
 		Long: "Grants read-only Calendar access (calendar.readonly) to an account and " +
 			"registers its calendars for sync. Use --write to also grant calendar.events. " +
 			"Source write_calendars and invite_calendars remain explicit opt-ins. If the account already has a Gmail token, " +
 			"re-consent bundles Gmail + Calendar together; keep BOTH checked on the consent " +
-			"screen so Gmail access is not dropped.",
+			"screen so Gmail access is not dropped. With --microsoft, signs in to a Microsoft 365 or " +
+			"Outlook.com mailbox and registers the calendars it owns, read-only.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -89,6 +97,9 @@ func newAddCalendarLocalCmd() *cobra.Command {
 			oauthAppExplicit := cmd.Flags().Changed("oauth-app")
 			if email == "" {
 				return usageErr(cmd, errors.New("account email is required"))
+			}
+			if calAddMicrosoft {
+				return runAddCalendarMicrosoftLocal(cmd, email)
 			}
 			if err := calsync.ValidateMinAccessRole(calAddMinRole); err != nil {
 				return usageErr(cmd, err)
@@ -219,6 +230,8 @@ func newAddCalendarLocalCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&calAddAll, "all-calendars", false, "include reader/freeBusyReader calendars (default: owner+writer)")
 	cmd.Flags().StringVar(&calAddMinRole, "min-access-role", "", "minimum access role: owner|writer|reader")
 	cmd.Flags().StringSliceVar(&calAddCalendars, "calendars", nil, "comma-separated calendar IDs to register (default: by access role)")
+	cmd.Flags().BoolVar(&calAddMicrosoft, "microsoft", false, "archive the calendars of a Microsoft 365 or Outlook.com mailbox through Microsoft Graph (read-only)")
+	registerOAuthPreflightedFlag(cmd)
 	cmd.Flags().Bool(calScopeEscalationConfirmedFlag, false, "Internal: Calendar scope escalation was already accepted by the frontend CLI")
 	if err := cmd.Flags().MarkHidden(calScopeEscalationConfirmedFlag); err != nil {
 		panic(err)
@@ -446,13 +459,15 @@ func newSyncCalendarLocalCmdWithClientBuilder(buildClient calendarSyncClientBuil
 	cmd := &cobra.Command{
 		Use:     "sync-calendar <name|email>",
 		Aliases: []string{"sync-calendar-incremental"},
-		Short:   "Sync Google Calendar events for an account",
+		Short:   "Sync Google or Microsoft calendar events",
 		Long: "Syncs calendar events for an account. The first run (or --full) does a full " +
 			"sync that enumerates and registers calendars; subsequent runs are incremental " +
 			"via syncToken. The account is resolved from a [[gcal]] config entry (by name or " +
-			"email) or used directly as an email. --after/--before bound a full sync only.",
+			"email) or used directly as an email. --after/--before bound a full sync only. " +
+			"For a Microsoft account, each run reads every event of its registered calendars, " +
+			"and --full also registers calendars that the mailbox owns.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
 				return errors.New("configuration is unavailable")
@@ -504,6 +519,26 @@ func newSyncCalendarLocalCmdWithClientBuilder(buildClient calendarSyncClientBuil
 			existing, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
 			if err != nil {
 				return fmt.Errorf("load registered calendar sources for %s: %w", email, err)
+			}
+			hasMS, err := hasMSCalendarSources(st, email)
+			if err != nil {
+				return err
+			}
+			if hasMS {
+				// With active Google calendars on the same account, the
+				// options select among those.
+				activeGoogle := len(activeSyncSources(existing)) > 0
+				if !activeGoogle {
+					if err := rejectMSCalendarSyncFlags(cmd); err != nil {
+						return usageErr(cmd, err)
+					}
+				}
+				msErr := runMSCalendarSyncAndReport(ctx, cmd.OutOrStdout(), st, email, calSyncFull, state)
+				if !activeGoogle {
+					return msErr
+				}
+				// A Microsoft failure does not stop the Google calendars.
+				defer func() { retErr = errors.Join(msErr, retErr) }()
 			}
 			if err := retiredCalendarSelectionError(existing, calendars); err != nil {
 				return err
@@ -1063,7 +1098,7 @@ func runConfiguredGCalSync(ctx context.Context, st *store.Store, src config.GCal
 	return runConfiguredGCalSyncWithClientBuilder(ctx, st, src, buildCalendarClient)
 }
 
-func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store, src config.GCalSource, buildClient calendarSyncClientBuilder) error {
+func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store, src config.GCalSource, buildClient calendarSyncClientBuilder) (err error) {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return errors.New("configuration is unavailable")
@@ -1073,7 +1108,37 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 	if email == "" {
 		return fmt.Errorf("gcal source %q email is required", src.Name)
 	}
+	// A [[gcal]] entry also schedules a Microsoft calendar account.
+	if ok, err := hasMSCalendarSources(st, email); err != nil || ok {
+		if err != nil {
+			return err
+		}
+		// Even a failed sync can have stored Microsoft events, so every
+		// return path refreshes the cache once.
+		refreshed := false
+		defer func() {
+			if !refreshed {
+				err = errors.Join(err, rebuildCacheAfterScheduledSync(ctx, "gcal:"+src.Name))
+			}
+		}()
+		_, msErr := runMSCalendarSync(ctx, st, email, false, state)
+		google, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
+		if err != nil {
+			return errors.Join(msErr, err)
+		}
+		// Calendars the entry lists are Google calendars, registered or not.
+		if len(activeSyncSources(google)) == 0 && len(src.Calendars) == 0 {
+			return msErr
+		}
+		// A Microsoft failure does not stop the Google calendars.
+		return errors.Join(msErr, runConfiguredGoogleCalendarSync(ctx, st, src, email, buildClient, logger, &refreshed))
+	}
+	return runConfiguredGoogleCalendarSync(ctx, st, src, email, buildClient, logger, nil)
+}
 
+// runConfiguredGoogleCalendarSync syncs the Google calendars of a [[gcal]]
+// entry. It sets *refreshed when it refreshes the cache itself.
+func runConfiguredGoogleCalendarSync(ctx context.Context, st *store.Store, src config.GCalSource, email string, buildClient calendarSyncClientBuilder, logger *slog.Logger, refreshed *bool) error {
 	existing, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
 	if err != nil {
 		return fmt.Errorf("load registered calendar sources for %s: %w", email, err)
@@ -1123,6 +1188,9 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 	_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 	if err != nil {
 		return err
+	}
+	if refreshed != nil {
+		*refreshed = true
 	}
 	return rebuildCacheAfterScheduledSync(ctx, "gcal:"+src.Name)
 }

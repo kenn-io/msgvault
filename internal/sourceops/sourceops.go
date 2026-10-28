@@ -110,18 +110,22 @@ func ResolveAccountFamilyContext(ctx context.Context, st Store, selector Selecto
 	var primary *store.Source
 	if len(direct) == 1 {
 		primary = direct[0]
-		if primary.SourceType != gcal.SourceType && !strings.EqualFold(primary.Identifier, input) {
+		if primary.SourceType != gcal.SourceType && primary.SourceType != "mscalendar" && !strings.EqualFold(primary.Identifier, input) {
 			calendarAccount = primary.Identifier
 		}
 	}
 	var calendars []*store.Source
-	if contextStore, ok := st.(ContextStore); ok {
-		calendars, err = contextStore.GetSourcesByTypeAndAccountContext(ctx, gcal.SourceType, calendarAccount)
-	} else {
-		calendars, err = st.GetSourcesByTypeAndAccount(gcal.SourceType, calendarAccount)
-	}
-	if err != nil {
-		return Selection{}, opserr.Internal(fmt.Errorf("resolve calendar sources: %w", err))
+	for _, sourceType := range []string{gcal.SourceType, "mscalendar"} {
+		var found []*store.Source
+		if contextStore, ok := st.(ContextStore); ok {
+			found, err = contextStore.GetSourcesByTypeAndAccountContext(ctx, sourceType, calendarAccount)
+		} else {
+			found, err = st.GetSourcesByTypeAndAccount(sourceType, calendarAccount)
+		}
+		if err != nil {
+			return Selection{}, opserr.Internal(fmt.Errorf("resolve calendar sources: %w", err))
+		}
+		calendars = append(calendars, found...)
 	}
 
 	sources := make([]*store.Source, 0, len(calendars)+1)

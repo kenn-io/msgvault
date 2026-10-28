@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-04"
-title: Google Calendar
-description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
+last_edited: "2026-10-28"
+title: Calendars
+description: Archive Google Calendar and Microsoft 365 calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
 
 msgvault can archive your Google Calendar events into the same local database as
@@ -13,6 +13,23 @@ against the messages you exchanged with her.
 Calendar sync is **read-only**. The separate event-control commands can change
 live events when you opt in to write consent and source permissions. Event
 control described below is unreleased functionality.
+
+## List archived events, unreleased
+
+```bash
+msgvault calendar events --from 2027-03-01 --to 2027-04-01
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+```
+
+Repeating events expand into occurrences. Edited occurrences appear at their new times, and cancelled occurrences show `cancelled`. Existing archives rebuild event and attendee tables during setup, so a re-sync isn't needed.
+
+Date-only bounds use midnight in your machine's time zone. You can also pass RFC3339 timestamps with offsets. The end is exclusive and must follow the start. Timed events print in your machine's time zone; all-day events show their dates. The `END (EXCL)` column shows the exclusive end. The ID identifies the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`.
+
+JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. The table prints a warning for those events and shows `deleted` for events deleted at the source. Narrow the window when the command asks you to.
+
+Queries allow up to 2,000 recurring series and 500,000 candidate steps across the request, with 50,000 steps per series. When recurrence expansion reaches the request work limit, the response keeps completed series, standalone events, and archived exceptions, and lists the interrupted series and every remaining series under `unexpandable`. Long-running series count steps from their start, so a narrower window may not reduce the work. A narrower window will not reduce the number of open-ended series.
+
+This archive read requires daemon API schema 3.28.0 or newer and owner access. Use the live commands below for `--account`, `--dry-run`, `--read-only`, and `--send-updates`. See the [CLI reference](https://msgvault.io/docs/cli-reference/#calendar) for the command contract.
 
 ## Prerequisites
 
@@ -51,6 +68,28 @@ only read).
 | `--oauth-app` | Named OAuth app to use |
 | `--headless` | Print headless-server setup instructions instead of opening a browser |
 | `--write` | Also request `calendar.events` for event control; source write permissions are still required |
+
+## Microsoft 365 and Outlook.com, unreleased
+
+msgvault can also archive the calendars of a Microsoft 365 or Outlook.com mailbox through Microsoft Graph. It uses the `[microsoft]` app from `add-o365`. Add the delegated Graph permissions `Calendars.Read` and `MailboxSettings.Read` to that app.
+
+```bash
+msgvault add-calendar you@example.com --microsoft
+msgvault sync-calendar you@example.com
+```
+
+`--headless` signs in with a device code.
+
+`add-calendar --microsoft` registers the calendars that the mailbox owns and leaves out calendars that other people share with it. Run `sync-calendar --full` or `add-calendar --microsoft` again to register calendars created later. Other syncs read only registered calendars, so a calendar removed with `remove-account` stays removed until one of those commands runs.
+
+Each sync reads every event of the registered calendars, because Graph has no change feed for a whole calendar. An event that a complete sync does not return is marked deleted, and the archive keeps it. A registered calendar that the mailbox no longer owns has all its events marked deleted.
+
+- `sync-calendar` refuses the Google-only options `--calendar`, `--limit`, `--after`, `--before`, `--all-calendars`, `--min-access-role`, `--noresume`, and `--oauth-app`.
+- `add-calendar --microsoft` refuses `--calendars`, `--all-calendars`, `--min-access-role`, `--write`, and `--oauth-app`.
+- To sync on a schedule, add a `[[gcal]]` entry with the account email, `enabled = true`, and a `schedule`. See [Scheduled sync](#scheduled-sync-daemon).
+- When the same email also has Google calendars, both sync, and a Microsoft failure does not stop the Google sync.
+
+Repeating events expand as Google events do. Edited occurrences appear at their new times. A monthly series on a day that a month lacks falls on the last day of that month, as in Outlook. Cancelled occurrences of a series do not appear, because Graph reports only their dates. Meeting rooms keep the `room` role and do not become contacts. Sync is read-only.
 
 ## Sync events
 

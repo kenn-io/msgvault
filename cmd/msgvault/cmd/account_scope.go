@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/collectionops"
+	"go.kenn.io/msgvault/internal/mscalendar"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -151,7 +152,7 @@ func filterSources(sources []*store.Source, keep func(*store.Source) bool) []*st
 }
 
 func emailAccountSource(src *store.Source) bool {
-	return src != nil && src.SourceType != sourceTypeCalendar
+	return src != nil && src.SourceType != sourceTypeCalendar && src.SourceType != mscalendar.SourceType
 }
 
 // ResolveCollectionFlag resolves the value of a --collection flag.

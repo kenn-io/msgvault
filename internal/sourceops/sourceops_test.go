@@ -129,6 +129,25 @@ func TestResolveAccountFamilySupportsCalendarOnlyAccount(t *testing.T) {
 	assert.Equal(t, []int64{calendar.ID}, sourceIDs(selection.Sources))
 }
 
+func TestResolveAccountFamilyIncludesMicrosoftCalendars(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	mail, err := f.Store.GetOrCreateSource("msmail", "ms@example.com")
+	require.NoError(err)
+	calendar := createCalendarSourceOfType(t, f, "mscalendar", "ms@example.com/cal-1", "ms@example.com")
+
+	family, err := sourceops.ResolveAccountFamily(f.Store, sourceops.Selector{Account: "ms@example.com"})
+	require.NoError(err)
+	assert.ElementsMatch([]int64{mail.ID, calendar.ID}, sourceIDs(family.Sources))
+
+	only := createCalendarSourceOfType(t, f, "mscalendar", "solo@example.com/cal-1", "solo@example.com")
+	family, err = sourceops.ResolveAccountFamily(f.Store, sourceops.Selector{Account: "solo@example.com"})
+	require.NoError(err)
+	assert.Equal([]int64{only.ID}, sourceIDs(family.Sources))
+}
+
 func TestResolveAllMatchesPreservesIntentionalFanout(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -173,7 +192,18 @@ func createCalendarSource(
 	account string,
 ) *store.Source {
 	t.Helper()
-	source, err := f.Store.GetOrCreateSource("gcal", identifier)
+	return createCalendarSourceOfType(t, f, "gcal", identifier, account)
+}
+
+func createCalendarSourceOfType(
+	t *testing.T,
+	f *storetest.Fixture,
+	sourceType string,
+	identifier string,
+	account string,
+) *store.Source {
+	t.Helper()
+	source, err := f.Store.GetOrCreateSource(sourceType, identifier)
 	require.NoError(t, err)
 	config, err := json.Marshal(map[string]string{
 		"account_email": account,

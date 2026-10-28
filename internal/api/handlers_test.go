@@ -4335,6 +4335,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 		{"synctech-sms", synctechsms.SourceType, "+15551234567", "synctech-sms:+15551234567", true},
 		{"gcal", gcal.SourceType, "alice@example.com/primary", "gcal:alice@example.com", true},
 		{"gcal no calendar id", gcal.SourceType, "alice@example.com", "", false},
+		{"mscalendar shares the account calendar job", "mscalendar", "alice@example.com/AAMkCal=", "gcal:alice@example.com", true},
 		{"granola", granola.SourceType, "acct-1", "granola:acct-1", true},
 		{"omi", "omi", "omi-work", "omi:omi-work", true},
 		{"circleback", circleback.SourceType, "acct-2", "circleback:acct-2", true},
