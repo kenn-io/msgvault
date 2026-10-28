@@ -35,8 +35,8 @@ const (
 	runtimeCreateTime               = "create_time"
 	runtimeShutdownToken            = "shutdown_token"
 	runtimeStartupPhase             = "startup_phase"
-	runtimeForeground               = "foreground"
-	runtimeForegroundValue          = "true"
+	runtimeBackground               = "background"
+	runtimeBackgroundValue          = "true"
 	minimumDaemonAPISchemaVersion   = "3.0.0"
 	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
 	daemonProbeTick                 = 250 * time.Millisecond
@@ -98,8 +98,8 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 	if createTime, ok := processCreateTimeMillisForRun(os.Getpid()); ok {
 		rec.Metadata[runtimeCreateTime] = strconv.FormatInt(createTime, 10)
 	}
-	if os.Getenv(serveBackgroundChildEnv) != "1" {
-		rec.Metadata[runtimeForeground] = runtimeForegroundValue
+	if os.Getenv(serveBackgroundChildEnv) == "1" {
+		rec.Metadata[runtimeBackground] = runtimeBackgroundValue
 	}
 	if _, err := daemonRuntimeStore(dataDir).Write(rec); err != nil {
 		return daemon.RuntimeRecord{}, "", fmt.Errorf("write daemon runtime record: %w", err)
