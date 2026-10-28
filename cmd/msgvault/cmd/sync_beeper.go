@@ -225,6 +225,9 @@ func printBeeperSummary(out io.Writer, accountID string, sum *beeper.ImportSumma
 	if sum.IdentityReplayErrors > 0 {
 		_, _ = fmt.Fprintf(out, ", %d identity replay pending", sum.IdentityReplayErrors)
 	}
+	if sum.RosterRepairErrors > 0 {
+		_, _ = fmt.Fprintf(out, ", %d membership repairs failed", sum.RosterRepairErrors)
+	}
 	if sum.AttachmentsDownloaded > 0 {
 		_, _ = fmt.Fprintf(out, ", %d attachments", sum.AttachmentsDownloaded)
 	}

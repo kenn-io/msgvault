@@ -19,7 +19,7 @@ const maxRosterRepairsPerRun = 16
 // next attempt. A full sync or new activity in the room refreshes it sooner.
 const rosterRepairBackoff = 24 * time.Hour
 
-func (imp *Importer) repairQuietRosters(ctx context.Context, syncID, sourceID int64, opts ImportOptions, state *SyncState, chats []chatVisit) (bool, error) {
+func (imp *Importer) repairQuietRosters(ctx context.Context, syncID, sourceID int64, opts ImportOptions, state *SyncState, chats []chatVisit, sum *ImportSummary) (bool, error) {
 	ids, err := imp.store.ListUnresolvedConversationIDs(ctx, sourceID)
 	if err != nil {
 		return false, err
@@ -45,7 +45,7 @@ func (imp *Importer) repairQuietRosters(ctx context.Context, syncID, sourceID in
 			continue
 		}
 		attempts++
-		stop, err := imp.repairQuietRoster(ctx, syncID, sourceID, chatID, opts, cs, now)
+		stop, err := imp.repairQuietRoster(ctx, syncID, sourceID, chatID, opts, cs, now, sum)
 		if err != nil || stop {
 			return stop, err
 		}
@@ -56,13 +56,14 @@ func (imp *Importer) repairQuietRosters(ctx context.Context, syncID, sourceID in
 // repairQuietRoster refreshes one quiet room's membership. It returns stop when
 // optional work should end for this run, and an error only when the import
 // context is canceled. Every other failure defers the room.
-func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int64, chatID string, opts ImportOptions, cs *ChatState, now time.Time) (bool, error) {
+func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int64, chatID string, opts ImportOptions, cs *ChatState, now time.Time, sum *ImportSummary) (bool, error) {
 	deferRoom := func(reason string, status string, cause error) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
 		cs.RosterRetryAfter = formatWatermark(now.Add(rosterRepairBackoff))
 		if status == store.SyncRunItemStatusError {
+			sum.RosterRepairErrors++
 			slog.Warn("quiet Beeper roster repair failed", "chat", chatID, "error", cause)
 		}
 		imp.recordItem(syncID, chatID, "membership", status, reason, cause)
@@ -75,7 +76,9 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return deferRoom("beeper_roster_repair_failed", store.SyncRunItemStatusError, cause)
 	}
 
-	if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceWithFailureContext(ctx, sourceID, chatID, "membership_fetch_failed"); err != nil {
+	// Like chat discovery's probe, clear the route's membership proof before the
+	// request and record a fetch failure only if the request actually fails.
+	if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
 		return failed(fmt.Errorf("invalidate route before roster repair: %w", err))
 	}
 	// The probe timeout bounds only the provider request. Roster writes for a
@@ -90,11 +93,8 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return false, err
 	}
 	if errors.Is(fetchErr, ErrNotFound) {
-		// Match discovery's handling of a chat Beeper no longer has: drop its
-		// route proof without a failure marker and stop probing it.
-		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
-			return failed(fmt.Errorf("invalidate route evidence for missing Beeper chat: %w", err))
-		}
+		// A chat Beeper no longer has keeps its invalidated route proof without a
+		// fetch-failure marker, and later runs stop probing it.
 		cs.Gone = true
 		return deferRoom("beeper_chat_gone", store.SyncRunItemStatusSkipped, fetchErr)
 	}
@@ -102,6 +102,9 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		fetchErr = errors.New("roster chat does not match the requested account and conversation")
 	}
 	if fetchErr != nil {
+		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceWithFailureContext(ctx, sourceID, chatID, "membership_fetch_failed"); err != nil {
+			return failed(fmt.Errorf("record roster fetch failure: %w", err))
+		}
 		stop, err := deferRoom("beeper_roster_repair_deferred", store.SyncRunItemStatusSkipped, fetchErr)
 		// Spend at most one timeout on optional work.
 		return stop || timedOut || opts.budgetExpired(), err

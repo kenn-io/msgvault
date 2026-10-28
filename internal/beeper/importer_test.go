@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -188,10 +189,13 @@ func TestQuietRosterRepairRetriesAfterParticipantReplacementFails(t *testing.T) 
 	f.mu.Unlock()
 	release := installQuietRosterReplacementFailure(t, st)
 
-	_, err = imp.Import(t.Context(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	requirements.NoError(err, "a failed optional roster write must not fail completed message work")
+	assertions.EqualValues(1, sum.RosterRepairErrors)
+	assertions.Zero(sum.Errors, "optional repair failures do not withhold source freshness")
 	run, err := st.GetLastSuccessfulSync(source.ID)
 	requirements.NoError(err)
+	assertions.EqualValues(1, run.ErrorsCount, "the completed run reports the failed repair")
 	failures, err := st.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
 	requirements.NoError(err)
 	requirements.Len(failures, 1, "the failed repair stays visible on the completed run")
@@ -252,6 +256,47 @@ func TestQuietRosterRepairRunsDespiteMessageFetchErrors(t *testing.T) {
 	ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
 	requirements.NoError(err)
 	assertions.Empty(ids, "a message fetch error in one chat must not hold up quiet-room roster repair")
+}
+
+func TestQuietRosterRepairOfGoneChatLeavesNoFetchFailure(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	quiet := mediaChat()
+	f.addChat(quiet)
+	active := mediaChat()
+	active.ID = "!active-gone-repair:beeper.local"
+	active.LastActivity = time.Now().UTC()
+	active.Msgs = nil
+	f.addChat(active)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := ImportOptions{AccountID: "signal", NoMedia: true}
+	_, err := imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	requirements.NoError(err)
+	var conversationID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM conversations
+		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID).Scan(&conversationID))
+	requirements.NoError(st.MarkConversationMemberCountUnknown(conversationID))
+	f.mu.Lock()
+	f.goneChatGets = map[string]bool{quiet.ID: true}
+	f.mu.Unlock()
+
+	_, err = imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	assertions.True(latestBeeperState(t, imp).Chats[quiet.ID].Gone)
+	var raw string
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT CAST(metadata AS TEXT) FROM conversations WHERE id = ?`), conversationID).Scan(&raw))
+	var metadata struct {
+		Route struct {
+			Failure            string `json:"failure"`
+			MembershipComplete bool   `json:"membership_complete"`
+		} `json:"messaging_route"`
+	}
+	requirements.NoError(json.Unmarshal([]byte(raw), &metadata))
+	assertions.NotEqual("membership_fetch_failed", metadata.Route.Failure, "a confirmed-gone room is not a failed fetch")
+	assertions.False(metadata.Route.MembershipComplete)
 }
 
 func installQuietRosterReplacementFailure(t *testing.T, st *store.Store) func() {

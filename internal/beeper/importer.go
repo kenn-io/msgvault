@@ -533,7 +533,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	// fetch must not hold up membership repair for every quiet room.
 	optionalWorkStopped := false
 	if !sum.Stopped {
-		optionalWorkStopped, err = imp.repairQuietRosters(ctx, syncID, src.ID, opts, state, chats)
+		optionalWorkStopped, err = imp.repairQuietRosters(ctx, syncID, src.ID, opts, state, chats, sum)
 		if err != nil {
 			return sum, err
 		}
@@ -1780,7 +1780,7 @@ func (imp *Importer) checkpointNowContext(ctx context.Context, syncID int64, sta
 		PageToken:         blob,
 		MessagesProcessed: sum.MessagesProcessed,
 		MessagesAdded:     sum.MessagesAdded,
-		ErrorsCount:       sum.Errors,
+		ErrorsCount:       sum.Errors + sum.RosterRepairErrors,
 	})
 	if err == nil {
 		imp.lastCheckpoint = time.Now()
