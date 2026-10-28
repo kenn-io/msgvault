@@ -181,28 +181,31 @@ func TestPerformUpdateWithDaemonLifecycleRestartsAfterPartialStopFailure(t *test
 }
 
 func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
-	for _, foreground := range []string{"", "true"} {
-		t.Run("foreground="+foreground, func(t *testing.T) {
+	for _, background := range []string{"", "false", "true"} {
+		t.Run("background="+background, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			dataDir := t.TempDir()
 			server := httptestPingDaemon(t)
 			portText := strconv.Itoa(server.Port)
-			_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+			record := daemon.RuntimeRecord{
 				PID:     os.Getpid(),
 				Network: daemon.NetworkTCP,
 				Address: net.JoinHostPort(server.Host, portText),
 				Service: daemonService,
 				Version: Version,
 				Metadata: map[string]string{
-					runtimeForeground:       foreground,
 					runtimeHost:             server.Host,
 					runtimePort:             portText,
 					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
 					runtimeAPISchemaVersion: api.APISchemaVersion,
 					runtimeCreateTime:       matchingProcessCreateTime(t),
 				},
-			})
+			}
+			if background != "" {
+				record.Metadata[runtimeBackground] = background
+			}
+			_, err := daemonRuntimeStore(dataDir).Write(record)
 			require.NoError(err, "write runtime")
 
 			var stoppedPID int
@@ -215,7 +218,7 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 
 			require.NoError(err, "stop local daemons")
 			assert.True(result.Stopped, "stopped")
-			assert.Equal(foreground == "true", result.Foreground, "foreground")
+			assert.Equal(background == "true", result.Background, "background")
 			assert.Equal(os.Getpid(), stoppedPID, "stopped pid")
 		})
 	}
@@ -253,7 +256,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		}, true, nil
 	})
 
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
 
 	require.NoError(err, "restart daemon")
 	assert.Equal(installedExe, gotExecutable, "restart executable")
@@ -294,23 +297,23 @@ func TestRestartDaemonAfterUpdatePassesUsableContext(t *testing.T) {
 		}, true, nil
 	})
 
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
 
 	require.NoError(err, "restart daemon")
 	require.NotNil(gotCtx, "readiness wait received a nil context")
 	assert.NoError(gotCtx.Err(), "context usable")
 }
 
-func TestRestartDaemonAfterUpdateLeavesForegroundDaemonStopped(t *testing.T) {
+func TestRestartDaemonAfterUpdateLeavesUnmarkedDaemonStopped(t *testing.T) {
 	assert := assert.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		assert.Fail("foreground daemon must be left to whoever started it")
+		assert.Fail("unmarked daemon must be left to whoever started it")
 		return nil, errors.New("unexpected daemon start")
 	})
 	for _, noRestart := range []bool{false, true} {
 		var out bytes.Buffer
-		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Foreground: true}, "", nil, noRestart, &out)
+		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, "", nil, noRestart, &out)
 		require.NoError(t, err)
 		assert.Contains(out.String(), cfg.Data.DataDir)
 		assert.Contains(out.String(), "ran as `msgvault serve`")
@@ -332,7 +335,7 @@ func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
 		state := testInvocationWithConfig(cfg)
 		state.options = options
 		var out bytes.Buffer
-		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, "", state, true, &out)
+		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true}, "", state, true, &out)
 		require.NoError(t, err)
 		assert.Contains(out.String(), cfg.Data.DataDir)
 		assert.Contains(out.String(), "msgvault daemon start")

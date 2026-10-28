@@ -174,7 +174,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 type updateDaemonStopResult struct {
 	Stopped    bool
-	Foreground bool
+	Background bool
 }
 
 func performUpdateWithDaemonLifecycle(
@@ -234,7 +234,7 @@ func loadDaemonConfigForUpdate(options invocationOptions) (*config.Config, error
 }
 
 func stopLocalDaemonsForUpdate(c *config.Config, logger *slog.Logger) (updateDaemonStopResult, error) {
-	var result updateDaemonStopResult
+	result := updateDaemonStopResult{Background: true}
 	if c == nil {
 		return result, errors.New("nil config")
 	}
@@ -248,7 +248,7 @@ func stopLocalDaemonsForUpdate(c *config.Config, logger *slog.Logger) (updateDae
 			return result, err
 		}
 		result.Stopped = true
-		result.Foreground = result.Foreground || rec.Metadata[runtimeForeground] == runtimeForegroundValue
+		result.Background = result.Background && rec.Metadata[runtimeBackground] == runtimeBackgroundValue
 	}
 	return result, nil
 }
@@ -257,7 +257,7 @@ func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, e
 	if !result.Stopped {
 		return nil
 	}
-	if result.Foreground {
+	if !result.Background {
 		_, _ = fmt.Fprintf(out, "The daemon for %s ran as `msgvault serve`, so update did not restart it. Restart it the way you started it, such as `systemctl restart msgvault`.\n", c.Data.DataDir)
 		return nil
 	}
@@ -267,8 +267,7 @@ func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, e
 		if state != nil {
 			options = state.options
 		}
-		args := serveBackgroundChildArgs(options)
-		args = append(args[:len(args)-1], "daemon", "start")
+		args := append(invocationGlobalArgs(options), "daemon", "start")
 		oauth.PrintHeadlessCommand(out, append([]string{"msgvault"}, args...)...)
 		return nil
 	}

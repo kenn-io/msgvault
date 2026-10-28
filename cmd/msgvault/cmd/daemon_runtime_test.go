@@ -72,9 +72,9 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 			assert.Equal(shutdownToken, rec.Metadata[runtimeShutdownToken], "shutdown token metadata")
 			assert.Equal(daemonStartupPhaseInitial, rec.Metadata[runtimeStartupPhase], "startup phase metadata")
 			if background == "1" {
-				assert.NotContains(rec.Metadata, runtimeForeground)
+				assert.Equal("true", rec.Metadata[runtimeBackground])
 			} else {
-				assert.Equal("true", rec.Metadata[runtimeForeground])
+				assert.NotContains(rec.Metadata, runtimeBackground)
 			}
 		})
 	}
