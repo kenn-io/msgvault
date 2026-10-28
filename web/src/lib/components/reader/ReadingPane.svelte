@@ -384,8 +384,8 @@
     align-items: center;
     flex-wrap: wrap;
     justify-content: space-between;
-    gap: var(--space-2) var(--space-4);
-    padding: var(--space-2) var(--space-4);
+    gap: var(--control-gap) var(--section-gap);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border-bottom: 1px solid var(--border-muted);
     box-shadow: 0 1px 0 var(--hairline-sheen);
   }
@@ -396,11 +396,12 @@
     min-width: 0;
     flex: 1 1 12rem;
     align-items: baseline;
-    gap: var(--space-4);
+    gap: var(--field-gap);
   }
 
   .pane-title {
-    min-width: min(8rem, 100%);
+    min-width: 0;
+    flex: 0 1 auto;
     overflow: hidden;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
@@ -422,7 +423,7 @@
     display: flex;
     flex: none;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--control-gap);
   }
 
   .tasks-sheet {
@@ -461,8 +462,8 @@
 
   .pane-status {
     display: grid;
-    gap: var(--space-3);
-    padding: var(--space-4);
+    gap: var(--field-gap);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
   }
 
   .pane-status p {

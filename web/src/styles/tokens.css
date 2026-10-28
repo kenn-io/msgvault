@@ -23,6 +23,28 @@
   --status-destructive-bg: var(--status-error-bg);
   --status-destructive-ink: var(--status-error-ink);
   --page-gutter: var(--space-6);
+
+  /* Layout tokens. Spacing comes from kit-ui's --space-1..8 (2, 4, 6, 8, 12,
+   * 16, 24, 32px) and type from --font-size-2xs..2xl; components pick one of
+   * these roles instead of writing a pixel value. */
+  --pane-pad-x: var(--space-5);
+  --pane-pad-y: var(--space-4);
+  --section-gap: var(--space-6);
+  --field-gap: var(--space-4);
+  --control-gap: var(--space-3);
+  --label-gap: var(--space-2);
+  --divider-gap: var(--space-4);
+  --control-h-sm: 24px;
+  --control-h: 28px;
+  --control-h-lg: 36px;
+  --control-pad-x: var(--space-5);
+  --chip-pad-x: var(--space-4);
+  --line-height-tight: 1.25;
+  --line-height-body: 1.45;
+
+  --scrollbar-size: 8px;
+  --scrollbar-thumb: color-mix(in srgb, var(--text-muted) 38%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--text-muted) 65%, transparent);
 }
 
 @media (max-width: 760px) {
@@ -58,14 +80,79 @@
   font-weight: 600;
 }
 
-/* Inner-pane scrollbars: thin, muted, darkens on hover. */
-:where([data-scroll]) {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--border-default) 55%, transparent) transparent;
+/* One scrollbar everywhere: thin, themed, no arrow buttons. Chrome ignores
+ * the ::-webkit-scrollbar rules once scrollbar-width or scrollbar-color is
+ * set, and Windows then falls back to the classic bar with arrows, so the
+ * standard properties apply only where the pseudo-elements don't exist. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
 }
 
-:where([data-scroll]:hover) {
-  scrollbar-color: var(--border-default) transparent;
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--scrollbar-size);
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* One padding for every panel. Kit gives dialog parts 16px, drawer headers
+ * 12px, and drawer footers 16px, so the edges of neighboring parts never line up. */
+:root:root .kit-modal-header {
+  padding: var(--control-gap) var(--pane-pad-x);
+}
+
+:root:root .kit-modal-header .kit-modal-close {
+  margin-right: calc(var(--control-gap) - var(--pane-pad-x));
+}
+
+:root:root .kit-modal-body {
+  padding: var(--pane-pad-x);
+}
+
+:root:root .kit-modal-footer,
+:root:root .kit-detail-drawer__footer {
+  gap: var(--control-gap);
+  padding: var(--pane-pad-x);
+}
+
+:root:root .kit-detail-drawer__header {
+  padding: var(--pane-pad-y) var(--pane-pad-x);
+}
+
+/* Kit trims button labels to the x-height, which centers lowercase letters
+ * and leaves a capitalized label sitting high. Trim to the cap height. Every
+ * size shares one side padding. */
+:root:root .kit-button .kit-button__label-text {
+  text-box-edge: cap alphabetic;
+}
+
+:root:root .kit-button {
+  padding-inline: var(--control-pad-x);
 }
 
 :where(a, [data-link]) {
@@ -83,6 +170,25 @@
  * labels below AA contrast. The dot and check mark already show the state. */
 :root .kit-filter-dropdown__panel .kit-filter-dropdown__item:not(.active) {
   opacity: 1;
+}
+
+/* Kit centers a short segment inside a taller track, so the active pill floats
+ * with a wide gap above and below and a narrow one beside. Stretch the
+ * segments to the track and pad them from tokens, so every side of the pill
+ * and the text in it is even. */
+:root:root .kit-segmented:not(.kit-segmented--borderless) {
+  align-items: stretch;
+}
+
+:root:root .kit-segmented .kit-segmented__btn {
+  padding: 0 var(--control-pad-x);
+}
+
+/* Kit gives each chip size its own side padding (6px, 6px, and 8px), and
+ * xs also pads the top and bottom. One chip padding keeps the text centered
+ * in every chip; the height comes from min-height and flex centering. */
+:root:root .kit-chip {
+  padding: 0 var(--chip-pad-x);
 }
 
 /* Kit mixes the muted chip text 25% toward its own background, which drops

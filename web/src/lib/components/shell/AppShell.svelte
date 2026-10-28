@@ -1696,7 +1696,7 @@
 {/if}
 
 <style>
-  .archive-navigation-status { padding: var(--space-3) var(--space-5); color: var(--text-secondary); }
+  .archive-navigation-status { padding: var(--control-gap) var(--pane-pad-x); color: var(--text-secondary); }
 
   .app-shell {
     display: flex;
@@ -1718,7 +1718,7 @@
     display: flex;
     min-height: var(--header-height);
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--control-gap);
     padding: 0 var(--page-gutter);
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border-default);
@@ -1731,7 +1731,7 @@
   .app-top-bar__end {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--control-gap);
     margin-left: auto;
   }
 
@@ -1749,7 +1749,7 @@
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    gap: var(--space-4);
-    padding: var(--space-5) var(--page-gutter) var(--space-4);
+    gap: var(--field-gap);
+    padding: var(--space-5) var(--page-gutter) var(--field-gap);
   }
 </style>
