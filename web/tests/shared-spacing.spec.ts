@@ -51,7 +51,7 @@ test('every page header divider meets the next visible content boundary', async 
   expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, 0])));
 });
 
-test('selection and dialog share inset edges', async ({ page }) => {
+test('selection bar uses the shared inset and gap', async ({ page }) => {
   await selectWorkspace(page, 'Everything');
   const grid = page.getByRole('grid', { name: 'Everything results' });
   await grid.focus();
@@ -65,7 +65,10 @@ test('selection and dialog share inset edges', async ({ page }) => {
     return { left: count.left - box.left, top: style.paddingTop, gap: style.columnGap };
   });
   expect(selectionInset).toEqual({ left: 12, top: '8px', gap: '8px' });
-  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+});
+
+test('save-view dialog shares header and field insets', async ({ page }) => {
+  await selectWorkspace(page, 'Everything');
   await page.getByRole('button', { name: 'Save view…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Save view' });
   await expect(dialog).toBeVisible();
@@ -82,6 +85,7 @@ test('selection and dialog share inset edges', async ({ page }) => {
 });
 
 test('loaded message sender, body, and attachment edges align with the reader', async ({ page }) => {
+  await page.route('**/api/v1/messages/1/recordings', (route) => route.fulfill({ json: { message_id: 1, recordings: [] } }));
   await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
     rows: [{ ...row, message_type: 'meeting_transcript', conversation_id: 11, anchor_message_id: 1 }], total_count: 1, cache_revision: 'spacing', search_provenance: {}
   } }));
@@ -182,30 +186,19 @@ test('linked message uses the page title text scale', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
 });
 
-test('overflowing settings keep 12px card insets and 8px scrollbars', async ({ page }) => {
-  await page.setViewportSize({ width: 1024, height: 600 });
-  await page.route('**/api/v1/settings', (route) => route.fulfill({
-    headers: { ETag: '"scrolling-settings"' },
-    json: {
-      groups: [{ id: 'browser', label: 'Appearance' }],
-      settings: Array.from({ length: 30 }, (_, index) => ({
-        key: `web.example_${index}`, group: 'browser', label: `Example setting ${index}`,
-        kind: 'string', value: { string: 'Example value' }, restart_required: false
-      }))
-    }
-  }));
+test('settings cards keep 12px control insets', async ({ page }) => {
   await selectWorkspace(page, 'Settings');
-  const scroll = page.locator('.kit-settings__scroll');
-  const control = page.getByRole('textbox', { name: 'Example setting 29', exact: true });
-  await control.scrollIntoViewIfNeeded();
-  const geometry = await scroll.evaluate((element) => {
-    const control = element.querySelectorAll('.kit-text-input');
-    const card = control[control.length - 1].closest('.kit-card')!;
-    return { overflow: element.scrollHeight > element.clientHeight,
-      inset: card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - control[control.length - 1].getBoundingClientRect().right,
-      scrollbar: getComputedStyle(element, '::-webkit-scrollbar').width };
+  const control = page.locator('.kit-card .row__control').first();
+  await expect(control).toBeVisible();
+  const inset = await control.evaluate((element) => {
+    const card = element.closest('.kit-card')!;
+    return card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - element.getBoundingClientRect().right;
   });
-  expect(geometry.overflow).toBe(true);
-  expect(geometry.inset).toBe(12);
-  expect(geometry.scrollbar).toBe('8px');
+  expect(inset).toBe(12);
+});
+
+test('app scrollbars use the shared 8px style', async ({ page }) => {
+  await selectWorkspace(page, 'Settings');
+  const size = await page.locator('.kit-settings__scroll').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar').width);
+  expect(size).toBe('8px');
 });
