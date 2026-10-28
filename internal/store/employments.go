@@ -83,6 +83,7 @@ func (s *Store) AddEmploymentContext(ctx context.Context, input EmploymentInput)
 			}
 			var inferenceProjectionBefore map[int64]personInferenceExportProjection
 			if provenanceIsInferred(input.Source) {
+				var err error
 				inferenceProjectionBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, input.PersonID)
 				if err != nil {
 					return fmt.Errorf("load inference export projection before employment add: %w", err)
@@ -143,12 +144,9 @@ func (s *Store) UpdateEmploymentContext(ctx context.Context, id, expectedRevisio
 				ctx, tx, snapshot.PersonID, input.PersonID); err != nil {
 				return err
 			}
-			var inferenceBefore map[int64]personInferenceExportProjection
-			if provenanceIsInferred(input.Source) {
-				inferenceBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, snapshot.PersonID, input.PersonID)
-				if err != nil {
-					return err
-				}
+			inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, snapshot.PersonID, input.PersonID)
+			if err != nil {
+				return err
 			}
 			projection := personfacts.ProjectionRef{Kind: personFactProjectionKindEmployment, RowID: id}
 			ownedBefore, err := ownsPersonFactProjectionTx(
@@ -168,7 +166,11 @@ func (s *Store) UpdateEmploymentContext(ctx context.Context, id, expectedRevisio
 					}
 				}
 			}
-			if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
+			if provenanceIsInferred(input.Source) {
+				if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
+					return err
+				}
+			} else if err := s.invalidateInferenceFullNameExposureChangesTx(ctx, tx, inferenceBefore); err != nil {
 				return err
 			}
 			return s.publishPersonIdentityEnrichmentTx(
@@ -198,12 +200,19 @@ func (s *Store) EndEmploymentContext(ctx context.Context, id, expectedRevision i
 			if err := s.claimEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
 				return err
 			}
+			inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, snapshot.PersonID)
+			if err != nil {
+				return err
+			}
 			employment, err = s.endEmploymentTx(ctx, tx, id, expectedRevision, endDate)
 			if err != nil {
 				return err
 			}
 			if err := s.appendManualPersonFactEmploymentPinTx(
 				ctx, tx, snapshot.PersonID, string(ProvenanceUser)); err != nil {
+				return err
+			}
+			if err := s.invalidateInferenceFullNameExposureChangesTx(ctx, tx, inferenceBefore); err != nil {
 				return err
 			}
 			return s.publishPersonIdentityEnrichmentTx(ctx, tx, snapshot.PersonID)
@@ -291,6 +300,10 @@ func (s *Store) deleteEmploymentOnce(ctx context.Context, id, expectedRevision i
 		if err := s.claimEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
 			return err
 		}
+		inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, snapshot.PersonID)
+		if err != nil {
+			return err
+		}
 		var deletedID int64
 		err = tx.QueryRowContext(ctx,
 			`DELETE FROM employments WHERE id = ? AND revision = ? RETURNING id`,
@@ -303,6 +316,9 @@ func (s *Store) deleteEmploymentOnce(ctx context.Context, id, expectedRevision i
 		}
 		if err := s.appendManualPersonFactEmploymentPinTx(
 			ctx, tx, snapshot.PersonID, string(ProvenanceUser)); err != nil {
+			return err
+		}
+		if err := s.invalidateInferenceFullNameExposureChangesTx(ctx, tx, inferenceBefore); err != nil {
 			return err
 		}
 		return s.publishPersonIdentityEnrichmentTx(ctx, tx, snapshot.PersonID)

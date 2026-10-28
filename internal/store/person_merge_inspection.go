@@ -496,12 +496,11 @@ func (s *Store) acceptPersonMergeCandidateValueTx(
 	if !found || current.ID != candidate.SurvivorValueID {
 		return 0, ErrPersonMergeCandidateState
 	}
-	var inferenceBefore map[int64]personInferenceExportProjection
-	if provenanceIsInferred(absorbed.Source) {
-		inferenceBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, candidate.PersonID)
-		if err != nil {
-			return 0, err
-		}
+	// A declared replacement can still change which inferred value supplies a
+	// fallback FN, so capture the projection for every accepted value.
+	inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, candidate.PersonID)
+	if err != nil {
+		return 0, err
 	}
 	now := time.Now().UTC()
 	if _, err := s.closePersonAttributeValueTx(ctx, tx, current.ID, now, now); err != nil {
@@ -520,7 +519,11 @@ func (s *Store) acceptPersonMergeCandidateValueTx(
 	if err != nil {
 		return 0, err
 	}
-	if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
+	if provenanceIsInferred(absorbed.Source) {
+		if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
+			return 0, err
+		}
+	} else if err := s.invalidateInferenceFullNameExposureChangesTx(ctx, tx, inferenceBefore); err != nil {
 		return 0, err
 	}
 	return inserted.ID, nil

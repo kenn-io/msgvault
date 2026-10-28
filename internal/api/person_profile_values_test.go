@@ -189,6 +189,7 @@ func TestPatchPersonProfileMapsValidationErrorsToBadRequest(t *testing.T) {
 		{"close before active", `{"categories":{"add":[{"original_value":"Friends","envelope":{"source":"user","active_from":"2026-08-08T12:00:00Z","active_until":"2026-08-08T11:00:00Z"}}]}}`},
 		{"confidence on declared value", `{"categories":{"add":[{"original_value":"Friends","envelope":{"source":"user","confidence":0.5}}]}}`},
 		{"negative ordinal", `{"categories":{"add":[{"original_value":"Friends","envelope":{"source":"user","ordinal":-1}}]}}`},
+		{"malformed vCard name text", `{"names":{"add":[{"name_kind":"formatted","formatted":"Alice\rExample","original_value":"Alice Example","envelope":{"source":"user"}}]}}`},
 		{"empty patch", `{}`},
 	}
 	for _, tc := range cases {
@@ -219,6 +220,39 @@ func TestPatchPersonProfilePreservesExplicitZeroOrdinal(t *testing.T) {
 		}
 	}
 	require.Fail("patched contact point was not returned")
+}
+
+func TestPatchPersonProfileRejectsInvalidExtendedAddressComponents(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "carriage return",
+			body: "{\"addresses\":{\"add\":[{\"address_kind\":\"postal\",\"extended_components\":\"unit\\rNorth\",\"envelope\":{\"source\":\"user\"}}]}}",
+		},
+		{
+			name: "NUL",
+			body: "{\"addresses\":{\"add\":[{\"address_kind\":\"postal\",\"extended_components\":\"unit\\u0000North\",\"envelope\":{\"source\":\"user\"}}]}}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			assert := assert.New(t)
+			server, st := newProfileTestServer(t)
+			personID := seedAPIPerson(t, st)
+			read := doRequest(t, server, http.MethodGet, personProfilePath(personID), nil, nil)
+			require.Equal(http.StatusOK, read.Code, read.Body.String())
+
+			response := doRequest(t, server, http.MethodPatch, personProfilePath(personID),
+				[]byte(tc.body), map[string]string{"If-Match": read.Header().Get("ETag")})
+			assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+			assert.Contains(response.Body.String(), "extended address components must not contain CR or NUL")
+		})
+	}
 }
 
 func TestPatchPersonProfileRejectsResponseOnlyEnvelopeFields(t *testing.T) {

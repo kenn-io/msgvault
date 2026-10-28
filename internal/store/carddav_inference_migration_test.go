@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -187,4 +188,290 @@ func TestCardDAVInferenceMigrationRunsAfterLegacyColumnMigrations(t *testing.T) 
 	applied, err := reopened.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportState, 1)
 	require.NoError(err)
 	require.True(applied)
+}
+
+func TestCardDAVInferenceMigrationV2MarksInferredContactProfilesForReview(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "upgraded.db")
+	st, err := Open(path)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	var contactOnly, declared int64
+	require.NoError(st.db.QueryRow(`INSERT INTO persons(vcard_uid, display_name) VALUES ('contact-only', 'Contact Only') RETURNING id`).Scan(&contactOnly))
+	require.NoError(st.db.QueryRow(`INSERT INTO persons(vcard_uid, display_name) VALUES ('declared', 'Declared') RETURNING id`).Scan(&declared))
+	require.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
+		for _, person := range []struct {
+			id     int64
+			source Provenance
+		}{{contactOnly, ProvenanceEnrichment}, {declared, ProvenanceUser}} {
+			if _, err := st.addPersonContactPointTx(t.Context(), tx, person.id, PersonContactPointInput{
+				AddressKind: ContactAddressEmail, OriginalValue: "person" + strconv.FormatInt(person.id, 10) + "@example.com",
+				Envelope: ValueEnvelopeInput{Source: person.source},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCardDAVInferenceExportStateV2)
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	reopened, err := Open(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	require.NoError(reopened.InitSchema())
+	for _, name := range []string{migrationCardDAVInferenceExportState, migrationCardDAVInferenceExportStateV2} {
+		applied, err := reopened.IsMigrationAppliedContext(t.Context(), name, 1)
+		require.NoError(err)
+		assert.True(applied, name)
+	}
+	assert.Equal(int64(1), inferenceRevision(t, reopened, contactOnly))
+	assert.Zero(inferenceRevision(t, reopened, declared))
+}
+
+func TestCardDAVInferenceMigrationV2FindsPendingUpdateMappingsForRetiredInferredContacts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, personID, _ := newPersonFactProjectionStore(t)
+	book := inferenceMigrationBook(t, st)
+	contact, err := st.AddPersonContactPointContext(t.Context(), personID, PersonContactPointInput{
+		AddressKind: ContactAddressEmail, OriginalValue: "retired@example.test",
+		Envelope: ValueEnvelopeInput{Source: ProvenanceEnrichment},
+	})
+	require.NoError(err)
+	envelope, err := vcard.ParseResourceEnvelope([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Retired Contact\r\nEMAIL:retired@example.test\r\nEND:VCARD\r\n"))
+	require.NoError(err)
+	var emailIdentity vcard.PropertyIdentity
+	for _, occurrence := range envelope.PropertyTree {
+		if occurrence.Property.Name == "EMAIL" {
+			emailIdentity = occurrence.Identity
+			break
+		}
+	}
+	require.NotEmpty(emailIdentity)
+	envelope.NativeMappings = []vcard.NativeMapping{{
+		Identity: emailIdentity, Table: personContactPointsTableName, RowID: contact.Envelope.ID,
+		Field: "original_value", Kind: vcard.HandlingNative,
+	}}
+	envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
+	metadata, err := vcard.MarshalResourceMetadata(envelope)
+	require.NoError(err)
+	inferenceMigrationPublication(t, st, personID, book, false)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	_, err = st.db.Exec(`UPDATE carddav_publications
+        SET pending_operation=?, outgoing_body=?, outgoing_semantic_hash=?, local_hash=?,
+            connection_generation=(SELECT connection_generation FROM carddav_accounts WHERE id=1),
+            book_sync_revision=?, mapping_revision=1, mutation_revision=1,
+            outgoing_envelope_metadata=?, pending_started_at=CURRENT_TIMESTAMP
+        WHERE person_id=?`, CardDAVMutationUpdate, envelope.StoredBody, "legacy-update", snapshot.Fingerprint,
+		book.SyncRevision, metadata, personID)
+	require.NoError(err)
+	require.NoError(st.SupersedePersonContactPointContext(t.Context(), personID, contact.Envelope.ID, nil))
+	// Model the pre-V2 archive: its inferred contact and pending intent exist,
+	// but writer mutations did not create inference export state.
+	_, err = st.db.Exec(`DELETE FROM person_carddav_inference_state WHERE person_id=?`, personID)
+	require.NoError(err)
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name=?`, migrationCardDAVInferenceExportStateV2)
+	require.NoError(err)
+
+	require.NoError(st.InitSchema())
+	assert.Equal(int64(1), inferenceRevision(t, st, personID))
+	publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
+	require.NoError(err)
+	assert.Equal(CardDAVMutationUpdate, publication.PendingOperation)
+	assert.Equal(metadata, publication.OutgoingEnvelopeMetadata)
+	source, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
+	require.NoError(err)
+	assert.True(source.Inference.ReviewRequired(source.ConnectionGeneration, book.ID))
+}
+
+func TestCardDAVInferenceMigrationV2InvalidatesApprovalForNewContributors(t *testing.T) {
+	for _, kind := range []string{"contact", "name", "address", "declared contact", "nonrendering contact", "notes only"} {
+		t.Run(kind, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, id, _ := newPersonFactProjectionStore(t)
+			book := inferenceMigrationBook(t, st)
+			inferenceNote(t, st, id, ProvenanceExtraction, "Approved note")
+			source, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), id)
+			require.NoError(err)
+			require.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
+				if err := st.approveCardDAVInferenceTx(t.Context(), tx, source.Inference, source.ConnectionGeneration, book.ID); err != nil {
+					return err
+				}
+				// Old writers did not track these rows in the inference revision.
+				envelope := ValueEnvelopeInput{Source: ProvenanceEnrichment}
+				switch kind {
+				case "name":
+					_, err = st.addPersonNameTx(t.Context(), tx, id, PersonNameInput{
+						NameKind: PersonNameFormatted, Formatted: new("Alex Example"), OriginalValue: "Alex Example", Envelope: envelope,
+					})
+				case "address":
+					_, err = st.addPersonAddressTx(t.Context(), tx, id, PersonAddressInput{
+						AddressKind: PersonAddressPostal, StreetAddress: new("1 Example Street"), OriginalValue: "1 Example Street", Envelope: envelope,
+					})
+				case "contact", "declared contact", "nonrendering contact":
+					input := PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "alex@example.com", Envelope: envelope}
+					switch kind {
+					case "declared contact":
+						input.Envelope.Source = ProvenanceUser
+					case "nonrendering contact":
+						input.AddressKind, input.OriginalValue = ContactAddressUsername, "@alice"
+					}
+					_, err = st.addPersonContactPointTx(t.Context(), tx, id, input)
+				}
+				return err
+			}))
+			_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCardDAVInferenceExportStateV2)
+			require.NoError(err)
+			wantReview := kind == "contact" || kind == "name" || kind == "address"
+			for range 2 {
+				require.NoError(st.InitSchema())
+				after, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), id)
+				require.NoError(err)
+				assert.Equal(wantReview, after.Inference.ReviewRequired(after.ConnectionGeneration, book.ID))
+				if wantReview {
+					assert.Equal(source.Inference.InferenceRevision+1, after.Inference.InferenceRevision)
+				} else {
+					assert.Equal(source.Inference.InferenceRevision, after.Inference.InferenceRevision)
+				}
+			}
+		})
+	}
+}
+
+func TestCardDAVInferenceMigrationV2IgnoresMalformedRetiredDeclaredAddress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, personID, _ := newPersonFactProjectionStore(t)
+	address, err := st.AddPersonAddressContext(t.Context(), personID, PersonAddressInput{
+		AddressKind: PersonAddressPostal, StreetAddress: new("10 Example Street"),
+		OriginalValue: "10 Example Street",
+		Envelope:      ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	require.NoError(st.SupersedePersonAddressContext(t.Context(), personID, address.Envelope.ID, nil))
+	_, err = st.db.Exec(`UPDATE person_addresses SET extended_components = ? WHERE id = ?`, "apartment\rline", address.Envelope.ID)
+	require.NoError(err)
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCardDAVInferenceExportStateV2)
+	require.NoError(err)
+
+	require.NoError(st.InitSchema())
+	applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV2, 1)
+	require.NoError(err)
+	assert.True(applied)
+	assert.Zero(inferenceRevision(t, st, personID))
+}
+
+func TestCardDAVInferenceMigrationV2AllowsRepairOfMalformedCurrentInferredAddress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, personID, _ := newPersonFactProjectionStore(t)
+	address, err := st.AddPersonAddressContext(t.Context(), personID, PersonAddressInput{
+		AddressKind: PersonAddressPostal, StreetAddress: new("10 Example Street"),
+		ExtendedComponents: new("Apartment 2;Floor 3"), OriginalValue: "10 Example Street",
+		Envelope: ValueEnvelopeInput{Source: ProvenanceEnrichment},
+	})
+	require.NoError(err)
+	_, err = st.db.Exec(`UPDATE person_addresses SET extended_components = ? WHERE id = ?`, "apartment\rline", address.Envelope.ID)
+	require.NoError(err)
+	addresses, err := st.ListPersonAddressesContext(t.Context(), personID, true)
+	require.NoError(err)
+	require.Len(addresses, 1)
+	_, _, err = addresses[0].VCardProjection()
+	require.Error(err, "publication projection must still reject malformed stored values")
+
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCardDAVInferenceExportStateV2)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV2, 1)
+	require.NoError(err)
+	assert.True(applied)
+	assert.GreaterOrEqual(inferenceRevision(t, st, personID), int64(1))
+
+	require.NoError(st.SupersedePersonAddressContext(t.Context(), personID, address.Envelope.ID, nil))
+}
+
+func TestCardDAVInferenceMigrationV2AllowsRepairOfMalformedCurrentInferredPhoneticName(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+	}{
+		{name: "carriage return", value: "Alice\rExample"},
+		{name: "NUL", value: "Alice\x00Example"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, personID, _ := newPersonFactProjectionStore(t)
+			if test.name == "NUL" && st.dialect.DriverName() == postgresDriverName {
+				t.Skip("PostgreSQL TEXT rejects embedded NUL bytes")
+			}
+			name, err := st.AddPersonNameContext(t.Context(), personID, PersonNameInput{
+				NameKind: PersonNamePhonetic, FamilyName: new("Example"), GivenName: new("Alice"),
+				OriginalValue: "Example;Alice",
+				Envelope:      ValueEnvelopeInput{Source: ProvenanceEnrichment},
+			})
+			require.NoError(err)
+			_, err = st.db.Exec(`UPDATE person_names SET given_name = ? WHERE id = ?`, test.value, name.Envelope.ID)
+			require.NoError(err)
+			_, err = st.db.Exec(`DELETE FROM person_carddav_inference_state WHERE person_id = ?`, personID)
+			require.NoError(err)
+			_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCardDAVInferenceExportStateV2)
+			require.NoError(err)
+
+			require.NoError(st.InitSchema())
+			applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV2, 1)
+			require.NoError(err)
+			assert.True(applied)
+			assert.GreaterOrEqual(inferenceRevision(t, st, personID), int64(1),
+				"malformed inferred names still carry publication review debt")
+
+			require.NoError(st.SupersedePersonNameContext(t.Context(), personID, name.Envelope.ID, nil),
+				"a profile edit must be able to retire and repair the malformed legacy name")
+		})
+	}
+}
+
+func TestMalformedCurrentInferredEmailCanBeRetired(t *testing.T) {
+	for _, operation := range []string{"direct supersede", "profile patch"} {
+		t.Run(operation, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, personID, _ := newPersonFactProjectionStore(t)
+			contact, err := st.AddPersonContactPointContext(t.Context(), personID, PersonContactPointInput{
+				AddressKind: ContactAddressEmail, OriginalValue: "legacy@example.test",
+				Envelope: ValueEnvelopeInput{Source: ProvenanceEnrichment},
+			})
+			require.NoError(err)
+			profile, err := st.GetPersonProfileContext(t.Context(), personID)
+			require.NoError(err)
+			_, err = st.db.Exec(st.Rebind(`UPDATE persons SET display_name = NULL WHERE id = ?`), personID)
+			require.NoError(err)
+			_, err = st.db.Exec(st.Rebind(`UPDATE person_contact_points SET original_value = ? WHERE id = ?`),
+				"legacy\r@example.test", contact.Envelope.ID)
+			require.NoError(err)
+
+			if operation == "direct supersede" {
+				err = st.SupersedePersonContactPointContext(
+					t.Context(), personID, contact.Envelope.ID, nil,
+				)
+			} else {
+				_, err = st.ApplyPersonProfilePatchContext(
+					t.Context(), personID, profile.Person.Revision,
+					PersonProfilePatch{ContactPoints: &PersonContactPointPatch{
+						Supersede: []int64{contact.Envelope.ID},
+					}},
+				)
+			}
+			require.NoError(err, "a malformed legacy email must remain repairable through profile edits")
+
+			current, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+			require.NoError(err)
+			assert.Empty(current)
+		})
+	}
 }

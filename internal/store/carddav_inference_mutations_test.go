@@ -295,8 +295,41 @@ func TestInferenceExportResolverStatusAndUnpin(t *testing.T) {
 	}
 }
 
+func TestInferenceExportUnrelatedPinPreservesDerivedFullNameReview(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, id, targets := newPersonFactProjectionStore(t)
+	_, err := st.AddPersonNameContext(t.Context(), id, PersonNameInput{
+		NameKind: PersonNameStructured, FamilyName: new("Example"), GivenName: new("Riley"),
+		Envelope: ValueEnvelopeInput{Source: ProvenanceExtraction},
+	})
+	require.NoError(err)
+	beforeRevision := inferenceRevision(t, st, id)
+	require.Equal(int64(1), beforeRevision)
+	profile, err := st.GetPersonProfileContext(t.Context(), id)
+	require.NoError(err)
+	beforeName, _, beforeInferred, ok := profile.DerivedVCardFullName()
+	require.True(ok)
+	require.True(beforeInferred)
+	assert.Equal("Riley Example", beforeName)
+
+	target := targets[AttributeSlugPrimaryChannel]
+	_, err = st.SetPersonFactPinContext(t.Context(), id,
+		personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, true, "test")
+	require.NoError(err)
+
+	profile, err = st.GetPersonProfileContext(t.Context(), id)
+	require.NoError(err)
+	afterName, _, afterInferred, ok := profile.DerivedVCardFullName()
+	require.True(ok)
+	require.True(afterInferred)
+	assert.Equal(beforeName, afterName)
+	assert.Equal(beforeRevision, inferenceRevision(t, st, id),
+		"pinning an unrelated fact must preserve review for an unchanged derived FN")
+}
+
 func TestInferenceExportMergeAndSplit(t *testing.T) {
-	for _, kind := range []string{"attribute", "employment", "declared"} {
+	for _, kind := range []string{"attribute", "employment", "contact", "address", "declared"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -306,12 +339,20 @@ func TestInferenceExportMergeAndSplit(t *testing.T) {
 			if kind == "declared" {
 				source = ProvenanceUser
 			}
-			if kind == "employment" {
+			switch kind {
+			case "employment":
 				org, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Example Org", Kind: OrganizationKindCompany})
 				require.NoError(err)
 				_, err = st.AddEmploymentContext(t.Context(), EmploymentInput{PersonID: absorbed.ID, OrganizationID: org.ID, Source: source})
 				require.NoError(err)
-			} else {
+			case "contact":
+				_, err := st.AddPersonContactPointContext(t.Context(), absorbed.ID, PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "inferred@example.com", Envelope: ValueEnvelopeInput{Source: source}})
+				require.NoError(err)
+			case "address":
+				street := "1 Inferred Street"
+				_, err := st.AddPersonAddressContext(t.Context(), absorbed.ID, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: &street, OriginalValue: street, Envelope: ValueEnvelopeInput{Source: source}})
+				require.NoError(err)
+			default:
 				inferenceNote(t, st, absorbed.ID, source, "Transferred")
 			}
 			_, err := st.db.Exec(`UPDATE person_carddav_inference_state SET approved_revision=inference_revision WHERE person_id=?`, absorbed.ID)
@@ -632,4 +673,62 @@ func TestInferenceExportSupportedSystemRetirement(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Accepting a declared merge candidate replaces the survivor's value with a
+// new row, and the merged card appends that row after existing occurrences.
+// When the value maps to N, the replacement can hand FN to an inferred
+// phonetic name, so the acceptance must require a new review.
+func TestInferenceExportDeclaredMergeCandidateReviewsFallbackName(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, id, _ := newPersonFactProjectionStore(t)
+	definition, err := st.CreateAttributeDefinitionContext(t.Context(), AttributeDefinitionInput{
+		UniversalID: "inference-structured-name", ObjectType: AttributeObjectPerson,
+		Slug: "inference_structured_name", Label: "Structured name",
+		ValueType: AttributeValueText, FieldType: AttributeFieldText,
+		Cardinality: AttributeCardinalitySingle, Ownership: AttributeOwnershipUser,
+		APIMutable: true, UICreatable: true, UIEditable: true, VCardProperty: new("N"),
+	})
+	require.NoError(err)
+	setName := func(personID int64, value string) {
+		t.Helper()
+		_, err := st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
+			PersonID: personID, DefinitionSlug: definition.Slug,
+			Value: AttributeValue{Type: AttributeValueText, Text: &value}, Source: ProvenanceUser,
+		})
+		require.NoError(err)
+	}
+	absorbed := inferencePerson(t, st, "candidate@example.com")
+	setName(id, "Survivor")
+	setName(absorbed.ID, "Absorbed")
+	_, err = st.AddPersonNameContext(t.Context(), id, PersonNameInput{
+		NameKind: PersonNamePhonetic, GivenName: new("Inferred"), FamilyName: new("Example"),
+		OriginalValue: "Inferred;Example", Envelope: ValueEnvelopeInput{Source: ProvenanceEnrichment},
+	})
+	require.NoError(err)
+	survivor, err := st.GetPersonContext(t.Context(), id)
+	require.NoError(err)
+	absorbed, err = st.GetPersonContext(t.Context(), absorbed.ID)
+	require.NoError(err)
+	merged, err := st.MergePersonsContext(t.Context(), PersonMergeRequest{
+		SurvivorID: id, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey: "declared-name-candidate-merge", Actor: "test",
+	})
+	require.NoError(err)
+	renamed, err := st.UpdatePersonDisplayNameContext(t.Context(), id, merged.Person.Revision, nil)
+	require.NoError(err)
+	before := inferenceRevision(t, st, id)
+
+	var candidateID int64
+	require.NoError(st.db.QueryRow(`SELECT id FROM person_merge_review_candidates
+		WHERE merge_id=? AND state='pending'`, merged.Merge.ID).Scan(&candidateID))
+	_, err = st.DecidePersonMergeCandidateContext(t.Context(), PersonMergeCandidateDecisionRequest{
+		PersonID: id, CandidateID: candidateID, ExpectedPersonRevision: renamed.Revision,
+		Decision: PersonMergeCandidateAccept, Actor: "test",
+	})
+	require.NoError(err)
+	assert.Greater(inferenceRevision(t, st, id), before,
+		"a declared replacement can reorder the fallback N candidates")
 }
