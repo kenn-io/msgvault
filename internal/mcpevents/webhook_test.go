@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -373,36 +374,47 @@ func TestClientTimeoutDuringDialGuardSendsNothing(t *testing.T) {
 	}
 }
 
-// A callback host can resolve to several addresses. One that silently drops
-// connections must not spend the whole request budget: the dial moves on to
-// the next address and delivers there.
+// A callback host can resolve to several addresses. Ones that silently drop
+// connections must not spend the whole request budget: each dial gets a share
+// of the time left, and the healthy last address still delivers.
 func TestWebhookFallsBackPastUnreachableAddress(t *testing.T) {
-	require := Require.New(t)
-	assert := Assert.New(t)
-	delivered := make(chan struct{}, 1)
-	w := tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
-		delivered <- struct{}{}
-		rw.WriteHeader(http.StatusNoContent)
-	})
-	w.client.Timeout = 2 * time.Second
-	unreachable := netip.MustParseAddr("203.0.113.8")
-	w.resolve = func(context.Context, string, string) ([]netip.Addr, error) {
-		return []netip.Addr{unreachable, netip.MustParseAddr("203.0.113.7")}, nil
+	for _, unreachable := range []int{1, 3} {
+		t.Run(fmt.Sprintf("%d unreachable", unreachable), func(t *testing.T) {
+			require := Require.New(t)
+			assert := Assert.New(t)
+			delivered := make(chan struct{}, 1)
+			w := tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
+				delivered <- struct{}{}
+				rw.WriteHeader(http.StatusNoContent)
+			})
+			// Each dead address waits for its share; the healthy one still has a
+			// full second.
+			w.client.Timeout = 4 * time.Second
+			healthyAddress := netip.MustParseAddr("203.0.113.7")
+			var addresses []netip.Addr
+			for i := range unreachable {
+				addresses = append(addresses, netip.AddrFrom4([4]byte{203, 0, 113, byte(20 + i)}))
+			}
+			addresses = append(addresses, healthyAddress)
+			w.resolve = func(context.Context, string, string) ([]netip.Addr, error) {
+				return addresses, nil
+			}
+			healthy := w.dial
+			w.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+				if !strings.HasPrefix(address, healthyAddress.String()+":") {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+				return healthy(ctx, network, address)
+			}
+			var err error
+			select {
+			case err = <-postInBackground(t.Context(), w, nil):
+			case <-time.After(10 * time.Second):
+				require.FailNow("request did not finish")
+			}
+			require.NoError(err)
+			assert.Len(delivered, 1)
+		})
 	}
-	healthy := w.dial
-	w.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if strings.HasPrefix(address, unreachable.String()+":") {
-			<-ctx.Done()
-			return nil, ctx.Err()
-		}
-		return healthy(ctx, network, address)
-	}
-	var err error
-	select {
-	case err = <-postInBackground(t.Context(), w, nil):
-	case <-time.After(10 * time.Second):
-		require.FailNow("request did not finish")
-	}
-	require.NoError(err)
-	assert.Len(delivered, 1)
 }

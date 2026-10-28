@@ -92,6 +92,7 @@ func newWebhookClient(trusted []TrustedCallback) (*webhookClient, error) {
 	}
 	w.transport = &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, MaxIdleConns: 128, MaxIdleConnsPerHost: 16, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 10 * time.Second}
 	w.transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		start := time.Now()
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, invalid("invalid_callback")
@@ -109,7 +110,7 @@ func newWebhookClient(trusted []TrustedCallback) (*webhookClient, error) {
 			}
 			// An address that silently drops connections must not spend the
 			// whole request budget before the next address is tried.
-			dialCtx, cancel := context.WithTimeout(ctx, dialShare(w.client.Timeout, len(addresses)-i))
+			dialCtx, cancel := context.WithTimeout(ctx, dialShare(w.client.Timeout-time.Since(start), len(addresses)-i))
 			conn, err := w.dial(dialCtx, network, net.JoinHostPort(address.String(), port))
 			cancel()
 			if err == nil {
@@ -126,11 +127,12 @@ func newWebhookClient(trusted []TrustedCallback) (*webhookClient, error) {
 	return w, nil
 }
 
-// dialShare gives each remaining address an equal part of the request
-// budget. The transport's dial context carries no request deadline, so the
-// client's timeout is the budget.
-func dialShare(budget time.Duration, remaining int) time.Duration {
-	return budget / time.Duration(max(remaining, 1))
+// dialShare gives each remaining address an equal part of the time left.
+// The transport's dial context carries no request deadline, so the caller
+// subtracts the time already spent resolving, checking, and dialing from the
+// client's timeout.
+func dialShare(left time.Duration, remaining int) time.Duration {
+	return left / time.Duration(max(remaining, 1))
 }
 
 func (w *webhookClient) addresses(ctx context.Context, host, port string) ([]netip.Addr, error) {
