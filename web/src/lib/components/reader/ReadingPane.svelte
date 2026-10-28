@@ -400,7 +400,8 @@
   }
 
   .pane-title {
-    min-width: min(8rem, 100%);
+    min-width: 0;
+    flex: 0 1 auto;
     overflow: hidden;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
