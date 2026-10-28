@@ -312,12 +312,17 @@ func TestRestartDaemonAfterUpdateLeavesUnmarkedDaemonStopped(t *testing.T) {
 		return nil, errors.New("unexpected daemon start")
 	})
 	for _, noRestart := range []bool{false, true} {
+		state := testInvocationWithConfig(cfg)
+		state.options = invocationOptions{homeDir: "/tmp/example archive", cfgFile: "/tmp/example config.toml"}
 		var out bytes.Buffer
-		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, "", nil, noRestart, &out)
+		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, "", state, noRestart, &out)
 		require.NoError(t, err)
 		assert.Contains(out.String(), cfg.Data.DataDir)
-		assert.Contains(out.String(), "ran as `msgvault serve`")
+		assert.Contains(out.String(), "Update couldn't confirm msgvault started the daemon")
+		assert.Contains(out.String(), "in the background, so it left it stopped")
 		assert.Contains(out.String(), "Restart it the way you started it")
+		assert.Contains(out.String(), "such as `systemctl restart msgvault`, or run:")
+		assert.Contains(out.String(), "msgvault --config '/tmp/example config.toml' --home '/tmp/example archive' daemon start")
 	}
 }
 
