@@ -415,6 +415,8 @@ visibleScrollbarTest('archived mail follows live theme switches, original colors
   await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
   const content = page.locator('iframe[title="Message body"]').contentFrame();
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+  let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
+  await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
   await expect.poll(async () => content.locator('html').evaluate((element) => ({
     overflow: element.scrollWidth > element.clientWidth,
     height: innerHeight - element.clientHeight,
@@ -443,6 +445,8 @@ visibleScrollbarTest('archived mail follows live theme switches, original colors
   // Change the actual shell theme while the same email remains open.
   await setKitTheme(page, 'light');
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
+  appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
+  await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
   await setKitTheme(page, 'dark');
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
 });

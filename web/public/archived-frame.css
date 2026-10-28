@@ -12,6 +12,7 @@
 html {
   --mail-text: #20242a;
   --mail-muted: #59626e;
+  --mail-scrollbar-ink: #5f6772;
   --mail-link: #1a5fce;
   --mail-border: #d8dade;
 
@@ -28,6 +29,7 @@ html[data-mode='themed'][data-scheme='light'] {
 html[data-mode='themed'][data-scheme='dark'] {
   --mail-text: #f2f3f5;
   --mail-muted: #a4a8af;
+  --mail-scrollbar-ink: #92979f;
   --mail-link: #74acfe;
   --mail-border: #3a3d42;
 
@@ -205,7 +207,7 @@ details[data-archived-quote-toggle][open] > summary [data-archived-quote-show] {
 @supports not selector(::-webkit-scrollbar) {
   * {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--mail-muted) 38%, transparent) transparent;
+    scrollbar-color: color-mix(in srgb, var(--mail-scrollbar-ink) 38%, transparent) transparent;
   }
 }
 
@@ -223,12 +225,12 @@ details[data-archived-quote-toggle][open] > summary [data-archived-quote-show] {
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--mail-muted) 38%, transparent);
+  background: color-mix(in srgb, var(--mail-scrollbar-ink) 38%, transparent);
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--mail-muted) 65%, transparent);
+  background: color-mix(in srgb, var(--mail-scrollbar-ink) 65%, transparent);
   background-clip: content-box;
 }
 
