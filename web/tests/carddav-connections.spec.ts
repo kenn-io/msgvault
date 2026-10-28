@@ -40,7 +40,7 @@ test('switching CardDAV connections clears credentials and uses selected setting
     });
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  await page.getByRole('button', { name: /^CardDAV account/ }).click();
+  await page.getByRole('button', { name: 'Contacts', exact: true }).click();
   await expect(page.getByLabel('Username', { exact: true })).toHaveValue('default@example.com');
   await page.getByLabel('Password', { exact: true }).fill('synthetic-default-password');
   await page.getByLabel('Base URL', { exact: true }).fill('https://draft.example.test/');
@@ -52,6 +52,14 @@ test('switching CardDAV connections clears credentials and uses selected setting
   await page.getByRole('button', { name: 'Test CardDAV connection' }).click();
   await expect(page.getByText('Connection successful. Found 2 address books.')).toBeVisible();
   await expect(page.getByText(/one write target across all CardDAV connections/)).toBeVisible();
+  await page.getByRole('combobox', { name: /^CardDAV connection/ }).click();
+  await page.getByRole('option', { name: 'default', exact: true }).click();
+  await expect(page.getByLabel('Password', { exact: true })).toHaveValue('synthetic-default-password');
+  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await page.getByRole('button', { name: 'Contacts', exact: true }).click();
+  await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({
     path: testInfo.outputPath('carddav-connections-mobile.png'),

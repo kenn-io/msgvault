@@ -194,7 +194,7 @@ describe('OperationsWorkspace', () => {
     ['person_embedding', 'person_facts', { settingsCategory: 'search', settingsAuthority: 'person_embeddings' }],
     ['visual_embedding', 'visual_attachments', { settingsCategory: 'search', settingsAuthority: 'visual_attachments' }],
     ['person_enrichment', 'person_facts', { settingsCategory: 'enrichment', settingsAuthority: '' }],
-    ['person_sweep', 'person_facts', { settingsCategory: 'people', settingsAuthority: '' }]
+    ['person_sweep', 'person_facts', { settingsCategory: 'enrichment', settingsAuthority: '' }]
   ] as const)('sends an Off %s row to Settings', async (kind, lane, target) => {
     const onSetUp = vi.fn();
     renderKinds([off(kind, lane)], { onSetUp });

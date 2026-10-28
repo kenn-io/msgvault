@@ -5,7 +5,7 @@
   import { listCardDAVConnections } from '../../api/generated/api/api';
   import type { CardDAVConnectionResponse } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
-  import type { CardDAVAccountValues } from '../../carddav/account-settings';
+  import type { CardDAVAccountValues, AccountDraft } from '../../carddav/account-settings';
   import type { CardDAVSettingsRequest } from '../../carddav/navigation';
   import { CardDAVConflictsController } from '../../carddav/conflicts-controller.svelte';
   import type { SettingState } from '../../settings/catalog';
@@ -15,13 +15,17 @@
   let {
     client,
     settings,
-    onSettingsRefresh = () => undefined,
+    drafts = $bindable({}),
+    resetRevision = 0,
+    saving = false,
     cardDAVRequest = undefined,
     onCardDAVRequestConsumed = () => undefined
   }: {
+    saving?: boolean;
+    resetRevision?: number;
+    drafts?: Record<string, AccountDraft>;
     client: APIClient;
     settings: SettingState[];
-    onSettingsRefresh?: () => void | Promise<void>;
     cardDAVRequest?: CardDAVSettingsRequest;
     onCardDAVRequestConsumed?: (key: number) => void;
   } = $props();
@@ -94,6 +98,9 @@
       }
     }
   }
+  $effect(() => {
+    if (resetRevision > 0) void loadConnections();
+  });
   function addConnection(): void {
     if (!/^[a-z][a-z0-9_-]{0,63}$/.test(newName) || newName === 'default') {
       connectionError = 'Choose a connection name with 1–64 lowercase letters, digits, underscores or hyphens, starting with a letter. The name default is reserved.';
@@ -127,12 +134,6 @@
     connectionAbort?.abort();
     conflictsController.destroy();
   });
-
-  async function accountSaved(): Promise<void> {
-    const wasAvailable = available;
-    await Promise.all([loadConnections(), onSettingsRefresh()]);
-    if (wasAvailable && available) await conflictsController.load();
-  }
 
   $effect(() => {
     const request = cardDAVRequest;
@@ -171,13 +172,15 @@
       Choose the provider, reconnect, and save this connection to restore it with the same name.
     </p>
   {/if}
-  {#key selected}
+  {#key `${selected}:${resetRevision}`}
     <CardDAVConnectionSettings
       {client}
       values={selectedValues}
+      draft={drafts[selected]}
+      onDraft={(draft) => { if (draft) drafts[selected] = draft; else delete drafts[selected]; }}
+      {saving}
       connection={selected}
       orphaned={selectedConnection?.orphaned === true}
-      onSaved={accountSaved}
       onAvailabilityChange={(name, value) => { availability[name] = value; }}
     />
   {/key}

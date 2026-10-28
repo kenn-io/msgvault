@@ -18,6 +18,7 @@ import type {
 } from '../api/generated/models';
 
 export class PeopleInferenceController {
+  keyDrafts = $state<Record<string, string>>({});
   status = $state<PeopleInferenceSettingsResponse>();
   selectedName = $state('');
   loading = $state(true);
@@ -30,7 +31,19 @@ export class PeopleInferenceController {
   private destroyed = false;
   private selectionEpoch = 0;
 
-  constructor(private readonly client: APIClient) {}
+  constructor(private readonly client: APIClient, private readonly onChanged: () => void | Promise<void> = () => undefined) {}
+
+  async saveKeys(): Promise<boolean> {
+    if (Object.keys(this.keyDrafts).length > 0) this.clearCheck();
+    for (const [name, key] of Object.entries(this.keyDrafts)) {
+      await this.run(() => this.writeKey(name, key));
+      if (this.error) return false;
+      delete this.keyDrafts[name];
+    }
+    return true;
+  }
+
+  updateConfigRevision(etag: string): void { this.configETag = etag; }
 
   get selectedProfile(): PeopleInferenceProfileSetting | undefined {
     return this.status?.profiles.find((profile) => profile.name === this.selectedName);
@@ -195,7 +208,7 @@ export class PeopleInferenceController {
     if (this.busy) return;
     this.busy = true;
     this.error = '';
-    try { await action(); }
+    try { await action(); await this.onChanged(); }
     catch (cause) {
       if (!this.destroyed) this.error = cause instanceof Error ? cause.message : 'Unable to update people sweep settings.';
     } finally {

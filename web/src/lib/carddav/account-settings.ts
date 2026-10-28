@@ -7,3 +7,11 @@ export interface CardDAVAccountValues {
   enabled: boolean;
   schedule: string;
 }
+
+export interface AccountDraft {
+  values: CardDAVAccountValues;
+  password: string;
+  request: import('../api/generated/models').CardDAVAccountRequest;
+  error?: string;
+  busy?: boolean;
+}
