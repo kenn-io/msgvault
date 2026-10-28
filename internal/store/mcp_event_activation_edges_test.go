@@ -98,12 +98,16 @@ func TestActivateMaxAgeFloor(t *testing.T) {
 		name          string
 		maxAge        time.Duration
 		otherScope    bool
+		olderFromMe   bool
 		wantSeq       int64
 		wantTruncated bool
 	}{
-		{"floor skips older rows", 3 * time.Minute, false, 2, true},
-		{"floor older than every row", 30 * time.Minute, false, 0, false},
-		{"older rows out of scope", 3 * time.Minute, true, 2, false},
+		{"floor skips older rows", 3 * time.Minute, false, false, 2, true},
+		{"floor older than every row", 30 * time.Minute, false, false, 0, false},
+		{"older rows out of scope", 3 * time.Minute, true, false, 2, false},
+		// include_from_me is false, so skipping the owner's own messages
+		// loses nothing the subscription would receive.
+		{"older rows excluded by filters", 3 * time.Minute, false, true, 2, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
@@ -117,6 +121,10 @@ func TestActivateMaxAgeFloor(t *testing.T) {
 			}
 			f.InsertMCPConversationEvent(clock.Epoch, 1, scope, now.Add(-10*time.Minute))
 			f.InsertMCPConversationEvent(clock.Epoch, 2, scope, now.Add(-5*time.Minute))
+			if tc.olderFromMe {
+				_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_log SET from_me=TRUE WHERE seq<=2`))
+				require.NoError(err)
+			}
 			if tc.otherScope {
 				scope = f.ConvID
 			}

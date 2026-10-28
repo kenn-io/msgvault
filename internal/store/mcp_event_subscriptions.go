@@ -501,7 +501,7 @@ func (s *Store) ActivateMCPSubscription(ctx context.Context, a MCPActivation) (*
 // applyMCPMaxAgeFloor moves a resumed cursor past events recorded before
 // now-maxAge. It uses recorded_at (commit time), the column retention prunes
 // on, so the floor does not depend on a source's occurrence clock. Truncation
-// is reported only when an in-scope event is skipped.
+// is reported only when a skipped event would have been delivered.
 func (s *Store) applyMCPMaxAgeFloor(ctx context.Context, tx *sql.Tx, sub *MCPSubscription, now time.Time, maxAge time.Duration) (bool, error) {
 	var floor sql.NullInt64
 	if err := tx.QueryRowContext(ctx, s.Rebind(`SELECT MAX(seq) FROM mcp_event_log WHERE epoch=? AND recorded_at<?`), sub.CursorEpoch, mcpTime(now.Add(-maxAge))).Scan(&floor); err != nil {
@@ -510,8 +510,8 @@ func (s *Store) applyMCPMaxAgeFloor(ctx context.Context, tx *sql.Tx, sub *MCPSub
 	if !floor.Valid || floor.Int64 <= sub.CursorSeq {
 		return false, nil
 	}
-	var skipped bool
-	if err := tx.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM mcp_event_log WHERE epoch=? AND family=? AND scope_kind=? AND scope_id=? AND seq>? AND seq<=?)`), sub.CursorEpoch, sub.Name, sub.ScopeKind, sub.ScopeID, sub.CursorSeq, floor.Int64).Scan(&skipped); err != nil {
+	skipped, err := s.mcpDeliverableEventThroughTx(ctx, tx, sub, floor.Int64)
+	if err != nil {
 		return false, err
 	}
 	sub.CursorSeq = floor.Int64
@@ -998,7 +998,13 @@ func (s *Store) mcpPruneLosesEventTx(ctx context.Context, tx *sql.Tx, sub *MCPSu
 	if sub.PendingSeq > 0 && sub.PendingSeq <= floor {
 		return true, nil
 	}
-	rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT `+mcpEventColumns+` FROM mcp_event_log WHERE epoch=? AND family=? AND scope_kind=? AND scope_id=? AND seq>? AND seq<=? ORDER BY seq`), sub.CursorEpoch, sub.Name, sub.ScopeKind, sub.ScopeID, sub.CursorSeq, floor)
+	return s.mcpDeliverableEventThroughTx(ctx, tx, sub, floor)
+}
+
+// mcpDeliverableEventThroughTx reports whether an event after the cursor and
+// at or below through would be delivered to sub.
+func (s *Store) mcpDeliverableEventThroughTx(ctx context.Context, tx *sql.Tx, sub *MCPSubscription, through int64) (bool, error) {
+	rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT `+mcpEventColumns+` FROM mcp_event_log WHERE epoch=? AND family=? AND scope_kind=? AND scope_id=? AND seq>? AND seq<=? ORDER BY seq`), sub.CursorEpoch, sub.Name, sub.ScopeKind, sub.ScopeID, sub.CursorSeq, through)
 	if err != nil {
 		return false, err
 	}
