@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -196,6 +197,40 @@ func TestExecuteGCClearsSurvivingRepliesToSourceDeletedMessages(t *testing.T) {
 		"read surviving reply pointer")
 	assert.False(replyTo.Valid, "GC must clear the pointer to the purged parent")
 	assert.NotEqual(parent, replyTo.Int64)
+}
+
+func TestQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newSQLiteGCFixture(t)
+	now := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	questionAt := now.Add(-4 * 24 * time.Hour)
+	question := f.PersistEmail(storetest.EmailSpec{
+		Thread: "loop-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
+		Body: "Can you send the invoice?", SentAt: questionAt,
+	})
+	_, err := loops.Done(t.Context(), f.Store, question, now)
+	require.NoError(err)
+	sourceMessageID, err := f.Store.GetMessageSourceID(question)
+	require.NoError(err)
+	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, sourceMessageID))
+	plan, err := f.Store.PlanGCContext(t.Context())
+	require.NoError(err)
+	assert.Equal(int64(1), plan.SourceDeleted)
+	deleted, err := f.Store.ExecuteGCContext(t.Context(), plan)
+	require.NoError(err)
+	assert.Equal(int64(1), deleted)
+
+	replacement := f.PersistEmail(storetest.EmailSpec{
+		Thread: "loop-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
+		Body: "Can you send a new invoice?", SentAt: questionAt,
+	})
+	require.Equal(question, replacement, "SQLite reused the purged question ID")
+	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
+	require.NoError(err)
+	require.Len(result.Loops, 1, "a distinct question remains visible after the marked question was purged")
+	assert.Equal(replacement, result.Loops[0].Anchor.ID)
+	assert.Len(result.Loops[0].Questions, 1, "the replacement has no inherited decision")
 }
 
 func newSQLiteGCFixture(t *testing.T) *storetest.Fixture {

@@ -36,6 +36,7 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 					SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
 					MessageType: store.MessageTypeEmail, ConversationID: conversationID,
 					SenderID: sql.NullInt64{Int64: ids[0], Valid: true},
+					SentAt:   sql.NullTime{Time: loopAgo(4 * loopDay), Valid: true},
 				},
 				Recipients: []store.RecipientSet{
 					{Type: "from", ParticipantIDs: ids[:1], DisplayNames: []string{""}, EmailAddresses: []string{"alice@example.com"}},
@@ -111,6 +112,20 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 	`), draft.CurrentMessageID).Scan(&oldDeleted))
 	requirements.True(oldDeleted.Valid)
 	assertWritten(draft.CurrentMessageID, published.CurrentMessageID)
+	for _, id := range []int64{draft.CurrentMessageID, published.CurrentMessageID} {
+		var authored bool
+		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&authored))
+		assertions.True(authored)
+	}
+	var walked []int64
+	for conv, err := range st.LoopConversationsContext(t.Context(), store.LoopQuery{ConversationID: conversationID}) {
+		requirements.NoError(err)
+		for message, err := range conv.Walk() {
+			requirements.NoError(err)
+			walked = append(walked, message.ID)
+		}
+	}
+	assertions.Empty(walked, "live and retired draft snapshots stay outside the conversation walk")
 }
 
 func TestManagedIMAPDraftAttachmentReplacement(t *testing.T) {
