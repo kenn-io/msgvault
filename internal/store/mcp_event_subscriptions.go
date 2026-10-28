@@ -296,6 +296,20 @@ func (s *Store) ActivateMCPSubscription(ctx context.Context, a MCPActivation) (*
 	if r == nil || !r.config.Enabled || input.Principal != r.config.Principal {
 		return nil, false, mcpStoreError("subscription_unavailable")
 	}
+	// Retention may delete an inactive predecessor past its grace period.
+	// Commit that maintenance first: inside the activation transaction the
+	// deletion would roll back with the concurrent_update it causes, and
+	// every retry would meet the same stale row.
+	pruneNow := a.Now
+	if a.TTL > 0 {
+		pruneNow = time.Now().UTC()
+	}
+	if err := s.withMCPEventTx(ctx, func(tx *sql.Tx, clock MCPEventClock) error {
+		_, err := s.pruneExpiredMCPEventsTx(ctx, tx, clock, pruneNow, mcpEventRetention(r))
+		return err
+	}); err != nil {
+		return nil, false, err
+	}
 	var result *MCPSubscription
 	truncated := false
 	err := s.withMCPEventTx(ctx, func(tx *sql.Tx, clock MCPEventClock) error {
@@ -977,9 +991,6 @@ func (s *Store) pruneExpiredMCPEventsTx(ctx context.Context, tx *sql.Tx, clock M
 	return s.pruneMCPEventsTx(ctx, tx, clock, now, retention)
 }
 
-// mcpScopeEventThroughFloorSQL matches an event in an UPDATE target
-// subscription's selection scope after its cursor and at or below the floor
-// bound by the single placeholder.
 // mcpPruneLosesEventTx reports whether pruning through floor deletes an
 // occurrence this subscription would still deliver: its pending receipt, or
 // an event in its scope that passes the same filters as delivery.

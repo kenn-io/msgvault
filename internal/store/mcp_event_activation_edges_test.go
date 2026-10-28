@@ -193,3 +193,32 @@ func TestActivateMaxAgeFloorOnExpiredReactivation(t *testing.T) {
 		})
 	}
 }
+
+// Retention deletes an inactive subscription after its grace period. The
+// first activation sees that the predecessor it was challenged against is
+// gone; a retry for a fresh subscription must then succeed instead of
+// meeting the same stale row, because the maintenance was committed.
+func TestMCPEventsActivationAfterGraceCommitsPruning(t *testing.T) {
+	require := Require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	cfg := mcpStoreConfig()
+	cfg.Retention = 7 * 24 * time.Hour
+	clock, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
+	require.NoError(err)
+	input := newMCPStoreSubscription(t, f, 1, now)
+	_, _, err = f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: input, Now: now})
+	require.NoError(err)
+	generation, err := f.Store.EndMCPSubscription(t.Context(), input.ID, input.Principal, now)
+	require.NoError(err)
+	stale := now.Add(-48 * time.Hour).Format("2006-01-02T15:04:05.000000000Z")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_subscriptions SET expires_at=?,updated_at=? WHERE id=?`), stale, stale, input.ID)
+	require.NoError(err)
+	f.InsertMCPConversationEvent(clock.Epoch, clock.HeadSeq+1, f.ConvID, now.Add(-8*24*time.Hour))
+
+	_, _, err = f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: newMCPStoreSubscription(t, f, 1, now), ExpectedGeneration: generation, ExpectedState: "unsubscribed", ExpectedSecretRevision: 1, Now: now})
+	require.ErrorContains(err, "concurrent_update")
+	active, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: newMCPStoreSubscription(t, f, 1, now), Now: now})
+	require.NoError(err, "the retry must not meet the predecessor retention already removed")
+	require.Equal(int64(1), active.Generation)
+}
