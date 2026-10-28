@@ -507,7 +507,6 @@
 {/if}
 
 <style>
-  .deletions > p { margin: 0; }
   .deletions {
     display: flex;
     min-height: 0;
