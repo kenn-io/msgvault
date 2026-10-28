@@ -165,6 +165,20 @@ type ControlCalendarErrorResponseJSON503 = ErrorResponse
 
 type ControlCalendarErrorResponseJSONDefault = ErrorResponse
 
+type ListCalendarEventsResponse = CalendarOccurrencePage
+
+type ListCalendarEventsErrorResponse = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON403 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON500 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON503 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSONDefault = ErrorResponse
+
 type SaveCardDAVAccountResponse = CardDAVAccountResponse
 
 type SaveCardDAVAccountErrorResponse = ErrorResponse
@@ -4256,6 +4270,19 @@ type ControlCalendarResp struct {
 	JSON502      *ControlCalendarErrorResponseJSON502
 	JSON503      *ControlCalendarErrorResponseJSON503
 	JSONDefault  *ControlCalendarErrorResponseJSONDefault
+}
+
+type ListCalendarEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCalendarEventsResponse
+	JSON400      *ListCalendarEventsErrorResponse
+	JSON401      *ListCalendarEventsErrorResponseJSON
+	JSON403      *ListCalendarEventsErrorResponseJSON403
+	JSON500      *ListCalendarEventsErrorResponseJSON500
+	JSON503      *ListCalendarEventsErrorResponseJSON503
+	JSONDefault  *ListCalendarEventsErrorResponseJSONDefault
 }
 
 type SaveCardDAVAccountResp503Headers struct {
