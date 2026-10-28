@@ -157,10 +157,8 @@ describe('CardDAV connection selection', () => {
       target: { value: 'synthetic-work-password' }
     });
 
-    await waitFor(() => expect(drafts.work?.request).toMatchObject({
-      connection: 'work',
-      username: 'person@example.com',
-      password: 'synthetic-work-password'
+    await waitFor(() => expect(drafts.work).toMatchObject({
+      values: { username: 'person@example.com' }, password: 'synthetic-work-password'
     }));
     expect(drafts.work?.error).toBeUndefined();
     expect(bodies).toHaveLength(0);
@@ -222,9 +220,9 @@ it('restores an orphaned connection with its retained name and account details',
   expect(requests.some(request => new URL(request.url).pathname.endsWith('/conflicts'))).toBe(false);
 
   await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-work-password' } });
-  await waitFor(() => expect(drafts.work?.request).toEqual({
-    connection: 'work', base_url: 'https://work.example.test/', username: 'work@example.com',
-    enabled: true, schedule: '0 2 * * *', password: 'synthetic-work-password'
+  await waitFor(() => expect(drafts.work).toMatchObject({
+    values: { baseURL: 'https://work.example.test/', username: 'work@example.com', enabled: true, schedule: '0 2 * * *' },
+    password: 'synthetic-work-password'
   }));
   expect(drafts.work?.error).toBeUndefined();
 });

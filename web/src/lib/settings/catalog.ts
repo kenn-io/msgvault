@@ -36,14 +36,10 @@ export interface SettingsGroup {
   settings: SettingState[];
 }
 
-/** How saved changes in a run of settings take effect. Read-only settings
- * cannot change here, so they do not count. */
-export type RestartPosture = 'live' | 'restart' | 'mixed' | 'none';
-
 /**
  * Arranges daemon settings into the categories and sections the daemon
- * declares. The daemon is the only source of labels, descriptions, order,
- * and grouping; settings whose group the daemon did not declare are dropped.
+ * declares. Settings supplies its own category layout and selected labels.
+ * Settings whose group the daemon did not declare are dropped.
  */
 export function groupSettings(
   settings: readonly SettingState[],
@@ -63,19 +59,6 @@ export function groupSettings(
       return { id: group.id, label: group.label, description: group.description, sections, settings: members };
     })
     .filter((group) => group.settings.length > 0);
-}
-
-export function restartPosture(settings: readonly SettingState[]): RestartPosture {
-  const editable = settings.filter((setting) => !setting.read_only);
-  if (editable.length === 0) return 'none';
-  const restart = editable.filter((setting) => setting.restart_required).length;
-  if (restart === 0) return 'live';
-  if (restart === editable.length) return 'restart';
-  return 'mixed';
-}
-
-export function hasHostManaged(settings: readonly SettingState[]): boolean {
-  return settings.some((setting) => Boolean(setting.read_only));
 }
 
 /** The value a setting holds on the daemon, as the plain value a control edits. */
