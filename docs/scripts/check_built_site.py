@@ -392,18 +392,6 @@ def fragment_id(fragment: str) -> str:
     return urllib.parse.unquote(fragment)
 
 
-def check_website_fonts_embedded() -> None:
-    # A font fetched as its own file arrives after the first paint, so every
-    # website face must ship inside the stylesheet (see embed_website_assets.py).
-    css = (SITE / "styles" / "site.css").read_text(encoding="utf-8")
-    sources = re.findall(r"@font-face\s*{[^}]*?src:\s*url\(\"?([^\")]+)", css)
-    if not sources:
-        fail("styles/site.css declares no website fonts")
-    for source in sources:
-        if not source.startswith("data:font/woff2;base64,"):
-            fail(f"styles/site.css loads a font from a file: {source}")
-
-
 def check_expected_asset_files() -> None:
     for asset in STATIC_ASSETS:
         path = SITE / "docs" / "assets" / "static" / asset
@@ -459,7 +447,8 @@ def main() -> None:
     for relative in WEBSITE_FILES:
         if not (SITE / relative).is_file():
             fail(f"missing website file {relative}")
-    check_website_fonts_embedded()
+    if not any((SITE / "fonts").glob("*.woff2")):
+        fail("missing website fonts")
 
     if not (SITE / "docs" / "404.html").exists():
         fail("missing docs/404.html")

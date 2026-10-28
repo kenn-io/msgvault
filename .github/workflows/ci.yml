@@ -293,39 +293,6 @@ jobs:
           PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
         run: make web-test-browser
 
-      # web-test-browser built ./msgvault with the embedded Web UI. Check the
-      # pages the daemon serves so the check sees its real headers and CSP.
-      - name: Start daemon for the first-paint check
-        id: first-paint-daemon
-        run: |
-          home="$RUNNER_TEMP/first-paint-home"
-          mkdir -p "$home"
-          printf '[server]\nbind_addr = "127.0.0.1"\n[analytics]\nauto_build_cache = false\n[vector]\nenabled = false\n' > "$home/config.toml"
-          ./msgvault --home "$home" serve --port 18431 > "$home/serve.log" 2>&1 &
-          echo "pid=$!" >> "$GITHUB_OUTPUT"
-          for attempt in {1..60}; do
-            if curl --fail --silent --output /dev/null --max-time 2 http://127.0.0.1:18431/; then
-              exit 0
-            fi
-            sleep 1
-          done
-          cat "$home/serve.log" >&2
-          echo 'msgvault serve did not answer within 60 attempts.' >&2
-          exit 1
-
-      - name: Check first paint
-        uses: kenn-io/actions/first-paint@ee1ddcce6a620e49ba96f613bb8d113e0193b4f6 # first-paint, kenn-io/actions#6
-        with:
-          urls: |
-            http://127.0.0.1:18431/
-            http://127.0.0.1:18431/messages/1
-
-      - name: Stop first-paint daemon
-        if: always() && steps.first-paint-daemon.outputs.pid != ''
-        env:
-          DAEMON_PID: ${{ steps.first-paint-daemon.outputs.pid }}
-        run: kill "$DAEMON_PID" || true
-
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

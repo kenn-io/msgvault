@@ -92,9 +92,6 @@ variant = "modern"
 custom_dir = "overrides"
 logo = "assets/static/favicon.svg"
 favicon = "assets/static/favicon.svg"
-# stylesheets/extra.css sets the system font stacks the docs use; skip the
-# theme's Google Fonts stylesheet, which only declared faces nothing renders.
-font = false
 features = [
   "navigation.instant",
   "navigation.instant.progress",
