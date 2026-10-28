@@ -29,7 +29,7 @@ func TestBeeperSend(t *testing.T) {
 		name, code                                                                                                       string
 		status, replyStatus                                                                                              int
 		disabled, unarchived, file, relative, directory, reply, wrongReply, grant, wrongSource, draftOnly, uploadFailure bool
-		merged, changedReply, padded, body, uploadError, foreignAccount                                                  bool
+		merged, changedReply, padded, body, uploadError, foreignAccount, truncated                                       bool
 	}{
 		{name: "accepted", code: "accepted"},
 		{name: "padded chat", code: "accepted", padded: true},
@@ -43,6 +43,8 @@ func TestBeeperSend(t *testing.T) {
 		{name: "send grant disabled", code: "send_disabled", grant: true, disabled: true},
 		{name: "unknown", code: "remote_unknown", status: 500},
 		{name: "rejected", code: "provider_rejected", status: 409},
+		{name: "truncated rejection", code: "provider_rejected", status: 400, truncated: true},
+		{name: "truncated success", code: "remote_unknown", status: 200, truncated: true},
 		{name: "not archived", code: "chat_not_archived", unarchived: true},
 		{name: "draft grant", code: "not_permitted", grant: true, draftOnly: true},
 		{name: "wrong source grant", code: "not_permitted", grant: true, wrongSource: true},
@@ -120,6 +122,10 @@ func TestBeeperSend(t *testing.T) {
 					}
 					if tc.reply {
 						assert.Equal("original", body["replyToMessageID"])
+					}
+					if tc.truncated {
+						// Advertise more bytes than the server sends to force a body-read error.
+						w.Header().Set("Content-Length", "100")
 					}
 					if tc.status != 0 {
 						w.WriteHeader(tc.status)

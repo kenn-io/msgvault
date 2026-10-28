@@ -55,7 +55,7 @@ func (c Chat) DraftState() (DraftState, error) {
 // WriteError reports a failed write. Status is the HTTP status Beeper
 // returned, 400 for a 200 upload response that carries an error
 // payload, or 0 when the request may have reached Beeper without a
-// response.
+// complete success response.
 type WriteError struct {
 	Status int
 	Err    error
@@ -117,7 +117,11 @@ func (c *Client) writeOnce(ctx context.Context, method, path, contentType string
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDraftResponseBytes))
 	if err != nil {
-		return nil, &WriteError{Err: err}
+		failure := &WriteError{Err: err}
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			failure.Status = resp.StatusCode
+		}
+		return nil, failure
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, &WriteError{Status: resp.StatusCode, Err: errPermanentResponse}
