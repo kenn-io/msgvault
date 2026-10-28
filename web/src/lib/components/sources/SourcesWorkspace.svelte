@@ -458,6 +458,11 @@
 </main>
 
 <style>
+  .sources > p { margin: 0; }
+  .sources > :global(.page-header) {
+    margin-bottom: calc(var(--space-5) - var(--space-4));
+  }
+
   .sources {
     display: flex;
     min-height: 0;

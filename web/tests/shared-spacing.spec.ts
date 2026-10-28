@@ -254,3 +254,30 @@ test('app scrollbars use the shared 8px style', async ({ page }) => {
   const size = await page.locator('.kit-settings__scroll').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar').width);
   expect(size).toBe('8px');
 });
+test.describe('touch reading', () => {
+  test.use({ isMobile: true, hasTouch: true, viewport: { width: 620, height: 900 } });
+
+  test('body and recording transcript share the reading size in one card', async ({ page }) => {
+    await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+      rows: [{ ...row, message_type: 'beeper', conversation_type: 'direct_chat', conversation_id: 11, anchor_message_id: 1 }],
+      total_count: 1, cache_revision: 'reading-size', search_provenance: {}
+    } }));
+    await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
+      id: 11, anchor_id: 1, has_before: false, has_after: false, total: 1,
+      messages: [{ id: 1, conversation_id: 11, subject: row.title, message_type: 'beeper',
+        from: 'Example Person', to: [], sent_at: row.occurred_at, body: 'A synthetic voice note body.',
+        attachments: [{ id: 1, filename: 'Voice-note.ogg', mime_type: 'audio/ogg', size_bytes: 2048, stored: false }] }]
+    } }));
+    await page.route('**/api/v1/messages/1/recordings', (route) => route.fulfill({ json: {
+      message_id: 1, recordings: [{ attachment_id: 1, filename: 'Voice-note.ogg', size_bytes: 2048, state: 'ready',
+        transcript: { origin: 'generated', units: [{ text: 'A synthetic voice note transcript.' }] } }]
+    } }));
+    await selectWorkspace(page, 'Everything');
+    await page.getByText(row.title, { exact: true }).click();
+    const card = page.locator('.message-card');
+    await expect(card.locator('.card-body pre')).toHaveText('A synthetic voice note body.');
+    await expect(card.locator('.transcript')).toContainText('A synthetic voice note transcript.');
+    await expect(card.locator('.card-body pre')).toHaveCSS('font-size', '14px');
+    await expect(card.locator('.transcript')).toHaveCSS('font-size', '14px');
+  });
+});
