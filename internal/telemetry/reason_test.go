@@ -130,9 +130,12 @@ func TestProviderFailureReasons(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
+				releaseResponse := make(chan struct{})
+				defer close(releaseResponse)
 				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if tc.status == 0 {
-						<-r.Context().Done()
+						// Returning on cancellation can send an empty 200 before the client observes its timeout.
+						<-releaseResponse
 						return
 					}
 					w.Header().Set("Retry-After", "1")
@@ -144,7 +147,7 @@ func TestProviderFailureReasons(t *testing.T) {
 				t.Cleanup(func() { http.DefaultTransport = transport })
 				err := tc.run(t.Context(), "https://example.com")
 				require.Error(t, err)
-				assert.Equal(t, tc.want, reason(err))
+				assert.Equal(t, tc.want, reason(err), "provider error: %v", err)
 			})
 		})
 	}
