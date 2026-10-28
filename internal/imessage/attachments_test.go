@@ -603,6 +603,7 @@ func TestImportSummarizesAttachmentFailures(t *testing.T) {
 	}
 	require.NoError(os.RemoveAll(dest))
 	require.NoError(os.WriteFile(dest, []byte("synthetic destination blocker"), 0600))
+	c.pageSize = 5
 	c.limit = 13
 
 	summary, err := c.Import(t.Context(), st, source)
