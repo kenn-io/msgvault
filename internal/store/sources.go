@@ -431,6 +431,16 @@ const packedBlobHashesUniqueToSourceSQL = `
 func (s *Store) removeSourceExec(
 	ctx context.Context, tx *loggedTx, sourceID int64,
 ) error {
+	// This maintenance transaction runs outside the write fences. When it
+	// will lock the Events clock, take the identity fence first, as fenced
+	// writers do. A capture-off writer holds a key-share identity lock and a
+	// share clock lock; the identity mutation lock below does not exclude it,
+	// so taking the clock after that lock could deadlock with the writer.
+	if s.captureMCPEnabled() {
+		if err := s.mcpIdentityFence(ctx, tx.Tx); err != nil {
+			return mcpSafeError(err)
+		}
+	}
 	// Identity candidate writes take this lock before validating and writing
 	// their polymorphic endpoints. Taking the same lock before source cleanup
 	// prevents a candidate from being inserted after cleanup but before the

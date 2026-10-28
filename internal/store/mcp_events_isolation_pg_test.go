@@ -95,3 +95,49 @@ func TestMCPEventsDisabledRepeatableReadWriterSeesCaptureEnabled(t *testing.T) {
 	assert.False(enabled, "the uncaptured write must turn capture off")
 	assert.Equal(enabledEpoch+1, epoch, "the uncaptured write must start a new epoch")
 }
+
+// Source removal runs in a maintenance transaction outside the write fences.
+// When it will lock the Events clock it must first take the identity fence,
+// or it can deadlock with a capture-off writer that holds a key-share lock on
+// identity and a share lock on the clock, then asks for identity again. The
+// writer here issues the same statements a capture-off writer does; a Store
+// keeps one Events runtime, so a second handle cannot be opened in-process.
+func TestMCPEventsSourceRemovalDoesNotDeadlockCaptureOffWriter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, err := st.ConfigureMCPEvents(ctx, MCPEventsConfig{
+		Enabled: true, Principal: "owner:synthetic",
+		Capabilities: []MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}},
+	})
+	require.NoError(err)
+	// Another process turned persisted capture off.
+	_, err = st.DB().ExecContext(ctx, `UPDATE mcp_event_clock SET enabled=FALSE WHERE singleton=1`)
+	require.NoError(err)
+	source, err := st.GetOrCreateSource("gmail", "removed@example.test")
+	require.NoError(err)
+
+	writer, err := st.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	defer func() { _ = writer.Rollback() }()
+	var writerPID int
+	require.NoError(writer.QueryRowContext(ctx, `SELECT pg_backend_pid() FROM archive_metadata WHERE key=$1 FOR KEY SHARE`, identityRevisionKey).Scan(&writerPID))
+	var enabled bool
+	require.NoError(writer.QueryRowContext(ctx, `SELECT enabled FROM mcp_event_clock WHERE singleton=1 FOR SHARE`).Scan(&enabled))
+	require.False(enabled)
+
+	removed := make(chan error, 1)
+	go func() { removed <- st.RemoveSource(source.ID) }()
+	waitForPGBlockedQuery(ctx, t, st, writerPID, "%")
+	_, err = writer.ExecContext(ctx, `SELECT value FROM archive_metadata WHERE key=$1 FOR SHARE`, identityRevisionKey)
+	require.NoError(err, "the writer must not deadlock with source removal")
+	require.NoError(writer.Commit())
+	select {
+	case err = <-removed:
+	case <-ctx.Done():
+		require.FailNow("source removal did not finish")
+	}
+	assert.NoError(err)
+}
