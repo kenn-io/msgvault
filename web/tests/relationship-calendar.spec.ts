@@ -52,7 +52,7 @@ async function openCalendar(page: Page, firstAt: string | Promise<string> = pers
   await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
 }
 
-test('calendar heading clears the graph and uses shared type sizes', async ({ page }) => {
+test('calendar heading clears the graph and uses the touch type scale', async ({ page }) => {
   await openCalendar(page);
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
   const geometry = await calendar.evaluate((element) => {

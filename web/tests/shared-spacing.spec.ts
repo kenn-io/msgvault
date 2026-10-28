@@ -1,9 +1,7 @@
 import { expect, test } from '@playwright/test';
-import { selectWorkspace } from './kit-ui';
+import { selectWorkspace, visibleScrollbarTest } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
-
-const visibleScrollbarTest = test.extend({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
 
 test.beforeEach(async ({ page }) => {
   await mockArchiveLayout(page);
@@ -170,8 +168,15 @@ test('filter, saved-query, and status chips share heights and visible insets', a
 });
 
 test('linked message uses the page title text scale', async ({ page }) => {
-  await page.route('**/api/v1/messages/1', (route) => route.fulfill({ json: {
-    id: 1, conversation_id: 11, subject: row.title, message_type: 'email'
+  const message = {
+    id: 1, conversation_id: 11, subject: row.title, message_type: 'email',
+    from: 'sender@example.com', to: ['archive@example.com'], sent_at: row.occurred_at,
+    snippet: row.preview, body: 'A linked archive message.', body_html: '',
+    labels: [], has_attachments: false, size_bytes: 25, attachments: []
+  };
+  await page.route('**/api/v1/messages/1', (route) => route.fulfill({ json: message }));
+  await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
+    id: 11, anchor_id: 1, messages: [message], has_before: false, has_after: false, total: 1
   } }));
   await page.goto('/messages/1');
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
