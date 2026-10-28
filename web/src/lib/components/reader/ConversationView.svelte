@@ -341,7 +341,7 @@
   .conversation-view > [role='status'],
   .conversation-view > [role='alert'] {
     margin: 0;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }

@@ -722,7 +722,7 @@
   }
 
   .hub-header {
-    padding: var(--space-5) var(--page-gutter) var(--space-4);
+    padding: var(--space-5) var(--page-gutter) 0;
   }
 
   .hub-body {
@@ -766,9 +766,9 @@
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--section-gap);
     margin-inline: auto;
-    padding: var(--space-6) var(--space-7);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     overflow: auto;
   }
 
@@ -786,7 +786,7 @@
     min-height: 80px;
     max-height: 50%;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--section-gap);
     overflow: auto;
   }
 

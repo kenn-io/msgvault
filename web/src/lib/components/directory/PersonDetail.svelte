@@ -284,21 +284,21 @@
 </section>
 
 <style>
-  .person-detail { display: grid; min-width: 0; gap: var(--space-4); padding: var(--space-4); }
+  .person-detail { display: grid; min-width: 0; gap: var(--section-gap); padding: var(--pane-pad-y) var(--pane-pad-x); }
   .person-header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .person-header h2 { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .person-actions { display: contents; }
   .person-detail :global(.detail-surface) { min-width: 0; overflow: hidden; }
   .detail-frame { min-width: 0; }
-  .detail-tabs { display: flex; flex-wrap: nowrap; gap: var(--space-1); overflow-x: auto; padding: var(--space-2); border-bottom: 1px solid var(--border-muted); background: var(--bg-inset); }
-  [role="tab"] { flex: none; padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: inherit; font-size: var(--font-size-sm); font-weight: 500; white-space: nowrap; cursor: pointer; }
+  .detail-tabs { display: flex; flex-wrap: nowrap; gap: var(--space-1); overflow-x: auto; padding: var(--pane-pad-y) var(--pane-pad-x); border-bottom: 1px solid var(--border-muted); background: var(--bg-inset); }
+  [role="tab"] { flex: none; padding: var(--space-2) var(--control-pad-x); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: inherit; font-size: var(--font-size-sm); font-weight: 500; white-space: nowrap; cursor: pointer; }
   [role="tab"]:hover { background: var(--bg-surface-hover); color: var(--text-secondary); }
   [role="tab"][aria-selected="true"] { background: var(--bg-surface); color: var(--text-primary); box-shadow: var(--shadow-sm); font-weight: 650; }
   [role="tab"]:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
-  .panel-shell { display: grid; min-width: 0; gap: var(--space-5); padding: var(--space-5); background: var(--bg-surface); }
+  .panel-shell { display: grid; min-width: 0; gap: var(--section-gap); padding: var(--pane-pad-y) var(--pane-pad-x); background: var(--bg-surface); }
   .panel-shell:focus-visible { outline: var(--focus-ring); outline-offset: -3px; }
   .panel-heading { display: grid; gap: var(--space-1); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-muted); }
-  .panel-heading span { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .panel-heading span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 600; }
   .panel-heading h3 { font-size: var(--font-size-lg); }
   .panel-heading p { color: var(--text-muted); font-size: var(--font-size-sm); }
   .tab-body { display: grid; min-width: 0; gap: var(--space-4); }
@@ -308,7 +308,7 @@
   ul { padding-left: var(--space-5); }
   .section-error { margin: 0; padding: var(--space-3); border-radius: var(--radius-sm); background: var(--bg-inset); color: var(--text-secondary); }
   @media (max-width: 640px) {
-    .person-detail { padding: var(--space-3); }
-    .panel-shell { padding: var(--space-4); }
+    .person-detail { padding: var(--pane-pad-y) var(--pane-pad-x); }
+    .panel-shell { padding: var(--pane-pad-y) var(--pane-pad-x); }
   }
 </style>

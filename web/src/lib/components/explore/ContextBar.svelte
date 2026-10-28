@@ -191,7 +191,7 @@
     min-width: 0;
     flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
@@ -216,7 +216,8 @@
     max-width: 100%;
     align-items: center;
     gap: var(--space-1);
-    padding: 0 var(--chip-pad-x);
+    padding: 0 var(--space-1) 0 var(--chip-pad-x);
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
     background: var(--bg-inset);
     color: var(--text-secondary);

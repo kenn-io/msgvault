@@ -143,12 +143,12 @@
 
 <style>
   .recordings {
-    padding: 0 var(--space-4) var(--space-4);
+    padding: 0 var(--pane-pad-x) var(--pane-pad-y);
   }
 
   .recordings-error {
     margin: 0;
-    padding: 0 var(--space-4) var(--space-4);
+    padding: 0 var(--pane-pad-x) var(--pane-pad-y);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
@@ -230,7 +230,7 @@
     overflow-wrap: break-word;
     color: var(--text-primary);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: var(--font-size-md);
     line-height: 1.55;
     white-space: pre-wrap;
   }

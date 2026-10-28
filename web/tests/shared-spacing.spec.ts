@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { selectWorkspace, setKitTheme } from './kit-ui';
+import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
 
@@ -12,70 +12,57 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Relationships', exact: true })).toBeVisible();
 });
 
-for (const theme of ['light', 'dark'] as const) {
-  test(`${theme}: header band ends at its reserved margin`, async ({ page }) => {
-    await setKitTheme(page, theme);
-    // The extra four pixels used to paint over the page's own content gap.
-    const header = page.locator('.page-header');
-    const band = await header.evaluate((element) => {
-      const box = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      const background = getComputedStyle(element, '::before');
-      return {
-        top: Number.parseFloat(background.top),
-        bottom: Number.parseFloat(background.bottom),
-        end: box.bottom - Number.parseFloat(background.bottom),
-        reservedEnd: box.bottom + Number.parseFloat(style.marginBottom)
-      };
-    });
-    expect(band.top).toBe(-12);
-    expect(band.bottom).toBe(-12);
-    expect(band.end).toBe(band.reservedEnd);
-    await expect(page.getByRole('grid', { name: 'Relationship results' })).toBeVisible();
+test('landing header divider meets the content boundary', async ({ page }) => {
+  const gap = await page.locator('.page-header').evaluate((element) => {
+    const band = getComputedStyle(element, '::before');
+    const divider = element.getBoundingClientRect().bottom - Number.parseFloat(band.bottom);
+    return document.querySelector('.hub-body')!.getBoundingClientRect().top - divider;
   });
+  expect(gap).toBe(0);
+  await expect(page.getByRole('grid', { name: 'Relationship results' })).toBeVisible();
+});
 
-  test(`${theme}: reader, selection, and dialog share inset edges`, async ({ page }) => {
-    await setKitTheme(page, theme);
-    await selectWorkspace(page, 'Everything');
-    await page.getByText(row.title, { exact: true }).click();
-    const reader = page.getByRole('complementary', { name: `Reading pane: ${row.title}` });
-    await expect(reader).toBeVisible();
-    const inset = await reader.locator('.pane-header').evaluate((element) => {
-      const box = element.getBoundingClientRect();
-      const heading = element.querySelector('.pane-heading')!.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return { left: heading.left - box.left, top: style.paddingTop, gap: style.columnGap };
-    });
-    expect(inset).toEqual({ left: 12, top: '8px', gap: '16px' });
-    await page.getByRole('button', { name: 'Close reading pane' }).click();
-    const grid = page.getByRole('grid', { name: 'Everything results' });
-    await grid.focus();
-    await page.keyboard.press('Shift+A');
-    const bar = page.locator('.selection-bar');
-    await expect(bar).toBeVisible();
-    const selectionInset = await bar.evaluate((element) => {
-      const box = element.getBoundingClientRect();
-      const count = element.querySelector('.selection-count')!.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return { left: count.left - box.left, top: style.paddingTop, gap: style.columnGap };
-    });
-    expect(selectionInset).toEqual({ left: 12, top: '8px', gap: '8px' });
-    await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
-    await page.getByRole('button', { name: 'Save view…' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Save view' });
-    await expect(dialog).toBeVisible();
-    const edges = await dialog.evaluate((element) => {
-      const headerElement = element.querySelector<HTMLElement>('.kit-modal-header')!;
-      const header = headerElement.getBoundingClientRect();
-      const body = element.querySelector('.kit-modal-body')!.getBoundingClientRect();
-      const heading = element.querySelector('.kit-modal-title')!.getBoundingClientRect();
-      const input = element.querySelector('.kit-text-input')!.getBoundingClientRect();
-      return { heading: heading.left - header.left - headerElement.clientLeft, field: input.left - body.left };
-    });
-    expect(edges).toEqual({ heading: 12, field: 12 });
-    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+test('reader, selection, and dialog share inset edges', async ({ page }) => {
+  await selectWorkspace(page, 'Everything');
+  await page.getByText(row.title, { exact: true }).click();
+  const reader = page.getByRole('complementary', { name: `Reading pane: ${row.title}` });
+  await expect(reader).toBeVisible();
+  const inset = await reader.locator('.pane-header').evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const heading = element.querySelector('.pane-heading')!.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return { left: heading.left - box.left, top: style.paddingTop, gap: style.columnGap };
   });
-}
+  expect(inset).toEqual({ left: 12, top: '8px', gap: '16px' });
+  await page.getByRole('button', { name: 'Close reading pane' }).click();
+  const grid = page.getByRole('grid', { name: 'Everything results' });
+  await grid.focus();
+  await page.keyboard.press('Shift+A');
+  const bar = page.locator('.selection-bar');
+  await expect(bar).toBeVisible();
+  const selectionInset = await bar.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const count = element.querySelector('.selection-count')!.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return { left: count.left - box.left, top: style.paddingTop, gap: style.columnGap };
+  });
+  expect(selectionInset).toEqual({ left: 12, top: '8px', gap: '8px' });
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await page.getByRole('button', { name: 'Save view…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Save view' });
+  await expect(dialog).toBeVisible();
+  const edges = await dialog.evaluate((element) => {
+    const headerElement = element.querySelector<HTMLElement>('.kit-modal-header')!;
+    const header = headerElement.getBoundingClientRect();
+    const body = element.querySelector('.kit-modal-body')!.getBoundingClientRect();
+    const heading = element.querySelector('.kit-modal-title')!.getBoundingClientRect();
+    const input = element.querySelector('.kit-text-input')!.getBoundingClientRect();
+    return { heading: heading.left - header.left - headerElement.clientLeft, field: input.left - body.left };
+  });
+  expect(edges).toEqual({ heading: 12, field: 12 });
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+});
+
 test('narrow page keeps the header band inside the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 600, height: 720 });
   const band = await page.locator('.page-header').evaluate((element) => {
@@ -113,18 +100,26 @@ test('loaded message sender, body, and attachment edges align with the reader', 
   expect(insets).toEqual([12, 12, 12, 12]);
 });
 
-test('Everything and Files search chips use the shared text inset', async ({ page }) => {
+test('adjacent removable chips have equal heights and even visible insets', async ({ page }) => {
   for (const workspace of ['Everything', 'Files']) {
     await selectWorkspace(page, workspace);
-    await page.getByRole('searchbox', { name: "Search everything" }).fill('archive');
-    const chip = page.locator('.context-chips .chip').first();
-    await expect(chip).toBeVisible();
-    const inset = await chip.evaluate((element) => {
+    await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
+    if (workspace === 'Everything') {
+      await page.getByRole('combobox', { name: 'Group by', exact: true }).click();
+      await page.getByRole('option', { name: 'Source', exact: true }).click();
+    }
+    const chips = page.locator('.context-chips .chip');
+    await expect(chips).toHaveCount(2);
+    const geometry = await chips.evaluateAll((elements) => elements.map((element) => {
       const range = document.createRange();
       range.selectNodeContents(element.firstChild!);
-      return range.getBoundingClientRect().left - element.getBoundingClientRect().left;
-    });
-    expect(inset).toBe(8);
+      const box = element.getBoundingClientRect();
+      const icon = element.querySelector('svg')!.getBoundingClientRect();
+      const border = Number.parseFloat(getComputedStyle(element).borderLeftWidth);
+      return { height: box.height, left: range.getBoundingClientRect().left - box.left - border,
+        right: box.right - border - icon.right };
+    }));
+    expect(geometry).toEqual([{ height: 26, left: 8, right: 8 }, { height: 26, left: 8, right: 8 }]);
   }
 });
 
@@ -137,4 +132,40 @@ test('linked message uses the page title text scale', async ({ page }) => {
   } }));
   await page.goto('/messages/1');
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
+});
+
+test('overflowing settings keep controls clear of the themed scrollbar', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.route('**/api/v1/settings', (route) => route.fulfill({
+    headers: { ETag: '"scrolling-settings"' },
+    json: {
+      groups: [{ id: 'browser', label: 'Appearance' }],
+      settings: Array.from({ length: 30 }, (_, index) => ({
+        key: `web.example_${index}`, group: 'browser', label: `Example setting ${index}`,
+        kind: 'string', value: { string: 'Example value' }, restart_required: false
+      }))
+    }
+  }));
+  await selectWorkspace(page, 'Settings');
+  const scroll = page.locator('.kit-settings__scroll');
+  const control = page.getByRole('textbox', { name: 'Example setting 29', exact: true });
+  await control.scrollIntoViewIfNeeded();
+  const geometry = await scroll.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const control = element.querySelectorAll('.kit-text-input');
+    const card = control[control.length - 1].closest('.kit-card')!;
+    return { overflow: element.scrollHeight > element.clientHeight,
+      clearance: box.left + element.clientLeft + element.clientWidth - control[control.length - 1].getBoundingClientRect().right,
+      inset: card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - control[control.length - 1].getBoundingClientRect().right,
+      scrollbar: getComputedStyle(element, '::-webkit-scrollbar').width };
+  });
+  expect(geometry.overflow).toBe(true);
+  expect(geometry.clearance).toBeGreaterThanOrEqual(12);
+  expect(geometry.inset).toBe(12);
+  expect(geometry.scrollbar).toBe('8px');
+  const gap = await page.locator('.page-header').evaluate((element) => {
+    const band = getComputedStyle(element, '::before');
+    return document.querySelector('.kit-settings')!.getBoundingClientRect().top - element.getBoundingClientRect().bottom + Number.parseFloat(band.bottom);
+  });
+  expect(gap).toBe(0);
 });

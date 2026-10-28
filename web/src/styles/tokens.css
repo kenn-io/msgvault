@@ -165,11 +165,11 @@
  * with a wide gap above and below and a narrow one beside. Stretch the
  * segments to the track and pad them from tokens, so every side of the pill
  * and the text in it is even. */
-:root:root .kit-segmented:not(.kit-segmented--borderless) {
+:root:root .kit-segmented:not(.kit-segmented--borderless):not(.kit-segmented--block) {
   align-items: stretch;
 }
 
-:root:root .kit-segmented .kit-segmented__btn {
+:root:root .kit-segmented:not(.kit-segmented--borderless):not(.kit-segmented--block) .kit-segmented__btn {
   padding: 0 var(--control-pad-x);
 }
 
