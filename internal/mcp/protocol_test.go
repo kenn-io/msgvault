@@ -21,6 +21,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/stacktest"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -142,6 +143,7 @@ func newTask5RawStdioPeerWithServer(t *testing.T, server *sdkmcp.Server) *task5R
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
+			stacktest.Dump(t)
 			assert.Fail(t, "raw stdio server did not stop within timeout")
 		}
 	})
@@ -159,6 +161,7 @@ func (p *task5RawStdioPeer) writeLiteralLine(t *testing.T, line string) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
+		stacktest.Dump(t)
 		require.FailNow(t, "raw stdio request write timed out")
 	}
 }
@@ -187,6 +190,7 @@ func (p *task5RawStdioPeer) callRaw(t *testing.T, line string) (task3RPCResponse
 		require.NoError(t, scanned.err, "raw stdio response")
 		raw = scanned.line
 	case <-time.After(5 * time.Second):
+		stacktest.Dump(t)
 		require.FailNow(t, "raw stdio response read timed out")
 	}
 	var response task3RPCResponse

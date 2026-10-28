@@ -11,6 +11,7 @@ permissions:
 
 # Compile without absolute source paths, like the Makefile does.
 env:
+  GOTRACEBACK: all
   GOFLAGS: -trimpath
 
 jobs:
