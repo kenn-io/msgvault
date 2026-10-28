@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Chip, CopyButton } from '@kenn-io/kit-ui';
+  import { Button, Chip } from '@kenn-io/kit-ui';
 
   import type { OverviewAction, OverviewRow } from '../../settings/overview';
 
@@ -13,7 +13,7 @@
     rows: readonly OverviewRow[];
     /** The id of the start action in progress; every start button waits. */
     working?: string;
-    onSetUp: (action: Extract<OverviewAction, { kind: 'setup' }>) => void;
+    onSetUp: (action: Extract<OverviewAction, { kind: 'settings' }>) => void;
     onSources: () => void;
     onStart: (action: Extract<OverviewAction, { kind: 'start' }>) => void;
   } = $props();
@@ -29,7 +29,7 @@
       </span>
       <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
       <span class="row__action">
-        {#if action?.kind === 'setup'}
+        {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${row.name}`} onclick={() => onSetUp(action)} />
         {:else if action?.kind === 'start'}
           <Button
@@ -41,12 +41,10 @@
             disabled={working !== ''}
             onclick={() => onStart(action)}
           />
-        {:else if action?.kind === 'command'}
-          <code>{action.command}</code><CopyButton text={action.command} />
         {:else if action?.kind === 'sources'}
           <Button size="sm" label="Open Sources status" onclick={onSources} />
-        {:else if action?.kind === 'guide'}
-          <a class="row__guide" href={action.href} target="_blank" rel="noreferrer">Setup guide</a>
+        {:else if action?.kind === 'host'}
+          <a class="row__guide" href={action.guideHref} target="_blank" rel="noreferrer">{action.guideLabel}</a>
         {/if}
       </span>
       {#if action?.kind === 'start' && action.consent}<span class="row__consent">{action.consent}</span>{/if}
