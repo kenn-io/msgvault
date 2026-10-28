@@ -43,41 +43,40 @@ func TestListLiveDaemonRuntimeRecordsKeepsUnjudgedRecords(t *testing.T) {
 }
 
 func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
-	for _, background := range []string{"", "1"} {
-		t.Run("background="+background, func(t *testing.T) {
-			t.Setenv(serveBackgroundChildEnv, background)
-			require := require.New(t)
-			assert := assert.New(t)
-			dataDir := t.TempDir()
+	t.Setenv(serveBackgroundChildEnv, "")
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
 
-			written, shutdownToken, err := writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key")
-			require.NoError(err, "writeDaemonRuntime")
-			require.NotEmpty(shutdownToken, "shutdown token")
-			t.Cleanup(func() { removeDaemonRuntime(dataDir) })
+	written, shutdownToken, err := writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key")
+	require.NoError(err, "writeDaemonRuntime")
+	require.NotEmpty(shutdownToken, "shutdown token")
+	t.Cleanup(func() { removeDaemonRuntime(dataDir) })
 
-			path, err := daemon.RuntimeStore{Dir: dataDir}.Path(written.PID)
-			require.NoError(err, "runtime record path")
-			rec, err := daemon.RuntimeStore{Dir: dataDir}.Read(path)
-			require.NoError(err, "read runtime record")
+	path, err := daemon.RuntimeStore{Dir: dataDir}.Path(written.PID)
+	require.NoError(err, "runtime record path")
+	rec, err := daemon.RuntimeStore{Dir: dataDir}.Read(path)
+	require.NoError(err, "read runtime record")
 
-			assert.Equal(daemonService, rec.Service, "service")
-			assert.Equal("v-test", rec.Version, "version")
-			assert.Equal(daemon.NetworkTCP, rec.Network, "network")
-			assert.Equal(net.JoinHostPort("127.0.0.1", "8123"), rec.Address, "address")
-			assert.Equal("127.0.0.1", rec.Metadata[runtimeHost], "host metadata")
-			assert.Equal(strconv.Itoa(8123), rec.Metadata[runtimePort], "port metadata")
-			assert.Equal(strconv.Itoa(daemonAPIVersion), rec.Metadata[runtimeAPIVersion], "api version metadata")
-			assert.Equal(api.APISchemaVersion, rec.Metadata[runtimeAPISchemaVersion], "api schema metadata")
-			assert.Equal(daemonAPIKeyFingerprint("test-api-key"), rec.Metadata[runtimeAuthFingerprint], "api key fingerprint metadata")
-			assert.Equal(shutdownToken, rec.Metadata[runtimeShutdownToken], "shutdown token metadata")
-			assert.Equal(daemonStartupPhaseInitial, rec.Metadata[runtimeStartupPhase], "startup phase metadata")
-			if background == "1" {
-				assert.Equal("true", rec.Metadata[runtimeBackground])
-			} else {
-				assert.NotContains(rec.Metadata, runtimeBackground)
-			}
-		})
-	}
+	assert.Equal(daemonService, rec.Service, "service")
+	assert.Equal("v-test", rec.Version, "version")
+	assert.Equal(daemon.NetworkTCP, rec.Network, "network")
+	assert.Equal(net.JoinHostPort("127.0.0.1", "8123"), rec.Address, "address")
+	assert.Equal("127.0.0.1", rec.Metadata[runtimeHost], "host metadata")
+	assert.Equal(strconv.Itoa(8123), rec.Metadata[runtimePort], "port metadata")
+	assert.Equal(strconv.Itoa(daemonAPIVersion), rec.Metadata[runtimeAPIVersion], "api version metadata")
+	assert.Equal(api.APISchemaVersion, rec.Metadata[runtimeAPISchemaVersion], "api schema metadata")
+	assert.Equal(daemonAPIKeyFingerprint("test-api-key"), rec.Metadata[runtimeAuthFingerprint], "api key fingerprint metadata")
+	assert.Equal(shutdownToken, rec.Metadata[runtimeShutdownToken], "shutdown token metadata")
+	assert.Equal(daemonStartupPhaseInitial, rec.Metadata[runtimeStartupPhase], "startup phase metadata")
+	assert.NotContains(rec.Metadata, runtimeBackground)
+
+	t.Setenv(serveBackgroundChildEnv, "1")
+	_, _, err = writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key")
+	require.NoError(err, "write background daemon runtime")
+	rec, err = daemon.RuntimeStore{Dir: dataDir}.Read(path)
+	require.NoError(err, "read background runtime record")
+	assert.Equal("true", rec.Metadata[runtimeBackground])
 }
 
 func TestWriteDaemonRuntimeAcceptsSymlinkedDataDir(t *testing.T) {

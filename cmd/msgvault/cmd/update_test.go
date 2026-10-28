@@ -231,6 +231,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 	installedExe := filepath.Join(t.TempDir(), "bin", updateExecutableName())
 	waitCh := make(chan error)
 	var gotExecutable string
+	var gotCtx context.Context
 
 	stubStartServeBackgroundProcess(t, func(
 		_ *config.Config,
@@ -244,11 +245,12 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		}, nil
 	})
 	stubWaitForBackgroundServeReady(t, func(
-		context.Context,
-		string,
-		<-chan error,
-		time.Duration,
+		ctx context.Context,
+		_ string,
+		_ <-chan error,
+		_ time.Duration,
 	) (*DaemonRuntime, bool, error) {
+		gotCtx = ctx
 		return &DaemonRuntime{
 			Record: daemon.RuntimeRecord{PID: 990},
 			Host:   net.IPv4(127, 0, 0, 1).String(),
@@ -260,46 +262,6 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 
 	require.NoError(err, "restart daemon")
 	assert.Equal(installedExe, gotExecutable, "restart executable")
-}
-
-// The restart builds its own command, and a cobra command only gets a context
-// from ExecuteC. Without one, cmd.Context() is nil and the first context call
-// in the readiness wait panics.
-func TestRestartDaemonAfterUpdatePassesUsableContext(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	cfg := lifecycleTestConfig(t.TempDir())
-	installedExe := filepath.Join(t.TempDir(), "bin", updateExecutableName())
-	waitCh := make(chan error)
-	var gotCtx context.Context
-
-	stubStartServeBackgroundProcess(t, func(
-		_ *config.Config,
-		_ backgroundServeStartOptions,
-	) (*backgroundServeProcess, error) {
-		return &backgroundServeProcess{
-			PID:     991,
-			LogPath: "/tmp/msgvault-serve.log",
-			Wait:    waitCh,
-		}, nil
-	})
-	stubWaitForBackgroundServeReady(t, func(
-		ctx context.Context,
-		_ string,
-		_ <-chan error,
-		_ time.Duration,
-	) (*DaemonRuntime, bool, error) {
-		gotCtx = ctx
-		return &DaemonRuntime{
-			Record: daemon.RuntimeRecord{PID: 991},
-			Host:   net.IPv4(127, 0, 0, 1).String(),
-			Port:   9091,
-		}, true, nil
-	})
-
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
-
-	require.NoError(err, "restart daemon")
 	require.NotNil(gotCtx, "readiness wait received a nil context")
 	assert.NoError(gotCtx.Err(), "context usable")
 }
@@ -313,15 +275,10 @@ func TestRestartDaemonAfterUpdateLeavesUnmarkedDaemonStopped(t *testing.T) {
 	})
 	for _, noRestart := range []bool{false, true} {
 		state := testInvocationWithConfig(cfg)
-		state.options = invocationOptions{homeDir: "/tmp/example archive", cfgFile: "/tmp/example config.toml"}
 		var out bytes.Buffer
 		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, "", state, noRestart, &out)
 		require.NoError(t, err)
-		assert.Contains(out.String(), cfg.Data.DataDir)
-		assert.Contains(out.String(), "Update couldn't confirm msgvault started the daemon")
-		assert.Contains(out.String(), "in the background, so it left it stopped")
-		assert.Contains(out.String(), "Restart it the way you started it")
-		assert.Contains(out.String(), "such as `systemctl restart msgvault`")
+		assert.Equal("Update couldn't confirm msgvault started the daemon for "+cfg.Data.DataDir+" in the background, so it left it stopped. Restart it the way you started it, such as `systemctl restart msgvault`.\n", out.String())
 		assert.NotContains(out.String(), "daemon start")
 	}
 }
@@ -333,20 +290,23 @@ func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
 		assert.Fail("--no-restart must leave the daemon stopped")
 		return nil, errors.New("unexpected daemon start")
 	})
-	for _, options := range []invocationOptions{
-		{},
-		{homeDir: "/tmp/example archive", cfgFile: "/tmp/example config.toml"},
+	for _, tt := range []struct {
+		options invocationOptions
+		command string
+	}{
+		{command: "    msgvault daemon start\n"},
+		{
+			options: invocationOptions{homeDir: "/tmp/example archive", cfgFile: "/tmp/example config.toml"},
+			command: "    msgvault --config '/tmp/example config.toml' --home '/tmp/example archive' daemon start\n",
+		},
 	} {
 		state := testInvocationWithConfig(cfg)
-		state.options = options
+		state.options = tt.options
 		var out bytes.Buffer
 		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true}, "", state, true, &out)
 		require.NoError(t, err)
 		assert.Contains(out.String(), cfg.Data.DataDir)
-		assert.Contains(out.String(), "msgvault daemon start")
-		if options.homeDir != "" {
-			assert.Contains(out.String(), "msgvault --config '/tmp/example config.toml' --home '/tmp/example archive' daemon start")
-		}
+		assert.Contains(out.String(), tt.command)
 	}
 }
 
