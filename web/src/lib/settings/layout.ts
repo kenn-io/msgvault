@@ -105,25 +105,6 @@ export const OPTION_LABELS: Readonly<Record<string, Readonly<Record<string, stri
   'web.default_search_mode': { full_text: 'Exact words', hybrid: 'Best match' },
 };
 
-// Settings the host owns. The page can show them but never edit them.
-const HOST_MANAGED = new Set([
-  'server.bind_addr',
-  'server.api_port',
-  'server.api_key',
-  'server.allow_insecure',
-  'server.trusted_proxies',
-  'vector.backend',
-  'vector.db_path',
-  'vector.skip_extension_create',
-  'vector.embeddings.api_key_env',
-  'vector.multimodal.api_key_env',
-  'vector.multimodal.capabilities_file',
-]);
-
-export function isHostManaged(setting: SettingState): boolean {
-  return Boolean(setting.read_only) || HOST_MANAGED.has(setting.key);
-}
-
 /** Every catalog field remains reachable in Settings. */
 export function categoryOf(setting: SettingState): CategoryID {
   return setting.key.startsWith('carddav.') ? 'carddav' : normalizeCategory(setting.group);
@@ -157,7 +138,7 @@ export function layoutCategory(id: CategoryID, settings: readonly SettingState[]
   const own = settings.filter((setting) => categoryOf(setting) === id);
   return {
     blocks,
-    advanced: own.filter((setting) => !isHostManaged(setting) && !shown.has(setting.key)),
-    config: own.filter((setting) => isHostManaged(setting)),
+    advanced: own.filter((setting) => !setting.read_only && !shown.has(setting.key)),
+    config: own.filter((setting) => setting.read_only),
   };
 }

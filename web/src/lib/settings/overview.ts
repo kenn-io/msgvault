@@ -42,15 +42,10 @@ export function overviewRows(
   embedding: EmbeddingStatus | undefined,
   visual: Status | undefined,
 ): OverviewRow[] {
-  // Contacts connections sync without the legacy single-account switch, so a
-  // contacts lane that has run counts as on.
-  const on = (kind: Kind): boolean => {
-    const found = lane(lanes, kind);
-    return Boolean(found?.configured || (kind === 'carddav_sync' && found?.latest));
-  };
+  const on = (kind: Kind): boolean => Boolean(lane(lanes, kind)?.configured);
   const chip = (kind: Kind, building?: string): OverviewRow['chip'] => {
     const found = lane(lanes, kind);
-    if (!found || found.unavailable_code) return { tone: 'muted', text: 'Unavailable' };
+    if (!found) return { tone: 'muted', text: 'Unavailable' };
     if (found.active) return { tone: 'info', text: found.active.state === 'queued' ? 'Queued' : building ?? 'Running' };
     if (!on(kind)) return { tone: 'muted', text: 'Off' };
     if (failed(lane(lanes, kind))) return { tone: 'danger', text: 'Failed' };
