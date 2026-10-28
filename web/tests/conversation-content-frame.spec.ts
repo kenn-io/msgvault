@@ -419,6 +419,8 @@ test.describe('designed archived mail', () => {
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
     let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
+    let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
+    await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await expect(content.locator('a').filter({ hasText: 'Read more' })).toHaveCSS('color', 'rgb(116, 172, 254)');
     await expect(content.getByRole('img', { name: 'Embedded image' })).toHaveCSS('filter', 'none');
@@ -441,6 +443,8 @@ test.describe('designed archived mail', () => {
     // Change the actual shell theme while the same email remains open.
     await setKitTheme(page, 'light');
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
+    appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
+    await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await setKitTheme(page, 'dark');
