@@ -29,7 +29,13 @@
     display: flex;
     flex-direction: column;
     gap: var(--control-gap);
+    /* Ordinary parents reserve --field-gap; together these fill the 12px
+     * header band. Parents with a different gap override this margin. */
     margin-bottom: calc(var(--space-5) - var(--field-gap));
+  }
+
+  .page-header + :global(p) {
+    margin: 0;
   }
 
   .page-header::before {

@@ -128,8 +128,7 @@
   padding: var(--pane-pad-x);
 }
 
-:root:root .kit-modal-footer,
-:root:root .kit-detail-drawer__footer {
+:root:root .kit-modal-footer {
   gap: var(--control-gap);
   padding: var(--pane-pad-x);
 }
@@ -178,7 +177,25 @@
  * xs also pads the top and bottom. One chip padding keeps the text centered
  * in every chip; the height comes from min-height and flex centering. */
 :root:root .kit-chip {
+  min-height: var(--chip-min-height);
   padding: 0 var(--chip-pad-x);
+}
+
+.filter-chip {
+  display: inline-flex;
+  min-height: var(--chip-min-height);
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--chip-pad-x);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+
+.filter-chip--removable {
+  /* The 24px remove button contributes the remaining 6px icon inset. */
+  padding-right: var(--space-1);
 }
 
 /* Kit mixes the muted chip text 25% toward its own background, which drops

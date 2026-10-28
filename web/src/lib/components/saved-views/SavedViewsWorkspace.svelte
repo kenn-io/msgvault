@@ -227,7 +227,7 @@
               {#if !incompatibility}
                 <ul class="summary" aria-label={`${view.name} summary`}>
                   {#each savedViewSummary(view.canonical_state as CanonicalState) as part, index (index)}
-                    <li>{part}</li>
+                    <li class="filter-chip">{part}</li>
                   {/each}
                 </ul>
               {/if}
@@ -308,7 +308,6 @@
 {/if}
 
 <style>
-  .saved-views > p { margin: 0; }
   .saved-views {
     display: flex;
     width: 100%;
@@ -399,12 +398,7 @@
     list-style: none;
   }
   .summary li {
-    display: inline-flex;
-    min-height: var(--chip-min-height);
-    align-items: center;
-    padding: 0 var(--chip-pad-x);
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
     background: var(--bg-subtle);
     color: var(--text-secondary);
     font-size: var(--font-size-xs);

@@ -458,7 +458,6 @@
 </main>
 
 <style>
-  .sources > p { margin: 0; }
   .sources {
     display: flex;
     min-height: 0;

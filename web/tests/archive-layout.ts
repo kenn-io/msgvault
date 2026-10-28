@@ -48,6 +48,12 @@ export async function mockArchiveLayout(page: Page) {
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({
     json: { saved_views: [] }
   }));
+  await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [{
+    id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Archive',
+    last_sync_at: row.occurred_at, updated_at: row.occurred_at,
+    active_sync: null, latest_sync: null, last_successful_sync: null,
+    can_sync: true, scheduled: false, next_sync_at: null
+  }] } }));
   await page.route('**/api/v1/files/search', (route) => route.fulfill({
     json: {
       files: [{

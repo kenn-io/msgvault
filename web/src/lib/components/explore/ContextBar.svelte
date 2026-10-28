@@ -132,14 +132,14 @@
   {#if hasChips}
     <div class="context-chips">
       {#if query}
-        <span class="chip">
+        <span class="filter-chip filter-chip--removable chip">
           {searchModeLabel(searchMode)}: “{query}”
           <IconButton size="sm" ariaLabel="Remove search" onclick={() => onRemoveQuery?.()}
           ><XIcon size="12" aria-hidden="true" /></IconButton>
         </span>
       {/if}
       {#each filters as filter, index (`${filter.dimension}:${filter.values.join('\u0000')}`)}
-        <span class="chip chip--filter">
+        <span class="filter-chip filter-chip--removable chip chip--filter">
           {filterDimensionLabel(filter.dimension)}: {filter.values.map((value) => filterValueLabel(filter.dimension, value)).join(', ')}
           <IconButton
             size="sm"
@@ -149,14 +149,14 @@
         </span>
       {/each}
       {#each extraChips as chip (chip.key)}
-        <span class="chip chip--filter">
+        <span class="filter-chip filter-chip--removable chip chip--filter">
           {chip.label}
           <IconButton size="sm" ariaLabel={chip.removeLabel} onclick={chip.onRemove}
           ><XIcon size="12" aria-hidden="true" /></IconButton>
         </span>
       {/each}
       {#each groupingChain as dimension, index (`${dimension}:${index}`)}
-        <span class="chip chip--group">
+        <span class="filter-chip filter-chip--removable chip chip--group">
           {groupedByLabel([dimension])}
           <IconButton
             size="sm"
@@ -212,17 +212,8 @@
   }
 
   .chip {
-    display: inline-flex;
-    min-height: var(--chip-min-height);
-    max-width: 100%;
-    align-items: center;
-    gap: var(--space-1);
-    padding: 0 var(--space-1) 0 var(--chip-pad-x);
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
     background: var(--bg-inset);
     color: var(--text-secondary);
-    overflow-wrap: anywhere;
   }
 
   .chip--filter {

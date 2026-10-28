@@ -97,11 +97,15 @@ test('loaded message sender, body, and attachment edges align with the reader', 
     rows: [{ ...row, message_type: 'meeting_transcript', conversation_id: 11, anchor_message_id: 1 }], total_count: 1, cache_revision: 'spacing', search_provenance: {}
   } }));
   await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
-    id: 11, anchor_id: 1, has_before: false, has_after: false, total: 1,
+    id: 11, anchor_id: 1, has_before: false, has_after: false, total: 2,
     messages: [{ id: 1, conversation_id: 11, subject: row.title, message_type: 'meeting_transcript',
       from: 'Example Person', to: [], sent_at: row.occurred_at, snippet: row.preview,
       body: 'A plain text archive message.', body_html: '',
-      attachments: [{ id: 1, filename: 'Meeting-notes.txt', stored: false }] }]
+      attachments: [{ id: 1, filename: 'Meeting-notes.txt', stored: false }] },
+      { id: 2, conversation_id: 11, subject: 'Wide newsletter', message_type: 'email',
+        from: 'Newsletter', to: [], sent_at: row.occurred_at, snippet: 'Wide archived HTML message.',
+        body: 'Wide archived HTML message.',
+        body_html: `<p>Wide archived HTML message.</p><table><tr>${'<td>Newsletter column</td>'.repeat(30)}</tr></table>`, attachments: [] }]
   } }));
   await selectWorkspace(page, 'Everything');
   await page.getByText(row.title, { exact: true }).click();
@@ -115,6 +119,17 @@ test('loaded message sender, body, and attachment edges align with the reader', 
     return section.firstElementChild!.getBoundingClientRect().left - section.getBoundingClientRect().left;
   }));
   expect(insets).toEqual([12, 12, 12]);
+  await reader.getByRole('button', { name: 'Expand message 2 from Newsletter', exact: true }).click();
+  const mail = reader.frameLocator('iframe[title="Message body"]').locator('html');
+  await expect(mail.getByText('Wide archived HTML message.')).toBeVisible();
+  const scrollbar = await mail.evaluate((element) => ({
+    overflow: element.scrollWidth > element.clientWidth,
+    height: getComputedStyle(element, '::-webkit-scrollbar').height,
+    buttons: getComputedStyle(element, '::-webkit-scrollbar-button').display
+  }));
+  expect(scrollbar.overflow).toBe(true);
+  expect(scrollbar.height).toBe('8px');
+  expect(scrollbar.buttons).toBe('none');
 });
 
 test('adjacent removable chips have equal heights and even visible insets', async ({ page }) => {
@@ -134,9 +149,25 @@ test('adjacent removable chips have equal heights and even visible insets', asyn
       right: box.right - border - icon.right };
   }));
   expect(geometry).toEqual([{ height: 26, left: 8, right: 8 }, { height: 26, left: 8, right: 8 }]);
+  await selectWorkspace(page, 'Directory');
+  await page.getByRole('button', { name: 'Filters', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Category filter' }).fill('Archive');
+  const filter = page.locator('.filter-chips .chip');
+  await expect(filter).toBeVisible();
+  const directoryGeometry = await filter.evaluate((element) => {
+    const range = document.createRange(); range.selectNodeContents(element.firstChild!);
+    const box = element.getBoundingClientRect();
+    const icon = element.querySelector('svg')!.getBoundingClientRect();
+    const border = Number.parseFloat(getComputedStyle(element).borderLeftWidth);
+    return { height: box.height, left: range.getBoundingClientRect().left - box.left - border,
+      right: box.right - border - icon.right };
+  });
+  expect(directoryGeometry).toEqual({ height: 26, left: 8, right: 8 });
+  await filter.getByRole('button', { name: 'Remove Category: Archive filter', exact: true }).click();
+  await expect(filter).toHaveCount(0);
 });
 
-test('the same active and saved query shares one chip height and centered text', async ({ page }) => {
+test('active queries, saved queries, and source status share one chip height', async ({ page }) => {
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
     id: 1, name: 'Archive search', schema_version: 2, revision: 1,
     canonical_state: { query: 'archive', search_mode: 'full_text' },
@@ -157,6 +188,10 @@ test('the same active and saved query shares one chip height and centered text',
   });
   expect(geometry.height).toBe(activeHeight);
   expect(geometry.centered).toBeLessThanOrEqual(1);
+  await selectWorkspace(page, 'Sources');
+  const status = page.locator('.kit-chip').filter({ hasText: 'Never synced' });
+  await expect(status).toBeVisible();
+  expect((await status.boundingBox())!.height).toBe(activeHeight);
 });
 
 test('linked message uses the page title text scale', async ({ page }) => {
