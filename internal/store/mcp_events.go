@@ -217,8 +217,8 @@ func (s *Store) beginMCPWriterTx(ctx context.Context, opts *sql.TxOptions, runti
 			return fail(err)
 		}
 		if err == nil {
-			var enabled bool
-			if err := tx.QueryRowContext(ctx, `SELECT enabled FROM mcp_event_clock WHERE singleton=1`).Scan(&enabled); err != nil {
+			enabled, err := s.mcpCaptureEnabledTx(ctx, tx.Tx)
+			if err != nil {
 				return fail(err)
 			}
 			if !enabled {
@@ -258,15 +258,33 @@ func (s *Store) mcpFenceWriterTx(ctx context.Context, tx *sql.Tx, runtime *mcpRu
 		_, err := s.mcpClockLock(ctx, tx)
 		return mcpSafeError(err)
 	}
-	var enabled bool
-	if err := tx.QueryRowContext(ctx, `SELECT enabled FROM mcp_event_clock WHERE singleton=1`).Scan(&enabled); err != nil {
+	enabled, err := s.mcpCaptureEnabledTx(ctx, tx)
+	if err != nil {
 		return mcpSafeError(err)
 	}
 	if !enabled {
 		return nil
 	}
-	_, err := s.mcpChangeCaptureTx(ctx, tx, runtime)
+	_, err = s.mcpChangeCaptureTx(ctx, tx, runtime)
 	return mcpSafeError(err)
+}
+
+// mcpCaptureEnabledTx reads the persisted capture switch for a writer whose
+// own runtime has capture off. On PostgreSQL the read takes a share lock. In a
+// REPEATABLE READ transaction whose snapshot predates a capture change, that
+// fails serialization instead of returning the stale value, and the writer
+// retries with a fresh snapshot. (A key-share lock would not: it is
+// compatible with the clock's non-key update and returns the old row.) The
+// lock only delays a concurrent capture change; once capture is on, this
+// writer takes the clock lock itself to record the gap.
+func (s *Store) mcpCaptureEnabledTx(ctx context.Context, tx *sql.Tx) (bool, error) {
+	query := `SELECT enabled FROM mcp_event_clock WHERE singleton=1`
+	if s.IsPostgreSQL() {
+		query += ` FOR SHARE`
+	}
+	var enabled bool
+	err := tx.QueryRowContext(ctx, query).Scan(&enabled)
+	return enabled, err
 }
 
 func (s *Store) mcpChangeCaptureTx(ctx context.Context, tx *sql.Tx, runtime *mcpRuntime) (MCPEventClock, error) {
