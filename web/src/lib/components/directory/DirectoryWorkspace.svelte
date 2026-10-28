@@ -390,6 +390,7 @@
   .filter-panel { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
   .date-field { display: inline-flex; gap: var(--space-2); align-items: center; color: var(--text-secondary); font-size: var(--font-size-xs); }
   .date-field label { display: inline-flex; gap: var(--space-2); align-items: center; }
+  .chip { display: inline-flex; min-height: var(--chip-min-height); max-width: 100%; align-items: center; gap: var(--space-1); padding: 0 var(--space-1) 0 var(--chip-pad-x); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
   .filter-chips :global(.chip) { border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
   .directory-content > :global(*) { min-height: 0; overflow: auto; }
