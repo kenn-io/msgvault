@@ -386,7 +386,7 @@ test('opening a message fires no sender-host request until images are enabled', 
   expect(sentinelRequests).toEqual([]);
 });
 
-test('email colors and scrollbars follow the app theme with an original-colors override', async ({ page }) => {
+test('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
   await page.addInitScript(() => {
     sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'dark' }));
   });
