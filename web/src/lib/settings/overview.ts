@@ -48,13 +48,15 @@ export function overviewRows(
     if (!found) return { tone: 'muted', text: 'Unavailable' };
     if (found.active) return { tone: 'info', text: found.active.state === 'queued' ? 'Queued' : building ?? 'Running' };
     if (!on(kind)) return { tone: 'muted', text: 'Off' };
-    if (failed(lane(lanes, kind))) return { tone: 'danger', text: 'Failed' };
+    if (failed(found)) return { tone: 'danger', text: 'Failed' };
     return { tone: 'success', text: 'On' };
   };
   const rows: OverviewRow[] = [];
   const setup = (kind: Kind): OverviewAction | undefined => kind === 'carddav_sync'
     ? { kind: 'settings', target: { settingsCategory: 'carddav', settingsAuthority: '' } }
     : OPERATION_SETUP[kind];
+
+  const configuredRow = (id: Kind, name: string): OverviewRow => ({ id, name, chip: chip(id), action: on(id) ? undefined : setup(id) });
 
   const messagesBuilt = Boolean(embedding?.active_generation);
   const messageProgress =
@@ -73,12 +75,7 @@ export function overviewRows(
         : setup('message_embedding'),
   });
 
-  rows.push({
-    id: 'person_embedding',
-    name: 'People search',
-    chip: chip('person_embedding'),
-    action: on('person_embedding') ? undefined : setup('person_embedding'),
-  });
+  rows.push(configuredRow('person_embedding', 'People search'));
 
   const visualLane = lane(lanes, 'visual_embedding');
   const visualCurrent = count(visual?.current);
@@ -101,19 +98,9 @@ export function overviewRows(
           : undefined,
   });
 
-  rows.push({
-    id: 'person_enrichment',
-    name: 'People lookups',
-    chip: chip('person_enrichment'),
-    action: on('person_enrichment') ? undefined : setup('person_enrichment'),
-  });
+  rows.push(configuredRow('person_enrichment', 'People lookups'));
 
-  rows.push({
-    id: 'person_sweep',
-    name: 'Facts and briefs',
-    chip: chip('person_sweep'),
-    action: on('person_sweep') ? undefined : setup('person_sweep'),
-  });
+  rows.push(configuredRow('person_sweep', 'Facts and briefs'));
 
   rows.push({
     id: 'carddav_sync',
@@ -126,22 +113,8 @@ export function overviewRows(
         : undefined,
   });
 
-  rows.push({
-    id: 'document_extraction',
-    name: 'Document extraction',
-    chip: chip('document_extraction'),
-    action: on('document_extraction')
-      ? undefined
-      : setup('document_extraction'),
-  });
-  rows.push({
-    id: 'document_embedding',
-    name: 'Document search',
-    chip: chip('document_embedding'),
-    action: on('document_embedding')
-      ? undefined
-      : setup('document_embedding'),
-  });
+  rows.push(configuredRow('document_extraction', 'Document extraction'));
+  rows.push(configuredRow('document_embedding', 'Document search'));
 
   rows.unshift({ id: 'source_sync', name: 'Source sync', chip: chip('source_sync'), action: { kind: 'sources' } });
   return rows;

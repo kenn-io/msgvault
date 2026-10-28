@@ -4,11 +4,10 @@
   import SecretField from './SecretField.svelte';
 
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
-  let { label, credentialState, pending, disabled = false, onchange }: {
+  let { label, credentialState, pending, onchange }: {
     label: string;
     credentialState?: SecretSettingState;
     pending?: SecretUpdate;
-    disabled?: boolean;
     onchange: (update: SecretUpdate | undefined) => void;
   } = $props();
   const configured = $derived(pending ? pending.action === 'set' : credentialState?.configured ?? false);
@@ -20,7 +19,7 @@
   {configured}
   {hint}
   source={credentialState?.source}
-  disabled={disabled || credentialState?.source === 'environment'}
+  disabled={credentialState?.source === 'environment'}
   onreplace={(value) => { onchange({ action: 'set', value }); return true; }}
   onclear={configured && (pending?.action === 'set' || credentialState?.source === 'stored')
     ? () => onchange(credentialState?.source === 'stored' ? { action: 'clear' } : undefined)

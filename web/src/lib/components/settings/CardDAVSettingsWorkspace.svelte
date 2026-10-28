@@ -17,11 +17,9 @@
     settings,
     drafts = $bindable({}),
     resetRevision = 0,
-    saving = false,
     cardDAVRequest = undefined,
     onCardDAVRequestConsumed = () => undefined
   }: {
-    saving?: boolean;
     resetRevision?: number;
     drafts?: Record<string, AccountDraft>;
     client: APIClient;
@@ -176,7 +174,6 @@
       values={selectedValues}
       draft={drafts[selected]}
       onDraft={(draft) => { if (draft) drafts[selected] = draft; else delete drafts[selected]; }}
-      {saving}
       connection={selected}
       orphaned={selectedConnection?.orphaned === true}
       onAvailabilityChange={(name, value) => { availability[name] = value; }}
