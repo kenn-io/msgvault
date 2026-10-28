@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -59,6 +58,7 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 		if err := rows.Close(); err != nil {
 			return err
 		}
+		applyThreshold := personfacts.DefaultPolicyV1().ApplyThreshold
 		for _, shell := range shells {
 			var target *personfacts.TargetDescriptor
 			for i := range catalog.Targets {
@@ -77,7 +77,9 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 			}
 			selected := make(map[string]bool)
 			for _, d := range shell.Decisions {
-				if d.Action == personfacts.DecisionAmbiguousRetained || (d.CompetingClaimKey != "" && (d.Action == personfacts.DecisionRetained || d.Action == personfacts.DecisionConflictRejected)) {
+				if d.Action == personfacts.DecisionAmbiguousRetained ||
+					d.Action == personfacts.DecisionConflictRejected ||
+					(d.Action == personfacts.DecisionRetained && d.Reason != personfacts.ReasonPinRetained && d.Score.Total >= applyThreshold) {
 					selected[d.ClaimKey] = true
 					if d.CompetingClaimKey != "" {
 						selected[d.CompetingClaimKey] = true
@@ -145,7 +147,6 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 			} else {
 				contest.Current = append(contest.Current, current...)
 			}
-			sort.Slice(contest.Claims, func(i, j int) bool { return contest.Claims[i].Claim.ClaimKey < contest.Claims[j].Claim.ClaimKey })
 			contests = append(contests, contest)
 		}
 		return nil
