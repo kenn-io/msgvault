@@ -83,8 +83,8 @@ func classifyAssetError(body []byte) error {
 // TokenFunc returns a bearer token for a Beeper Desktop API request.
 type TokenFunc func(context.Context) (string, error)
 
-// Client is a Beeper Desktop API client. Archive reads use only GET; SetDraft
-// is the one write, reached only from an explicit draft command.
+// Client is a Beeper Desktop API client. Archive reads use only GET;
+// explicit draft and send commands use one-shot writes.
 type Client struct {
 	baseURL       string
 	token         TokenFunc

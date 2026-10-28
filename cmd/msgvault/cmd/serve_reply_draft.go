@@ -339,7 +339,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			}
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_parent", fmt.Errorf("load parent source: %w", err))
 		}
-		if err := authorizeDelegatedDraftSource(grant, parentSource); err != nil {
+		if err := authorizeDelegatedDraftSource(grant, parentSource, agentgrant.PermissionDraftCreate); err != nil {
 			return draftReplyTarget{}, "", nil, err
 		}
 	}
@@ -364,7 +364,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("--account or --source-id is required"))
 	}
 
-	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
+	if err := authorizeDelegatedDraftSource(grant, source, agentgrant.PermissionDraftCreate); err != nil {
 		return draftReplyTarget{}, "", nil, err
 	}
 	identities, err := a.store.ListAccountIdentitiesContext(ctx, source.ID)
@@ -513,12 +513,12 @@ func (a *storeAPIAdapter) refreshDraftCache(ctx context.Context, source *store.S
 // draft creation on the given source. Returns nil when grant is nil (owner
 // path). The check runs before authorizeIMAPDraft so an out-of-scope source
 // never discloses whether drafting is enabled.
-func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source) error {
+func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source, permission agentgrant.Permission) error {
 	if grant == nil {
 		return nil
 	}
 	ref := draftSourceRef(source)
-	if !grant.Allows(agentgrant.PermissionDraftCreate, ref) {
+	if !grant.Allows(permission, ref) {
 		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
 	}
 	return nil

@@ -892,6 +892,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
 		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
 		beeperDraftPolicy:      snapshotBeeperDraftPolicy(cfg),
+		beeperSendPolicy:       snapshotBeeperSendPolicy(cfg),
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
@@ -1155,7 +1156,14 @@ func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 	if cfg == nil {
 		return nil
 	}
-	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
+	return slices.Clone(cfg.Beeper.Drafts)
+}
+
+func snapshotBeeperSendPolicy(cfg *config.Config) []config.GmailDraftSource {
+	if cfg == nil {
+		return nil
+	}
+	return slices.Clone(cfg.Beeper.Sends)
 }
 
 func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string, state *invocation) error {
@@ -1780,6 +1788,7 @@ type storeAPIAdapter struct {
 	draftClientFactory        func(context.Context, *store.Source) (*imaplib.Client, error)
 	gmailDraftPolicy          []config.GmailDraftSource
 	beeperDraftPolicy         []config.GmailDraftSource
+	beeperSendPolicy          []config.GmailDraftSource
 	gmailDraftClientFactory   func(context.Context, *store.Source) (gmail.DraftAPI, error)
 	calendarClientFactory     func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
 	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
@@ -2559,6 +2568,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 			return nil
 		}
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
+	}
+	if api.IsCLIRunSendMessage(req.Args) {
+		return a.runCLISendMessage(ctx, req, emit)
 	}
 	if api.IsCLIRunDraftCreate(req.Args) {
 		if api.IsCLIRunDraftForward(req.Args) {

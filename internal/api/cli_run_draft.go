@@ -10,6 +10,12 @@ import (
 // in-process instead of spawning a subprocess.
 const CLIRunDraftReplyCommand = "draft-reply"
 
+const CLIRunSendMessageCommand = "send-message"
+
+func IsCLIRunSendMessage(args []string) bool {
+	return len(args) > 0 && args[0] == CLIRunSendMessageCommand
+}
+
 const CLIRunDraftComposeCommand = "draft-compose"
 
 const CLIRunDraftForwardCommand = "draft-forward"
@@ -66,6 +72,9 @@ func CLIRunDraftLifecyclePermissions(command string) []agentgrant.Permission {
 func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
 	if grant == nil || len(args) == 0 {
 		return false
+	}
+	if IsCLIRunSendMessage(args) {
+		return grant.HasPermission(agentgrant.PermissionMessageSend)
 	}
 	if IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args) {
 		return grant.HasPermission(agentgrant.PermissionDraftCreate)

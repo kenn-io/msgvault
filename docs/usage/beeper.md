@@ -13,9 +13,14 @@ All messages imported this way use `message_type = beeper`. Sync only reads
 Beeper; it does not send or edit messages or mark conversations read.
 
 Separately, enable [Beeper chat drafts](../cli-reference.md#beeper-chat-drafts)
-per source to place text in Beeper's message box for review. msgvault never
-sends it. Writes stop if the box already contains unrelated text, but text
+per source to place text in Beeper's message box for review. Draft commands do not
+send it. Writes stop if the box already contains unrelated text, but text
 typed between the check and write can still be lost.
+
+On unreleased `main`, [`send-message`](../cli-reference.md#send-message) sends
+text and/or one file immediately to an archived chat when the daemon owner
+enables `[[beeper.sends]]` for that source. Sending is separate from sync and
+drafts and is disabled by default.
 
 ## Prerequisites
 

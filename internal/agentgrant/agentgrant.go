@@ -19,6 +19,7 @@ const (
 	PermissionMessageRead       Permission = "message.read"
 	PermissionAttachmentRead    Permission = "attachment.read"
 	PermissionStatsRead         Permission = "stats.read"
+	PermissionMessageSend       Permission = "message.send"
 	PermissionDraftCreate       Permission = "draft.create"
 	PermissionDraftEdit         Permission = "draft.edit"
 	PermissionDraftDelete       Permission = "draft.delete"
@@ -33,6 +34,7 @@ var knownPermissions = map[string]Permission{
 	string(PermissionMessageRead):       PermissionMessageRead,
 	string(PermissionAttachmentRead):    PermissionAttachmentRead,
 	string(PermissionStatsRead):         PermissionStatsRead,
+	string(PermissionMessageSend):       PermissionMessageSend,
 	string(PermissionDraftCreate):       PermissionDraftCreate,
 	string(PermissionDraftEdit):         PermissionDraftEdit,
 	string(PermissionDraftDelete):       PermissionDraftDelete,

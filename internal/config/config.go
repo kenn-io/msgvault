@@ -1105,6 +1105,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if strings.HasPrefix(key.String(), "gmail.drafts.") {
 			cfg.deferDaemonError(fmt.Errorf("unknown Gmail draft config key %q", key.String()))
 		}
+		if strings.HasPrefix(key.String(), "beeper.sends.") {
+			cfg.deferDaemonError(fmt.Errorf("unknown Beeper send config key %q", key.String()))
+		}
 		if strings.HasPrefix(key.String(), "beeper.drafts.") {
 			cfg.deferDaemonError(fmt.Errorf("unknown Beeper draft config key %q", key.String()))
 		}
@@ -1254,6 +1257,7 @@ func (c *Config) validateDraftSources(content []byte) error {
 			Drafts []draftSelector `toml:"drafts"`
 		} `toml:"gmail"`
 		Beeper struct {
+			Sends  []draftSelector `toml:"sends"`
 			Drafts []draftSelector `toml:"drafts"`
 		} `toml:"beeper"`
 	}
@@ -1266,8 +1270,11 @@ func (c *Config) validateDraftSources(content []byte) error {
 		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
 		return err
 	}
-	return validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
-		func(d GmailDraftSource) int64 { return d.SourceID }, nil)
+	if err := validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
+		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
+		return err
+	}
+	return validateDraftSelectors("beeper.sends", c.Beeper.Sends, raw.Beeper.Sends, func(d GmailDraftSource) int64 { return d.SourceID }, nil)
 }
 
 func validateDraftSelectors[T any](section string, entries []T, raw []draftSelector, sourceID func(T) int64, check func(T) error) error {
@@ -1681,6 +1688,8 @@ type BeeperConfig struct {
 	MediaMaxParticipants int `toml:"media_max_participants"`
 	// AccountsConfig holds per-Beeper-account media overrides.
 	AccountsConfig map[string]MediaAccountConfig `toml:"accounts_config"`
+	// Sends lets the daemon send messages on these sources.
+	Sends []GmailDraftSource `toml:"sends"`
 	// Drafts lets the daemon write native chat drafts on these sources. The
 	// entries have the same shape as [[gmail.drafts]].
 	Drafts []GmailDraftSource `toml:"drafts"`

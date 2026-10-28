@@ -29,7 +29,7 @@ daemon reads does not. These are `[server]` and `MSGVAULT_API_PORT` and
 `daemon_auto_restart`, or the other `MSGVAULT_*` overrides), `[web]`,
 `[integrations.*]`, `[carddav]`, `[carddav_connections]`,
 `[people.identity_scoring]`, `[[imap.drafts]]`, `[[gmail.drafts]]`,
-`[[beeper.drafts]]`, and `[[fastmail]]`.
+`[[beeper.drafts]]`, `[[beeper.sends]]`, and `[[fastmail]]`.
 
 A command that hits one still runs, and prints
 `Warning: invalid daemon config: ...` to stderr after it finishes. With

@@ -1448,7 +1448,7 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
-	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
+	if IsCLIRunSendMessage(args) || IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
@@ -1698,7 +1698,7 @@ func cliRunCommandAllowed(args []string) bool {
 	if len(args) > 1 && strings.HasPrefix(args[1], "__") {
 		return false
 	}
-	if IsCLIRunDraftCreate(args) {
+	if IsCLIRunSendMessage(args) || IsCLIRunDraftCreate(args) {
 		return len(args) >= 2
 	}
 	if IsCLIRunDraftSendAs(args) {

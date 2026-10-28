@@ -33,7 +33,7 @@ Search and read:
   search        Search messages using Gmail-like query syntax
   show-message  Show full message details
   show-thread   Show a message's thread in chronological order
-  stats         Show archive message, thread, attachment and account totals
+  stats         Show archive totals
   tui           Open the interactive terminal UI
 
 Export:
@@ -135,6 +135,7 @@ Drafts, calendar, and Kata (write to providers):
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
   message-tags  Read or update native email tags
+  send-message  Send to an archived Beeper chat
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches
