@@ -46,7 +46,6 @@
     RAIL,
     normalizeCategory,
     layoutCategory,
-    isHostManaged,
     type Block,
     type CategoryID,
   } from '../../settings/layout';
@@ -440,7 +439,11 @@
         delete accountDrafts[name];
         resetKey += 1;
       }
-      if (!(await inference.saveKeys())) throw new Error(inference.error);
+      if (!(await inference.saveKeys())) {
+        const message = inference.error;
+        inference.error = '';
+        throw new Error(message);
+      }
       void focusCategoryHeading();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Can't save settings.";
@@ -508,7 +511,7 @@
   function rowFields(row: string | readonly string[]): SettingState[] {
     return (typeof row === 'string' ? [row] : [...row])
       .map(find)
-      .filter((setting): setting is SettingState => setting !== undefined && !isHostManaged(setting) && visible(setting));
+      .filter((setting): setting is SettingState => setting !== undefined && !setting.read_only && visible(setting));
   }
   function isSwitch(setting: SettingState): boolean {
     return setting.kind === 'boolean' && !(setting.options && setting.options.length > 0);
@@ -631,6 +634,7 @@
 
         <h2 id="settings-category-heading" tabindex="-1">{label}</h2>
 
+        <fieldset class="settings-fields" disabled={saving}>
         {#if activeId === 'overview'}
           {#if !statusSettled}
             <p class="state" role="status">Loading…</p>
@@ -699,12 +703,22 @@
             </details>
           {/if}
         {/if}
+        </fieldset>
       {/snippet}
     </SettingsLayout>
   {/if}
 </main>
 
 <style>
+  .settings-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
   .settings {
     display: flex;
     flex: 1;

@@ -539,3 +539,71 @@ it('rejects an invalid new provider name before sending a write', async () => {
   expect((await screen.findByRole('alert')).textContent).toContain('Names can use letters');
   expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
 });
+
+it('locks provider fields and newly mounted category controls while a provider save waits', async () => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const base = { enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' }, allowed_identifiers: [], target_keys: [] };
+  const doc = settingsDoc({ person_enrichment_providers: [
+    { ...base, name: 'primary', kind: 'exa', mode: 'people', credential_id: 'people.enrichment.primary' },
+    { ...base, name: 'backup', kind: 'sixtyfour', tier: 'standard', credential_id: 'people.enrichment.backup' }
+  ] });
+  const { client, seen } = fixture(doc, request => {
+    if (request.method === 'PUT') return pending;
+    if (request.url.includes('/settings/people-inference')) return Response.json({
+      profiles: [{ name: 'routed', protocol: 'openai', credential_source: 'stored', credential_configured: true }],
+      configured_enabled: false, running_enabled: false, pending_restart: false
+    }, { headers: { ETag: '"p1"' } });
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await screen.findByLabelText('Replacement API key');
+  await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(seen.some(request => request.method === 'PUT')).toBe(true));
+  for (const name of ['Search mode', 'Tier', 'Replacement API key']) expect(screen.getByLabelText(name).matches(':disabled'), name).toBe(true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  expect(screen.getByRole('combobox', { name: /^CardDAV connection/ }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Add connection' }).matches(':disabled')).toBe(true);
+  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
+  expect((await screen.findByLabelText('Replacement API key')).matches(':disabled')).toBe(true);
+  finish(Response.json(doc, { headers: { ETag: '"s2"' } }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+});
+
+it('shows one footer-save error for an inference key and keeps the key pending', async () => {
+  const inference = { profiles: [{ name: 'routed', protocol: 'openai', credential_source: 'stored', credential_configured: true, credential_revision: '"key-a"' }], configured_enabled: false, running_enabled: false, pending_restart: false };
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/key')) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
+    if (request.url.includes('/settings/people-inference')) return Response.json(inference, { headers: { ETag: '"p1"' } });
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await fireEvent.input(await screen.findByLabelText('Replacement API key'), { target: { value: 'synthetic-key' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findAllByRole('alert');
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+  expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['Key store unavailable']);
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
+});
+
+it.each(['message', 'visual'] as const)('starts the %s index from Overview and refreshes its row', async kind => {
+  let built = false;
+  const operation = kind === 'message' ? 'message_embedding' : 'visual_embedding';
+  const path = kind === 'message' ? '/api/v1/cli/run' : '/api/v1/multimodal/build';
+  const { client, seen } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [{
+      kind: operation, configured: true, history_availability: 'available', supported_actions: kind === 'visual' && !built ? ['visual_build'] : []
+    }] });
+    if (request.url.includes('/embeddings/status')) return Response.json({ active_generation: built ? 1 : null });
+    if (request.url.endsWith(path)) {
+      built = true;
+      return kind === 'message' ? new Response('{"type":"complete"}\n') : Response.json({});
+    }
+  });
+  render(SettingsWorkspace, { client });
+  const name = kind === 'message' ? 'Build index, Message search' : 'Build visual index, Visual search';
+  await fireEvent.click(await screen.findByRole('button', { name }));
+  await waitFor(() => expect(screen.queryByRole('button', { name })).toBeNull());
+  expect(seen.find(request => request.path === path)?.body).toEqual(kind === 'message'
+    ? { args: ['embeddings', 'build', '--full-rebuild', '--yes'] } : { consent: true });
+  expect(within(document.querySelector(`[data-feature="${operation}"]`) as HTMLElement).getByText('On')).toBeDefined();
+});

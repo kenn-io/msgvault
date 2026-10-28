@@ -88,12 +88,6 @@ export class PeopleInferenceController {
     }, true);
   }
 
-  async saveKey(key: string): Promise<void> {
-    if (!this.selectedName || !key) return;
-    this.clearCheck();
-    await this.run(() => this.writeKey(this.selectedName, key));
-  }
-
   private async writeKey(name: string, key: string): Promise<void> {
     const profile = this.status?.profiles.find((item) => item.name === name);
     if (!profile?.credential_revision) throw new Error('Reload people sweep settings before replacing the key.');
@@ -199,6 +193,9 @@ export class PeopleInferenceController {
     const status = this.read(result);
     if (this.destroyed) return;
     this.status = status;
+    for (const name of Object.keys(this.keyDrafts)) {
+      if (!status.profiles.some(profile => profile.name === name)) delete this.keyDrafts[name];
+    }
     this.configETag = result.response.headers.get('ETag') ?? '';
     if (!this.configETag) throw new Error('People sweep settings response omitted its config ETag. Reload before editing.');
   }
