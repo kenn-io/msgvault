@@ -19,9 +19,9 @@ func constrainedListingEngine(t *testing.T) *DuckDBEngine {
 func TestExploreFastPathFitsConstrainedMemory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	engine := buildBenchData(t)
-	// Keep headroom below the listing budget, including on runners with fewer CPUs.
-	_, err := engine.db.Exec("SET memory_limit='144MB'; SET threads=4")
+	engine := constrainedListingEngine(t)
+	// Exercise four query threads even when the test runner has fewer CPUs.
+	_, err := engine.db.Exec("SET threads=4")
 	require.NoError(err)
 	result, err := engine.Explore(context.Background(), ExploreRequest{
 		Page: PageSpec{Limit: 50},
