@@ -3,8 +3,8 @@
   import type { PersonEnrichmentProviderSetting as ProviderSetting } from '../../api/generated/models';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
-  let { provider, draft, pendingKey, saving = false, onchange, onkey }: {
-    provider: ProviderSetting; draft: ProviderSetting; pendingKey?: SecretUpdate; saving?: boolean;
+  let { provider, draft, pendingKey, onchange, onkey }: {
+    provider: ProviderSetting; draft: ProviderSetting; pendingKey?: SecretUpdate;
     onchange: (value: ProviderSetting) => void; onkey: (update: SecretUpdate | undefined) => void;
   } = $props();
   function setString(field: keyof ProviderSetting, value: string) {
@@ -28,7 +28,7 @@
     <h4 id={`provider-${provider.name}`}>{provider.name}</h4>
     <Chip size="xs" tone="muted" uppercase={false}>{provider.kind === 'exa' ? 'Exa' : 'SixtyFour'}</Chip>
     <span class="grow"></span>
-    <Toggle disabled={saving}
+    <Toggle
       ariaLabel={`Enable ${provider.name}`}
       checked={draft.enabled}
       onchange={(enabled) => {
@@ -36,16 +36,16 @@
       }}
     />
   </header>
-  <div class="field" aria-label={`${provider.name} credential`}>
+  <div class="field" class:setting--changed={pendingKey !== undefined} aria-label={`${provider.name} credential`}>
     <span>API key</span>
-    <ProviderCredentialControl label={`API key for ${provider.name}`} credentialState={provider.credential} pending={pendingKey} disabled={saving} onchange={onkey} />
+    <ProviderCredentialControl label={`API key for ${provider.name}`} credentialState={provider.credential} pending={pendingKey} onchange={onkey} />
   </div>
   <details class="advanced">
     <summary>Advanced</summary>
     <div class="provider-grid">
       <label class="wide">
         Endpoint
-        <input disabled={saving}
+        <input
           type="url"
           required
           aria-label={`${provider.name} endpoint`}
@@ -56,7 +56,7 @@
       {#if provider.kind === 'sixtyfour'}
         <label class="wide">
           Poll endpoint
-          <input disabled={saving}
+          <input
             type="url"
             required
             aria-label={`${provider.name} poll endpoint`}
@@ -75,7 +75,7 @@
         </label>
         <label>
           Results per request
-          <input disabled={saving}
+          <input
             type="number"
             min="1"
             value={draft.num_results ?? 1}
@@ -85,21 +85,21 @@
       {/if}
       <label class="wide">
         Details sent to the provider
-        <input disabled={saving}
+        <input
           value={(draft.allowed_identifiers ?? []).join(', ')}
           oninput={(event) => setList('allowed_identifiers', event.currentTarget.value)}
         />
       </label>
       <label class="wide">
         Fields it may fill in
-        <input disabled={saving}
+        <input
           value={(draft.target_keys ?? []).join(', ')}
           oninput={(event) => setList('target_keys', event.currentTarget.value)}
         />
       </label>
       <label>
         How long the provider keeps data
-        <input disabled={saving}
+        <input
           required
           value={draft.retention_posture}
           oninput={(event) => setString('retention_posture', event.currentTarget.value)}
@@ -107,7 +107,7 @@
       </label>
       <label>
         Whether the provider trains on data
-        <input disabled={saving}
+        <input
           required
           value={draft.training_posture}
           oninput={(event) => setString('training_posture', event.currentTarget.value)}
@@ -115,7 +115,7 @@
       </label>
       <label>
         Refresh every
-        <input disabled={saving}
+        <input
           required
           value={draft.refresh_interval}
           oninput={(event) => setString('refresh_interval', event.currentTarget.value)}
@@ -123,7 +123,7 @@
       </label>
       <label>
         Request timeout
-        <input disabled={saving}
+        <input
           required
           value={draft.request_timeout}
           oninput={(event) => setString('request_timeout', event.currentTarget.value)}
@@ -132,7 +132,7 @@
       {#if provider.kind === 'sixtyfour'}
         <label>
           Check for results every
-          <input disabled={saving}
+          <input
             required
             value={draft.poll_interval}
             oninput={(event) => setString('poll_interval', event.currentTarget.value)}
@@ -140,7 +140,7 @@
         </label>
         <label>
           Give up after
-          <input disabled={saving}
+          <input
             required
             value={draft.max_job_age}
             oninput={(event) => setString('max_job_age', event.currentTarget.value)}
@@ -149,7 +149,7 @@
       {/if}
       <label>
         Retries
-        <input disabled={saving}
+        <input
           type="number"
           min="0"
           value={draft.max_retries}
@@ -158,7 +158,7 @@
       </label>
       <label>
         Requests per run
-        <input disabled={saving}
+        <input
           type="number"
           min="1"
           value={draft.max_requests_per_run}
@@ -167,7 +167,7 @@
       </label>
       <label>
         Requests per day
-        <input disabled={saving}
+        <input
           type="number"
           min="1"
           value={draft.max_requests_per_day}
@@ -176,7 +176,7 @@
       </label>
       <div class="sensitive-targets">
         <span>Allow sensitive fields</span>
-        <Toggle disabled={saving}
+        <Toggle
           ariaLabel={`Allow sensitive fields for ${provider.name}`}
           checked={draft.allow_sensitive_targets}
           onchange={(allow_sensitive_targets) => {
@@ -217,6 +217,16 @@
     gap: var(--space-2);
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
+  }
+  .setting--changed > span::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: var(--space-4);
+    border-radius: 50%;
+    background: var(--accent-amber);
+    vertical-align: middle;
   }
   .advanced summary {
     color: var(--text-secondary);

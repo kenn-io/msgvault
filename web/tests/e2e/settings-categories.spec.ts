@@ -57,6 +57,27 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
 
   const captureDir = process.env.MSGVAULT_SETTINGS_CAPTURE_DIR ?? testInfo.outputPath('settings');
   await mkdir(captureDir, { recursive: true });
+  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  const refreshed = page.waitForResponse(response => response.url().endsWith('/api/v1/operations/status'));
+  await page.getByRole('button', { name: 'Refresh feature status', exact: true }).click();
+  expect((await refreshed).ok()).toBe(true);
+  await page.getByRole('button', { name: 'Search & AI', exact: true }).click();
+  await page.getByRole('button', { name: 'Add API key', exact: true }).click();
+  await page.getByLabel('New API key', { exact: true }).fill('synthetic-pending-key');
+  await page.getByRole('button', { name: 'Save API key', exact: true }).click();
+  await expect(page.locator('[data-setting-key="vector.embeddings.api_key"]')).toHaveClass(/setting--changed/);
+  const people = page.getByRole('switch', { name: 'Search people', exact: true });
+  await people.click();
+  await page.getByRole('textbox', { name: 'How long the provider keeps data', exact: true }).fill('zero');
+  await people.click();
+  await expect(page.getByRole('textbox', { name: 'How long the provider keeps data', exact: true })).toHaveValue('zero');
+  await page.screenshot({ path: join(captureDir, 'search-pending-drafts-1440-dark.png') });
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'How long the provider keeps data', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await page.getByRole('combobox', { name: /^Search opens in:/ }).click();
+  await expect(page.getByRole('option', { name: 'Semantic', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   for (const theme of ['dark', 'light']) {
     if (theme === 'light') {
       await page.getByRole('button', { name: 'Advanced', exact: true }).click();

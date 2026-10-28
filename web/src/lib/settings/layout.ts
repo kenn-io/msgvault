@@ -105,6 +105,11 @@ export const OPTION_LABELS: Readonly<Record<string, Readonly<Record<string, stri
   'web.default_search_mode': { full_text: 'Exact words', hybrid: 'Best match' },
 };
 
+/** Choices omitted from the approved Settings screens. */
+export const HIDDEN_OPTIONS: Readonly<Record<string, readonly string[]>> = {
+  'web.default_search_mode': ['semantic'],
+};
+
 /** Every catalog field remains reachable in Settings. */
 export function categoryOf(setting: SettingState): CategoryID {
   return setting.key.startsWith('carddav.') ? 'carddav' : normalizeCategory(setting.group);
