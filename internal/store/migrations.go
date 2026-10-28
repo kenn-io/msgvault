@@ -185,12 +185,13 @@ func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
 				}
 			}
 			if len(ids) < batchSize {
-				// The walk is complete; the migration ledger records it from here.
+				// Record completion with the cursor's removal, so a crash between them
+				// can't lose both and restart the walk from the first message.
 				if _, err := tx.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key = ?`,
 					hiddenTextBackfillCursorKey); err != nil {
 					return fmt.Errorf("clear hidden text backfill cursor: %w", err)
 				}
-				return nil
+				return s.markMigrationAppliedContext(ctx, tx, migrationMessagesHiddenTextBackfill, 1)
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata (key, value) VALUES (?, ?)
 				ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
