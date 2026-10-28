@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"testing"
 	"time"
 
@@ -143,29 +142,45 @@ func TestMCPEventsSourceRemovalDoesNotDeadlockCaptureOffWriter(t *testing.T) {
 	assert.NoError(err)
 }
 
-// CardDAV discovery replacement opens its own transaction. Fenced writers such
-// as a book-role change on a capturing handle take the identity fence before
-// the discovery lock, so a replacement that changes the account identity must
-// take identity first too, whatever its own handle's capture setting, or the
-// two deadlock across processes. The writer here issues the fenced writer's
-// lock statements in that order.
-func TestMCPEventsCardDAVDiscoveryTakesIdentityBeforeDiscoveryLock(t *testing.T) {
-	for _, capture := range []bool{true, false} {
-		t.Run(fmt.Sprintf("capture=%t", capture), func(t *testing.T) {
+// CardDAV discovery replacement opens its own transaction, so it must follow
+// the lock order of the other CardDAV writers on its handle. On a configured
+// handle, fenced writers such as a book-role change take identity before the
+// discovery lock; a capturing writer in another process does the same. On an
+// unconfigured handle, writers are unfenced and take the discovery lock
+// first. Each case pairs a replacement that changes the account identity with
+// a writer that issues the matching statements in that order.
+func TestMCPEventsCardDAVDiscoveryFollowsHandleLockOrder(t *testing.T) {
+	enabled := MCPEventsConfig{
+		Enabled: true, Principal: "owner:synthetic",
+		Capabilities: []MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}},
+	}
+	identityFirst := []string{
+		`SELECT value FROM archive_metadata WHERE key='identity_revision' FOR UPDATE`,
+		`SELECT singleton FROM carddav_discovery_lock WHERE singleton = 1 FOR UPDATE`,
+	}
+	discoveryFirst := []string{
+		`SELECT singleton FROM carddav_discovery_lock WHERE singleton = 1 FOR UPDATE`,
+		`UPDATE archive_metadata SET value = value WHERE key = 'identity_revision'`,
+	}
+	for _, tc := range []struct {
+		name   string
+		config *MCPEventsConfig
+		writer []string
+	}{
+		{"capture on", &enabled, identityFirst},
+		{"capture off", &MCPEventsConfig{}, identityFirst},
+		{"unconfigured", nil, discoveryFirst},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
-			cfg := MCPEventsConfig{}
-			if capture {
-				cfg = MCPEventsConfig{
-					Enabled: true, Principal: "owner:synthetic",
-					Capabilities: []MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}},
-				}
+			if tc.config != nil {
+				_, err := st.ConfigureMCPEvents(ctx, *tc.config)
+				require.NoError(err)
 			}
-			_, err := st.ConfigureMCPEvents(ctx, cfg)
-			require.NoError(err)
 			discovery := func(username string) CardDAVDiscoveryInput {
 				return CardDAVDiscoveryInput{
 					BaseURL: "https://contacts.example/dav", Username: username,
@@ -177,14 +192,16 @@ func TestMCPEventsCardDAVDiscoveryTakesIdentityBeforeDiscoveryLock(t *testing.T)
 					}},
 				}
 			}
-			_, _, err = st.ReplaceCardDAVDiscoveryContext(ctx, discovery("user-a"))
+			_, _, err := st.ReplaceCardDAVDiscoveryContext(ctx, discovery("user-a"))
 			require.NoError(err)
 
 			writer, err := st.DB().BeginTx(ctx, nil)
 			require.NoError(err)
 			defer func() { _ = writer.Rollback() }()
 			var writerPID int
-			require.NoError(writer.QueryRowContext(ctx, `SELECT pg_backend_pid() FROM archive_metadata WHERE key=$1 FOR UPDATE`, identityRevisionKey).Scan(&writerPID))
+			require.NoError(writer.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&writerPID))
+			_, err = writer.ExecContext(ctx, tc.writer[0])
+			require.NoError(err)
 
 			replaced := make(chan error, 1)
 			go func() {
@@ -192,8 +209,8 @@ func TestMCPEventsCardDAVDiscoveryTakesIdentityBeforeDiscoveryLock(t *testing.T)
 				replaced <- err
 			}()
 			waitForPGBlockedQuery(ctx, t, st, writerPID, "%")
-			_, err = writer.ExecContext(ctx, `SELECT singleton FROM carddav_discovery_lock WHERE singleton = 1 FOR UPDATE`)
-			require.NoError(err, "the fenced writer must not deadlock with discovery replacement")
+			_, err = writer.ExecContext(ctx, tc.writer[1])
+			require.NoError(err, "the writer must not deadlock with discovery replacement")
 			require.NoError(writer.Commit())
 			select {
 			case err = <-replaced:
