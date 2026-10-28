@@ -160,7 +160,10 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.37.0**.
+it is separate from the binary release version. The current schema is **3.38.0**.
+
+Schema 3.38.0 adds `POST /api/v1/people/create` for standalone curated
+profiles. The MCP `create_person` tool requires this schema version or newer.
 
 Schema 3.35.0 adds `GET /api/v1/calendar/events`, which lists archived calendar occurrences in a window with repeating events expanded. `msgvault calendar events` requires a daemon supporting this schema.
 

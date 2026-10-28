@@ -67,8 +67,12 @@ type CardDAVPublicationReviewSource struct {
 // non-rendering input. It keeps the source classification so a declared value
 // becoming inferred invalidates review even when its textual value is equal.
 type personInferenceExportProjection struct {
-	Attributes  []personInferenceExportAttribute  `json:"attributes"`
-	Employments []personInferenceExportEmployment `json:"employments"`
+	Attributes      []personInferenceExportAttribute  `json:"attributes"`
+	Employments     []personInferenceExportEmployment `json:"employments"`
+	ContactPoints   []personInferenceExportComponent  `json:"contact_points"`
+	Addresses       []personInferenceExportComponent  `json:"addresses"`
+	Names           []personInferenceExportComponent  `json:"names"`
+	DerivedFullName *string                           `json:"derived_full_name,omitempty"`
 }
 
 type personInferenceExportAttribute struct {
@@ -86,6 +90,48 @@ type personInferenceExportEmployment struct {
 	Title        string   `json:"title"`
 	Role         string   `json:"role"`
 	Inferred     bool     `json:"inferred"`
+}
+
+// personInferenceExportComponent is one exportable name, contact point, or
+// postal address. Row holds every rendered value of the row, so a replacement
+// that changes only a parameter such as GEO, URI, or SORT-AS still differs.
+// Inferred ones carry review debt like attributes do, so a merge or split that
+// moves them changes the receiving person's projection.
+type personInferenceExportComponent struct {
+	RowID    int64  `json:"-"`
+	Row      string `json:"row"`
+	Inferred bool   `json:"inferred"`
+}
+
+// inferenceExportEnvelope keeps the envelope fields a vCard property renders.
+// Database identity, provenance detail, and timestamps stay out so a merge
+// that moves an unchanged row compares equal.
+type inferenceExportEnvelope struct {
+	Pref       *int     `json:"pref"`
+	TypeTokens []string `json:"type_tokens"`
+	Group      *string  `json:"group"`
+	PropID     *string  `json:"prop_id"`
+	PID        []string `json:"pid"`
+	AltID      *string  `json:"altid"`
+}
+
+// newInferenceExportComponent encodes a rendered property projection together
+// with the envelope fields that also render on the property.
+func newInferenceExportComponent[T any](row T, envelope ValueEnvelope) (personInferenceExportComponent, error) {
+	encoded, err := json.Marshal(struct {
+		Row      T                       `json:"row"`
+		Envelope inferenceExportEnvelope `json:"envelope"`
+	}{row, inferenceExportEnvelope{
+		Pref: envelope.Pref, TypeTokens: envelope.TypeTokens,
+		Group: envelope.VCard.Group, PropID: envelope.VCard.PropID,
+		PID: envelope.VCard.PID, AltID: envelope.VCard.AltID,
+	}}, json.Deterministic(true))
+	if err != nil {
+		return personInferenceExportComponent{}, fmt.Errorf("encode inference export component: %w", err)
+	}
+	return personInferenceExportComponent{
+		RowID: envelope.ID, Row: string(encoded), Inferred: provenanceIsInferred(envelope.Source),
+	}, nil
 }
 
 func (s *Store) loadPersonInferenceExportProjectionTx(
@@ -147,7 +193,312 @@ func (s *Store) loadPersonInferenceExportProjectionTx(
 			projection.Employments = append(projection.Employments, contributor)
 		}
 	}
+	if err := s.loadPersonInferenceExportContactsTx(
+		ctx, tx, personID, true, true, &projection,
+	); err != nil {
+		return personInferenceExportProjection{}, err
+	}
 	return projection, nil
+}
+
+func (s *Store) loadPersonInferenceExportContactsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	personID int64,
+	currentOnly, profileFallbacks bool,
+	projection *personInferenceExportProjection,
+) error {
+	points, err := s.listPersonContactPointsTx(ctx, tx, personID, currentOnly)
+	if err != nil {
+		return err
+	}
+	projection.ContactPoints = make([]personInferenceExportComponent, 0, len(points))
+	for _, point := range points {
+		if !provenanceIsInferred(point.Envelope.Source) {
+			continue
+		}
+		rendered, ok := point.VCardProjection()
+		if !ok {
+			continue
+		}
+		envelope := point.Envelope
+		component, err := newInferenceExportComponent(rendered, envelope)
+		if err != nil {
+			return err
+		}
+		projection.ContactPoints = append(projection.ContactPoints, component)
+	}
+	names, err := s.listPersonNamesTx(ctx, tx, personID, currentOnly)
+	if err != nil {
+		return err
+	}
+	projection.Names = make([]personInferenceExportComponent, 0, len(names))
+	for _, name := range names {
+		rendered, ok := name.VCardProjection()
+		if !ok {
+			continue
+		}
+		envelope := name.Envelope
+		component, err := newInferenceExportComponent(rendered, envelope)
+		if err != nil {
+			return err
+		}
+		projection.Names = append(projection.Names, component)
+	}
+	if currentOnly {
+		var displayName sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE id = ?`, personID).Scan(&displayName); err != nil {
+			return fmt.Errorf("read person %d display name for CardDAV inference projection: %w", personID, err)
+		}
+		profile := PersonProfile{
+			Person: Person{ID: personID, DisplayName: nullStringPtr(displayName)},
+			Names:  names,
+		}
+		if !personInferenceProjectionHasRenderedFullName(profile, projection.Attributes) {
+			if value, _, inferred, ok := profile.DerivedVCardFullName(); ok {
+				if inferred {
+					projection.DerivedFullName = &value
+				}
+			} else {
+				candidates, err := renderedNameFallbackCandidates(names, projection.Attributes)
+				if err != nil {
+					return fmt.Errorf("derive inferred CardDAV name fallback full name: %w", err)
+				}
+				// profileFallbacks is false when the caller did not load
+				// attributes and employment, so ORG candidates are unknown.
+				if len(candidates) == 0 && profileFallbacks {
+					candidates = organizationFallbackCandidates(*projection)
+					if len(candidates) == 0 {
+						candidates, err = contactFallbackCandidates(points, projection.Attributes)
+						if err != nil {
+							return fmt.Errorf("derive inferred CardDAV contact fallback full name: %w", err)
+						}
+					}
+				}
+				exposure, exposed, err := fallbackFullNameExposure(candidates)
+				if err != nil {
+					return err
+				}
+				if exposed {
+					projection.DerivedFullName = &exposure
+				}
+			}
+		}
+	}
+	addresses, err := s.listPersonAddressesTx(ctx, tx, personID, currentOnly)
+	if err != nil {
+		return err
+	}
+	projection.Addresses = make([]personInferenceExportComponent, 0, len(addresses))
+	for _, address := range addresses {
+		if !provenanceIsInferred(address.Envelope.Source) {
+			continue
+		}
+		rendered, ok, err := address.VCardProjection()
+		if err != nil {
+			// Legacy rows can contain values rejected by the current vCard
+			// parser. Keep their identity as inferred debt so migration and
+			// corrective edits remain possible; publication still validates
+			// renderability.
+			projection.Addresses = append(projection.Addresses, personInferenceExportComponent{
+				RowID: address.Envelope.ID, Inferred: true,
+			})
+			continue
+		}
+		if !ok {
+			continue
+		}
+		envelope := address.Envelope
+		component, err := newInferenceExportComponent(rendered, envelope)
+		if err != nil {
+			return err
+		}
+		projection.Addresses = append(projection.Addresses, component)
+	}
+	return nil
+}
+
+// organizationFallbackCandidates mirrors the renderer's ORG fallback, which
+// comes after N and before EMAIL and TEL. The current primary employment and
+// attributes mapped to ORG both render ORG occurrences.
+func organizationFallbackCandidates(projection personInferenceExportProjection) []fallbackFullNameCandidate {
+	candidates := attributeFallbackCandidates(projection.Attributes, "ORG")
+	for _, employment := range projection.Employments {
+		if len(employment.Organization) == 0 {
+			continue
+		}
+		candidates = append(candidates, fallbackFullNameCandidate{
+			Table: "employments", RowID: employment.RowID,
+			Value: strings.Join(employment.Organization, ";"), Inferred: employment.Inferred,
+		})
+	}
+	return candidates
+}
+
+func personProfileHasRenderedFullName(profile PersonProfile) bool {
+	for _, name := range profile.Names {
+		projection, renders := name.VCardProjection()
+		if renders && projection.Property == "FN" {
+			return true
+		}
+	}
+	return false
+}
+
+func personInferenceProjectionHasRenderedFullName(
+	profile PersonProfile, attributes []personInferenceExportAttribute,
+) bool {
+	if personProfileHasRenderedFullName(profile) {
+		return true
+	}
+	// The vCard projector treats any portable FN attribute as present, even
+	// when its scalar value is empty, so it suppresses the derived fallback.
+	for _, attribute := range attributes {
+		if attribute.Property == "FN" {
+			return true
+		}
+	}
+	return false
+}
+
+// fallbackFullNameCandidate is one row that can supply the FN the resource
+// renderer derives when a card has no formatted or structured name. Table
+// keeps row IDs from different tables distinct.
+type fallbackFullNameCandidate struct {
+	Table    string `json:"table"`
+	RowID    int64  `json:"row_id"`
+	Value    string `json:"value"`
+	Inferred bool   `json:"inferred"`
+}
+
+// attributeFallbackCandidates returns attribute values whose definition maps
+// to property. The renderer reads every occurrence of that property in the
+// merged card, whether a native row or an attribute rendered it.
+func attributeFallbackCandidates(
+	attributes []personInferenceExportAttribute, property string,
+) []fallbackFullNameCandidate {
+	var candidates []fallbackFullNameCandidate
+	for _, attribute := range attributes {
+		if attribute.Property != property {
+			continue
+		}
+		value := strings.TrimSpace(attribute.Value)
+		if scheme, rest, ok := strings.Cut(value, ":"); ok &&
+			(property == "EMAIL" && strings.EqualFold(scheme, "mailto") ||
+				property == "TEL" && strings.EqualFold(scheme, "tel")) {
+			value = strings.TrimSpace(rest)
+		}
+		if value != "" {
+			candidates = append(candidates, fallbackFullNameCandidate{
+				Table: "person_attribute_values", RowID: attribute.RowID, Value: value,
+				Inferred: attribute.Inferred,
+			})
+		}
+	}
+	return candidates
+}
+
+// fallbackFullNameExposure records the order-dependent FN fallback. The
+// renderer takes the first candidate in the merged card, and the merge keeps a
+// persisted occurrence in place while it appends a replacement row, so profile
+// order cannot predict which candidate renders. Any inferred candidate can
+// therefore become the visible FN. The exposure names every candidate row, so
+// replacing one, even with an identical value, requires a new review. Merges
+// move rows without changing their IDs, so moving an unchanged row compares
+// equal.
+func fallbackFullNameExposure(candidates []fallbackFullNameCandidate) (string, bool, error) {
+	if !slices.ContainsFunc(candidates, func(candidate fallbackFullNameCandidate) bool {
+		return candidate.Inferred
+	}) {
+		return "", false, nil
+	}
+	encoded, err := json.Marshal(candidates, json.Deterministic(true))
+	if err != nil {
+		return "", false, fmt.Errorf("encode CardDAV fallback full name candidates: %w", err)
+	}
+	return string(encoded), true, nil
+}
+
+// renderedNameFallbackCandidates mirrors the resource renderer's first-N
+// fallback. A phonetic N or an attribute mapped to N can supply the visible FN
+// when the profile has no formatted, structured, or display name.
+func renderedNameFallbackCandidates(
+	names []PersonName, attributes []personInferenceExportAttribute,
+) ([]fallbackFullNameCandidate, error) {
+	candidates := attributeFallbackCandidates(attributes, "N")
+	for _, name := range names {
+		projection, renders := name.VCardProjection()
+		if !renders || projection.Property != "N" {
+			continue
+		}
+		components, err := vcard.SplitStructuredText(projection.Value)
+		if err != nil {
+			if strings.ContainsAny(projection.Value, "\r\x00") {
+				// Legacy malformed rows remain in the projection as inferred
+				// review debt, but cannot supply a publishable fallback FN.
+				continue
+			}
+			return nil, err
+		}
+		ordered := make([]string, 0, 5)
+		for _, index := range []int{3, 1, 2, 0, 4} {
+			if index >= len(components) {
+				continue
+			}
+			if component := strings.TrimSpace(components[index]); component != "" {
+				ordered = append(ordered, component)
+			}
+		}
+		if len(ordered) == 0 {
+			continue
+		}
+		candidates = append(candidates, fallbackFullNameCandidate{
+			Table: personNamesTableName, RowID: name.Envelope.ID, Value: strings.Join(ordered, " "),
+			Inferred: provenanceIsInferred(name.Envelope.Source),
+		})
+	}
+	return candidates, nil
+}
+
+// contactFallbackCandidates mirrors the renderer's EMAIL-then-TEL fallback:
+// the first property kind with a usable value supplies the FN.
+func contactFallbackCandidates(
+	points []PersonContactPoint, attributes []personInferenceExportAttribute,
+) ([]fallbackFullNameCandidate, error) {
+	for _, property := range []string{"EMAIL", "TEL"} {
+		candidates := attributeFallbackCandidates(attributes, property)
+		for _, point := range points {
+			projection, ok := point.VCardProjection()
+			if !ok || projection.Property != property {
+				continue
+			}
+			value, err := vcard.UnescapeText(projection.Value)
+			if err != nil {
+				if strings.ContainsAny(projection.Value, "\r\x00") {
+					// Keep malformed legacy contacts in the inferred review
+					// projection, but do not use them as a fallback name.
+					continue
+				}
+				return nil, err
+			}
+			value = strings.TrimSpace(value)
+			if scheme, rest, ok := strings.Cut(value, ":"); ok &&
+				(property == "EMAIL" && strings.EqualFold(scheme, "mailto") ||
+					property == "TEL" && strings.EqualFold(scheme, "tel")) {
+				value = rest
+			}
+			if value != "" {
+				candidates = append(candidates, fallbackFullNameCandidate{
+					Table: personContactPointsTableName, RowID: point.Envelope.ID, Value: value,
+					Inferred: provenanceIsInferred(point.Envelope.Source),
+				})
+			}
+		}
+		if len(candidates) > 0 {
+			return candidates, nil
+		}
+	}
+	return nil, nil
 }
 
 func inferenceExportEmploymentText(value *string) string {
@@ -184,6 +535,34 @@ func inferenceExportProjectionChanged(
 			}
 			values = append(values, "employment:"+string(encoded))
 		}
+		for _, contact := range projection.ContactPoints {
+			encoded, err := json.Marshal(contact, json.Deterministic(true))
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, "contact:"+string(encoded))
+		}
+		for _, address := range projection.Addresses {
+			encoded, err := json.Marshal(address, json.Deterministic(true))
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, "address:"+string(encoded))
+		}
+		for _, name := range projection.Names {
+			encoded, err := json.Marshal(name, json.Deterministic(true))
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, "name:"+string(encoded))
+		}
+		if projection.DerivedFullName != nil {
+			encoded, err := json.Marshal(projection.DerivedFullName, json.Deterministic(true))
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, "derived-full-name:"+string(encoded))
+		}
 		slices.Sort(values)
 		return values, nil
 	}
@@ -199,6 +578,9 @@ func inferenceExportProjectionChanged(
 }
 
 func inferenceExportProjectionHasInferred(projection personInferenceExportProjection) bool {
+	if projection.DerivedFullName != nil {
+		return true
+	}
 	for _, attribute := range projection.Attributes {
 		if attribute.Inferred {
 			return true
@@ -209,10 +591,33 @@ func inferenceExportProjectionHasInferred(projection personInferenceExportProjec
 			return true
 		}
 	}
+	for _, contact := range projection.ContactPoints {
+		if contact.Inferred {
+			return true
+		}
+	}
+	for _, address := range projection.Addresses {
+		if address.Inferred {
+			return true
+		}
+	}
+	for _, name := range projection.Names {
+		if name.Inferred {
+			return true
+		}
+	}
 	return false
 }
 
 func (s *Store) backfillCardDAVInferenceExportState(ctx context.Context) error {
+	return s.backfillCardDAVInferenceExportStateVersion(ctx, false)
+}
+
+func (s *Store) backfillCardDAVInferenceExportStateV2(ctx context.Context) error {
+	return s.backfillCardDAVInferenceExportStateVersion(ctx, true)
+}
+
+func (s *Store) backfillCardDAVInferenceExportStateVersion(ctx context.Context, contactsOnly bool) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM persons ORDER BY id`)
 		if err != nil {
@@ -231,6 +636,12 @@ func (s *Store) backfillCardDAVInferenceExportState(ctx context.Context) error {
 			return fmt.Errorf("iterate CardDAV inference export backfill people: %w", err)
 		}
 		for _, personID := range personIDs {
+			if contactsOnly {
+				if err := s.backfillPersonCardDAVInferenceV2Tx(ctx, tx, personID); err != nil {
+					return err
+				}
+				continue
+			}
 			projection, err := s.loadPersonInferenceExportProjectionTx(ctx, tx, personID)
 			if err != nil {
 				return fmt.Errorf("load CardDAV inference export backfill projection: %w", err)
@@ -252,6 +663,218 @@ func (s *Store) backfillCardDAVInferenceExportState(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+func (s *Store) backfillPersonCardDAVInferenceV2Tx(ctx context.Context, tx *loggedTx, personID int64) error {
+	var current, history personInferenceExportProjection
+	if err := s.loadPersonInferenceExportContactsTx(ctx, tx, personID, true, false, &current); err != nil {
+		return err
+	}
+	needsReview := inferenceExportProjectionHasInferred(current)
+	if err := s.loadPersonInferenceExportContactsTx(ctx, tx, personID, false, false, &history); err != nil {
+		return err
+	}
+	if inferenceExportProjectionHasInferred(history) {
+		if !needsReview {
+			var err error
+			needsReview, err = s.personHasPublishedContactInferenceTx(ctx, tx, personID, history)
+			if err != nil {
+				return err
+			}
+		}
+		// Frozen requests may still contain inferred contributors retired since
+		// the request. Their v1 approval never covered these fields.
+		result, err := tx.ExecContext(ctx, `UPDATE carddav_publications
+            SET approved_body_sha256=NULL, approved_inference_revision=NULL, approved_mutation_revision=NULL
+            WHERE person_id=? AND pending_operation=?`, personID, CardDAVMutationCreate)
+		if err != nil {
+			return fmt.Errorf("invalidate legacy CardDAV create approval: %w", err)
+		}
+		pending, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		conflict, err := s.invalidateLegacyCardDAVConflictCreatesTx(ctx, tx, personID)
+		if err != nil {
+			return err
+		}
+		updateIntent, err := s.personHasPendingUpdateInferenceTx(ctx, tx, personID, history)
+		if err != nil {
+			return err
+		}
+		needsReview = needsReview || pending > 0 || conflict || updateIntent
+	}
+	if needsReview {
+		return s.advancePersonInferenceExportRevisionTx(ctx, tx, personID)
+	}
+	return nil
+}
+
+// personHasPendingUpdateInferenceTx recognizes inferred contributors captured
+// by an ordinary pending UPDATE or unresolved conflict intent even when the
+// row is retired and the stored remote envelope never owned that property.
+// Keep both intents unchanged so recovery can still confirm the exact canonical
+// write read-only.
+func (s *Store) personHasPendingUpdateInferenceTx(
+	ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection,
+) (bool, error) {
+	inferredRows := map[string]map[int64]bool{
+		personNamesTableName:         {},
+		personContactPointsTableName: {},
+		personAddressesTableName:     {},
+	}
+	for table, components := range map[string][]personInferenceExportComponent{
+		personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints,
+		personAddressesTableName: history.Addresses,
+	} {
+		for _, component := range components {
+			if component.Inferred {
+				inferredRows[table][component.RowID] = true
+			}
+		}
+	}
+	var pendingMetadata []byte
+	err := tx.QueryRowContext(ctx, `SELECT outgoing_envelope_metadata FROM carddav_publications
+        WHERE person_id=? AND pending_operation=?`, personID, CardDAVMutationUpdate).Scan(&pendingMetadata)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("load pending CardDAV update ownership: %w", err)
+	}
+	if len(pendingMetadata) > 0 {
+		envelope, err := vcard.UnmarshalResourceMetadata(pendingMetadata)
+		if err != nil {
+			return false, fmt.Errorf("decode pending CardDAV update ownership: %w", err)
+		}
+		for _, mapping := range envelope.NativeMappings {
+			if inferredRows[mapping.Table][mapping.RowID] {
+				return true, nil
+			}
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT c.local_mutation_intent FROM carddav_conflicts c
+        WHERE c.status=? AND c.local_mutation_intent IS NOT NULL
+          AND EXISTS(SELECT 1 FROM carddav_resources r WHERE r.address_book_id=c.address_book_id
+            AND r.href=c.href AND r.person_id=?)`, CardDAVConflictUnresolved, personID)
+	if err != nil {
+		return false, fmt.Errorf("load legacy CardDAV conflict update intents: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return false, err
+		}
+		var intent cardDAVConflictIntentV1
+		if err := json.Unmarshal(raw, &intent); err != nil {
+			return false, fmt.Errorf("decode legacy CardDAV conflict update intent: %w", err)
+		}
+		if intent.Operation != CardDAVMutationUpdate || intent.PersonID != personID || len(intent.EnvelopeMetadata) == 0 {
+			continue
+		}
+		envelope, err := vcard.UnmarshalResourceMetadata(intent.EnvelopeMetadata)
+		if err != nil {
+			return false, fmt.Errorf("decode legacy CardDAV conflict update ownership: %w", err)
+		}
+		for _, mapping := range envelope.NativeMappings {
+			if inferredRows[mapping.Table][mapping.RowID] {
+				return true, nil
+			}
+		}
+	}
+	return false, rows.Err()
+}
+
+func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection) (bool, error) {
+	byTable := map[string]map[int64]bool{}
+	for table, components := range map[string][]personInferenceExportComponent{
+		personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints,
+		personAddressesTableName: history.Addresses,
+	} {
+		byTable[table] = make(map[int64]bool)
+		for _, component := range components {
+			if component.Inferred {
+				byTable[table][component.RowID] = true
+			}
+		}
+	}
+	mappingsExpr := "json_extract(e.resource_metadata, '$.native_mappings')"
+	if s.IsPostgreSQL() {
+		mappingsExpr = "e.resource_metadata ->> 'native_mappings'"
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT `+mappingsExpr+` FROM vcard_resource_envelopes e
+        WHERE e.person_id=? AND EXISTS(SELECT 1 FROM carddav_publications p
+            WHERE p.person_id=e.person_id AND p.desired=TRUE
+              AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT)
+              AND e.source_resource_uid=p.href)`, personID)
+	if err != nil {
+		return false, fmt.Errorf("load published contact inference mappings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw sql.NullString
+		if err := rows.Scan(&raw); err != nil {
+			return false, err
+		}
+		if !raw.Valid {
+			continue
+		}
+		var mappings []vcard.NativeMapping
+		if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
+			return false, fmt.Errorf("decode published contact inference mappings: %w", err)
+		}
+		for _, mapping := range mappings {
+			if byTable[mapping.Table][mapping.RowID] {
+				return true, nil
+			}
+		}
+	}
+	return false, rows.Err()
+}
+
+func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx *loggedTx, personID int64) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT c.id, c.local_mutation_intent FROM carddav_conflicts c
+        WHERE c.status=? AND c.local_mutation_intent IS NOT NULL
+          AND EXISTS(SELECT 1 FROM carddav_resources r WHERE r.address_book_id=c.address_book_id
+            AND r.href=c.href AND r.person_id=?)`, CardDAVConflictUnresolved, personID)
+	if err != nil {
+		return false, fmt.Errorf("load legacy CardDAV conflict creates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	intents := make(map[int64]cardDAVConflictIntentV1)
+	for rows.Next() {
+		var id int64
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return false, err
+		}
+		var intent cardDAVConflictIntentV1
+		if err := json.Unmarshal(raw, &intent); err != nil {
+			return false, fmt.Errorf("decode legacy CardDAV conflict create: %w", err)
+		}
+		if intent.Operation == CardDAVMutationCreate {
+			intents[id] = intent
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	for id, intent := range intents {
+		// Preserve bytes for canonical confirmation. After a 404, the stale
+		// authorization releases this intent and requires a fresh review.
+		intent.AuthorizationGeneration = 0
+		encoded, err := json.Marshal(intent, json.Deterministic(true))
+		if err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE carddav_conflicts SET local_mutation_intent=?,
+            approved_local_body_sha256=NULL, approved_local_inference_revision=NULL, approved_conflict_revision=NULL
+            WHERE id=?`, encoded, id); err != nil {
+			return false, fmt.Errorf("invalidate legacy CardDAV conflict create approval: %w", err)
+		}
+	}
+	return len(intents) > 0, nil
 }
 
 // personHasPublishedInferenceHistoryTx conservatively recognizes prior inferred

@@ -92,3 +92,58 @@ func TestPersonAndRelationshipWritesRetryDeadlock(t *testing.T) {
 		})
 	}
 }
+
+func TestInferredNameRetirementWritesRetryRelationshipDeadlock(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL row locks are required for inferred-name retirement deadlock regressions")
+	}
+	cases := []struct {
+		name  string
+		write func(context.Context, *store.Store, *store.Person, int64) error
+	}{{
+		name: "supersede name",
+		write: func(ctx context.Context, st *store.Store, person *store.Person, nameID int64) error {
+			return st.SupersedePersonNameContext(ctx, person.ID, nameID, nil)
+		},
+	}, {
+		name: "profile patch",
+		write: func(ctx context.Context, st *store.Store, person *store.Person, nameID int64) error {
+			_, err := st.ApplyPersonProfilePatchContext(ctx, person.ID, person.Revision,
+				store.PersonProfilePatch{Names: &store.PersonNamePatch{Supersede: []int64{nameID}}})
+			return err
+		},
+	}}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			t.Cleanup(cancel)
+			person, err := st.CreateStandalonePersonContext(ctx, store.PersonCreateInput{
+				Name: "Alex Example", Source: store.ProvenanceEnrichment,
+			})
+			require.NoError(err)
+			counterpart, err := st.CreateStandalonePersonContext(ctx, store.PersonCreateInput{
+				Name: fmt.Sprintf("Riley %d Example", i),
+			})
+			require.NoError(err)
+			_, err = st.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
+				SourcePersonID: person.ID, TargetPersonID: counterpart.ID,
+				TypeSlug: "friend", Source: store.ProvenanceUser, Actor: "test",
+			})
+			require.NoError(err)
+			profile, err := st.GetPersonProfileContext(ctx, person.ID)
+			require.NoError(err)
+			require.Len(profile.Names, 1)
+			require.Less(person.ID, counterpart.ID)
+
+			writeErr := forcePostgreSQLDeadlock(ctx, t, st,
+				postgreSQLRowLock{table: "persons", id: counterpart.ID},
+				postgreSQLRowLock{table: "persons", id: person.ID},
+				func(ctx context.Context) error {
+					return tc.write(ctx, st, &profile.Person, profile.Names[0].Envelope.ID)
+				})
+			require.NoError(writeErr, "%s must retry a transient PostgreSQL deadlock", tc.name)
+		})
+	}
+}

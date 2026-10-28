@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 type PersonContactPoint struct {
@@ -21,6 +23,87 @@ type PersonContactPoint struct {
 	Normalization        string             `json:"normalization"`
 	NormalizationVersion int                `json:"normalization_version"`
 	URI                  *string            `json:"uri,omitzero" nullable:"false"`
+}
+
+// PersonContactPointVCardProjection contains the property and parameters
+// rendered from a stored contact point. CardDAV inference review uses the
+// same projection.
+type PersonContactPointVCardProjection struct {
+	Property    string  `json:"property"`
+	Value       string  `json:"value"`
+	ServiceType *string `json:"service_type"`
+	ValueType   *string `json:"value_type"`
+}
+
+// VCardValue returns the unescaped export value, or empty when the contact
+// cannot render. Projection and inference review must use the same rules.
+func (p PersonContactPoint) VCardValue() string {
+	if !p.AddressKind.Exportable() {
+		return ""
+	}
+	value := strings.TrimSpace(p.OriginalValue)
+	if p.URI != nil && strings.TrimSpace(*p.URI) != "" {
+		value = strings.TrimSpace(*p.URI)
+	}
+	if value == "" {
+		return ""
+	}
+	switch p.AddressKind {
+	case ContactAddressEmail, ContactAddressSocial, ContactAddressLanguage:
+		return value
+	case ContactAddressProviderIdentity:
+		return ""
+	case ContactAddressUsername, ContactAddressIMPP, ContactAddressURL,
+		ContactAddressCalendar, ContactAddressContactURI, ContactAddressOrgDirectory:
+		if !vcard.IsURIValue(value) {
+			return ""
+		}
+	case ContactAddressPhone:
+		if !vcard.IsURIValue(value) {
+			phone := strings.TrimSpace(p.NormalizedValue)
+			if phone == "" {
+				phone = strings.ReplaceAll(value, " ", "")
+			}
+			return "tel:" + phone
+		}
+	}
+	return value
+}
+
+func (p PersonContactPoint) VCardProjection() (PersonContactPointVCardProjection, bool) {
+	value := p.VCardValue()
+	if value == "" {
+		return PersonContactPointVCardProjection{}, false
+	}
+	projection := PersonContactPointVCardProjection{Value: value}
+	switch p.AddressKind {
+	case ContactAddressEmail:
+		projection.Property, projection.Value = "EMAIL", vcard.EscapeText(value)
+	case ContactAddressPhone:
+		projection.Property = "TEL"
+	case ContactAddressUsername, ContactAddressIMPP:
+		projection.Property = "IMPP"
+	case ContactAddressURL:
+		projection.Property = "URL"
+	case ContactAddressSocial:
+		projection.Property = "SOCIALPROFILE"
+		projection.ServiceType = vcardProjectionParameterValue(p.ServiceSlug)
+		if !vcard.IsURIValue(value) {
+			projection.Value = vcard.EscapeText(value)
+			projection.ValueType = new("text")
+		}
+	case ContactAddressCalendar:
+		projection.Property = "CALURI"
+	case ContactAddressContactURI:
+		projection.Property = "CONTACT-URI"
+	case ContactAddressOrgDirectory:
+		projection.Property = "ORG-DIRECTORY"
+	case ContactAddressLanguage:
+		projection.Property, projection.Value = "LANG", vcard.EscapeText(value)
+	default:
+		return PersonContactPointVCardProjection{}, false
+	}
+	return projection, true
 }
 
 type PersonContactPointInput struct {
@@ -59,9 +142,11 @@ func (s *Store) AddPersonContactPointContext(
 		if err := ensureProfilePersonTx(ctx, tx, personID); err != nil {
 			return err
 		}
-		var err error
-		result, err = s.addPersonContactPointTx(ctx, tx, personID, input)
-		if err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			var err error
+			result, err = s.addPersonContactPointTx(ctx, tx, personID, input)
+			return err
+		}); err != nil {
 			return err
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
@@ -139,9 +224,9 @@ func (s *Store) SupersedePersonContactPointContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := s.supersedePersonContactPointTx(
-			ctx, tx, personID, contactPointID, activeUntil,
-		); err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			return s.supersedePersonContactPointTx(ctx, tx, personID, contactPointID, activeUntil)
+		}); err != nil {
 			return err
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {

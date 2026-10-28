@@ -171,9 +171,14 @@ func (s *Store) splitPersonMergeOnce(
 		if err != nil {
 			return err
 		}
-		var displayName any
+		var displayName, displayNameSourceNameID any
+		var displayNameOwnerID *int64
 		if selection.restoresAbsorbed && absorbedRoot.DisplayName != nil {
 			displayName = *absorbedRoot.DisplayName
+			displayNameOwnerID = absorbedRoot.DisplayNameSourceNameID
+			if displayNameOwnerID != nil {
+				displayNameSourceNameID = *displayNameOwnerID
+			}
 		}
 		displayOwnerRows := snapshot.Rows
 		displayOwnerPerson := absorbedRoot.ID
@@ -182,8 +187,9 @@ func (s *Store) splitPersonMergeOnce(
 		}
 		var newPersonID int64
 		if err := tx.QueryRowContext(ctx,
-			`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`,
-			newUID, displayName,
+			`INSERT INTO persons (vcard_uid, display_name, display_name_source_name_id)
+			VALUES (?, ?, ?) RETURNING id`,
+			newUID, displayName, displayNameSourceNameID,
 		).Scan(&newPersonID); err != nil {
 			return fmt.Errorf("create split person: %w", err)
 		}
@@ -231,6 +237,22 @@ func (s *Store) splitPersonMergeOnce(
 		if err != nil {
 			return err
 		}
+		if displayNameOwnerID != nil {
+			ownerCurrent, err := s.personSplitDisplayNameOwnerCurrentTx(
+				ctx, tx, newPersonID, *displayNameOwnerID,
+			)
+			if err != nil {
+				return err
+			}
+			if !ownerCurrent {
+				if err := s.clearPersonSplitDisplayNameOwnerTx(
+					ctx, tx, newPersonID, *displayNameOwnerID,
+				); err != nil {
+					return err
+				}
+				displayName, displayNameOwnerID = nil, nil
+			}
+		}
 		for _, ancestor := range ancestorRestorations {
 			ancestorAmbiguous, err := s.restorePersonSplitRowsTx(
 				ctx, tx, ancestor.merge.ID, splitID, request.SourcePersonID,
@@ -242,16 +264,49 @@ func (s *Store) splitPersonMergeOnce(
 				return err
 			}
 			ambiguous = append(ambiguous, ancestorAmbiguous...)
-			if ancestor.absorbedRoot.DisplayName != nil {
-				if _, err := tx.ExecContext(ctx, `UPDATE persons
-					SET display_name = COALESCE(display_name, ?) WHERE id = ?`,
-					*ancestor.absorbedRoot.DisplayName, newPersonID); err != nil {
-					return fmt.Errorf("restore ancestor split display name: %w", err)
+			if displayNameOwnerID != nil {
+				ownerCurrent, err := s.personSplitDisplayNameOwnerCurrentTx(
+					ctx, tx, newPersonID, *displayNameOwnerID,
+				)
+				if err != nil {
+					return err
 				}
+				if !ownerCurrent {
+					if err := s.clearPersonSplitDisplayNameOwnerTx(
+						ctx, tx, newPersonID, *displayNameOwnerID,
+					); err != nil {
+						return err
+					}
+					displayName, displayNameOwnerID = nil, nil
+				}
+			}
+			if ancestor.absorbedRoot.DisplayName != nil {
 				if displayName == nil {
-					displayName = *ancestor.absorbedRoot.DisplayName
-					displayOwnerRows = ancestor.snapshot.Rows
-					displayOwnerPerson = ancestor.absorbedRoot.ID
+					candidateOwnerID := ancestor.absorbedRoot.DisplayNameSourceNameID
+					ownerCurrent := true
+					if candidateOwnerID != nil {
+						ownerCurrent, err = s.personSplitDisplayNameOwnerCurrentTx(
+							ctx, tx, newPersonID, *candidateOwnerID,
+						)
+						if err != nil {
+							return err
+						}
+					}
+					if ownerCurrent {
+						displayName = *ancestor.absorbedRoot.DisplayName
+						displayNameSourceNameID = nil
+						displayNameOwnerID = candidateOwnerID
+						if displayNameOwnerID != nil {
+							displayNameSourceNameID = *displayNameOwnerID
+						}
+						if _, err := tx.ExecContext(ctx, `UPDATE persons SET
+							display_name = ?, display_name_source_name_id = ? WHERE id = ?`,
+							displayName, displayNameSourceNameID, newPersonID); err != nil {
+							return fmt.Errorf("restore ancestor split display name: %w", err)
+						}
+						displayOwnerRows = ancestor.snapshot.Rows
+						displayOwnerPerson = ancestor.absorbedRoot.ID
+					}
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_review_candidates SET
@@ -961,6 +1016,32 @@ func (s *Store) restorePersonSplitRowsTx(
 		}
 	}
 	return ambiguous, nil
+}
+
+func (s *Store) personSplitDisplayNameOwnerCurrentTx(
+	ctx context.Context, tx *loggedTx, personID, nameID int64,
+) (bool, error) {
+	var current bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM person_names
+		WHERE person_id = ? AND id = ? AND name_kind = ?
+		  AND active_until IS NULL AND superseded_at IS NULL
+	)`, personID, nameID, PersonNameFormatted).Scan(&current)
+	if err != nil {
+		return false, fmt.Errorf("check split display-name owner %d for person %d: %w", nameID, personID, err)
+	}
+	return current, nil
+}
+
+func (s *Store) clearPersonSplitDisplayNameOwnerTx(
+	ctx context.Context, tx *loggedTx, personID, nameID int64,
+) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE persons
+		SET display_name = NULL, display_name_source_name_id = NULL
+		WHERE id = ? AND display_name_source_name_id = ?`, personID, nameID); err != nil {
+		return fmt.Errorf("clear retired split display-name owner %d for person %d: %w", nameID, personID, err)
+	}
+	return nil
 }
 
 func appendPersonSplitUnrestoredRow(

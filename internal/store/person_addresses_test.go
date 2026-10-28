@@ -41,6 +41,33 @@ func TestPersonAddressRoundTripsStructuredComponentsAndMetadata(t *testing.T) {
 	assert.Equal("a1", *stored[0].Envelope.VCard.PropID)
 }
 
+func TestAddPersonAddressRejectsMalformedExtendedComponents(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+	}{
+		{name: "carriage return", value: "apartment\rline"},
+		{name: "NUL", value: "apartment\x00line"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := storetest.New(t).Store
+			personID := newTestPerson(t, st)
+			_, err := st.AddPersonAddressContext(t.Context(), personID, store.PersonAddressInput{
+				AddressKind: store.PersonAddressPostal, StreetAddress: new("10 Example Street"),
+				ExtendedComponents: new(test.value), OriginalValue: "10 Example Street",
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.Error(err)
+
+			addresses, err := st.ListPersonAddressesContext(t.Context(), personID, true)
+			require.NoError(err)
+			assert.Empty(addresses)
+		})
+	}
+}
+
 func TestBirthAndDeathPlacesAreAddressRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

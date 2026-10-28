@@ -85,6 +85,116 @@ func newPersonSplitFixtureWithAbsorbedSetup(
 	}
 }
 
+func standaloneSplitPersonWithParticipant(
+	t *testing.T, st *store.Store, email, name string, source store.Provenance,
+) (*store.Person, int64) {
+	t.Helper()
+	require := require.New(t)
+	person, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+		Name: name, Source: source,
+	})
+	require.NoError(err)
+	participantID, err := st.EnsureParticipant(email, name, "example.test")
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_participants
+		(person_id, participant_id) VALUES (?, ?)`), person.ID, participantID)
+	require.NoError(err)
+	person, err = st.GetPersonContext(t.Context(), person.ID)
+	require.NoError(err)
+	return person, participantID
+}
+
+func TestSplitDoesNotRestoreRetiredInferredDisplayNameOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	survivor, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+		Name: "Curated Survivor",
+	})
+	require.NoError(err)
+	absorbed, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+		Name: "Retired Enrichment", Source: store.ProvenanceEnrichment,
+	})
+	require.NoError(err)
+	absorbedNames, err := st.ListPersonNamesContext(t.Context(), absorbed.ID, true)
+	require.NoError(err)
+	require.Len(absorbedNames, 1)
+
+	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "split-retired-inferred-name", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(st.SupersedePersonNameContext(
+		t.Context(), merged.Person.ID, absorbedNames[0].Envelope.ID, nil,
+	))
+	currentNames, err := st.ListPersonNamesContext(t.Context(), merged.Person.ID, true)
+	require.NoError(err)
+	assert.Empty(currentNames, "the transferred inferred name was retired after the merge")
+
+	source, err := st.GetPersonContext(t.Context(), merged.Person.ID)
+	require.NoError(err)
+	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
+		SourcePersonID: source.ID, MergeID: merged.Merge.ID,
+		ExpectedSourceRevision: source.Revision,
+		IdempotencyKey:         "split-retired-inferred-name-owner", Actor: "test",
+	})
+	require.NoError(err)
+	assert.Nil(split.NewPerson.DisplayName,
+		"split must not restore a display-name mirror whose owning name row is retired")
+}
+
+func TestAncestorSplitDoesNotRestoreRetiredInferredDisplayNameOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	first, _ := standaloneSplitPersonWithParticipant(
+		t, st, "first@example.test", "First Person", store.ProvenanceUser,
+	)
+	absorbed, absorbedParticipant := standaloneSplitPersonWithParticipant(
+		t, st, "absorbed@example.test", "Retired Enrichment", store.ProvenanceEnrichment,
+	)
+	absorbedNames, err := st.ListPersonNamesContext(t.Context(), absorbed.ID, true)
+	require.NoError(err)
+	require.Len(absorbedNames, 1)
+
+	firstMerge, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+		SurvivorID: first.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: first.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "ancestor-split-first-merge", Actor: "test",
+	})
+	require.NoError(err)
+	later, _ := standaloneSplitPersonWithParticipant(
+		t, st, "later@example.test", "Later Person", store.ProvenanceUser,
+	)
+	secondMerge, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+		SurvivorID: later.ID, AbsorbedID: firstMerge.Person.ID,
+		ExpectedSurvivorRevision: later.Revision,
+		ExpectedAbsorbedRevision: firstMerge.Person.Revision,
+		IdempotencyKey:           "ancestor-split-second-merge", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(st.SupersedePersonNameContext(
+		t.Context(), secondMerge.Person.ID, absorbedNames[0].Envelope.ID, nil,
+	))
+
+	source, err := st.GetPersonContext(t.Context(), secondMerge.Person.ID)
+	require.NoError(err)
+	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
+		SourcePersonID: source.ID, MergeID: secondMerge.Merge.ID,
+		ParticipantIDs:         []int64{absorbedParticipant},
+		ExpectedSourceRevision: source.Revision,
+		IdempotencyKey:         "ancestor-split-retired-inferred-name-owner", Actor: "test",
+	})
+	require.NoError(err)
+	assert.Nil(split.NewPerson.DisplayName,
+		"ancestor restoration must not restore a mirror whose owning name row is retired")
+}
+
 func TestSplitPersonMerge_ExactReversalRestoresExplicitFactPinState(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
