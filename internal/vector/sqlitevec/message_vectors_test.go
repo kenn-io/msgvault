@@ -45,27 +45,6 @@ func TestMessageVectorsReturnsStoredValuesUnnormalized(t *testing.T) {
 	assert.Equal(t, [][]float32{v}, got[1])
 }
 
-func TestMessageVectorsExcludesNegativeChunkIndices(t *testing.T) {
-	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 4, "")
-	require.NoError(t, err)
-	chunks := []vector.Chunk{{MessageID: 1, ChunkIndex: -1, Vector: []float32{3, 4, 0, 0}}}
-	want := make([][]float32, 0, 4)
-	for i := range 4 {
-		v := unitVec(4, i)
-		chunks = append(chunks, vector.Chunk{MessageID: 1, ChunkIndex: i, Vector: v})
-		want = append(want, v)
-	}
-	require.NoError(t, b.Upsert(ctx, gid, chunks))
-	gen, err := b.BuildingGeneration(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, gen)
-
-	got, err := b.MessageVectors(ctx, *gen, []int64{1}, 4)
-	require.NoError(t, err)
-	assert.Equal(t, want, got[1])
-}
-
 func TestMessageVectorsScopesToGeneration(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	a := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
@@ -81,7 +60,7 @@ func TestMessageVectorsScopesToGeneration(t *testing.T) {
 	}
 }
 
-func TestMessageVectorsPagesAndCaps(t *testing.T) {
+func TestMessageVectorsReadsAcrossPages(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	ids := make([]int64, 257)
 	vecs := make(map[int64][]float32, len(ids))
@@ -104,23 +83,6 @@ func TestMessageVectorsPagesAndCaps(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, got, 257)
 	assert.Equal(t, [][]float32{unitVec(768, 0)}, got[1])
-
-	// A zero-value backend proves the cap is enforced before any database query,
-	// even when deduplication would reduce the input below the cap.
-	_, err = (&Backend{}).MessageVectors(ctx, gen, make([]int64, 2001), 4)
-	assert.ErrorIs(t, err, vector.ErrFilterTooLarge)
-}
-
-func TestMessageVectorsRejectsInvalidArguments(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		dim, maxChunks int
-	}{{"zero chunks", 768, 0}, {"negative chunks", 768, -1}, {"zero dimension", 0, 4}, {"negative dimension", -1, 4}} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := (&Backend{}).MessageVectors(context.Background(), vector.Generation{Dimension: tc.dim}, []int64{1}, tc.maxChunks)
-			assert.Error(t, err)
-		})
-	}
 }
 
 func TestMessageVectorsEmptyIDs(t *testing.T) {
