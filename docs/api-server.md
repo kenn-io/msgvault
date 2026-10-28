@@ -160,7 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.45.0**.
+it is separate from the binary release version. The current schema is **3.46.0**.
+
+Schema 3.46.0 adds the owner-only contested person facts report.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
@@ -188,8 +190,6 @@ Schema 3.30.0 adds `hidden_text_present` to message details and search rows. It 
 
 Schema 3.42.0 adds `imessage.media_max_participants` and `imessage.max_media_mb` to the settings catalog and updates.
 
-Schema 3.26.0 also adds the owner-only contested person facts report at `GET /people/{id}/fact-contests`.
-
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
@@ -215,6 +215,8 @@ Schema 3.26.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query 
 Schema 3.44.0 adds the [open-loop](#open-loops) routes, including
 `POST /api/v1/loops/{message_id}/reopen` to clear a done or snooze decision on
 one exact question.
+
+Schema 3.45.0 adds the owner-only `GET /people/{id}/fact-contests` report. For each fact the resolver left unsettled, it lists the current value, the competing claims with the resolver's decision, and their supported citations. Facts the owner has pinned or chosen are left out, and sensitive facts require `include_sensitive=true`.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.

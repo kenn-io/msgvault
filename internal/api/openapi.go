@@ -377,8 +377,7 @@ import (
 // 3.24.0 adds authenticated streamed Muesli recording imports.
 // 3.25.0 adds archived chat discovery ranked by the best matching name or title.
 // 3.26.0 adds bounded search-aware deletion resolution with an explicit
-// max_results cap and matched_count for skipped matches, and the owner-only
-// contested person facts report.
+// max_results cap and matched_count for skipped matches.
 // 3.27.0 adds optional attachment text results and recording errors in media search.
 // 3.28.0 adds the typed calendar projection to calendar event message details.
 // 3.29.0 adds literal address filtering to the durable people Directory.
@@ -401,7 +400,8 @@ import (
 // 3.43.0 adds receiver-reported sender authentication to single-message reads.
 // 3.44.0 adds owner-only open-loop routes and done, snooze, and reopen decisions.
 // 3.45.0 adds sender labels to message and file search rows.
-const APISchemaVersion = "3.45.0"
+// 3.46.0 adds the owner-only contested person facts report.
+const APISchemaVersion = "3.46.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
