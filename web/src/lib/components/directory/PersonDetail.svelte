@@ -169,7 +169,7 @@
 
   <Card level="default" padding="none" class="detail-surface">
     <div class="detail-frame">
-      <div class="detail-tabs" role="tablist" aria-label="Person detail sections" data-scroll>
+      <div class="detail-tabs" role="tablist" aria-label="Person detail sections">
         {#each SECTIONS as section (section.id)}
           <button bind:this={tabButtons[section.id]} id={tabID(section.id)} type="button" role="tab"
             aria-selected={activeTab === section.id} aria-controls={panelID(section.id)}

@@ -403,7 +403,6 @@
     class="table-grid"
     bind:this={gridElement}
     role="grid"
-    data-scroll
     aria-label="Everything results"
     aria-rowcount={accessibilityRowCount}
     aria-colcount={visibleColumns.length + 1}

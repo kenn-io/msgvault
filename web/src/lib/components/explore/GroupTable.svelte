@@ -280,7 +280,6 @@
     class="group-grid"
     bind:this={gridElement}
     role="grid"
-    data-scroll
     aria-label={`${workspaceLabel} grouped by ${dimension}`}
     aria-rowcount={accessibilityRowCount}
     aria-colcount="5"

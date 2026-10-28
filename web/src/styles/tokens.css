@@ -32,15 +32,9 @@
   --section-gap: var(--space-6);
   --field-gap: var(--space-4);
   --control-gap: var(--space-3);
-  --label-gap: var(--space-2);
-  --divider-gap: var(--space-4);
-  --control-h-sm: 24px;
-  --control-h: 28px;
-  --control-h-lg: 36px;
   --control-pad-x: var(--space-5);
   --chip-pad-x: var(--space-4);
   --line-height-tight: 1.25;
-  --line-height-body: 1.45;
 
   --scrollbar-size: 8px;
   --scrollbar-thumb: color-mix(in srgb, var(--text-muted) 38%, transparent);
@@ -120,8 +114,7 @@
   height: 0;
 }
 
-/* One padding for every panel. Kit gives dialog parts 16px, drawer headers
- * 12px, and drawer footers 16px, so the edges of neighboring parts never line up. */
+/* Share one horizontal inset across dialog and drawer sections. */
 :root:root .kit-modal-header {
   padding: var(--control-gap) var(--pane-pad-x);
 }
@@ -138,10 +131,6 @@
 :root:root .kit-detail-drawer__footer {
   gap: var(--control-gap);
   padding: var(--pane-pad-x);
-}
-
-:root:root .kit-detail-drawer__header {
-  padding: var(--pane-pad-y) var(--pane-pad-x);
 }
 
 /* Kit trims button labels to the x-height, which centers lowercase letters

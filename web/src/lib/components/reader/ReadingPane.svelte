@@ -296,7 +296,7 @@
 
   <div class="pane-body">
     {#if meetingActionsRequest}
-      <div class="meeting-actions-sheet" data-scroll>
+      <div class="meeting-actions-sheet">
         <MeetingActions {client} request={meetingActionsRequest} {onOpenMeeting} />
       </div>
     {/if}
@@ -332,7 +332,7 @@
         <p class="preview">{(selection.kind === 'entry' ? selection.row.preview : selection.message.snippet) || 'No preview is available.'}</p>
       </section>
     {:else}
-      <div class="group-scroll" aria-label="Group details" data-scroll>
+      <div class="group-scroll" aria-label="Group details">
         {#if showFiles}
           {#if selection.meetingScope}
             <MeetingPanel {client} scope={{ kind: 'explore', explore: selection.meetingScope }}
@@ -400,8 +400,7 @@
   }
 
   .pane-title {
-    min-width: 0;
-    flex: 0 1 auto;
+    min-width: min(8rem, 100%);
     overflow: hidden;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
@@ -430,7 +429,7 @@
     flex: none;
     max-height: 40%;
     overflow: auto;
-    padding: 0 var(--space-4);
+    padding: 0 var(--pane-pad-x);
     border-bottom: 1px solid var(--border-muted);
   }
 
@@ -443,7 +442,7 @@
 
   .meeting-context-sheet {
     flex: none;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-3) var(--pane-pad-x);
     border-bottom: 1px solid var(--border-muted);
   }
 

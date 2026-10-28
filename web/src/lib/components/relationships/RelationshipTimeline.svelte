@@ -189,7 +189,6 @@
     aria-label="Relationship activity"
     aria-busy={loading || loadingMore}
     tabindex="0"
-    data-scroll
     bind:this={gridElement}
     onkeydown={handleKeydown}
     onscroll={handleScroll}

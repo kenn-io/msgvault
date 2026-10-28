@@ -216,7 +216,7 @@
     max-width: 100%;
     align-items: center;
     gap: var(--space-1);
-    padding: 0 0 0 var(--space-2);
+    padding: 0 var(--chip-pad-x);
     border-radius: var(--radius-sm);
     background: var(--bg-inset);
     color: var(--text-secondary);
