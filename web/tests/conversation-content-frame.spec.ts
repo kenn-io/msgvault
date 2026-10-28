@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { setKitTheme } from './kit-ui';
 
-test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
+const visibleScrollbarTest = test.extend({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
 
 const row = {
   key: 'source:1:message:source-1',
@@ -411,7 +411,7 @@ test.describe('designed archived mail', () => {
     } }));
   });
 
-  test('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
+  visibleScrollbarTest('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await expect(page.locator('html')).toHaveClass(/dark/);
     await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
@@ -447,7 +447,7 @@ test.describe('designed archived mail', () => {
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
   });
 
-  test('wide archived mail fits its visible 8px arrowless scrollbar', async ({ page }) => {
+  visibleScrollbarTest('wide archived mail fits its visible 8px arrowless scrollbar', async ({ page }) => {
     await page.route('**/api/v1/conversations/7**', (route) => route.fulfill({ json: {
       id: 7, anchor_id: 42, has_before: false, has_after: false, total: 1,
       messages: [{
