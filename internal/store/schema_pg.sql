@@ -4227,3 +4227,12 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Matrix recovery gives each Megolm session and message index to one event.
+-- Claims outlive message rows so archive GC cannot reopen a replayed index.
+CREATE TABLE IF NOT EXISTS matrix_megolm_claims (
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    claim_key TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, claim_key)
+);

@@ -1531,7 +1531,8 @@ dedicated device named `msgvault (read-only)`. See
 msgvault add-matrix \
   --homeserver https://matrix.example.org \
   --user-id @archive:example.org \
-  --password-file /path/to/password
+  --password-file /path/to/password \
+  --recovery-file /path/to/recovery-key
 ```
 
 | Flag | Default | Description |
@@ -1540,10 +1541,12 @@ msgvault add-matrix \
 | `--user-id` | required | Full Matrix user ID |
 | `--password-file` | prompt or stdin | Read the account password from a file |
 | `--login-token-file` | — | Read a single-use `m.login.token` obtained from an SSO/login flow; mutually exclusive with `--password-file` |
+| `--recovery-file` | prompt | Read the secret-storage recovery key or passphrase from a file |
+| `--recovery-passphrase` | `false` | Treat the recovery secret as a passphrase |
+| `--skip-key-backup` | `false` | Clear the saved backup key and keep encrypted placeholders; mutually exclusive with recovery flags |
 | `--no-default-identity` | `false` | Do not auto-confirm the Matrix user ID as this source's "me" identity |
 
-The access token is written to an owner-only file under `tokens/`. Running it
-again for a registered user renews the login in place and keeps its history.
+The access token and unlocked backup key are written to an owner-only file under `tokens/`. The recovery secret is never saved. First setup requires a recovery secret or `--skip-key-backup`; renewal without either keeps the saved backup key. Running it again for a registered user renews the login in place and keeps its history. See the [Matrix guide](usage/matrix.md) for credential access, backup retention, and decryption limits.
 
 ---
 
@@ -1562,10 +1565,14 @@ msgvault sync-matrix --full
 | Flag | Default | Description |
 |---|---|---|
 | `--account` | all registered | Sync only this exact Matrix user ID |
-| `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+| `--full` | `false` | Ignore stored cursors, re-fetch complete joined-room history, repeat legacy media discovery, and retry media immediately |
+| `--no-media` | `false` | Record media metadata without downloading bytes this run |
 
-Room selection and scheduled sync are controlled by `[matrix]`. Encrypted
-events are kept as raw placeholders.
+Room selection and scheduled sync are controlled by `[matrix]`. The account's key backup decrypts encrypted history and retries earlier placeholders after a backup change, with the retry limits described in the [Matrix guide](usage/matrix.md). The recovered count includes message rows replaced with decrypted content, excluding edits and reactions.
+
+The first sync after upgrading discovers media in previously archived messages and saves a per-account completion marker. Later syncs skip this scan; `--full` repeats it.
+
+Later syncs fetch pending media and retry temporary failures such as 408, 425, 429, 5xx, timeouts and connection errors. Transient failures stay pending and retry on normal syncs after a growing backoff of 1, 2, 4, 8, 16, then 24 hours. Later failures keep the 24-hour backoff. Access denied, missing files, hash mismatches and decryption errors stay failed and retry on normal syncs after one week. `--full` bypasses both waits. The summary counts outstanding pending and failed media for the selected account and rooms. Each media item is attempted once per run.
 
 ---
 

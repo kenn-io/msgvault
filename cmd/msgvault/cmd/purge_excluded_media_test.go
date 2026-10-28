@@ -184,6 +184,44 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 	assert.Equal(int64(1)<<20, policy.MaxBytes)
 }
 
+func TestMediaPolicyForMatrixUsesAccountConfig(t *testing.T) {
+	current := &config.Config{Matrix: config.MatrixConfig{MaxMediaMB: 7, AccountsConfig: map[string]config.MediaAccountConfig{"@archive:example.org": {MaxMediaMB: 3}}}}
+
+	policy, ok := mediaPolicyForSource(current, sourceTypeMatrix, "@archive:example.org")
+	require.True(t, ok)
+	assert.Equal(t, int64(3)<<20, policy.MaxBytes)
+}
+
+func TestPurgeExcludedMatrixMediaAfterAllToDirectScopeChange(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
+	f.config.Matrix.MediaScope = string(attachmentpolicy.ScopeAll)
+	_, err := f.store.DB().Exec(`UPDATE sources SET source_type = 'matrix', identifier = '@archive:example.org'`)
+	req.NoError(err)
+	_, err = f.store.DB().Exec(`UPDATE conversations SET conversation_type = 'group_chat' WHERE conversation_type = 'channel'`)
+	req.NoError(err)
+	_, err = f.store.DB().Exec(`UPDATE attachments SET source_attachment_id = REPLACE(source_attachment_id, 'beeper:', 'matrix:')`)
+	req.NoError(err)
+	run := func() {
+		command := newPurgeExcludedMediaLocalCmd(f.deps())
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs([]string{"--yes"})
+		req.NoError(command.Execute())
+	}
+	run()
+	check.Equal(attachmentpolicy.StateStored, f.state(t, f.excludedID))
+	check.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
+	f.config.Matrix.MediaScope = string(attachmentpolicy.ScopeDirect)
+	run()
+	check.Equal(attachmentpolicy.StateSkipped, f.state(t, f.excludedID))
+	check.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
+	check.FileExists(f.fullPath)
+	var reason string
+	req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT attachment_skip_reason FROM attachments WHERE id = ?`), f.excludedID).Scan(&reason))
+	check.Equal(string(attachmentpolicy.SkipPolicyScope), reason)
+}
+
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

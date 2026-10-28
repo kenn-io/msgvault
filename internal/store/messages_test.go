@@ -1833,6 +1833,20 @@ func TestListUnresolvedMessageRepliesAfterUsesBoundedKeysetPages(t *testing.T) {
 	last, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", second[1].MessageID, 2)
 	require.NoError(err)
 	assert.Empty(last)
+	otherRoom, err := st.EnsureConversation(source.ID, "other-channel", "Other")
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET conversation_id = ? WHERE id = ?`), otherRoom, ids[0])
+	require.NoError(err)
+	filtered, err := st.ListUnresolvedMessageRepliesAfterContext(t.Context(), source.ID, "discord", 0, 2, convID)
+	require.NoError(err)
+	require.Len(filtered, 2)
+	wantFiltered := ids[1:3]
+	gotFiltered := []int64{filtered[0].MessageID, filtered[1].MessageID}
+	assert.Equal(wantFiltered, gotFiltered)
+	filtered, err = st.ListUnresolvedMessageRepliesAfterContext(t.Context(), source.ID, "discord", 0, 2, otherRoom)
+	require.NoError(err)
+	require.Len(filtered, 1)
+	assert.Equal(ids[0], filtered[0].MessageID)
 }
 
 func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {

@@ -32,9 +32,19 @@ func validateHomeserverURL(raw string) error {
 	return fmt.Errorf("matrix homeserver URL must use HTTPS unless its host is loopback: %q", raw)
 }
 
+// refuseRedirects stops a client from following redirects. Go keeps
+// Authorization, and resends a login body, when a redirect changes only the
+// port or drops TLS on the same hostname.
+func refuseRedirects(cli *mautrix.Client) {
+	cli.Client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+}
+
 // Runtime owns the mautrix client for an account.
 type Runtime struct {
-	Client *mautrix.Client
+	backupState
+
+	Client         *mautrix.Client
+	backupKeyError error
 }
 
 // Login creates a dedicated Matrix device using a password or m.login.token.
@@ -46,6 +56,7 @@ func Login(ctx context.Context, homeserver, userID, secret string, tokenLogin bo
 	if err != nil {
 		return Credentials{}, fmt.Errorf("create Matrix client: %w", err)
 	}
+	refuseRedirects(cli)
 	req := &mautrix.ReqLogin{
 		Type:                     mautrix.AuthTypePassword,
 		Identifier:               mautrix.UserIdentifier{Type: mautrix.IdentifierTypeUser, User: userID},
@@ -101,8 +112,11 @@ func Open(creds Credentials) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create Matrix client: %w", err)
 	}
+	refuseRedirects(cli)
 	cli.DeviceID = id.DeviceID(creds.DeviceID)
-	return &Runtime{Client: cli}, nil
+	r := &Runtime{Client: cli}
+	r.backupKeyError = r.setBackupKey(creds.BackupKey)
+	return r, nil
 }
 
 // Logout deletes the dedicated Matrix device represented by creds.
@@ -114,6 +128,7 @@ func Logout(ctx context.Context, creds Credentials) error {
 	if err != nil {
 		return fmt.Errorf("create Matrix logout client: %w", err)
 	}
+	refuseRedirects(cli)
 	cli.DeviceID = id.DeviceID(creds.DeviceID)
 	if _, err := cli.Logout(ctx); err != nil {
 		return fmt.Errorf("logout Matrix device %s: %w", creds.DeviceID, err)

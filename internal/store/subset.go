@@ -925,6 +925,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, fmt.Errorf("copy source preserved-attachment markers: %w", err)
 		}
 	}
+	if present, err := sourceTableExists(tx, "matrix_megolm_claims"); err != nil {
+		return nil, fmt.Errorf("check matrix_megolm_claims: %w", err)
+	} else if present {
+		if _, err := copyByName(tx, "matrix_megolm_claims",
+			`conversation_id IN (SELECT id FROM conversations)`); err != nil {
+			return nil, fmt.Errorf("copy matrix_megolm_claims: %w", err)
+		}
+	}
 	if err := copySourceMergeLifecycle(tx); err != nil {
 		return nil, err
 	}

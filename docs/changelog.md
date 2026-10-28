@@ -45,6 +45,8 @@ All notable changes to msgvault, grouped by release.
   configurable 4 GiB recorder/server caps. Stored audio follows the shared
   Docbank consent and discovery pipeline.
 
+- Matrix sync archives policy-eligible images, stickers, video, audio and files. The first sync after upgrading discovers media in previously archived messages once per account and configured room scope. Temporary failures retry with a growing backoff; missing files, hash mismatches and decryption errors retry after one week. `sync-matrix --full` re-fetches complete joined-room history, repeats legacy media discovery, and retries media immediately.
+- Matrix sync decrypts history through the account's key backup and recovers earlier placeholders, edits, reactions and reply links. First setup requires a recovery secret or `--skip-key-backup`. `add-matrix` accepts `--recovery-file`, `--recovery-passphrase` and `--skip-key-backup`. See the [Matrix guide](usage/matrix.md) for credential storage and authentication limits.
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
 

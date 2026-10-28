@@ -1501,6 +1501,34 @@ func TestCopySubsetCopiesPortableSourceMergeMarkersForSelectedRows(t *testing.T)
 	assert.Zero(excludedAttachmentMarker, "a marker for an unselected attachment must not cross the subset")
 }
 
+func TestCopySubsetKeepsMatrixClaimsForCopiedConversations(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 2)
+	sourceDB, err := sql.Open("sqlite3", sourcePath+"?_foreign_keys=ON")
+	require.NoError(err)
+	_, err = sourceDB.Exec(`
+		INSERT INTO matrix_megolm_claims (conversation_id, claim_key, event_id)
+		VALUES (1, 'matrix_megolm_session_1', '$excluded'), (2, 'matrix_megolm_session_2', '$selected');
+	`)
+	require.NoError(err)
+	require.NoError(sourceDB.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	claims, err := destination.MatrixRecoveredEvents(t.Context(), 2)
+	require.NoError(err)
+	assert.Equal(map[string]string{"matrix_megolm_session_2": "$selected"}, claims)
+	claims, err = destination.MatrixRecoveredEvents(t.Context(), 1)
+	require.NoError(err)
+	assert.Empty(claims)
+}
+
 func TestCopySubsetPreservesSourceMergeLifecycleMarkers(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

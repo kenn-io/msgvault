@@ -678,6 +678,7 @@ func mediaPolicyLane(cfg *config.Config) laneStatus {
 	lane := laneStatus{Lane: laneMediaPolicy, Label: "Chat media collection", State: laneStateOn}
 	summaries := []string{
 		"beeper " + mediaPolicySummary(cfg.Beeper.MediaPolicy("")),
+		"matrix " + mediaPolicySummary(cfg.Matrix.MediaPolicy("")),
 		"slack " + mediaPolicySummary(cfg.Slack.MediaPolicy("")),
 		"discord " + mediaPolicySummary(cfg.Discord.MediaPolicy("")),
 		"teams " + mediaPolicySummary(cfg.Teams.MediaPolicy("")),

@@ -879,31 +879,36 @@ func (s *Store) ListUnresolvedMessageReplies(sourceID int64, messageType string)
 func (s *Store) ListUnresolvedMessageRepliesAfter(
 	sourceID int64, messageType string, afterID int64, limit int,
 ) ([]UnresolvedMessageReply, error) {
-	return s.ListUnresolvedMessageRepliesAfterContext(context.Background(), sourceID, messageType, afterID, limit)
+	return s.ListUnresolvedMessageRepliesAfterContext(context.Background(), sourceID, messageType, afterID, limit, 0)
 }
 
 // ListUnresolvedMessageRepliesAfterContext honors cancellation during ListUnresolvedMessageRepliesAfter.
 func (s *Store) ListUnresolvedMessageRepliesAfterContext(ctx context.Context,
-	sourceID int64, messageType string, afterID int64, limit int,
+	sourceID int64, messageType string, afterID int64, limit int, conversationID int64,
 ) ([]UnresolvedMessageReply, error) {
 	if limit <= 0 {
 		return nil, errors.New("list unresolved message replies: limit must be positive")
 	}
-	return s.listUnresolvedMessageRepliesContext(ctx, sourceID, messageType, afterID, limit)
+	return s.listUnresolvedMessageRepliesContext(ctx, sourceID, messageType, afterID, limit, conversationID)
 }
 
 func (s *Store) listUnresolvedMessageReplies(
 	sourceID int64, messageType string, afterID int64, limit int,
 ) ([]UnresolvedMessageReply, error) {
-	return s.listUnresolvedMessageRepliesContext(context.Background(), sourceID, messageType, afterID, limit)
+	return s.listUnresolvedMessageRepliesContext(context.Background(), sourceID, messageType, afterID, limit, 0)
 }
 
 // listUnresolvedMessageRepliesContext honors cancellation during listUnresolvedMessageReplies.
 func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
-	sourceID int64, messageType string, afterID int64, limit int,
+	sourceID int64, messageType string, afterID int64, limit int, conversationID int64,
 ) ([]UnresolvedMessageReply, error) {
 	limitClause := ""
 	args := []any{sourceID, messageType, afterID}
+	conversationClause := ""
+	if conversationID != 0 {
+		conversationClause = " AND conversation_id = ?"
+		args = append(args, conversationID)
+	}
 	if limit > 0 {
 		limitClause = " LIMIT ?"
 		args = append(args, limit)
@@ -917,7 +922,7 @@ func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
 		  AND reply_to_message_id IS NULL
 		  AND metadata IS NOT NULL
 		  AND CAST(metadata AS TEXT) LIKE '%"referenced_message_id"%'
-		ORDER BY id`+limitClause,
+		`+conversationClause+` ORDER BY id`+limitClause,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved message replies: %w", err)
@@ -6295,6 +6300,30 @@ func (s *Store) RecomputeMessageAttachmentStatsContext(ctx context.Context, mess
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
+// RecomputeMessageSizeEstimateContext includes stored attachments after a body edit.
+func (s *Store) RecomputeMessageSizeEstimateContext(ctx context.Context, messageID int64) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		return recomputeMessageSizeEstimateWith(q, messageID)
+	})
+}
+
+func recomputeMessageSizeEstimateWith(q querier, messageID int64) error {
+	var body sql.NullString
+	err := q.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read message body for size estimate: %w", err)
+	}
+	_, err = q.Exec(`UPDATE messages SET size_estimate = ? + (
+		SELECT COALESCE(SUM(size), 0) FROM attachments
+		WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash != ''
+	) WHERE id = ?`, len(body.String), messageID, messageID)
+	return err
+}
+
 func recomputeMessageAttachmentStatsWith(q querier, messageID int64) error {
 	_, err := q.Exec(`
 		UPDATE messages
@@ -6458,21 +6487,7 @@ func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []Attachme
 		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, deleteWhere, refs); err != nil {
 			return err
 		}
-		var body sql.NullString
-		err := tx.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read Teams message body for size estimate: %w", err)
-		}
-		_, err = tx.Exec(`
-			UPDATE messages SET size_estimate = ? + (
-				SELECT COALESCE(SUM(size), 0) FROM attachments
-				WHERE message_id = ? AND content_hash != ''
-			) WHERE id = ?
-		`, len(body.String), messageID, messageID)
-		if err != nil {
-			return fmt.Errorf("update Teams message size estimate: %w", err)
-		}
-		return nil
+		return recomputeMessageSizeEstimateWith(tx, messageID)
 	})
 }
 
@@ -6633,6 +6648,27 @@ func ftsMessageUnsearchable(q querier, messageID int64) (bool, error) {
 	var terminal bool
 	err := q.QueryRow(`SELECT COALESCE(search_fts = ''::tsvector AND indexing_version = ?, FALSE) FROM messages WHERE id = ?`, CurrentFTSIndexingVersion, messageID).Scan(&terminal)
 	return terminal, err
+}
+
+// ReplaceMessageMatrixAttachments replaces Matrix-managed media occurrences.
+func (s *Store) ReplaceMessageMatrixAttachments(ctx context.Context, messageID int64, refs []AttachmentRef) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
+		if err := s.replaceMessageAttachmentsWhereTxContext(ctx, tx, messageID, `source_attachment_id LIKE ?`, refs, "matrix:%"); err != nil {
+			return err
+		}
+		if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
+			return err
+		}
+		return recomputeMessageSizeEstimateWith(tx, messageID)
+	})
+}
+
+// MessageMatrixAttachments returns Matrix-managed media keyed by MXC identity.
+func (s *Store) MessageMatrixAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachments(messageID, "matrix:")
 }
 
 // ArchivedRawMessage is one archived message paired with the verbatim provider

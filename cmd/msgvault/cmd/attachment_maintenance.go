@@ -490,6 +490,7 @@ func attachmentProducingCommand(args []string) bool {
 		"sync-chatwoot",
 		"sync-discord",
 		"sync-inline",
+		"sync-matrix",
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
