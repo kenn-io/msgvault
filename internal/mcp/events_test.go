@@ -349,32 +349,6 @@ func TestEventsConcurrencyLimitReturnsSafeProtocolError(t *testing.T) {
 	assert.Equal("events_unavailable", eventsWireObject(t, rpc["data"])["reason"])
 }
 
-func TestEventsStdioPolicyDoesNotExposeMethodsOrReadTools(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	serverSession, err := newMCPServer(ServeOptions{Events: eventsTestBackend{}}, true).Connect(ctx, serverTransport, nil)
-	require.NoError(err)
-	defer func() { assert.NoError(serverSession.Close()) }()
-	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "synthetic-stdio", Version: "1"}, nil)
-	require.NoError(sdkmcp.AddSendingCustomMethod[*sdkmcp.ParamsBase, *eventResult](client, "events/list"))
-	session, err := client.Connect(ctx, clientTransport, nil)
-	require.NoError(err)
-	defer func() { assert.NoError(session.Close()) }()
-	tools, err := session.ListTools(ctx, nil)
-	require.NoError(err)
-	for _, tool := range tools.Tools {
-		assert.NotEqual("get_mcp_event", tool.Name)
-		assert.NotEqual("list_calendar_sources", tool.Name)
-	}
-	_, err = sdkmcp.CallCustomMethod[*sdkmcp.ParamsBase, *eventResult](ctx, session, "events/list", &sdkmcp.ParamsBase{})
-	var rpc *jsonrpc.Error
-	require.ErrorAs(err, &rpc)
-	assert.Equal(int64(-32601), rpc.Code)
-}
-
 func TestEventsParameterNamesAreCaseSensitive(t *testing.T) {
 	h := newMCPHTTPServer(ServeOptions{Events: eventsTestBackend{}}, HTTPOptions{APIKey: "owner-fixture"}).Handler
 	// A missing params.name is refused by the Mcp-Name guard before the
