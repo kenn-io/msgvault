@@ -264,6 +264,57 @@ func TestBeeperSendFailureCode(t *testing.T) {
 	}
 }
 
+func TestBeeperSendArchiveLookupUnavailable(t *testing.T) {
+	testutil.SkipIfPostgres(t, "local read fault injection alters SQLite tables")
+	for _, table := range []string{"sources", "conversations"} {
+		t.Run(table, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newBeeperDraftFixture(t)
+			f.adapter.beeperSendPolicy = []config.GmailDraftSource{{SourceID: f.source.ID, Enabled: true}}
+			_, err := f.store.EnsureConversationWithType(f.source.ID, beeperDraftTestChat, "direct", "Example chat")
+			require.NoError(err)
+			lookup := func() error {
+				if table == "sources" {
+					source, err := f.store.GetSourceByIDContext(t.Context(), f.source.ID)
+					if err == nil {
+						require.Equal(f.source.ID, source.ID)
+					}
+					return err
+				}
+				chats, err := f.store.ConversationMetadataBatchContext(t.Context(), f.source.ID, []string{beeperDraftTestChat})
+				if err == nil {
+					require.Contains(chats, beeperDraftTestChat)
+				}
+				return err
+			}
+			require.NoError(lookup())
+			_, err = f.store.DB().Exec("ALTER TABLE " + table + " RENAME TO fault_" + table)
+			require.NoError(err)
+			lookupErr := lookup()
+			require.Error(lookupErr)
+			require.NotErrorIs(lookupErr, sql.ErrNoRows)
+			if table == "conversations" {
+				_, err = f.store.GetSourceByIDContext(t.Context(), f.source.ID)
+				require.NoError(err, "source resolution must still work")
+			}
+
+			err = f.adapter.runCLISendMessage(t.Context(), api.CLIRunRequest{Args: []string{
+				"send-message", "--source-id", strconv.FormatInt(f.source.ID, 10),
+				"--to", beeperDraftTestChat, "--body", "hello",
+			}}, nil)
+
+			_, restoreErr := f.store.DB().Exec("ALTER TABLE fault_" + table + " RENAME TO " + table)
+			require.NoError(restoreErr)
+			require.NoError(lookup())
+			requests, patches := f.beeper.counts()
+			assert.Zero(requests)
+			assert.Zero(patches)
+			assertBeeperDraftCode(t, err, "provider_unavailable")
+		})
+	}
+}
+
 func TestBeeperSendReplyArchiveUnavailable(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
