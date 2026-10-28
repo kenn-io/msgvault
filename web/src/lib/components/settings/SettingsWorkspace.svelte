@@ -7,9 +7,6 @@
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
     putSettingsProviderCredential as generatedPutSettingsProviderCredential,
-    resumeVisualAttachmentBuild as generatedResumeVisualAttachmentBuild,
-    startVisualAttachmentBuild as generatedStartVisualAttachmentBuild,
-    syncCardDAV as generatedSyncCardDAV,
     saveCardDAVAccount,
     putSettingsPersonEnrichmentProvider,
   } from '../../api/generated/api/api';
@@ -29,7 +26,8 @@
   import { settingsNavigationTarget, type CardDAVSettingsRequest, type SettingsNavigationTarget } from '../../carddav/navigation';
   import type { SavedAppearance } from '../../theme/preferences.svelte';
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
-  import type { AccountDraft } from '../../carddav/account-settings';
+  import { accountRequest, type AccountDraft } from '../../carddav/account-settings';
+  import { runOperationAction } from '../../operations/actions';
   import { maskSecret } from '../../settings/secrets';
   import {
     providerUpdate,
@@ -109,6 +107,7 @@
   let loaded = $state(false);
   let saving = $state(false);
   let error = $state('');
+  let accountSaveStatus = $state('');
   let activeCategory = $state(untrack(() => category));
   let root = $state<HTMLElement>();
   let embeddingStatus = $state<EmbeddingStatus>();
@@ -201,17 +200,6 @@
   async function buildMessageIndex(): Promise<void> {
     await createExploreAPI(client).runCoverageAction('build_index', 'initializing');
   }
-  async function syncContacts(): Promise<void> {
-    const connection = lanes?.find((lane) => lane.kind === 'carddav_sync')?.latest?.connection ?? 'default';
-    const { data, error: responseError } = await generatedSyncCardDAV({ full: false, connection }, client);
-    if (!data) throw new Error(apiErrorMessage(responseError, "Can't sync contacts."));
-  }
-  async function runVisual(start: () => Promise<{ response: Response }>): Promise<void> {
-    const { response } = await start();
-    if (!response.ok) throw new Error("Can't build the index.");
-  }
-  const startVisual = () => runVisual(() => generatedStartVisualAttachmentBuild({ consent: true }, client));
-  const resumeVisual = () => runVisual(() => generatedResumeVisualAttachmentBuild(client));
 
   async function focusSetting(categoryID: string, settingKey: string | undefined): Promise<void> {
     selectCategory(categoryID);
@@ -227,13 +215,11 @@
     void focusSetting(target?.categoryID ?? action.target.settingsCategory, target?.settingKey);
   }
   function startFeature(action: Extract<OverviewAction, { kind: 'start' }>): void {
-    const runs = {
-      messages: buildMessageIndex,
-      visual_build: startVisual,
-      visual_resume: resumeVisual,
-      contacts: syncContacts,
-    };
-    void build(action.id, runs[action.id]);
+    void build(action.id, async () => {
+      if (action.id === 'messages') return buildMessageIndex();
+      const result = await runOperationAction(action.id === 'contacts' ? 'carddav_sync' : action.id, client);
+      if (result.outcome !== 'succeeded') throw new Error(result.message);
+    });
   }
 
   $effect(() => {
@@ -370,6 +356,7 @@
 
   // Endpoints save before credentials, which bind to their saved destination.
   async function saveSettings() {
+    if (saving || inference.busy) return;
     const updates: SettingUpdate[] = [
       ...Object.entries(drafts)
         .filter(([key]) => !find(key)?.read_only)
@@ -380,7 +367,11 @@
       return;
     saving = true;
     error = '';
+    accountSaveStatus = '';
     try {
+      for (const draft of Object.values(accountDrafts)) {
+        if (draft.error) throw new Error(draft.error);
+      }
       if (updates.length > 0) {
         const {
           data: result,
@@ -442,9 +433,9 @@
         credentialUpdates = next;
       }
       for (const [name, draft] of Object.entries(accountDrafts)) {
-        if (draft.error) throw new Error(draft.error);
-        const result = await saveCardDAVAccount(draft.request, client);
+        const result = await saveCardDAVAccount(accountRequest(draft.values, draft.password, name), client);
         if (!result.data) throw new Error(apiErrorMessage(result.error, "Can't save the contact account."));
+        accountSaveStatus = `Contact account ${name} saved. Found ${result.data.books} address ${result.data.books === 1 ? 'book' : 'books'}.`;
         await loadSettings(true);
         delete accountDrafts[name];
         resetKey += 1;
@@ -454,6 +445,7 @@
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Can't save settings.";
     } finally {
+      statusRevision += 1;
       saving = false;
     }
   }
@@ -529,7 +521,7 @@
   </span>
   <Button label="Discard" disabled={saving} onclick={discard} />
   <Button
-    disabled={saving || incompleteDrafts > 0 || Object.values(accountDrafts).some(draft => draft.busy)}
+    disabled={saving || inference.busy || incompleteDrafts > 0}
     tone="info"
     surface="solid"
     label={saving ? 'Saving…' : 'Save changes'}
@@ -631,6 +623,7 @@
             <Notice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
+          {#if accountSaveStatus}<p class="notice" role="status">{accountSaveStatus}</p>{/if}
           {#if pendingRestart}
             <p class="notice notice--pending" role="status">Saved. Restart msgvault to apply these changes.</p>
           {/if}

@@ -98,7 +98,7 @@ describe('CardDAVAccountSettings', () => {
     render(CardDAVAccountSettings, { client: createAPIClient(vi.fn()), values: refreshedValues, onDraft });
     await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
     await waitFor(() => expect(onDraft).toHaveBeenLastCalledWith(expect.objectContaining({
-      request: { base_url: 'https://fresh.example.test/', username: 'bob', enabled: false, schedule: '0 4 * * *' }, error: undefined
+      values: { ...refreshedValues, enabled: false }, password: '', error: undefined
     })));
     expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(false);
   });

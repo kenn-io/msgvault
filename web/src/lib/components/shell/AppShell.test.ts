@@ -3419,3 +3419,21 @@ describe('AppShell', () => {
 function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
+
+it('opens Settings Overview from Operations', async () => {
+  window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations', settingsCategory: 'server' }))}`);
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+    if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
+    return Response.json(exploreResponse());
+  });
+  const settings = createRawSnippet(() => ({ render: () => '<main aria-label="Settings fixture"></main>' }));
+  const state = new ExploreState(window);
+  const rendered = render(AppShell, { client, state, enabled: false, settings });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Settings overview' }));
+  expect(await screen.findByRole('main', { name: 'Settings fixture' })).toBeDefined();
+  expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'overview' });
+  rendered.unmount();
+  state.destroy();
+});

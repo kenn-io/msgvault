@@ -126,15 +126,7 @@ export function isHostManaged(setting: SettingState): boolean {
 
 /** Every catalog field remains reachable in Settings. */
 export function categoryOf(setting: SettingState): CategoryID {
-  const key = setting.key;
-  if (key.startsWith('web.')) return 'advanced';
-  if (key.startsWith('server.') || key.startsWith('log.')) return 'server';
-  if (key.startsWith('vector.')) return 'search';
-  if (key.startsWith('people.')) return 'enrichment';
-  if (key.startsWith('carddav.')) return 'carddav';
-  if (key.startsWith('integrations.')) return 'tasks';
-  if (/^(beeper|slack|inline|discord|teams|sync|attachments)\./.test(key) || setting.group === 'sources' || setting.group === 'attachments') return 'sources';
-  return 'advanced';
+  return setting.key.startsWith('carddav.') ? 'carddav' : normalizeCategory(setting.group);
 }
 
 export function normalizeCategory(id: string): CategoryID {

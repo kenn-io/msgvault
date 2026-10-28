@@ -1,3 +1,5 @@
+import type { CardDAVAccountRequest } from '../api/generated/models';
+
 export interface CardDAVAccountValues {
   provider: string;
   oauthApp: string;
@@ -11,7 +13,16 @@ export interface CardDAVAccountValues {
 export interface AccountDraft {
   values: CardDAVAccountValues;
   password: string;
-  request: import('../api/generated/models').CardDAVAccountRequest;
   error?: string;
-  busy?: boolean;
+}
+
+export function accountRequest(values: CardDAVAccountValues, password: string, connection: string | undefined): CardDAVAccountRequest {
+  return {
+    connection, base_url: values.provider === 'google' ? 'https://www.googleapis.com/.well-known/carddav'
+      : values.provider === 'microsoft' ? 'https://graph.microsoft.com/v1.0' : values.baseURL,
+    username: values.username, enabled: values.enabled, schedule: values.schedule,
+    ...(values.provider === 'google' ? { provider: 'google', oauth_app: values.oauthApp }
+      : values.provider === 'microsoft' ? { provider: 'microsoft' }
+        : password ? { password } : {}),
+  };
 }
