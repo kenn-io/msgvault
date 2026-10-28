@@ -44,10 +44,11 @@ describe('overviewRows', () => {
     expect(row(rows, 'visual_embedding').action).toMatchObject({ kind: 'start', id: 'visual_build', consent: expect.any(String) });
   });
 
-  it('counts contacts as on once a connection has synced', () => {
+  it('keeps disabled contacts Off after an earlier successful sync', () => {
     const rows = overviewRows([lane('carddav_sync', { configured: false, latest: { state: 'succeeded' } } as Partial<OperationLaneStatus>)], undefined, undefined);
 
-    expect(row(rows, 'carddav_sync').chip.text).toBe('On');
+    expect(row(rows, 'carddav_sync').chip.text).toBe('Off');
+    expect(row(rows, 'carddav_sync').action).toMatchObject({ kind: 'settings', target: { settingsCategory: 'carddav' } });
   });
 
   it('marks a configured failed feature without offering Set up', () => {
@@ -78,5 +79,12 @@ it('shows index progress only while a run is active', () => {
   for (const kind of ['message_embedding', 'visual_embedding'] as const) {
     expect(row(overviewRows([lane(kind)], embedding, visual), kind).chip.text).toBe('On');
     expect(row(overviewRows([lane(kind, { active })], embedding, visual), kind).chip.text).toBe(`Building ${kind === 'message_embedding' ? 2 : 3} of 10`);
+  }
+});
+
+it.each(['message_embedding', 'person_embedding', 'document_extraction', 'document_embedding', 'visual_embedding', 'person_enrichment'] as const)('uses current configuration when %s history is unavailable', kind => {
+  for (const configured of [true, false]) {
+    const rows = overviewRows([lane(kind, { configured, history_availability: 'unavailable', unavailable_code: `${kind}_history_unavailable` })], undefined, undefined);
+    expect(row(rows, kind).chip.text).toBe(configured ? 'On' : 'Off');
   }
 });

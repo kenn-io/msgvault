@@ -570,7 +570,7 @@ Switch it off and the row states what happens instead; switch it on and a
 value input appears, starting from a suggested value. Rows you have changed
 carry an amber dot. A save bar appears at the bottom of the page only while you
 have unsaved changes. It counts them and offers **Discard** and **Save
-changes**. **Save changes** stays disabled while a number field is empty. When
+changes**. **Save changes** stays disabled while a number field is empty. During a save, fields and resource actions wait; category navigation stays available. When
 the bar disappears after a save or discard, focus moves to the category
 heading.
 
