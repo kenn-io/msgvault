@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { setKitTheme } from './kit-ui';
 
+test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
+
 const row = {
   key: 'source:1:message:source-1',
   kind: 'message',
@@ -413,14 +415,12 @@ test('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({
   await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
   const content = page.locator('iframe[title="Message body"]').contentFrame();
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
-  const scrollbar = await content.locator('html').evaluate((element) => ({
+  await expect.poll(async () => content.locator('html').evaluate((element) => ({
     overflow: element.scrollWidth > element.clientWidth,
-    height: getComputedStyle(element, '::-webkit-scrollbar').height,
+    height: innerHeight - element.clientHeight,
+    blank: element.clientHeight - Math.ceil(Math.max(element.getBoundingClientRect().height, document.body.scrollHeight)),
     buttons: getComputedStyle(element, '::-webkit-scrollbar-button').display
-  }));
-  expect(scrollbar.overflow).toBe(true);
-  expect(scrollbar.height).toBe('8px');
-  expect(scrollbar.buttons).toBe('none');
+  }))).toEqual({ overflow: true, height: 8, blank: 0, buttons: 'none' });
   await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(content.locator('a').filter({ hasText: 'Read more' })).toHaveCSS('color', 'rgb(116, 172, 254)');
   await expect(content.getByRole('img', { name: 'Embedded image' })).toHaveCSS('filter', 'none');
