@@ -115,7 +115,6 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 					continue
 				}
 				claim.Evidence = evidence
-				claim.Claim.Evidence = nil
 				contest.Claims = append(contest.Claims, PersonFactContestedClaim{Claim: claim, Decision: d})
 			}
 			if len(contest.Claims) == 0 {
