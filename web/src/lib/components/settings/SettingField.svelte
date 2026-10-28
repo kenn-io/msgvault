@@ -20,18 +20,17 @@
   import { SelectDropdown, TextInput, Toggle } from '@kenn-io/kit-ui';
   import { valueText, type SettingState } from '../../settings/catalog';
   import CronField from './CronField.svelte';
+  import { HIDDEN_OPTIONS } from '../../settings/layout';
 
   type SettingOff = NonNullable<NonNullable<SettingState['validation']>['off']>;
 
   let {
     setting,
-    disabled = false,
     label,
     value,
     onchange,
     optionLabels = undefined,
   }: {
-    disabled?: boolean;
     setting: SettingState;
     label: string;
     /** The draft when one exists, otherwise the stored value. */
@@ -44,7 +43,8 @@
   const text = $derived(valueText(value));
   const off = $derived(setting.validation?.off);
   const switchedOff = $derived(off !== undefined && text === (off.value ?? ''));
-  const options = $derived(setting.options ?? []);
+  const options = $derived((setting.options ?? []).filter(option => !HIDDEN_OPTIONS[setting.key]?.includes(option)).map(option => ({ value: option, label: optionLabels?.[option] ?? optionLabel(option) })));
+  const displayedOptions = $derived(options.some(option => option.value === text) ? options : [{ value: text, label: optionLabel(text), disabled: true }, ...options]);
 
   // A setting with an off value renders as a switch beside its control:
   // off stores the daemon's off value, on starts from the suggested value.
@@ -67,30 +67,28 @@
   <label class="field" data-size="md">
     <span class="kit-sr-only">{label}</span>
     <SelectDropdown
-      {disabled}
       value={text}
       title={label}
-      options={options.map((option) => ({ value: option, label: optionLabels?.[option] ?? optionLabel(option) }))}
+      options={displayedOptions}
       onchange={(next) => onchange(next)}
     />
   </label>
 {:else if setting.kind === 'boolean'}
-  <Toggle {disabled} ariaLabel={label} checked={Boolean(value)} onchange={(checked) => onchange(checked)} />
+  <Toggle ariaLabel={label} checked={Boolean(value)} onchange={(checked) => onchange(checked)} />
 {:else}
   {#if off}
-    <Toggle {disabled} ariaLabel={`Set ${label}`} checked={!switchedOff} onchange={(on) => switchTo(off, on)} />
+    <Toggle ariaLabel={`Set ${label}`} checked={!switchedOff} onchange={(on) => switchTo(off, on)} />
   {/if}
   {#if off && switchedOff}
     <span class="off">{off.label}</span>
   {:else if setting.validation?.format === 'cron'}
     <div class="field" data-size="cron">
-      <CronField {disabled} {label} value={text} required={setting.validation?.required} oninput={(next) => onchange(next)} />
+      <CronField {label} value={text} required={setting.validation?.required} oninput={(next) => onchange(next)} />
     </div>
   {:else if setting.kind === 'integer' || setting.kind === 'number'}
     <label class="field" data-size="xs">
       <span class="kit-sr-only">{label}</span>
       <input
-        {disabled}
         type="number"
         data-mono
         value={text}
@@ -109,7 +107,6 @@
     <label class="field" data-size={off ? 'sm' : 'lg'}>
       <span class="kit-sr-only">{label}</span>
       <TextInput
-        {disabled}
         value={text}
         block
         oninput={(next) =>

@@ -10,7 +10,7 @@
     saveCardDAVAccount,
     putSettingsPersonEnrichmentProvider,
   } from '../../api/generated/api/api';
-  import { Notice, SettingsLayout, Toggle, Button, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { Notice, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -44,11 +44,11 @@
     LABELS,
     OPTION_LABELS,
     RAIL,
-    normalizeCategory,
     layoutCategory,
     type Block,
     type CategoryID,
   } from '../../settings/layout';
+  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import PageHeader from '../shell/PageHeader.svelte';
   import CardDAVSettingsWorkspace from './CardDAVSettingsWorkspace.svelte';
   import PeopleInferenceSettings from './PeopleInferenceSettings.svelte';
@@ -113,16 +113,14 @@
   let visualStatus = $state<VisualStatus>();
   let lanes = $state<OperationLaneStatus[]>();
   let statusSettled = $state(false);
+  let statusRefreshing = $state(false);
   let building = $state('');
   let consumedCategoryRequestKey: number | undefined;
   let focusedNavigationSettingKey: string | undefined;
 
   const categories: SettingsCategory[] = RAIL.map(({ id, label }) => ({ id, label }));
-  const resolvedCategory = $derived(
-    normalizeCategory(activeCategory),
-  );
-  const label = $derived(categories.find((candidate) => candidate.id === resolvedCategory)?.label ?? '');
-  const layout = $derived(layoutCategory(resolvedCategory as CategoryID, settings, groups));
+  const label = $derived(categories.find((candidate) => candidate.id === activeCategory)?.label ?? '');
+  const layout = $derived(layoutCategory(activeCategory as CategoryID, settings, groups));
   const dirtyCount = $derived(
     Object.keys(drafts).length +
       Object.keys(secretUpdates).length +
@@ -157,9 +155,12 @@
   // Overview owns feature status and index actions.
   let statusRevision = $state(0);
   $effect(() => {
-    if (resolvedCategory !== 'overview') return;
+    if (activeCategory !== 'overview') return;
     void statusRevision;
     const controller = new AbortController();
+    const control = untrack(() => root?.querySelector<HTMLElement>('.feature-refresh'));
+    const hadFocus = control?.contains(document.activeElement);
+    statusRefreshing = true;
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (!controller.signal.aborted) embeddingStatus = response.ok ? data : undefined;
@@ -171,13 +172,20 @@
       })
       .catch(() => undefined);
     void generatedGetOperationStatus({ ...client, signal: controller.signal })
-      .then(({ data }) => {
+      .then(({ data, response }) => {
         if (controller.signal.aborted) return;
-        lanes = data?.lanes;
+        lanes = response.ok ? data?.lanes : undefined;
         statusSettled = true;
       })
       .catch(() => {
-        if (!controller.signal.aborted) statusSettled = true;
+        if (!controller.signal.aborted) { lanes = undefined; statusSettled = true; }
+      })
+      .finally(async () => {
+        if (controller.signal.aborted) return;
+        statusRefreshing = false;
+        await tick();
+        const active = document.activeElement;
+        if (hadFocus && (!active || active === document.body || control?.contains(active))) control?.querySelector<HTMLButtonElement>('button')?.focus();
       });
     return () => controller.abort();
   });
@@ -196,9 +204,6 @@
 
     }
   }
-  async function buildMessageIndex(): Promise<void> {
-    await createExploreAPI(client).runCoverageAction('build_index', 'initializing');
-  }
 
   async function focusSetting(categoryID: string, settingKey: string | undefined): Promise<void> {
     selectCategory(categoryID);
@@ -215,7 +220,7 @@
   }
   function startFeature(action: Extract<OverviewAction, { kind: 'start' }>): void {
     void build(action.id, async () => {
-      if (action.id === 'messages') return buildMessageIndex();
+      if (action.id === 'messages') return createExploreAPI(client).runCoverageAction('build_index', 'initializing');
       const result = await runOperationAction(action.id === 'contacts' ? 'carddav_sync' : action.id, client);
       if (result.outcome !== 'succeeded') throw new Error(result.message);
     });
@@ -297,6 +302,10 @@
     }
     secretUpdates = nextSecrets;
   }
+  function setCredential(id: string, update: SecretUpdate | undefined) {
+    if (update) credentialUpdates[id] = update;
+    else delete credentialUpdates[id];
+  }
   function setSecret(setting: SettingState, value: string) {
     secretUpdates = { ...secretUpdates, [setting.key]: { action: 'set', value } };
   }
@@ -335,7 +344,8 @@
   }
   let resetKey = $state(0);
   function isDirty(key: string): boolean {
-    return Object.hasOwn(drafts, key) || Object.hasOwn(secretUpdates, key);
+    const credentialID = find(key)?.credential_id;
+    return key in drafts || key in secretUpdates || Boolean(credentialID && credentialUpdates[credentialID]);
   }
 
   const APPEARANCE_FIELDS: Readonly<Record<string, keyof SavedAppearance>> = {
@@ -355,15 +365,13 @@
 
   // Endpoints save before credentials, which bind to their saved destination.
   async function saveSettings() {
-    if (saving || inference.busy) return;
+    if (saving || inference.busy || dirtyCount === 0) return;
     const updates: SettingUpdate[] = [
       ...Object.entries(drafts)
         .filter(([key]) => !find(key)?.read_only)
         .map(([key, value]) => ({ key, value: typedValue(find(key), value) })),
       ...Object.entries(secretUpdates).map(([key, secret]) => ({ key, secret })),
     ];
-    if (updates.length === 0 && Object.keys(credentialUpdates).length === 0 && Object.keys(providerDrafts).length + Object.keys(accountDrafts).length + Object.keys(inference.keyDrafts).length === 0)
-      return;
     saving = true;
     error = '';
     accountSaveStatus = '';
@@ -470,9 +478,6 @@
     );
 
   }
-  async function reload() {
-    await loadSettings(true);
-  }
   function providerSaved(document: SettingsDocument, nextETag: string) {
     settings = document.settings;
     providers = document.person_enrichment_providers ?? providers;
@@ -504,7 +509,7 @@
   function visible(setting: SettingState): boolean {
 
     if (setting.key.startsWith('vector.people.') && setting.key !== 'vector.people.enabled') {
-      return Boolean(currentValue(find('vector.people.enabled') ?? setting));
+      return isDirty(setting.key) || Boolean(currentValue(find('vector.people.enabled') ?? setting));
     }
     return true;
   }
@@ -544,7 +549,7 @@
     tabindex="-1"
   >
     {#if isSwitch(setting)}
-      <Toggle disabled={saving} ariaLabel={text} checked={on} onchange={(checked) => setDraft(setting.key, checked)} />
+      <Toggle ariaLabel={text} checked={on} onchange={(checked) => setDraft(setting.key, checked)} />
       <span class="setting__label">{text}</span>
 
     {:else}
@@ -553,14 +558,14 @@
         {#if setting.kind === 'secret'}
           {@const shown = secretShown(setting)}
           {#if setting.credential_id}
-            <ProviderCredentialControl label={text} credentialState={setting.secret} pending={credentialUpdates[setting.credential_id]} disabled={saving} onchange={(update) => { if (update) credentialUpdates[setting.credential_id!] = update; else delete credentialUpdates[setting.credential_id!]; }} />
+            <ProviderCredentialControl label={text} credentialState={setting.secret} pending={credentialUpdates[setting.credential_id]} onchange={(update) => setCredential(setting.credential_id!, update)} />
           {:else}
           <SecretField
             label={text}
             configured={shown.configured}
             hint={shown.hint}
             source={setting.secret?.source}
-            disabled={saving || setting.secret?.source === 'environment'}
+            disabled={setting.secret?.source === 'environment'}
             onreplace={(value) => {
               setSecret(setting, value);
               return true;
@@ -573,7 +578,6 @@
         {:else}
           <SettingField
             {setting}
-            disabled={saving}
             label={text}
             value={currentValue(setting)}
             optionLabels={OPTION_LABELS[setting.key]}
@@ -607,7 +611,13 @@
 
 <main class="settings" bind:this={root} aria-label="Settings">
   <div class="settings-header">
-    <PageHeader title="Settings" />
+    <PageHeader title="Settings">
+      {#snippet actions()}
+        {#if activeCategory === 'overview'}
+          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" disabled={statusRefreshing} onclick={() => (statusRevision += 1)}><RefreshCwIcon size={16} /></IconButton></span>
+        {/if}
+      {/snippet}
+    </PageHeader>
   </div>
   {#if loading}
     <p class="state" role="status">Loading…</p>
@@ -616,7 +626,7 @@
   {:else}
     <SettingsLayout
       {categories}
-      bind:active={() => resolvedCategory, selectCategory}
+      bind:active={() => activeCategory, selectCategory}
       title=""
       footer={dirtyCount === 0 ? undefined : settingsFooter}
     >
@@ -646,7 +656,6 @@
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
             resetRevision={resetKey}
-            {saving}
             {client}
             {settings}
             bind:drafts={accountDrafts}
@@ -661,7 +670,7 @@
               <h3>Providers</h3>
               <div class="provider-list">
                 {#each providers as provider (provider.name)}
-                  <PersonEnrichmentProviderCard {provider} draft={providerDrafts[provider.name] ?? provider} pendingKey={credentialUpdates[provider.credential_id]} {saving} onchange={setProviderDraft} onkey={(update) => { if (update) credentialUpdates[provider.credential_id] = update; else delete credentialUpdates[provider.credential_id]; }} />
+                  <PersonEnrichmentProviderCard {provider} draft={providerDrafts[provider.name] ?? provider} pendingKey={credentialUpdates[provider.credential_id]} onchange={setProviderDraft} onkey={(update) => setCredential(provider.credential_id, update)} />
                 {/each}
                 <div class="provider-add">
                   {#each ['exa', 'sixtyfour'] as kind (kind)}
@@ -671,7 +680,7 @@
                       existingNames={providers.map((provider) => provider.name)}
                       configETag={etag}
                       onSaved={providerSaved}
-                      onConflict={reload}
+                      onConflict={() => loadSettings(true)}
                     />
                   {/each}
                 </div>

@@ -314,6 +314,7 @@ it('keeps provider endpoints and keys across categories, saves endpoints before 
   await fireEvent.click(screen.getByRole('button', { name: 'Add API key for primary' }));
   await fireEvent.input(screen.getByLabelText('New API key for primary'), { target: { value: 'synthetic-provider-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save API key for primary' }));
+  expect(screen.getByLabelText('primary credential').classList.contains('setting--changed')).toBe(true);
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.click(screen.getByRole('switch', { name: 'Trace every SQL statement' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
@@ -521,6 +522,7 @@ it('retains a conflicting provider key and retries with the refreshed credential
   await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
   await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
+  expect(document.querySelector('[data-setting-key="vector.embeddings.api_key"]')?.classList.contains('setting--changed')).toBe(true);
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   expect((await screen.findByRole('alert')).textContent).toContain('The key changed elsewhere');
   expect(screen.getByText('1 unsaved change')).toBeDefined();
@@ -606,4 +608,68 @@ it.each(['message', 'visual'] as const)('starts the %s index from Overview and r
   expect(seen.find(request => request.path === path)?.body).toEqual(kind === 'message'
     ? { args: ['embeddings', 'build', '--full-rebuild', '--yes'] } : { consent: true });
   expect(within(document.querySelector(`[data-feature="${operation}"]`) as HTMLElement).getByText('On')).toBeDefined();
+});
+
+it('refreshes completed feature work while keeping its current rows visible', async () => {
+  let finish!: (response: Response) => void;
+  let reads = 0;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) {
+      reads += 1;
+      if (reads === 3) return Response.json({ message: 'Unavailable' }, { status: 503 });
+      if (reads > 3) return Response.json({ lanes: [{ kind: 'visual_embedding', configured: true, supported_actions: [] }] });
+      return reads === 1 ? Response.json({ lanes: [{ kind: 'visual_embedding', configured: true, active: { state: 'running' }, supported_actions: [] }] }) : pending;
+    }
+  });
+  render(SettingsWorkspace, { client });
+  await screen.findByText('Running');
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Refresh feature status' }) as HTMLButtonElement).disabled).toBe(false));
+  screen.getByRole('button', { name: 'Refresh feature status' }).focus();
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  await waitFor(() => expect(reads).toBe(2));
+  expect(screen.getByText('Running')).toBeDefined();
+  expect((screen.getByRole('button', { name: 'Refresh feature status' }) as HTMLButtonElement).disabled).toBe(true);
+  finish(Response.json({ lanes: [{ kind: 'visual_embedding', configured: true, supported_actions: [] }] }));
+  await screen.findByText('On');
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Refresh feature status' })));
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  await screen.findByText("Can't load status");
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await screen.findByText('On');
+});
+
+it.each(['full_text', 'semantic'])('offers approved search defaults and preserves stored %s until a new choice', async stored => {
+  const doc = settingsDoc();
+  doc.settings.find(item => item.key === 'web.default_search_mode')!.value = typed(stored);
+  const { client, seen } = fixture(doc);
+  render(SettingsWorkspace, { client, category: 'advanced' });
+  const trigger = await screen.findByRole('combobox', { name: /^Search opens in:/ });
+  expect(trigger.textContent).toContain(stored === 'semantic' ? 'Semantic' : 'Exact words');
+  expect(screen.queryByText('1 unsaved change')).toBeNull();
+  await fireEvent.click(trigger);
+  const semantic = screen.queryByRole('option', { name: 'Semantic' });
+  if (stored === 'semantic') expect((semantic as HTMLButtonElement).disabled).toBe(true);
+  else expect(semantic).toBeNull();
+  await fireEvent.click(screen.getByRole('option', { name: 'Best match' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  expect(seen.find(request => request.method === 'PATCH')?.body).toEqual({ updates: [{ key: 'web.default_search_mode', value: { string: 'hybrid' } }] });
+});
+
+it('keeps edited People search details visible when switching the feature off', async () => {
+  const doc = settingsDoc();
+  doc.settings.push(setting('vector.people.enabled', 'search', 'boolean', false), setting('vector.people.retention_posture', 'search', 'string', 'standard'));
+  const { client, seen } = fixture(doc);
+  render(SettingsWorkspace, { client, category: 'search' });
+  const toggle = await screen.findByRole('switch', { name: 'Search people' });
+  expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull();
+  await fireEvent.click(toggle);
+  await fireEvent.input(screen.getByLabelText('How long the provider keeps data'), { target: { value: 'zero' } });
+  await fireEvent.click(toggle);
+  expect((screen.getByLabelText('How long the provider keeps data') as HTMLInputElement).value).toBe('zero');
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  expect(seen.find(request => request.method === 'PATCH')?.body).toEqual({ updates: [{ key: 'vector.people.retention_posture', value: { string: 'zero' } }] });
+  await waitFor(() => expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull());
 });
