@@ -180,6 +180,10 @@
   padding: 0 var(--chip-pad-x);
 }
 
+:root:root .kit-chip:not(.kit-chip--xs) {
+  min-height: var(--chip-min-height);
+}
+
 :root:root .kit-chip:has(> .kit-chip__trailing) {
   min-height: var(--chip-min-height);
   padding-right: var(--space-1);
