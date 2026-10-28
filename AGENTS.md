@@ -79,6 +79,9 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
 
 - Use `make build` for a worktree binary. `make install` changes the user's
   installed binary and needs intentional authorization.
+- Tests that construct configuration directly must set `Data.DataDir` to a
+  temporary directory before writing or purging attachments. Changing
+  `HomeDir` after `config.NewDefaultConfig()` does not change `Data.DataDir`.
 - All `go test` invocations need `-tags "fts5 sqlite_vec"`. Run the packages you
   changed; `make test` (and CI) runs the full suite.
   PostgreSQL tests use the targets documented in [Development](docs/development.md).
