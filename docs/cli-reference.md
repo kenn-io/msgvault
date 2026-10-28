@@ -467,6 +467,8 @@ available, `pending_message_id`, `reply_to_message_id`, and `file_name`.
 | `send_disabled` | The source has no enabled `[[beeper.sends]]` entry. |
 | `not_permitted` | The token lacks source permission or requested a file. |
 | `chat_not_archived` | The chat has not been archived under this source. |
+| `chat_not_found` | Beeper has no chat with that ID. |
+| `provider_identity_mismatch` | Beeper returned another chat. |
 | `not_supported` | The destination is a merged container; send to an archived member chat. |
 | `invalid_args` | Arguments or the local file are invalid. |
 | `invalid_reply_target` | The reply target does not belong to this source and chat. |

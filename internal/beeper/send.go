@@ -48,7 +48,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID string, params SendPara
 	if err != nil {
 		return SendResult{}, err
 	}
-	data, err := c.writeOnce(ctx, http.MethodPost, "/v1/chats/"+url.PathEscape(chatID)+"/messages", "application/json", bytes.NewReader(encoded), c.http.Timeout)
+	data, err := c.writeOnce(ctx, http.MethodPost, "/v1/chats/"+url.PathEscape(chatID)+"/messages", "application/json", bytes.NewReader(encoded), c.http.Timeout, true)
 	if err != nil {
 		return SendResult{}, err
 	}
@@ -91,7 +91,7 @@ func (c *Client) UploadAsset(ctx context.Context, file io.Reader, fileName strin
 		_ = writer.CloseWithError(err)
 		done <- err
 	}()
-	data, err := c.writeOnce(ctx, http.MethodPost, "/v1/assets/upload", multipartWriter.FormDataContentType(), reader, 0)
+	data, err := c.writeOnce(ctx, http.MethodPost, "/v1/assets/upload", multipartWriter.FormDataContentType(), reader, 0, true)
 	_ = reader.CloseWithError(err)
 	uploadErr := <-done
 	if err != nil {

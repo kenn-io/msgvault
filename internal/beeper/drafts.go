@@ -77,7 +77,7 @@ func (c *Client) SetDraft(ctx context.Context, chatID string, text *string) (*Ch
 		}
 		body = encoded
 	}
-	data, err := c.writeOnce(ctx, http.MethodPatch, "/v1/chats/"+url.PathEscape(chatID), "application/json", bytes.NewReader(body), c.http.Timeout)
+	data, err := c.writeOnce(ctx, http.MethodPatch, "/v1/chats/"+url.PathEscape(chatID), "application/json", bytes.NewReader(body), c.http.Timeout, false)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (c *Client) SetDraft(ctx context.Context, chatID string, text *string) (*Ch
 	return &chat, nil
 }
 
-func (c *Client) writeOnce(ctx context.Context, method, path, contentType string, body io.Reader, timeout time.Duration) ([]byte, error) {
+func (c *Client) writeOnce(ctx context.Context, method, path, contentType string, body io.Reader, timeout time.Duration, refuseRedirects bool) ([]byte, error) {
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("wait for beeper rate limit: %w", err)
 	}
@@ -105,6 +105,9 @@ func (c *Client) writeOnce(ctx context.Context, method, path, contentType string
 	req.Header.Set("Content-Type", contentType)
 	writeClient := *c.http
 	writeClient.Timeout = timeout
+	if refuseRedirects {
+		writeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 	resp, err := writeClient.Do(req)
 	if err != nil {
 		return nil, &WriteError{Err: err}
