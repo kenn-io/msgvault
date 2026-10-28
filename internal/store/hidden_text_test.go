@@ -148,6 +148,33 @@ func TestInitSchemaResumesHiddenTextBackfill(t *testing.T) {
 	assert.Equal(0, cursors, "a completed walk clears its cursor")
 }
 
+func TestInitSchemaBackfillsHiddenTextAcrossBatches(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	// One more message than a batch holds, so the walk saves a cursor and then completes.
+	ids := f.CreateMessages(1001)
+	for _, id := range []int64{ids[0], ids[len(ids)-1]} {
+		_, err := f.Store.DB().Exec(f.Store.Rebind(
+			`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (?, ?, ?)`),
+			id, "Archived text", `<div hidden>Hidden text</div>`)
+		require.NoError(err)
+	}
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		"messages_hidden_text_backfill_v1")
+	require.NoError(err)
+
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	var flagged, cursors int
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE hidden_text_present`).Scan(&flagged))
+	assert.Equal(2, flagged, "both batches are checked")
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT COUNT(*) FROM archive_metadata WHERE key = ?`), "hidden_text_backfill_cursor").Scan(&cursors))
+	assert.Equal(0, cursors)
+	applied, err := f.Store.IsMigrationApplied("messages_hidden_text_backfill_v1")
+	require.NoError(err)
+	assert.True(applied)
+}
+
 func TestUpdateMessageDerivedTextHiddenTextPresent(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
