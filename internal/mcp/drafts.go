@@ -42,7 +42,7 @@ var stableDraftOutputSchema = &jsonschema.Schema{Schema: schema202012, Type: "ob
 var stableDraftDefinitions = func() map[string]toolDefinition {
 	definitions := map[string]toolDefinition{
 		"send-message": writeDefinition(ToolSendMessage, "Send immediately to an existing archived Beeper chat. Requires beeper.sends and, for agents, message.send. file is an absolute daemon-host path for owner sessions only. On remote_unknown, read the chat before sending again; never retry automatically.", closedObject(map[string]*jsonschema.Schema{
-			"account": stringSchema("Source account"), "source_id": safeIDSchema("Source ID"), "to": stringSchema("Archived Beeper chat ID"), "body": stringSchema("Message text"), "file": stringSchema("Absolute daemon-host file path, owner only"), "reply_to": safeIDSchema("Archived message in this chat"),
+			"account": stringSchema("Source account"), toolArgSourceID: safeIDSchema("Source ID"), "to": stringSchema("Archived Beeper chat ID"), "body": stringSchema("Message text"), "file": stringSchema("Absolute daemon-host file path, owner only"), "reply_to": safeIDSchema("Archived message in this chat"),
 		}, "to"), stableDraftOutputSchema, draftToolHandler("send-message", "")),
 		"draft-reply": writeDefinition(ToolDraftReply, "Run msgvault draft-reply through the daemon to create a reply draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
 			"message_id": safeIDSchema("Archived parent message ID"), "body": stringSchema("Reply body"), "from": stringSchema("Confirmed source identity"), "all": booleanSchema("Reply to all visible recipients"), "account": stringSchema("Destination account"), "source_id": safeIDSchema("Destination source ID"),

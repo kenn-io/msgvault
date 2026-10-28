@@ -17,39 +17,50 @@ import (
 )
 
 func TestSendMessageAndUploadAsset(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
-		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+		assert.Equal("Bearer test-token", r.Header.Get("Authorization"))
 		switch r.URL.Path {
 		case "/v1/assets/upload":
-			require.NoError(t, r.ParseMultipartForm(1024))
-			defer r.MultipartForm.RemoveAll()
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			if !assert.NoError(r.ParseMultipartForm(1024)) { // #nosec G120 -- MaxBytesReader bounds the body above; gosec does not track this field assignment.
+				return
+			}
+			defer func() { assert.NoError(r.MultipartForm.RemoveAll()) }()
 			f, header, err := r.FormFile("file")
-			require.NoError(t, err)
-			defer f.Close()
+			if !assert.NoError(err) {
+				return
+			}
+			defer func() { assert.NoError(f.Close()) }()
 			data, err := io.ReadAll(f)
-			require.NoError(t, err)
-			assert.Equal(t, "content", string(data))
-			assert.Equal(t, "example.txt", header.Filename)
-			assert.Equal(t, "text/plain; charset=utf-8", header.Header.Get("Content-Type"))
-			assert.Empty(t, r.MultipartForm.Value)
+			if !assert.NoError(err) {
+				return
+			}
+			assert.Equal("content", string(data))
+			assert.Equal("example.txt", header.Filename)
+			assert.Equal("text/plain; charset=utf-8", header.Header.Get("Content-Type"))
+			assert.Empty(r.MultipartForm.Value)
 			_, _ = io.WriteString(w, `{"uploadID":"upload-1"}`)
 		case "/v1/chats/!chat:beeper.local/messages":
 			var body map[string]any
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-			assert.Equal(t, map[string]any{"text": "hello", "replyToMessageID": "original", "attachment": map[string]any{"uploadID": "upload-1"}}, body)
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+				return
+			}
+			assert.Equal(map[string]any{"text": "hello", "replyToMessageID": "original", "attachment": map[string]any{"uploadID": "upload-1"}}, body)
 			_, _ = io.WriteString(w, `{"chatID":"!chat:beeper.local","pendingMessageID":"pending-1"}`)
 		}
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, func(_ context.Context) (string, error) { return "test-token", nil }, 1000)
 	upload, err := client.UploadAsset(t.Context(), strings.NewReader("content"), "example.txt")
-	require.NoError(t, err)
+	require.NoError(err)
 	pending, err := client.SendMessage(t.Context(), "!chat:beeper.local", SendParams{Text: "hello", ReplyToMessageID: "original", UploadID: upload})
-	require.NoError(t, err)
-	assert.Equal(t, SendResult{ChatID: "!chat:beeper.local", PendingMessageID: "pending-1"}, pending)
-	assert.Equal(t, []string{"POST /v1/assets/upload", "POST /v1/chats/!chat:beeper.local/messages"}, requests)
+	require.NoError(err)
+	assert.Equal(SendResult{ChatID: "!chat:beeper.local", PendingMessageID: "pending-1"}, pending)
+	assert.Equal([]string{"POST /v1/assets/upload", "POST /v1/chats/!chat:beeper.local/messages"}, requests)
 }
 
 func TestBeeperWritesNeverRetry(t *testing.T) {
@@ -87,32 +98,41 @@ func (failedSendTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestSendMessageUnknownOutcome(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	client := NewClient("http://localhost", testToken, 1000)
 	client.http = &http.Client{Transport: failedSendTransport{}}
 	_, err := client.SendMessage(t.Context(), "chat", SendParams{Text: "hello"})
 	var failure *WriteError
-	require.ErrorAs(t, err, &failure)
-	assert.Zero(t, failure.Status)
+	require.ErrorAs(err, &failure)
+	assert.Zero(failure.Status)
 	for _, body := range []string{`not json`, `{}`, `{"pendingMessageID":"pending-1"}`, `{"chatID":"chat"}`} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
 		client := NewClient(server.URL, testToken, 1000)
 		_, err = client.SendMessage(t.Context(), "chat", SendParams{Text: "hello"})
-		require.ErrorAs(t, err, &failure)
-		assert.Zero(t, failure.Status)
+		require.ErrorAs(err, &failure)
+		assert.Zero(failure.Status)
 		server.Close()
 	}
 }
 
 func TestUploadUnknownExtensionSniffsContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, r.ParseMultipartForm(1024))
-		defer r.MultipartForm.RemoveAll()
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if !assert.NoError(t, r.ParseMultipartForm(1024)) { // #nosec G120 -- MaxBytesReader bounds the body above; gosec does not track this field assignment.
+			return
+		}
+		defer func() { assert.NoError(t, r.MultipartForm.RemoveAll()) }()
 		f, header, err := r.FormFile("file")
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		assert.Equal(t, "image/png", header.Header.Get("Content-Type"))
-		defer f.Close()
+		defer func() { assert.NoError(t, f.Close()) }()
 		data, err := io.ReadAll(f)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		assert.Equal(t, "\x89PNG\r\n\x1a\nexample", string(data))
 		_, _ = io.WriteString(w, `{"uploadID":"upload-1"}`)
 	}))
@@ -156,6 +176,6 @@ func TestSendMessageTokenFailure(t *testing.T) {
 	_, err := client.SendMessage(t.Context(), "chat", SendParams{Text: "hello"})
 	require.Error(t, err)
 	var writeErr *WriteError
-	assert.False(t, errors.As(err, &writeErr))
+	assert.NotErrorAs(t, err, &writeErr)
 	assert.Zero(t, calls)
 }

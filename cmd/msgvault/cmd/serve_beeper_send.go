@@ -141,8 +141,7 @@ func (a *storeAPIAdapter) checkBeeperReply(ctx context.Context, client *beeper.C
 }
 
 func beeperSendFailureCode(err error, sending bool) string {
-	var writeErr *beeper.WriteError
-	if errors.As(err, &writeErr) {
+	if writeErr, ok := errors.AsType[*beeper.WriteError](err); ok {
 		if writeErr.Status >= 300 && writeErr.Status < 500 {
 			return "provider_rejected"
 		}

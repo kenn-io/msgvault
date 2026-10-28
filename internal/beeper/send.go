@@ -69,7 +69,7 @@ func (c *Client) UploadAsset(ctx context.Context, file io.Reader, fileName strin
 		buffered := bufio.NewReader(file)
 		prefix, err := buffered.Peek(512)
 		if err != nil && err != io.EOF {
-			return "", err
+			return "", fmt.Errorf("sniff upload content type: %w", err)
 		}
 		mimeType = http.DetectContentType(prefix)
 		file = buffered

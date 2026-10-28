@@ -285,7 +285,7 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 	positionals := map[string]string{"draft_reply": "message_id", "draft_forward": "message_id", "draft_get": "draft_id", "draft_edit": "draft_id", "draft_delete": "draft_id", "draft_recover": "draft_id", "draft_send_as": "account"}
 	var names []string
 	for _, tool := range listed.Tools {
-		if !(strings.HasPrefix(tool.Name, "draft_") || tool.Name == "send_message") {
+		if !strings.HasPrefix(tool.Name, "draft_") && tool.Name != "send_message" {
 			continue
 		}
 		names = append(names, tool.Name)
@@ -410,10 +410,11 @@ func TestMCPSendMessageCapabilityGate(t *testing.T) {
 }
 
 func TestMCPSendMessageFiles(t *testing.T) {
+	requirements := require.New(t)
 	f := newBeeperDraftFixture(t)
 	f.adapter.beeperSendPolicy = []config.GmailDraftSource{{SourceID: f.source.ID, Enabled: true}}
 	_, err := f.store.EnsureConversationWithType(f.source.ID, beeperDraftTestChat, "direct", "Example chat")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var requests []string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
@@ -430,14 +431,20 @@ func TestMCPSendMessageFiles(t *testing.T) {
 	f.adapter.config.Beeper.URL = provider.URL
 	daemon := mcpDraftTestDaemon(t, f.adapter, nil)
 	path := filepath.Join(t.TempDir(), "photo.png")
-	require.NoError(t, os.WriteFile(path, []byte("image"), 0o600))
+	requirements.NoError(os.WriteFile(path, []byte("image"), 0o600))
+	cwd, err := os.Getwd()
+	requirements.NoError(err)
+	relativePath, err := filepath.Rel(cwd, path)
+	requirements.NoError(err)
 	for _, tc := range []struct {
 		name, path, code string
 		delegated        bool
 	}{
-		{"owner absolute", path, "accepted", false}, {"owner relative", "photo.png", "invalid_args", false}, {"delegated", path, "not_permitted", true},
+		{"owner absolute", path, "accepted", false}, {"owner relative", relativePath, "invalid_args", false}, {"delegated", path, "not_permitted", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: daemon.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 			if tc.delegated {
 				ctx = mcpDraftAgentContext(t, daemon, f.source.ID, []string{"message.send"})
@@ -445,14 +452,14 @@ func TestMCPSendMessageFiles(t *testing.T) {
 			session := mcpDraftTestSession(ctx, t)
 			requests = nil
 			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolSendMessage, Arguments: map[string]any{"source_id": f.source.ID, "to": beeperDraftTestChat, "file": tc.path}})
-			require.NoError(t, err)
-			assert.Contains(t, mcpDraftResultText(t, result), tc.code)
+			require.NoError(err)
+			assert.Contains(mcpDraftResultText(t, result), tc.code)
 			if tc.code == "accepted" {
-				assert.False(t, result.IsError)
-				assert.Equal(t, []string{"GET /v1/chats/" + beeperDraftTestChat, "POST /v1/assets/upload", "POST /v1/chats/" + beeperDraftTestChat + "/messages"}, requests)
+				assert.False(result.IsError)
+				assert.Equal([]string{"GET /v1/chats/" + beeperDraftTestChat, "POST /v1/assets/upload", "POST /v1/chats/" + beeperDraftTestChat + "/messages"}, requests)
 			} else {
-				assert.True(t, result.IsError)
-				assert.Empty(t, requests)
+				assert.True(result.IsError)
+				assert.Empty(requests)
 			}
 		})
 	}

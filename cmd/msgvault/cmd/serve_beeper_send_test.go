@@ -58,12 +58,14 @@ func TestBeeperSend(t *testing.T) {
 		{name: "wrong reply", code: "invalid_reply_target", reply: true, wrongReply: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newBeeperDraftFixture(t)
 			if !tc.disabled {
 				f.adapter.beeperSendPolicy = []config.GmailDraftSource{{SourceID: f.source.ID, Enabled: true}}
 			}
 			conversation, err := f.store.EnsureConversationWithType(f.source.ID, beeperDraftTestChat, "direct", "Example chat")
-			require.NoError(t, err)
+			require.NoError(err)
 			var requests []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests = append(requests, r.Method+" "+r.URL.Path)
@@ -105,17 +107,19 @@ func TestBeeperSend(t *testing.T) {
 					_, _ = io.WriteString(w, `{"uploadID":"upload-1"}`)
 				default:
 					var body map[string]any
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+						return
+					}
 					if tc.file {
-						assert.Equal(t, map[string]any{"uploadID": "upload-1"}, body["attachment"])
+						assert.Equal(map[string]any{"uploadID": "upload-1"}, body["attachment"])
 					}
 					if !tc.file || tc.body {
-						assert.Equal(t, "hello", body["text"])
+						assert.Equal("hello", body["text"])
 					} else {
-						assert.NotContains(t, body, "text")
+						assert.NotContains(body, "text")
 					}
 					if tc.reply {
-						assert.Equal(t, "original", body["replyToMessageID"])
+						assert.Equal("original", body["replyToMessageID"])
 					}
 					if tc.status != 0 {
 						w.WriteHeader(tc.status)
@@ -138,7 +142,7 @@ func TestBeeperSend(t *testing.T) {
 			if tc.file {
 				req.Cwd = t.TempDir()
 				path := filepath.Join(req.Cwd, "example.txt")
-				require.NoError(t, os.WriteFile(path, []byte("file content"), 0o600))
+				require.NoError(os.WriteFile(path, []byte("file content"), 0o600))
 				if tc.directory {
 					path = req.Cwd
 				}
@@ -153,10 +157,10 @@ func TestBeeperSend(t *testing.T) {
 			if tc.reply {
 				if tc.wrongReply {
 					conversation, err = f.store.EnsureConversationWithType(f.source.ID, "!other:beeper.local", "direct", "Other chat")
-					require.NoError(t, err)
+					require.NoError(err)
 				}
 				id, err := f.store.UpsertMessage(&store.Message{SourceID: f.source.ID, SourceMessageID: "original", ConversationID: conversation, MessageType: "beeper", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC), Valid: true}})
-				require.NoError(t, err)
+				require.NoError(err)
 				args = append(args, "--reply-to", strconv.FormatInt(id, 10))
 			}
 			if tc.grant {
@@ -174,23 +178,23 @@ func TestBeeperSend(t *testing.T) {
 			var output beeperSendOutput
 			err = f.adapter.runCLISendMessage(t.Context(), req, func(event api.CLIRunEvent) error { return json.Unmarshal([]byte(event.Data), &output) })
 			if tc.code == "accepted" {
-				require.NoError(t, err)
-				assert.Equal(t, "accepted", output.Status)
-				assert.Equal(t, "pending-1", output.PendingMessageID)
-				assert.Equal(t, "merged-chat", output.ChatID)
+				require.NoError(err)
+				assert.Equal("accepted", output.Status)
+				assert.Equal("pending-1", output.PendingMessageID)
+				assert.Equal("merged-chat", output.ChatID)
 			} else {
 				assertBeeperDraftCode(t, err, tc.code)
 			}
 			if tc.code == "accepted" || tc.code == "remote_unknown" || (tc.code == "provider_rejected" && !tc.uploadFailure && !tc.uploadError) {
-				assert.Equal(t, tc.code, output.Status)
+				assert.Equal(tc.code, output.Status)
 			} else {
-				assert.Empty(t, output.Status)
+				assert.Empty(output.Status)
 			}
 			if tc.replyStatus != 0 {
-				require.GreaterOrEqual(t, len(requests), 2)
-				assert.Equal(t, "GET /v1/chats/"+beeperDraftTestChat, requests[0])
+				require.GreaterOrEqual(len(requests), 2)
+				assert.Equal("GET /v1/chats/"+beeperDraftTestChat, requests[0])
 				for _, request := range requests[1:] {
-					assert.Equal(t, "GET /v1/chats/"+beeperDraftTestChat+"/messages/original", request)
+					assert.Equal("GET /v1/chats/"+beeperDraftTestChat+"/messages/original", request)
 				}
 				return
 			}
@@ -206,20 +210,20 @@ func TestBeeperSend(t *testing.T) {
 				if !tc.uploadFailure && !tc.uploadError {
 					expected = append(expected, "POST /v1/chats/"+beeperDraftTestChat+"/messages")
 				}
-				assert.Equal(t, expected, requests)
+				assert.Equal(expected, requests)
 			case "provider_unavailable":
-				assert.Equal(t, []string{"GET /v1/chats/" + beeperDraftTestChat, "POST /v1/assets/upload"}, requests)
+				assert.Equal([]string{"GET /v1/chats/" + beeperDraftTestChat, "POST /v1/assets/upload"}, requests)
 			default:
 				if tc.changedReply || tc.wrongReply {
 					expected := []string{"GET /v1/chats/" + beeperDraftTestChat}
 					if !tc.wrongReply {
 						expected = append(expected, "GET /v1/chats/"+beeperDraftTestChat+"/messages/original")
 					}
-					assert.Equal(t, expected, requests)
+					assert.Equal(expected, requests)
 				} else if tc.merged || tc.foreignAccount {
-					assert.Equal(t, []string{"GET /v1/chats/" + beeperDraftTestChat}, requests)
+					assert.Equal([]string{"GET /v1/chats/" + beeperDraftTestChat}, requests)
 				} else {
-					assert.Empty(t, requests)
+					assert.Empty(requests)
 				}
 			}
 		})
@@ -227,15 +231,17 @@ func TestBeeperSend(t *testing.T) {
 }
 
 func TestBeeperSendTextOutput(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var output string
-	require.NoError(t, emitBeeperSend(func(event api.CLIRunEvent) error { output += event.Data; return nil }, cliStreamStdout, false, beeperSendOutput{Status: "accepted", ChatID: "chat", PendingMessageID: "pending-1"}))
-	assert.Equal(t, "status: accepted\nbeeper chat: chat\npending message: pending-1\n", output)
+	require.NoError(emitBeeperSend(func(event api.CLIRunEvent) error { output += event.Data; return nil }, cliStreamStdout, false, beeperSendOutput{Status: "accepted", ChatID: "chat", PendingMessageID: "pending-1"}))
+	assert.Equal("status: accepted\nbeeper chat: chat\npending message: pending-1\n", output)
 
 	output = ""
-	require.NoError(t, emitBeeperSend(func(event api.CLIRunEvent) error { output += event.Data; return nil }, cliStreamStderr, false, beeperSendOutput{Status: "remote_unknown", ChatID: "chat", FileName: "example.txt"}))
-	assert.Contains(t, output, "file: example.txt")
-	assert.NotContains(t, output, "pending message:")
-	assert.Contains(t, output, "Read the chat before sending again")
+	require.NoError(emitBeeperSend(func(event api.CLIRunEvent) error { output += event.Data; return nil }, cliStreamStderr, false, beeperSendOutput{Status: "remote_unknown", ChatID: "chat", FileName: "example.txt"}))
+	assert.Contains(output, "file: example.txt")
+	assert.NotContains(output, "pending message:")
+	assert.Contains(output, "Read the chat before sending again")
 }
 
 func TestBeeperSendFailureCode(t *testing.T) {
@@ -253,22 +259,24 @@ func TestBeeperSendFailureCode(t *testing.T) {
 }
 
 func TestBeeperSendReplyArchiveUnavailable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	testutil.SkipIfPostgres(t, "local read fault injection alters SQLite tables")
 	f := newBeeperDraftFixture(t)
 	f.adapter.beeperSendPolicy = []config.GmailDraftSource{{SourceID: f.source.ID, Enabled: true}}
 	conversation, err := f.store.EnsureConversationWithType(f.source.ID, beeperDraftTestChat, "direct", "Example chat")
-	require.NoError(t, err)
+	require.NoError(err)
 	id, err := f.store.UpsertMessage(&store.Message{SourceID: f.source.ID, SourceMessageID: "original", ConversationID: conversation, MessageType: "beeper"})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.store.GetMessageContext(t.Context(), id)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// Only the message detail read needs this table; source and chat lookups still work.
 	_, err = f.store.DB().Exec("ALTER TABLE message_bodies RENAME TO fault_message_bodies")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.store.GetMessageContext(t.Context(), id)
-	require.Error(t, err)
-	require.NotErrorIs(t, err, sql.ErrNoRows)
+	require.Error(err)
+	require.NotErrorIs(err, sql.ErrNoRows)
 
 	err = f.adapter.runCLISendMessage(t.Context(), api.CLIRunRequest{Args: []string{
 		"send-message", "--source-id", strconv.FormatInt(f.source.ID, 10),
@@ -276,11 +284,11 @@ func TestBeeperSendReplyArchiveUnavailable(t *testing.T) {
 	}}, nil)
 
 	_, restoreErr := f.store.DB().Exec("ALTER TABLE fault_message_bodies RENAME TO message_bodies")
-	require.NoError(t, restoreErr)
+	require.NoError(restoreErr)
 	_, lookupErr := f.store.GetMessageContext(t.Context(), id)
-	require.NoError(t, lookupErr)
+	require.NoError(lookupErr)
 	requests, patches := f.beeper.counts()
-	assert.Equal(t, 1, requests, "only the live chat lookup should run")
-	assert.Zero(t, patches)
+	assert.Equal(1, requests, "only the live chat lookup should run")
+	assert.Zero(patches)
 	assertBeeperDraftCode(t, err, "provider_unavailable")
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -205,8 +206,10 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	// PI-13: delegated draft-reply and send-message requests carrying non-empty
 	// Env are rejected before the operation starts.
 	t.Run("preservation invariant 13: Env→cliRunEnvAllowedForCommand", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		_, secret, _, err := srv.agentGrants.Issue("env-test-agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionMessageSend}, []agentgrant.SourceRef{{ID: 1, Type: "beeper", Identifier: "example-account"}}, time.Time{})
-		require.NoError(t, err)
+		require.NoError(err)
 		// Env: cliRunEnvAllowedForCommand returns false for every env name on
 		// these commands, so handleCLIRun writes env_not_allowed (HTTP 400) before
 		// calling the runner.
@@ -214,17 +217,17 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 			{"draft-reply", "42"},
 			{"send-message", "--source-id=1", "--to=!chat:beeper.local", "--body=hi"},
 		} {
-			envBody, marshalErr := json.Marshal(CLIRunRequest{Args: args, Env: map[string]string{"X": "y"}})
-			require.NoError(t, marshalErr)
+			envBody, marshalErr := json.Marshal(CLIRunRequest{Args: args, Env: map[string]string{clirun.EnvBeeperToken: "test-token"}})
+			require.NoError(marshalErr)
 			envReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(envBody))
 			envReq.Header.Set("Content-Type", "application/json")
 			envReq.Header.Set(apiprotocol.AgentTokenHeader, secret)
 			envW := httptest.NewRecorder()
 			srv.Router().ServeHTTP(envW, envReq)
 			var envResp ErrorResponse
-			require.NoError(t, json.NewDecoder(envW.Body).Decode(&envResp))
-			assert.Equal(t, http.StatusBadRequest, envW.Code)
-			assert.Equal(t, "env_not_allowed", envResp.Error, "command: %s", args[0]) // cliRunEnvAllowedForCommand
+			require.NoError(json.NewDecoder(envW.Body).Decode(&envResp))
+			assert.Equal(http.StatusBadRequest, envW.Code)
+			assert.Equal("env_not_allowed", envResp.Error, "command: %s", args[0]) // cliRunEnvAllowedForCommand
 		}
 	})
 }
