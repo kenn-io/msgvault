@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -35,7 +36,7 @@ func (a *storeAPIAdapter) runCLISendMessage(ctx context.Context, req api.CLIRunR
 	}
 	source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{Account: intent.Account, SourceID: intent.SourceID, SourceIDSet: intent.SourceIDSet})
 	if err != nil {
-		return draftReplyError("invalid_source", err)
+		return draftReplyError(sendSourceFailureCode(err), err)
 	}
 	if req.Grant != nil && len(intent.File) != 0 {
 		return draftReplyNotPermitted(errors.New("files are owner only"))
@@ -72,7 +73,7 @@ func (a *storeAPIAdapter) runCLISendMessage(ctx context.Context, req api.CLIRunR
 	}
 	chats, err := a.store.ConversationMetadataBatchContext(ctx, source.ID, intent.To)
 	if err != nil {
-		return draftReplyError("chat_not_archived", err)
+		return draftReplyError("provider_unavailable", err)
 	}
 	if _, exists := chats[output.ChatID]; !exists {
 		return draftReplyError("chat_not_archived", errors.New("chat is not archived for this source"))
@@ -150,6 +151,16 @@ func beeperSendFailureCode(err error, sending bool) string {
 		}
 	}
 	return "provider_unavailable"
+}
+
+// sendSourceFailureCode keeps caller-fixable selector mistakes on
+// invalid_source. sourceops marks internal catalog read failures as
+// transient, so they map to provider_unavailable per the send-message table.
+func sendSourceFailureCode(err error) string {
+	if opserr.KindOf(err) == opserr.KindInternal {
+		return "provider_unavailable"
+	}
+	return "invalid_source"
 }
 
 func emitBeeperSend(emit func(api.CLIRunEvent) error, stream string, asJSON bool, output beeperSendOutput) error {
