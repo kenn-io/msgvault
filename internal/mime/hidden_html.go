@@ -127,18 +127,20 @@ func (styles inlineStyles) parse(style string) []inlineDeclaration {
 		}
 		value = strings.TrimSpace(strings.ToLower(decodeInlineCSSEscapes(value)))
 		// The shorthand also resets the image, to none unless it names one.
-		shorthand := name == "background"
-		if shorthand {
-			if !validBackgroundShorthand(value) {
+		if name == "background" {
+			color, valid := backgroundShorthandColor(value)
+			if !valid {
 				// Browsers ignore an invalid shorthand, keeping the earlier background.
 				continue
 			}
+			// The shorthand resets the image and color it omits, to none and transparent.
 			shorthandImage := "none"
 			if strings.Contains(value, "url(") || strings.Contains(value, "gradient(") {
 				shorthandImage = "image"
 			}
 			add("background-image", shorthandImage, isImportant)
-			name = "background-color"
+			add("background-color", color, isImportant)
+			continue
 		}
 		if name == "background-image" {
 			switch {
@@ -156,7 +158,6 @@ func (styles inlineStyles) parse(style string) []inlineDeclaration {
 		}
 		if name == "color" || name == "background-color" {
 			switch {
-			case name == "background-color" && value == "unknown":
 			case name == "color" && (value == "currentcolor" || slices.Contains(inheritCSSKeywords, value)):
 				// The parent's color shows through, so an earlier declaration no longer applies.
 			case slices.Contains(inheritCSSKeywords, value) || value == "initial":
@@ -167,8 +168,8 @@ func (styles inlineStyles) parse(style string) []inlineDeclaration {
 				}
 			default:
 				parsed := inlineHTMLColor(value)
-				// A valid shorthand, or a color this check can't read, still sets a background.
-				if parsed == "" && name == "background-color" && (shorthand && strings.ContainsAny(value, "( ") || unreadableCSSColor(value)) {
+				// A valid color this check can't read still sets a background.
+				if parsed == "" && name == "background-color" && unreadableCSSColor(value) {
 					parsed = "unknown"
 				}
 				value = parsed
@@ -229,16 +230,32 @@ func inlineHTMLDeclarations(value string) []*css.Declaration {
 }
 
 // fontShorthandSize returns the size the font shorthand sets: the first field, before any "/",
-// that is a font-size keyword or a length with a unit (or zero). It returns "" when there is none.
+// that is a font-size keyword or a length with a unit (or zero). It returns "" when there is none
+// or no family follows it.
 func fontShorthandSize(value string) string {
 	if slices.Contains(inheritCSSKeywords, value) {
 		return value
 	}
-	for field := range strings.FieldsSeq(value) {
-		field, _, _ = strings.Cut(field, "/")
-		if _, unit, length := inlineCSSLength(field); length && (unit != "" || field == "0") || slices.Contains(strings.Fields(inlineCSSValues["font-size"]), field) {
-			return field
+	fields := strings.Fields(value)
+	for i, field := range fields {
+		size, lineHeight, slash := strings.Cut(field, "/")
+		if _, unit, length := inlineCSSLength(size); !(length && (unit != "" || size == "0") || slices.Contains(strings.Fields(inlineCSSValues["font-size"]), size)) {
+			continue
 		}
+		// A family must follow the size and any line height, or browsers ignore the shorthand.
+		rest := fields[i+1:]
+		switch {
+		case slash && lineHeight == "" && len(rest) > 0:
+			rest = rest[1:]
+		case !slash && len(rest) > 0 && rest[0] == "/":
+			rest = rest[min(2, len(rest)):]
+		case !slash && len(rest) > 0 && strings.HasPrefix(rest[0], "/"):
+			rest = rest[1:]
+		}
+		if len(rest) == 0 {
+			return ""
+		}
+		return size
 	}
 	return ""
 }
@@ -325,11 +342,13 @@ func unreadableCSSColor(value string) bool {
 	return slices.Contains(cssColorFunctions, cssFunctionName(value))
 }
 
-// validBackgroundShorthand reports whether every field of a background shorthand is a value
-// the shorthand accepts. Fields are split on spaces, slashes, and commas outside parentheses.
-func validBackgroundShorthand(value string) bool {
+// backgroundShorthandColor returns the background color a shorthand sets: a resolved color,
+// "unknown" for one this check can't read, or "transparent" when it names none. It reports false
+// unless every field, split on spaces, slashes, and commas outside parentheses, is a value the
+// shorthand accepts.
+func backgroundShorthandColor(value string) (string, bool) {
 	if value == "initial" || slices.Contains(inheritCSSKeywords, value) {
-		return true
+		return "transparent", true
 	}
 	var fields []string
 	depth, start := 0, -1
@@ -351,15 +370,21 @@ func validBackgroundShorthand(value string) bool {
 	if start >= 0 {
 		fields = append(fields, value[start:])
 	}
+	color := "transparent"
 	for _, field := range fields {
 		function := cssFunctionName(field)
 		number, unit, length := inlineCSSLength(field)
-		if !slices.Contains(backgroundCSSKeywords, field) && inlineHTMLColor(field) == "" && !unreadableCSSColor(field) &&
-			!validCSSLength(number, unit, length) && !cssImageFunction(function) && !slices.Contains(cssMathFunctions, function) {
-			return false
+		switch {
+		case inlineHTMLColor(field) != "":
+			color = inlineHTMLColor(field)
+		case unreadableCSSColor(field) || field == "currentcolor":
+			color = "unknown"
+		case !slices.Contains(backgroundCSSKeywords, field) && !validCSSLength(number, unit, length) &&
+			!cssImageFunction(function) && !slices.Contains(cssMathFunctions, function):
+			return "", false
 		}
 	}
-	return len(fields) > 0
+	return color, len(fields) > 0
 }
 
 var inlineCSSEscape = regexp.MustCompile(`\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\r\n\f])?|[^\r\n\f])`)
