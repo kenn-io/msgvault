@@ -70,7 +70,7 @@
     color: var(--text-primary);
     font-size: var(--font-size-xl);
     font-weight: var(--font-weight-semibold);
-    line-height: var(--line-height-tight);
+    line-height: 1.25;
   }
 
   p {
