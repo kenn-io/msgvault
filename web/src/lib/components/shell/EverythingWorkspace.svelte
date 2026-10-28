@@ -884,6 +884,10 @@
 </main>
 
 <style>
+  .everything-workspace > :global(.page-header) {
+    margin-bottom: calc(var(--space-5) - var(--space-4));
+  }
+
   .everything-workspace {
     display: flex;
     width: 100%;
