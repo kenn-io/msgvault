@@ -681,6 +681,9 @@ func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
 // are bound once. Listings without domain filters keep scalar rescans to avoid
 // materializing the archive's message strings.
 //
+// Materialize the bounded page so its enrichment queries share those rows
+// instead of inlining the full listing pipeline into each consumer.
+//
 // Output columns, ordering, and pagination are identical to buildExploreSQL;
 // TestExploreListingFastPathMatchesLegacy pins the equivalence.
 func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string, shareFilteredPopulation bool) string {
@@ -692,7 +695,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
 	}
 	return buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression) +
 		exploreLogicalEntriesCTE(false) + fmt.Sprintf(`
-), page AS (
+), page AS MATERIALIZED (
     SELECT * FROM logical_entries
     ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
     LIMIT ? OFFSET ?

@@ -17,13 +17,18 @@ func constrainedListingEngine(t *testing.T) *DuckDBEngine {
 }
 
 func TestExploreFastPathFitsConstrainedMemory(t *testing.T) {
-	engine := constrainedListingEngine(t)
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := buildBenchData(t)
+	// Keep headroom below the listing budget, including on runners with fewer CPUs.
+	_, err := engine.db.Exec("SET memory_limit='144MB'; SET threads=4")
+	require.NoError(err)
 	result, err := engine.Explore(context.Background(), ExploreRequest{
 		Page: PageSpec{Limit: 50},
 	})
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 50)
-	assert.Equal(t, int64(104), result.TotalCount)
+	require.NoError(err)
+	assert.Len(result.Rows, 50)
+	assert.Equal(int64(104), result.TotalCount)
 }
 
 func TestExploreFastPathCountsBeyondEndWithinConstrainedMemory(t *testing.T) {
