@@ -7,7 +7,7 @@ func init() { rootCmd.AddCommand(newSendMessageCommand()) }
 func newSendMessageCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "send-message",
-		Short: "Send to an archived Beeper chat",
+		Short: "Send to a Beeper chat",
 		Long:  "Send text and/or one local file immediately. Sending requires [[beeper.sends]]. Requests are never retried; on remote_unknown, read the chat before sending again.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

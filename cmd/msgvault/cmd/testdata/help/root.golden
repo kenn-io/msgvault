@@ -135,7 +135,7 @@ Drafts, calendar, and Kata (write to providers):
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
   message-tags  Read or update native email tags
-  send-message  Send to an archived Beeper chat
+  send-message  Send to a Beeper chat
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches
