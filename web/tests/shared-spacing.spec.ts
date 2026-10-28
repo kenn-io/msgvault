@@ -51,19 +51,8 @@ test('every page header divider meets the next visible content boundary', async 
   expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, 0])));
 });
 
-test('reader, selection, and dialog share inset edges', async ({ page }) => {
+test('selection and dialog share inset edges', async ({ page }) => {
   await selectWorkspace(page, 'Everything');
-  await page.getByText(row.title, { exact: true }).click();
-  const reader = page.getByRole('complementary', { name: `Reading pane: ${row.title}` });
-  await expect(reader).toBeVisible();
-  const inset = await reader.locator('.pane-header').evaluate((element) => {
-    const box = element.getBoundingClientRect();
-    const heading = element.querySelector('.pane-heading')!.getBoundingClientRect();
-    const style = getComputedStyle(element);
-    return { left: heading.left - box.left, top: style.paddingTop, gap: style.columnGap };
-  });
-  expect(inset).toEqual({ left: 12, top: '8px', gap: '16px' });
-  await page.getByRole('button', { name: 'Close reading pane' }).click();
   const grid = page.getByRole('grid', { name: 'Everything results' });
   await grid.focus();
   await page.keyboard.press('Shift+A');
@@ -97,21 +86,24 @@ test('loaded message sender, body, and attachment edges align with the reader', 
     rows: [{ ...row, message_type: 'meeting_transcript', conversation_id: 11, anchor_message_id: 1 }], total_count: 1, cache_revision: 'spacing', search_provenance: {}
   } }));
   await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
-    id: 11, anchor_id: 1, has_before: false, has_after: false, total: 2,
+    id: 11, anchor_id: 1, has_before: false, has_after: false, total: 1,
     messages: [{ id: 1, conversation_id: 11, subject: row.title, message_type: 'meeting_transcript',
       from: 'Example Person', to: [], sent_at: row.occurred_at, snippet: row.preview,
       body: 'A plain text archive message.', body_html: '',
-      attachments: [{ id: 1, filename: 'Meeting-notes.txt', stored: false }] },
-      { id: 2, conversation_id: 11, subject: 'Wide newsletter', message_type: 'email',
-        from: 'Newsletter', to: [], sent_at: row.occurred_at, snippet: 'Wide archived HTML message.',
-        body: 'Wide archived HTML message.',
-        body_html: `<p>Wide archived HTML message.</p><table><tr>${'<td>Newsletter column</td>'.repeat(30)}</tr></table>`, attachments: [] }]
+      attachments: [{ id: 1, filename: 'Meeting-notes.txt', stored: false }] }]
   } }));
   await selectWorkspace(page, 'Everything');
   await page.getByText(row.title, { exact: true }).click();
   const reader = page.getByRole('complementary', { name: `Reading pane: ${row.title}` });
   await expect(reader.getByText('A plain text archive message.')).toBeVisible();
   await expect(reader.getByText('Meeting-notes.txt (not downloaded)')).toBeVisible();
+  const inset = await reader.locator('.pane-header').evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const heading = element.querySelector('.pane-heading')!.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return { left: heading.left - box.left, top: style.paddingTop, gap: style.columnGap };
+  });
+  expect(inset).toEqual({ left: 12, top: '8px', gap: '16px' });
   const insets = await reader.evaluate((element) => [
     '.card-header', '.card-body', '.attachments'
   ].map((selector) => {
@@ -119,20 +111,14 @@ test('loaded message sender, body, and attachment edges align with the reader', 
     return section.firstElementChild!.getBoundingClientRect().left - section.getBoundingClientRect().left;
   }));
   expect(insets).toEqual([12, 12, 12]);
-  await reader.getByRole('button', { name: 'Expand message 2 from Newsletter', exact: true }).click();
-  const mail = reader.frameLocator('iframe[title="Message body"]').locator('html');
-  await expect(mail.getByText('Wide archived HTML message.')).toBeVisible();
-  const scrollbar = await mail.evaluate((element) => ({
-    overflow: element.scrollWidth > element.clientWidth,
-    height: getComputedStyle(element, '::-webkit-scrollbar').height,
-    buttons: getComputedStyle(element, '::-webkit-scrollbar-button').display
-  }));
-  expect(scrollbar.overflow).toBe(true);
-  expect(scrollbar.height).toBe('8px');
-  expect(scrollbar.buttons).toBe('none');
 });
 
-test('adjacent removable chips have equal heights and even visible insets', async ({ page }) => {
+test('filter, saved-query, and status chips share heights and visible insets', async ({ page }) => {
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
+    id: 1, name: 'Archive search', schema_version: 2, revision: 1,
+    canonical_state: { query: 'archive', search_mode: 'full_text' },
+    created_at: row.occurred_at, updated_at: row.occurred_at
+  }] } }));
   await selectWorkspace(page, 'Everything');
   await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
   await page.getByRole('combobox', { name: 'Group by', exact: true }).click();
@@ -165,47 +151,31 @@ test('adjacent removable chips have equal heights and even visible insets', asyn
   expect(directoryGeometry).toEqual({ height: 26, left: 8, right: 8 });
   await filter.getByRole('button', { name: 'Remove Category: Archive filter', exact: true }).click();
   await expect(filter).toHaveCount(0);
-});
-
-test('active queries, saved queries, and source status share one chip height', async ({ page }) => {
-  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
-    id: 1, name: 'Archive search', schema_version: 2, revision: 1,
-    canonical_state: { query: 'archive', search_mode: 'full_text' },
-    created_at: row.occurred_at, updated_at: row.occurred_at
-  }] } }));
-  await selectWorkspace(page, 'Everything');
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
-  const active = page.locator('.context-chips .chip').first();
-  await expect(active).toBeVisible();
-  const activeHeight = (await active.boundingBox())!.height;
   await selectWorkspace(page, 'Saved views');
   const summary = page.locator('.summary li').filter({ hasText: 'archive' });
   await expect(summary).toBeVisible();
-  const geometry = await summary.evaluate((element) => {
+  const savedGeometry = await summary.evaluate((element) => {
     const range = document.createRange(); range.selectNodeContents(element);
     const box = element.getBoundingClientRect(); const text = range.getBoundingClientRect();
     return { height: box.height, centered: Math.abs((text.top + text.bottom) / 2 - (box.top + box.bottom) / 2) };
   });
-  expect(geometry.height).toBe(activeHeight);
-  expect(geometry.centered).toBeLessThanOrEqual(1);
+  expect(savedGeometry.height).toBe(26);
+  expect(savedGeometry.centered).toBeLessThanOrEqual(1);
   await selectWorkspace(page, 'Sources');
   const status = page.locator('.kit-chip').filter({ hasText: 'Never synced' });
   await expect(status).toBeVisible();
-  expect((await status.boundingBox())!.height).toBe(activeHeight);
+  expect((await status.boundingBox())!.height).toBe(26);
 });
 
 test('linked message uses the page title text scale', async ({ page }) => {
   await page.route('**/api/v1/messages/1', (route) => route.fulfill({ json: {
     id: 1, conversation_id: 11, subject: row.title, message_type: 'email'
   } }));
-  await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
-    id: 11, anchor_id: 1, messages: [], has_before: false, has_after: false, total: 0
-  } }));
   await page.goto('/messages/1');
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
 });
 
-test('overflowing settings use the shared panel inset and themed scrollbar', async ({ page }) => {
+test('overflowing settings keep card insets and themed scrollbars', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 600 });
   await page.route('**/api/v1/settings', (route) => route.fulfill({
     headers: { ETag: '"scrolling-settings"' },

@@ -386,7 +386,7 @@ test('opening a message fires no sender-host request until images are enabled', 
   expect(sentinelRequests).toEqual([]);
 });
 
-test('email colors follow the app theme with an original-colors override', async ({ page }) => {
+test('email colors and scrollbars follow the app theme with an original-colors override', async ({ page }) => {
   await page.addInitScript(() => {
     sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'dark' }));
   });
@@ -403,7 +403,7 @@ test('email colors follow the app theme with an original-colors override', async
       from: 'alice@example.com', to: ['bob@example.com'], sent_at: row.occurred_at,
       snippet: row.preview, labels: [], has_attachments: false, size_bytes: 10,
       body: 'A designed email', attachments: [],
-      body_html: '<table bgcolor="#ffffff"><tr><td style="color: #111111; background-color: #ffffff"><p>Designed email text</p><a href="https://example.com" style="color: #112233">Read more</a><img alt="Embedded image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></td></tr></table>' +
+      body_html: '<table bgcolor="#ffffff"><tr><td style="color: #111111; background-color: #ffffff"><p>Designed email text</p><a href="https://example.com" style="color: #112233">Read more</a><img alt="Embedded image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></td>' + '<td>Newsletter column</td>'.repeat(30) + '</tr></table>' +
         '<blockquote><p style="color: #111111">Quoted paragraph</p><blockquote><div>Nested quote</div><a href="https://example.com"><span>Quoted link</span></a></blockquote></blockquote>' +
         '<div class="gmail_quote"><div style="color: #111111">Gmail quoted text</div></div>'
     }]
@@ -413,6 +413,14 @@ test('email colors follow the app theme with an original-colors override', async
   await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
   const content = page.locator('iframe[title="Message body"]').contentFrame();
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+  const scrollbar = await content.locator('html').evaluate((element) => ({
+    overflow: element.scrollWidth > element.clientWidth,
+    height: getComputedStyle(element, '::-webkit-scrollbar').height,
+    buttons: getComputedStyle(element, '::-webkit-scrollbar-button').display
+  }));
+  expect(scrollbar.overflow).toBe(true);
+  expect(scrollbar.height).toBe('8px');
+  expect(scrollbar.buttons).toBe('none');
   await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(content.locator('a').filter({ hasText: 'Read more' })).toHaveCSS('color', 'rgb(116, 172, 254)');
   await expect(content.getByRole('img', { name: 'Embedded image' })).toHaveCSS('filter', 'none');
