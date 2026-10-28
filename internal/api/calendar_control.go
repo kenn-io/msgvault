@@ -27,7 +27,7 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 	}
 	name := huma.DefaultSchemaNamer(original, hint)
 	switch t.PkgPath() {
-	case "go.kenn.io/msgvault/internal/gcal":
+	case "go.kenn.io/msgvault/internal/gcal", "go.kenn.io/msgvault/internal/gcal/gcalmodel":
 		return "GCal" + name
 	case "go.kenn.io/msgvault/internal/calcontrol":
 		return "Calendar" + name
