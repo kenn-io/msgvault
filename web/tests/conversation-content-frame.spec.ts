@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { setKitTheme } from './kit-ui';
 
-test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
+const visibleScrollbarTest = test.extend({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
 
 const row = {
   key: 'source:1:message:source-1',
@@ -388,7 +388,7 @@ test('opening a message fires no sender-host request until images are enabled', 
   expect(sentinelRequests).toEqual([]);
 });
 
-test('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
+visibleScrollbarTest('archived mail follows live theme switches, original colors, and visible scrollbar fit', async ({ page }) => {
   await page.addInitScript(() => {
     sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'dark' }));
   });

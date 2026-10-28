@@ -3,8 +3,11 @@ import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
 
+const visibleScrollbarTest = test.extend({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
+
 test.beforeEach(async ({ page }) => {
   await mockArchiveLayout(page);
+  await page.route('**/api/v1/people**', (route) => route.fulfill({ json: { people: [], total_count: 0 } }));
   await page.route('**/api/v1/relationships', (route) => route.fulfill({ json: {
     rows: [], total_count: 0, cache_revision: 'spacing', identity_revision: 1
   } }));
@@ -13,7 +16,6 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('every page header divider meets the next visible content boundary', async ({ page }) => {
-  await page.route('**/api/v1/people**', (route) => route.fulfill({ json: { people: [], total_count: 0 } }));
   await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
   await page.route('**/api/v1/operations/status', (route) => route.fulfill({ json: { lanes: [] } }));
   await page.route('**/api/v1/sources**', (route) => route.fulfill({ json: { sources: [] } }));
@@ -175,7 +177,7 @@ test('linked message uses the page title text scale', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
 });
 
-test('overflowing settings keep 12px card insets and 8px scrollbars', async ({ page }) => {
+visibleScrollbarTest('overflowing settings keep 12px card insets and 8px scrollbars', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 600 });
   await page.route('**/api/v1/settings', (route) => route.fulfill({
     headers: { ETag: '"scrolling-settings"' },
@@ -196,9 +198,9 @@ test('overflowing settings keep 12px card insets and 8px scrollbars', async ({ p
     const card = control[control.length - 1].closest('.kit-card')!;
     return { overflow: element.scrollHeight > element.clientHeight,
       inset: card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - control[control.length - 1].getBoundingClientRect().right,
-      scrollbar: getComputedStyle(element, '::-webkit-scrollbar').width };
+      scrollbar: (element as HTMLElement).offsetWidth - element.clientWidth };
   });
   expect(geometry.overflow).toBe(true);
   expect(geometry.inset).toBe(12);
-  expect(geometry.scrollbar).toBe('8px');
+  expect(geometry.scrollbar).toBe(8);
 });
