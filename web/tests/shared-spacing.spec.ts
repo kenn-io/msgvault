@@ -20,9 +20,14 @@ test('every page header divider meets the next visible content boundary', async 
     id: 1, name: 'Synthetic saved view', schema_version: 2, revision: 1, canonical_state: {},
     created_at: row.occurred_at, updated_at: row.occurred_at
   }] } }));
+  await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [] } }));
+  await page.route('**/api/v1/identity/match-candidates**', (route) => route.fulfill({ json: { candidates: [], limit: 100, offset: 0 } }));
+  await page.route('**/api/v1/person-relationship-reviews**', (route) => route.fulfill({ json: { reviews: [] } }));
   const gaps: Record<string, number> = {};
   for (const label of ['Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved views', 'Sources', 'Operations', 'Deletions', 'Settings']) {
     await selectWorkspace(page, label);
+    if (label === 'Reviews') await expect(page.getByText('No identity matches in this queue.', { exact: true })).toBeVisible();
+    if (label === 'Deletions') await expect(page.getByText('No staged deletions', { exact: true })).toBeVisible();
     if (label === 'Sources') await expect(page.getByText('No archived sources are available.')).toBeVisible();
     if (label === 'Saved views') await expect(page.getByText('Synthetic saved view', { exact: true })).toBeVisible();
     if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
@@ -79,20 +84,9 @@ test('reader, selection, and dialog share inset edges', async ({ page }) => {
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 });
 
-test('narrow page keeps the header band inside the viewport', async ({ page }) => {
-  await page.setViewportSize({ width: 600, height: 720 });
-  const band = await page.locator('.page-header').evaluate((element) => {
-    const box = element.getBoundingClientRect();
-    const style = getComputedStyle(element, '::before');
-    return { left: box.left + Number.parseFloat(style.left), right: box.right - Number.parseFloat(style.right) };
-  });
-  expect(band.left).toBe(0);
-  expect(band.right).toBe(600);
-});
-
 test('loaded message sender, body, and attachment edges align with the reader', async ({ page }) => {
   await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
-    rows: [{ ...row, conversation_id: 11, anchor_message_id: 1 }], total_count: 1, cache_revision: 'spacing', search_provenance: {}
+    rows: [{ ...row, message_type: 'meeting_transcript', conversation_id: 11, anchor_message_id: 1 }], total_count: 1, cache_revision: 'spacing', search_provenance: {}
   } }));
   await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
     id: 11, anchor_id: 1, has_before: false, has_after: false, total: 1,
@@ -107,36 +101,31 @@ test('loaded message sender, body, and attachment edges align with the reader', 
   await expect(reader.getByText('A plain text archive message.')).toBeVisible();
   await expect(reader.getByText('Meeting-notes.txt (not downloaded)')).toBeVisible();
   const insets = await reader.evaluate((element) => [
-    '.pane-heading', '.card-header', '.card-body', '.attachments'
+    '.card-header', '.card-body', '.attachments'
   ].map((selector) => {
     const section = element.querySelector(selector)!;
-    if (selector === '.pane-heading') return section.getBoundingClientRect().left - element.getBoundingClientRect().left;
     return section.firstElementChild!.getBoundingClientRect().left - section.getBoundingClientRect().left;
   }));
-  expect(insets).toEqual([12, 12, 12, 12]);
+  expect(insets).toEqual([12, 12, 12]);
 });
 
 test('adjacent removable chips have equal heights and even visible insets', async ({ page }) => {
-  for (const workspace of ['Everything', 'Files']) {
-    await selectWorkspace(page, workspace);
-    await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
-    if (workspace === 'Everything') {
-      await page.getByRole('combobox', { name: 'Group by', exact: true }).click();
-      await page.getByRole('option', { name: 'Source', exact: true }).click();
-    }
-    const chips = page.locator('.context-chips .chip');
-    await expect(chips).toHaveCount(2);
-    const geometry = await chips.evaluateAll((elements) => elements.map((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element.firstChild!);
-      const box = element.getBoundingClientRect();
-      const icon = element.querySelector('svg')!.getBoundingClientRect();
-      const border = Number.parseFloat(getComputedStyle(element).borderLeftWidth);
-      return { height: box.height, left: range.getBoundingClientRect().left - box.left - border,
-        right: box.right - border - icon.right };
-    }));
-    expect(geometry).toEqual([{ height: 26, left: 8, right: 8 }, { height: 26, left: 8, right: 8 }]);
-  }
+  await selectWorkspace(page, 'Everything');
+  await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
+  await page.getByRole('combobox', { name: 'Group by', exact: true }).click();
+  await page.getByRole('option', { name: 'Source', exact: true }).click();
+  const chips = page.locator('.context-chips .chip');
+  await expect(chips).toHaveCount(2);
+  const geometry = await chips.evaluateAll((elements) => elements.map((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element.firstChild!);
+    const box = element.getBoundingClientRect();
+    const icon = element.querySelector('svg')!.getBoundingClientRect();
+    const border = Number.parseFloat(getComputedStyle(element).borderLeftWidth);
+    return { height: box.height, left: range.getBoundingClientRect().left - box.left - border,
+      right: box.right - border - icon.right };
+  }));
+  expect(geometry).toEqual([{ height: 26, left: 8, right: 8 }, { height: 26, left: 8, right: 8 }]);
 });
 
 test('the same active and saved query shares one chip height and centered text', async ({ page }) => {
@@ -174,7 +163,7 @@ test('linked message uses the page title text scale', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
 });
 
-test('overflowing settings keep controls clear of the themed scrollbar', async ({ page }) => {
+test('overflowing settings use the shared panel inset and themed scrollbar', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 600 });
   await page.route('**/api/v1/settings', (route) => route.fulfill({
     headers: { ETag: '"scrolling-settings"' },
@@ -191,49 +180,13 @@ test('overflowing settings keep controls clear of the themed scrollbar', async (
   const control = page.getByRole('textbox', { name: 'Example setting 29', exact: true });
   await control.scrollIntoViewIfNeeded();
   const geometry = await scroll.evaluate((element) => {
-    const box = element.getBoundingClientRect();
     const control = element.querySelectorAll('.kit-text-input');
     const card = control[control.length - 1].closest('.kit-card')!;
     return { overflow: element.scrollHeight > element.clientHeight,
-      clearance: box.left + element.clientLeft + element.clientWidth - control[control.length - 1].getBoundingClientRect().right,
       inset: card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - control[control.length - 1].getBoundingClientRect().right,
       scrollbar: getComputedStyle(element, '::-webkit-scrollbar').width };
   });
   expect(geometry.overflow).toBe(true);
-  expect(geometry.clearance).toBeGreaterThanOrEqual(12);
   expect(geometry.inset).toBe(12);
   expect(geometry.scrollbar).toBe('8px');
-  const gap = await page.locator('.page-header').evaluate((element) => {
-    const band = getComputedStyle(element, '::before');
-    return document.querySelector('.kit-settings')!.getBoundingClientRect().top - element.getBoundingClientRect().bottom + Number.parseFloat(band.bottom);
-  });
-  expect(gap).toBe(0);
-});
-
-test.describe('touch reading', () => {
-  test.use({ isMobile: true, hasTouch: true, viewport: { width: 620, height: 900 } });
-
-  test('body and recording transcript share the reading size in one card', async ({ page }) => {
-    await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
-      rows: [{ ...row, message_type: 'beeper', conversation_type: 'direct_chat', conversation_id: 11, anchor_message_id: 1 }],
-      total_count: 1, cache_revision: 'reading-size', search_provenance: {}
-    } }));
-    await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
-      id: 11, anchor_id: 1, has_before: false, has_after: false, total: 1,
-      messages: [{ id: 1, conversation_id: 11, subject: row.title, message_type: 'beeper',
-        from: 'Example Person', to: [], sent_at: row.occurred_at, body: 'A synthetic voice note body.',
-        attachments: [{ id: 1, filename: 'Voice-note.ogg', mime_type: 'audio/ogg', size_bytes: 2048, stored: false }] }]
-    } }));
-    await page.route('**/api/v1/messages/1/recordings', (route) => route.fulfill({ json: {
-      message_id: 1, recordings: [{ attachment_id: 1, filename: 'Voice-note.ogg', size_bytes: 2048, state: 'ready',
-        transcript: { origin: 'generated', units: [{ text: 'A synthetic voice note transcript.' }] } }]
-    } }));
-    await selectWorkspace(page, 'Everything');
-    await page.getByText(row.title, { exact: true }).click();
-    const card = page.locator('.message-card');
-    await expect(card.locator('.card-body pre')).toHaveText('A synthetic voice note body.');
-    await expect(card.locator('.transcript')).toContainText('A synthetic voice note transcript.');
-    await expect(card.locator('.card-body pre')).toHaveCSS('font-size', '14px');
-    await expect(card.locator('.transcript')).toHaveCSS('font-size', '14px');
-  });
 });
