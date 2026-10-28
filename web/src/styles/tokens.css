@@ -35,11 +35,9 @@
   --control-pad-x: var(--space-5);
   --chip-pad-x: var(--space-4);
   --chip-min-height: 26px;
-  --line-height-tight: 1.25;
 
   --scrollbar-size: 8px;
   --scrollbar-thumb: color-mix(in srgb, var(--text-muted) 38%, transparent);
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--text-muted) 65%, transparent);
 }
 
 @media (max-width: 760px) {
@@ -105,7 +103,7 @@
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
+  background: color-mix(in srgb, var(--text-muted) 65%, transparent);
   background-clip: content-box;
 }
 
