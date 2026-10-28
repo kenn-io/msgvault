@@ -453,6 +453,11 @@ func (s *Store) ActivateMCPSubscription(ctx context.Context, a MCPActivation) (*
 				}
 			}
 		}
+		if input.CursorSeq >= clock.PrunedThroughSeq && input.LastOutcome == "gap_pending" {
+			// The reset to the head reported the loss; a later sweep must
+			// not keep treating this cursor as one that lost events.
+			input.LastOutcome = ""
+		}
 		forceHead := old != nil && old.State == "stopped" && (old.StopReason == "retention" || old.StopReason == "capture_gap")
 		if forceHead {
 			input.CursorEpoch = clock.Epoch
@@ -1025,7 +1030,7 @@ func (s *Store) mcpDeliverableEventThroughTx(ctx context.Context, tx *sql.Tx, su
 }
 
 func (s *Store) mcpActiveCursorsBelowTx(ctx context.Context, tx *sql.Tx, epoch, floor int64) ([]*MCPSubscription, error) {
-	rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT `+mcpSubscriptionColumns+` FROM mcp_event_subscriptions WHERE state='active' AND cursor_epoch=? AND cursor_seq<?`), epoch, floor)
+	rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT `+mcpSubscriptionColumns+` FROM mcp_event_subscriptions WHERE state IN ('active','expired') AND cursor_epoch=? AND cursor_seq<?`), epoch, floor)
 	if err != nil {
 		return nil, err
 	}
@@ -1080,14 +1085,13 @@ func (s *Store) pruneMCPEventsTx(ctx context.Context, tx *sql.Tx, clock MCPEvent
 	}
 	// A subscription below the floor has lost data only when its pending
 	// receipt or an event it would deliver is at or below the floor. Those
-	// stay active with the cursor untouched: the next PrepareMCPDelivery sees
-	// it below the floor, resets to the head and reports a gap. The loss is
-	// marked because a later sweep, which no longer sees the deleted event,
-	// would otherwise take the subscription for a quiet one. Every other
-	// active cursor moves to the floor, so renewal and delivery do not report
-	// truncation for events the subscription filters out. Expired
-	// subscriptions keep their cursors: a loss is not recorded on them, and a
-	// later sweep could no longer see the deleted event.
+	// keep the cursor untouched: the next PrepareMCPDelivery, or a renewal of
+	// an expired row, sees it below the floor, resets to the head and reports
+	// the gap. The loss is marked because a later sweep, which no longer sees
+	// the deleted event, would otherwise take the subscription for a quiet
+	// one. Every other active or expired cursor moves to the floor, so
+	// delivery and renewal within grace do not report truncation for events
+	// the subscription filters out.
 	if err := s.mcpPruneCursorsTx(ctx, tx, clock.Epoch, floor, now); err != nil {
 		return clock, err
 	}

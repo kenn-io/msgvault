@@ -163,6 +163,49 @@ func TestMCPEventsPruningKeepsExpiredSubscriptionLossVisible(t *testing.T) {
 	assert.True(truncated, "an event pruned while the subscription was expired is reported on renewal")
 }
 
+// Pruning only events an expired subscription filters out loses nothing. A
+// renewal within grace resumes from the floor and delivers the retained event
+// it wants, instead of reporting truncation and skipping to the head.
+func TestMCPEventsExpiredRenewalIgnoresPrunedExcludedEvents(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	cfg := mcpStoreConfig()
+	cfg.Retention = 9 * 24 * time.Hour
+	clock, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
+	require.NoError(err)
+	input, active := activateMCPConversationSubscription(t, f, 1, f.ConvID, now)
+	expiredAt := now.Add(25 * time.Hour)
+	require.NoError(f.Store.ExpireMCPSubscriptions(t.Context(), expiredAt))
+	expired, err := f.Store.GetMCPSubscription(t.Context(), active.ID)
+	require.NoError(err)
+	require.NotNil(expired)
+	require.Equal("expired", expired.State)
+	// The owner's own message is excluded because include_from_me is false.
+	f.InsertMCPConversationEvent(clock.Epoch, 1, f.ConvID, now.Add(-8*24*time.Hour))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_log SET from_me=TRUE WHERE seq=1`))
+	require.NoError(err)
+	sweep := expiredAt.Add(time.Minute)
+	f.InsertMCPConversationEvent(clock.Epoch, 2, f.ConvID, sweep)
+
+	require.NoError(f.Store.PruneMCPEvents(t.Context(), sweep, 7*24*time.Hour))
+	require.NoError(f.Store.PruneMCPEvents(t.Context(), sweep.Add(time.Minute), 7*24*time.Hour))
+
+	input.ExpiresAt = sweep.Add(24 * time.Hour)
+	renewed, truncated, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: input, ExpectedGeneration: expired.Generation, ExpectedState: expired.State, ExpectedSecretRevision: expired.SecretRevision, Now: sweep.Add(2 * time.Minute)})
+	require.NoError(err)
+	assert.False(truncated, "only excluded events were pruned")
+	assert.Equal(int64(1), renewed.CursorSeq)
+	delivery, err := f.Store.PrepareMCPDelivery(t.Context(), renewed.ID, renewed.Generation, sweep.Add(3*time.Minute), func(store.MCPSubscription, store.MCPEvent) ([]byte, error) {
+		return []byte(`{"eventId":"synthetic"}`), nil
+	})
+	require.NoError(err)
+	require.NotNil(delivery)
+	assert.Nil(delivery.Control)
+	assert.Equal(int64(2), delivery.Event.Seq)
+}
+
 // An owner change revokes retained subscriptions even while Events stay off,
 // so restoring the old owner later cannot renew them. A process that does not
 // know the owner revokes nothing.
