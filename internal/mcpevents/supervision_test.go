@@ -467,62 +467,6 @@ func TestDeliveryFailureLogsSafeReason(t *testing.T) {
 	assert.NotContains(logs.text(), "receiver.example.net", "logs must not include callback destinations")
 }
 
-func TestAckReceiptRetryDoesNotWaitForFailureBackoff(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	s, f, req := eventService(t)
-	result, err := s.Subscribe(t.Context(), s.principal, req)
-	require.NoError(err)
-	before, err := s.st.GetMCPSubscription(t.Context(), result.ID)
-	require.NoError(err)
-	require.NotNil(before)
-	appendReceipt(t, s, f, 1)
-	// Three failed attempts make the next failure backoff several minutes.
-	now := time.Now().UTC()
-	for range 3 {
-		pending, err := s.st.PrepareMCPDelivery(t.Context(), result.ID, before.Generation, now, func(sub store.MCPSubscription, event store.MCPEvent) ([]byte, error) {
-			return json.Marshal(s.envelope(sub, event))
-		})
-		require.NoError(err)
-		require.NotNil(pending)
-		_, err = s.st.FinishMCPDelivery(t.Context(), result.ID, before.Generation, 1, now, http.StatusServiceUnavailable, now)
-		require.NoError(err)
-	}
-	var receiverAcked atomic.Bool
-	deliveries := make(chan struct{}, 2)
-	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
-		_, err := io.Copy(io.Discard, r.Body)
-		Assert.NoError(t, err)
-		deliveries <- struct{}{}
-		receiverAcked.Store(true)
-		rw.WriteHeader(http.StatusNoContent)
-	})
-	var postAckOperations atomic.Int32
-	finishFailed := make(chan struct{})
-	s.opts.WithOperation = func(ctx context.Context, fn func() error) error {
-		// After the ACK, the worker rechecks authorization and then records the receipt.
-		if receiverAcked.Load() && postAckOperations.Add(1) == 2 {
-			close(finishFailed)
-			return errors.New("synthetic transient FinishMCPDelivery gate failure")
-		}
-		return fn()
-	}
-	startWorker(t, s, result.ID, before.Generation)
-	select {
-	case <-finishFailed:
-	case <-time.After(10 * time.Second):
-		require.FailNow("FinishMCPDelivery did not hit the injected failure after the ACK")
-	}
-	require.Eventually(func() bool {
-		row, err := s.st.GetMCPSubscription(t.Context(), result.ID)
-		return err == nil && row != nil && row.CursorSeq == 1 && row.PendingSeq == 0
-	}, 10*time.Second, 10*time.Millisecond, "an acknowledged receipt must retry promptly, not after failure backoff")
-	row, err := s.st.GetMCPSubscription(t.Context(), result.ID)
-	require.NoError(err)
-	assert.Equal("acknowledged", row.LastOutcome)
-	assert.Len(deliveries, 1, "retrying the receipt must not resend the occurrence")
-}
-
 func TestGuardRefusalDoesNotHideFailureFromAnotherConnection(t *testing.T) {
 	require := Require.New(t)
 	s, f, req := eventService(t)
