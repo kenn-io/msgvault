@@ -1,395 +1,261 @@
 <script lang="ts">
-  import { putSettingsPersonEnrichmentProvider as generatedPutSettingsPersonEnrichmentProvider } from '../../api/generated/api/api';
-  import { Button, NumberInput, Toggle } from '@kenn-io/kit-ui';
-  import { untrack } from 'svelte';
-  import type { APIClient } from '../../api/client';
-  import type {
-    PersonEnrichmentProviderSetting as GeneratedPersonEnrichmentProviderSetting,
-    PersonEnrichmentProviderUpdate as GeneratedPersonEnrichmentProviderUpdate,
-    ProviderCredentialResponse as GeneratedProviderCredentialResponse,
-    SettingsResponse as GeneratedSettingsResponse,
-  } from '../../api/generated/models';
+  import { Chip, Toggle } from '@kenn-io/kit-ui';
+  import type { PersonEnrichmentProviderSetting as ProviderSetting } from '../../api/generated/models';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
-  type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
-  type ProviderUpdate = GeneratedPersonEnrichmentProviderUpdate;
-  type SettingsDocument = GeneratedSettingsResponse;
-  type CredentialResponse = GeneratedProviderCredentialResponse;
-  let {
-    client,
-    provider,
-    configETag,
-    credentialETag,
-    onSaved,
-    onConfigConflict,
-    onCredentialSaved,
-    onCredentialConflict,
-  }: {
-    client: APIClient;
-    provider: ProviderSetting;
-    configETag: string;
-    credentialETag: string;
-    onSaved: (document: SettingsDocument, etag: string) => void;
-    onConfigConflict: () => void | Promise<void>;
-    onCredentialSaved: (response: CredentialResponse, etag: string) => void;
-    onCredentialConflict: () => void | Promise<void>;
+  type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
+  let { provider, draft, pendingKey, saving = false, onchange, onkey }: {
+    provider: ProviderSetting; draft: ProviderSetting; pendingKey?: SecretUpdate; saving?: boolean;
+    onchange: (value: ProviderSetting) => void; onkey: (update: SecretUpdate | undefined) => void;
   } = $props();
-  let draft = $state<ProviderSetting>(cloneProvider(untrack(() => provider)));
-  let observedProvider = $state<ProviderSetting>(untrack(() => provider));
-  let dirty = $state(false);
-  let saving = $state(false);
-  let error = $state('');
-  const endpointDirty = $derived(
-    draft.endpoint !== provider.endpoint || draft.poll_endpoint !== provider.poll_endpoint,
-  );
-  $effect(() => {
-    const next = provider;
-    if (next === observedProvider) return;
-    observedProvider = next;
-    if (!dirty) draft = cloneProvider(next);
-  });
-  async function saveProvider() {
-    if (saving) return;
-    saving = true;
-    error = '';
-    try {
-      const {
-        data,
-        error: responseError,
-        response,
-      } = await generatedPutSettingsPersonEnrichmentProvider({ name: provider.name }, providerUpdate(draft), {
-        ...client,
-        headers: { 'If-Match': configETag },
-      });
-      if (response.status === 412) {
-        await onConfigConflict();
-        error = 'The configuration changed on disk. Latest settings were loaded; review this provider and save again.';
-        return;
-      }
-      if (!data) {
-        error = apiErrorMessage(responseError, 'Unable to save person-enrichment provider.');
-        return;
-      }
-      const saved = data.person_enrichment_providers?.find((candidate) => candidate.name === provider.name);
-      if (saved) {
-        draft = cloneProvider(saved);
-        observedProvider = saved;
-      }
-      dirty = false;
-      onSaved(data, response.headers.get('ETag') ?? configETag);
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to save person-enrichment provider.';
-    } finally {
-      saving = false;
-    }
-  }
   function setString(field: keyof ProviderSetting, value: string) {
-    dirty = true;
-    draft = { ...draft, [field]: value };
+    onchange({ ...draft, [field]: value });
   }
-  function setNumber(field: keyof ProviderSetting, value: number | null) {
-    dirty = true;
-    draft = { ...draft, [field]: value ?? 0 };
+  function setNumber(field: keyof ProviderSetting, value: string) {
+    onchange({ ...draft, [field]: value === '' ? '' : Number(value) } as ProviderSetting);
   }
   function setList(field: 'allowed_identifiers' | 'target_keys', value: string) {
-    dirty = true;
-    draft = {
+    onchange({
       ...draft,
       [field]: value
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean),
-    };
-  }
-  function providerUpdate(value: ProviderSetting): ProviderUpdate {
-    return {
-      kind: value.kind,
-      enabled: value.enabled,
-      endpoint: value.endpoint,
-      poll_endpoint: value.poll_endpoint,
-      mode: value.mode,
-      tier: value.tier,
-      num_results: value.num_results,
-      allowed_identifiers: value.allowed_identifiers ?? [],
-      target_keys: value.target_keys ?? [],
-      allow_sensitive_targets: value.allow_sensitive_targets,
-      retention_posture: value.retention_posture,
-      training_posture: value.training_posture,
-      refresh_interval: value.refresh_interval,
-      request_timeout: value.request_timeout,
-      poll_interval: value.poll_interval,
-      max_job_age: value.max_job_age,
-      max_retries: value.max_retries,
-      max_requests_per_run: value.max_requests_per_run,
-      max_requests_per_day: value.max_requests_per_day,
-    };
-  }
-  function cloneProvider(value: ProviderSetting): ProviderSetting {
-    return {
-      ...value,
-      allowed_identifiers: [...(value.allowed_identifiers ?? [])],
-      target_keys: [...(value.target_keys ?? [])],
-    };
-  }
-  function apiErrorMessage(responseError: unknown, fallback: string): string {
-    if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {
-      const message = (
-        responseError as {
-          message?: unknown;
-        }
-      ).message;
-      if (typeof message === 'string' && message) return message;
-    }
-    return fallback;
+    });
   }
 </script>
-
 <article class="provider-card" aria-labelledby={`provider-${provider.name}`}>
   <header>
-    <div>
-      <h4 id={`provider-${provider.name}`}>{provider.name}</h4>
-      <p>{provider.kind === 'exa' ? 'Exa' : 'SixtyFour'} · stable provider name</p>
-    </div>
-    <Toggle
+    <h4 id={`provider-${provider.name}`}>{provider.name}</h4>
+    <Chip size="xs" tone="muted" uppercase={false}>{provider.kind === 'exa' ? 'Exa' : 'SixtyFour'}</Chip>
+    <span class="grow"></span>
+    <Toggle disabled={saving}
       ariaLabel={`Enable ${provider.name}`}
       checked={draft.enabled}
       onchange={(enabled) => {
-        dirty = true;
-        draft = { ...draft, enabled };
+        onchange({ ...draft, enabled });
       }}
     />
   </header>
-
-  <div class="provider-grid">
-    <label class="wide">
-      Endpoint
-      <input
-        type="url"
-        required
-        aria-label={`${provider.name} endpoint`}
-        value={draft.endpoint}
-        oninput={(event) => setString('endpoint', event.currentTarget.value)}
-      />
-    </label>
-    {#if provider.kind === 'sixtyfour'}
+  <div class="field" aria-label={`${provider.name} credential`}>
+    <span>API key</span>
+    <ProviderCredentialControl label={`API key for ${provider.name}`} credentialState={provider.credential} pending={pendingKey} disabled={saving} onchange={onkey} />
+  </div>
+  <details class="advanced">
+    <summary>Advanced</summary>
+    <div class="provider-grid">
       <label class="wide">
-        Poll endpoint
-        <input
+        Endpoint
+        <input disabled={saving}
           type="url"
           required
-          aria-label={`${provider.name} poll endpoint`}
-          value={draft.poll_endpoint ?? ''}
-          oninput={(event) => setString('poll_endpoint', event.currentTarget.value)}
+          aria-label={`${provider.name} endpoint`}
+          value={draft.endpoint}
+          oninput={(event) => setString('endpoint', event.currentTarget.value)}
+        />
+      </label>
+      {#if provider.kind === 'sixtyfour'}
+        <label class="wide">
+          Poll endpoint
+          <input disabled={saving}
+            type="url"
+            required
+            aria-label={`${provider.name} poll endpoint`}
+            value={draft.poll_endpoint ?? ''}
+            oninput={(event) => setString('poll_endpoint', event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          Tier
+          <input value={draft.tier ?? ''} oninput={(event) => setString('tier', event.currentTarget.value)} />
+        </label>
+      {:else}
+        <label>
+          Search mode
+          <input value={draft.mode ?? ''} oninput={(event) => setString('mode', event.currentTarget.value)} />
+        </label>
+        <label>
+          Results per request
+          <input disabled={saving}
+            type="number"
+            min="1"
+            value={draft.num_results ?? 1}
+            oninput={(event) => setNumber('num_results', event.currentTarget.value)}
+          />
+        </label>
+      {/if}
+      <label class="wide">
+        Details sent to the provider
+        <input disabled={saving}
+          value={(draft.allowed_identifiers ?? []).join(', ')}
+          oninput={(event) => setList('allowed_identifiers', event.currentTarget.value)}
+        />
+      </label>
+      <label class="wide">
+        Fields it may fill in
+        <input disabled={saving}
+          value={(draft.target_keys ?? []).join(', ')}
+          oninput={(event) => setList('target_keys', event.currentTarget.value)}
         />
       </label>
       <label>
-        Tier
-        <input value={draft.tier ?? ''} oninput={(event) => setString('tier', event.currentTarget.value)} />
-      </label>
-    {:else}
-      <label>
-        Search mode
-        <input value={draft.mode ?? ''} oninput={(event) => setString('mode', event.currentTarget.value)} />
-      </label>
-      <label>
-        Results per request
-        <NumberInput
-          min={1}
-          block
-          size="lg"
-          value={draft.num_results ?? 1}
-          oninput={(value) => setNumber('num_results', value)}
-        />
-      </label>
-    {/if}
-    <label class="wide">
-      Allowed identifiers
-      <input
-        value={(draft.allowed_identifiers ?? []).join(', ')}
-        oninput={(event) => setList('allowed_identifiers', event.currentTarget.value)}
-      />
-      <small>Comma-separated identity classes sent to this provider.</small>
-    </label>
-    <label class="wide">
-      Target keys
-      <input
-        value={(draft.target_keys ?? []).join(', ')}
-        oninput={(event) => setList('target_keys', event.currentTarget.value)}
-      />
-      <small>Only these approved person fields may be written.</small>
-    </label>
-    <label>
-      Retention posture
-      <input
-        required
-        value={draft.retention_posture}
-        oninput={(event) => setString('retention_posture', event.currentTarget.value)}
-      />
-    </label>
-    <label>
-      Training posture
-      <input
-        required
-        value={draft.training_posture}
-        oninput={(event) => setString('training_posture', event.currentTarget.value)}
-      />
-    </label>
-    <label>
-      Refresh interval
-      <input
-        required
-        value={draft.refresh_interval}
-        oninput={(event) => setString('refresh_interval', event.currentTarget.value)}
-      />
-    </label>
-    <label>
-      Request timeout
-      <input
-        required
-        value={draft.request_timeout}
-        oninput={(event) => setString('request_timeout', event.currentTarget.value)}
-      />
-    </label>
-    {#if provider.kind === 'sixtyfour'}
-      <label>
-        Poll interval
-        <input
+        How long the provider keeps data
+        <input disabled={saving}
           required
-          value={draft.poll_interval}
-          oninput={(event) => setString('poll_interval', event.currentTarget.value)}
+          value={draft.retention_posture}
+          oninput={(event) => setString('retention_posture', event.currentTarget.value)}
         />
       </label>
       <label>
-        Maximum job age
-        <input
+        Whether the provider trains on data
+        <input disabled={saving}
           required
-          value={draft.max_job_age}
-          oninput={(event) => setString('max_job_age', event.currentTarget.value)}
+          value={draft.training_posture}
+          oninput={(event) => setString('training_posture', event.currentTarget.value)}
         />
       </label>
-    {/if}
-    <label>
-      Maximum retries
-      <NumberInput
-        min={0}
-        block
-        size="lg"
-        value={draft.max_retries}
-        oninput={(value) => setNumber('max_retries', value)}
-      />
-    </label>
-    <label>
-      Requests per run
-      <NumberInput
-        min={1}
-        block
-        size="lg"
-        value={draft.max_requests_per_run}
-        oninput={(value) => setNumber('max_requests_per_run', value)}
-      />
-    </label>
-    <label>
-      Requests per day
-      <NumberInput
-        min={1}
-        block
-        size="lg"
-        value={draft.max_requests_per_day}
-        oninput={(value) => setNumber('max_requests_per_day', value)}
-      />
-    </label>
-    <div class="sensitive-targets">
-      <div>
-        <strong>Allow sensitive targets</strong>
-        <small>Only enable when every listed target is intentionally approved for provider disclosure.</small>
+      <label>
+        Refresh every
+        <input disabled={saving}
+          required
+          value={draft.refresh_interval}
+          oninput={(event) => setString('refresh_interval', event.currentTarget.value)}
+        />
+      </label>
+      <label>
+        Request timeout
+        <input disabled={saving}
+          required
+          value={draft.request_timeout}
+          oninput={(event) => setString('request_timeout', event.currentTarget.value)}
+        />
+      </label>
+      {#if provider.kind === 'sixtyfour'}
+        <label>
+          Check for results every
+          <input disabled={saving}
+            required
+            value={draft.poll_interval}
+            oninput={(event) => setString('poll_interval', event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          Give up after
+          <input disabled={saving}
+            required
+            value={draft.max_job_age}
+            oninput={(event) => setString('max_job_age', event.currentTarget.value)}
+          />
+        </label>
+      {/if}
+      <label>
+        Retries
+        <input disabled={saving}
+          type="number"
+          min="0"
+          value={draft.max_retries}
+          oninput={(event) => setNumber('max_retries', event.currentTarget.value)}
+        />
+      </label>
+      <label>
+        Requests per run
+        <input disabled={saving}
+          type="number"
+          min="1"
+          value={draft.max_requests_per_run}
+          oninput={(event) => setNumber('max_requests_per_run', event.currentTarget.value)}
+        />
+      </label>
+      <label>
+        Requests per day
+        <input disabled={saving}
+          type="number"
+          min="1"
+          value={draft.max_requests_per_day}
+          oninput={(event) => setNumber('max_requests_per_day', event.currentTarget.value)}
+        />
+      </label>
+      <div class="sensitive-targets">
+        <span>Allow sensitive fields</span>
+        <Toggle disabled={saving}
+          ariaLabel={`Allow sensitive fields for ${provider.name}`}
+          checked={draft.allow_sensitive_targets}
+          onchange={(allow_sensitive_targets) => {
+                onchange({ ...draft, allow_sensitive_targets });
+          }}
+        />
       </div>
-      <Toggle
-        ariaLabel={`Allow sensitive targets for ${provider.name}`}
-        checked={draft.allow_sensitive_targets}
-        onchange={(allow_sensitive_targets) => {
-          dirty = true;
-          draft = { ...draft, allow_sensitive_targets };
-        }}
-      />
     </div>
-  </div>
-
-  <section class="provider-credential" aria-label={`${provider.name} credential`}>
-    <h5>Provider credential</h5>
-    <ProviderCredentialControl
-      {client}
-      credentialID={provider.credential_id}
-      label={`${provider.kind === 'exa' ? 'Exa' : 'SixtyFour'} API key for ${provider.name}`}
-      credentialState={provider.credential}
-      {credentialETag}
-      disabledReason={endpointDirty ? 'Save provider settings first before changing this credential.' : ''}
-      onSaved={onCredentialSaved}
-      onConflict={onCredentialConflict}
-    />
-  </section>
-
-  {#if error}<p class="provider-error" role="alert">{error}</p>{/if}
-  <footer>
-    <Button
-      disabled={saving}
-      label={saving ? 'Saving…' : `Save ${provider.name} provider`}
-      onclick={() => void saveProvider()}
-    />
-  </footer>
+  </details>
 </article>
 
 <style>
   .provider-card {
     display: grid;
-    gap: var(--space-4);
-    padding: var(--space-4);
+    gap: var(--field-gap);
+    padding: var(--pane-pad-x);
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
   }
   header,
-  footer,
   .sensitive-targets {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
+    gap: var(--control-gap);
   }
-  h4,
-  h5,
-  p {
+  .grow {
+    flex: 1;
+  }
+  h4 {
     margin: 0;
   }
-  header p,
-  label small,
-  .sensitive-targets small {
-    color: var(--text-muted);
+  h4 {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+  .field {
+    display: grid;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+  }
+  .advanced summary {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
   }
   .provider-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3);
+    gap: var(--field-gap) var(--section-gap);
+    margin-top: var(--field-gap);
   }
   label {
     display: grid;
-    gap: 0.35rem;
+    gap: var(--space-2);
     min-width: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
   }
   .wide,
   .sensitive-targets {
     grid-column: 1 / -1;
   }
+  .sensitive-targets {
+    justify-content: space-between;
+    font-size: var(--font-size-sm);
+  }
   input {
+    box-sizing: border-box;
     min-width: 0;
-    min-height: 2.25rem;
+    height: var(--control-height);
     width: 100%;
-  }
-  .provider-credential {
-    display: grid;
-    gap: var(--space-2);
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border-muted);
-  }
-  .provider-error {
-    color: var(--status-error-ink);
+    padding: 0 var(--space-3);
+    border: var(--border-width) solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--font-size-sm);
   }
 
   @media (max-width: 760px) {
