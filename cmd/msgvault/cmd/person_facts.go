@@ -313,10 +313,74 @@ func newPersonFactsCommand() *cobra.Command {
 		},
 	}
 
+	contested := &cobra.Command{
+		Use: "contested <person-id>", Short: "List contested automatic person facts", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			personID, err := positivePersonCLIArg(cmd, args[0], personValue)
+			if err != nil {
+				return err
+			}
+			client, _, err := OpenHTTPStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = client.Close() }()
+			query := &generated.ListPersonFactContestsQuery{}
+			if options.includeSensitive {
+				include := true
+				query.IncludeSensitive = &include
+			}
+			response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ListPersonFactContestsResp, error) {
+				return api.ListPersonFactContestsWithResponse(cmd.Context(), &generated.ListPersonFactContestsRequestOptions{PathParams: &generated.ListPersonFactContestsPath{ID: personID}, Query: query})
+			})
+			if err != nil {
+				return err
+			}
+			if response.JSON200 == nil {
+				return errors.New("person fact contests response was empty")
+			}
+			if options.jsonOutput {
+				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Contests, json.Deterministic(true))
+			}
+			if len(response.JSON200.Contests) == 0 {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No contested facts."); err != nil {
+					return fmt.Errorf("write empty contest report: %w", err)
+				}
+				return nil
+			}
+			for _, contest := range response.JSON200.Contests {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s/%s (resolved %s)\n", contest.Target.Kind, contest.Target.Slug, contest.ResolvedAt.Format(time.RFC3339))
+				if contest.ResolutionRevision != contest.Target.Revision {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Definition changed since resolution (resolved revision %s; current revision %s)\n", contest.ResolutionRevision, contest.Target.Revision)
+				}
+				if len(contest.Current) == 0 {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  Current: none")
+				}
+				for _, current := range contest.Current {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Current: %s\n", current.Value)
+				}
+				for _, claim := range contest.Claims {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Claim %s: %s (%s, %s)\n", claim.ClaimKey, claim.Value, claim.Relation, claim.Decision.Reason)
+					if claim.ValidFrom != nil {
+						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Valid from: %s\n", claim.ValidFrom.Format(time.RFC3339))
+					}
+					if claim.ValidUntil != nil {
+						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Valid until: %s\n", claim.ValidUntil.Format(time.RFC3339))
+					}
+					for _, evidence := range claim.Evidence {
+						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Evidence: %s %s %s (event %s, recorded %s)\n", evidence.EvidenceKey, pointerString(evidence.SourceRef), pointerString(evidence.SourceURL), evidence.EventTime.Format(time.RFC3339), evidence.RecordedTime.Format(time.RFC3339))
+					}
+				}
+			}
+			return nil
+		},
+	}
+	contested.Flags().BoolVar(&options.includeSensitive, "include-sensitive", false, "Include sensitive targets")
+
 	pin := newPersonFactPinCommand(options, true)
 	unpin := newPersonFactPinCommand(options, false)
 
-	for _, command := range []*cobra.Command{catalog, evidence, status, claims, decisions, pins, pin, unpin} {
+	for _, command := range []*cobra.Command{catalog, evidence, status, claims, decisions, pins, pin, unpin, contested} {
 		command.Flags().BoolVar(&options.jsonOutput, flagJSON, false, "Output as JSON")
 	}
 	for _, command := range []*cobra.Command{evidence, claims, decisions} {
@@ -325,7 +389,7 @@ func newPersonFactsCommand() *cobra.Command {
 		addPersonFactCLIPageFlags(command, options)
 	}
 	addPersonFactCLIPageFlags(status, options)
-	facts.AddCommand(catalog, evidence, status, claims, decisions, pins, pin, unpin)
+	facts.AddCommand(catalog, evidence, status, claims, decisions, pins, pin, unpin, contested)
 	return facts
 }
 

@@ -235,9 +235,20 @@ msgvault person facts catalog
 msgvault person facts evidence 7 --limit 20
 msgvault person facts claims 7 --limit 20
 msgvault person facts decisions 7 --limit 20
+msgvault person facts contested 7
 msgvault person facts evidence-status 7
 msgvault person facts pins 7
 ```
+
+`facts contested` reports the latest unresolved contests for one person, with
+current profile values, competing claims, reasons, and supported evidence.
+It does not change the profile or call a model. Deleted, edited, or reassigned
+evidence is omitted when it no longer supports a claim. If a definition changed
+since the decision, the report shows the resolution revision alongside the
+current target revision. Use `--json` for
+machine-readable output and `--include-sensitive` to include sensitive targets.
+The owner-only HTTP equivalent is `GET /api/v1/people/{id}/fact-contests`; pass
+`include_sensitive=true` to include sensitive targets.
 
 Use `facts catalog` to obtain the field's **kind**, **key**, and **revision**.
 Attribute keys are stable universal IDs, not display labels or slugs. Copy the
