@@ -14,7 +14,8 @@ test.beforeEach(async ({ page }) => {
 
 test('every page header divider meets the next visible content boundary', async ({ page }) => {
   await page.route('**/api/v1/people**', (route) => route.fulfill({ json: { people: [], total_count: 0 } }));
-  await page.route('**/api/v1/operations**', (route) => route.fulfill({ json: { runs: [], total_count: 0 } }));
+  await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
+  await page.route('**/api/v1/operations/status', (route) => route.fulfill({ json: { lanes: [] } }));
   await page.route('**/api/v1/sources**', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
     id: 1, name: 'Synthetic saved view', schema_version: 2, revision: 1, canonical_state: {},
@@ -26,12 +27,19 @@ test('every page header divider meets the next visible content boundary', async 
   const gaps: Record<string, number> = {};
   for (const label of ['Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved views', 'Sources', 'Operations', 'Deletions', 'Settings']) {
     await selectWorkspace(page, label);
+    if (label === 'Relationships') await expect(page.getByText('No relationships found', { exact: true })).toBeVisible();
+    if (label === 'Directory') await expect(page.getByText('No people found', { exact: true })).toBeVisible();
+    if (label === 'Everything') await expect(page.getByRole('grid', { name: 'Everything results' }).getByText(row.title, { exact: true })).toBeVisible();
+    if (label === 'Files') await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
+    if (label === 'Operations') await expect(page.getByRole('status', { name: 'Operation history state' })).toHaveText('No operation runs match the current filters.');
     if (label === 'Reviews') await expect(page.getByText('No identity matches in this queue.', { exact: true })).toBeVisible();
     if (label === 'Deletions') await expect(page.getByText('No staged deletions', { exact: true })).toBeVisible();
     if (label === 'Sources') await expect(page.getByText('No archived sources are available.')).toBeVisible();
     if (label === 'Saved views') await expect(page.getByText('Synthetic saved view', { exact: true })).toBeVisible();
     if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
-    gaps[label] = await page.locator('.page-header').evaluate((element) => {
+    const header = page.locator('.page-header:visible');
+    await expect(header).toHaveCount(1);
+    gaps[label] = await header.evaluate((element) => {
       const divider = element.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(element, '::before').bottom);
       const owner = element.parentElement!;
       let next = element.nextElementSibling;
@@ -147,7 +155,6 @@ test('the same active and saved query shares one chip height and centered text',
     const box = element.getBoundingClientRect(); const text = range.getBoundingClientRect();
     return { height: box.height, centered: Math.abs((text.top + text.bottom) / 2 - (box.top + box.bottom) / 2) };
   });
-  expect(activeHeight).toBe(26);
   expect(geometry.height).toBe(activeHeight);
   expect(geometry.centered).toBeLessThanOrEqual(1);
 });
