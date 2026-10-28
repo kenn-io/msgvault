@@ -19,11 +19,13 @@ func TestFilenameSuggestionPersonDirections(t *testing.T) {
 		name, kind, recipient         string
 		sender                        any
 		roster                        bool
+		unsent                        bool
 		from, to, group, defaultGroup bool
 		role                          personscope.Role
 	}
 	cases := []example{
 		{name: "sender", sender: member, from: true, role: personscope.RoleFrom},
+		{name: "draft", sender: member, unsent: true},
 		{name: "envelope-from", recipient: "from", from: true, role: personscope.RoleFrom},
 		{name: "to", recipient: "to", to: true, role: personscope.RoleTo},
 		{name: "cc", recipient: "cc", to: true, role: personscope.RoleCC},
@@ -41,7 +43,7 @@ func TestFilenameSuggestionPersonDirections(t *testing.T) {
 		require := require.New(t)
 		var conv, message, id int64
 		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO conversations(source_id,source_conversation_id,conversation_type) VALUES(?,?,?) RETURNING id`), f.Source.ID, tc.name, tc.kind).Scan(&conv))
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sender_id) VALUES(?,?,?,'email',?) RETURNING id`), f.Source.ID, conv, tc.name, tc.sender).Scan(&message))
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sender_id,is_sent) VALUES(?,?,?,'email',?,?) RETURNING id`), f.Source.ID, conv, tc.name, tc.sender, !tc.unsent).Scan(&message))
 		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&id))
 		if tc.recipient != "" {
 			require.NoError(f.Store.ReplaceMessageRecipients(message, tc.recipient, []int64{member}, []string{"Member Example"}))
