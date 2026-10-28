@@ -220,6 +220,7 @@
   }
 
   .context-chips :global(.chip) {
+    min-height: var(--chip-min-height);
     background: var(--bg-inset);
     color: var(--text-secondary);
   }
