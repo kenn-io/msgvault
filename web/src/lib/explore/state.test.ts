@@ -240,7 +240,7 @@ describe('Explore URL state', () => {
     for (const invalid of ['<script>', 42, '', 'Search']) {
       expect(parseExploreURLState(serializeExploreURLState({
         ...defaultExploreURLState, workspace: 'settings', settingsCategory: invalid
-      } as unknown as ExploreURLState)).settingsCategory).toBe('browser');
+      } as unknown as ExploreURLState)).settingsCategory).toBe('overview');
     }
   });
 
@@ -290,12 +290,12 @@ describe('Explore URL state', () => {
     expect(invalid.settingsAuthority).toBe('');
   });
 
-  it('opens Settings on Appearance for a retired document authority link', () => {
+  it('opens Settings on Overview for a retired document authority link', () => {
     const restored = parseExploreURLState(`?workspace=settings&explore=${encodeURIComponent(JSON.stringify({
       schemaVersion: 2, settingsAuthority: 'document_index'
     }))}`);
     expect(restored.settingsAuthority).toBe('');
-    expect(restored.settingsCategory).toBe('browser');
+    expect(restored.settingsCategory).toBe('overview');
   });
 
   it.each([
@@ -1665,4 +1665,12 @@ describe('session-owned exploration selection', () => {
       })
     ).toThrow('candidate snapshot');
   });
+});
+
+it.each([
+  ['browser', 'advanced'], ['archive', 'advanced'], ['integrations', 'tasks'],
+  ['attachments', 'sources'], ['people', 'enrichment'], ['toString', 'overview']
+])('restores the Settings link %s to %s', (settingsCategory, expected) => {
+  const restored = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory }))}`);
+  expect(restored.settingsCategory).toBe(expected);
 });
