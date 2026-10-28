@@ -526,8 +526,9 @@ const MCPActiveSubscriptionLimit = 64
 const MCPMaxDeliveryAttempts = 5
 
 // EndMCPSubscription unsubscribes a subscription and returns its new generation
-// so callers can cancel older workers. A key with no live row
-// (never subscribed, already unsubscribed, or gone) is "subscription_not_found".
+// so callers can cancel older workers. A key with no live row (never
+// subscribed, already unsubscribed, gone, or revoked by a principal change)
+// is "subscription_not_found".
 func (s *Store) EndMCPSubscription(ctx context.Context, id, principal string, now time.Time) (int64, error) {
 	var generation int64
 	err := s.withMCPEventTx(ctx, func(tx *sql.Tx, _ MCPEventClock) error {
@@ -541,7 +542,9 @@ func (s *Store) EndMCPSubscription(ctx context.Context, id, principal string, no
 		if sub.Principal != principal {
 			return mcpStoreError("subscription_unavailable")
 		}
-		if sub.State == "unsubscribed" || sub.State == "gone" {
+		// A principal change revoked this row for good. Ending it would clear
+		// that reason and let a restored owner key reactivate it.
+		if sub.State == "unsubscribed" || sub.State == "gone" || sub.StopReason == "principal_revoked" {
 			return mcpStoreError("subscription_not_found")
 		}
 		stopMCPSubscription(sub, "unsubscribed", "", now)

@@ -230,3 +230,34 @@ func TestMCPEventsActivationAfterGraceCommitsPruning(t *testing.T) {
 	require.NoError(err, "the retry must not meet the predecessor retention already removed")
 	require.Equal(int64(1), active.Generation)
 }
+
+// A principal change revokes the old owner's subscriptions for good. If that
+// owner key is configured again, unsubscribing a revoked row must not clear
+// the revocation and let a later activation restore it.
+func TestMCPEventsUnsubscribeKeepsPrincipalRevocation(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	owner := mcpStoreConfig()
+	_, err := f.Store.ConfigureMCPEvents(t.Context(), owner)
+	require.NoError(err)
+	input := newMCPStoreSubscription(t, f, 1, now)
+	_, _, err = f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: input, Now: now})
+	require.NoError(err)
+	rotated := owner
+	rotated.Principal = "owner:rotated"
+	_, err = f.Store.ConfigureMCPEvents(t.Context(), rotated)
+	require.NoError(err)
+	_, err = f.Store.ConfigureMCPEvents(t.Context(), owner)
+	require.NoError(err)
+
+	_, err = f.Store.EndMCPSubscription(t.Context(), input.ID, input.Principal, now)
+	require.ErrorContains(err, "subscription_not_found")
+	row, err := f.Store.GetMCPSubscription(t.Context(), input.ID)
+	require.NoError(err)
+	require.NotNil(row)
+	assert.Equal("principal_revoked", row.StopReason)
+	_, _, err = f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: newMCPStoreSubscription(t, f, 1, now), ExpectedGeneration: row.Generation, ExpectedState: row.State, ExpectedSecretRevision: row.SecretRevision, Now: now})
+	require.ErrorContains(err, "subscription_unavailable")
+}
