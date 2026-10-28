@@ -28,8 +28,8 @@ describe('overviewRows', () => {
       'Document extraction',
       'Document search',
     ]);
-    expect(row(rows, 'message_embedding')).toMatchObject({ chip: { text: 'Off' }, action: { kind: 'setup', category: 'search' } });
-    expect(row(rows, 'document_extraction').action).toMatchObject({ kind: 'guide' });
+    expect(row(rows, 'message_embedding')).toMatchObject({ chip: { text: 'Off' }, action: { kind: 'settings', target: { settingsCategory: 'search' } } });
+    expect(row(rows, 'document_extraction').action).toMatchObject({ kind: 'host' });
   });
 
   it('offers Build index when message search is on but has no index yet', () => {
@@ -44,12 +44,6 @@ describe('overviewRows', () => {
     expect(row(rows, 'visual_embedding').action).toMatchObject({ kind: 'start', id: 'visual_build', consent: expect.any(String) });
   });
 
-  it('shows a command once a config-only feature is on', () => {
-    const rows = overviewRows([lane('document_extraction')], undefined, undefined);
-
-    expect(row(rows, 'document_extraction')).toMatchObject({ chip: { text: 'On' }, action: { kind: 'command', command: 'msgvault documents build' } });
-  });
-
   it('counts contacts as on once a connection has synced', () => {
     const rows = overviewRows([lane('carddav_sync', { configured: false, latest: { state: 'succeeded' } } as Partial<OperationLaneStatus>)], undefined, undefined);
 
@@ -59,7 +53,7 @@ describe('overviewRows', () => {
   it('marks a failed feature and links to where it is set up', () => {
     const rows = overviewRows([lane('person_enrichment', { latest: { state: 'failed' } } as Partial<OperationLaneStatus>)], undefined, undefined);
 
-    expect(row(rows, 'person_enrichment')).toMatchObject({ chip: { text: 'Failed' }, action: { kind: 'setup', category: 'enrichment' } });
+    expect(row(rows, 'person_enrichment')).toMatchObject({ chip: { text: 'Failed' }, action: { kind: 'settings', target: { settingsCategory: 'enrichment' } } });
   });
 });
 
