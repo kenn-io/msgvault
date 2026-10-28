@@ -970,7 +970,7 @@ the CLI does not inherit the daemon's environment.
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 
-`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start`, `msgvault daemon restart`, and the restart after `msgvault update` still start a daemon when you run them. Commands routed to `[remote].url` are unaffected.
+`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start` and `msgvault daemon restart` still start a daemon when you run them. `msgvault update` restarts only a daemon msgvault started in the background, unless you pass `--no-restart`. Commands routed to `[remote].url` are unaffected.
 
 Browser sessions are additive to API-key authentication. Existing CLI and
 programmatic clients continue to send the configured key. For remote browser

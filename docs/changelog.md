@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
+- `msgvault update` leaves foreground daemons to their supervisor or the person who started them; `--no-restart` also leaves background daemons stopped.
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
