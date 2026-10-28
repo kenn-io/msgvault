@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/dedup"
+	"go.kenn.io/msgvault/internal/mscalendar"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -859,6 +860,15 @@ func TestResolveDeduplicateScopeNonEmailCollectionReturnsInvalidError(t *testing
 	require.Error(err, "expected non-email collection to be rejected")
 	assert.Equal(opserr.KindInvalid, opserr.KindOf(err), "error kind")
 	assert.Contains(err.Error(), `--collection "calendars" has no member accounts`, "error message")
+}
+
+func TestResolveDeduplicateScopeRejectsMicrosoftCalendarSource(t *testing.T) {
+	f := storetest.New(t)
+	calendarSource, err := f.Store.GetOrCreateSource(mscalendar.SourceType, "me@example.com/cal-1")
+	require.NoError(t, err)
+
+	_, err = resolveDeduplicateScope(f.Store, deduplicateScopeRequest{SourceID: calendarSource.ID})
+	assert.Equal(t, opserr.KindInvalid, opserr.KindOf(err), "a calendar is not an email account")
 }
 
 // TestPrintAccumulatedUndoHint asserts the helper's behavior:

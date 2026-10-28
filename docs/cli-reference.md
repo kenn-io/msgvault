@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-10-28"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1837,12 +1837,13 @@ msgvault add-calendar <email> [flags]
 | `--all-calendars` | Include reader/freeBusyReader (subscribed, holiday) calendars |
 | `--min-access-role` | Minimum access role: `owner`, `writer`, or `reader` |
 | `--calendars` | Comma-separated calendar IDs to register |
+| `--microsoft` | Archive the calendars of a Microsoft 365 or Outlook.com mailbox through Microsoft Graph, read-only (unreleased). Registers the calendars the mailbox owns; see [Microsoft calendars](usage/calendar.md#microsoft-365-and-outlookcom-unreleased) |
 
 ---
 
 ## sync-calendar
 
-Sync Google Calendar events for an account. The account is resolved from a `[[gcal]]` config entry (by name or email) or used directly as an email. The first run (or `--full`) does a full sync that registers calendars; later runs are incremental via the Calendar `syncToken`. Events are stored as searchable records (`message_type = calendar_event`) and become eligible for semantic search when the embedding worker runs. Cancelled events are retained and marked cancelled, never deleted. Sync is read-only.
+Sync Google Calendar events for an account. The account is resolved from a `[[gcal]]` config entry (by name or email) or used directly as an email. The first run (or `--full`) does a full sync that registers calendars; later runs are incremental via the Calendar `syncToken`. Events are stored as searchable records (`message_type = calendar_event`) and become eligible for semantic search when the embedding worker runs. Cancelled events are retained and marked cancelled, never deleted. Sync is read-only. For a Microsoft account added with `add-calendar --microsoft`, the command syncs its registered calendars instead; see [Microsoft calendars](usage/calendar.md#microsoft-365-and-outlookcom-unreleased).
 
 ```bash
 msgvault sync-calendar <name|email> [flags]
@@ -1850,7 +1851,7 @@ msgvault sync-calendar <name|email> [flags]
 
 | Flag | Description |
 |---|---|
-| `--full` | Force a full sync (ignore stored sync tokens) |
+| `--full` | Force a full sync (ignore stored sync tokens). For a Microsoft account, also register calendars that the mailbox owns, including ones removed with `remove-account` |
 | `--limit` | Max events per calendar (0 = unlimited) |
 | `--after` / `--before` | Bound a full sync to a date range (`YYYY-MM-DD`); full sync only |
 | `--calendar` | Restrict to specific calendar IDs |
@@ -1863,8 +1864,16 @@ msgvault sync-calendar <name|email> [flags]
 
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
+List archived calendar events or control live Google Calendar events through the daemon. These commands are unreleased.
+
+```bash
+msgvault calendar events --from 2027-03-01 --to 2027-04-01
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+```
+
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.28.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
 ID, or an alias from `config.toml`.
 
@@ -1890,9 +1899,9 @@ msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> 
 
 | Flag | Applies to | Contract |
 |---|---|---|
-| `--account` | All | Required OAuth account or configured source name, separate from the target calendar |
-| `--dry-run` | All | Verify live access and return the proposed writes without applying them; availability still reads Google |
-| `--read-only` | All | Reject all mutations |
+| `--account` | Live commands | Required OAuth account or configured source name, separate from the target calendar |
+| `--dry-run` | Live commands | Verify live access and return the proposed writes without applying them; availability still reads Google |
+| `--read-only` | Live commands | Reject all mutations |
 | `--json` | All | Print complete results and archive receipts; dry runs and availability always print JSON |
 | `--send-updates` | Writes | `none` (default), `all`, or `externalOnly` |
 | `--summary`, `--description`, `--location` | Create/update | Omitted update fields are preserved; explicit empty clears |
