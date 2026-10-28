@@ -409,7 +409,7 @@ test.describe('designed archived mail', () => {
     } }));
   });
 
-  test('archived mail follows live themes, original colors, and scrollbar palette', async ({ page }) => {
+  test('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await expect(page.locator('html')).toHaveClass(/dark/);
     await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
