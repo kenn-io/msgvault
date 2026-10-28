@@ -209,6 +209,53 @@ func linkedPeopleFixture(t *testing.T) (*TestDataBuilder, int64, int64, int64, i
 	return b, source, alicePrimary, aliceAlias, bob, start
 }
 
+func TestGetPersonUsesLiveMembershipAfterUnlinkWithRetainedCache(t *testing.T) {
+	b, source, primary, alias, _, start := linkedPeopleFixture(t)
+	draft := b.AddMessage(MessageOpt{SourceID: source, Subject: "Unsent", SentAt: start.Add(3 * time.Hour)})
+	b.AddFrom(draft, primary, "Alice Example")
+	b.AddTo(draft, alias, "")
+	b.AddAttachmentWithMIME(902, draft, 100, "draft.pdf", "application/pdf")
+	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
+	engine := b.BuildEngine()
+
+	linked, err := engine.GetPerson(t.Context(), alias, Context{}, []int64{primary, alias})
+	require.NoError(t, err)
+	require.NotNil(t, linked)
+	require.Equal(t, int64(3), linked.ActivityCount)
+
+	// After unlinking, the caller supplies no linked members while a failed
+	// identity refresh leaves the committed Parquet cluster unchanged.
+	for _, tc := range []struct {
+		name    string
+		id      int64
+		files   int64
+		firstAt time.Time
+	}{
+		{name: "former canonical", id: primary, firstAt: start},
+		{name: "former alias", id: alias, files: 1, firstAt: start.Add(time.Hour)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			detail, err := engine.GetPerson(t.Context(), tc.id, Context{}, nil)
+			require.NoError(err)
+			require.NotNil(detail)
+			summary, err := engine.GetPersonSummary(t.Context(), tc.id, ExploreRequest{
+				Context: Context{SourceIDs: []int64{source}},
+			}, nil)
+			require.NoError(err)
+			require.Len(summary.Rows, 1)
+			for _, row := range []PersonSummary{*detail, summary.Rows[0]} {
+				assert.Equal(tc.id, row.ID)
+				assert.Equal(int64(2), row.ActivityCount, "count only this participant's sent activity")
+				assert.Equal(tc.files, row.FileCount)
+				assert.Equal(tc.firstAt, row.FirstAt)
+				assert.Equal(start.Add(2*time.Hour), row.LastAt)
+			}
+		})
+	}
+}
+
 func TestSearchPeopleShowsPartialIdentityLabelsHonestly(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

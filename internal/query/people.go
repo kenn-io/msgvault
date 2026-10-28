@@ -531,7 +531,8 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 // matched entry projects exactID as its person_id, so the aggregates and the
 // participants join downstream still key on the requested row.
 //
-// Exact-ID lookup uses relationship activity edges within the analytical context.
+// Exact-ID lookup uses raw participant links within the analytical context so
+// live membership can differ from the cached identity clusters.
 // Listing/search aggregates edges by canonical ID, so linked aliases count once.
 func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (string, []any) {
 	if exactID == nil {
@@ -549,33 +550,31 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	if len(memberIDs) == 0 {
 		memberIDs = []int64{*exactID}
 	}
-	// Membership resolves through relationship_activity's baked
-	// canonical_id rather than list_contains over aggregated member
-	// lists; the classified branch inside sqlActivityEntryEdges keeps a
-	// chat entry's membership scoped to the filtered context exactly as
-	// the aggregated lists did. The IN over memberIDs (never empty here)
-	// matches the cluster whichever alias the caller requested: every
-	// edge bakes the cluster's canonical ID, which is itself one of the
-	// resolved members. memberList binds twice — once per UNION branch.
 	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
-	args := make([]any, 0, len(memberIDs)*2+1)
-	args = append(args, *exactID)
-	for range 2 {
+	args := make([]any, 0, len(memberIDs)*3+1)
+	for range 3 {
 		for _, memberID := range memberIDs {
 			args = append(args, memberID)
 		}
 	}
+	args = append(args, *exactID)
 	return `
+), person_message_ids AS (
+	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id IN ` + memberList + `
+	UNION
+	SELECT m.id AS message_id FROM messages m WHERE m.sender_id IN ` + memberList + `
+), person_chat_conversation_ids AS (
+	SELECT cp.conversation_id FROM conversation_participants cp WHERE cp.participant_id IN ` + memberList + `
+	UNION
+	SELECT f.conversation_id FROM classified f
+	WHERE f.is_chat AND f.message_id IN (SELECT message_id FROM person_message_ids)
 ), person_entries AS (
 	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
-	FROM logical_entries
-	WHERE entry_key IN (
-		SELECT edge.entry_key FROM (` +
-		sqlActivityEntryEdges("a.canonical_id AS person_id",
-			"a.is_direct AND a.canonical_id IN "+memberList,
-			"(a.is_direct OR a.is_conversation_member) AND a.canonical_id IN "+memberList) + `
-		) AS edge
-	)`, args
+	FROM logical_entries le
+	WHERE (le.entry_kind <> 'conversation'
+	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
+	   OR (le.entry_kind = 'conversation'
+	       AND le.conversation_id IN (SELECT conversation_id FROM person_chat_conversation_ids))`, args
 }
 
 func (e *DuckDBEngine) SearchDomains(ctx context.Context, request DomainSearchRequest) (*DomainSearchResponse, error) {
