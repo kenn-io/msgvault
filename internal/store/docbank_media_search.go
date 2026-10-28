@@ -119,10 +119,15 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 	}
 	args := []any{destination}
 	messageWhere, scopeArgs := documentSearchMessageWhere(scope)
-	visible := `SELECT 1 FROM attachments a
+	// Resolve eligible receipt matches before joining messages. Otherwise the
+	// planner can scan every attachment of a message again for each receipt.
+	visible := `WITH matching_attachments AS MATERIALIZED (
+ SELECT a.message_id FROM attachments a
+ WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + `)
+ SELECT 1 FROM matching_attachments a
  JOIN messages m ON m.id = a.message_id
  JOIN conversations cv ON cv.id = m.conversation_id
- WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + ` AND ` + messageWhere
+ WHERE ` + messageWhere
 	args = append(args, scopeArgs...)
 	// EXISTS checks one visible occurrence per receipt instead of materializing
 	// every occurrence. OFFSET keeps PostgreSQL's lookup correlated to the receipt.
