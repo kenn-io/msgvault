@@ -10,6 +10,75 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
+func TestPersonFactContestsIncludesChallengerToUnpinnedCurrentValue(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		value      string
+		relation   personfacts.ClaimRelation
+		confidence int
+		authority  personfacts.EvidenceAuthority
+		score      int
+		reason     personfacts.DecisionReason
+		contested  bool
+	}{
+		{"replacement", `"email"`, personfacts.RelationSupport, 740, personfacts.AuthorityAuthoritative, 924, personfacts.ReasonInsufficientMargin, true},
+		{"contradiction", `"chat"`, personfacts.RelationContradict, 0, personfacts.AuthorityAuthoritative, 850, personfacts.ReasonExplicitContradiction, true},
+		{"below threshold", `"email"`, personfacts.RelationSupport, 740, personfacts.AuthorityOrdinary, 724, personfacts.ReasonBelowThreshold, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			st, personID, targets := newPersonFactProjectionStore(t)
+			target := targets[AttributeSlugPrimaryChannel]
+			_, err := st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
+				PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel,
+				Value: AttributeValue{Type: AttributeValueText, Text: new("chat")}, Source: ProvenanceUser,
+			})
+			requirements.NoError(err)
+			_, err = st.SetPersonFactPinContext(t.Context(), personID,
+				personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, false, "test")
+			requirements.NoError(err)
+
+			claim := personFactProjectionClaim(personID, target, tc.value, "unpinned-challenger")
+			claim.Relation = tc.relation
+			claim.Confidence.ReportedScore = tc.confidence
+			claim.Evidence[0].Directness = personfacts.DirectOther
+			claim.Evidence[0].Authority = tc.authority
+			input := personFactProjectionInput(personID, "unpinned-challenger", []personfacts.ProposedClaim{claim}, nil)
+			input.ResolvedAt = time.Now().UTC()
+			input.Claims[0].Evidence[0].EventTime = input.ResolvedAt.Add(-time.Hour)
+			result, err := st.ApplyPersonFactGenerationContext(t.Context(), input, nil)
+			requirements.NoError(err)
+			requirements.Len(result.Decisions, 1)
+			assertions.Equal(tc.score, result.Decisions[0].Score.Total)
+			assertions.Equal(personfacts.DecisionRetained, result.Decisions[0].Action)
+			assertions.Equal(tc.reason, result.Decisions[0].Reason)
+			assertions.Empty(result.Decisions[0].CompetingClaimKey)
+
+			values, err := st.ListPersonAttributeValuesContext(t.Context(), personID,
+				PersonAttributeQuery{DefinitionSlug: AttributeSlugPrimaryChannel})
+			requirements.NoError(err)
+			requirements.Len(values, 1)
+			assertions.Equal("chat", *values[0].Value.Text)
+			contests, err := st.ListPersonFactContestsContext(t.Context(), personID, false)
+			requirements.NoError(err)
+			if !tc.contested {
+				assertions.Empty(contests)
+				return
+			}
+			requirements.Len(contests, 1)
+			requirements.Len(contests[0].Current, 1)
+			assertions.JSONEq(`"chat"`, string(contests[0].Current[0].Normalized.JSON))
+			requirements.Len(contests[0].Claims, 1)
+			assertions.JSONEq(tc.value, string(contests[0].Claims[0].Claim.Claim.SubmittedValue))
+			assertions.Equal(result.Decisions[0], contests[0].Claims[0].Decision)
+			requirements.Len(contests[0].Claims[0].Evidence, 1)
+			assertions.True(contests[0].Claims[0].Evidence[0].Supported)
+			assertions.Equal(claim.Evidence[0].SourceURL, contests[0].Claims[0].Evidence[0].Input.SourceURL)
+		})
+	}
+}
+
 func TestPersonFactContestsReportsSupportedTieWithoutWrites(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
