@@ -241,7 +241,7 @@ func TestPersonFactContestsIncludesNearTie(t *testing.T) {
 	assertions.Len(contests[0].Claims, 2)
 }
 
-func TestPersonFactContestsOmitsSupersededResolution(t *testing.T) {
+func TestPersonFactContestsOmitsExplicitlyPinnedTarget(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)

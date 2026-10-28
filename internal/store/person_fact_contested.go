@@ -74,15 +74,12 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 			if err != nil {
 				return err
 			}
-			selected := make(map[string]bool)
+			selected := make([]personfacts.Decision, 0, len(shell.Decisions))
 			for _, d := range shell.Decisions {
 				if d.Action == personfacts.DecisionAmbiguousRetained ||
 					d.Action == personfacts.DecisionConflictRejected ||
 					(d.Action == personfacts.DecisionRetained && d.Reason != personfacts.ReasonPinRetained && d.Score.Total >= applyThreshold) {
-					selected[d.ClaimKey] = true
-					if d.CompetingClaimKey != "" {
-						selected[d.CompetingClaimKey] = true
-					}
+					selected = append(selected, d)
 				}
 			}
 			if len(selected) == 0 {
@@ -97,10 +94,7 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 				byKey[c.ClaimKey] = c
 			}
 			contest := PersonFactContest{Target: *target, ResolvedAt: shell.ResolvedAt, ResolutionRevision: shell.Target.Revision, Current: []personfacts.CurrentProjection{}, Claims: []PersonFactContestedClaim{}}
-			for _, d := range shell.Decisions {
-				if !selected[d.ClaimKey] {
-					continue
-				}
+			for _, d := range selected {
 				claim, ok := byKey[d.ClaimKey]
 				if !ok {
 					continue
