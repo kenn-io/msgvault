@@ -321,8 +321,8 @@ func TestRestartDaemonAfterUpdateLeavesUnmarkedDaemonStopped(t *testing.T) {
 		assert.Contains(out.String(), "Update couldn't confirm msgvault started the daemon")
 		assert.Contains(out.String(), "in the background, so it left it stopped")
 		assert.Contains(out.String(), "Restart it the way you started it")
-		assert.Contains(out.String(), "such as `systemctl restart msgvault`, or run:")
-		assert.Contains(out.String(), "msgvault --config '/tmp/example config.toml' --home '/tmp/example archive' daemon start")
+		assert.Contains(out.String(), "such as `systemctl restart msgvault`")
+		assert.NotContains(out.String(), "daemon start")
 	}
 }
 
