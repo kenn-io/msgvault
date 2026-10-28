@@ -127,7 +127,12 @@ func (styles inlineStyles) parse(style string) []inlineDeclaration {
 		}
 		value = strings.TrimSpace(strings.ToLower(decodeInlineCSSEscapes(value)))
 		// The shorthand also resets the image, to none unless it names one.
-		if name == "background" {
+		shorthand := name == "background"
+		if shorthand {
+			if !validBackgroundShorthand(value) {
+				// Browsers ignore an invalid shorthand, keeping the earlier background.
+				continue
+			}
 			shorthandImage := "none"
 			if strings.Contains(value, "url(") || strings.Contains(value, "gradient(") {
 				shorthandImage = "image"
@@ -139,7 +144,7 @@ func (styles inlineStyles) parse(style string) []inlineDeclaration {
 			switch {
 			case value == "none" || value == "initial" || slices.Contains(inheritCSSKeywords, value):
 				value = "none"
-			case strings.Contains(value, "(") && strings.HasSuffix(value, ")"):
+			case cssImageFunction(cssFunctionName(value)):
 				value = "image"
 			default:
 				// Browsers ignore a value that names no image, keeping the earlier one.
@@ -162,8 +167,8 @@ func (styles inlineStyles) parse(style string) []inlineDeclaration {
 				}
 			default:
 				parsed := inlineHTMLColor(value)
-				// A shorthand with an image, gradient, or color this check can't read still sets a background.
-				if parsed == "" && name == "background-color" && strings.ContainsAny(value, "( ") {
+				// A valid shorthand, or a color this check can't read, still sets a background.
+				if parsed == "" && name == "background-color" && (shorthand && strings.ContainsAny(value, "( ") || unreadableCSSColor(value)) {
 					parsed = "unknown"
 				}
 				value = parsed
@@ -267,20 +272,94 @@ func validInlineCSSValue(property, value string) bool {
 	if !checked || value == "initial" || slices.Contains(strings.Fields(keywords), value) || slices.Contains(inheritCSSKeywords, value) {
 		return true
 	}
-	if strings.HasSuffix(value, ")") {
-		return strings.HasPrefix(keywords, "<")
+	if function := cssFunctionName(value); function != "" {
+		return strings.HasPrefix(keywords, "<") && slices.Contains(cssMathFunctions, function) || property == "clip" && function == "rect"
 	}
 	number, unit, length := inlineCSSLength(value)
 	switch strings.Fields(keywords)[0] {
 	case "<length>":
-		return length
+		return validCSSLength(number, unit, length)
 	case "<length+>":
-		return length && number >= 0
+		return validCSSLength(number, unit, length) && number >= 0
 	case "<number>":
 		return length && (unit == "" || unit == "%")
 	default:
 		return false
 	}
+}
+
+// validCSSLength reports whether a parsed length is valid in standards mode, which rejects a
+// unitless length other than zero.
+func validCSSLength(number float64, unit string, length bool) bool {
+	return length && (unit != "" || number == 0)
+}
+
+// cssFunctionName returns the name of a CSS function value, such as "url" for url(a.png), or "".
+func cssFunctionName(value string) string {
+	name, _, ok := strings.Cut(value, "(")
+	if !ok || name == "" || !strings.HasSuffix(value, ")") || strings.ContainsFunc(name, unicode.IsSpace) {
+		return ""
+	}
+	return name
+}
+
+var (
+	cssMathFunctions  = []string{"calc", "min", "max", "clamp"}
+	cssColorFunctions = []string{"rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix", "light-dark"}
+	cssImageFunctions = []string{"url", "image-set", "-webkit-image-set", "cross-fade", "element", "paint"}
+	// backgroundCSSKeywords are the keywords the background shorthand accepts besides colors.
+	backgroundCSSKeywords = strings.Fields("none currentcolor repeat no-repeat repeat-x repeat-y space round scroll fixed local left right top bottom center border-box padding-box content-box text auto cover contain")
+)
+
+func cssImageFunction(name string) bool {
+	return slices.Contains(cssImageFunctions, name) || strings.HasSuffix(name, "-gradient")
+}
+
+// unreadableCSSColor reports a valid color that inlineHTMLColor can't resolve: a color function
+// or a hex color with alpha.
+func unreadableCSSColor(value string) bool {
+	if hex, ok := strings.CutPrefix(value, "#"); ok && (len(hex) == 4 || len(hex) == 8) {
+		_, err := strconv.ParseUint(hex, 16, 32)
+		return err == nil
+	}
+	return slices.Contains(cssColorFunctions, cssFunctionName(value))
+}
+
+// validBackgroundShorthand reports whether every field of a background shorthand is a value
+// the shorthand accepts. Fields are split on spaces, slashes, and commas outside parentheses.
+func validBackgroundShorthand(value string) bool {
+	if value == "initial" || slices.Contains(inheritCSSKeywords, value) {
+		return true
+	}
+	var fields []string
+	depth, start := 0, -1
+	for i, r := range value {
+		if r == '(' {
+			depth++
+		} else if r == ')' && depth > 0 {
+			depth--
+		}
+		if depth == 0 && (unicode.IsSpace(r) || r == '/' || r == ',') {
+			if start >= 0 {
+				fields = append(fields, value[start:i])
+			}
+			start = -1
+		} else if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		fields = append(fields, value[start:])
+	}
+	for _, field := range fields {
+		function := cssFunctionName(field)
+		number, unit, length := inlineCSSLength(field)
+		if !slices.Contains(backgroundCSSKeywords, field) && inlineHTMLColor(field) == "" && !unreadableCSSColor(field) &&
+			!validCSSLength(number, unit, length) && !cssImageFunction(function) && !slices.Contains(cssMathFunctions, function) {
+			return false
+		}
+	}
+	return len(fields) > 0
 }
 
 var inlineCSSEscape = regexp.MustCompile(`\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\r\n\f])?|[^\r\n\f])`)
