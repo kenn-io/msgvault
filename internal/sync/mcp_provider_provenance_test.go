@@ -123,3 +123,45 @@ func TestMCPProviderIMAPMailboxDeltaLiveRecoveryMuted(t *testing.T) {
 	assert.Equal(1, providerEventCount(t, env), "forced recovery discovers historical rows without live attribution")
 	assertMessageCount(t, env.Store, 3)
 }
+
+// A live message and its event commit together, so a journal failure rolls
+// the message back too. The run must then fail without moving the history
+// cursor: an ingest error would be skipped for good, and replayed fetch debt
+// is muted. The next run reprocesses the history range and records both.
+func TestMCPProviderGmailJournalFailureKeepsHistoryForRetry(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+
+	env := newTestEnv(t)
+	enableProviderEvents(t, env, "gmail")
+	source := env.CreateSourceWithHistory(t, "1000")
+	failJournal := []string{`CREATE TRIGGER synthetic_journal_failure BEFORE INSERT ON mcp_event_log BEGIN SELECT RAISE(ABORT, 'synthetic journal failure'); END`}
+	restoreJournal := `DROP TRIGGER synthetic_journal_failure`
+	if env.Store.IsPostgreSQL() {
+		failJournal = []string{
+			`CREATE FUNCTION synthetic_journal_failure() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'synthetic journal failure'; END; $$ LANGUAGE plpgsql`,
+			`CREATE TRIGGER synthetic_journal_failure BEFORE INSERT ON mcp_event_log FOR EACH ROW EXECUTE FUNCTION synthetic_journal_failure()`,
+		}
+		restoreJournal = `DROP TRIGGER synthetic_journal_failure ON mcp_event_log`
+	}
+	for _, statement := range failJournal {
+		_, err := env.Store.DB().Exec(statement)
+		require.NoError(err)
+	}
+	env.Mock.AddMessage("live-delta", testemail.NewMessage().Body("Live synthetic body").Bytes(), []string{"INBOX"})
+	env.SetHistory(1001, historyAdded("live-delta"))
+
+	_, err := env.Syncer.Incremental(env.Context, source)
+	require.Error(err, "a journal failure must fail the run")
+	assertMessageCount(t, env.Store, 0)
+	after, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err)
+	require.NotNil(after)
+	assert.Equal("1000", after.SyncCursor.String, "the history cursor must not move past the failed message")
+
+	_, err = env.Store.DB().Exec(restoreJournal)
+	require.NoError(err)
+	runIncrementalSync(t, env)
+	assertMessageCount(t, env.Store, 1)
+	assert.Equal(1, providerEventCount(t, env))
+}

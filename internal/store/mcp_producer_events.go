@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -31,4 +32,13 @@ func (s *Store) appendArchivedMessageTx(ctx context.Context, tx *loggedTx, id in
 		return err
 	}
 	return s.appendMCPEventTx(ctx, tx, MCPEvent{Family: "msgvault.message_archived", Kind: "message", ScopeKind: "conversation", ScopeID: conversation, SourceID: source, ConversationID: conversation, MessageID: id, ItemKey: fmt.Sprintf("message:%d", id), FromMe: fromMe, OccurredAt: occurred, Data: data})
+}
+
+// IsMCPEventsStorageError reports whether a write failed because its Events
+// journal entry could not be stored. The write rolled back with it, and a
+// retry can succeed. A rejected event, such as invalid event data, is not a
+// storage failure.
+func IsMCPEventsStorageError(err error) bool {
+	_, ok := errors.AsType[mcpRedactedError](err)
+	return ok
 }

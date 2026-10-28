@@ -253,6 +253,14 @@ func (s *Syncer) incremental(
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
 							s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 							checkpoint.ErrorsCount++
+							if store.IsMCPEventsStorageError(err) {
+								// The message rolled back with its event. Ingest
+								// errors are never replayed, and replayed fetch
+								// debt is muted, so fail the run and keep the
+								// history cursor; the next run ingests it live.
+								_ = s.store.FailSync(syncID, err.Error())
+								return nil, fmt.Errorf("record MCP Events for message %s: %w", newMsgIDs[i], err)
+							}
 							continue
 						}
 						checkpoint.MessagesAdded++
