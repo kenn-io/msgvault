@@ -543,9 +543,12 @@ func TestLiveRefreshWithCurrentCursorIsNoOp(t *testing.T) {
 	runServiceUntilCleanup(t, s)
 	appendReceipt(t, s, f, 1)
 	receiver.waitFor(t, 1, "the occurrence must be attempted")
+	// Preparing the attempt sets next_attempt_at to now; only the recorded
+	// failure moves it to the backoff. Wait for that, or the refresh below
+	// races the worker's own receipt update.
 	require.Eventually(func() bool {
 		row, err := s.st.GetMCPSubscription(t.Context(), first.ID)
-		return err == nil && row.PendingSeq == 1 && row.AttemptCount == 1 && !row.NextAttemptAt.IsZero()
+		return err == nil && row.PendingSeq == 1 && row.AttemptCount == 1 && row.NextAttemptAt.After(time.Now().Add(10*time.Second))
 	}, 10*time.Second, 10*time.Millisecond)
 	_, err = f.Store.DB().Exec(`UPDATE mcp_event_subscriptions SET attempt_count=2`)
 	require.NoError(err)
