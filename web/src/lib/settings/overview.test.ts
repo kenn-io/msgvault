@@ -50,10 +50,11 @@ describe('overviewRows', () => {
     expect(row(rows, 'carddav_sync').chip.text).toBe('On');
   });
 
-  it('marks a failed feature and links to where it is set up', () => {
+  it('marks a configured failed feature without offering Set up', () => {
     const rows = overviewRows([lane('person_enrichment', { latest: { state: 'failed' } } as Partial<OperationLaneStatus>)], undefined, undefined);
 
-    expect(row(rows, 'person_enrichment')).toMatchObject({ chip: { text: 'Failed' }, action: { kind: 'settings', target: { settingsCategory: 'enrichment' } } });
+    expect(row(rows, 'person_enrichment').chip.text).toBe('Failed');
+    expect(row(rows, 'person_enrichment').action).toBeUndefined();
   });
 });
 
@@ -68,4 +69,14 @@ it('distinguishes unavailable status and active work from an unbuilt index', () 
 it('offers only the advertised contacts sync action', () => {
   expect(row(overviewRows([lane('carddav_sync')], undefined, undefined), 'carddav_sync').action).toBeUndefined();
   expect(row(overviewRows([lane('carddav_sync', { supported_actions: ['carddav_sync'] })], undefined, undefined), 'carddav_sync').action).toEqual({ kind: 'start', id: 'contacts', label: 'Sync now' });
+});
+
+it('shows index progress only while a run is active', () => {
+  const embedding = { active_generation: 1, current: 2, eligible: 10, pending: 8 } as unknown as EmbeddingStatus;
+  const visual = { current: 3, eligible: 10 } as import('../api/generated/models').Status;
+  const active = { id: 'run-1', state: 'running', counters: [] } as unknown as OperationLaneStatus['active'];
+  for (const kind of ['message_embedding', 'visual_embedding'] as const) {
+    expect(row(overviewRows([lane(kind)], embedding, visual), kind).chip.text).toBe('On');
+    expect(row(overviewRows([lane(kind, { active })], embedding, visual), kind).chip.text).toBe(`Building ${kind === 'message_embedding' ? 2 : 3} of 10`);
+  }
 });
