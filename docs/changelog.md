@@ -65,7 +65,7 @@ All notable changes to msgvault, grouped by release.
   managed draft is created, updated, or deleted. Imports, full syncs, and
   recovery scans stay silent. Events are off by default; enable them with
   [`[mcp.events]`](configuration.md#mcpevents). They need the daemon owner's
-  API key on `msgvault mcp --http` and API schema 3.27.0. Events follow the
+  API key on `msgvault mcp --http` and API schema 3.28.0. Events follow the
   draft MCP Events extension (SEP-3415), advertised as
   `io.modelcontextprotocol/events`.
 
