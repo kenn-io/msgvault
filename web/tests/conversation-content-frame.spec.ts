@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { setKitTheme } from './kit-ui';
 
+test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
+
 const row = {
   key: 'source:1:message:source-1',
   kind: 'message',
@@ -461,10 +463,10 @@ test.describe('designed archived mail', () => {
     const content = page.locator('iframe[title="Message body"]').contentFrame();
     await expect.poll(async () => content.locator('html').evaluate((element) => ({
       overflow: element.scrollWidth > element.clientWidth,
-      size: getComputedStyle(element, '::-webkit-scrollbar').height,
+      size: innerHeight - element.clientHeight,
       blank: element.clientHeight - Math.ceil(Math.max(element.getBoundingClientRect().height, document.body.scrollHeight)),
       buttons: getComputedStyle(element, '::-webkit-scrollbar-button').display
-    }))).toEqual({ overflow: true, size: '8px', blank: 0, buttons: 'none' });
+    }))).toEqual({ overflow: true, size: 8, blank: 0, buttons: 'none' });
   });
 });
 
