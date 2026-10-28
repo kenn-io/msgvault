@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { Button, Checkbox, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Checkbox, RadioGroup, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type { PeopleInferencePresetCreateRequest } from '../../api/generated/models';
   import { credentialStatus, PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
@@ -103,12 +103,22 @@
       </fieldset>
       <label>Archive data since (YYYY-MM-DD)<TextInput bind:value={sourceSince} placeholder="YYYY-MM-DD" required block /></label>
       <label>Archive data until (optional, YYYY-MM-DD)<TextInput bind:value={sourceUntil} placeholder="YYYY-MM-DD" block /></label>
-      <fieldset>
-        <legend>Sensitive archive content</legend>
-        <label><input type="radio" name="sensitive-content" value="allow" bind:group={sensitiveChoice} required /> Allow sensitive content</label>
-        <label><input type="radio" name="sensitive-content" value="exclude" bind:group={sensitiveChoice} /> Exclude sensitive content</label>
+      <div class="policy">
+        <RadioGroup
+          legend="Sensitive archive content"
+          name="sensitive-content"
+          required
+          options={[
+            { value: 'allow', label: 'Allow sensitive content' },
+            { value: 'exclude', label: 'Exclude sensitive content' },
+          ]}
+          value={sensitiveChoice || undefined}
+          onchange={(value) => {
+            sensitiveChoice = value ?? '';
+          }}
+        />
         <p>Real sweeps send archive text to this provider. Excluding sensitive content permits only the synthetic check.</p>
-      </fieldset>
+      </div>
       <label>Retention statement<TextInput bind:value={retentionPosture} required autocomplete="off" block /></label>
       <label>Training statement<TextInput bind:value={trainingPosture} required autocomplete="off" block /></label>
       <Button type="submit" disabled={controller.busy} label="Create profile" />
@@ -185,9 +195,9 @@
   .form, .profile, .disclosure, .replacement-key { display: grid; gap: var(--space-3); min-width: 0; }
   .form, .profile { border: 1px solid var(--border-muted); border-radius: var(--radius-md); padding: var(--space-4); }
   label { display: grid; gap: var(--space-1); min-width: 0; }
-  label:has(input[type='radio']) { display: flex; align-items: center; }
-  fieldset { display: grid; gap: var(--space-2); min-width: 0; border: 1px solid var(--border-muted); }
-  fieldset p { margin: 0; }
+  fieldset, .policy { display: grid; gap: var(--space-2); min-width: 0; border: 1px solid var(--border-muted); }
+  .policy { padding: var(--space-2); }
+  .policy p { margin: 0; }
   dl { display: grid; gap: var(--space-2); margin: 0; }
   dl div { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: var(--space-2); }
   dt { color: var(--text-muted); }

@@ -31,6 +31,7 @@
     Card,
     Chip,
     Notice,
+    NumberInput,
     SelectDropdown,
     SettingsLayout,
     SettingsSection,
@@ -362,6 +363,17 @@
     }
     return fallback;
   }
+  function numberFieldValue(setting: SettingState): number | null {
+    const value = currentValue(setting);
+    if (value === '' || value == null) return null;
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  // Integer settings step by 1 and reject a decimal point. A float setting
+  // needs a fractional step, or NumberInput treats the field as an integer.
+  function numberFieldStep(setting: SettingState): number {
+    return setting.kind === 'integer' ? 1 : 0.1;
+  }
   function stringValue(setting: SettingState): string {
     const value = currentValue(setting);
     if (Array.isArray(value)) return value.join(', ');
@@ -612,21 +624,17 @@
               />
             </div>
           {:else if setting.kind === 'integer' || setting.kind === 'number'}
-            <label class="row__field" data-size="xs">
+            <label class="row__field" data-size="xs" data-mono>
               <span class="kit-sr-only">{label}</span>
-              <input
-                type="number"
-                data-mono
-                value={stringValue(setting)}
-                step={setting.kind === 'integer' ? '1' : 'any'}
+              <NumberInput
+                block
+                value={numberFieldValue(setting)}
+                step={numberFieldStep(setting)}
                 min={off?.on_minimum ?? setting.validation?.minimum}
                 max={setting.validation?.maximum}
                 required={setting.validation?.required || off !== undefined}
-                aria-invalid={drafts[setting.key] === '' || undefined}
-                oninput={(event) => {
-                  const raw = event.currentTarget.value;
-                  setDraft(setting.key, raw === '' ? '' : Number(raw));
-                }}
+                invalid={drafts[setting.key] === ''}
+                oninput={(value) => setDraft(setting.key, value === null ? '' : value)}
               />
             </label>
           {:else}
@@ -979,24 +987,6 @@
   .row__value--unset,
   .row__value--off {
     color: var(--text-muted);
-  }
-  input[type='number'] {
-    box-sizing: border-box;
-    width: 100%;
-    height: 28px;
-    padding: 0 var(--space-3);
-    border: var(--border-width) solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font: inherit;
-    font-size: var(--font-size-sm);
-    transition: border-color var(--transition-fast) var(--transition-ease, ease);
-  }
-  input[type='number']:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 1px;
-    border-color: var(--accent-blue);
   }
   .provider-list {
     display: grid;
