@@ -1,7 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { setKitTheme } from './kit-ui';
-
-const visibleScrollbarTest = test.extend({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
+import { setKitTheme, visibleScrollbarTest } from './kit-ui';
 
 const row = {
   key: 'source:1:message:source-1',
