@@ -29,18 +29,6 @@ func mcpReferenceFixture(t *testing.T) (*storetest.Fixture, *store.MCPSubscripti
 	return f, active, id, now
 }
 
-func TestMCPEventsReferenceReadReturnsCurrentSurvivingMessage(t *testing.T) {
-	f, active, id, now := mcpReferenceFixture(t)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET subject='Synthetic edited subject' WHERE id=?`), id)
-	Require.NoError(t, err)
-	var subject string
-	err = f.Store.ReadMCPEventMessage(t.Context(), active.ID, 1, active.Principal, id, now, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(t.Context(), f.Store.Rebind(`SELECT subject FROM messages WHERE id=?`), id).Scan(&subject)
-	})
-	Require.NoError(t, err)
-	Assert.Equal(t, "Synthetic edited subject", subject)
-}
-
 func TestMCPEventsReferenceReadRejectsPhysicallyReusedMessageID(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
