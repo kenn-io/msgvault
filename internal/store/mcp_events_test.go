@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
@@ -35,18 +36,20 @@ func TestMCPEventsSchemaStartsDisabled(t *testing.T) {
 // same person's CardDAV operation at once.
 func TestMCPIngestViewSharesRootOperationGuards(t *testing.T) {
 	f := storetest.New(t)
-	release, err := f.Store.AcquireCardDAVPersonOperation(t.Context(), 1)
-	Require.NoError(t, err)
-	defer release()
-	for name, view := range map[string]*store.Store{
+	views := map[string]*store.Store{
 		"root view":   f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive}),
 		"nested view": f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive}).WithIngestContext(store.IngestContext{Mode: store.IngestBackfill}),
-	} {
-		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-			defer cancel()
-			_, err := view.AcquireCardDAVPersonOperation(ctx, 1)
-			Require.ErrorIs(t, err, context.DeadlineExceeded, "the view must wait for the root's operation")
-		})
 	}
+	// The guard is in memory only, so the bubble's clock decides the wait.
+	synctest.Test(t, func(t *testing.T) {
+		release, err := f.Store.AcquireCardDAVPersonOperation(t.Context(), 1)
+		Require.NoError(t, err)
+		defer release()
+		for name, view := range views {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			_, err := view.AcquireCardDAVPersonOperation(ctx, 1)
+			cancel()
+			Assert.ErrorIs(t, err, context.DeadlineExceeded, "%s must wait for the root's operation", name)
+		}
+	})
 }
