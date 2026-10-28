@@ -172,7 +172,6 @@
 <style>
   .selection-bar {
     display: flex;
-    min-height: var(--control-h-lg);
     flex: 0 0 auto;
     flex-wrap: wrap;
     align-items: center;
