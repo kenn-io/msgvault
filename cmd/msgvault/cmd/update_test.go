@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -179,38 +181,44 @@ func TestPerformUpdateWithDaemonLifecycleRestartsAfterPartialStopFailure(t *test
 }
 
 func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	dataDir := t.TempDir()
-	server := httptestPingDaemon(t)
-	portText := strconv.Itoa(server.Port)
-	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-		PID:     os.Getpid(),
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(server.Host, portText),
-		Service: daemonService,
-		Version: Version,
-		Metadata: map[string]string{
-			runtimeHost:             server.Host,
-			runtimePort:             portText,
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-			runtimeCreateTime:       matchingProcessCreateTime(t),
-		},
-	})
-	require.NoError(err, "write runtime")
+	for _, foreground := range []string{"", "true"} {
+		t.Run("foreground="+foreground, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dataDir := t.TempDir()
+			server := httptestPingDaemon(t)
+			portText := strconv.Itoa(server.Port)
+			_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+				PID:     os.Getpid(),
+				Network: daemon.NetworkTCP,
+				Address: net.JoinHostPort(server.Host, portText),
+				Service: daemonService,
+				Version: Version,
+				Metadata: map[string]string{
+					runtimeForeground:       foreground,
+					runtimeHost:             server.Host,
+					runtimePort:             portText,
+					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+					runtimeAPISchemaVersion: api.APISchemaVersion,
+					runtimeCreateTime:       matchingProcessCreateTime(t),
+				},
+			})
+			require.NoError(err, "write runtime")
 
-	var stoppedPID int
-	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime, _ *slog.Logger) error {
-		stoppedPID = rt.Record.PID
-		return nil
-	})
+			var stoppedPID int
+			stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime, _ *slog.Logger) error {
+				stoppedPID = rt.Record.PID
+				return nil
+			})
 
-	result, err := stopLocalDaemonsForUpdate(lifecycleTestConfig(dataDir), testDiscardLogger())
+			result, err := stopLocalDaemonsForUpdate(lifecycleTestConfig(dataDir), testDiscardLogger())
 
-	require.NoError(err, "stop local daemons")
-	assert.True(result.Stopped, "stopped")
-	assert.Equal(os.Getpid(), stoppedPID, "stopped pid")
+			require.NoError(err, "stop local daemons")
+			assert.True(result.Stopped, "stopped")
+			assert.Equal(foreground == "true", result.Foreground, "foreground")
+			assert.Equal(os.Getpid(), stoppedPID, "stopped pid")
+		})
+	}
 }
 
 func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
@@ -245,7 +253,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		}, true, nil
 	})
 
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe, testInvocationWithConfig(cfg))
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
 
 	require.NoError(err, "restart daemon")
 	assert.Equal(installedExe, gotExecutable, "restart executable")
@@ -286,11 +294,52 @@ func TestRestartDaemonAfterUpdatePassesUsableContext(t *testing.T) {
 		}, true, nil
 	})
 
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe, testInvocationWithConfig(cfg))
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
 
 	require.NoError(err, "restart daemon")
 	require.NotNil(gotCtx, "readiness wait received a nil context")
 	assert.NoError(gotCtx.Err(), "context usable")
+}
+
+func TestRestartDaemonAfterUpdateLeavesForegroundDaemonStopped(t *testing.T) {
+	assert := assert.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		assert.Fail("foreground daemon must be left to whoever started it")
+		return nil, errors.New("unexpected daemon start")
+	})
+	for _, noRestart := range []bool{false, true} {
+		var out bytes.Buffer
+		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Foreground: true}, "", nil, noRestart, &out)
+		require.NoError(t, err)
+		assert.Contains(out.String(), cfg.Data.DataDir)
+		assert.Contains(out.String(), "ran as `msgvault serve`")
+		assert.Contains(out.String(), "Restart it the way you started it")
+	}
+}
+
+func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
+	assert := assert.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		assert.Fail("--no-restart must leave the daemon stopped")
+		return nil, errors.New("unexpected daemon start")
+	})
+	for _, options := range []invocationOptions{
+		{},
+		{homeDir: "/tmp/example archive", cfgFile: "/tmp/example config.toml"},
+	} {
+		state := testInvocationWithConfig(cfg)
+		state.options = options
+		var out bytes.Buffer
+		err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, "", state, true, &out)
+		require.NoError(t, err)
+		assert.Contains(out.String(), cfg.Data.DataDir)
+		assert.Contains(out.String(), "msgvault daemon start")
+		if options.homeDir != "" {
+			assert.Contains(out.String(), "msgvault --config '/tmp/example config.toml' --home '/tmp/example archive' daemon start")
+		}
+	}
 }
 
 // fakeUpdateRelease stands in for GitHub: checks report a newer release, and

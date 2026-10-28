@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/update"
 )
 
@@ -28,6 +29,9 @@ Requires confirmation before making changes (use --yes to skip).
 Dev builds are not replaced by default. Use --force to install the latest
 official release over a dev build.
 
+Update restarts only a daemon msgvault started in the background; a foreground
+daemon is left to its supervisor or the person who started it.
+
 Package-managed installations, such as Homebrew, are upgraded through their
 package manager. For those, update only reports whether a newer release exists
 and refuses to install it.`,
@@ -36,6 +40,7 @@ and refuses to install it.`,
 	cmd.Flags().Bool("check", false, "only check for updates, don't install")
 	cmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
 	cmd.Flags().BoolP("force", "f", false, "replace dev build with latest official release")
+	cmd.Flags().Bool("no-restart", false, "leave the daemon stopped after the update")
 	return cmd
 }
 
@@ -54,6 +59,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	checkOnly, _ := cmd.Flags().GetBool("check")
 	yes, _ := cmd.Flags().GetBool("yes")
 	force, _ := cmd.Flags().GetBool("force")
+	noRestart, _ := cmd.Flags().GetBool("no-restart")
 
 	// A package manager owns this binary, so replacing it would desynchronize
 	// the manager's records. Refuse before any network or daemon work.
@@ -156,7 +162,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		},
 		performUpdate,
 		func(c *config.Config, result updateDaemonStopResult) error {
-			return restartDaemonAfterUpdate(c, result, installExecutablePath, invocationFromCommand(cmd))
+			return restartDaemonAfterUpdate(c, result, installExecutablePath, invocationFromCommand(cmd), noRestart, cmd.OutOrStdout())
 		},
 	); err != nil {
 		return err
@@ -167,7 +173,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 type updateDaemonStopResult struct {
-	Stopped bool
+	Stopped    bool
+	Foreground bool
 }
 
 func performUpdateWithDaemonLifecycle(
@@ -241,12 +248,28 @@ func stopLocalDaemonsForUpdate(c *config.Config, logger *slog.Logger) (updateDae
 			return result, err
 		}
 		result.Stopped = true
+		result.Foreground = result.Foreground || rec.Metadata[runtimeForeground] == runtimeForegroundValue
 	}
 	return result, nil
 }
 
-func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, executablePath string, state *invocation) error {
+func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, executablePath string, state *invocation, noRestart bool, out io.Writer) error {
 	if !result.Stopped {
+		return nil
+	}
+	if result.Foreground {
+		_, _ = fmt.Fprintf(out, "The daemon for %s ran as `msgvault serve`, so update did not restart it. Restart it the way you started it, such as `systemctl restart msgvault`.\n", c.Data.DataDir)
+		return nil
+	}
+	if noRestart {
+		_, _ = fmt.Fprintf(out, "The daemon for %s is stopped. Run `msgvault daemon start` to start it:\n", c.Data.DataDir)
+		var options invocationOptions
+		if state != nil {
+			options = state.options
+		}
+		args := serveBackgroundChildArgs(options)
+		args = append(args[:len(args)-1], "daemon", "start")
+		oauth.PrintHeadlessCommand(out, append([]string{"msgvault"}, args...)...)
 		return nil
 	}
 	cmd := &cobra.Command{Use: "msgvault update daemon-restart"}
