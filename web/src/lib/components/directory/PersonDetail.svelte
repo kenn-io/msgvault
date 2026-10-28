@@ -180,7 +180,7 @@
 
       <div class="panel-shell" id={panelID(activeTab)} role="tabpanel" aria-labelledby={tabID(activeTab)} tabindex="0">
         <header class="panel-heading">
-          <span>Person record</span>
+          <span data-section-label>Person record</span>
           <h3>{activeSection.label}</h3>
           <p>{activeSection.description}</p>
         </header>
@@ -298,7 +298,6 @@
   .panel-shell { display: grid; min-width: 0; gap: var(--section-gap); padding: var(--pane-pad-y) var(--pane-pad-x); background: var(--bg-surface); }
   .panel-shell:focus-visible { outline: var(--focus-ring); outline-offset: -3px; }
   .panel-heading { display: grid; gap: var(--space-1); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-muted); }
-  .panel-heading span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 600; }
   .panel-heading h3 { font-size: var(--font-size-lg); }
   .panel-heading p { color: var(--text-muted); font-size: var(--font-size-sm); }
   .tab-body { display: grid; min-width: 0; gap: var(--space-4); }
