@@ -5,6 +5,7 @@ package storetest
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 var globalCounter atomic.Int64
@@ -31,7 +33,7 @@ type Fixture struct {
 func New(t *testing.T) *Fixture {
 	t.Helper()
 	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gmail", "test@example.com")
+	source, err := st.GetOrCreateSource("gmail", OwnerAddress)
 	require.NoError(t, err, "setup: GetOrCreateSource")
 	convID, err := st.EnsureConversation(source.ID, "default-thread", "Default Thread")
 	require.NoError(t, err, "setup: EnsureConversation")
@@ -321,5 +323,79 @@ func (b *MessageBuilder) Create(t *testing.T, st *store.Store) int64 {
 	m := b.msg
 	id, err := st.UpsertMessage(&m)
 	require.NoError(t, err, "MessageBuilder.Create")
+	return id
+}
+
+// OwnerAddress is the account the Fixture's source archives. An email from it
+// is outbound; an email to it is inbound.
+const OwnerAddress = "test@example.com"
+
+// EmailSpec describes one archived email in a thread.
+type EmailSpec struct {
+	Thread  string
+	From    string
+	To      []string
+	Bcc     []string
+	Subject string
+	Body    string
+	// Raw is the stored original. Empty stores a plain message built from
+	// the other fields unless NoRaw is set.
+	Raw      string
+	NoRaw    bool
+	ListID   string
+	SentAt   time.Time
+	FileName string
+}
+
+// PersistEmail archives spec with its participants, recipients, body, raw
+// MIME, and optional file attachment, and returns the message ID.
+func (f *Fixture) PersistEmail(spec EmailSpec) int64 {
+	f.T.Helper()
+	if spec.Thread == "" {
+		spec.Thread = "default-thread"
+	}
+	require.NoError(f.T, f.Store.AddAccountIdentity(f.Source.ID, OwnerAddress, "manual"), "PersistEmail: owner identity")
+	convID, err := f.Store.EnsureConversation(f.Source.ID, spec.Thread, spec.Subject)
+	require.NoError(f.T, err, "PersistEmail: conversation")
+	from := f.EnsureParticipant(spec.From, "", "example.com")
+	var to []int64
+	for _, address := range spec.To {
+		to = append(to, f.EnsureParticipant(address, "", "example.com"))
+	}
+	var bcc []int64
+	for _, address := range spec.Bcc {
+		bcc = append(bcc, f.EnsureParticipant(address, "", "example.com"))
+	}
+	data := &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: f.Source.ID, ConversationID: convID, MessageType: store.MessageTypeEmail,
+			SourceMessageID: fmt.Sprintf("email-%d", f.msgCounter.Add(1)),
+			SenderID:        sql.NullInt64{Int64: from, Valid: true},
+			SentAt:          sql.NullTime{Time: spec.SentAt, Valid: true},
+			Subject:         sql.NullString{String: spec.Subject, Valid: spec.Subject != ""},
+			ListID:          sql.NullString{String: spec.ListID, Valid: spec.ListID != ""},
+			IsFromMe:        spec.From == OwnerAddress,
+		},
+		BodyText: sql.NullString{String: spec.Body, Valid: spec.Body != ""},
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{spec.From}},
+			{Type: "to", ParticipantIDs: to, EmailAddresses: spec.To},
+			{Type: "bcc", ParticipantIDs: bcc, EmailAddresses: spec.Bcc},
+		},
+	}
+	if spec.Raw == "" && !spec.NoRaw {
+		spec.Raw = string(email.NewMessage().From(spec.From).To(strings.Join(spec.To, ", ")).Bcc(strings.Join(spec.Bcc, ", ")).
+			Subject(spec.Subject).Date(spec.SentAt.Format(time.RFC1123Z)).Body(spec.Body).CRLF().Bytes())
+	}
+	if spec.Raw != "" {
+		data.RawMIME = []byte(spec.Raw)
+	}
+	id, err := f.Store.PersistMessageContext(f.T.Context(), data)
+	require.NoError(f.T, err, "PersistEmail: message")
+	if spec.FileName != "" {
+		_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments (message_id, filename, storage_path, attachment_role)
+			VALUES (?, ?, 'ab/file', 'standalone')`), id, spec.FileName)
+		require.NoError(f.T, err, "PersistEmail: attachment")
+	}
 	return id
 }

@@ -5656,6 +5656,34 @@ func TestCopySubsetPreservesSelectedMessageEligibility(t *testing.T) {
 	}
 }
 
+func TestSubsetCopiesLoopDecisions(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	require.NoError(source.MarkMessageDeleted(1, "msg_4"))
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO loop_decisions(message_id,state,snoozed_until) VALUES (1,'snoozed','2026-10-25T12:00:00Z'),(2,'done',NULL),(4,'done',NULL)`)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 3, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	var state string
+	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT state FROM loop_decisions WHERE message_id = 2`).Scan(&state))
+	require.Equal(LoopStateDone, state)
+	var count int
+	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM loop_decisions`).Scan(&count))
+	require.Equal(2, count, "only selected questions carry their decisions")
+	var until time.Time
+	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT snoozed_until FROM loop_decisions WHERE message_id = 1`).Scan(&until))
+	require.Equal(time.Date(2026, time.October, 25, 12, 0, 0, 0, time.UTC), until.UTC())
+}
+
 func TestCopySubsetRepairsCopiedSynctechSendState(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

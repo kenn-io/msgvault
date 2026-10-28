@@ -985,6 +985,13 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("preserve subset draft evidence: %w", err)
 	}
 	result.Labels += preservedLabels
+	if present, err := sourceTableExists(tx, "loop_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if _, err := copyByName(tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy loop decisions: %w", err)
+		}
+	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.
