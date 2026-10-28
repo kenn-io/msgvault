@@ -141,6 +141,29 @@ func TestPersonFactContestsReportsSupportedTieWithoutWrites(t *testing.T) {
 	assertions.Equal(before, personFactProjectionCounts(t, st))
 }
 
+func TestPersonFactContestsSensitiveTargetRequiresOptIn(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, personID, _ := newPersonFactProjectionStore(t)
+	target := projectionTargetBySlug(t, st, "religion")
+	input := personFactProjectionInput(personID, "sensitive-contested-tie", []personfacts.ProposedClaim{
+		personFactProjectionClaim(personID, target, `"Buddhism"`, "sensitive-first"),
+		personFactProjectionClaim(personID, target, `"Hinduism"`, "sensitive-second"),
+	}, nil)
+	input.Policy.AllowSensitive = true
+	_, err := st.ApplyPersonFactGenerationContext(t.Context(), input, nil)
+	requirements.NoError(err)
+
+	contests, err := st.ListPersonFactContestsContext(t.Context(), personID, false)
+	requirements.NoError(err)
+	assertions.Empty(contests)
+
+	contests, err = st.ListPersonFactContestsContext(t.Context(), personID, true)
+	requirements.NoError(err)
+	requirements.Len(contests, 1)
+	assertions.Equal(target.Key, contests[0].Target.Key)
+}
+
 func TestPersonFactContestsIncludesEveryNearTiedNegativeClaim(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

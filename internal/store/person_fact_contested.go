@@ -95,10 +95,7 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 			}
 			contest := PersonFactContest{Target: *target, ResolvedAt: shell.ResolvedAt, ResolutionRevision: shell.Target.Revision, Current: []personfacts.CurrentProjection{}, Claims: []PersonFactContestedClaim{}}
 			for _, d := range selected {
-				claim, ok := byKey[d.ClaimKey]
-				if !ok {
-					continue
-				}
+				claim := byKey[d.ClaimKey]
 				evidence := make([]personfacts.Evidence, 0)
 				for _, item := range claim.Evidence {
 					if item.Supported {

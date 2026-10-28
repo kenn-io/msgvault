@@ -298,11 +298,7 @@ func (s *Server) handleListPersonFactContests(w http.ResponseWriter, r *http.Req
 		}
 		for _, entry := range item.Claims {
 			claim := PersonFactContestClaim{ClaimKey: entry.Claim.ClaimKey, Relation: entry.Claim.Claim.Relation, ValidFrom: entry.Claim.Claim.ValidFrom, ValidUntil: entry.Claim.Claim.ValidUntil, Decision: personFactDecisionDTO(entry.Decision), Evidence: []PersonFactEvidence{}}
-			if entry.Claim.Normalized != nil {
-				claim.Value = string(entry.Claim.Normalized.JSON)
-			} else {
-				claim.Value = string(entry.Claim.Claim.SubmittedValue)
-			}
+			claim.Value = string(entry.Claim.Normalized.JSON)
 			for _, evidence := range entry.Claim.Evidence {
 				claim.Evidence = append(claim.Evidence, personFactEvidenceDTO(evidence))
 			}
