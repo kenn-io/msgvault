@@ -47,6 +47,7 @@
           <a class="row__guide" href={action.guideHref} target="_blank" rel="noreferrer">{action.guideLabel}</a>
         {/if}
       </span>
+      {#if action?.kind === 'host'}<span class="row__consent">{action.text}</span>{/if}
       {#if action?.kind === 'start' && action.consent}<span class="row__consent">{action.consent}</span>{/if}
     </li>
   {/each}
