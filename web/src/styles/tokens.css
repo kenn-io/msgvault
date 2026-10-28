@@ -175,8 +175,11 @@
  * xs also pads the top and bottom. One chip padding keeps the text centered
  * in every chip; the height comes from min-height and flex centering. */
 :root:root .kit-chip {
-  min-height: var(--chip-min-height);
   padding: 0 var(--chip-pad-x);
+}
+
+:root:root .kit-chip:not(.kit-chip--xs) {
+  min-height: var(--chip-min-height);
 }
 
 .filter-chip {
