@@ -97,10 +97,17 @@ func (c *Client) UploadAsset(ctx context.Context, file io.Reader, fileName strin
 	if err != nil {
 		return "", err
 	}
+	uploadID, responseErr := decodeUploadResponse(data)
+	var failure *WriteError
+	// Beeper may answer before consuming the body. Its rejection or usable
+	// receipt takes precedence over the resulting interrupted multipart write.
+	if responseErr == nil || (errors.As(responseErr, &failure) && failure.Status == http.StatusBadRequest) {
+		return uploadID, responseErr
+	}
 	if uploadErr != nil {
 		return "", uploadErr
 	}
-	return decodeUploadResponse(data)
+	return "", responseErr
 }
 
 // decodeUploadResponse extracts the upload ID. Beeper can answer 200 with

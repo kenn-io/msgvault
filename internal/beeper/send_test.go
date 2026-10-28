@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -113,6 +114,41 @@ func TestSendMessageUnknownOutcome(t *testing.T) {
 		require.ErrorAs(err, &failure)
 		assert.Zero(failure.Status)
 		server.Close()
+	}
+}
+
+func TestUploadAssetEarlyResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name, response, uploadID string
+		status                   int
+	}{
+		{name: "rejection", response: `{"error":"unsupported upload"}`, status: http.StatusBadRequest},
+		{name: "receipt", response: `{"uploadID":"upload-1"}`, uploadID: "upload-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, "/v1/assets/upload", r.URL.Path)
+				// Answer before reading the body; the large upload cannot finish
+				// before this response interrupts the multipart writer.
+				w.Header().Set("Connection", "close")
+				_, _ = io.WriteString(w, tc.response)
+			}))
+			defer server.Close()
+			client := NewClient(server.URL, testToken, 1000)
+			uploadID, err := client.UploadAsset(t.Context(), strings.NewReader(strings.Repeat("x", 32<<20)), "example.txt")
+			assert.Equal(t, int32(1), calls.Load())
+			if tc.status != 0 {
+				var failure *WriteError
+				require.ErrorAs(t, err, &failure)
+				assert.Equal(t, tc.status, failure.Status)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.uploadID, uploadID)
+		})
 	}
 }
 
