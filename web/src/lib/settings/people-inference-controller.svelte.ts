@@ -36,8 +36,7 @@ export class PeopleInferenceController {
   async saveKeys(): Promise<boolean> {
     if (Object.keys(this.keyDrafts).length > 0) this.clearCheck();
     for (const [name, key] of Object.entries(this.keyDrafts)) {
-      await this.run(() => this.writeKey(name, key));
-      if (this.error) return false;
+      if (!(await this.run(() => this.writeKey(name, key)))) return false;
       delete this.keyDrafts[name];
     }
     return true;
@@ -86,7 +85,7 @@ export class PeopleInferenceController {
       // saved profile visible so a failed key write can be retried in place.
       this.choose(name);
       if (key) await this.writeKey(name, key);
-    });
+    }, true);
   }
 
   async saveKey(key: string): Promise<void> {
@@ -147,7 +146,7 @@ export class PeopleInferenceController {
     if (!this.canSelect) return;
     await this.run(async () => {
       this.capture(await selectSettingsPeopleInference({ name: this.selectedName }, this.configOptions()));
-    });
+    }, true);
   }
 
   async revoke(): Promise<void> {
@@ -162,7 +161,7 @@ export class PeopleInferenceController {
     this.clearCheck();
     await this.run(async () => {
       this.capture(await disableSettingsPeopleInference(this.configOptions()));
-    });
+    }, true);
   }
 
   async remove(name: string): Promise<void> {
@@ -170,7 +169,7 @@ export class PeopleInferenceController {
     await this.run(async () => {
       this.capture(await deleteSettingsPeopleInferenceProvider({ name }, this.configOptions()));
       if (!this.destroyed) this.choose(this.status?.profiles[0]?.name ?? '');
-    });
+    }, true);
   }
 
   destroy(): void { this.destroyed = true; }
@@ -204,13 +203,18 @@ export class PeopleInferenceController {
     if (!this.configETag) throw new Error('People sweep settings response omitted its config ETag. Reload before editing.');
   }
 
-  private async run(action: () => Promise<void>): Promise<void> {
-    if (this.busy) return;
+  private async run(action: () => Promise<void>, changesConfig = false): Promise<boolean> {
+    if (this.busy) return false;
     this.busy = true;
     this.error = '';
-    try { await action(); await this.onChanged(); }
+    try {
+      await action();
+      if (changesConfig) await this.onChanged();
+      return true;
+    }
     catch (cause) {
       if (!this.destroyed) this.error = cause instanceof Error ? cause.message : 'Unable to update people sweep settings.';
+      return false;
     } finally {
       if (!this.destroyed) this.busy = false;
     }

@@ -279,3 +279,21 @@ describe('PeopleInferenceSettings', () => {
     expect(requests.at(-1)!.method).toBe('DELETE');
   });
 });
+
+it('keeps a replacement key pending while a provider check is running', async () => {
+  let finish!: (response: Response) => void;
+  const checked = new Promise<Response>(resolve => { finish = resolve; });
+  const { client, requests } = fixture(status, request => request.url.endsWith('/check') ? checked : undefined);
+  const controller = new PeopleInferenceController(client);
+  await controller.load();
+  controller.keyDrafts = { routed: 'synthetic-replacement' };
+  const checking = controller.check();
+  expect(await controller.saveKeys()).toBe(false);
+  expect(controller.keyDrafts).toEqual({ routed: 'synthetic-replacement' });
+  expect(requests.some(request => request.url.endsWith('/key'))).toBe(false);
+  finish(Response.json({ ok: true, fingerprint: profile.fingerprint }));
+  await checking;
+  expect(await controller.saveKeys()).toBe(true);
+  expect(controller.keyDrafts).toEqual({});
+  expect(requests.filter(request => request.url.endsWith('/key'))).toHaveLength(1);
+});

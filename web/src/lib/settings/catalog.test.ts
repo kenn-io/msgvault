@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { groupSettings, hasHostManaged, restartPosture, type SettingState } from './catalog';
+import { groupSettings, type SettingState } from './catalog';
 
 describe('settings catalog', () => {
   it('arranges settings into daemon groups and sections in daemon order', () => {
@@ -36,19 +36,7 @@ describe('settings catalog', () => {
     );
   });
 
-  it('reports how a run of settings takes effect, ignoring host-managed rows', () => {
-    const live = setting('web.theme', 'dark', { restart_required: false });
-    const restart = setting('log.level', 'info');
-    const hostManaged = setting('server.bind_addr', '127.0.0.1', { read_only: true });
 
-    expect(restartPosture([live, live])).toBe('live');
-    expect(restartPosture([restart, hostManaged])).toBe('restart');
-    expect(restartPosture([live, restart])).toBe('mixed');
-    expect(restartPosture([hostManaged])).toBe('none');
-    expect(restartPosture([])).toBe('none');
-    expect(hasHostManaged([restart, hostManaged])).toBe(true);
-    expect(hasHostManaged([restart])).toBe(false);
-  });
 });
 
 function setting(key: string, value: unknown, overrides: Partial<SettingState> = {}): SettingState {

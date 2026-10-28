@@ -51,10 +51,9 @@ export function overviewRows(
   const chip = (kind: Kind, building?: string): OverviewRow['chip'] => {
     const found = lane(lanes, kind);
     if (!found || found.unavailable_code) return { tone: 'muted', text: 'Unavailable' };
-    if (found.active) return { tone: 'info', text: found.active.state === 'queued' ? 'Queued' : 'Running' };
+    if (found.active) return { tone: 'info', text: found.active.state === 'queued' ? 'Queued' : building ?? 'Running' };
     if (!on(kind)) return { tone: 'muted', text: 'Off' };
     if (failed(lane(lanes, kind))) return { tone: 'danger', text: 'Failed' };
-    if (building) return { tone: 'info', text: building };
     return { tone: 'success', text: 'On' };
   };
   const rows: OverviewRow[] = [];
@@ -150,8 +149,5 @@ export function overviewRows(
   });
 
   rows.unshift({ id: 'source_sync', name: 'Source sync', chip: chip('source_sync'), action: { kind: 'sources' } });
-  return rows.map((row) => {
-    const action = setup(row.id as Kind);
-    return !row.action && row.chip.text === 'Failed' && action?.kind === 'settings' ? { ...row, action } : row;
-  });
+  return rows;
 }

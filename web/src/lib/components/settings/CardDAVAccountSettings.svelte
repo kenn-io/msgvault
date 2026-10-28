@@ -5,12 +5,10 @@
   import { Button, SettingsSection, TextInput, Toggle, SelectDropdown } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
-  import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
   import { authorizeGoogleContacts } from '../../settings/google-authorization';
   import { shellQuote } from '../../settings/shell-quote';
-  import type { CardDAVAccountValues, AccountDraft } from '../../carddav/account-settings';
+  import { accountRequest, type CardDAVAccountValues, type AccountDraft } from '../../carddav/account-settings';
   import CronField from './CronField.svelte';
-  type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
   type Action = 'test' | 'authorize';
   let {
     client,
@@ -32,8 +30,6 @@
   let oauthApp = $state(initialValues.oauthApp);
   let persistedProvider = $state(untrack(() => values.provider));
   let persistedOAuthApp = $state(untrack(() => values.oauthApp));
-  const googleURL = 'https://www.googleapis.com/.well-known/carddav';
-  const graphURL = 'https://graph.microsoft.com/v1.0';
   const google = $derived(provider === 'google');
   const microsoft = $derived(provider === 'microsoft');
   const oauth = $derived(google || microsoft);
@@ -96,19 +92,6 @@
     persistedEnabled = next.enabled;
     persistedSchedule = next.schedule;
   }
-  function requestBody(): CardDAVAccountRequest {
-    const body: CardDAVAccountRequest = {
-      connection,
-      base_url: baseURL,
-      username,
-      enabled,
-      schedule,
-    };
-    if (google) { body.provider = 'google'; body.oauth_app = oauthApp; body.base_url = googleURL; }
-    else if (microsoft) { body.provider = 'microsoft'; body.base_url = graphURL; }
-    else if (password !== '') body.password = password;
-    return body;
-  }
   function identityTuple(): string {
     return `${provider}\u0000${oauthApp}\u0000${baseURL}\u0000${username}`;
   }
@@ -158,7 +141,7 @@
     error = '';
     status = '';
     try {
-      const { data, error: responseError } = await generatedTestCardDAVAccount(requestBody(), {
+      const { data, error: responseError } = await generatedTestCardDAVAccount(accountRequest({ provider, oauthApp, baseURL, username, passwordConfigured: persistedPasswordConfigured, enabled, schedule }, password, connection), {
         ...client,
         signal: controller.signal,
       });
@@ -180,7 +163,7 @@
     const currentValues: CardDAVAccountValues = { provider, oauthApp, baseURL, username, passwordConfigured: persistedPasswordConfigured, enabled, schedule };
     const changed = provider !== persistedProvider || oauthApp !== persistedOAuthApp || baseURL !== persistedBaseURL || username !== persistedUsername || enabled !== persistedEnabled || schedule !== persistedSchedule || password !== '';
     const needsPassword = passwordRequiredForSave() && password === '';
-    onDraft(changed ? { values: currentValues, password, busy: activeAction !== undefined, request: requestBody(), error: needsPassword ? 'Password is required for a new or changed CardDAV account.' : (!oauth && !baseURL) || !username ? 'Enter the contact account URL and username.' : undefined } : undefined);
+    onDraft(changed ? { values: currentValues, password, error: needsPassword ? 'Password is required for a new or changed CardDAV account.' : (!oauth && !baseURL) || !username ? 'Enter the contact account URL and username.' : undefined } : undefined);
   });
   function apiErrorMessage(responseError: unknown, fallback: string): string {
     if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {

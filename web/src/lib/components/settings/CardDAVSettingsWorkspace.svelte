@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
 
   import { Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { listCardDAVConnections } from '../../api/generated/api/api';
@@ -40,7 +40,7 @@
   let connectionGeneration = 0;
   let disposed = false;
   const connectionOptions = $derived.by(() => {
-    const names = new Set(['default', ...connections.map(item => item.connection)]);
+    const names = new Set(['default', ...connections.map(item => item.connection), ...Object.keys(drafts)]);
     if (newConnection) names.add(newConnection);
     return [...names].map(value => ({
       value,
@@ -99,7 +99,8 @@
     }
   }
   $effect(() => {
-    if (resetRevision > 0) void loadConnections();
+    void resetRevision;
+    void loadConnections();
   });
   function addConnection(): void {
     if (!/^[a-z][a-z0-9_-]{0,63}$/.test(newName) || newName === 'default') {
@@ -118,9 +119,6 @@
 
   let availability = $state<Record<string, boolean>>({});
   const available = $derived(Object.values(availability).some(Boolean));
-  onMount(() => {
-    void loadConnections();
-  });
   $effect(() => {
     if (available) {
       untrack(() => { void conflictsController.load(); });
