@@ -408,6 +408,9 @@
     max-width: 100%;
   }
   .summary :global(.summary-chip) {
+    display: inline-flex;
+    min-height: var(--chip-min-height);
+    align-items: center;
     border: 1px solid var(--border-default);
     background: var(--bg-subtle);
     color: var(--text-secondary);
