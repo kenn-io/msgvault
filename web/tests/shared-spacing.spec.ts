@@ -223,6 +223,30 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   expect.soft(statusShape.radius).toBeGreaterThanOrEqual(statusShape.height / 2);
 });
 
+test('the same active and saved query shares one chip height and centered text', async ({ page }) => {
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
+    id: 1, name: 'Archive search', schema_version: 2, revision: 1,
+    canonical_state: { query: 'archive', search_mode: 'full_text' },
+    created_at: row.occurred_at, updated_at: row.occurred_at
+  }] } }));
+  await selectWorkspace(page, 'Everything');
+  await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
+  const active = page.locator('.context-chips .chip').first();
+  await expect(active).toBeVisible();
+  const activeHeight = (await active.boundingBox())!.height;
+  await selectWorkspace(page, 'Saved views');
+  const summary = page.locator('.summary li').filter({ hasText: 'archive' });
+  await expect(summary).toBeVisible();
+  const geometry = await summary.evaluate((element) => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    const box = element.getBoundingClientRect(); const text = range.getBoundingClientRect();
+    return { height: box.height, centered: Math.abs((text.top + text.bottom) / 2 - (box.top + box.bottom) / 2) };
+  });
+  expect(activeHeight).toBe(26);
+  expect(geometry.height).toBe(activeHeight);
+  expect(geometry.centered).toBeLessThanOrEqual(1);
+});
+
 test('linked message uses the page title text scale', async ({ page }) => {
   const message = {
     id: 1, conversation_id: 11, subject: row.title, message_type: 'email',
