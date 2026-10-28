@@ -204,6 +204,12 @@ func TestDraftToolCatalogFollowsCommandsAndWriteClass(t *testing.T) {
 	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as", "send_message"}, names(owner))
 	assert.Equal([]string{"draft_get", "draft_send_as"}, names(rawListTools(t, opts, false)))
 	for _, name := range names(owner) {
+		if strings.HasPrefix(name, "draft_") {
+			description, ok := toolsByName(t, owner)[name]["description"].(string)
+			require.True(ok)
+			assert.NotContains(description, "Msgvault never sends", name)
+			assert.Contains(description, "Draft commands do not send.", name)
+		}
 		annotations, ok := toolsByName(t, owner)[name]["annotations"].(map[string]any)
 		require.True(ok)
 		assert.Equal(true, annotations["openWorldHint"])
