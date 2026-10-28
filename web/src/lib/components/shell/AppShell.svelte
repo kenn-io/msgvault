@@ -1696,6 +1696,10 @@
 {/if}
 
 <style>
+  .files-shell > :global(.page-header) {
+    margin-bottom: calc(var(--space-5) - var(--space-4));
+  }
+
   .archive-navigation-status { padding: var(--control-gap) var(--pane-pad-x); color: var(--text-secondary); }
 
   .app-shell {
