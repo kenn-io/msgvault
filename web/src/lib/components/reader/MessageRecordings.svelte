@@ -230,7 +230,7 @@
     overflow-wrap: break-word;
     color: var(--text-primary);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: var(--font-size-md);
     line-height: 1.55;
     white-space: pre-wrap;
   }
