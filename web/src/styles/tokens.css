@@ -32,16 +32,10 @@
   --section-gap: var(--space-6);
   --field-gap: var(--space-4);
   --control-gap: var(--space-3);
-  --label-gap: var(--space-2);
-  --divider-gap: var(--space-4);
-  --control-h-sm: 24px;
-  --control-h: 28px;
-  --control-h-lg: 36px;
   --control-pad-x: var(--space-5);
   --chip-pad-x: var(--space-4);
   --chip-min-height: 26px;
   --line-height-tight: 1.25;
-  --line-height-body: 1.45;
 
   --scrollbar-size: 8px;
   --scrollbar-thumb: color-mix(in srgb, var(--text-muted) 38%, transparent);
@@ -138,10 +132,6 @@
 :root:root .kit-detail-drawer__footer {
   gap: var(--control-gap);
   padding: var(--pane-pad-x);
-}
-
-:root:root .kit-detail-drawer__header {
-  padding: var(--pane-pad-y) var(--pane-pad-x);
 }
 
 /* Kit trims button labels to the x-height, which centers lowercase letters
