@@ -52,8 +52,10 @@ func (c Chat) DraftState() (DraftState, error) {
 	return state, nil
 }
 
-// WriteError reports a failed write with its HTTP status, or 0
-// when the request may have reached Beeper without a response.
+// WriteError reports a failed write. Status is the HTTP status Beeper
+// returned, 400 for a 200 upload response that carries an error
+// payload, or 0 when the request may have reached Beeper without a
+// response.
 type WriteError struct {
 	Status int
 	Err    error

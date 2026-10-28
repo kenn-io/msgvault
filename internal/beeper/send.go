@@ -100,11 +100,21 @@ func (c *Client) UploadAsset(ctx context.Context, file io.Reader, fileName strin
 	if uploadErr != nil {
 		return "", uploadErr
 	}
+	return decodeUploadResponse(data)
+}
+
+// decodeUploadResponse extracts the upload ID. Beeper can answer 200 with
+// an error payload instead of an ID; that answer is a permanent rejection.
+func decodeUploadResponse(data []byte) (string, error) {
 	var response struct {
 		UploadID string `json:"uploadID"`
+		Error    string `json:"error"`
 	}
 	if err := json.Unmarshal(data, &response); err != nil {
 		return "", &WriteError{Err: err}
+	}
+	if response.Error != "" {
+		return "", &WriteError{Status: http.StatusBadRequest, Err: errPermanentResponse}
 	}
 	if response.UploadID == "" {
 		return "", &WriteError{Err: errors.New("upload did not return an asset")}

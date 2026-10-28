@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/sourceops"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -88,18 +89,10 @@ func (a *storeAPIAdapter) runCLISendMessage(ctx context.Context, req api.CLIRunR
 		return draftReplyError("not_supported", errors.New("send to a member chat"))
 	}
 	if intent.ReplyTo != 0 {
-		message, err := a.store.GetMessageContext(ctx, intent.ReplyTo)
-		if err != nil || message.SourceID != source.ID || message.SourceConversationID != output.ChatID {
-			return draftReplyError("invalid_reply_target", errors.New("reply must name an archived message in this chat"))
+		output.ReplyToMessageID, err = a.checkBeeperReply(ctx, client, source, output.ChatID, intent.ReplyTo)
+		if err != nil {
+			return err
 		}
-		if err := client.VerifyArchivedMessage(ctx, output.ChatID, message.SourceMessageID, message.SentAt); err != nil {
-			code := "provider_unavailable"
-			if errors.Is(err, beeper.ErrNotFound) || errors.Is(err, beeper.ErrArchivedMessageMismatch) {
-				code = "invalid_reply_target"
-			}
-			return draftReplyError(code, err)
-		}
-		output.ReplyToMessageID = message.SourceMessageID
 	}
 	params := beeper.SendParams{Text: intent.Body, ReplyToMessageID: output.ReplyToMessageID}
 	if file != nil {
@@ -126,10 +119,31 @@ func (a *storeAPIAdapter) runCLISendMessage(ctx context.Context, req api.CLIRunR
 	return nil
 }
 
+// checkBeeperReply loads the archived reply target and verifies it against
+// the live chat. Store lookup failures are transient; a missing, foreign,
+// or live-mismatched target is caller-fixable.
+func (a *storeAPIAdapter) checkBeeperReply(ctx context.Context, client *beeper.Client, source *store.Source, chatID string, replyTo int64) (string, error) {
+	message, err := a.store.GetMessageContext(ctx, replyTo)
+	if err != nil && !errors.Is(err, store.ErrMessageNotFound) {
+		return "", draftReplyError("provider_unavailable", err)
+	}
+	if err != nil || message.SourceID != source.ID || message.SourceConversationID != chatID {
+		return "", draftReplyError("invalid_reply_target", errors.New("reply must name an archived message in this chat"))
+	}
+	if err := client.VerifyArchivedMessage(ctx, chatID, message.SourceMessageID, message.SentAt); err != nil {
+		code := "provider_unavailable"
+		if errors.Is(err, beeper.ErrNotFound) || errors.Is(err, beeper.ErrArchivedMessageMismatch) {
+			code = "invalid_reply_target"
+		}
+		return "", draftReplyError(code, err)
+	}
+	return message.SourceMessageID, nil
+}
+
 func beeperSendFailureCode(err error, sending bool) string {
 	var writeErr *beeper.WriteError
 	if errors.As(err, &writeErr) {
-		if writeErr.Status >= 400 && writeErr.Status < 500 {
+		if writeErr.Status >= 300 && writeErr.Status < 500 {
 			return "provider_rejected"
 		}
 		if sending {
