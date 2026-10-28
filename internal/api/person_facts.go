@@ -303,7 +303,7 @@ func (s *Server) handleListPersonFactContests(w http.ResponseWriter, r *http.Req
 			} else {
 				claim.Value = string(entry.Claim.Claim.SubmittedValue)
 			}
-			for _, evidence := range entry.Evidence {
+			for _, evidence := range entry.Claim.Evidence {
 				claim.Evidence = append(claim.Evidence, personFactEvidenceDTO(evidence))
 			}
 			contest.Claims = append(contest.Claims, claim)
