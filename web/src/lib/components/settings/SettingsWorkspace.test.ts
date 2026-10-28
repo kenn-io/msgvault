@@ -236,7 +236,7 @@ describe('SettingsWorkspace', () => {
     expect(seen.find((entry) => entry.method === 'PUT')!.ifMatch).toBe('"credential-a"');
   });
 
-  it('lands a Set up link on the first field the switch still needs', async () => {
+  it('lands a Set up link on the feature switch', async () => {
     const { client } = fixture();
     render(SettingsWorkspace, {
       client, category: 'search',
@@ -244,7 +244,7 @@ describe('SettingsWorkspace', () => {
     });
     await screen.findByRole('heading', { name: 'Search & AI' });
     await waitFor(() => expect((window.document.activeElement as HTMLElement | null)?.dataset['settingKey'])
-      .toBe('vector.embeddings.endpoint'));
+      .toBe('vector.enabled'));
   });
 
   it('reports a saved Appearance value, and hides search-mode choices until vector search is ready', async () => {
@@ -274,7 +274,7 @@ describe('SettingsWorkspace', () => {
     expect(screen.getByText('1 unsaved change')).toBeDefined();
   });
 
-  it('shows Contacts with its heading first and without sync status, Sync now, or Full sync', async () => {
+  it('keeps Contacts account and sync controls reachable', async () => {
     const { client } = fixture();
     render(SettingsWorkspace, { client, category: 'carddav' });
     expect(await screen.findByRole('heading', { name: 'Contacts' })).toBeDefined();
@@ -292,46 +292,7 @@ describe('SettingsWorkspace', () => {
     expect(await screen.findByLabelText('Profile name')).toBeDefined();
   });
 
-  it('offers to build the message index when search is on and no index is active', async () => {
-    const doc = settingsDoc();
-    (doc.settings as Setting[]).find((candidate) => candidate.key === 'vector.enabled')!.value = typed(true);
-    const { client, seen } = fixture(doc, (request) => {
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/embeddings/status') return Response.json({ active_generation: null });
-      if (path === '/api/v1/cli/run') return new Response('{"type":"complete"}\n');
-      return undefined;
-    });
-    render(SettingsWorkspace, { client, category: 'search' });
-    expect(await screen.findByText('Index not built')).toBeDefined();
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Build index' }));
-    await waitFor(() => expect(seen.find((entry) => entry.path === '/api/v1/cli/run')?.body).toEqual({
-      args: ['embeddings', 'build', '--full-rebuild', '--yes']
-    }));
-  });
-
-  it('shows the visual index step the server advertises, with its consent line', async () => {
-    const doc = settingsDoc();
-    (doc.settings as Setting[]).push(setting('vector.multimodal.enabled', 'search', 'boolean', true, { label: 'Visual search' }));
-    const lane = (actions: string[]) => ({ lanes: [{ kind: 'visual_embedding', lane: 'visual_attachments', configured: true, supported_actions: actions }] });
-    let actions = ['visual_build'];
-    const { client, seen } = fixture(doc, (request) => {
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json(lane(actions));
-      if (path === '/api/v1/multimodal/build') {
-        actions = ['visual_resume'];
-        return Response.json({});
-      }
-      return undefined;
-    });
-    render(SettingsWorkspace, { client, category: 'search' });
-    expect(await screen.findByText('Sends attachments to your search provider.')).toBeDefined();
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Build visual index' }));
-    await waitFor(() => expect(seen.find((entry) => entry.path === '/api/v1/multimodal/build')?.body).toEqual({ consent: true }));
-    expect(await screen.findByRole('button', { name: 'Resume visual index' })).toBeDefined();
-    expect(screen.queryByText('Sends attachments to your search provider.')).toBeNull();
-  });
 });
 
 

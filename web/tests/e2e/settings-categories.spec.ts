@@ -13,7 +13,7 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Set up Message search', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Search & AI', exact: true })).toBeVisible();
-  await expect(page.locator('[data-setting-key="vector.embeddings.endpoint"]')).toBeFocused();
+  await expect(page.locator('[data-setting-key="vector.enabled"]')).toBeFocused();
   await page.getByRole('button', { name: 'Server', exact: true }).click();
   await page.getByRole('textbox', { name: 'Stop when idle after', exact: true }).fill('17m');
   await page.getByRole('button', { name: 'Advanced', exact: true }).click();
