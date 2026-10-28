@@ -484,6 +484,8 @@ func TestPersonFactContestsHTTPIncludesClaimsAndEvidence(t *testing.T) {
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	requirements.Len(body.Contests, 1)
 	requirements.Len(body.Contests[0].Claims, 2)
+	requirements.Len(body.Contests[0].Current, 1)
+	assertions.JSONEq(`"chat"`, body.Contests[0].Current[0].Value)
 	assertions.Equal(target.Revision, body.Contests[0].ResolutionRevision)
 	for _, claim := range body.Contests[0].Claims {
 		assertions.Equal(personfacts.DecisionAmbiguousRetained, claim.Decision.Action)

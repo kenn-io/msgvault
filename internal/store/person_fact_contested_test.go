@@ -72,11 +72,39 @@ func TestPersonFactContestsIncludesChallengerToUnpinnedCurrentValue(t *testing.T
 			requirements.Len(contests[0].Claims, 1)
 			assertions.JSONEq(tc.value, string(contests[0].Claims[0].Claim.Claim.SubmittedValue))
 			assertions.Equal(result.Decisions[0], contests[0].Claims[0].Decision)
-			requirements.Len(contests[0].Claims[0].Evidence, 1)
-			assertions.True(contests[0].Claims[0].Evidence[0].Supported)
-			assertions.Equal(claim.Evidence[0].SourceURL, contests[0].Claims[0].Evidence[0].Input.SourceURL)
+			requirements.Len(contests[0].Claims[0].Claim.Evidence, 1)
+			assertions.True(contests[0].Claims[0].Claim.Evidence[0].Supported)
+			assertions.Equal(claim.Evidence[0].SourceURL, contests[0].Claims[0].Claim.Evidence[0].Input.SourceURL)
 		})
 	}
+}
+
+func TestPersonFactContestsManualAttributeChoiceSettlesContest(t *testing.T) {
+	requirements := require.New(t)
+	st, personID, targets := newPersonFactProjectionStore(t)
+	target := targets[AttributeSlugPrimaryChannel]
+	_, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "manual-choice-current", []personfacts.ProposedClaim{
+		personFactProjectionClaim(personID, target, `"chat"`, "manual-choice-chat"),
+	}, nil), nil)
+	requirements.NoError(err)
+	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "manual-choice-challenger", []personfacts.ProposedClaim{
+		personFactProjectionClaim(personID, target, `"email"`, "manual-choice-email"),
+	}, nil), nil)
+	requirements.NoError(err)
+	contests, err := st.ListPersonFactContestsContext(t.Context(), personID, false)
+	requirements.NoError(err)
+	requirements.Len(contests, 1)
+	requirements.Len(contests[0].Current, 1)
+	requirements.JSONEq(`"chat"`, string(contests[0].Current[0].Normalized.JSON))
+
+	_, err = st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
+		PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel,
+		Value: AttributeValue{Type: AttributeValueText, Text: new("email")}, Source: ProvenanceUser,
+	})
+	requirements.NoError(err)
+	contests, err = st.ListPersonFactContestsContext(t.Context(), personID, false)
+	requirements.NoError(err)
+	requirements.Empty(contests)
 }
 
 func TestPersonFactContestsReportsSupportedTieWithoutWrites(t *testing.T) {
@@ -99,7 +127,7 @@ func TestPersonFactContestsReportsSupportedTieWithoutWrites(t *testing.T) {
 	requirements.Len(contests[0].Claims, 2)
 	for _, claim := range contests[0].Claims {
 		assertions.Equal(personfacts.DecisionAmbiguousRetained, claim.Decision.Action)
-		assertions.Len(claim.Evidence, 1)
+		assertions.Len(claim.Claim.Evidence, 1)
 	}
 	assertions.Equal(before, personFactProjectionCounts(t, st))
 }
@@ -145,7 +173,7 @@ func TestPersonFactContestsIncludesEveryNearTiedNegativeClaim(t *testing.T) {
 	requirements.Len(contests[0].Claims, 3)
 	requirements.Len(contests[0].Current, 1)
 	for _, claim := range contests[0].Claims {
-		assertions.Len(claim.Evidence, 1)
+		assertions.Len(claim.Claim.Evidence, 1)
 	}
 }
 
@@ -258,6 +286,11 @@ func TestPersonFactContestsCurrentEmploymentExcludesHistoricalProjection(t *test
 	declared, err := st.AddEmploymentContext(t.Context(), EmploymentInput{PersonID: personID, OrganizationID: currentOrg.ID, Title: new("Manager"), IsCurrent: new(true), Source: ProvenanceUser})
 	requirements.NoError(err)
 	contests, err := st.ListPersonFactContestsContext(t.Context(), personID, false)
+	requirements.NoError(err)
+	assertions.Empty(contests)
+	_, err = st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, false, "test")
+	requirements.NoError(err)
+	contests, err = st.ListPersonFactContestsContext(t.Context(), personID, false)
 	requirements.NoError(err)
 	requirements.Len(contests, 1)
 	requirements.Len(contests[0].Current, 1)

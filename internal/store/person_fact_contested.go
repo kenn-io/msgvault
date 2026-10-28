@@ -20,7 +20,6 @@ type PersonFactContest struct {
 type PersonFactContestedClaim struct {
 	Claim    personfacts.ResolvedClaim `json:"claim"`
 	Decision personfacts.Decision      `json:"decision"`
-	Evidence []personfacts.Evidence    `json:"evidence"`
 }
 
 // ListPersonFactContestsContext reads the latest resolutions and effective evidence
@@ -115,9 +114,9 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 				if len(evidence) == 0 {
 					continue
 				}
-				claim.Evidence = nil
+				claim.Evidence = evidence
 				claim.Claim.Evidence = nil
-				contest.Claims = append(contest.Claims, PersonFactContestedClaim{Claim: claim, Decision: d, Evidence: evidence})
+				contest.Claims = append(contest.Claims, PersonFactContestedClaim{Claim: claim, Decision: d})
 			}
 			if len(contest.Claims) == 0 {
 				continue
@@ -129,6 +128,13 @@ func (s *Store) ListPersonFactContestsContext(ctx context.Context, personID int6
 			current, err := projector.loadCurrent(ctx, personID, *target)
 			if err != nil {
 				return err
+			}
+			pin, err := s.effectivePersonFactPinTx(ctx, tx, personID, *target, current)
+			if err != nil {
+				return err
+			}
+			if pin.Pinned {
+				continue
 			}
 			if target.Kind == personfacts.TargetEmployment {
 				employments, err := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{PersonID: personID})
