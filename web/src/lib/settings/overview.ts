@@ -1,14 +1,12 @@
 import type { ChipTone } from '@kenn-io/kit-ui';
 
 import type { EmbeddingStatus, OperationLaneStatus, Status } from '../api/generated/models';
-import type { CategoryID } from './layout';
+import { OPERATION_SETUP, type OperationSetup } from '../operations/labels';
 
 /** What the one button on a row does. */
 export type OverviewAction =
-  | { kind: 'setup'; category: CategoryID; key?: string }
+  | OperationSetup
   | { kind: 'start'; id: 'messages' | 'visual_build' | 'visual_resume' | 'contacts'; label: string; consent?: string }
-  | { kind: 'command'; command: string }
-  | { kind: 'guide'; href: string }
   | { kind: 'sources' };
 
 export interface OverviewRow {
@@ -59,23 +57,10 @@ export function overviewRows(
     if (building) return { tone: 'info', text: building };
     return { tone: 'success', text: 'On' };
   };
-  // Setting up a feature that needs semantic search starts at that switch.
-  const search = (key: string): OverviewAction => ({
-    kind: 'setup',
-    category: 'search',
-    key: on('message_embedding') ? key : 'vector.enabled',
-  });
-
   const rows: OverviewRow[] = [];
-  // A failed feature with no start action links to where it is set up.
-  const setups: Record<string, OverviewAction | undefined> = {
-    message_embedding: { kind: 'setup', category: 'search', key: 'vector.enabled' },
-    person_embedding: search('vector.people.enabled'),
-    visual_embedding: { kind: 'setup', category: 'search', key: 'vector.multimodal.enabled' },
-    person_enrichment: { kind: 'setup', category: 'enrichment', key: 'people.enrichment.enabled' },
-    person_sweep: { kind: 'setup', category: 'enrichment' },
-    carddav_sync: { kind: 'setup', category: 'carddav' },
-  };
+  const setup = (kind: Kind): OverviewAction | undefined => kind === 'carddav_sync'
+    ? { kind: 'settings', target: { settingsCategory: 'carddav', settingsAuthority: '' } }
+    : OPERATION_SETUP[kind];
 
   const messagesBuilt = Boolean(embedding?.active_generation);
   const messageProgress =
@@ -91,14 +76,14 @@ export function overviewRows(
       ? { kind: 'start', id: 'messages', label: 'Build index' }
       : on('message_embedding')
         ? undefined
-        : setups.message_embedding,
+        : setup('message_embedding'),
   });
 
   rows.push({
     id: 'person_embedding',
     name: 'People search',
     chip: chip('person_embedding'),
-    action: on('person_embedding') ? undefined : setups.person_embedding,
+    action: on('person_embedding') ? undefined : setup('person_embedding'),
   });
 
   const visualLane = lane(lanes, 'visual_embedding');
@@ -114,7 +99,7 @@ export function overviewRows(
     name: 'Visual search',
     chip: chip('visual_embedding', visualProgress),
     action: !on('visual_embedding')
-      ? setups.visual_embedding
+      ? setup('visual_embedding')
       : visualActions.includes('visual_build')
         ? { kind: 'start', id: 'visual_build', label: 'Build visual index', consent: BUILD_VISUAL_CONSENT }
         : visualActions.includes('visual_resume')
@@ -126,14 +111,14 @@ export function overviewRows(
     id: 'person_enrichment',
     name: 'People lookups',
     chip: chip('person_enrichment'),
-    action: on('person_enrichment') ? undefined : setups.person_enrichment,
+    action: on('person_enrichment') ? undefined : setup('person_enrichment'),
   });
 
   rows.push({
     id: 'person_sweep',
     name: 'Facts and briefs',
     chip: chip('person_sweep'),
-    action: on('person_sweep') ? undefined : setups.person_sweep,
+    action: on('person_sweep') ? undefined : setup('person_sweep'),
   });
 
   rows.push({
@@ -141,7 +126,7 @@ export function overviewRows(
     name: 'Contacts',
     chip: chip('carddav_sync'),
     action: !on('carddav_sync')
-      ? setups.carddav_sync
+      ? setup('carddav_sync')
       : lane(lanes, 'carddav_sync')?.supported_actions.includes('carddav_sync')
         ? { kind: 'start', id: 'contacts', label: 'Sync now' }
         : undefined,
@@ -152,20 +137,21 @@ export function overviewRows(
     name: 'Document extraction',
     chip: chip('document_extraction'),
     action: on('document_extraction')
-      ? { kind: 'command', command: 'msgvault documents build' }
-      : { kind: 'guide', href: 'https://msgvault.io/docs/usage/document-indexing/#configure-the-policy' },
+      ? undefined
+      : setup('document_extraction'),
   });
   rows.push({
     id: 'document_embedding',
     name: 'Document search',
     chip: chip('document_embedding'),
     action: on('document_embedding')
-      ? { kind: 'command', command: 'msgvault documents vectors build' }
-      : { kind: 'guide', href: 'https://msgvault.io/docs/usage/document-indexing/#semantic-and-hybrid-document-search' },
+      ? undefined
+      : setup('document_embedding'),
   });
 
   rows.unshift({ id: 'source_sync', name: 'Source sync', chip: chip('source_sync'), action: { kind: 'sources' } });
-  return rows.map((row) =>
-    !row.action && row.chip.text === 'Failed' && setups[row.id] ? { ...row, action: setups[row.id] } : row,
-  );
+  return rows.map((row) => {
+    const action = setup(row.id as Kind);
+    return !row.action && row.chip.text === 'Failed' && action?.kind === 'settings' ? { ...row, action } : row;
+  });
 }

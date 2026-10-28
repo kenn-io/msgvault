@@ -169,29 +169,3 @@ export function layoutCategory(id: CategoryID, settings: readonly SettingState[]
     config: own.filter((setting) => isHostManaged(setting)),
   };
 }
-
-/** What each switch needs filled in before it can work. */
-const REQUIRES: Readonly<Record<string, readonly string[]>> = {
-  'vector.enabled': ['vector.embeddings.endpoint', 'vector.embeddings.model', 'vector.embeddings.api_key'],
-  'vector.people.enabled': ['vector.people.retention_posture', 'vector.people.training_posture'],
-  'vector.multimodal.enabled': ['vector.multimodal.api_key'],
-  'integrations.kata.enabled': ['integrations.kata.endpoint'],
-  'integrations.tasks.enabled': ['integrations.tasks.endpoint'],
-};
-
-/**
- * The first empty field a switch needs, or the switch itself when it is on or
- * nothing is missing. A Set up link lands there.
- */
-export function firstRequiredField(key: string, settings: readonly SettingState[]): string {
-  const on = settings.find((setting) => setting.key === key)?.value;
-  if (on && 'boolean' in on && on.boolean) return key;
-  const missing = (REQUIRES[key] ?? []).find((name) => {
-    const setting = settings.find((candidate) => candidate.key === name);
-    if (!setting) return false;
-    if (setting.kind === 'secret') return !setting.secret?.configured;
-    const value = setting.value;
-    return !value || ('string' in value && value.string === '');
-  });
-  return missing ?? key;
-}

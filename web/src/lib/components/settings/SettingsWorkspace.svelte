@@ -13,7 +13,7 @@
     saveCardDAVAccount,
     putSettingsPersonEnrichmentProvider,
   } from '../../api/generated/api/api';
-  import { Chip, Notice, SettingsLayout, Toggle, Button, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { Notice, SettingsLayout, Toggle, Button, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -26,7 +26,7 @@
     Status as VisualStatus,
   } from '../../api/generated/models';
   import { createExploreAPI } from '../../explore/api';
-  import type { CardDAVSettingsRequest, SettingsNavigationTarget } from '../../carddav/navigation';
+  import { settingsNavigationTarget, type CardDAVSettingsRequest, type SettingsNavigationTarget } from '../../carddav/navigation';
   import type { SavedAppearance } from '../../theme/preferences.svelte';
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import type { AccountDraft } from '../../carddav/account-settings';
@@ -41,14 +41,12 @@
     type SettingState,
     type SettingGroupState,
   } from '../../settings/catalog';
-  import { messageIndexStatus, visualIndexStatus, type IndexStatus } from '../../settings/index-status';
   import { overviewRows, type OverviewAction } from '../../settings/overview';
   import {
     LABELS,
     OPTION_LABELS,
     RAIL,
     normalizeCategory,
-    firstRequiredField,
     layoutCategory,
     isHostManaged,
     type Block,
@@ -64,7 +62,6 @@
   import SettingField from './SettingField.svelte';
   import SettingsOverview from './SettingsOverview.svelte';
 
-  type IndexAction = { id: string; label: string; consent?: string; run: () => Promise<void> };
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
   type SettingUpdate = GeneratedSettingUpdate;
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
@@ -121,7 +118,6 @@
   let building = $state('');
   let consumedCategoryRequestKey: number | undefined;
   let focusedNavigationSettingKey: string | undefined;
-  let requestedField = $state('');
 
   const categories: SettingsCategory[] = RAIL.map(({ id, label }) => ({ id, label }));
   const resolvedCategory = $derived(
@@ -141,37 +137,7 @@
     Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length +
     Object.values(providerDrafts).filter(provider => [provider.max_retries, provider.max_requests_per_run, provider.max_requests_per_day, provider.num_results].some(value => String(value) === '')).length,
   );
-  const visualActions = $derived(lanes?.find((lane) => lane.kind === 'visual_embedding')?.supported_actions ?? []);
   const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus));
-  // Each switch that has an index can offer the step that builds it.
-  const indexActions = $derived.by(() => {
-    const actions: Record<string, IndexAction[]> = {};
-    if (embeddingStatus && !embeddingStatus.active_generation) {
-      actions['vector.enabled'] = [{ id: 'messages', label: 'Build index', run: buildMessageIndex }];
-    }
-    const visual: IndexAction[] = [];
-    if (visualActions.includes('visual_build')) {
-      visual.push({
-        id: 'visual_build',
-        label: 'Build visual index',
-        consent: 'Sends attachments to your search provider.',
-        run: startVisual,
-      });
-    }
-    if (visualActions.includes('visual_resume')) {
-      visual.push({
-        id: 'visual_resume',
-        label: 'Resume visual index',
-        run: resumeVisual,
-      });
-    }
-    if (visual.length > 0) actions['vector.multimodal.enabled'] = visual;
-    return actions;
-  });
-  const indexStatus = $derived<Record<string, IndexStatus | undefined>>({
-    'vector.enabled': messageIndexStatus(embeddingStatus),
-    'vector.multimodal.enabled': visualIndexStatus(visualStatus),
-  });
 
   onMount(() => {
     void loadSettings(false);
@@ -190,11 +156,10 @@
     onCategoryChange(categoryID);
   }
 
-  // Index status and the step that builds each index show beside the switches on the Search page
-  // and in the Overview rows.
+  // Overview owns feature status and index actions.
   let statusRevision = $state(0);
   $effect(() => {
-    if (resolvedCategory !== 'search' && resolvedCategory !== 'overview') return;
+    if (resolvedCategory !== 'overview') return;
     void statusRevision;
     const controller = new AbortController();
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
@@ -248,20 +213,18 @@
   const startVisual = () => runVisual(() => generatedStartVisualAttachmentBuild({ consent: true }, client));
   const resumeVisual = () => runVisual(() => generatedResumeVisualAttachmentBuild(client));
 
-  // An Overview row opens the Settings field that turns its feature on.
-  async function setUp(action: Extract<OverviewAction, { kind: 'setup' }>): Promise<void> {
-    selectCategory(action.category);
-    if (!action.key) {
-      await tick();
-      (root?.querySelector<HTMLElement>('input[required]') ?? root?.querySelector<HTMLElement>('#settings-category-heading'))?.focus();
-      return;
-    }
-    const target = firstRequiredField(action.key, settings);
-    requestedField = target;
+  async function focusSetting(categoryID: string, settingKey: string | undefined): Promise<void> {
+    selectCategory(categoryID);
     await tick();
-    const field = root?.querySelector<HTMLElement>(`[data-setting-key="${target}"]`);
+    const field = settingKey
+      ? root?.querySelector<HTMLElement>(`[data-setting-key="${settingKey}"]`)
+      : root?.querySelector<HTMLElement>('#settings-category-heading');
     field?.closest('details')?.setAttribute('open', '');
-    (field ?? root?.querySelector<HTMLElement>(`[data-setting-key="${action.key}"]`))?.focus();
+    field?.focus();
+  }
+  function setUp(action: Extract<OverviewAction, { kind: 'settings' }>): void {
+    const target = settingsNavigationTarget(action.target.settingsAuthority);
+    void focusSetting(target?.categoryID ?? action.target.settingsCategory, target?.settingKey);
   }
   function startFeature(action: Extract<OverviewAction, { kind: 'start' }>): void {
     const runs = {
@@ -273,20 +236,12 @@
     void build(action.id, runs[action.id]);
   }
 
-  // A Set up link lands on the first field the switch still needs.
   $effect(() => {
     const target = navigationTarget;
     if (target) {
       activeCategory = target.categoryID;
-      if (loading) return;
-      if (target.settingKey === focusedNavigationSettingKey) return;
-      const settingKey = firstRequiredField(target.settingKey, settings);
-      requestedField = settingKey;
-      void tick().then(() => {
-        const field = root?.querySelector<HTMLElement>(`[data-setting-key="${settingKey}"]`);
-        field?.closest('details')?.setAttribute('open', '');
-        field?.focus();
-      });
+      if (loading || target.settingKey === focusedNavigationSettingKey) return;
+      void focusSetting(target.categoryID, target.settingKey);
       focusedNavigationSettingKey = target.settingKey;
       return;
     }
@@ -358,29 +313,18 @@
     secretUpdates = nextSecrets;
   }
   function setSecret(setting: SettingState, value: string) {
-    if (setting.credential_id) {
-      credentialUpdates = { ...credentialUpdates, [setting.credential_id]: { action: 'set', value } };
-    } else {
-      secretUpdates = { ...secretUpdates, [setting.key]: { action: 'set', value } };
-    }
+    secretUpdates = { ...secretUpdates, [setting.key]: { action: 'set', value } };
   }
   // Clearing drops a key that is still waiting, and stages the removal of a stored one.
   function clearSecret(setting: SettingState) {
     const configured = setting.secret?.configured;
-    if (setting.credential_id) {
-      const next = { ...credentialUpdates };
-      delete next[setting.credential_id];
-      if (configured && setting.secret?.source === 'stored') next[setting.credential_id] = { action: 'clear' };
-      credentialUpdates = next;
-      return;
-    }
     const next = { ...secretUpdates };
     delete next[setting.key];
     if (configured) next[setting.key] = { action: 'clear' };
     secretUpdates = next;
   }
   function secretShown(setting: SettingState): { configured: boolean; hint: string } {
-    const update = setting.credential_id ? credentialUpdates[setting.credential_id] : secretUpdates[setting.key];
+    const update = secretUpdates[setting.key];
     if (update?.action === 'set') return { configured: true, hint: maskSecret(update.value) };
     if (update?.action === 'clear') return { configured: false, hint: '' };
     return { configured: setting.secret?.configured ?? false, hint: setting.secret?.hint ?? '' };
@@ -565,7 +509,7 @@
   function visible(setting: SettingState): boolean {
 
     if (setting.key.startsWith('vector.people.') && setting.key !== 'vector.people.enabled') {
-      return requestedField.startsWith('vector.people.') || Boolean(currentValue(find('vector.people.enabled') ?? setting));
+      return Boolean(currentValue(find('vector.people.enabled') ?? setting));
     }
     return true;
   }
@@ -593,10 +537,9 @@
   />
 {/snippet}
 
-<!-- One setting: a switch with its status beside it, a key, or a labelled field. -->
+<!-- One setting: a switch, a key, or a labelled field. -->
 {#snippet control(setting: SettingState)}
   {@const text = rowLabel(setting)}
-  {@const status = indexStatus[setting.key]}
   {@const on = Boolean(currentValue(setting))}
   <div
     class="setting"
@@ -608,24 +551,7 @@
     {#if isSwitch(setting)}
       <Toggle disabled={saving} ariaLabel={text} checked={on} onchange={(checked) => setDraft(setting.key, checked)} />
       <span class="setting__label">{text}</span>
-      {#if on}
-        <span class="setting__status">
-          {#if status}<Chip size="xs" tone={status.tone} uppercase={false}>{status.text}</Chip>{/if}
-          {#if !isDirty(setting.key)}
-            {#each indexActions[setting.key] ?? [] as action (action.id)}
-              <Button
-                size="sm"
-                tone="info"
-                surface="soft"
-                label={building === action.id ? 'Working…' : action.label}
-                disabled={building !== ''}
-                onclick={() => void build(action.id, action.run)}
-              />
-              {#if action.consent}<span class="setting__consent">{action.consent}</span>{/if}
-            {/each}
-          {/if}
-        </span>
-      {/if}
+
     {:else}
       <span class="setting__label">{text}</span>
       <div class="setting__control">
@@ -644,7 +570,7 @@
               setSecret(setting, value);
               return true;
             }}
-            onclear={shown.configured && (!setting.credential_id || setting.secret?.source === 'stored')
+            onclear={shown.configured
               ? () => clearSecret(setting)
               : undefined}
           />
@@ -885,22 +811,11 @@
     outline-offset: 4px;
   }
   .setting--switch {
-    grid-template-columns: auto auto 1fr;
+    grid-template-columns: auto 1fr;
     align-items: center;
     justify-content: start;
     gap: var(--control-gap);
     min-height: var(--control-height);
-  }
-  .setting__status {
-    display: flex;
-    min-width: 0;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--field-gap);
-  }
-  .setting__consent {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
   .setting__label {
     color: var(--text-secondary);
