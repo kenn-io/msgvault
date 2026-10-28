@@ -130,6 +130,7 @@ func TestVerifyArchivedMessage(t *testing.T) {
 		ok             bool
 	}{
 		{"match", "message", "chat", 0, true}, {"precision", "message", "chat", archivedSampleTolerance, true},
+		{"negative precision", "message", "chat", -archivedSampleTolerance, true},
 		{"timestamp", "message", "chat", time.Hour, false}, {"id", "other", "chat", 0, false}, {"chat", "message", "other", 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

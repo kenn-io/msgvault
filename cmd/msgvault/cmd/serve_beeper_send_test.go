@@ -29,11 +29,12 @@ func TestBeeperSend(t *testing.T) {
 		name, code                                                                                                       string
 		status, replyStatus                                                                                              int
 		disabled, unarchived, file, relative, directory, reply, wrongReply, grant, wrongSource, draftOnly, uploadFailure bool
-		merged, changedReply, padded, body, uploadError                                                                  bool
+		merged, changedReply, padded, body, uploadError, foreignAccount                                                  bool
 	}{
 		{name: "accepted", code: "accepted"},
 		{name: "padded chat", code: "accepted", padded: true},
 		{name: "text and file", code: "accepted", file: true, body: true},
+		{name: "foreign account", code: "provider_identity_mismatch", file: true, foreignAccount: true},
 		{name: "merged chat", code: "not_supported", file: true, merged: true},
 		{name: "reply lookup unavailable", code: "provider_unavailable", reply: true, file: true, replyStatus: 500},
 		{name: "missing reply", code: "invalid_reply_target", reply: true, file: true, replyStatus: 404},
@@ -83,7 +84,11 @@ func TestBeeperSend(t *testing.T) {
 					if tc.merged {
 						merge = `{}`
 					}
-					_, _ = fmt.Fprintf(w, `{"id":%q,"accountID":%q,"merge":%s}`, beeperDraftTestChat, f.source.Identifier, merge)
+					accountID := f.source.Identifier
+					if tc.foreignAccount {
+						accountID = "foreign-account"
+					}
+					_, _ = fmt.Fprintf(w, `{"id":%q,"accountID":%q,"merge":%s}`, beeperDraftTestChat, accountID, merge)
 				case r.URL.Path == "/v1/assets/upload":
 					if tc.uploadError {
 						_, _ = io.WriteString(w, `{"error":"file too large"}`)
@@ -211,7 +216,7 @@ func TestBeeperSend(t *testing.T) {
 						expected = append(expected, "GET /v1/chats/"+beeperDraftTestChat+"/messages/original")
 					}
 					assert.Equal(t, expected, requests)
-				} else if tc.merged {
+				} else if tc.merged || tc.foreignAccount {
 					assert.Equal(t, []string{"GET /v1/chats/" + beeperDraftTestChat}, requests)
 				} else {
 					assert.Empty(t, requests)
@@ -223,14 +228,28 @@ func TestBeeperSend(t *testing.T) {
 
 func TestBeeperSendTextOutput(t *testing.T) {
 	var output string
+	require.NoError(t, emitBeeperSend(func(event api.CLIRunEvent) error { output += event.Data; return nil }, cliStreamStdout, false, beeperSendOutput{Status: "accepted", ChatID: "chat", PendingMessageID: "pending-1"}))
+	assert.Equal(t, "status: accepted\nbeeper chat: chat\npending message: pending-1\n", output)
+
+	output = ""
 	require.NoError(t, emitBeeperSend(func(event api.CLIRunEvent) error { output += event.Data; return nil }, cliStreamStderr, false, beeperSendOutput{Status: "remote_unknown", ChatID: "chat", FileName: "example.txt"}))
 	assert.Contains(t, output, "file: example.txt")
 	assert.NotContains(t, output, "pending message:")
 	assert.Contains(t, output, "Read the chat before sending again")
 }
 
-func TestBeeperSendPreRequestFailure(t *testing.T) {
-	assert.Equal(t, "provider_unavailable", beeperSendFailureCode(errors.New("token unavailable"), true))
+func TestBeeperSendFailureCode(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		err        error
+	}{
+		{name: "pre-request failure", code: "provider_unavailable", err: errors.New("token unavailable")},
+		{name: "redirect", code: "provider_rejected", err: &beeper.WriteError{Status: http.StatusTemporaryRedirect}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.code, beeperSendFailureCode(tc.err, true))
+		})
+	}
 }
 
 func TestBeeperSendReplyArchiveUnavailable(t *testing.T) {
@@ -264,8 +283,4 @@ func TestBeeperSendReplyArchiveUnavailable(t *testing.T) {
 	assert.Equal(t, 1, requests, "only the live chat lookup should run")
 	assert.Zero(t, patches)
 	assertBeeperDraftCode(t, err, "provider_unavailable")
-}
-
-func TestBeeperSendRedirectFailureCode(t *testing.T) {
-	assert.Equal(t, "provider_rejected", beeperSendFailureCode(&beeper.WriteError{Status: http.StatusTemporaryRedirect}, true))
 }

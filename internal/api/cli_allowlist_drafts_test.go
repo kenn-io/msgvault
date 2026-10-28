@@ -202,23 +202,30 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		assert.Equal(t, "command_not_allowed", resp.Error)
 	})
 
-	// PI-13: a delegated draft-reply carrying non-empty Env or Cwd is rejected
-	// before the operation starts. Two separate owners cover the gates after
-	// the handleCLIRun delegated arm was trimmed to its two essential statements.
+	// PI-13: delegated draft-reply and send-message requests carrying non-empty
+	// Env are rejected before the operation starts.
 	t.Run("preservation invariant 13: Env→cliRunEnvAllowedForCommand", func(t *testing.T) {
+		_, secret, _, err := srv.agentGrants.Issue("env-test-agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionMessageSend}, []agentgrant.SourceRef{{ID: 1, Type: "beeper", Identifier: "example-account"}}, time.Time{})
+		require.NoError(t, err)
 		// Env: cliRunEnvAllowedForCommand returns false for every env name on
-		// draft-reply, so handleCLIRun writes env_not_allowed (HTTP 400) before
+		// these commands, so handleCLIRun writes env_not_allowed (HTTP 400) before
 		// calling the runner.
-		envBody, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"draft-reply", "42"}, Env: map[string]string{"X": "y"}})
-		require.NoError(t, marshalErr)
-		envReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(envBody))
-		envReq.Header.Set("Content-Type", "application/json")
-		envReq.Header.Set(apiprotocol.AgentTokenHeader, secret)
-		envW := httptest.NewRecorder()
-		srv.Router().ServeHTTP(envW, envReq)
-		var envResp ErrorResponse
-		require.NoError(t, json.NewDecoder(envW.Body).Decode(&envResp))
-		assert.Equal(t, "env_not_allowed", envResp.Error) // cliRunEnvAllowedForCommand
+		for _, args := range [][]string{
+			{"draft-reply", "42"},
+			{"send-message", "--source-id=1", "--to=!chat:beeper.local", "--body=hi"},
+		} {
+			envBody, marshalErr := json.Marshal(CLIRunRequest{Args: args, Env: map[string]string{"X": "y"}})
+			require.NoError(t, marshalErr)
+			envReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(envBody))
+			envReq.Header.Set("Content-Type", "application/json")
+			envReq.Header.Set(apiprotocol.AgentTokenHeader, secret)
+			envW := httptest.NewRecorder()
+			srv.Router().ServeHTTP(envW, envReq)
+			var envResp ErrorResponse
+			require.NoError(t, json.NewDecoder(envW.Body).Decode(&envResp))
+			assert.Equal(t, http.StatusBadRequest, envW.Code)
+			assert.Equal(t, "env_not_allowed", envResp.Error, "command: %s", args[0]) // cliRunEnvAllowedForCommand
+		}
 	})
 }
 

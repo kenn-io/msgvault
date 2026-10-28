@@ -383,7 +383,7 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 				}
 				var drafts []string
 				for _, name := range names {
-					if strings.HasPrefix(name, "draft_") || name == "send_message" {
+					if strings.HasPrefix(name, "draft_") {
 						drafts = append(drafts, name)
 					}
 				}
