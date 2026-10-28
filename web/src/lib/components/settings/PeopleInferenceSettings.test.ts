@@ -89,7 +89,8 @@ describe('PeopleInferenceSettings', () => {
     expect(requests[2]!.headers.get('If-Match')).toBe('"credential-a"');
     await expect(requests[1]!.json()).resolves.toEqual(preset);
     failKey = false;
-    await controller.saveKey('synthetic-replacement');
+    controller.keyDrafts = { routed: 'synthetic-replacement' };
+    await controller.saveKeys();
     expect(controller.error).toBe('');
     expect(controller.selectedProfile?.credential_configured).toBe(true);
   });
@@ -218,23 +219,37 @@ describe('PeopleInferenceSettings', () => {
     await controller.saveKeys();
     expect(controller.canSelect).toBe(false);
     expect(controller.canConsent).toBe(false);
-    await controller.saveKey('synthetic-replacement');
+    controller.keyDrafts = { routed: 'synthetic-replacement' };
+    await controller.saveKeys();
     const keys = requests.filter((request) => request.url.endsWith('/key'));
     expect(keys.map((request) => request.headers.get('If-Match'))).toEqual(['"credential-a"', '"credential-b"']);
   });
 
-  it('requires reload after a credential conflict without invalidating config edits', async () => {
-    const { client, requests } = fixture(status, (request) => {
-      if (request.url.endsWith('/key')) return Response.json({ message: 'Stale key' }, { status: 412 });
+  it('reloads the credential revision and retries a pending key with its refreshed metadata', async () => {
+    let conflicted = false;
+    const { client, requests } = fixture(status, request => {
+      if (request.url.endsWith('/key') && !conflicted) {
+        conflicted = true;
+        return Response.json({ message: 'Stale key' }, { status: 412 });
+      }
+      if (request.method === 'GET' && conflicted) return Response.json({ ...status,
+        profiles: [{ ...profile, credential_revision: '"credential-refreshed"' }]
+      }, { headers: { ETag: '"config-a"' } });
     });
     const controller = new PeopleInferenceController(client);
-    await controller.load();
-    await controller.saveKey('synthetic-secret');
+    render(PeopleInferenceSettings, { client, controller });
+    await fireEvent.input(await screen.findByLabelText('Replacement API key'), { target: { value: 'synthetic-key' } });
+    expect(await controller.saveKeys()).toBe(false);
     expect(controller.error).toContain('credential changed');
-    await controller.saveKey('synthetic-replacement');
+    expect(await controller.saveKeys()).toBe(false);
     expect(requests).toHaveLength(2);
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload people sweep settings' }));
+    await waitFor(() => expect(controller.busy).toBe(false));
+    expect((screen.getByLabelText('Replacement API key') as HTMLInputElement).value).toBe('synthetic-key');
+    expect(await controller.saveKeys()).toBe(true);
+    expect(requests.filter(request => request.url.endsWith('/key')).map(request => request.headers.get('If-Match'))).toEqual(['"credential-a"', '"credential-refreshed"']);
     await controller.disable();
-    expect(requests.at(-1)!.headers.get('If-Match')).toBe('"config-a"');
+    expect(requests.at(-1)!.headers.get('If-Match')).toBe('"config-b"');
   });
 
   it('does not enable a profile if consent is missing from the server response', async () => {
@@ -296,4 +311,15 @@ it('keeps a replacement key pending while a provider check is running', async ()
   expect(await controller.saveKeys()).toBe(true);
   expect(controller.keyDrafts).toEqual({});
   expect(requests.filter(request => request.url.endsWith('/key'))).toHaveLength(1);
+});
+
+it('prunes a removed profile key while keeping another profile key ready to save', async () => {
+  const { client, requests } = fixture({ ...status, profiles: [profile, { ...profile, name: 'backup' }] });
+  const controller = new PeopleInferenceController(client);
+  await controller.load();
+  controller.keyDrafts = { backup: 'removed-key', routed: 'surviving-key' };
+  await controller.remove('backup');
+  expect(controller.keyDrafts).toEqual({ routed: 'surviving-key' });
+  expect(await controller.saveKeys()).toBe(true);
+  expect(requests.filter(request => request.url.endsWith('/key')).map(request => new URL(request.url).pathname)).toEqual(['/api/v1/settings/people-inference/providers/routed/key']);
 });
