@@ -372,3 +372,37 @@ func TestClientTimeoutDuringDialGuardSendsNothing(t *testing.T) {
 		})
 	}
 }
+
+// A callback host can resolve to several addresses. One that silently drops
+// connections must not spend the whole request budget: the dial moves on to
+// the next address and delivers there.
+func TestWebhookFallsBackPastUnreachableAddress(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	delivered := make(chan struct{}, 1)
+	w := tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
+		delivered <- struct{}{}
+		rw.WriteHeader(http.StatusNoContent)
+	})
+	w.client.Timeout = 2 * time.Second
+	unreachable := netip.MustParseAddr("203.0.113.8")
+	w.resolve = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{unreachable, netip.MustParseAddr("203.0.113.7")}, nil
+	}
+	healthy := w.dial
+	w.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if strings.HasPrefix(address, unreachable.String()+":") {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return healthy(ctx, network, address)
+	}
+	var err error
+	select {
+	case err = <-postInBackground(t.Context(), w, nil):
+	case <-time.After(10 * time.Second):
+		require.FailNow("request did not finish")
+	}
+	require.NoError(err)
+	assert.Len(delivered, 1)
+}

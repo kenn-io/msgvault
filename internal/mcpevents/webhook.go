@@ -101,13 +101,17 @@ func newWebhookClient(trusted []TrustedCallback) (*webhookClient, error) {
 			return nil, err
 		}
 		var last error
-		for _, address := range addresses {
+		for i, address := range addresses {
 			if check, ok := ctx.Value(callbackGuardKey{}).(func() error); ok {
 				if err := check(); err != nil {
 					return nil, err
 				}
 			}
-			conn, err := w.dial(ctx, network, net.JoinHostPort(address.String(), port))
+			// An address that silently drops connections must not spend the
+			// whole request budget before the next address is tried.
+			dialCtx, cancel := context.WithTimeout(ctx, dialShare(w.client.Timeout, len(addresses)-i))
+			conn, err := w.dial(dialCtx, network, net.JoinHostPort(address.String(), port))
+			cancel()
 			if err == nil {
 				return conn, nil
 			}
@@ -121,6 +125,14 @@ func newWebhookClient(trusted []TrustedCallback) (*webhookClient, error) {
 	w.client = &http.Client{Transport: w.transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return w, nil
 }
+
+// dialShare gives each remaining address an equal part of the request
+// budget. The transport's dial context carries no request deadline, so the
+// client's timeout is the budget.
+func dialShare(budget time.Duration, remaining int) time.Duration {
+	return budget / time.Duration(max(remaining, 1))
+}
+
 func (w *webhookClient) addresses(ctx context.Context, host, port string) ([]netip.Addr, error) {
 	if pins, ok := w.pins[callbackOrigin(host, port)]; ok {
 		return append([]netip.Addr(nil), pins...), nil
