@@ -32,11 +32,20 @@
   --section-gap: var(--space-6);
   --field-gap: var(--space-4);
   --control-gap: var(--space-3);
+  --label-gap: var(--space-2);
+  --divider-gap: var(--space-4);
+  --control-h-sm: 24px;
+  --control-h: 28px;
+  --control-h-lg: 36px;
   --control-pad-x: var(--space-5);
   --chip-pad-x: var(--space-4);
   --chip-min-height: 26px;
+  --line-height-tight: 1.25;
+  --line-height-body: 1.45;
 
-  --scrollbar-ink: var(--text-muted);
+  --scrollbar-size: 8px;
+  --scrollbar-thumb: color-mix(in srgb, var(--text-muted) 38%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--text-muted) 65%, transparent);
 }
 
 @media (max-width: 760px) {
@@ -72,6 +81,46 @@
   font-weight: 600;
 }
 
+/* One scrollbar everywhere: thin, themed, no arrow buttons. Chrome ignores
+ * the ::-webkit-scrollbar rules once scrollbar-width or scrollbar-color is
+ * set, and Windows then falls back to the classic bar with arrows, so the
+ * standard properties apply only where the pseudo-elements don't exist. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+}
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--scrollbar-size);
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Share one horizontal inset across dialog and drawer sections. */
 :root:root .kit-modal-header {
   padding: var(--control-gap) var(--pane-pad-x);
@@ -85,9 +134,14 @@
   padding: var(--pane-pad-x);
 }
 
-:root:root .kit-modal-footer {
+:root:root .kit-modal-footer,
+:root:root .kit-detail-drawer__footer {
   gap: var(--control-gap);
   padding: var(--pane-pad-x);
+}
+
+:root:root .kit-detail-drawer__header {
+  padding: var(--pane-pad-y) var(--pane-pad-x);
 }
 
 /* Kit trims button labels to the x-height, which centers lowercase letters
