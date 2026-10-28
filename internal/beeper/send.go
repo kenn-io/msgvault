@@ -101,12 +101,11 @@ func (c *Client) UploadAsset(ctx context.Context, file io.Reader, fileName strin
 	}
 	var response struct {
 		UploadID string `json:"uploadID"`
-		Error    string `json:"error"`
 	}
 	if err := json.Unmarshal(data, &response); err != nil {
 		return "", &WriteError{Err: err}
 	}
-	if response.UploadID == "" || response.Error != "" {
+	if response.UploadID == "" {
 		return "", &WriteError{Err: errors.New("upload did not return an asset")}
 	}
 	return response.UploadID, nil

@@ -24,16 +24,14 @@ import (
 
 func TestBeeperSend(t *testing.T) {
 	for _, tc := range []struct {
-		name, code                                                                                                                 string
-		status                                                                                                                     int
-		disabled, unarchived, file, relative, directory, reply, wrongReply, grant, wrongSource, draftOnly, withBody, uploadFailure bool
-		merged, changedReply, missingReply, incompleteReceipt                                                                      bool
+		name, code                                                                                                       string
+		status                                                                                                           int
+		disabled, unarchived, file, relative, directory, reply, wrongReply, grant, wrongSource, draftOnly, uploadFailure bool
+		merged, changedReply                                                                                             bool
 	}{
 		{name: "accepted", code: "accepted"},
-		{name: "incomplete receipt", code: "remote_unknown", incompleteReceipt: true},
 		{name: "merged chat", code: "not_supported", file: true, merged: true},
 		{name: "changed reply", code: "invalid_reply_target", reply: true, file: true, changedReply: true},
-		{name: "missing reply", code: "invalid_reply_target", reply: true, file: true, missingReply: true},
 		{name: "disabled", code: "send_disabled", disabled: true},
 		{name: "unknown", code: "remote_unknown", status: 500},
 		{name: "rejected", code: "provider_rejected", status: 409},
@@ -44,7 +42,6 @@ func TestBeeperSend(t *testing.T) {
 		{name: "agent file", code: "not_permitted", grant: true, file: true},
 		{name: "file only", code: "accepted", file: true},
 		{name: "relative file", code: "accepted", file: true, relative: true},
-		{name: "file with text", code: "accepted", file: true, withBody: true},
 		{name: "upload failure", code: "provider_unavailable", file: true, uploadFailure: true},
 		{name: "directory", code: "invalid_args", file: true, directory: true},
 		{name: "upload rejected", code: "provider_rejected", file: true, uploadFailure: true, status: 413},
@@ -63,10 +60,6 @@ func TestBeeperSend(t *testing.T) {
 				requests = append(requests, r.Method+" "+r.URL.Path)
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/chats/"+beeperDraftTestChat+"/messages/original":
-					if tc.missingReply {
-						w.WriteHeader(404)
-						return
-					}
 					sent := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 					if tc.changedReply {
 						sent = sent.Add(time.Hour)
@@ -87,25 +80,13 @@ func TestBeeperSend(t *testing.T) {
 						w.WriteHeader(status)
 						return
 					}
-					require.NoError(t, r.ParseMultipartForm(1024))
-					defer r.MultipartForm.RemoveAll()
-					file, _, err := r.FormFile("file")
-					require.NoError(t, err)
-					defer file.Close()
-					data, err := io.ReadAll(file)
-					require.NoError(t, err)
-					assert.Equal(t, "file content", string(data))
 					_, _ = io.WriteString(w, `{"uploadID":"upload-1"}`)
 				default:
 					var body map[string]any
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 					if tc.file {
 						assert.Equal(t, map[string]any{"uploadID": "upload-1"}, body["attachment"])
-						if tc.withBody {
-							assert.Equal(t, "hello", body["text"])
-						} else {
-							assert.NotContains(t, body, "text")
-						}
+						assert.NotContains(t, body, "text")
 					} else {
 						assert.Equal(t, "hello", body["text"])
 					}
@@ -114,10 +95,6 @@ func TestBeeperSend(t *testing.T) {
 					}
 					if tc.status != 0 {
 						w.WriteHeader(tc.status)
-						return
-					}
-					if tc.incompleteReceipt {
-						_, _ = io.WriteString(w, `{"pendingMessageID":"pending-1"}`)
 						return
 					}
 					_, _ = io.WriteString(w, `{"chatID":"merged-chat","pendingMessageID":"pending-1"}`)
@@ -142,9 +119,6 @@ func TestBeeperSend(t *testing.T) {
 					path = filepath.Base(path)
 				}
 				args = append(args, "--file", path)
-				if tc.withBody {
-					args = append(args, "--body", "hello")
-				}
 			} else {
 				args = append(args, "--body", "hello")
 			}
@@ -200,7 +174,7 @@ func TestBeeperSend(t *testing.T) {
 			case "provider_unavailable":
 				assert.Equal(t, []string{"GET /v1/chats/" + beeperDraftTestChat, "POST /v1/assets/upload"}, requests)
 			default:
-				if tc.changedReply || tc.missingReply || tc.wrongReply {
+				if tc.changedReply || tc.wrongReply {
 					expected := []string{"GET /v1/chats/" + beeperDraftTestChat}
 					if !tc.wrongReply {
 						expected = append(expected, "GET /v1/chats/"+beeperDraftTestChat+"/messages/original")

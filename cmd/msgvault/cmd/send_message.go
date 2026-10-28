@@ -19,7 +19,6 @@ func newSendMessageCommand() *cobra.Command {
 	}
 	command.Flags().String("account", "", "source account or display name")
 	command.Flags().Int64("source-id", 0, "exact source ID")
-	// Preserve repeated values so the daemon can reject ambiguous send inputs.
 	command.Flags().StringArray("to", nil, "archived Beeper chat ID")
 	command.Flags().String("body", "", "message text")
 	command.Flags().StringArray("file", nil, "one local file (owner only)")

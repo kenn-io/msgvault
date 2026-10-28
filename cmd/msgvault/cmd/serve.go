@@ -892,7 +892,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
 		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
 		beeperDraftPolicy:      snapshotBeeperDraftPolicy(cfg),
-		beeperSendPolicy:       snapshotBeeperSendPolicy(cfg),
+		beeperSendPolicy:       slices.Clone(cfg.Beeper.Sends),
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
@@ -1156,14 +1156,7 @@ func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 	if cfg == nil {
 		return nil
 	}
-	return slices.Clone(cfg.Beeper.Drafts)
-}
-
-func snapshotBeeperSendPolicy(cfg *config.Config) []config.GmailDraftSource {
-	if cfg == nil {
-		return nil
-	}
-	return slices.Clone(cfg.Beeper.Sends)
+	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
 }
 
 func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string, state *invocation) error {

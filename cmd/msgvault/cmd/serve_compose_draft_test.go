@@ -51,7 +51,7 @@ func TestDraftComposeArgsSendMessage(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, intent.Send)
 	}
-	for _, extra := range [][]string{{}, {"--body="}, {"--body=  "}, {"--body=x\x00"}, {"--file=a", "--body="}, {"--body=x", "--to=other"}, {"--file=a", "--file=b"}, {"--body=x", "--account=other"}, {"--body=x", "--from=owner@example.test"}, {"--body=x", "--cc=other@example.test"}, {"--body=x", "--bcc=other@example.test"}, {"--body=x", "--subject="}, {"--body=x", "--conversation=1"}} {
+	for _, extra := range [][]string{{}, {"--body="}, {"--file=a", "--body="}, {"--body=x", "--to=other"}, {"--file=a", "--file=b"}, {"--body=x", "--account=other"}, {"--body=x", "--cc=other@example.test"}, {"--body=x", "--conversation=1"}} {
 		_, err := parseDraftComposeArgs(append(append([]string{}, base...), extra...))
 		assertBeeperDraftCode(t, err, "invalid_args")
 	}

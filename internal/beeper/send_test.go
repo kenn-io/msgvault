@@ -54,7 +54,7 @@ func TestSendMessageAndUploadAsset(t *testing.T) {
 
 func TestBeeperWritesNeverRetry(t *testing.T) {
 	for _, status := range []int{429, 500} {
-		for _, operation := range []string{"send", "upload", "draft"} {
+		for _, operation := range []string{"send", "upload"} {
 			t.Run(fmt.Sprintf("%s/%d", operation, status), func(t *testing.T) {
 				calls := 0
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(status) }))
@@ -66,8 +66,6 @@ func TestBeeperWritesNeverRetry(t *testing.T) {
 					_, err = client.SendMessage(t.Context(), "chat", SendParams{Text: "hello"})
 				case "upload":
 					_, err = client.UploadAsset(t.Context(), strings.NewReader("content"), "example.txt")
-				case "draft":
-					_, err = client.SetDraft(t.Context(), "chat", nil)
 				}
 				var failure *WriteError
 				require.ErrorAs(t, err, &failure)

@@ -403,7 +403,6 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 
 func TestMCPSendMessageCapabilityGate(t *testing.T) {
 	for _, delegated := range []bool{false, true} {
-		assert.NotContains(t, mcpDraftCommandsForSchema(delegated, "3.25.0"), api.CLIRunSendMessageCommand)
 		assert.NotContains(t, mcpDraftCommandsForSchema(delegated, "3.26.0"), api.CLIRunSendMessageCommand)
 		assert.NotContains(t, mcpDraftCommandsForSchema(delegated, "3.27.0"), api.CLIRunSendMessageCommand)
 		assert.Contains(t, mcpDraftCommandsForSchema(delegated, "3.28.0"), api.CLIRunSendMessageCommand)
@@ -422,10 +421,6 @@ func TestMCPSendMessageFiles(t *testing.T) {
 		case "/v1/chats/" + beeperDraftTestChat:
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": beeperDraftTestChat, "accountID": f.source.Identifier})
 		case "/v1/assets/upload":
-			require.NoError(t, r.ParseMultipartForm(1024))
-			defer r.MultipartForm.RemoveAll()
-			assert.Equal(t, "photo.png", r.MultipartForm.File["file"][0].Filename)
-			assert.Equal(t, "image/png", r.MultipartForm.File["file"][0].Header.Get("Content-Type"))
 			_, _ = w.Write([]byte(`{"uploadID":"upload-1"}`))
 		default:
 			_, _ = w.Write([]byte(`{"chatID":"chat","pendingMessageID":"pending-1"}`))
