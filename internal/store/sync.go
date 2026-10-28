@@ -88,8 +88,10 @@ func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 	}
 }
 
+// withoutSyncScope returns the root Store that owns shared in-process state.
+// Sync-scoped and ingest views both point syncBase at that root.
 func (s *Store) withoutSyncScope() *Store {
-	if s.syncGeneration == nil {
+	if s.syncBase == nil {
 		return s
 	}
 	return s.syncBase

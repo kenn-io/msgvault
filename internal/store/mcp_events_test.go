@@ -1,10 +1,13 @@
 package store_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -24,5 +27,26 @@ func TestMCPEventsSchemaStartsDisabled(t *testing.T) {
 		var count int
 		require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count))
 		assert.Zero(count)
+	}
+}
+
+// An ingest view only tags writes with their provider phase. It must share
+// the root Store's in-process guards, or a view and the root could run the
+// same person's CardDAV operation at once.
+func TestMCPIngestViewSharesRootOperationGuards(t *testing.T) {
+	f := storetest.New(t)
+	release, err := f.Store.AcquireCardDAVPersonOperation(t.Context(), 1)
+	Require.NoError(t, err)
+	defer release()
+	for name, view := range map[string]*store.Store{
+		"root view":   f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive}),
+		"nested view": f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive}).WithIngestContext(store.IngestContext{Mode: store.IngestBackfill}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+			_, err := view.AcquireCardDAVPersonOperation(ctx, 1)
+			Require.ErrorIs(t, err, context.DeadlineExceeded, "the view must wait for the root's operation")
+		})
 	}
 }

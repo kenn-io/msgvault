@@ -124,7 +124,8 @@ func (s *Store) captureMCPEnabled() bool {
 func (s *Store) WithIngestContext(ingest IngestContext) *Store {
 	view := s.ScopedToSync(0, 0)
 	view.syncGeneration = s.syncGeneration
-	view.syncBase = s.syncBase
+	// The view shares the root's guards and mutexes even when unscoped.
+	view.syncBase = s.withoutSyncScope()
 	view.mcpBase = s.mcpRoot()
 	view.mcpIngest = ingest
 	// ScopedToSync views defer Directory refreshes; an ingest view keeps the
