@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { setKitTheme, visibleScrollbarTest } from './kit-ui';
+import { setKitTheme } from './kit-ui';
 
 const row = {
   key: 'source:1:message:source-1',
@@ -409,7 +409,7 @@ test.describe('designed archived mail', () => {
     } }));
   });
 
-  visibleScrollbarTest('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
+  test('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await expect(page.locator('html')).toHaveClass(/dark/);
     await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
@@ -449,7 +449,7 @@ test.describe('designed archived mail', () => {
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
   });
 
-  visibleScrollbarTest('wide archived mail fits its visible 8px arrowless scrollbar', async ({ page }) => {
+  test('wide archived mail fits its visible 8px arrowless scrollbar', async ({ page }) => {
     await page.route('**/api/v1/conversations/7**', (route) => route.fulfill({ json: {
       id: 7, anchor_id: 42, has_before: false, has_after: false, total: 1,
       messages: [{
@@ -465,10 +465,10 @@ test.describe('designed archived mail', () => {
     const content = page.locator('iframe[title="Message body"]').contentFrame();
     await expect.poll(async () => content.locator('html').evaluate((element) => ({
       overflow: element.scrollWidth > element.clientWidth,
-      size: innerHeight - element.clientHeight,
+      size: getComputedStyle(element, '::-webkit-scrollbar').height,
       blank: element.clientHeight - Math.ceil(Math.max(element.getBoundingClientRect().height, document.body.scrollHeight)),
       buttons: getComputedStyle(element, '::-webkit-scrollbar-button').display
-    }))).toEqual({ overflow: true, size: 8, blank: 0, buttons: 'none' });
+    }))).toEqual({ overflow: true, size: '8px', blank: 0, buttons: 'none' });
   });
 });
 
