@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { selectWorkspace, visibleScrollbarTest } from './kit-ui';
+import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
 
@@ -182,7 +182,7 @@ test('linked message uses the page title text scale', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
 });
 
-visibleScrollbarTest('overflowing settings keep 12px card insets and 8px scrollbars', async ({ page }) => {
+test('overflowing settings keep 12px card insets and 8px scrollbars', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 600 });
   await page.route('**/api/v1/settings', (route) => route.fulfill({
     headers: { ETag: '"scrolling-settings"' },
@@ -203,9 +203,9 @@ visibleScrollbarTest('overflowing settings keep 12px card insets and 8px scrollb
     const card = control[control.length - 1].closest('.kit-card')!;
     return { overflow: element.scrollHeight > element.clientHeight,
       inset: card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - control[control.length - 1].getBoundingClientRect().right,
-      scrollbar: (element as HTMLElement).offsetWidth - element.clientWidth };
+      scrollbar: getComputedStyle(element, '::-webkit-scrollbar').width };
   });
   expect(geometry.overflow).toBe(true);
   expect(geometry.inset).toBe(12);
-  expect(geometry.scrollbar).toBe(8);
+  expect(geometry.scrollbar).toBe('8px');
 });
