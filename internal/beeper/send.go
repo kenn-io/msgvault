@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -111,6 +112,9 @@ func (c *Client) UploadAsset(ctx context.Context, file io.Reader, fileName strin
 	return response.UploadID, nil
 }
 
+// ErrArchivedMessageMismatch reports a live message whose identity or timestamp differs from the archive.
+var ErrArchivedMessageMismatch = errors.New("archived message identity or timestamp mismatch")
+
 // VerifyArchivedMessage checks that an archived reply still identifies the same message.
 func (c *Client) VerifyArchivedMessage(ctx context.Context, chatID, messageID string, sentAt time.Time) error {
 	message, err := c.GetMessage(ctx, chatID, messageID)
@@ -119,7 +123,7 @@ func (c *Client) VerifyArchivedMessage(ctx context.Context, chatID, messageID st
 	}
 	delta := message.Timestamp.Sub(sentAt)
 	if message.ID != messageID || message.ChatID != chatID || delta < -archivedSampleTolerance || delta > archivedSampleTolerance {
-		return errors.New("archived reply target no longer matches Beeper")
+		return fmt.Errorf("archived reply target no longer matches Beeper: %w", ErrArchivedMessageMismatch)
 	}
 	return nil
 }

@@ -137,7 +137,7 @@ func TestVerifyArchivedMessage(t *testing.T) {
 			if tc.ok {
 				require.NoError(t, err)
 			} else {
-				require.Error(t, err)
+				require.ErrorIs(t, err, ErrArchivedMessageMismatch)
 			}
 		})
 	}

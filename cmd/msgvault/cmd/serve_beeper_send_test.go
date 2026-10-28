@@ -25,7 +25,7 @@ import (
 func TestBeeperSend(t *testing.T) {
 	for _, tc := range []struct {
 		name, code                                                                                                       string
-		status                                                                                                           int
+		status, replyStatus                                                                                              int
 		disabled, unarchived, file, relative, directory, reply, wrongReply, grant, wrongSource, draftOnly, uploadFailure bool
 		merged, changedReply, padded, body                                                                               bool
 	}{
@@ -33,6 +33,8 @@ func TestBeeperSend(t *testing.T) {
 		{name: "padded chat", code: "accepted", padded: true},
 		{name: "text and file", code: "accepted", file: true, body: true},
 		{name: "merged chat", code: "not_supported", file: true, merged: true},
+		{name: "reply lookup unavailable", code: "provider_unavailable", reply: true, file: true, replyStatus: 500},
+		{name: "missing reply", code: "invalid_reply_target", reply: true, file: true, replyStatus: 404},
 		{name: "changed reply", code: "invalid_reply_target", reply: true, file: true, changedReply: true},
 		{name: "disabled", code: "send_disabled", disabled: true},
 		{name: "unknown", code: "remote_unknown", status: 500},
@@ -62,6 +64,11 @@ func TestBeeperSend(t *testing.T) {
 				requests = append(requests, r.Method+" "+r.URL.Path)
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/chats/"+beeperDraftTestChat+"/messages/original":
+					if tc.replyStatus != 0 {
+						w.Header().Set("Retry-After", "0")
+						w.WriteHeader(tc.replyStatus)
+						return
+					}
 					sent := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 					if tc.changedReply {
 						sent = sent.Add(time.Hour)
@@ -165,6 +172,14 @@ func TestBeeperSend(t *testing.T) {
 				assert.Equal(t, tc.code, output.Status)
 			} else {
 				assert.Empty(t, output.Status)
+			}
+			if tc.replyStatus != 0 {
+				require.GreaterOrEqual(t, len(requests), 2)
+				assert.Equal(t, "GET /v1/chats/"+beeperDraftTestChat, requests[0])
+				for _, request := range requests[1:] {
+					assert.Equal(t, "GET /v1/chats/"+beeperDraftTestChat+"/messages/original", request)
+				}
+				return
 			}
 			switch tc.code {
 			case "accepted", "remote_unknown", "provider_rejected":

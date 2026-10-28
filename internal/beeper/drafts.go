@@ -105,7 +105,6 @@ func (c *Client) writeOnce(ctx context.Context, method, path, contentType string
 	req.Header.Set("Content-Type", contentType)
 	writeClient := *c.http
 	writeClient.Timeout = timeout
-	writeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := writeClient.Do(req)
 	if err != nil {
 		return nil, &WriteError{Err: err}

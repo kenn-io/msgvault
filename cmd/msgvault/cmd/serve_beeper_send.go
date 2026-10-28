@@ -93,7 +93,11 @@ func (a *storeAPIAdapter) runCLISendMessage(ctx context.Context, req api.CLIRunR
 			return draftReplyError("invalid_reply_target", errors.New("reply must name an archived message in this chat"))
 		}
 		if err := client.VerifyArchivedMessage(ctx, output.ChatID, message.SourceMessageID, message.SentAt); err != nil {
-			return draftReplyError("invalid_reply_target", err)
+			code := "provider_unavailable"
+			if errors.Is(err, beeper.ErrNotFound) || errors.Is(err, beeper.ErrArchivedMessageMismatch) {
+				code = "invalid_reply_target"
+			}
+			return draftReplyError(code, err)
 		}
 		output.ReplyToMessageID = message.SourceMessageID
 	}
