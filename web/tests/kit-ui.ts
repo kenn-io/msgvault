@@ -1,6 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
-
-export const visibleScrollbarTest = test.extend({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
+import { expect, type Page } from '@playwright/test';
 
 export async function selectKitOption(
   page: Page,
