@@ -257,12 +257,12 @@ func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, e
 	if !result.Stopped {
 		return nil
 	}
-	if !result.Background || noRestart {
-		if !result.Background {
-			_, _ = fmt.Fprintf(out, "Update couldn't confirm msgvault started the daemon for %s in the background, so it left it stopped. Restart it the way you started it, such as `systemctl restart msgvault`, or run:\n", c.Data.DataDir)
-		} else {
-			_, _ = fmt.Fprintf(out, "The daemon for %s is stopped. Run `msgvault daemon start` to start it:\n", c.Data.DataDir)
-		}
+	if !result.Background {
+		_, _ = fmt.Fprintf(out, "Update couldn't confirm msgvault started the daemon for %s in the background, so it left it stopped. Restart it the way you started it, such as `systemctl restart msgvault`.\n", c.Data.DataDir)
+		return nil
+	}
+	if noRestart {
+		_, _ = fmt.Fprintf(out, "The daemon for %s is stopped. Run `msgvault daemon start` to start it:\n", c.Data.DataDir)
 		var options invocationOptions
 		if state != nil {
 			options = state.options
