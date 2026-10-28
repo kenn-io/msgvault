@@ -147,7 +147,7 @@
     <MessagePage client={session.client} {messageID} />
   {:else}
   <AppShell client={session.client} {appearanceDefaults} {searchModeDefault}>
-    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange)}
+    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources)}
       <SettingsWorkspace
         client={session.client}
         plainHTTPWarning={session.status?.plain_http_warning ?? false}
@@ -156,6 +156,7 @@
         {navigationTarget}
         {category}
         {onCategoryChange}
+        {onSources}
         onAppearanceSaved={appearanceSaved}
       />
     {/snippet}

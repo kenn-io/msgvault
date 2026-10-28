@@ -1,17 +1,15 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from 'svelte';
-  import { Button, Checkbox, RadioGroup, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { onMount } from 'svelte';
+  import { Button, Checkbox, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type { PeopleInferencePresetCreateRequest } from '../../api/generated/models';
   import { credentialStatus, PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
 
-  let { client }: { client: APIClient } = $props();
-  const controller = new PeopleInferenceController(untrack(() => client));
+  let { client, controller }: { client: APIClient; controller: PeopleInferenceController } = $props();
   let provider = $state<PeopleInferencePresetCreateRequest['preset_id']>('openai');
   let name = $state('');
   let model = $state('');
   let key = $state('');
-  let replacementKey = $state('');
   let allowedSources = $state<string[]>([]);
   let sourceSince = $state('');
   let sourceUntil = $state('');
@@ -20,8 +18,7 @@
   let trainingPosture = $state('');
   let removeConfirmationName = $state('');
 
-  onMount(() => { void controller.load(); });
-  onDestroy(() => controller.destroy());
+  onMount(() => { if (!controller.status) void controller.load(); });
 
   async function createProfile(): Promise<void> {
     const stableName = name.trim();
@@ -51,11 +48,6 @@
       retentionPosture = '';
       trainingPosture = '';
     }
-  }
-
-  async function saveReplacementKey(): Promise<void> {
-    await controller.saveKey(replacementKey);
-    replacementKey = '';
   }
 
   function setSource(source: string, checked: boolean): void {
@@ -103,22 +95,12 @@
       </fieldset>
       <label>Archive data since (YYYY-MM-DD)<TextInput bind:value={sourceSince} placeholder="YYYY-MM-DD" required block /></label>
       <label>Archive data until (optional, YYYY-MM-DD)<TextInput bind:value={sourceUntil} placeholder="YYYY-MM-DD" block /></label>
-      <div class="policy">
-        <RadioGroup
-          legend="Sensitive archive content"
-          name="sensitive-content"
-          required
-          options={[
-            { value: 'allow', label: 'Allow sensitive content' },
-            { value: 'exclude', label: 'Exclude sensitive content' },
-          ]}
-          value={sensitiveChoice || undefined}
-          onchange={(value) => {
-            sensitiveChoice = value ?? '';
-          }}
-        />
+      <fieldset>
+        <legend>Sensitive archive content</legend>
+        <label><input type="radio" name="sensitive-content" value="allow" bind:group={sensitiveChoice} required /> Allow sensitive content</label>
+        <label><input type="radio" name="sensitive-content" value="exclude" bind:group={sensitiveChoice} /> Exclude sensitive content</label>
         <p>Real sweeps send archive text to this provider. Excluding sensitive content permits only the synthetic check.</p>
-      </div>
+      </fieldset>
       <label>Retention statement<TextInput bind:value={retentionPosture} required autocomplete="off" block /></label>
       <label>Training statement<TextInput bind:value={trainingPosture} required autocomplete="off" block /></label>
       <Button type="submit" disabled={controller.busy} label="Create profile" />
@@ -129,7 +111,7 @@
         <h3>Profile setup</h3>
         <SelectDropdown title="Profile" value={controller.selectedName} disabled={controller.busy}
           options={controller.status.profiles.map((profile) => ({ value: profile.name, label: profile.name }))}
-          onchange={(value) => { removeConfirmationName = ''; replacementKey = ''; controller.choose(value); }} />
+          onchange={(value) => { removeConfirmationName = ''; controller.choose(value); }} />
         {#if controller.selectedProfile}
           {@const profile = controller.selectedProfile}
           <dl>
@@ -140,10 +122,7 @@
             <div><dt>Consent</dt><dd>{profile.consent_active ? 'Granted for this profile' : 'Not granted'}</dd></div>
           </dl>
           {#if profile.protocol !== 'codex_app_server' && profile.credential_source !== 'env'}
-            <form class="replacement-key" onsubmit={(event) => { event.preventDefault(); void saveReplacementKey(); }}>
-              <label>Replacement API key<TextInput type="password" bind:value={replacementKey} autocomplete="new-password" required block /></label>
-              <Button type="submit" disabled={controller.busy} label="Save API key" />
-            </form>
+            <label>Replacement API key<TextInput type="password" value={controller.keyDrafts[profile.name] ?? ''} oninput={(value) => { if (value) controller.keyDrafts[profile.name] = value; else delete controller.keyDrafts[profile.name]; }} autocomplete="new-password" block /></label>
           {/if}
           <div class="actions">
             <Button disabled={controller.busy || !profile.credential_configured || profile.protocol === 'codex_app_server'} onclick={() => void controller.check()} label="Check provider" />
@@ -192,12 +171,12 @@
 <style>
   .people-inference { display: grid; gap: var(--space-5); min-width: 0; overflow-wrap: anywhere; }
   header p { color: var(--text-muted); margin-block: var(--space-2); }
-  .form, .profile, .disclosure, .replacement-key { display: grid; gap: var(--space-3); min-width: 0; }
+  .form, .profile, .disclosure { display: grid; gap: var(--space-3); min-width: 0; }
   .form, .profile { border: 1px solid var(--border-muted); border-radius: var(--radius-md); padding: var(--space-4); }
   label { display: grid; gap: var(--space-1); min-width: 0; }
-  fieldset, .policy { display: grid; gap: var(--space-2); min-width: 0; border: 1px solid var(--border-muted); }
-  .policy { padding: var(--space-2); }
-  .policy p { margin: 0; }
+  label:has(input[type='radio']) { display: flex; align-items: center; }
+  fieldset { display: grid; gap: var(--space-2); min-width: 0; border: 1px solid var(--border-muted); }
+  fieldset p { margin: 0; }
   dl { display: grid; gap: var(--space-2); margin: 0; }
   dl div { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: var(--space-2); }
   dt { color: var(--text-muted); }

@@ -1,35 +1,37 @@
 <script lang="ts">
   import {
-    saveCardDAVAccount as generatedSaveCardDAVAccount,
     testCardDAVAccount as generatedTestCardDAVAccount,
   } from '../../api/generated/api/api';
   import { Button, SettingsSection, TextInput, Toggle, SelectDropdown } from '@kenn-io/kit-ui';
-  import ZapIcon from '@lucide/svelte/icons/zap';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
   import { authorizeGoogleContacts } from '../../settings/google-authorization';
   import { shellQuote } from '../../settings/shell-quote';
-  import type { CardDAVAccountValues } from '../../carddav/account-settings';
+  import type { CardDAVAccountValues, AccountDraft } from '../../carddav/account-settings';
   import CronField from './CronField.svelte';
   type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
-  type Action = 'test' | 'save' | 'authorize';
+  type Action = 'test' | 'authorize';
   let {
     client,
     values,
     connection = undefined,
-    onSaved = () => undefined,
+    draft = undefined,
+    onDraft,
+    saving = false,
   }: {
     client: APIClient;
     values: CardDAVAccountValues;
     connection?: string;
-    onSaved?: () => void | Promise<void>;
+    saving?: boolean;
+    draft?: AccountDraft;
+    onDraft: (draft: AccountDraft | undefined) => void;
   } = $props();
-  const initialValues = untrack(() => values);
+  const initialValues = untrack(() => draft?.values ?? values);
   let provider = $state(initialValues.provider);
   let oauthApp = $state(initialValues.oauthApp);
-  let persistedProvider = $state(initialValues.provider);
-  let persistedOAuthApp = $state(initialValues.oauthApp);
+  let persistedProvider = $state(untrack(() => values.provider));
+  let persistedOAuthApp = $state(untrack(() => values.oauthApp));
   const googleURL = 'https://www.googleapis.com/.well-known/carddav';
   const graphURL = 'https://graph.microsoft.com/v1.0';
   const google = $derived(provider === 'google');
@@ -45,14 +47,14 @@
   function authorizationCommand(shell: 'posix' | 'cmd'): string {
     return `msgvault carddav authorize-${provider} ${shellQuote(username || 'you@example.com', shell)}${google && oauthApp ? ` --oauth-app ${shellQuote(oauthApp, shell)}` : ''}`;
   }
-  let password = $state('');
-  let persistedBaseURL = $state(initialValues.baseURL);
-  let persistedUsername = $state(initialValues.username);
-  let persistedPasswordConfigured = $state(initialValues.passwordConfigured);
+  let password = $state(untrack(() => draft?.password ?? ''));
+  let persistedBaseURL = $state(untrack(() => values.baseURL));
+  let persistedUsername = $state(untrack(() => values.username));
+  let persistedPasswordConfigured = $state(untrack(() => values.passwordConfigured));
   let enabled = $state(initialValues.enabled);
   let schedule = $state(initialValues.schedule);
-  let persistedEnabled = $state(initialValues.enabled);
-  let persistedSchedule = $state(initialValues.schedule);
+  let persistedEnabled = $state(untrack(() => values.enabled));
+  let persistedSchedule = $state(untrack(() => values.schedule));
   const uid = $props.id();
   let activeAction = $state<Action | undefined>();
   let error = $state('');
@@ -174,48 +176,12 @@
       }
     }
   }
-  async function saveAccount() {
-    if (activeAction !== undefined || !validatePassword(true)) return;
-    requestController?.abort();
-    const controller = new AbortController();
-    requestController = controller;
-    const generation = ++actionGeneration;
-    activeAction = 'save';
-    error = '';
-    status = '';
-    try {
-      const { data, error: responseError } = await generatedSaveCardDAVAccount(requestBody(), {
-        ...client,
-        signal: controller.signal,
-      });
-      if (!current(generation, controller.signal)) return;
-      if (!data) throw new Error(apiErrorMessage(responseError, 'Unable to save the CardDAV account.'));
-      const passwordConfigured = persistedPasswordConfigured || password !== '';
-      baseURL = data.base_url;
-      username = data.username;
-      enabled = data.enabled;
-      schedule = data.schedule ?? '';
-      persistedProvider = provider;
-      persistedOAuthApp = oauthApp;
-      persistedBaseURL = data.base_url;
-      persistedUsername = data.username;
-      persistedPasswordConfigured = passwordConfigured;
-      persistedEnabled = data.enabled;
-      persistedSchedule = data.schedule ?? '';
-      password = '';
-      testedTuple = '';
-      status = `CardDAV account saved. Found ${data.books} address ${data.books === 1 ? 'book' : 'books'}.`;
-      void onSaved();
-    } catch (cause) {
-      if (!current(generation, controller.signal)) return;
-      error = cause instanceof Error ? cause.message : 'Unable to save the CardDAV account.';
-    } finally {
-      if (current(generation)) {
-        if (requestController === controller) requestController = undefined;
-        activeAction = undefined;
-      }
-    }
-  }
+  $effect(() => {
+    const currentValues: CardDAVAccountValues = { provider, oauthApp, baseURL, username, passwordConfigured: persistedPasswordConfigured, enabled, schedule };
+    const changed = provider !== persistedProvider || oauthApp !== persistedOAuthApp || baseURL !== persistedBaseURL || username !== persistedUsername || enabled !== persistedEnabled || schedule !== persistedSchedule || password !== '';
+    const needsPassword = passwordRequiredForSave() && password === '';
+    onDraft(changed ? { values: currentValues, password, busy: activeAction !== undefined, request: requestBody(), error: needsPassword ? 'Password is required for a new or changed CardDAV account.' : (!oauth && !baseURL) || !username ? 'Enter the contact account URL and username.' : undefined } : undefined);
+  });
   function apiErrorMessage(responseError: unknown, fallback: string): string {
     if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {
       const message = (
@@ -244,25 +210,16 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}<p class="status" role="status">{status}</p>{/if}
 
-  <p class="posture">
-    <ZapIcon size={12} aria-hidden="true" />
-    Saving the account applies right away. No daemon restart is needed.
-  </p>
-  <form
-    onsubmit={(event) => {
-      event.preventDefault();
-      void saveAccount();
-    }}
-  >
+  <form onsubmit={(event) => event.preventDefault()}>
     <label>
       Provider
-      <SelectDropdown title="CardDAV provider" value={provider} options={[{ value: '', label: 'Other CardDAV server' }, { value: 'google', label: 'Google Contacts' }, { value: 'microsoft', label: 'Microsoft 365 or Outlook.com' }]} onchange={selectProvider} disabled={activeAction !== undefined} />
+      <SelectDropdown title="CardDAV provider" value={provider} options={[{ value: '', label: 'Other CardDAV server' }, { value: 'google', label: 'Google Contacts' }, { value: 'microsoft', label: 'Microsoft 365 or Outlook.com' }]} onchange={selectProvider} disabled={saving || activeAction !== undefined} />
     </label>
     <div class="fields">
       {#if !oauth}
       <div class="field">
         <label class="field__label" for={`${uid}-url`}>Base URL</label>
-        <TextInput id={`${uid}-url`} type="url" bind:value={baseURL} disabled={activeAction !== undefined} required block />
+        <TextInput id={`${uid}-url`} type="url" bind:value={baseURL} disabled={saving || activeAction !== undefined} required block />
       </div>
       {/if}
       <div class="field">
@@ -271,7 +228,7 @@
           id={`${uid}-username`}
           autocomplete="username"
           bind:value={username}
-          disabled={activeAction !== undefined}
+          disabled={saving || activeAction !== undefined}
           required
           block
         />
@@ -279,10 +236,10 @@
     {#if google}
       <label>
         OAuth app
-        <TextInput bind:value={oauthApp} disabled={activeAction !== undefined} placeholder="Default Google OAuth app" block />
+        <TextInput bind:value={oauthApp} disabled={saving || activeAction !== undefined} placeholder="Default Google OAuth app" block />
       </label>
       <div class="actions">
-        <Button label={activeAction === 'authorize' ? 'Waiting for Google…' : 'Connect Google'} disabled={activeAction !== undefined} onclick={() => void connectGoogle()} />
+        <Button label={activeAction === 'authorize' ? 'Waiting for Google…' : 'Connect Google'} disabled={saving || activeAction !== undefined} onclick={() => void connectGoogle()} />
         {#if activeAction === 'authorize'}<Button label="Cancel sign-in" onclick={() => requestController?.abort()} />{/if}
       </div>
       <p>Register <code>{window.location.origin}/</code> as an authorized redirect URI in your Google OAuth app. Keep existing permissions checked when granting contacts access.</p>
@@ -303,7 +260,7 @@
           type="password"
           autocomplete="current-password"
           bind:value={password}
-          disabled={activeAction !== undefined}
+          disabled={saving || activeAction !== undefined}
           required={passwordRequiredForSave()}
           ariaDescribedby={`${uid}-password-hint`}
           block
@@ -321,23 +278,16 @@
     <div class="field">
       <div class="field__head">
         <span class="field__label">Automatic sync</span>
-        <Toggle bind:checked={enabled} disabled={activeAction !== undefined} label="Enabled" />
+        <Toggle bind:checked={enabled} disabled={saving || activeAction !== undefined} label="Enabled" />
       </div>
-      <CronField label="Schedule" bind:value={schedule} disabled={activeAction !== undefined} />
+      <CronField label="Schedule" bind:value={schedule} disabled={saving || activeAction !== undefined} />
     </div>
 
     <div class="actions">
       <Button
-        disabled={activeAction !== undefined}
+        disabled={saving || activeAction !== undefined}
         label={activeAction === 'test' ? 'Testing…' : 'Test CardDAV connection'}
         onclick={() => void testConnection()}
-      />
-      <Button
-        type="submit"
-        disabled={activeAction !== undefined}
-        tone="info"
-        surface="solid"
-        label={activeAction === 'save' ? 'Saving…' : 'Save CardDAV account'}
       />
     </div>
   </form>
@@ -349,18 +299,6 @@
   form {
     display: grid;
     gap: var(--space-5);
-  }
-  .posture {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin: 0 0 var(--space-5);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-  .posture :global(svg) {
-    flex-shrink: 0;
-    color: var(--accent-green);
   }
   .fields {
     display: grid;

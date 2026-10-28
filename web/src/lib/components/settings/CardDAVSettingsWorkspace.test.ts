@@ -1,3 +1,4 @@
+import type { AccountDraft } from '../../carddav/account-settings';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -107,10 +108,10 @@ describe('CardDAV connection selection', () => {
     await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'default');
     await waitFor(() =>
       expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe(
-        'https://default.example.test/'
+        'https://draft.example.test/'
       )
     );
-    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('synthetic-default-password');
   });
   it('creates a named form without borrowing the default credential', async () => {
     const bodies: Record<string, unknown>[] = [];
@@ -135,7 +136,8 @@ describe('CardDAV connection selection', () => {
       if (path.endsWith('/runs')) return Response.json({ runs: [] });
       return Response.json({ conflicts: [] });
     });
-    render(CardDAVSettingsWorkspace, { client, settings: [] });
+    const drafts: Record<string, AccountDraft> = {};
+    render(CardDAVSettingsWorkspace, { client, settings: [], drafts });
     await waitFor(() => expect(screen.getByRole('combobox', { name: /^CardDAV connection/ })).toBeDefined());
     await fireEvent.input(screen.getByLabelText('New connection name'), {
       target: { value: 'work' }
@@ -148,19 +150,20 @@ describe('CardDAV connection selection', () => {
     await fireEvent.input(screen.getByLabelText('Username'), {
       target: { value: 'person@example.com' }
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
+
     expect(bodies).toHaveLength(0);
     expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(true);
     await fireEvent.input(screen.getByLabelText('Password'), {
       target: { value: 'synthetic-work-password' }
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
-    await waitFor(() => expect(bodies).toHaveLength(1));
-    expect(bodies[0]).toMatchObject({
+
+    await waitFor(() => expect(drafts.work?.request).toMatchObject({
       connection: 'work',
       username: 'person@example.com',
       password: 'synthetic-work-password'
-    });
+    }));
+    expect(drafts.work?.error).toBeUndefined();
+    expect(bodies).toHaveLength(0);
   });
 });
 
@@ -202,7 +205,8 @@ it('restores an orphaned connection with its retained name and account details',
     if (url.pathname.endsWith('/conflicts')) return Response.json({ conflicts: [] });
     throw new Error(`Unexpected ${request.method} ${url.pathname}`);
   });
-  render(CardDAVSettingsWorkspace, { client, settings: [] });
+  const drafts: Record<string, AccountDraft> = {};
+  render(CardDAVSettingsWorkspace, { client, settings: [], drafts });
   await screen.findByText('Runtime unavailable');
   await chooseSelectOption(
     screen.getByRole('combobox', { name: /^CardDAV connection/ }),
@@ -218,19 +222,9 @@ it('restores an orphaned connection with its retained name and account details',
   expect(requests.some(request => new URL(request.url).pathname.endsWith('/conflicts'))).toBe(false);
 
   await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-work-password' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
-
-  await waitFor(() => expect(screen.queryByText(/Configuration is missing/)).toBeNull());
-  await screen.findByText('Runtime available');
-  await screen.findByRole('heading', { name: 'Sync history' });
-  await waitFor(() => expect(requests
-    .map(request => new URL(request.url))
-    .filter(url => url.searchParams.get('connection') === 'work')
-    .map(url => url.pathname).sort()
-  ).toEqual(['/api/v1/carddav/books', '/api/v1/carddav/runs', '/api/v1/carddav/status']));
-  const save = requests.find(request => request.method === 'PUT')!;
-  await expect(save.clone().json()).resolves.toEqual({
+  await waitFor(() => expect(drafts.work?.request).toEqual({
     connection: 'work', base_url: 'https://work.example.test/', username: 'work@example.com',
     enabled: true, schedule: '0 2 * * *', password: 'synthetic-work-password'
-  });
+  }));
+  expect(drafts.work?.error).toBeUndefined();
 });

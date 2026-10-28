@@ -43,6 +43,7 @@
     onNavigate = () => undefined,
     onAnnounce = () => undefined,
     onConfigure = () => undefined,
+    onOverview = () => undefined,
     onSetUp = () => undefined
   }: {
     controller: Controller;
@@ -52,6 +53,7 @@
     onNavigate?: (target: RelatedStatus) => void;
     onAnnounce?: (message: string) => void;
     onConfigure?: () => void;
+    onOverview?: () => void;
     onSetUp?: (target: OperationSettingsTarget) => void;
   } = $props();
 
@@ -307,6 +309,7 @@
           busy={current.statusRefreshing}
           onRefresh={() => void refreshStatus()}
         />
+    <Button label="Settings overview" onclick={onOverview} />
       {/snippet}
     </PageHeader>
 

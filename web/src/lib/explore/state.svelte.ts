@@ -1,3 +1,4 @@
+import { normalizeCategory } from '../settings/layout';
 import { SvelteSet } from 'svelte/reactivity';
 
 import type {
@@ -186,7 +187,7 @@ export const defaultExploreURLState: ExploreURLState = {
   operationRunID: null,
   operationStatus: '',
   settingsAuthority: '',
-  settingsCategory: 'browser',
+  settingsCategory: 'overview',
   columns: [...DEFAULT_EXPLORE_COLUMNS],
   columnWidths: {},
   activeRow: null,
@@ -366,15 +367,11 @@ function operationRunID(value: unknown): string | null {
     : null;
 }
 
-const SETTINGS_CATEGORY_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
-
-// A Settings authority link chooses its category; otherwise keep a
-// well-formed category id. Settings shows Appearance for ids the daemon
-// does not list.
+// Authority links select their setting; old category links select its new home.
 function settingsCategory(value: unknown, authority: SettingsNavigationAuthority | ''): string {
   const target = settingsNavigationTarget(authority);
   if (target) return target.categoryID;
-  return typeof value === 'string' && SETTINGS_CATEGORY_PATTERN.test(value) ? value : 'browser';
+  return normalizeCategory(typeof value === 'string' ? value : 'overview');
 }
 
 function legacyRelationshipTarget(

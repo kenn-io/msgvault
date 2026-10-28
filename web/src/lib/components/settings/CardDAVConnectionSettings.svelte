@@ -1,17 +1,19 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
-  import type { CardDAVAccountValues } from '../../carddav/account-settings';
+  import type { CardDAVAccountValues, AccountDraft } from '../../carddav/account-settings';
   import { CardDAVController } from '../../carddav/controller.svelte';
   import CardDAVAccountSettings from './CardDAVAccountSettings.svelte';
   import CardDAVOperations from './CardDAVOperations.svelte';
 
-  let { client, values, connection, orphaned, onSaved, onAvailabilityChange }: {
+  let { client, values, connection, orphaned, onAvailabilityChange, draft, onDraft, saving = false }: {
+    saving?: boolean;
+    draft?: AccountDraft;
+    onDraft: (draft: AccountDraft | undefined) => void;
     client: APIClient;
     values: CardDAVAccountValues;
     connection: string;
     orphaned: boolean;
-    onSaved: () => void | Promise<void>;
     onAvailabilityChange: (connection: string, available: boolean) => void;
   } = $props();
   const controller = new CardDAVController(untrack(() => client), undefined, untrack(() => connection));
@@ -24,12 +26,9 @@
   });
   onDestroy(() => controller.destroy());
 
-  async function accountSaved(): Promise<void> {
-    await Promise.all([controller.load(), onSaved()]);
-  }
 </script>
 
-<CardDAVAccountSettings {client} {values} {connection} onSaved={accountSaved} />
+<CardDAVAccountSettings {client} {values} {connection} {draft} {onDraft} {saving} />
 {#if !orphaned}
   <CardDAVOperations {controller} syncConnection={connection} />
 {/if}
