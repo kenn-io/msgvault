@@ -3,13 +3,14 @@ package synctechsms
 import (
 	"database/sql"
 	"time"
+
+	"go.kenn.io/msgvault/internal/synctechstate"
 )
 
 const (
 	AdapterName               = "synctech-sms"
 	SourceType                = "synctech_sms"
 	ParticipantIdentifierType = "synctech_sms"
-	RawFormat                 = "synctech_sms_xml_json"
 )
 
 type BackupKind string
@@ -22,12 +23,12 @@ const (
 type SMSType int
 
 const (
-	SMSTypeInbox  SMSType = 1
-	SMSTypeSent   SMSType = 2
-	SMSTypeDraft  SMSType = 3
-	SMSTypeOutbox SMSType = 4
-	SMSTypeFailed SMSType = 5
-	SMSTypeQueued SMSType = 6
+	SMSTypeInbox  SMSType = synctechstate.SMSTypeInbox
+	SMSTypeSent   SMSType = synctechstate.SMSTypeSent
+	SMSTypeDraft  SMSType = synctechstate.SMSTypeDraft
+	SMSTypeOutbox SMSType = synctechstate.SMSTypeOutbox
+	SMSTypeFailed SMSType = synctechstate.SMSTypeFailed
+	SMSTypeQueued SMSType = synctechstate.SMSTypeQueued
 )
 
 type MMSBox int
