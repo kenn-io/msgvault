@@ -531,7 +531,10 @@ func (m Model) peopleOverviewRelationshipLines() []string {
 		return []string{"", heading, "Relationship activity has not loaded. Press r to retry."}
 	default:
 		return append([]string{""}, relationshipHeatmapLines(
-			m.peopleState.relationshipCalendar, max(m.width, 1), m.styles, noColorRequested(),
+			m.peopleState.relationshipCalendar,
+			max(m.width, 1),
+			m.styles,
+			noColorRequested(),
 		)...)
 	}
 }
