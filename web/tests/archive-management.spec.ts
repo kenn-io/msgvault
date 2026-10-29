@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+});
+
 const row = {
   key: 'source:1:message:m1', kind: 'message', message_type: 'email', conversation_type: 'email',
   title: 'Reviewed message', preview: 'Exact selection', occurred_at: '2026-07-19T10:00:00Z',
@@ -62,7 +67,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   }] } }));
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Reviewed message')).toBeVisible();
   await grid.focus();
   await page.keyboard.press('Space');
@@ -106,6 +111,6 @@ test('archive management workspaces preserve reviewed authority and daemon job b
 
   await page.getByRole('button', { name: 'Invoices' }).click();
   await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('invoice');
-  await expect(page.getByRole('grid', { name: 'Everything results' })).toBeFocused();
+  await expect(page.getByRole('grid', { name: 'Messages results' })).toBeFocused();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
 });

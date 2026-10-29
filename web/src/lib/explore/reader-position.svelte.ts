@@ -19,8 +19,8 @@ class ReaderPosition {
     return this.#value;
   }
 
-  set(value: string): void {
-    this.#value = value === 'right' ? 'right' : 'below';
+  set(value: 'below' | 'right'): void {
+    this.#value = value;
     try {
       localStorage.setItem(STORAGE_KEY, this.#value);
     } catch {

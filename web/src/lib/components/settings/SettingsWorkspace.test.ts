@@ -675,7 +675,6 @@ it('keeps the acknowledged named account schedule when refreshing connection sum
   await screen.findByText('Unable to load CardDAV connections.');
   expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
 });
-
 it('opens document status from Overview Details without a past run', async () => {
   const { client } = fixture(settingsDoc(), request => {
     if (new URL(request.url).pathname.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents', related_status: 'getDocumentIndexStatus' })] });

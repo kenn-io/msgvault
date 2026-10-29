@@ -17,7 +17,7 @@ test('100k raw chat fragments reach Everything only as logical conversation rows
   expect(fixture.firstPage.total_count).toBe(fixture.logicalRows.length);
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid).toBeVisible();
   await expect(grid.locator('[data-row-key]').first()).toBeVisible();
   await expect(grid.getByText('Preview text for message 1 about various topics', { exact: true })).toHaveCount(0);

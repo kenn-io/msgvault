@@ -21,7 +21,7 @@ test('Everything preserves a deep focused row across density changes', async ({ 
     total_count: total, cache_revision: 'density-everything', search_provenance: {}
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.evaluate((element) => {
     element.scrollTop = 249 * 36;
     element.dispatchEvent(new Event('scroll'));

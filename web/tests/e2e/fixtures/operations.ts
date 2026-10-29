@@ -294,7 +294,7 @@ function lane(
     ...(latest ? { latest, latest_successful: latest.state === 'succeeded' ? latest : undefined } : {}),
     ...(latest?.state === 'running' ? { active: latest } : {}),
     ...(related_status ? { related_status } : {}),
-    ...(history_availability === 'unavailable' ? { unavailable_code: 'adapter_unavailable' } : {})
+    ...(history_availability === 'unavailable' ? { unavailable_code: `${kind}_history_unavailable` } : {})
   };
 }
 

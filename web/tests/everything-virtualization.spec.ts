@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
+});
+
 function syntheticRow(index: number) {
   return {
     key: `message:${index}`,
@@ -103,7 +109,7 @@ test('50,000 rows keep a bounded keyed DOM and stable grid focus', async ({ page
     }));
   });
   for (const { token, ratio } of mutedContrast) expect(ratio, token).toBeGreaterThanOrEqual(4.5);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid).toBeVisible();
   await expect.poll(async () => grid.locator('[role="row"]').count()).toBeGreaterThan(1);
   expect(await grid.locator('[role="row"]').count()).toBeLessThan(80);
@@ -212,7 +218,7 @@ test('End stops safely when a cursor repeats without progress', async ({ page })
   });
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
   await grid.focus();
   await page.keyboard.press('End');
@@ -263,7 +269,7 @@ test('deep durable focus and scroll restore through real back and reload with 50
   const url = `/?feature=preview&explore=${encodeURIComponent(JSON.stringify(state))}`;
 
   await page.goto(url);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-5500/);
   await expect(grid.getByText('Synthetic subject 5500')).toBeVisible();
   expect(requests).toHaveLength(11);

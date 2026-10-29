@@ -13,6 +13,8 @@ describe('application foundation', () => {
     const session = createSessionController(async (input) => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
       if (path === '/api/v1/telemetry/events') {
         events.push(await request.json());
@@ -25,12 +27,16 @@ describe('application foundation', () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     render(App, { session });
     for (const [label, name] of [
-      ['Everything', 'everything'], ['Directory', 'directory'], ['Reviews', 'directory_review'],
-      ['Files', 'files'], ['Operations', 'operations'], ['Relationships', 'relationships'],
-      ['Saved views', 'saved_views'], ['Sources', 'sources'], ['Deletions', 'deletions'], ['Settings', 'settings'],
+      ['Messages', 'everything'], ['People', 'relationships'], ['Files', 'files'], ['Sources', 'sources'], ['Settings', 'settings'],
     ]) {
       await fireEvent.click(await screen.findByRole('button', { name: label }));
       await waitFor(() => expect(events.some((event) => event.properties?.screen === name)).toBe(true));
+    }
+    for (const [label, name] of [['Directory', 'directory'], ['Open Reviews', 'directory_review'], ['Deletions', 'deletions']]) {
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      await fireEvent.input(await screen.findByRole('combobox', { name: 'Messages commands' }), { target: { value: label } });
+      await fireEvent.click(await screen.findByRole('option', { name: label }));
+      await waitFor(() => expect(events.some(event => event.properties?.screen === name)).toBe(true));
     }
     window.history.replaceState(null, '', '/messages/123');
     await fireEvent(window, new PopStateEvent('popstate'));
@@ -44,12 +50,14 @@ describe('application foundation', () => {
     document.documentElement.classList.remove('dark');
     window.history.replaceState(null, '', '/');
   });
-  it('mounts the Relationships landmark once bootstrap succeeds', async () => {
-    const session = createSessionController(async () =>
-      Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: true }),
+  it('mounts the Messages landmark once bootstrap succeeds', async () => {
+    const session = createSessionController(async input =>
+      new URL((input as Request).url).pathname === '/api/session'
+        ? Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: true })
+        : Response.json({}, { status: 404 }),
     );
     render(App, { session });
-    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
   });
   it('keeps the archive mounted after telemetry expires', async () => {
     const telemetryRequests: Request[] = [];
@@ -66,7 +74,7 @@ describe('application foundation', () => {
     await waitFor(() => expect(transport).toHaveBeenCalled());
     await Promise.all(transport.mock.results.map((result) => result.value));
     expect(telemetryRequests[0].headers.get('X-CSRF-Token')).toBe('csrf-token');
-    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
     expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
   });
   it('shows a quiet connecting state until bootstrap resolves, then login when required', async () => {
@@ -75,11 +83,11 @@ describe('application foundation', () => {
     );
     render(App, { session });
     expect(screen.getByRole('main', { name: 'Connecting' })).toBeDefined();
-    expect(screen.queryByRole('main', { name: 'Relationships' })).toBeNull();
+    expect(screen.queryByRole('main', { name: 'Messages' })).toBeNull();
     expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
     await session.bootstrap();
     expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
-    expect(screen.queryByRole('main', { name: 'Relationships' })).toBeNull();
+    expect(screen.queryByRole('main', { name: 'Messages' })).toBeNull();
   });
   it('titles the connecting screen msgvault', () => {
     const session = createSessionController(() => new Promise<Response>(() => undefined));
@@ -116,6 +124,8 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         sessionCalls += 1;
         if (sessionCalls === 1) throw new TypeError('Failed to fetch');
@@ -137,10 +147,10 @@ describe('application foundation', () => {
     const retry = await screen.findByRole('button', { name: 'Retry' });
     expect(screen.getByRole('main', { name: 'Connection error' })).toBeDefined();
     expect(screen.getByRole('alert')).toBeDefined();
-    expect(screen.queryByRole('main', { name: 'Relationships' })).toBeNull();
+    expect(screen.queryByRole('main', { name: 'Messages' })).toBeNull();
     expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
     await fireEvent.click(retry);
-    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     await waitFor(() => expect(document.documentElement.dataset.density).toBe('comfortable'));
   });
@@ -174,6 +184,8 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         return Response.json({
           auth_mode: 'session',
@@ -205,6 +217,8 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         return Response.json({ auth_mode: 'required', https: true, plain_http_warning: false });
       }
@@ -249,6 +263,8 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         return Response.json({ auth_mode: 'required', https: true, plain_http_warning: false });
       }
@@ -280,7 +296,7 @@ describe('application foundation', () => {
     expect(telemetryRequests).toHaveLength(0);
     await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Log in' }));
-    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
     await waitFor(() => expect(telemetryRequests).toHaveLength(1));
     expect(startReporting).toHaveBeenCalledTimes(1);
     expect(telemetryRequests[0].method).toBe('POST');
@@ -290,12 +306,12 @@ describe('application foundation', () => {
     expect(signedIn).toHaveBeenLastCalledWith(false);
     await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Log in' }));
-    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
     expect(signedIn).toHaveBeenLastCalledWith(true);
     expect(startReporting).toHaveBeenCalledTimes(1);
     await new Promise((resolve) => setTimeout(resolve));
     expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
-    expect(screen.getByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(screen.getByRole('main', { name: 'Messages' })).toBeDefined();
   });
   it.each([
     ['semantic', 'Semantic'],
@@ -312,6 +328,8 @@ describe('application foundation', () => {
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
         const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
         if (path === '/api/session') {
           return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
         }
@@ -359,6 +377,8 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/v1/settings' && request.method === 'GET' && ++settingsReads === 2) {
         // The browser-defaults load reads the daemon before the save, then stalls.
         const stale = await daemon(request.clone());
@@ -386,6 +406,8 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/v1/settings' && request.method === 'GET' && ++settingsReads === 2) {
         // The browser-defaults load reads an older daemon default, then stalls past the save.
         const stale = await daemon(request.clone());
@@ -426,6 +448,8 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
       }

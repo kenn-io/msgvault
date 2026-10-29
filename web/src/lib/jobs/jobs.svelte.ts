@@ -18,7 +18,7 @@ export class JobsStore {
     ? 'Unable to refresh all job status.' : undefined);
   health = $derived.by<JobsHealth>(() => {
     const health = jobsHealth(this.items);
-    return health === 'failed' ? health : this.error || !this.loaded ? 'unavailable' : health;
+    return health !== 'ok' ? health : this.error || !this.loaded ? 'unavailable' : health;
   });
   #sources = $state<SourceStatus[]>([]);
   #sourceError = $state(false);
