@@ -112,10 +112,10 @@ it.each(['rename', 'delete'])('keeps a completed %s when an earlier list read fi
     const request = new Request(input, init);
     if (request.method === 'PATCH') return Response.json({ ...saved, name: 'Q3 budget', revision: 2 });
     if (request.method === 'DELETE') { deleted = true; return new Response(null, { status: 204 }); }
-    if (new URL(request.url).pathname === '/api/v1/saved-views') return ++reads === 1 ? pending : Response.json({ saved_views: deleted ? [invoices] : [{ ...saved, name: 'Q3 budget', revision: 2 }] });
+    if (new URL(request.url).pathname === '/api/v1/saved-views') return ++reads === 1 ? Response.json({ saved_views: [saved] }) : reads === 2 ? pending : Response.json({ saved_views: deleted ? [invoices] : [{ ...saved, name: 'Q3 budget', revision: 2 }] });
     return Response.json({}, { status: 404 });
   }));
-  data.views = [saved];
+  await data.refresh();
   const reading = data.refresh();
   if (mutation === 'rename') await data.renameView(saved, 'Q3 budget');
   else { await data.deleteView(saved); await data.expireDelete(); }
@@ -142,6 +142,7 @@ it('exposes failed reads, keeps last views, and clears the error after Retry', a
 it('refreshes a PATCH conflict so the next edit uses the current revision', async () => {
   const saved = view(1, 'Budget');
   const revisions: string[] = [];
+  let reads = 0;
   let refreshed!: () => void;
   const read = new Promise<void>(resolve => { refreshed = resolve; });
   const data = new ShellData(createAPIClient(async (input, init) => {
@@ -151,10 +152,10 @@ it('refreshes a PATCH conflict so the next edit uses the current revision', asyn
       revisions.push(request.headers.get('If-Match')!);
       return revisions.length === 1 ? Response.json({}, { status: 409 }) : Response.json({ ...saved, name: 'Q3', revision: 3 });
     }
-    if (path === '/api/v1/saved-views') { refreshed(); return Response.json({ saved_views: [{ ...saved, revision: 2 }] }); }
+    if (path === '/api/v1/saved-views') { if (++reads === 1) return Response.json({ saved_views: [saved] }); refreshed(); return Response.json({ saved_views: [{ ...saved, revision: 2 }] }); }
     return Response.json({}, { status: 404 });
   }));
-  data.views = [saved];
+  await data.refresh();
   expect(await data.renameView(saved, 'Q3')).toBe('This view changed in another session. Cancel this edit and try again.');
   await read;
   await vi.waitFor(() => expect(data.views[0]?.revision).toBe(2));

@@ -25,6 +25,7 @@ export class JobsStore {
     return health !== 'ok' ? health : this.error || !this.loaded ? 'unavailable' : health;
   });
   #sources = $state<SourceStatus[]>([]);
+  get sources(): readonly SourceStatus[] { return this.#sources; }
   #sourceError = $state<boolean>();
   #operations: OperationsController;
   #client: APIClient;
