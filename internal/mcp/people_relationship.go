@@ -88,12 +88,8 @@ func (h *handlers) getPersonRelationship(
 		return nil, newInternalError("get person relationship contact", errors.New("empty response"))
 	}
 	if contact.ActivityCount == 0 {
-		canonicalID := participantID
-		if contact.Cluster != nil {
-			canonicalID = contact.Cluster.CanonicalID
-		}
 		return jsonResult(getPersonRelationshipResponse{
-			ParticipantID: participantID, CanonicalID: canonicalID,
+			ParticipantID: participantID, CanonicalID: contact.CanonicalID(),
 			DisplayLabel: contact.DisplayLabel,
 			Annual:       []identityindex.AnnualTemperatureSummary{}, CacheRevision: contact.CacheRevision,
 		})

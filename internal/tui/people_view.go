@@ -518,12 +518,11 @@ func (m Model) peopleContactTabLines() []string {
 }
 
 func (m Model) peopleOverviewRelationshipLines() []string {
-	if m.peopleState.contact != nil && m.peopleState.contact.ActivityCount == 0 {
-		return []string{"", "No sent or received messages with this contact yet."}
-	}
 	year := m.peopleState.relationshipYear
 	heading := relationshipAlignedLine("● Relationship", strconv.Itoa(year), max(m.width, 1))
 	switch {
+	case m.peopleState.contact != nil && m.peopleState.contact.ActivityCount == 0:
+		return []string{"", "No sent or received messages with this contact yet."}
 	case m.peopleState.relationshipLoading && m.peopleState.relationshipCalendar == nil:
 		return []string{"", heading, m.spinnerIndicator() + " Loading relationship activity..."}
 	case m.peopleState.relationshipErr != nil:
@@ -532,10 +531,7 @@ func (m Model) peopleOverviewRelationshipLines() []string {
 		return []string{"", heading, "Relationship activity has not loaded. Press r to retry."}
 	default:
 		return append([]string{""}, relationshipHeatmapLines(
-			m.peopleState.relationshipCalendar,
-			max(m.width, 1),
-			m.styles,
-			noColorRequested(),
+			m.peopleState.relationshipCalendar, max(m.width, 1), m.styles, noColorRequested(),
 		)...)
 	}
 }

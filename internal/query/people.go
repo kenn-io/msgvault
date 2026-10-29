@@ -117,6 +117,15 @@ type PersonSummary struct {
 	Profile                        *PersonProfile     `json:"profile,omitzero" nullable:"false"`
 }
 
+// CanonicalID returns the ID of the contact's identity cluster, or its own ID
+// when it has no linked aliases.
+func (p PersonSummary) CanonicalID() int64 {
+	if p.Cluster != nil {
+		return p.Cluster.CanonicalID
+	}
+	return p.ID
+}
+
 type PersonSearchResponse struct {
 	Rows             []PersonSummary  `json:"rows"`
 	TotalCount       int64            `json:"total_count"`
