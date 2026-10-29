@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
-import type { SyncResult } from '../api/generated/models';
-import { KIND_LANES, visualStatus } from '../../test/operations';
+import type { Status as VisualStatus, SyncResult } from '../api/generated/models';
+import { KIND_LANES, RELATED_STATUS } from '../../test/operations';
 import { OperationsController } from './controller.svelte';
 import type {
   OperationAction,
@@ -74,12 +74,7 @@ function statusResponse(overrides: Partial<Record<OperationKind, {
       supported_actions: overrides[kind]?.supported_actions ?? [],
       latest: run(`${RUN_ONE}-${kind}`, kind, lane),
       latest_successful: run(`${RUN_TWO}-${kind}`, kind, lane),
-      related_status: kind === 'carddav_sync' ? 'getCardDAVStatus'
-        : kind === 'document_extraction' ? 'getDocumentIndexStatus'
-          : kind === 'document_embedding' ? 'getDocumentVectorStatus'
-            : kind === 'visual_embedding' ? 'getVisualAttachmentStatus'
-              : kind === 'source_sync' ? 'listSourceStatus'
-                : undefined,
+      related_status: RELATED_STATUS[kind],
       ...(overrides[kind]?.history_availability === 'unavailable'
         ? { unavailable_code: 'synthetic_unavailable' }
         : {})
@@ -96,6 +91,43 @@ function runsResponse(
     membership_revision: overrides.membership_revision ?? 7,
     unavailable_kinds: overrides.unavailable_kinds ?? [],
     ...(overrides.next_cursor ? { next_cursor: overrides.next_cursor } : {})
+  };
+}
+
+function visualStatus(): VisualStatus {
+  return {
+    active_leases: 0,
+    converged: 1,
+    convergence_ratio: 1,
+    convergence_total: 1,
+    current: 1,
+    duplicate_cost: {
+      at_least_once: false,
+      detail: 'Synthetic test policy.',
+      provider_idempotent: true
+    },
+    eligible: 1,
+    formats: [],
+    generation: {
+      consented: true,
+      dimension: 3,
+      fingerprint: 'synthetic-generation',
+      id: 1,
+      model: 'synthetic-model',
+      source_fence: 1,
+      state: 'active'
+    },
+    journal_cursor: 1,
+    journal_high_water: 1,
+    journal_lag: 0,
+    reconciliation_complete: true,
+    retryable: 0,
+    stale: 0,
+    terminal: 0,
+    tombstoned: 0,
+    unavailable: 0,
+    unknown_role: 0,
+    usage: { billed_units: 0, input_bytes: 0, requests: 0, usage_available: false }
   };
 }
 
@@ -545,7 +577,7 @@ describe('OperationsController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (request.method === 'POST') {
-        return Response.json(action === 'carddav_sync' ? syncResult() : visualStatus);
+        return Response.json(action === 'carddav_sync' ? syncResult() : visualStatus());
       }
       reads += 1;
       return Response.json(path.endsWith('/status')
