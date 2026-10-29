@@ -18,9 +18,6 @@ type OperationState = OperationRunSummary['state'];
 const operationPublicFixture = JSON.parse(readFileSync(
   new URL('./operations-public.json', import.meta.url), 'utf8'
 )) as unknown;
-const operationPrivateSentinels = JSON.parse(readFileSync(
-  new URL('./operations-private-sentinels.json', import.meta.url), 'utf8'
-)) as Record<string, string>;
 const checkedPublicFixture = operationPublicFixture as unknown as OperationRunsResponse;
 const sourceRun = fixtureRun('source_sync');
 const cardDAVRun = fixtureRun('carddav_sync');
@@ -35,8 +32,6 @@ export const OPERATION_REFERENCES = {
   visual: visualRun.id,
   sweep: sweepRun.id
 } as const;
-
-export const OPERATION_PRIVACY_SENTINELS = Object.values(operationPrivateSentinels);
 
 const firstPage = [sourceRun, cardDAVRun, documentRun, visualRun];
 const secondPage = [sweepRun];

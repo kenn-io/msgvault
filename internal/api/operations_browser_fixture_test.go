@@ -29,16 +29,17 @@ type browserOperationPrivateSentinels struct {
 
 func TestBrowserOperationFixtureUsesProductionPublicProjection(t *testing.T) {
 	t.Parallel()
+	requirements := require.New(t)
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "web", "tests", "e2e", "fixtures", "operations-public.json"))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var fixture struct {
 		OperationRunsResponse
 		JobRuns []OperationRunSummary `json:"job_runs"`
 	}
-	require.NoError(t, json.Unmarshal(raw, &fixture))
-	require.Len(t, fixture.Runs, 5)
-	require.Len(t, fixture.JobRuns, 8)
+	requirements.NoError(json.Unmarshal(raw, &fixture))
+	requirements.Len(fixture.Runs, 5)
+	requirements.Len(fixture.JobRuns, 8)
 	runs := append(fixture.Runs, fixture.JobRuns...)
 
 	archive := &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID}
