@@ -119,7 +119,7 @@ export function categoryOf(setting: SettingState): CategoryID {
 }
 
 export function normalizeCategory(id: string, fallback: CategoryID = 'overview'): CategoryID {
-  const aliases: Record<string, CategoryID> = { browser: 'advanced', archive: 'advanced', integrations: 'tasks', attachments: 'sources' };
+  const aliases: Record<string, CategoryID> = { browser: 'advanced', archive: 'advanced', integrations: 'tasks', attachments: 'sources', people: 'enrichment' };
   return RAIL.some(category => category.id === id) ? id as CategoryID : Object.hasOwn(aliases, id) ? aliases[id]! : fallback;
 }
 

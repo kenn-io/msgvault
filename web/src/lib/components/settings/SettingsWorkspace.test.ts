@@ -295,6 +295,8 @@ it('creates an absent Exa provider with safe defaults after reloading a conflict
   });
   render(SettingsWorkspace, { client, category: 'enrichment' });
   await fireEvent.click(await screen.findByRole('button', { name: 'Add Exa' }));
+  expect(screen.getByText('The provider starts disabled. Review its disclosure policy and add a credential before enabling it.')).toBeDefined();
+  expect(screen.getByText('Names are durable IDs and cannot change provider kind later.')).toBeDefined();
   await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: 'exa-primary' } });
   await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
   await screen.findByText('The settings changed on disk. The latest are loaded. Try again.');
@@ -487,6 +489,24 @@ it('refreshes the shared config revision when creating a profile succeeds before
   await screen.findByText('Key store unavailable');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.find(request => request.method === 'PATCH')?.ifMatch).toBe('"s2"'));
+});
+
+it('opens retired People sweep links in People lookups', () => {
+  expect(normalizeCategory('people')).toBe('enrichment');
+});
+
+it('clears the settings load error after a successful Retry', async () => {
+  let reads = 0;
+  const { client } = fixture(settingsDoc(), request => {
+    if (new URL(request.url).pathname === '/api/v1/settings' && request.method === 'GET' && ++reads === 1) {
+      return Response.json({ message: 'Temporary settings read failure' }, { status: 503 });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'advanced' });
+  await screen.findByText("Can't load settings");
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await screen.findByLabelText('Theme');
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 it('shows settings from unknown groups under Advanced and defaults unknown URLs to Overview', async () => {

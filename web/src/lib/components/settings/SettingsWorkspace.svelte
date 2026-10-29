@@ -240,6 +240,7 @@
       credentialETag = response.headers.get('Credential-ETag') ?? document.credential_etag ?? '';
       if (retainDrafts) pruneSettledDrafts();
       else discardChanges();
+      error = '';
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Can't load settings.";
     } finally {
