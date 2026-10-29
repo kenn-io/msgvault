@@ -93,6 +93,33 @@ describe('AppShell', () => {
     };
   }
 
+  it.each(['Sync status', 'Saved view actions'])('%s typeahead keeps Messages open with a selection', async menu => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json({ unavailable_actions: [] });
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane('message_embedding')] });
+      if (path.endsWith('/saved-views')) return Response.json({ saved_views: [view(1, 'Budget')] });
+      if (path.endsWith('/explore')) return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
+      return Response.json({});
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client, state });
+    await screen.findByText('Synthetic subject 1');
+    state.replaceTransient({ activeRow: 'message:1' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    await fireEvent.click(await screen.findByRole('button', { name: menu === 'Sync status' ? 'Sync status: Needs attention' : 'Budget actions' }));
+    const first = (await screen.findAllByRole('menuitem'))[0]!;
+    first.focus();
+    await fireEvent.keyDown(first, { key: 'd' });
+    expect(state.current.workspace).toBe('everything');
+    expect(screen.getByRole('menu').contains(document.activeElement)).toBe(true);
+    rendered.unmount();
+    state.destroy();
+  });
+
   it.each([{ query: 'needle', cache: false }, { query: '', cache: true }])('labels an Everything load failure for $query with cache=$cache', async ({ query, cache }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
     const client = createAPIClient(async (input) => {

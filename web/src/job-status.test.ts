@@ -145,3 +145,29 @@ it('Sources Sync now stays running when an older shell poll completes', async ()
   await tick();
   expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Running');
 });
+
+it('refreshes the shell dot after Messages search Build index', async () => {
+  window.history.replaceState(null, '', '/?workspace=everything&mode=hybrid');
+  let built = false;
+  const session = sessionFor((request, path) => {
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: [jobLane('message_embedding', {
+      latest: jobRun('message_embedding'),
+      ...(built ? { active: { ...jobRun('message_embedding'), state: 'running', finished_at: undefined, error: undefined } } : {}),
+    })] });
+    if (path === '/api/v1/search/coverage') return Response.json({
+      eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1',
+      status: 'initializing', actions: built ? [] : ['build_index'],
+    });
+    if (request.method === 'POST' && path === '/api/v1/cli/run') {
+      built = true;
+      return new Response('{"type":"complete"}\n');
+    }
+  });
+  render(App, { session });
+  await screen.findByRole('button', { name: 'Sync status: Needs attention' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Build index' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  await waitFor(() => expect(built).toBe(true));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Build index' })).toBeNull());
+  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Running'), { timeout: 3000 });
+});

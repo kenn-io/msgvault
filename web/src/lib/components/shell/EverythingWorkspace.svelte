@@ -82,6 +82,7 @@
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onSaveView: () => void;
+    onStatusChange?: () => void;
   }
 
   let {
@@ -114,6 +115,7 @@
     changeConversationAnchor,
     onOpenMeeting = undefined,
     onSaveView,
+    onStatusChange = () => undefined,
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
@@ -583,6 +585,7 @@
     }
     try {
       await api.runCoverageAction(action, session.coverage?.status ?? 'unavailable');
+      onStatusChange();
       coverageRetryRevision += 1;
     } catch (cause) {
       session.coverage = {

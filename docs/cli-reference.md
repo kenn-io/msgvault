@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-28"
+last_edited: "2026-10-29"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -4623,7 +4623,7 @@ provider. Stored provider credentials are checked too. An `on` state means the
 setup checks passed; it does not prove that an index has been built or that a
 provider will answer. The MCP summary is a partial list derived from enabled
 configuration flags, not the live server's `tools/list` response. Use the
-feature's status command or [Web Operations](web-ui.md#operations) to inspect
+feature's status command or [Settings Overview](web-ui.md#settings-and-restart-behavior) to inspect
 index progress and coverage.
 
 ```bash
