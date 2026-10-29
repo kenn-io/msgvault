@@ -4,22 +4,24 @@
   import type { APIClient } from '../../api/client';
   import type { OperationsController } from '../../operations/controller.svelte';
   import type { OperationAction, OperationsURLState } from '../../operations/models';
-  import { OPERATION_KIND_LABELS, type RelatedStatus } from '../../operations/labels';
+  import { OPERATION_KIND_LABELS, RELATED_STATUS_LABELS, type RelatedStatus } from '../../operations/labels';
   import { operationFocusAnchor, resolveOperationFocusAnchor, type OperationFocusAnchor } from '../../operations/focus';
   import OperationRelatedStatus from '../operations/OperationRelatedStatus.svelte';
   import OperationRunDetail from '../operations/OperationRunDetail.svelte';
   import OperationRunTable from '../operations/OperationRunTable.svelte';
   import Dialog from '../common/Dialog.svelte';
 
-  let { client, controller, state: local = $bindable(), onclose, onNavigate, onConfigure, onAnnounce = () => undefined }: {
+  let { client, controller, restorationEpoch, state: local = $bindable(), onclose, onNavigate, onConfigure, onAnnounce = () => undefined }: {
     client: APIClient;
     controller: OperationsController;
+    restorationEpoch: number;
     state: OperationsURLState;
     onclose: () => void;
     onNavigate: (target: RelatedStatus) => void;
     onConfigure: () => void;
     onAnnounce?: (message: string) => void;
   } = $props();
+  let appliedRestorationEpoch = untrack(() => restorationEpoch);
   let root = $state<HTMLElement>();
   let anchor: OperationFocusAnchor | undefined;
   let invokingRow: HTMLButtonElement | undefined;
@@ -33,9 +35,31 @@
     if (controller.snapshot.historyReadable || controller.snapshot.runsError) void controller.refresh();
   });
   $effect(() => {
-    const wanted = { ...local };
-    untrack(() => { void controller.applyURLState(wanted); });
+    const wanted = local;
+    const epoch = restorationEpoch;
+    const restoring = epoch !== appliedRestorationEpoch;
+    appliedRestorationEpoch = epoch;
+    untrack(() => {
+      void controller.applyURLState(wanted).then(async () => {
+        await tick();
+        if (epoch !== restorationEpoch || local !== wanted || !root?.isConnected) return;
+        if (wanted.operationRunID && (restoring || !anchor)) anchor = operationFocusAnchor(current.rows, wanted.operationRunID) ?? anchor;
+        if (!restoring) return;
+        const target = wanted.operationStatus ? root.querySelector<HTMLButtonElement>('.related-status button')
+          : wanted.operationRunID ? detailFocusTarget() : runListFocusTarget();
+        target?.focus();
+      });
+    });
   });
+  function runListFocusTarget(id = resolveOperationFocusAnchor(current.rows, anchor)): HTMLButtonElement | undefined {
+    const fallback = Array.from(root?.querySelectorAll<HTMLButtonElement>('button[data-run-id]') ?? []).find(button => button.dataset.runId === id);
+    return invokingRow?.isConnected ? invokingRow : fallback ?? root?.querySelector<HTMLButtonElement>('button') ?? undefined;
+  }
+  function detailFocusTarget(): HTMLButtonElement | undefined {
+    const label = relatedFocus ?? (current.detail?.related_status ? `Open ${RELATED_STATUS_LABELS[current.detail.related_status]}` : undefined);
+    const buttons = Array.from(root?.querySelectorAll<HTMLButtonElement>('button') ?? []);
+    return buttons.find(button => button.textContent?.trim() === label) ?? buttons[0];
+  }
   function patchFilter(patch: Partial<OperationsURLState>): void {
     local = { ...local, ...patch, operationRunID: null, operationStatus: '' };
   }
@@ -48,8 +72,7 @@
     const id = resolveOperationFocusAnchor(current.rows, anchor) ?? local.operationRunID;
     local = { ...local, operationRunID: null };
     await tick();
-    const fallback = Array.from(root?.querySelectorAll<HTMLButtonElement>('button[data-run-id]') ?? []).find(button => button.dataset.runId === id);
-    (invokingRow?.isConnected ? invokingRow : fallback)?.focus();
+    runListFocusTarget(id ?? undefined)?.focus();
   }
   function navigateStatus(target: RelatedStatus, button: HTMLButtonElement): void {
     relatedFocus = button.textContent?.trim();
@@ -58,8 +81,7 @@
   async function closeRelatedStatus(): Promise<void> {
     local = { ...local, operationStatus: '' };
     await tick();
-    const buttons = Array.from(root?.querySelectorAll<HTMLButtonElement>('button') ?? []);
-    (buttons.find(button => button.textContent?.trim() === relatedFocus) ?? buttons[0])?.focus();
+    detailFocusTarget()?.focus();
     relatedFocus = undefined;
   }
   const actionSuccess: Record<OperationAction, string> = {
@@ -108,7 +130,7 @@
       {#if current.detailLoading}<p class="muted" role="status">Loading run…</p>{/if}
       {#if current.detailError}<p class="error" role="alert">{current.detailError}</p>{/if}
       {#if current.detail}
-        <OperationRunDetail detail={current.detail} compact showClose={false} actionPending={current.actionPending}
+        <OperationRunDetail detail={current.detail} actionPending={current.actionPending}
           onNavigate={navigateStatus} onAction={(action) => void runAction(action)} />
       {/if}
     {:else}
