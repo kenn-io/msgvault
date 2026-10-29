@@ -7,7 +7,7 @@ import { OPERATION_SETUP, operationStateChip, type OperationSetup } from '../ope
 /** What the one button on a row does. */
 export type OverviewAction =
   | OperationSetup
-  | { kind: 'start'; id: 'messages' | 'visual_build' | 'visual_resume' | 'contacts'; label: string; consent?: string }
+  | { kind: 'start'; id: 'messages' | 'visual_build' | 'visual_resume' | 'carddav_sync'; label: string; consent?: string }
   | { kind: 'sources' };
 
 export interface OverviewRow {
@@ -112,7 +112,7 @@ export function overviewRows(
     action: !on('carddav_sync')
       ? setup('carddav_sync')
       : lane(lanes, 'carddav_sync')?.supported_actions.includes('carddav_sync')
-        ? { kind: 'start', id: 'contacts', label: 'Sync now' }
+        ? { kind: 'start', id: 'carddav_sync', label: 'Sync now' }
         : undefined,
   });
 
