@@ -12,6 +12,14 @@ export const KIND_LANES: ReadonlyArray<readonly [OperationLaneStatus['kind'], Op
   ['visual_embedding', 'visual_attachments']
 ];
 
+export const RELATED_STATUS: Partial<Record<OperationLaneStatus['kind'], OperationLaneStatus['related_status']>> = {
+  source_sync: 'listSourceStatus',
+  carddav_sync: 'getCardDAVStatus',
+  document_extraction: 'getDocumentIndexStatus',
+  document_embedding: 'getDocumentVectorStatus',
+  visual_embedding: 'getVisualAttachmentStatus',
+};
+
 export function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
   return { kind, configured: true, lane: KIND_LANES.find(([candidate]) => candidate === kind)![1], history_availability: 'available', supported_actions: [], ...extra };
 }

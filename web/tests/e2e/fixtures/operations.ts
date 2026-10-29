@@ -1,8 +1,8 @@
 import type { Page, Route } from '@playwright/test';
+import { RELATED_STATUS } from '../../../src/test/operations';
 import { readFileSync } from 'node:fs';
 import type {
   OperationLaneStatus,
-  OperationLaneStatusRelatedStatus,
   OperationLaneStatusSupportedActionsItem as OperationAction,
   OperationRunsResponse,
   OperationRunDetail,
@@ -227,13 +227,6 @@ function detailFor(id: string): OperationRunDetail | undefined {
     candidate.id === id || rotatedReference(candidate.id) === id);
   const runByID = original && id === rotatedReference(original.id) ? rotatedRun(original) : original;
   if (!runByID) return undefined;
-  const related = {
-    source_sync: 'listSourceStatus',
-    carddav_sync: 'getCardDAVStatus',
-    document_extraction: 'getDocumentIndexStatus',
-    document_embedding: 'getDocumentVectorStatus',
-    visual_embedding: 'getVisualAttachmentStatus'
-  } as const;
   return {
     ...runByID,
     supported_actions: runByID.kind === 'carddav_sync'
@@ -241,8 +234,8 @@ function detailFor(id: string): OperationRunDetail | undefined {
       : runByID.kind === 'visual_embedding'
         ? ['visual_resume']
         : [],
-    ...(runByID.kind in related
-      ? { related_status: related[runByID.kind as keyof typeof related] }
+    ...(RELATED_STATUS[runByID.kind]
+      ? { related_status: RELATED_STATUS[runByID.kind] }
       : {})
   };
 }
@@ -255,15 +248,15 @@ function statusResponse(
   const visible = (run: OperationRunSummary) => rotated ? rotatedRun(run) : run;
   return {
     lanes: [
-      lane('messages', 'source_sync', visible(sourceRun), 'listSourceStatus'),
+      lane('messages', 'source_sync', visible(sourceRun)),
       lane('messages', 'message_embedding'),
       lane('person_facts', 'person_sweep', visible(sweepRun)),
-      lane('person_facts', 'person_embedding', undefined, undefined, [], 'unavailable'),
+      lane('person_facts', 'person_embedding', undefined, [], 'unavailable'),
       lane('person_facts', 'person_enrichment'),
-      lane('contacts', 'carddav_sync', visible(cardDAVRun), 'getCardDAVStatus', ['carddav_sync']),
-      lane('documents', 'document_extraction', visible(documentRun), 'getDocumentIndexStatus', [], 'available', documentConfigured),
-      lane('documents', 'document_embedding', undefined, 'getDocumentVectorStatus'),
-      lane('visual_attachments', 'visual_embedding', visible(visualRun), 'getVisualAttachmentStatus', ['visual_resume'], 'available', visualConfigured)
+      lane('contacts', 'carddav_sync', visible(cardDAVRun), ['carddav_sync']),
+      lane('documents', 'document_extraction', visible(documentRun), [], 'available', documentConfigured),
+      lane('documents', 'document_embedding', undefined),
+      lane('visual_attachments', 'visual_embedding', visible(visualRun), ['visual_resume'], 'available', visualConfigured)
     ]
   };
 }
@@ -280,7 +273,6 @@ function lane(
   laneName: OperationLane,
   kind: OperationKind,
   latest?: OperationRunSummary,
-  related_status?: OperationLaneStatusRelatedStatus,
   supported_actions: OperationAction[] = [],
   history_availability: 'available' | 'unavailable' = 'available',
   configured = kind !== 'message_embedding'
@@ -293,7 +285,7 @@ function lane(
     supported_actions,
     ...(latest ? { latest, latest_successful: latest.state === 'succeeded' ? latest : undefined } : {}),
     ...(latest?.state === 'running' ? { active: latest } : {}),
-    ...(related_status ? { related_status } : {}),
+    ...(RELATED_STATUS[kind] ? { related_status: RELATED_STATUS[kind] } : {}),
     ...(history_availability === 'unavailable' ? { unavailable_code: `${kind}_history_unavailable` } : {})
   };
 }
