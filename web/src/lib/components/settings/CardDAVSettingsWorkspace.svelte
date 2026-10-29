@@ -16,12 +16,14 @@
     client,
     settings,
     drafts = $bindable({}),
+    saved = {},
     resetRevision = 0,
     cardDAVRequest = undefined,
     onCardDAVRequestConsumed = () => undefined
   }: {
     resetRevision?: number;
     drafts?: Record<string, AccountDraft>;
+    saved?: Record<string, CardDAVAccountValues>;
     client: APIClient;
     settings: SettingState[];
     cardDAVRequest?: CardDAVSettingsRequest;
@@ -38,7 +40,7 @@
   let connectionGeneration = 0;
   let disposed = false;
   const connectionOptions = $derived.by(() => {
-    const names = new Set(['default', ...connections.map(item => item.connection), ...Object.keys(drafts)]);
+    const names = new Set(['default', ...connections.map(item => item.connection), ...Object.keys(drafts), ...Object.keys(saved)]);
     if (newConnection) names.add(newConnection);
     return [...names].map(value => ({
       value,
@@ -181,7 +183,7 @@
     <CardDAVConnectionSettings
       {resetRevision}
       {client}
-      values={selectedValues}
+      values={connectionError && Object.hasOwn(saved, selected) ? saved[selected] : selectedValues}
       draft={Object.hasOwn(drafts, selected) ? drafts[selected] : undefined}
       onDraft={(draft) => { if (draft) drafts = { ...untrack(() => drafts), [selected]: draft }; else delete drafts[selected]; }}
       connection={selected}

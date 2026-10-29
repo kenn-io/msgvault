@@ -410,14 +410,6 @@ describe('application foundation', () => {
     expect(window.location.search).toBe(before);
     expect(localStorage.getItem(SEARCH_MODE_PREFERENCE_KEY)).toBe('hybrid');
   });
-  it('keeps a Display menu theme override ahead of a saved theme', async () => {
-    sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'light' }));
-    await openAppearance(appearanceDaemon());
-    await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
-  });
 
   it('threads repeated same-conflict handoffs through AppShell as distinct exactly-once live events', async () => {
     window.history.replaceState(

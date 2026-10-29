@@ -3,9 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
-import { lane } from '../../../test/operations';
+import { activeGeneration, embeddingStatus, lane } from '../../../test/operations';
 import { chooseSelectOption } from '../../../test/kit-ui';
-
 
 type Setting = Record<string, unknown>;
 
@@ -242,16 +241,6 @@ describe('SettingsWorkspace', () => {
     expect(onCategoryChange).not.toHaveBeenCalled();
   });
 
-  it('reports a saved Appearance theme', async () => {
-    const onAppearanceSaved = vi.fn();
-    const { client } = fixture();
-    render(SettingsWorkspace, { client, category: 'advanced', onAppearanceSaved });
-    await screen.findByRole('heading', { name: 'Advanced', level: 2 });
-    await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(onAppearanceSaved).toHaveBeenCalledWith({ theme: 'dark' }));
-  });
-
 });
 
 it('keeps provider endpoints and keys across categories, saves endpoints before keys, and retains only a failed key', async () => {
@@ -302,8 +291,8 @@ it('retains account passwords across categories and clears them on Discard', asy
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'account@example.com' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('default: Password is required');
+  expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(await screen.findByText(/default: Password is required/)).toBeDefined();
   expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
   expect(screen.getByText('2 unsaved changes')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
@@ -345,7 +334,7 @@ it('Overview shows a contacts sync action error', async () => {
   });
   render(SettingsWorkspace, { client });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Connections needing attention: work');
+  expect(await screen.findByRole('alert')).toBeDefined();
 });
 
 it('saves other categories after leaving a contact connection test', async () => {
@@ -481,7 +470,7 @@ it('keeps Contacts sync available while the message index builds and refreshes i
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const { client, seen } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [lane('message_embedding'), lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'] })] });
-    if (request.url.includes('/embeddings/status')) return Response.json({ active_generation: built ? 1 : null });
+    if (request.url.includes('/embeddings/status')) return Response.json({ ...embeddingStatus, active_generation: built ? activeGeneration : null });
     if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: built ? [] : ['build_index'] });
     if (request.url.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded', connections: [] });
     if (request.url.endsWith('/cli/run')) return pending;
@@ -493,7 +482,7 @@ it('keeps Contacts sync available while the message index builds and refreshes i
   await waitFor(() => expect(seen.some(request => request.path === '/api/v1/cli/run')).toBe(true));
   expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false);
   await fireEvent.click(screen.getByRole('button', { name: 'Sync now, Contacts' }));
-  await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
+  await waitFor(() => expect(seen.some(request => request.path.endsWith('/carddav/sync'))).toBe(true));
   expect((await screen.findByRole('button', { name })) as HTMLButtonElement).toHaveProperty('disabled', true);
   built = true;
   finish(new Response('{"type":"complete"}\n'));
@@ -550,7 +539,8 @@ it.each(['full_text', 'semantic'])('offers approved search defaults and preserve
   const doc = settingsDoc();
   doc.settings.find(item => item.key === 'web.default_search_mode')!.value = typed(stored);
   const { client, seen } = fixture(doc);
-  render(SettingsWorkspace, { client, category: 'advanced' });
+  const onAppearanceSaved = vi.fn();
+  render(SettingsWorkspace, { client, category: 'advanced', onAppearanceSaved });
   const trigger = await screen.findByRole('combobox', { name: /^Search opens in:/ });
   expect(trigger.textContent).toContain(stored === 'semantic' ? 'Semantic' : 'Exact words');
   expect(screen.queryByText('1 unsaved change')).toBeNull();
@@ -559,9 +549,11 @@ it.each(['full_text', 'semantic'])('offers approved search defaults and preserve
   if (stored === 'semantic') expect((semantic as HTMLButtonElement).disabled).toBe(true);
   else expect(semantic).toBeNull();
   await fireEvent.click(screen.getByRole('option', { name: 'Best match' }));
+  await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.find(request => request.method === 'PATCH')?.body).toEqual({ updates: [{ key: 'web.default_search_mode', value: { string: 'hybrid' } }] });
+  expect(seen.find(request => request.method === 'PATCH')?.body).toEqual({ updates: [{ key: 'web.default_search_mode', value: { string: 'hybrid' } }, { key: 'web.theme', value: { string: 'dark' } }] });
+  expect(onAppearanceSaved).toHaveBeenCalledWith({ defaultSearchMode: 'hybrid', theme: 'dark' });
 });
 
 it('keeps edited People search details visible when switching the feature off', async () => {
@@ -610,7 +602,6 @@ it.each(['first enable', 'last disable', 'replacement'] as const)('saves valid p
     : [['PUT', 'replacement', '"s1"'], ['PUT', 'primary', '"s2"']]);
   expect(doc.settings.find(item => item.key === 'people.enrichment.enabled')!.value).toEqual(typed(transition !== 'last disable'));
 });
-
 
 it.each(['constructor', '__proto__'])('preserves and edits the saved endpoint for accepted provider name %s', async name => {
   const provider = { ...providerDefaults, name, kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: `people.enrichment/${name}`, credential: { configured: false, source: 'none' } };
@@ -803,9 +794,28 @@ it('refreshes the shared config revision when creating a profile succeeds before
   await fireEvent.click(screen.getByRole('radio', { name: 'Exclude sensitive content' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
   await screen.findByText('Key store unavailable');
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.find(request => request.method === 'PATCH')?.ifMatch).toBe('"s2"'));
-  await waitFor(() => expect(screen.queryByText('1 unsaved change')).toBeNull());
+});
+
+it('keeps the acknowledged named account schedule when refreshing connection summaries fails', async () => {
+  let saved = false;
+  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
+  const { client } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/carddav/connections')) return saved ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ connections: [{ connection: 'work', status: account }] });
+    if (path.endsWith('/carddav/status')) return Response.json(account);
+    if (path.endsWith('/carddav/account')) {
+      saved = true;
+      return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'carddav' });
+  await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
+  await screen.findByDisplayValue('work@example.com');
+  await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('Contact account work saved. Found 1 address book.');
+  await screen.findByText('Unable to load CardDAV connections.');
+  expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
 });

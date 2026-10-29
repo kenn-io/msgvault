@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { EmbeddingStatus, OperationLaneStatus } from '../api/generated/models';
-import { lane } from '../../test/operations';
+import type { OperationLaneStatus } from '../api/generated/models';
+import { activeGeneration, embeddingStatus, lane, visualStatus } from '../../test/operations';
 import { overviewRows } from './overview';
-
 
 function row(rows: ReturnType<typeof overviewRows>, id: string) {
   const found = rows.find((candidate) => candidate.id === id);
@@ -31,7 +30,7 @@ describe('overviewRows', () => {
   });
 
   it.each([true, false])('gates the message build on server coverage actions (%s)', available => {
-    const rows = overviewRows([lane('message_embedding')], { active_generation: null } as unknown as EmbeddingStatus, undefined, available ? ['build_index'] : []);
+    const rows = overviewRows([lane('message_embedding')], embeddingStatus, undefined, available ? ['build_index'] : []);
     expect(row(rows, 'message_embedding').action).toEqual(available ? { kind: 'start', id: 'messages', label: 'Build index' } : undefined);
     expect(row(rows, 'message_embedding').chip.text).toBe(available ? 'Unbuilt' : 'On');
   });
@@ -56,8 +55,8 @@ it('offers only the advertised contacts sync action', () => {
 });
 
 it('shows index progress only while a run is active', () => {
-  const embedding = { active_generation: 1, current: 2, eligible: 10, pending: 8 } as unknown as EmbeddingStatus;
-  const visual = { current: 3, eligible: 10 } as import('../api/generated/models').Status;
+  const embedding = { ...embeddingStatus, active_generation: activeGeneration, current: 2, pending: 8 };
+  const visual = { ...visualStatus, current: 3 };
   for (const kind of ['message_embedding', 'visual_embedding'] as const) {
     const active: NonNullable<OperationLaneStatus['active']> = { id: 'run-1', kind, lane: kind === 'visual_embedding' ? 'visual_attachments' : 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] };
     expect(row(overviewRows([lane(kind)], embedding, visual), kind).chip.text).toBe('On');
