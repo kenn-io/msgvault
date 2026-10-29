@@ -97,6 +97,8 @@ func TestDocumentRangesCleanup(t *testing.T) {
 			if action == "retryable failure" {
 				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
 				requirements.NoError(err)
+				_, err = f.Store.GarbageCollectDocumentRangeCheckpoints(t.Context(), time.Now().UTC().Add(-7*24*time.Hour), 100)
+				requirements.NoError(err)
 				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(-7*24*time.Hour), 100)
 				requirements.NoError(err)
 				var count int
@@ -104,6 +106,8 @@ func TestDocumentRangesCleanup(t *testing.T) {
 				assertions.Equal(1, count, "retain checkpoints for the latest retryable attempt on the live target")
 				return
 			}
+			_, err = f.Store.GarbageCollectDocumentRangeCheckpoints(t.Context(), time.Now().UTC().Add(time.Hour), 100)
+			requirements.NoError(err)
 			_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Hour), 100)
 			requirements.NoError(err)
 			var count int
@@ -122,9 +126,11 @@ func TestDocumentRangesCleanup(t *testing.T) {
 				cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour)
 				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
 				requirements.NoError(err)
+				rangesRemoved, err := f.Store.GarbageCollectDocumentRangeCheckpoints(t.Context(), cutoff, 100)
+				requirements.NoError(err)
+				assertions.Equal(1, rangesRemoved)
 				collected, err := f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
 				requirements.NoError(err)
-				assertions.Equal(1, collected.RangesRemoved)
 				assertions.Zero(collected.ExtractionsRemoved)
 				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 				assertions.Zero(count, "collect checkpoints after their profile stops being the target")
@@ -147,6 +153,8 @@ func TestDocumentRangesCleanup(t *testing.T) {
 				assertions.Equal(1, count)
 				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
 				requirements.NoError(err)
+				_, err = f.Store.GarbageCollectDocumentRangeCheckpoints(t.Context(), time.Now().UTC().Add(-7*24*time.Hour), 100)
+				requirements.NoError(err)
 				_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(-7*24*time.Hour), 100)
 				requirements.NoError(err)
 				requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
@@ -162,6 +170,8 @@ func TestDocumentRangesCleanup(t *testing.T) {
 			requirements.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t, rebuilt, "rebuilt sentinel", strings.Repeat("e", 64))))
 			cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour)
 			_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET updated_at = ? WHERE id = ?"), time.Now().UTC().Add(-8*24*time.Hour), claim.ExtractionID)
+			requirements.NoError(err)
+			_, err = f.Store.GarbageCollectDocumentRangeCheckpoints(t.Context(), cutoff, 100)
 			requirements.NoError(err)
 			_, err = f.Store.GarbageCollectDocumentDerivatives(t.Context(), cutoff, 100)
 			requirements.NoError(err)

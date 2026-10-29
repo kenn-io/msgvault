@@ -30,7 +30,9 @@ func configureDocumentReconcileJob(
 			return err
 		}
 		if !consented {
-			return st.UnregisterAttachmentChangeConsumer(ctx, documentindex.DocumentAttachmentConsumerKey)
+			if err := st.UnregisterAttachmentChangeConsumer(ctx, documentindex.DocumentAttachmentConsumerKey); err != nil {
+				return err
+			}
 		}
 	}
 	reconciler, err := documentindex.NewReconciler(st, documentindex.ReconcilerConfig{
@@ -47,6 +49,18 @@ func configureDocumentReconcileJob(
 		Name:     documentFullReconcileJob,
 		Schedule: documentFullReconcileCron,
 		Run: func(ctx context.Context) error {
+			for {
+				rangesRemoved, gcErr := st.GarbageCollectDocumentRangeCheckpoints(
+					ctx, time.Now().UTC().Add(-documentDerivativeRecoveryWindow),
+					documentDerivativeGCBatch,
+				)
+				if gcErr != nil {
+					return fmt.Errorf("garbage collect document range checkpoints: %w", gcErr)
+				}
+				if rangesRemoved < documentDerivativeGCBatch {
+					break
+				}
+			}
 			_, err := st.GetAttachmentChangeConsumer(ctx, documentindex.DocumentAttachmentConsumerKey)
 			if errors.Is(err, store.ErrAttachmentChangeConsumerMissing) {
 				return nil
@@ -65,7 +79,7 @@ func configureDocumentReconcileJob(
 				if gcErr != nil {
 					return fmt.Errorf("garbage collect document derivatives: %w", gcErr)
 				}
-				if result.ExtractionsRemoved < documentDerivativeGCBatch && result.RangesRemoved < documentDerivativeGCBatch {
+				if result.ExtractionsRemoved < documentDerivativeGCBatch {
 					return nil
 				}
 			}

@@ -91,9 +91,10 @@ to send queries to the embedding provider.
     old model no longer validate: run a fresh probe, then
     `documents consent-mistral` again.
 
-Provider uploads are manual-only. `msgvault serve` performs weekly local
-reconciliation and derivative cleanup when document indexing is enabled, but it
-never starts extraction on its own. Start every upload batch explicitly with
+Provider uploads are manual-only. While `msgvault serve` runs, it cleans stale
+local derivatives weekly, even when document indexing is disabled. Attachment
+reconciliation runs weekly when document indexing is enabled. Neither job
+starts extraction on its own. Start every upload batch explicitly with
 `documents build` or `documents resume`; when the daemon owns the archive, it
 runs that requested batch so the command does not contend for the writer lock.
 

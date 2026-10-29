@@ -146,7 +146,6 @@ type DocumentIndexStatusResponse struct {
 
 type DocumentDerivativeGCResult struct {
 	ExtractionsRemoved  int `json:"extractions_removed"`
-	RangesRemoved       int `json:"ranges_removed"`
 	CurrentHeadsRemoved int `json:"current_heads_removed"`
 }
 
@@ -903,21 +902,18 @@ func (s *Store) CompleteDocumentExtractionRebuild(ctx context.Context, rebuildID
 	return nil
 }
 
-// GarbageCollectDocumentDerivatives removes bounded stale extraction
-// revisions. Superseded revisions are eligible after the recovery cutoff.
-// Current owners and terminal suppression records stay while their source is
-// live. Range checkpoints from superseded attempts or profiles that are no
-// longer the target are collected separately with the same cutoff and bound.
-// Active staging leases are never collected.
-func (s *Store) GarbageCollectDocumentDerivatives(
+// GarbageCollectDocumentRangeCheckpoints removes bounded range checkpoints
+// from superseded attempts or profiles that are no longer the target. Active
+// staging leases are never collected.
+func (s *Store) GarbageCollectDocumentRangeCheckpoints(
 	ctx context.Context,
 	before time.Time,
 	limit int,
-) (DocumentDerivativeGCResult, error) {
+) (int, error) {
 	if before.IsZero() || limit <= 0 || limit > 10_000 {
-		return DocumentDerivativeGCResult{}, errors.New("document derivative GC has invalid bounds")
+		return 0, errors.New("document range checkpoint GC has invalid bounds")
 	}
-	result := DocumentDerivativeGCResult{}
+	var removed int
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		deletedRanges, err := tx.Exec(`
 			DELETE FROM document_extraction_ranges WHERE extraction_id IN (
@@ -932,17 +928,36 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 			                AND newer.extraction_input_key = e.extraction_input_key
 			                AND (newer.created_at > e.created_at OR (newer.created_at = e.created_at AND newer.id > e.id)))
 			      )
-			    ORDER BY e.updated_at, e.id
-			    LIMIT ?
-			)`, before.UTC(), limit)
+			ORDER BY e.updated_at, e.id
+			LIMIT ?
+		)`, before.UTC(), limit)
 		if err != nil {
 			return fmt.Errorf("delete stale document extraction ranges: %w", err)
 		}
-		rangesRemoved, err := deletedRanges.RowsAffected()
+		rows, err := deletedRanges.RowsAffected()
 		if err != nil {
 			return fmt.Errorf("read stale document extraction range delete count: %w", err)
 		}
-		result.RangesRemoved = int(rangesRemoved)
+		removed = int(rows)
+		return nil
+	})
+	return removed, err
+}
+
+// GarbageCollectDocumentDerivatives removes bounded stale extraction
+// revisions. Superseded revisions are eligible after the recovery cutoff.
+// Current owners and terminal suppression records stay while their source is
+// live. Active staging leases are never collected.
+func (s *Store) GarbageCollectDocumentDerivatives(
+	ctx context.Context,
+	before time.Time,
+	limit int,
+) (DocumentDerivativeGCResult, error) {
+	if before.IsZero() || limit <= 0 || limit > 10_000 {
+		return DocumentDerivativeGCResult{}, errors.New("document derivative GC has invalid bounds")
+	}
+	result := DocumentDerivativeGCResult{}
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.Query(`
 			SELECT e.id, e.state,
 			       CASE WHEN h.extraction_id IS NULL THEN FALSE ELSE TRUE END
