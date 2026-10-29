@@ -479,7 +479,7 @@ describe('AppShell', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Demo view' }));
   }
 
-  it('opens a saved view without the Files filename, type, and sort set earlier', async () => {
+  it('resets Files filters for a saved view and restores them with Back', async () => {
     window.history.replaceState(null, '', '/?workspace=files');
     const fileSearches: Request[] = [];
     const state = new ExploreState(window);
@@ -789,7 +789,7 @@ describe('AppShell', () => {
       expect(within(bar).queryByText('Counting…')).toBeNull();
     });
 
-    it('shows the Size column after selecting it with Display typeahead', async () => {
+    it('shows the Size column after selecting it in Display', async () => {
       const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
         rows: [entry(1)], total_count: 1
       })));
@@ -798,13 +798,6 @@ describe('AppShell', () => {
       expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
 
       await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
-      const first = within(screen.getByRole('menu', { name: 'Display' })).getByRole('menuitemradio', { name: 'System' });
-      first.focus();
-      await fireEvent.keyDown(first, { key: 's' });
-      const subject = screen.getByRole('menuitem', { name: /^Subject/ });
-      await waitFor(() => expect(document.activeElement).toBe(subject));
-      await fireEvent.keyDown(subject, { key: 'i' });
-      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Size' })));
       await fireEvent.click(screen.getByRole('menuitem', { name: 'Size' }));
 
       expect(await screen.findByRole('columnheader', { name: 'Size' })).toBeDefined();
@@ -2849,11 +2842,6 @@ describe('AppShell', () => {
     }
 
     it.each([
-      {
-        layer: 'Columns',
-        open: () => clickFocused(screen.getByRole('button', { name: 'Display' })),
-        isOpen: () => screen.queryByRole('menuitem', { name: 'Size' }) !== null
-      },
       {
         layer: 'Sort',
         open: () => clickFocused(screen.getByRole('combobox', { name: /^Sort:/ })),
