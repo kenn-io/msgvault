@@ -28,7 +28,7 @@
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import { accountRequest, type AccountDraft } from '../../carddav/account-settings';
   import { runOperationAction } from '../../operations/actions';
-  import { pendingSecret, type SecretUpdate } from '../../settings/secrets';
+  import { pendingSecret } from '../../settings/secrets';
   import type { SearchCoverageAction } from '../../search/modes';
   import {
     providerUpdate,
@@ -60,6 +60,7 @@
   import SettingField from './SettingField.svelte';
   import SettingsOverview from './SettingsOverview.svelte';
 
+  type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
   type SettingUpdate = GeneratedSettingUpdate;
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
   type CredentialResponse = GeneratedProviderCredentialResponse;
