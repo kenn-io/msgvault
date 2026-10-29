@@ -20,17 +20,7 @@ const open = () => fireEvent.click(screen.getByRole('button', { name: 'Display' 
 
 describe('DisplayMenu', () => {
   it('sets theme and density from one menu', async () => {
-    const props = renderMenu();
-    await open();
-
-    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Dark' }));
-    expect(props.onThemeChange).toHaveBeenCalledWith('dark');
-    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Comfortable' }));
-    expect(props.onDensityChange).toHaveBeenCalledWith('comfortable');
-  });
-
-  it('shows the current theme and density as checked', async () => {
-    renderMenu({ theme: 'light', density: 'comfortable' });
+    const props = renderMenu({ theme: 'light', density: 'comfortable' });
     await open();
 
     const checked = (name: string) => screen.getByRole('menuitemradio', { name }).getAttribute('aria-checked');
@@ -38,6 +28,11 @@ describe('DisplayMenu', () => {
     expect(checked('System')).toBe('false');
     expect(checked('Comfortable')).toBe('true');
     expect(checked('Compact')).toBe('false');
+
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Dark' }));
+    expect(props.onThemeChange).toHaveBeenCalledWith('dark');
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Comfortable' }));
+    expect(props.onDensityChange).toHaveBeenCalledWith('comfortable');
   });
 
   it('leaves out columns and reader position where the page has neither', async () => {
