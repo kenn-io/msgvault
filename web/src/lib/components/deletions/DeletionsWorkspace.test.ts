@@ -65,7 +65,7 @@ describe('DeletionsWorkspace', () => {
     expect(screen.getByText('Select items in Everything, then choose Review for deletion…')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Review selection' })).toBeNull();
     expect(await screen.findByText('No staged deletions')).toBeDefined();
-    expect(screen.getByText('msgvault delete-staged').tagName).toBe('CODE');
+    expect(screen.getByText("Deletions you've staged. Nothing is deleted until you run msgvault delete-staged.")).toBeDefined();
   });
 
   it('summarizes a review with size, relative expiry, and only the staging reason', async () => {

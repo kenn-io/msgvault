@@ -31,6 +31,7 @@
     Chip,
     EmptyState,
     Modal,
+    PageHeader,
     Table,
     TableHeaderCell,
     appShortcuts,
@@ -39,7 +40,6 @@
   import type { APIClient } from '../../api/client';
   import { preflightReasonLabel } from '../../explore/labels';
   import { formatBytes, formatDateTime, formatRelativeTime } from '../../util/format';
-  import PageHeader from '../shell/PageHeader.svelte';
   import type {
     DeletionManifestDetail as GeneratedDeletionManifestDetail,
     DeletionManifestSummary as GeneratedDeletionManifestSummary,
@@ -308,9 +308,10 @@
 </script>
 
 <main class="deletions" aria-label="Deletions">
-  <PageHeader title="Deletions">
-    {#snippet descriptionContent()}Deletions you've staged. Nothing is deleted until you run <code>msgvault delete-staged</code>.{/snippet}
-  </PageHeader>
+  <PageHeader
+    title="Deletions"
+    description="Deletions you've staged. Nothing is deleted until you run msgvault delete-staged."
+  />
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
   <section class="selection-review" aria-label="Deletion selection">
