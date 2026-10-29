@@ -14,7 +14,7 @@ connections. Publishing, unpublishing, and choosing the local side of a conflict
 
 ## Connect an address book
 
-In the Web UI, open **Settings → Contacts**, test the connection, then choose **Save changes**.
+In the Web UI, open **Settings → Contacts** to test and save a connection.
 Select an existing connection or choose **Add connection** for another account.
 The CLI can discover the same accounts:
 
@@ -83,7 +83,7 @@ consent and revocation to be independent as well.
 1. Configure a Google OAuth client following the [OAuth setup guide](../guides/oauth-setup.md),
    and enable the **Google Contacts CardDAV API** in the same Google Cloud
    project. The Gmail and Calendar APIs do not cover contacts; without it,
-   **Save changes** fails during discovery.
+   **Save CardDAV account** fails during discovery.
    For Web UI sign-in, register the Web UI's root URL, including its trailing
    slash, as an authorized redirect URI in a **Web application** OAuth client.
    The settings form shows the exact URL. Remote Web UIs need HTTPS; loopback
@@ -91,7 +91,7 @@ consent and revocation to be independent as well.
 2. Click **Connect Google**. A new window opens for Google sign-in. Choose the
    requested account and keep existing permissions checked while granting
    contacts access. Return to settings when the window closes.
-3. Click **Test CardDAV connection**, then **Save changes**. Review the
+3. Click **Test CardDAV connection**, then **Save CardDAV account**. Review the
    discovered book's roles before the first sync.
 
 The daemon requests Google's `https://www.googleapis.com/auth/carddav` scope
@@ -169,7 +169,7 @@ deleted without a conflict; the contact stays in Outlook's Deleted Items.
 To sign in without saving a connection, run
 `msgvault carddav authorize-microsoft you@example.com`. Then save the
 connection with the **Microsoft 365 or Outlook.com** provider in
-**Settings → Contacts** and choose **Save changes**. An existing connection keeps its schedule.
+**Settings → Contacts**. An existing connection keeps its schedule.
 
 Graph stores fewer fields than vCard. msgvault maps names, nickname, email
 addresses, phone numbers, organization, job title, postal addresses, a

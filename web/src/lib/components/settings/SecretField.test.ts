@@ -29,18 +29,14 @@ describe('SecretField', () => {
     expect(screen.getByText('From an environment variable on the daemon host.')).toBeDefined();
   });
 
-  it('blocks replacement and clear buttons while the field is disabled', () => {
-    render(SecretField, { label: 'Task API key', configured: true, disabled: true, onreplace: () => true, onclear: vi.fn() });
-    expect((screen.getByRole('button', { name: 'Replace task API key' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Clear task API key' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
   it('takes a new key through the dialog and closes when it is accepted', async () => {
     const onreplace = vi.fn(() => true);
-    render(SecretField, { label: 'Task API key', onreplace });
+    render(SecretField, { label: 'Task API key', applyNote: 'Applies right away.', onreplace });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add task API key' }));
-    const save = screen.getByRole('button', { name: 'Use task API key' }) as HTMLButtonElement;
+    const dialog = screen.getByRole('dialog', { name: 'Add task API key' });
+    expect(dialog.textContent).toContain('Applies right away.');
+    const save = screen.getByRole('button', { name: 'Save task API key' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     await fireEvent.input(screen.getByLabelText('New task API key'), { target: { value: 'sk-live-0123456789' } });
     expect(save.disabled).toBe(false);
@@ -49,4 +45,35 @@ describe('SecretField', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('keeps the dialog open with the error when the key is refused', async () => {
+    const onreplace = vi.fn(async () => false);
+    const { rerender } = render(SecretField, { label: 'Task API key', onreplace });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task API key' }));
+    await fireEvent.input(screen.getByLabelText('New task API key'), { target: { value: 'refused-key-value' } });
+    await fireEvent.submit(screen.getByLabelText('New task API key').closest('form') as HTMLFormElement);
+    await rerender({ label: 'Task API key', onreplace, error: 'Unable to save provider credential.' });
+    expect(screen.getByRole('dialog', { name: 'Add task API key' })).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toBe('Unable to save provider credential.');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('blocks the buttons and says why while the field is disabled', async () => {
+    render(SecretField, {
+      label: 'Task API key',
+      configured: true,
+      hint: 'sk-…x9Q',
+      disabledReason: 'Save endpoint settings first.',
+      onreplace: () => true,
+      onclear: () => undefined,
+    });
+
+    expect((screen.getByRole('button', { name: 'Replace task API key' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Clear task API key' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Save endpoint settings first.')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Replace task API key' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
 });
