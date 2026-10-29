@@ -492,6 +492,25 @@ func TestImportPreservesDocumentMetadata(t *testing.T) {
 	assert.Equal("application/pdf", mimeType)
 }
 
+// TestImportSnippetTakesFirstLine pins the shared preview behavior: the
+// snippet is the body's first line, exactly like every other importer's
+// textutil.SnippetFromBody rendering.
+func TestImportSnippetTakesFirstLine(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Snippet Chat", []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"text": "first preview line\nsecond body line",
+	}})
+	importRoot(t, st, root)
+
+	var snippet sql.NullString
+	require.NoError(t, st.DB().QueryRow(`
+		SELECT snippet FROM messages WHERE source_message_id = '7000000000000777001:1'`).Scan(&snippet))
+	assert.True(t, snippet.Valid, "a text body produces a snippet")
+	assert.Equal(t, "first preview line", snippet.String)
+}
+
 // TestParticipantsResolvedCountsAllSenders pins the summary counter:
 // ParticipantsResolved counts every distinct participant the run resolved —
 // the owner plus every sender across chats, including channel and anonymous
@@ -652,6 +671,242 @@ func TestImportResumeReEnsuresTornMedia(t *testing.T) {
 	path, hash := attachmentRow(t, st, "7000000000000987654:103")
 	assert.NotEmpty(path, "torn media row is restored from the export file")
 	assert.NotEmpty(hash)
+}
+
+// messageIDFor returns the archive id of one imported source message.
+func messageIDFor(t *testing.T, st *store.Store, sourceMessageID string) int64 {
+	t.Helper()
+	var id int64
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&id))
+	return id
+}
+
+// deleteSearchDocument punches the search document out for one message the
+// way the two dialects store it: a messages_fts row on SQLite, the
+// search_fts column on PostgreSQL.
+func deleteSearchDocument(t *testing.T, st *store.Store, id int64) {
+	t.Helper()
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(`UPDATE messages SET search_fts = NULL WHERE id = $1`, id)
+		require.NoError(t, err)
+		return
+	}
+	_, err := st.DB().Exec(`DELETE FROM messages_fts WHERE rowid = ?`, id)
+	require.NoError(t, err)
+}
+
+func searchDocumentPresent(t *testing.T, st *store.Store, id int64) bool {
+	t.Helper()
+	var present bool
+	var err error
+	if st.IsPostgreSQL() {
+		err = st.DB().QueryRow(
+			`SELECT search_fts IS NOT NULL FROM messages WHERE id = $1`, id).Scan(&present)
+	} else {
+		err = st.DB().QueryRow(
+			`SELECT EXISTS (SELECT 1 FROM messages_fts WHERE rowid = ?)`, id).Scan(&present)
+	}
+	require.NoError(t, err)
+	return present
+}
+
+// runDeferredWriteRepair imports one chat, removes a single write a
+// completed import always leaves behind — simulating an interruption after
+// UpsertMessage committed — and re-imports. The skipped-as-existing message
+// must converge: the absent write is refilled from the export and nothing
+// else changes. resume selects the checkpoint path (a failed sync whose
+// checkpoint names no completed chat) over the ordinary fresh re-scan.
+func runDeferredWriteRepair(t *testing.T, resume bool) {
+	t.Helper()
+	for _, tc := range []struct {
+		name  string
+		tear  func(t *testing.T, st *store.Store, id int64)
+		check func(t *testing.T, st *store.Store, id int64)
+	}{
+		{
+			name: "body",
+			tear: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				_, err := st.DB().Exec(st.Rebind(`DELETE FROM message_bodies WHERE message_id = ?`), id)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				var body sql.NullString
+				require.NoError(t, st.DB().QueryRow(st.Rebind(
+					`SELECT body_text FROM message_bodies WHERE message_id = ?`), id).Scan(&body))
+				assert.True(t, body.Valid, "the torn body row is rewritten")
+				assert.Equal(t, "a repaired body", body.String)
+			},
+		},
+		{
+			name: "recipients",
+			tear: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				_, err := st.DB().Exec(st.Rebind(`DELETE FROM message_recipients WHERE message_id = ?`), id)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				var from, to int
+				require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients
+					WHERE message_id = ? AND recipient_type = 'from'`), id).Scan(&from))
+				require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients
+					WHERE message_id = ? AND recipient_type = 'to'`), id).Scan(&to))
+				assert.Equal(t, 1, from, "the from recipient is rewritten")
+				assert.Equal(t, 1, to, "the direct chat's to recipient is rewritten")
+			},
+		},
+		{
+			name: "edited state",
+			tear: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET is_edited = FALSE WHERE id = ?`), id)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				var edited bool
+				require.NoError(t, st.DB().QueryRow(st.Rebind(
+					`SELECT is_edited FROM messages WHERE id = ?`), id).Scan(&edited))
+				assert.True(t, edited, "the lost edited flag is restored")
+			},
+		},
+		{
+			name: "search document",
+			tear: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				if !st.IsPostgreSQL() && !st.FTS5Available() {
+					t.Skip("no FTS5 module in this build")
+				}
+				deleteSearchDocument(t, st, id)
+			},
+			check: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				assert.True(t, searchDocumentPresent(t, st, id), "the search document is rebuilt")
+			},
+		},
+		{
+			name: "reply link",
+			tear: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET reply_to_message_id = NULL WHERE id = ?`), id)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, st *store.Store, id int64) {
+				t.Helper()
+				var parentSrc string
+				require.NoError(t, st.DB().QueryRow(st.Rebind(`
+					SELECT p.source_message_id FROM messages c
+					JOIN messages p ON p.id = c.reply_to_message_id
+					WHERE c.id = ?`), id).Scan(&parentSrc))
+				assert.Equal(t, "7000000000000777001:1", parentSrc, "the reply link is restored")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := writeChatExport(t, t.TempDir(), "personal_chat", "Repair Chat", []map[string]any{
+				{
+					"id": 1, "type": "message", "date_unixtime": "1610909800",
+					"from": "Alice Example", "from_id": "user7000000000000555555",
+					"text": "the parent",
+				},
+				{
+					"id": 2, "type": "message", "date_unixtime": "1610909900",
+					"from": "Alice Example", "from_id": "user7000000000000555555",
+					"text": "a repaired body", "reply_to_message_id": 1,
+					"edited": "2021-01-17T19:13:19:00", "edited_unixtime": "1610910799",
+				},
+			})
+			importRoot(t, st, root)
+			id := messageIDFor(t, st, "7000000000000777001:2")
+			tc.tear(t, st, id)
+			if resume {
+				failSyncAt(t, st, root)
+			}
+			importRoot(t, st, root)
+			tc.check(t, st, id)
+		})
+	}
+}
+
+// TestImportRepairsDeferredWritesOnRetry pins convergence on an ordinary
+// re-scan: messages skipped as existing get their absent writes refilled.
+func TestImportRepairsDeferredWritesOnRetry(t *testing.T) {
+	runDeferredWriteRepair(t, false)
+}
+
+// TestImportRepairsDeferredWritesOnResume pins the same convergence on a
+// checkpoint resume that reprocesses the interrupted chat.
+func TestImportRepairsDeferredWritesOnResume(t *testing.T) {
+	runDeferredWriteRepair(t, true)
+}
+
+// TestImportErrorRefreshesCompletedChatStats pins derived state on the
+// error path: a chat committed earlier in the run carries fresh stats even
+// when a later malformed chat fails the whole run.
+func TestImportErrorRefreshesCompletedChatStats(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Stats Chat", []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"text": "committed before the failure",
+	}})
+	doc := loadFullExport(t, root)
+	doc.Chats.List = append(doc.Chats.List, fullExportChat{
+		ID: -1002222222222, Type: "private_group", Name: "Broken Chat",
+		Messages: []map[string]any{{
+			"id": 1, "type": "message", "date_unixtime": "not-a-timestamp", "text": "broken",
+		}},
+	})
+	saveFullExport(t, root, doc)
+
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(t, err, "the malformed chat fails the run")
+
+	var count int
+	require.NoError(t, st.DB().QueryRow(`
+		SELECT message_count FROM conversations c
+		JOIN sources s ON s.id = c.source_id
+		WHERE s.source_type = 'telegram' AND c.source_conversation_id = '7000000000000777001'`).Scan(&count))
+	assert.Equal(t, 1, count, "the committed chat's stats refresh on the error path")
+}
+
+// TestImportCancellationRefreshesCompletedChatStats pins the same on the
+// cancellation path: a cancelled run still refreshes stats for chats the
+// archive already carries.
+func TestImportCancellationRefreshesCompletedChatStats(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	copyFullFixture(t, dir)
+
+	// A run archived the first chat's messages but was cancelled before it
+	// could refresh derived state, leaving the counter stale.
+	limited, err := Import(context.Background(), st, ImportOptions{
+		RootDir: dir, AttachmentsDir: t.TempDir(), Limit: 3,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, limited.MessagesAdded)
+	_, err = st.DB().Exec(`
+		UPDATE conversations SET message_count = 0 WHERE source_conversation_id = '7000000000000987654'`)
+	require.NoError(t, err)
+	failSyncAt(t, st, dir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = Import(ctx, st, ImportOptions{RootDir: dir, AttachmentsDir: t.TempDir()})
+	require.ErrorIs(t, err, context.Canceled)
+
+	var count int
+	require.NoError(t, st.DB().QueryRow(`
+		SELECT message_count FROM conversations c
+		JOIN sources s ON s.id = c.source_id
+		WHERE s.source_type = 'telegram' AND c.source_conversation_id = '7000000000000987654'`).Scan(&count))
+	assert.Equal(t, 3, count, "the cancellation path still refreshes committed chats' stats")
 }
 
 // TestImportResumeChangedExportAtSameRoot pins the resume guard: replacing
@@ -878,7 +1133,7 @@ func setChatMessages(t *testing.T, root string, chatID string, messages []map[st
 			return
 		}
 	}
-	t.Fatalf("chat %s not found in %s", chatID, root)
+	require.Failf(t, "setChatMessages: chat not found", "chat %s not found in %s", chatID, root)
 }
 
 // writeChatExport writes a full-shaped export whose single chat carries the

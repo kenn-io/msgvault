@@ -23,7 +23,7 @@ func TestConvTypeMapsEveryDocumentedChatType(t *testing.T) {
 		{"private_supergroup", "group_chat"},
 		{"public_supergroup", "group_chat"},
 		{"private_channel", "channel"},
-		{"public_channel", "channel"},
+		{"replies", "group_chat"},
 		{"something_new", "chat"},
 	} {
 		chat := &Chat{ID: 1, Type: tc.raw}

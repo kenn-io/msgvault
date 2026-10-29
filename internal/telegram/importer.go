@@ -17,6 +17,7 @@ import (
 	json "encoding/json/v2"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // syncType names the sync_runs row this importer writes.
@@ -76,8 +77,11 @@ type ImportSummary struct {
 // Import reads a Telegram Desktop JSON export under opts.RootDir into st.
 // The import is append-only: messages are keyed on the chat's decimal id
 // and "<chat-id>:<message-id>", a run imports only messages the archive
-// does not yet carry, and a later export never mutates the bodies,
-// recipients, attachments, or reply links of archived messages.
+// does not yet carry, and a later export never overwrites the bodies,
+// recipients, attachments, or reply links an earlier import wrote. Values
+// an interruption left absent — a body, recipients, the edited flag, the
+// search document, or a reply link that never landed — are refilled from
+// the current export, so deferred writes converge across re-runs.
 func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
 	start := time.Now()
 	summary := &ImportSummary{}
@@ -164,8 +168,17 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 	}
 	st = st.ScopedToSync(source.ID, syncID)
 	var syncErr error
+	refreshStats := func() {
+		if err := st.RecomputeConversationStats(source.ID); err != nil {
+			logger.Warn("telegram: recompute stats", "err", err)
+		}
+	}
 	defer func() {
 		if syncErr != nil {
+			// Chats an earlier point of the run — or an earlier run —
+			// already committed keep fresh derived state even though the
+			// run dies here.
+			refreshStats()
 			_ = st.FailSync(syncID, syncErr.Error())
 		} else {
 			_ = st.CompleteSync(syncID, "")
@@ -220,9 +233,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 		}
 	}
 
-	if err := st.RecomputeConversationStats(source.ID); err != nil {
-		logger.Warn("telegram: recompute stats", "err", err)
-	}
+	refreshStats()
 	summary.ParticipantsResolved = resolver.resolvedCount()
 	summary.Duration = time.Since(start)
 	return summary, nil
@@ -240,11 +251,13 @@ type pendingReply struct {
 	parentSrcID string
 }
 
-// importChat imports one chat append-only. Existing source messages are
-// skipped entirely; only unseen messages are written. ensureMedia re-ensures
-// attachment rows of already-archived messages during a valid resume, whose
-// byte-identical export makes the preserving upsert a no-op except for rows
-// an interruption lost.
+// importChat imports one chat append-only. Messages the archive already
+// carries are skipped as new writes, but their deferred writes — body,
+// recipients, edited flag, search document, reply link — are refilled when
+// absent (see repair below). ensureMedia re-ensures attachment rows of
+// already-archived messages during a valid resume, whose byte-identical
+// export makes the preserving upsert a no-op except for rows an
+// interruption lost.
 func importChat(
 	ctx context.Context,
 	st *store.Store,
@@ -309,6 +322,61 @@ func importChat(
 	}
 
 	var replies []pendingReply
+	// Deferred writes converge: one batched probe reports, for the messages
+	// this run skips as archived, which of the writes a completed import
+	// always leaves behind are missing. The skip branch refills exactly
+	// those from this export's bytes and leaves present values untouched.
+	gaps := make(map[int64]store.MessageWriteGaps, len(archived))
+	if len(archived) > 0 {
+		existingIDs := make([]int64, 0, len(archived))
+		for _, id := range archived {
+			existingIDs = append(existingIDs, id)
+		}
+		gaps, err = st.MessageWriteGapsContext(ctx, existingIDs)
+		if err != nil {
+			return fmt.Errorf("check deferred writes: %w", err)
+		}
+	}
+	// repair refills one already-archived message's absent deferred writes:
+	// the body row, the recipient rows, the edited flag, the search
+	// document, and the reply link resolved after the chat finishes. Each
+	// is sourced from the current export and written only when missing, so
+	// an idempotent re-run converges a torn or --limit-cut import without
+	// mutating anything an earlier import wrote.
+	repair := func(m *Message, messageID int64, srcMsgID string, gap store.MessageWriteGaps) {
+		if gap.BodyMissing {
+			if err := st.UpsertMessageBody(messageID, sql.NullString{String: m.Text, Valid: m.Text != ""}, sql.NullString{}); err != nil {
+				summary.Errors++
+				logger.Warn("telegram: repair body", "err", err)
+			}
+		}
+		if m.Edited && !gap.Edited {
+			if err := st.SetMessageEditedStateContext(ctx, messageID, true); err != nil {
+				summary.Errors++
+				logger.Warn("telegram: repair edited state", "err", err)
+			}
+		}
+		if gap.RecipientsMissing && m.FromID != "" {
+			pid, isOwner, err := resolver.chatMember(ctx, ownerID, ownerPID, m)
+			if err != nil {
+				logger.Warn("telegram: resolve sender for repair", "sender", m.FromID, "err", err)
+			} else if pid != 0 {
+				_ = st.EnsureConversationParticipant(convID, pid, "member")
+				writeRecipients(st, messageID, m, pid, isOwner, ownerPID, direct, peerPID, peerName, ownerName, logger)
+			}
+		}
+		if gap.SearchMissing {
+			if err := st.UpsertFTS(messageID, chat.Name, m.Text, m.FromName, "", ""); err != nil {
+				logger.Warn("telegram: repair fts", "err", err)
+			}
+		}
+		if m.ReplyTo != 0 && gap.ReplyLinkMissing {
+			replies = append(replies, pendingReply{
+				childSrcID:  srcMsgID,
+				parentSrcID: fmt.Sprintf("%d:%d", chat.ID, m.ReplyTo),
+			})
+		}
+	}
 	for mi := range chat.Messages {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -332,6 +400,7 @@ func importChat(
 					logger.Warn("telegram: re-ensure attachments", "err", err)
 				}
 			}
+			repair(m, messageID, srcMsgID, gaps[messageID])
 			continue
 		}
 
@@ -352,7 +421,7 @@ func importChat(
 		}
 
 		candidates := attachmentCandidates(m)
-		snippet := store.SnippetFromBody(m.Text)
+		snippet := textutil.SnippetFromBody(m.Text)
 		msgRow := &store.Message{
 			ConversationID:  convID,
 			SourceID:        sourceID,
@@ -390,25 +459,8 @@ func importChat(
 			}
 		}
 
-		// Recipients: from = the real sender. A personal or bot chat also
-		// determines to = the other participant; group and channel
-		// messages stay sender-only.
 		if senderID.Valid {
-			if err := st.ReplaceMessageRecipients(messageID, "from", []int64{senderID.Int64}, []string{m.FromName}); err != nil {
-				logger.Warn("telegram: replace from recipients", "err", err)
-			}
-			if direct {
-				switch {
-				case isFromMe && peerPID != 0:
-					if err := st.ReplaceMessageRecipients(messageID, "to", []int64{peerPID}, []string{peerName}); err != nil {
-						logger.Warn("telegram: replace to recipients", "err", err)
-					}
-				case !isFromMe:
-					if err := st.ReplaceMessageRecipients(messageID, "to", []int64{ownerPID}, []string{ownerName}); err != nil {
-						logger.Warn("telegram: replace to recipients", "err", err)
-					}
-				}
-			}
+			writeRecipients(st, messageID, m, senderID.Int64, isFromMe, ownerPID, direct, peerPID, peerName, ownerName, logger)
 		}
 
 		if err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, opts, logger, summary); err != nil {
@@ -449,6 +501,40 @@ func importChat(
 		}
 	}
 	return nil
+}
+
+// writeRecipients writes the recipient rows one message's export entry
+// determines: from = the resolved sender. A personal or bot chat also
+// determines to = the other participant; group and channel messages stay
+// sender-only.
+func writeRecipients(
+	st *store.Store,
+	messageID int64,
+	m *Message,
+	senderPID int64,
+	isFromMe bool,
+	ownerPID int64,
+	direct bool,
+	peerPID int64,
+	peerName, ownerName string,
+	logger *slog.Logger,
+) {
+	if err := st.ReplaceMessageRecipients(messageID, "from", []int64{senderPID}, []string{m.FromName}); err != nil {
+		logger.Warn("telegram: replace from recipients", "err", err)
+	}
+	if !direct {
+		return
+	}
+	switch {
+	case isFromMe && peerPID != 0:
+		if err := st.ReplaceMessageRecipients(messageID, "to", []int64{peerPID}, []string{peerName}); err != nil {
+			logger.Warn("telegram: replace to recipients", "err", err)
+		}
+	case !isFromMe:
+		if err := st.ReplaceMessageRecipients(messageID, "to", []int64{ownerPID}, []string{ownerName}); err != nil {
+			logger.Warn("telegram: replace to recipients", "err", err)
+		}
+	}
 }
 
 // storeAttachments stores each media candidate for one message. A missing

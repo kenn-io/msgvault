@@ -21,6 +21,10 @@ const (
 	chatTypeSavedMessages     = "saved_messages"
 	chatTypePrivateChannel    = "private_channel"
 	chatTypePublicChannel     = "public_channel"
+	// chatTypeReplies is the "Replies" pseudo-chat: the thread list where
+	// channel-post comments and discussion replies land. Its entries are
+	// group-style discussions, so ConvType maps it with the groups.
+	chatTypeReplies = "replies"
 )
 
 // Chat is one Telegram chat or channel from an export.
@@ -44,7 +48,8 @@ func (c *Chat) ConvType() string {
 	switch c.Type {
 	case chatTypePersonalChat, chatTypeBotChat, chatTypeSavedMessages:
 		return "direct_chat"
-	case chatTypePrivateGroup, chatTypePrivateSupergroup, chatTypePublicSupergroup:
+	case chatTypePrivateGroup, chatTypePrivateSupergroup, chatTypePublicSupergroup,
+		chatTypeReplies:
 		return "group_chat"
 	case chatTypePrivateChannel, chatTypePublicChannel:
 		return "channel"

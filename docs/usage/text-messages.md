@@ -365,6 +365,10 @@ therefore do not propagate to already-imported messages. An interrupted run
 resumes over the same export bytes, chat by chat; `--no-resume` starts
 fresh.
 
+A write an interruption left unfinished — a body, recipients, an edit
+marker, a search entry, or a reply link — is completed on the next run from
+the export's current bytes; values already stored are never overwritten.
+
 ### Flags
 
 | Flag | Default | Description |

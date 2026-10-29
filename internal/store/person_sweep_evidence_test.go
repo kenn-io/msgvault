@@ -411,7 +411,7 @@ func TestSearchPersonSweepMessagesPreservesNewestFirstCandidateRanking(t *testin
 }
 
 func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
-	for _, sourceType := range []string{"matrix", "slack", "slackdump", "inline"} {
+	for _, sourceType := range []string{"matrix", "slack", "slackdump", "inline", "telegram"} {
 		t.Run(sourceType, func(t *testing.T) {
 			f := newPersonSweepJournalFixture(t, true, false)
 			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
@@ -422,6 +422,14 @@ func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
 			item := sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id)
 			require.NotNil(t, item.SubjectPersonID)
 			assert.Equal(t, personfacts.DirectSelf, item.Directness)
+			// The SQL authorship predicate must admit the same rows the
+			// hydration path attributes to the person as their own subject.
+			authored, err := f.store.ListPersonSweepHistoricalCandidates(t.Context(),
+				peoplesweep.HistoricalCandidateRequest{
+					PersonID: f.alicePersonID, AuthoredByPerson: true, Limit: 10,
+				})
+			require.NoError(t, err)
+			assert.Contains(t, authored, id, "the SQL authorship predicate admits %s", sourceType)
 		})
 	}
 }

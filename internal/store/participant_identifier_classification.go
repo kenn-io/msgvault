@@ -22,6 +22,8 @@ func classifyParticipantIdentifier(
 		classification.ServiceSlug = "imessage"
 	case kind == "whatsapp":
 		classification.ServiceSlug = "whatsapp"
+	case kind == "telegram":
+		classification.ServiceSlug = "telegram"
 	case kind == "matrix":
 		classification.ServiceSlug = "matrix"
 		if separator := strings.Index(value, ":"); separator > 0 && separator+1 < len(value) {
