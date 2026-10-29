@@ -564,7 +564,7 @@
       {categories}
       bind:active={() => activeCategory, selectCategory}
       title=""
-      footer={pendingLeave || (activeCategory !== 'carddav' && dirtyCount > 0) ? settingsFooter : undefined}
+      footer={pendingLeave || dirtyCount > 0 ? settingsFooter : undefined}
     >
       {#snippet panel(activeId)}
         <div class="notices">
