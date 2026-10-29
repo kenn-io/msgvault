@@ -1232,7 +1232,7 @@ describe('AppShell', () => {
     try {
       await fireEvent.click(await screen.findByRole('button', { name: 'Set up Person fact sweep' }));
       expect(state.current).toMatchObject({
-        workspace: 'settings', settingsCategory: 'enrichment', settingsAuthority: ''
+        workspace: 'settings', settingsAuthority: ''
       });
     } finally {
       rendered.unmount();

@@ -7,7 +7,12 @@ import type { OperationLaneStatus } from '../../api/generated/models';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
-  return { kind, configured: true, lane: kind === 'visual_embedding' ? 'visual_attachments' : 'messages', history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
+  const lanes = {
+    carddav_sync: 'contacts', document_embedding: 'documents', document_extraction: 'documents',
+    message_embedding: 'messages', person_embedding: 'person_facts', person_enrichment: 'person_facts',
+    person_sweep: 'person_facts', source_sync: 'messages', visual_embedding: 'visual_attachments'
+  } as const;
+  return { kind, configured: true, lane: lanes[kind], history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
 }
 
 type Setting = Record<string, unknown>;
@@ -320,27 +325,6 @@ it('retains account passwords across categories and clears them on Discard', asy
   expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
 });
 
-it('retains inference replacement keys across navigation and saves them from the footer', async () => {
-  const inference = { profiles: [inferenceProfile], configured_enabled: false, running_enabled: false, pending_restart: false };
-  const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/key')) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
-    if (request.url.includes('/settings/people-inference'))
-      return Response.json(inference, { headers: { ETag: '"p1"' } });
-  });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  await fireEvent.input(await screen.findByLabelText('Replacement API key'), { target: { value: 'synthetic-inference-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
-  expect((await screen.findByLabelText('Replacement API key') as HTMLInputElement).value).toBe('synthetic-inference-key');
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByRole('alert');
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
-  expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['Key store unavailable']);
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
-  expect(seen.filter(request => request.method === 'PUT' && request.path.endsWith('/people-inference/providers/primary/key'))).toHaveLength(1);
-});
-
 it('keeps attachment off values and cron schedules editable under Sources', async () => {
   const doc = settingsDoc();
   doc.settings.push(setting('discord.max_media_mb', 'attachments', 'integer', 0, {
@@ -369,7 +353,7 @@ it('Overview shows a contacts sync action error', async () => {
   });
   render(SettingsWorkspace, { client });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
-  expect(await screen.findByRole('alert')).toBeDefined();
+  expect((await screen.findByRole('alert')).textContent).toContain('Connections needing attention: work');
 });
 
 it('saves other categories after leaving a contact connection test', async () => {
@@ -747,7 +731,7 @@ it('refreshes the shared credential revision after an inference key succeeds bef
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/settings' && request.method === 'GET') return Response.json({ ...doc, credential_etag: revision }, { headers: { ETag: '"s1"', 'Credential-ETag': revision } });
     if (path.includes('/settings/people-inference')) {
-      if (request.method === 'PUT' && path.endsWith('/backup/key')) return Response.json({ message: 'Backup key store unavailable' }, { status: 503 });
+      if (request.method === 'PUT' && path.endsWith('/backup/key')) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
       if (request.method === 'PUT') revision = '"credential-b"';
       return Response.json({ profiles, configured_enabled: false, running_enabled: false, pending_restart: false }, { headers: { ETag: '"s1"' } });
     }
@@ -757,8 +741,16 @@ it('refreshes the shared credential revision after an inference key succeeds bef
   await fireEvent.input(await screen.findByLabelText('Replacement API key'), { target: { value: 'synthetic-primary-key' } });
   await chooseSelectOption(screen.getByRole('combobox', { name: /^Profile:/ }), 'backup');
   await fireEvent.input(screen.getByLabelText('Replacement API key'), { target: { value: 'synthetic-backup-key' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
+  await chooseSelectOption(screen.getByRole('combobox', { name: /^Profile:/ }), 'backup');
+  expect((await screen.findByLabelText('Replacement API key') as HTMLInputElement).value).toBe('synthetic-backup-key');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+  expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['Key store unavailable']);
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
+  expect(seen.filter(request => request.method === 'PUT' && request.path.endsWith('/people-inference/providers/backup/key'))).toHaveLength(1);
   await fireEvent.click(screen.getByRole('button', { name: 'Search & AI' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
   await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-embedding-key' } });
