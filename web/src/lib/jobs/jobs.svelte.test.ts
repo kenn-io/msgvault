@@ -100,7 +100,7 @@ it('keeps a superseding source read pending and discards an older completion', a
   await oldRead;
   expect(store.loaded).toBe(false);
   expect(store.error).toBeUndefined();
-  answers[1]!(Response.json({ sources: [sourceStatus({ latest_sync: syncRunStatus({ status: 'running', completed_at: null }) })] }));
+  answers[1]!(Response.json({ sources: [sourceStatus({ source_type: 'mbox', sync_unavailable_reason: 'source_not_schedulable', latest_sync: syncRunStatus({ status: 'running', completed_at: null }) })] }));
   await freshRead;
   expect(store.loaded).toBe(true);
   expect(store.health).toBe('running');
