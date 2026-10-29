@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -116,6 +118,55 @@ func TestAttachVector_EmbedsQueriesThroughConfiguredAPIFormat(t *testing.T) {
 	assert.Equal("voyage-contextual", ev.prov.APIFormat, "the run reports the format that produced its scores")
 }
 
+func TestAttachVectorFiltersColdCandidatesBeforeEvalRanking(t *testing.T) {
+	dataDir := t.TempDir()
+	c := evalVectorConfig(t, vector.APIFormatOpenAI, "test-model")
+	c.Data.DataDir = dataDir
+	c.Vector.Embeddings.Dimension = 3
+	_, endpoint := embedTestServer(t, `{"data":[{"index":0,"embedding":[1,0,0]}]}`)
+	c.Vector.Embeddings.Endpoint = endpoint
+	ctx := withTestConfig(t, c)
+	s, err := store.Open(c.DatabaseDSN())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s.Close()) }()
+	require.NoError(t, s.InitSchema())
+	source, err := s.GetOrCreateSource("slack", "synthetic-workspace")
+	require.NoError(t, err)
+	fullRoom, err := s.EnsureConversation(source.ID, "full-room", "Full room")
+	require.NoError(t, err)
+	coldRoom, err := s.EnsureConversation(source.ID, "cold-room", "Cold room")
+	require.NoError(t, err)
+	require.NoError(t, s.SetConversationPolicyOverride(ctx, source.ID, "full-room", conversationpolicy.Full))
+	require.NoError(t, s.SetConversationPolicyOverride(ctx, source.ID, "cold-room", conversationpolicy.Full))
+	fullMessage, err := s.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: fullRoom, SourceMessageID: "full-message", MessageType: "slack"})
+	require.NoError(t, err)
+	coldMessage, err := s.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: coldRoom, SourceMessageID: "cold-message", MessageType: "slack"})
+	require.NoError(t, err)
+	require.NoError(t, sqlitevec.RegisterExtension())
+	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{
+		Path: filepath.Join(dataDir, "vectors.db"), MainPath: c.DatabaseDSN(), MainDB: s.DB(), Dimension: 3,
+	})
+	require.NoError(t, err)
+	gen, err := backend.CreateGeneration(ctx, c.Vector.Embeddings.Model, 3, c.Vector.GenerationFingerprint())
+	require.NoError(t, err)
+	require.NoError(t, backend.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: fullMessage, Vector: []float32{0, 1, 0}},
+		{MessageID: coldMessage, Vector: []float32{1, 0, 0}},
+	}))
+	require.NoError(t, backend.ActivateGeneration(ctx, gen, true))
+	require.NoError(t, backend.Close())
+	require.NoError(t, s.SetConversationPolicyOverride(ctx, source.ID, "cold-room", conversationpolicy.Cold))
+
+	ev := &evaluator{ctx: ctx, diag: &runDiagnostics{}}
+	cleanup, err := ev.attachVector(ctx, s)
+	require.NoError(t, err)
+	defer cleanup()
+	hits, _, err := ev.heng.Search(ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "synthetic query", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, fullMessage, hits[0].MessageID, "retained cold vectors must not rank ahead of eligible eval results")
+}
+
 // TestAttachVector_RejectsContextualModelMismatch covers the other resolved
 // config the eval tool must refuse: api_format = "voyage-contextual" with a
 // non-contextual model.
@@ -172,7 +223,7 @@ func TestAttachVector_HonorsSQLiteAcceleratorMode(t *testing.T) {
 	for _, tc := range []struct {
 		mode, wantPath string
 	}{
-		{"auto", "vec1_ivf_opq"},
+		{"auto", "exact-filter"},
 		{"exact", "exact"},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {

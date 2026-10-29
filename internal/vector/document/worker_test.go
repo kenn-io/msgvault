@@ -687,6 +687,23 @@ func TestWorkerRunRetriesBackendPutFailureWithoutCommitting(t *testing.T) {
 	assertions.Equal("backend_transient", ledger.failures[0].errorCode)
 }
 
+func TestWorkerRunReleasesClaimsWhenBackendPutSeesPolicyTransition(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
+	backend := &fakeDocumentVectorBackend{putErr: fmt.Errorf("publish: %w", store.ErrConversationPolicyStale)}
+	worker := newFakeWorker(ledger, &fakeDocumentVectorProvider{
+		vectors: [][][]float32{{{1, 2, 3}}},
+	}, backend)
+
+	result, err := worker.Run(t.Context(), 1, 10)
+	requirements.ErrorIs(err, store.ErrConversationPolicyStale)
+	assertions.Zero(result.Retry + result.Terminal)
+	assertions.Empty(ledger.failures, "a policy transition is not a document failure")
+	assertions.Empty(ledger.committed)
+	assertions.Equal([]string{"token-a"}, ledger.released)
+}
+
 func TestWorkerRunClassifiesProviderSuffixWhenPrefixBackendPutFails(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -937,6 +954,7 @@ type fakeDocumentVectorLedger struct {
 	claims             []*store.DocumentVectorChunkClaim
 	claimCalls         int
 	committed          []string
+	released           []string
 	failures           []fakeDocumentVectorFailure
 	commitErr          map[string]error
 	commit             func(context.Context, string) error
@@ -1015,6 +1033,13 @@ func (l *fakeDocumentVectorLedger) RenewDocumentVectorChunkClaim(_ context.Conte
 		l.renewOnce.Do(func() { close(renewed) })
 	}
 	return workerNow.Add(time.Minute), err
+}
+
+func (l *fakeDocumentVectorLedger) ReleaseDocumentVectorChunkClaim(_ context.Context, _ int64, token, _ string, _ int64, _ time.Time) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.released = append(l.released, token)
+	return nil
 }
 
 func (l *fakeDocumentVectorLedger) renewTokenCallCount(token string) int {

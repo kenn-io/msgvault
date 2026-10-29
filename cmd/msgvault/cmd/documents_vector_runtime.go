@@ -5,8 +5,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,8 +12,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
-	"go.kenn.io/msgvault/internal/vector/pgvector"
-	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 func nextDocumentVectorWorkerOwner() string {
@@ -38,6 +34,15 @@ type documentVectorBuildCheckpointer interface {
 func (w checkpointingDocumentVectorWorker) Run(
 	ctx context.Context, generationID vectordocument.GenerationID, limit int,
 ) (result vectordocument.RunResult, runErr error) {
+	if policy, ok := w.checkpointer.(interface {
+		CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	}); ok {
+		var err error
+		ctx, err = policy.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
 	pass, terminal, err := beginCommandOperationPass(
 		ctx, w.recorder, operations.KindDocumentEmbedding, w.scope,
 	)
@@ -100,11 +105,21 @@ func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store,
 		return vectordocument.ReconcileResult{}, err
 	}
 	if generation.State == store.DocumentVectorGenerationRetired {
-		backend, closeBackend, err := openDocumentVectorCleanupBackend(ctx, st, cfg.DatabaseDSN())
+		backend, sqlitePath, closeBackend, err := openDocumentVectorCleanupBackend(ctx, st)
 		if err != nil {
 			return vectordocument.ReconcileResult{}, err
 		}
 		defer func() { _ = closeBackend() }()
+		if backend == nil {
+			if err := st.ReconcileConversationPolicyMediaProgress(ctx); err != nil {
+				return vectordocument.ReconcileResult{}, err
+			}
+			if err := st.ReconcileConversationPolicyMissingVectors(ctx, sqlitePath); err != nil {
+				return vectordocument.ReconcileResult{}, err
+			}
+			purged, err := st.PurgeRetiredDocumentVectorGeneration(ctx, generationID)
+			return vectordocument.ReconcileResult{Purged: purged, Converged: purged, CleanupExhausted: true}, err
+		}
 		reconciler := vectordocument.NewReconciler(vectordocument.ReconcilerDeps{
 			Ledger: st, Backend: backend, Now: func() time.Time { return time.Now().UTC() },
 		})
@@ -122,34 +137,34 @@ func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store,
 		newOperationPassScope("cli:document-vector", operations.TriggerManual))
 }
 
-func openDocumentVectorCleanupBackend(ctx context.Context, st *store.Store, mainPath string) (vectordocument.Backend, func() error, error) {
-	state := invocationFromContext(ctx)
-	if state == nil || state.cfg == nil {
-		return nil, nil, errors.New("configuration is unavailable")
-	}
-	cfg := state.cfg
-	if store.IsPostgresURL(mainPath) {
-		backend, err := pgvector.DocumentBackendForDB(st.DB())
-		if err != nil {
-			return nil, nil, fmt.Errorf("open pgvector document cleanup backend: %w", err)
-		}
-		return backend, func() error { return nil }, nil
-	}
-	vectorPath := cfg.Vector.DBPath
-	if vectorPath == "" {
-		vectorPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
-	}
-	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: vectorPath})
+// openDocumentVectorCleanupBackend returns a nil backend when native storage
+// is missing, with the resolved SQLite path that absence was checked against.
+func openDocumentVectorCleanupBackend(ctx context.Context, st *store.Store) (vectordocument.Backend, string, func() error, error) {
+	lanes, closeLanes, err := openConversationPolicyCleanupLanes(ctx, st)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open document cleanup backend: %w", err)
+		return nil, "", nil, err
 	}
-	return backend.DocumentBackend(), backend.Close, nil
+	if lanes.nativeMissing {
+		return nil, lanes.sqlitePath, closeLanes, nil
+	}
+	backend, ok := lanes.Documents.(vectordocument.Backend)
+	if !ok {
+		_ = closeLanes()
+		return nil, "", nil, errors.New("document cleanup backend is unavailable")
+	}
+	return backend, "", closeLanes, nil
 }
 
 func runDocumentVectorWithFeatures(
 	ctx context.Context, st *store.Store, vf *vectorFeatures, generationID int64, limit int,
 	scope operations.PassScope,
 ) (vectordocument.ReconcileResult, error) {
+	var captureErr error
+	ctx, captureErr = st.CaptureConversationPolicyWork(ctx)
+	if captureErr != nil {
+		return vectordocument.ReconcileResult{}, captureErr
+	}
+
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
 		return vectordocument.ReconcileResult{}, errors.New("configuration is unavailable")

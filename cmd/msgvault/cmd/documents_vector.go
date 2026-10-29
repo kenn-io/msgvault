@@ -110,6 +110,22 @@ func withDocumentVectorStore(ctx context.Context, deps documentsCommandDeps, fn 
 	return fn(st)
 }
 
+func withInitializedDocumentVectorStore(ctx context.Context, deps documentsCommandDeps, fn func(*store.Store) error) error {
+	open := deps.openInitializedStore
+	if open == nil {
+		open = deps.openStore
+	}
+	if open == nil {
+		return errors.New("document vector ledger is unavailable")
+	}
+	st, cleanup, err := open(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	return fn(st)
+}
+
 func runDocumentVectorCommandHTTP(command *cobra.Command, args []string, forwardEmbeddingKey bool) error {
 	if forwardEmbeddingKey {
 		return runDaemonCLICommandHTTPFromCobraWithEnv(command, args, embeddingsForwardEnv(invocationFromCommand(command)))
@@ -147,7 +163,7 @@ func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDocumentVectorCommandHTTP(command, args, false)
 			}
-			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
+			run := func(st *store.Store) error {
 				spec, err := configuredDocumentVectorSpec(command.Context(), st)
 				if err != nil {
 					return err
@@ -170,7 +186,11 @@ func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 				}
 				_, _ = fmt.Fprintf(command.OutOrStdout(), "Recorded consent for document vector egress fingerprint %s. Restart the daemon to enable scheduled document vector work.\n", consent.EgressFingerprint)
 				return nil
-			})
+			}
+			if yes {
+				return withDocumentVectorStore(command.Context(), deps, run)
+			}
+			return withInitializedDocumentVectorStore(command.Context(), deps, run)
 		},
 	}
 	command.Flags().BoolVar(&yes, "yes", false, "Confirm hosted document embedding consent")
@@ -387,7 +407,7 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 				_, _ = fmt.Fprintln(command.OutOrStdout(), "document_vectors=disabled")
 				return nil
 			}
-			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
+			return withInitializedDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
 				spec, err := desiredDocumentVectorSpec(command.Context(), st)
 				if errors.Is(err, store.ErrDocumentVectorInvalidGenerationState) {
 					if jsonOutput {

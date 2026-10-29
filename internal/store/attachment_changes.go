@@ -100,7 +100,15 @@ func (s *Store) CompleteAttachmentChangeReconciliation(
 		}
 		return errors.New("attachment reconciliation baseline cannot be negative")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	// The policy check reads before this update writes, so a peer commit in
+	// between fails SQLite's snapshot upgrade. Rerun the whole transaction.
+	return retryBusyWriteErr(ctx, s, "complete attachment change reconciliation", func() error {
+		return s.completeAttachmentChangeReconciliation(ctx, consumerKey, baselineSequence)
+	})
+}
+
+func (s *Store) completeAttachmentChangeReconciliation(ctx context.Context, consumerKey string, baselineSequence int64) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		result, err := q.Exec(`
 			UPDATE attachment_change_consumers
@@ -224,7 +232,15 @@ func (s *Store) AdvanceAttachmentChangeConsumer(
 	if sequence < 0 {
 		return errors.New("attachment change sequence cannot be negative")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	// The policy check reads before this callback reserves SQLite's writer, so
+	// a peer commit in between fails the upgrade. Rerun the whole transaction.
+	return retryBusyWriteErr(ctx, s, "advance attachment change consumer", func() error {
+		return s.advanceAttachmentChangeConsumer(ctx, consumerKey, sequence)
+	})
+}
+
+func (s *Store) advanceAttachmentChangeConsumer(ctx context.Context, consumerKey string, sequence int64) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if !s.IsPostgreSQL() {
 			// Reserve SQLite's writer slot before reading the cursor and event.

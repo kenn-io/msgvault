@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -32,6 +33,8 @@ func Available() bool { return false }
 // can reference sqlitevec.Options without a compile error; the struct is
 // never populated at runtime when the PG code path is taken.
 type Options struct {
+	// PolicyStore is the authoritative archive; nil is only for archive-free fixtures.
+	PolicyStore      *store.Store
 	Path             string
 	MainPath         string
 	Dimension        int
@@ -39,6 +42,7 @@ type Options struct {
 	BuildScope       vector.BuildScope
 	ReadOnly         bool
 	MetadataReadOnly bool
+	ExistingOnly     bool
 	ANNWorkCeiling   int
 	ANNOversample    int
 	ANNNProbe        int
@@ -137,3 +141,7 @@ func (b *Backend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID)
 func (b *Backend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, _ int64, _ []float32) ([]vector.ChunkHit, error) {
 	return nil, ErrNotBuilt
 }
+
+func (b *Backend) PruneIneligibleEmbeddings(context.Context) (int64, error) { return 0, ErrNotBuilt }
+
+func (b *Backend) PruneIneligiblePersons(context.Context) (int64, error) { return 0, ErrNotBuilt }

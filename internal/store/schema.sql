@@ -1486,6 +1486,14 @@ CREATE TABLE IF NOT EXISTS messages (
     -- stamps this column after a successful upsert (or skip).
     embed_gen INTEGER,
 
+    -- Revision of the source and contextual inputs used to build a vector.
+    -- Unlike embed_gen, this does not name a single generation: rebuilding a
+    -- second generation must not invalidate a still-current active vector.
+    -- Input changes advance it while clearing embed_gen; each generation's
+    -- vector rows retain the revision they published and search requires an
+    -- exact match.
+    embedding_revision INTEGER NOT NULL DEFAULT 0,
+
     -- Content-change watermark, maintained ENTIRELY by the database (triggers
     -- created by EnsureTriggers), never by application write paths. Unlike
     -- last_modified above, which bumps on ANY change to the row, this moves

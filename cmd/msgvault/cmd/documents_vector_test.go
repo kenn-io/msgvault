@@ -31,8 +31,16 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	cfg := invocationFromContext(testCtx).cfg
 	t.Setenv("SYNTHETIC_EMBEDDING_KEY", "secret-that-must-not-print")
 	runtimeCalls := 0
+	writerOpens, readerOpens := 0, 0
 	deps := documentsCommandDeps{
-		openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openStore: func(context.Context) (*store.Store, func(), error) {
+			writerOpens++
+			return fixture.Store, func() {}, nil
+		},
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) {
+			readerOpens++
+			return fixture.Store, func() {}, nil
+		},
 		runDocumentVector: func(context.Context, *store.Store, int64, int) (vectordocument.ReconcileResult, error) {
 			runtimeCalls++
 			return vectordocument.ReconcileResult{}, nil
@@ -54,6 +62,8 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	assert.Contains(unconfirmedOutput.String(), "Docbank-prepared normalized attachment document inputs will be sent")
 	assert.NotContains(unconfirmedOutput.String(), "Explicit semantic or hybrid document searches")
 	assert.NotContains(unconfirmedOutput.String(), "secret-that-must-not-print")
+	assert.Equal(0, writerOpens, "unconfirmed disclosure must use the initialized read opener")
+	assert.Equal(1, readerOpens)
 	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	unconfirmedConsent, err := fixture.Store.GetDocumentVectorConsent(testCtx, consentSpec.EgressFingerprint)
@@ -65,6 +75,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	consent.SetOut(&consentOutput)
 	consent.SetArgs([]string{documentVectorsSubcommand, "consent", "--yes"})
 	require.NoError(consent.ExecuteContext(testCtx))
+	assert.Equal(1, writerOpens, "confirmed consent uses the policy writer")
 	assert.Contains(consentOutput.String(), "Hosted document embedding disclosure:")
 	assert.Contains(consentOutput.String(), "Recorded consent for document vector egress fingerprint "+consentSpec.EgressFingerprint)
 	assert.NotContains(consentOutput.String(), "secret-that-must-not-print")
@@ -104,6 +115,8 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	status.SetOut(&statusOutput)
 	status.SetArgs([]string{documentVectorsSubcommand, statusValue})
 	require.NoError(status.ExecuteContext(testCtx))
+	assert.Equal(2, readerOpens, "status must not activate policy cleanup")
+	assert.Equal(2, writerOpens)
 	assert.Contains(statusOutput.String(), "building_generation=")
 	assert.Contains(statusOutput.String(), "state=building")
 	assert.Contains(statusOutput.String(), "pending=0 retryable=0 terminal=0 ready_live=0 obsolete=0 cleanup_pending=0")

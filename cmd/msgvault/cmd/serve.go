@@ -397,7 +397,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		defer close(policyDone)
 		runConversationPolicyRuntime(ctx, s, currentConversationPolicySettingsSource(state), policyTicks.C, func(err error) {
 			if err != nil && ctx.Err() == nil {
-				logger.Warn("conversation policy refresh incomplete; the next tick retries", "error", err)
+				logger.Warn("conversation policy refresh incomplete; cleanup will retry", "error", err)
 			}
 			// Existing cache admission rejects stale revisions while this rebuild runs.
 			if ctx.Err() == nil {
@@ -1874,6 +1874,10 @@ func (a *storeAPIAdapter) PersonMatchConsentEgressContext(
 
 func (a *storeAPIAdapter) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, limit int) (int, error) {
 	return a.store.EnsurePersonMatchScoringCandidatesContext(ctx, limit)
+}
+
+func (a *storeAPIAdapter) CaptureConversationPolicyWork(ctx context.Context) (context.Context, error) {
+	return a.store.CaptureConversationPolicyWork(ctx)
 }
 
 func (a *storeAPIAdapter) ClaimNextIdentityMatchJudgmentContext(ctx context.Context, owner string, leaseDuration time.Duration, scoringVersion ...string) (*store.IdentityMatchJudgmentLease, error) {

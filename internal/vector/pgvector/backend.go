@@ -27,6 +27,7 @@ var _ vector.ChunkScoringBackend = (*Backend)(nil)
 var _ vector.FilteredCoverageBackend = (*Backend)(nil)
 var _ vector.ConvergedGenerationActivator = (*Backend)(nil)
 var _ vector.OrphanEmbeddingPruner = (*Backend)(nil)
+var _ vector.IneligibleEmbeddingPruner = (*Backend)(nil)
 
 // annOverFetchFactor multiplies k for the inner ANN scan so that after
 // GROUP BY dedup across multi-chunk messages, at least k distinct
@@ -37,6 +38,8 @@ const annOverFetchFactor = 4
 // embedding schema and the main msgvault schema; pgvector embeddings
 // live in the same Postgres database.
 type Options struct {
+	// PolicyStore is the authoritative archive; nil is only for archive-free fixtures.
+	PolicyStore *store.Store
 	// DB is the pgx-backed handle to the database that contains both
 	// the msgvault main schema and the pgvector embedding tables.
 	DB *sql.DB
@@ -82,8 +85,9 @@ type Options struct {
 // with the pgvector extension. The same *sql.DB also serves the main
 // msgvault schema (messages, message_recipients, message_labels).
 type Backend struct {
-	db    *sql.DB
-	scope vector.BuildScope
+	policyStore *store.Store
+	db          *sql.DB
+	scope       vector.BuildScope
 }
 
 // Open verifies the database is reachable, applies the embedding schema
@@ -95,8 +99,9 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		return nil, errors.New("pgvector.Open: Options.DB is required")
 	}
 	b := &Backend{
-		db:    opts.DB,
-		scope: vector.NewBuildScope(opts.BuildScope.MessageTypes, opts.BuildScope.SourceIDs),
+		db:          opts.DB,
+		policyStore: opts.PolicyStore,
+		scope:       vector.NewBuildScope(opts.BuildScope.MessageTypes, opts.BuildScope.SourceIDs),
 	}
 	if !opts.SkipMigrate {
 		// serve / build / search: full migrate incl. CREATE EXTENSION (the
@@ -290,7 +295,7 @@ func (b *Backend) missingForGenWhere(genArg string, firstScopeArg int) (string, 
 // so both always agree on what "in scope" means. Scope placeholders are
 // numbered from firstScopeArg.
 func (b *Backend) liveScopeWhere(firstScopeArg int) (string, []any) {
-	where := store.LiveMessagesWhere("", true)
+	where := b.liveMessageWhere("")
 	args := make([]any, 0, len(b.scope.MessageTypes)+len(b.scope.SourceIDs))
 	nextArg := firstScopeArg
 	if len(b.scope.MessageTypes) > 0 {
@@ -662,10 +667,18 @@ func (b *Backend) BuildingGeneration(ctx context.Context) (*vector.Generation, e
 }
 
 func (b *Backend) generationByState(ctx context.Context, state vector.GenerationState) (vector.Generation, error) {
+	return b.generationByStateQuery(ctx, b.db, state)
+}
+
+type queryRower interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (b *Backend) generationByStateQuery(ctx context.Context, q queryRower, state vector.GenerationState) (vector.Generation, error) {
 	var g vector.Generation
 	var startedAt int64
 	var completedAt, activatedAt sql.NullInt64
-	err := b.db.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		`SELECT id, model, dimension, fingerprint, state,
 		        started_at, completed_at, activated_at, message_count
 		   FROM index_generations WHERE state = $1`, string(state)).Scan(
@@ -704,6 +717,10 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		return fmt.Errorf("begin upsert tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if err := b.checkPolicyPublicationTx(ctx, tx, distinctMessageIDs(chunks)); err != nil {
+		return err
+	}
 
 	// Read the generation's dimension and lifecycle state under a row lock
 	// inside the SAME transaction that writes the embeddings. FOR UPDATE
@@ -762,8 +779,8 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO embeddings
 		  (generation_id, message_id, chunk_index, embedded_at, source_char_len,
-		   chunk_char_start, chunk_char_end, truncated, dimension, embedding, source_basis)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector, $11)`)
+		   chunk_char_start, chunk_char_end, truncated, dimension, embedding, source_basis, embedding_revision)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector, $11, $12)`)
 	if err != nil {
 		return fmt.Errorf("prepare embeddings insert: %w", err)
 	}
@@ -773,7 +790,7 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		if _, err := stmt.ExecContext(ctx,
 			int64(gen), c.MessageID, c.ChunkIndex, now, c.SourceCharLen,
 			c.ChunkCharStart, c.ChunkCharEnd, c.Truncated, dim,
-			vectorLiteral(c.Vector), int(c.SourceBasis),
+			vectorLiteral(c.Vector), int(c.SourceBasis), c.EmbeddingRevision,
 		); err != nil {
 			return fmt.Errorf("insert embedding for msg %d chunk %d: %w", c.MessageID, c.ChunkIndex, err)
 		}
@@ -925,7 +942,24 @@ func parseVectorLiteral(s string, dim int) ([]float32, error) {
 // LoadVector returns the embedding for messageID in the active
 // generation. Mirrors sqlitevec.LoadVector.
 func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, error) {
-	active, err := b.ActiveGeneration(ctx)
+	var q queryRower = b.db
+	var tx *sql.Tx
+	var err error
+	if b.policyStore != nil {
+		tx, err = b.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return nil, fmt.Errorf("load vector for message %d: begin policy transaction: %w", messageID, err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := b.policyStore.LockPostgresConversationPolicyTx(ctx, tx, store.ConversationPolicyShared); err != nil {
+			return nil, fmt.Errorf("load vector for message %d: lock conversation policy: %w", messageID, err)
+		}
+		if err := b.policyStore.CheckConversationPolicyPublicationTx(ctx, tx, []int64{messageID}); err != nil {
+			return nil, err
+		}
+		q = tx
+	}
+	active, err := b.generationByStateQuery(ctx, q, vector.GenerationActive)
 	if err != nil {
 		return nil, err
 	}
@@ -933,10 +967,14 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 	// always exists for any embedded message regardless of how many
 	// additional chunks it has. find_similar (the only LoadVector caller
 	// today) treats embeddings as message-level. Mirrors sqlitevec.
+	policyClause := ""
+	if b.policyStore != nil {
+		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id = embeddings.message_id AND " + b.embeddedMessageWhere("embeddings") + ")"
+	}
 	var lit string
-	err = b.db.QueryRowContext(ctx,
+	err = q.QueryRowContext(ctx,
 		`SELECT embedding::text FROM embeddings
-		  WHERE generation_id = $1 AND message_id = $2 AND chunk_index = 0`,
+		  WHERE generation_id = $1 AND message_id = $2 AND chunk_index = 0`+policyClause,
 		int64(active.ID), messageID).Scan(&lit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("no embedding for message %d in generation %d", messageID, active.ID)
@@ -1065,7 +1103,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 			       ) ann
 			 GROUP BY ann.message_id
 			 ORDER BY distance, ann.message_id
-			 LIMIT $4`, dim, store.LiveMessagesWhere("m", true))
+			 LIMIT $4`, dim, b.embeddedMessageWhere("e"))
 		// Empty-filter path: the candidate universe is the whole
 		// generation, so the inner-LIMIT ceiling is the generation chunk
 		// count and there is no separate distinct-message early exit
@@ -1124,7 +1162,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		baseArgs = append(baseArgs, v)
 		return fmt.Sprintf("$%d", len(baseArgs))
 	}
-	existsClause := filterExistsClause("e", filter, bind)
+	existsClause := b.filterExistsClause("e", filter, bind)
 	innerArg := fmt.Sprintf("$%d", len(baseArgs)+1)
 	outerArg := fmt.Sprintf("$%d", len(baseArgs)+2)
 	stmt := fmt.Sprintf(`
@@ -1156,8 +1194,8 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 // filter clauses, keeping the whole filter in SQL instead of round-tripping
 // matching ids through Go. Filter values are bound via the supplied bind
 // closure; the live + filter clauses all reference the inner alias `m`. [V2].
-func filterExistsClause(embedAlias string, f vector.Filter, bind func(any) string) string {
-	clauses := append([]string{store.LiveMessagesWhere("m", true)}, buildPGFilterClauses(f, bind)...)
+func (b *Backend) filterExistsClause(embedAlias string, f vector.Filter, bind func(any) string) string {
+	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind)...)
 	return fmt.Sprintf(
 		"EXISTS (SELECT 1 FROM messages m WHERE m.id = %s.message_id AND %s)",
 		embedAlias, strings.Join(clauses, " AND "))
@@ -1179,7 +1217,7 @@ func (b *Backend) filteredChunkAndMessageCount(ctx context.Context, gen vector.G
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	existsClause := filterExistsClause("e", f, bind)
+	existsClause := b.filterExistsClause("e", f, bind)
 	q := `SELECT COUNT(*), COUNT(DISTINCT e.message_id)
 		   FROM embeddings e
 		  WHERE e.generation_id = $1 AND ` + existsClause
@@ -1333,37 +1371,110 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 // with the backend's other embedding writers, so embeddings and message_count
 // are repaired atomically without racing an upsert or retirement.
 func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
+	n, _, err := b.pruneEmbeddingBatch(ctx, false, false)
+	return n, err
+}
+
+// PruneIneligibleEmbeddings reconciles current full eligibility in every generation.
+func (b *Backend) PruneIneligibleEmbeddings(ctx context.Context) (int64, error) {
+	if b.policyStore == nil {
+		return 0, errors.New("policy cleanup requires PolicyStore")
+	}
+	var total int64
+	first := true
+	for {
+		n, ledger, err := b.pruneEmbeddingBatch(ctx, true, first)
+		first = false
+		total += n
+		if err != nil || (n == 0 && ledger == 0) {
+			return total, err
+		}
+	}
+}
+
+func (b *Backend) pruneEmbeddingBatch(ctx context.Context, policy, resetProgress bool) (int64, int64, error) {
+	var ledger int64
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("begin orphan prune: %w", err)
+		return 0, 0, fmt.Errorf("begin orphan prune: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if policy {
+		if err := b.policyStore.LockPostgresConversationPolicyTx(ctx, tx, store.ConversationPolicyExclusive); err != nil {
+			return 0, 0, err
+		}
+	}
+	orphanWhere := `NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id)`
+	if policy {
+		orphanWhere = `e.message_id IN (SELECT candidate.message_id FROM embeddings candidate WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=candidate.message_id AND ` + store.FullMessageWhere("m") + `) GROUP BY candidate.message_id ORDER BY candidate.message_id LIMIT 500)`
+	}
+
 	// The count, delete, and count repair below are corpus-wide maintenance.
 	// Disable the pool's 30-second statement timeout for this transaction so
 	// a large accumulated orphan set can complete. SET LOCAL resets when the
 	// transaction commits or rolls back.
 	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
-		return 0, fmt.Errorf("disable statement_timeout for orphan prune: %w", err)
+		return 0, 0, fmt.Errorf("disable statement_timeout for orphan prune: %w", err)
 	}
 
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id FROM index_generations ORDER BY id FOR UPDATE`)
 	if err != nil {
-		return 0, fmt.Errorf("lock generations for orphan prune: %w", err)
+		return 0, 0, fmt.Errorf("lock generations for orphan prune: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var generationID int64
 		if err := rows.Scan(&generationID); err != nil {
 			_ = rows.Close()
-			return 0, fmt.Errorf("scan locked generation: %w", err)
+			return 0, 0, fmt.Errorf("scan locked generation: %w", err)
 		}
 	}
 	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close locked generations: %w", err)
+		return 0, 0, fmt.Errorf("close locked generations: %w", err)
 	}
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate locked generations: %w", err)
+		return 0, 0, fmt.Errorf("iterate locked generations: %w", err)
+	}
+
+	if policy {
+		released, err := b.prunePolicyLedgerBatch(ctx, tx)
+		if err != nil {
+			return 0, 0, err
+		}
+		ledger = int64(len(released))
+		if where := releasedMemberWhere("e", released); where != "" {
+			orphanWhere = "(" + orphanWhere + " OR " + where + ")"
+		}
+		if resetProgress {
+			if _, err := tx.ExecContext(ctx, `UPDATE embed_watermark SET watermark_id=0 WHERE watermark_id<>0`); err != nil {
+				return 0, 0, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE embedding_document_progress SET reconcile_cursor='', journal_cursor='' WHERE reconcile_cursor<>'' OR journal_cursor<>''`); err != nil {
+				return 0, 0, err
+			}
+		}
+	}
+
+	affectedRows, err := tx.QueryContext(ctx, `SELECT e.generation_id FROM embeddings e WHERE `+orphanWhere+` GROUP BY e.generation_id ORDER BY e.generation_id`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = affectedRows.Close() }()
+	var affected []string
+	for affectedRows.Next() {
+		var id int64
+		if err := affectedRows.Scan(&id); err != nil {
+			_ = affectedRows.Close()
+			return 0, 0, err
+		}
+		affected = append(affected, strconv.FormatInt(id, 10))
+	}
+	if err := affectedRows.Close(); err != nil {
+		return 0, 0, err
+	}
+	if err := affectedRows.Err(); err != nil {
+		return 0, 0, err
 	}
 
 	var pruned int64
@@ -1371,16 +1482,16 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 		SELECT COUNT(*) FROM (
 			SELECT e.generation_id, e.message_id
 			  FROM embeddings e
-			 WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id)
+			 WHERE `+orphanWhere+`
 			 GROUP BY e.generation_id, e.message_id
 		) orphan_embeddings`).Scan(&pruned); err != nil {
-		return 0, fmt.Errorf("count orphan embeddings: %w", err)
+		return 0, 0, fmt.Errorf("count orphan embeddings: %w", err)
 	}
 	if pruned > 0 {
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM embeddings e
-			 WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id)`); err != nil {
-			return 0, fmt.Errorf("delete orphan embeddings: %w", err)
+			 WHERE `+orphanWhere); err != nil {
+			return 0, 0, fmt.Errorf("delete orphan embeddings: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE index_generations g
@@ -1388,14 +1499,14 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 				SELECT COUNT(DISTINCT e.message_id)
 				  FROM embeddings e
 				 WHERE e.generation_id = g.id
-			   )`); err != nil {
-			return 0, fmt.Errorf("repair generation message counts: %w", err)
+			   ) WHERE g.id IN (`+strings.Join(affected, ",")+`)`); err != nil {
+			return 0, 0, fmt.Errorf("repair generation message counts: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit orphan prune: %w", err)
+		return 0, 0, fmt.Errorf("commit orphan prune: %w", err)
 	}
-	return pruned, nil
+	return pruned, ledger, nil
 }
 
 // Stats returns counts for the given generation. When gen == 0,
@@ -1482,7 +1593,8 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.GenerationID) (int64, error) {
 	where := `e.generation_id = $1
 		    AND m.embed_gen = $1
-		    AND ` + store.LiveMessagesWhere("m", true)
+		    AND e.embedding_revision = m.embedding_revision
+		    AND ` + b.liveMessageWhere("m")
 	scopeWhere, scopeArgs := messageScopeWhere(b.scope, 2)
 	where += scopeWhere
 	args := append([]any{int64(gen)}, scopeArgs...)
@@ -1513,7 +1625,8 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 		WHERE e.generation_id = $1
 		  AND e.message_id = ANY($2)
 		  AND m.embed_gen = $1
-		  AND `+store.LiveMessagesWhere("m", true),
+		  AND e.embedding_revision = m.embedding_revision
+		  AND `+b.liveMessageWhere("m"),
 		int64(gen), messageIDs).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count filtered embedded messages: %w", err)
 	}
@@ -1534,9 +1647,10 @@ func (b *Backend) EmbeddingCoverage(
 		       COUNT(*) FILTER (WHERE m.embed_gen = $1),
 		       COUNT(*) FILTER (WHERE m.embed_gen = $1 AND EXISTS (
 		           SELECT 1 FROM embeddings e
-		           WHERE e.generation_id = $1 AND e.message_id = m.id))
+		           WHERE e.generation_id = $1 AND e.message_id = m.id
+		             AND e.embedding_revision = m.embedding_revision))
 		FROM messages m
-		WHERE `+store.LiveMessagesWhere("m", true)+scopeWhere,
+		WHERE `+b.liveMessageWhere("m")+scopeWhere,
 		args...).Scan(&coverage.Live, &coverage.Stamped, &coverage.Embedded); err != nil {
 		return vector.EmbeddingCoverage{}, fmt.Errorf("count embedding coverage: %w", err)
 	}
@@ -1590,12 +1704,17 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 			vector.ErrDimensionMismatch, len(queryVec), dim)
 	}
 
+	policyClause := ""
+	if b.policyStore != nil {
+		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id=embeddings.message_id AND " + b.embeddedMessageWhere("embeddings") + ")"
+	}
 	stmt := fmt.Sprintf(`
 		SELECT chunk_index, chunk_char_start, chunk_char_end, source_basis,
 		       (embedding::vector(%d)) <=> $3::vector AS distance
 		  FROM embeddings
 		 WHERE generation_id = $1 AND message_id = $2
-		 ORDER BY distance ASC, chunk_index ASC`, dim)
+		 %s
+ ORDER BY distance ASC, chunk_index ASC`, dim, policyClause)
 
 	rows, err := b.db.QueryContext(ctx, stmt, int64(gen), messageID, vectorLiteral(queryVec))
 	if err != nil {

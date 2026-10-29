@@ -1105,6 +1105,7 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 		return nil, fmt.Errorf("register sqlite-vec: %w", err)
 	}
 	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{
+		PolicyStore:     mainStore,
 		Path:            vecDBPath,
 		MainPath:        mainPath,
 		Dimension:       vecCfg.Embeddings.Dimension,

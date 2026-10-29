@@ -5351,7 +5351,7 @@ revoked secret is denied without fallback.
 Inspect enforced conversation archive tiers and source-qualified overrides
 in newer `main` builds.
 See [conversation archive tiers](configuration.md#conversation-archive-tiers)
-for defaults and refresh timing.
+for defaults, refresh timing and cleanup behavior.
 
 ```sh
 msgvault policy list
@@ -5363,6 +5363,6 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 config or automatic selection. JSON includes effective full/cold tier, roster
 count with known/unknown status, last activity, override origin and `staged: false`.
 Set/reset enforce eligibility immediately and request an analytics rebuild when
-automatic rebuilding is enabled. Completion does not mean the cache has finished
-rebuilding.
+automatic rebuilding is enabled. Derived cleanup failures are reported as pending
+for daemon retry. Completion does not mean the cache has finished rebuilding.
 `stub` and `skip` are rejected. No messages are removed.

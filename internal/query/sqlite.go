@@ -1163,7 +1163,7 @@ func (e *SQLiteEngine) fetchMessageSummariesByIDsInto(
 		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		WHERE m.id IN (%s) AND %s
-	`, sqliteSenderNameExpr, sqliteSenderJoin, strings.Join(placeholders, ","), store.LiveMessagesWhere("m", true))
+	`, sqliteSenderNameExpr, sqliteSenderJoin, strings.Join(placeholders, ","), store.LiveMessagesWhere("m", true)+" AND "+store.FullMessageWhere("m"))
 
 	rows, err := e.queryContext(ctx, q, args...)
 	if err != nil {

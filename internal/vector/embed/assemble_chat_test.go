@@ -2,7 +2,9 @@ package embed
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"slices"
@@ -525,4 +527,23 @@ func assertExactChatSpans(t *testing.T, body string, chunks []OwnedChunk) {
 		lastEnd = chunk.SourceCharEnd
 	}
 	assert.Equal(t, body, reconstructed.String())
+}
+
+// Windows embedded before embedding revisions existed must keep their stored
+// revision, or the next pass sends every unchanged window to the provider
+// again. Revision zero therefore hashes exactly as the pre-revision format.
+func TestChatDocumentRevisionKeepsPreRevisionEncoding(t *testing.T) {
+	metadata := MetadataVersion{ConversationID: 7, Digest: "digest"}
+	chunks := []OwnedChunk{{MessageID: 11, ChunkIndex: 0, SourceCharStart: 0, SourceCharEnd: 5, Text: "hello"}}
+	legacy := sha256.New()
+	_, _ = fmt.Fprintf(legacy, "%s\x00%s\x00%d\x00%s\x00", "chat:7:2026-01-01", "header", 7, "digest")
+	_, _ = fmt.Fprintf(legacy, "%d\x00", int64(11))
+	_, _ = fmt.Fprintf(legacy, "%d\x00%d\x00%d\x00%d\x00%d\x00%t\x00%s\x00", int64(11), 0, 0, 5, 0, false, "hello")
+
+	unchanged := chatDocumentRevision("chat:7:2026-01-01", "header", metadata,
+		[]SourceVersion{{MessageID: 11}}, chunks)
+	assert.Equal(t, hex.EncodeToString(legacy.Sum(nil)), unchanged)
+	revised := chatDocumentRevision("chat:7:2026-01-01", "header", metadata,
+		[]SourceVersion{{MessageID: 11, EmbeddingRevision: 2}}, chunks)
+	assert.NotEqual(t, unchanged, revised, "a changed message revision must change the window revision")
 }

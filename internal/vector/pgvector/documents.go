@@ -37,6 +37,10 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := b.checkPolicyPublicationTx(ctx, tx, vector.ScopePublicationMessageIDs(scopes)); err != nil {
+		return err
+	}
+
 	var dim int
 	var state vector.GenerationState
 	err = tx.QueryRowContext(ctx,
@@ -207,8 +211,9 @@ func (b *Backend) publishPGScope(ctx context.Context, tx *sql.Tx, gen vector.Gen
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO embeddings
 			(generation_id, message_id, chunk_index, embedded_at, source_char_len,
-			 chunk_char_start, chunk_char_end, source_basis, truncated, dimension, embedding)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector)`)
+			 chunk_char_start, chunk_char_end, source_basis, truncated, dimension, embedding,
+			 embedding_revision)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector, $12)`)
 	if err != nil {
 		return fmt.Errorf("prepare document embedding insert: %w", err)
 	}
@@ -217,7 +222,7 @@ func (b *Backend) publishPGScope(ctx context.Context, tx *sql.Tx, gen vector.Gen
 		if _, err := stmt.ExecContext(ctx,
 			int64(gen), chunk.MessageID, chunk.ChunkIndex, now, chunk.SourceCharLen,
 			chunk.ChunkCharStart, chunk.ChunkCharEnd, int(chunk.SourceBasis), chunk.Truncated,
-			dim, vectorLiteral(chunk.Vector)); err != nil {
+			dim, vectorLiteral(chunk.Vector), chunk.EmbeddingRevision); err != nil {
 			return fmt.Errorf("insert document embedding (msg %d chunk %d): %w", chunk.MessageID, chunk.ChunkIndex, err)
 		}
 	}
@@ -397,40 +402,46 @@ func (b *Backend) GetDocumentProgress(ctx context.Context, gen vector.Generation
 }
 
 func (b *Backend) AdvanceDocumentChangeWatermark(ctx context.Context, gen vector.GenerationID, sequence int64) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, change_sequence)
 		VALUES ($1, $2)
 		ON CONFLICT(generation_id) DO UPDATE SET
 			change_sequence = GREATEST(embedding_document_progress.change_sequence, excluded.change_sequence)`,
-		int64(gen), sequence)
-	if err != nil {
-		return fmt.Errorf("advance document change watermark: %w", err)
-	}
-	return nil
+			int64(gen), sequence)
+		if err != nil {
+			return fmt.Errorf("advance document change watermark: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) SetDocumentReconcileCursor(ctx context.Context, gen vector.GenerationID, cursor string) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, reconcile_cursor)
 		VALUES ($1, $2)
 		ON CONFLICT(generation_id) DO UPDATE SET reconcile_cursor = excluded.reconcile_cursor`,
-		int64(gen), cursor)
-	if err != nil {
-		return fmt.Errorf("set document reconcile cursor: %w", err)
-	}
-	return nil
+			int64(gen), cursor)
+		if err != nil {
+			return fmt.Errorf("set document reconcile cursor: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) SetDocumentJournalCursor(ctx context.Context, gen vector.GenerationID, cursor string) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, journal_cursor)
 		VALUES ($1, $2)
 		ON CONFLICT(generation_id) DO UPDATE SET journal_cursor = excluded.journal_cursor`,
-		int64(gen), cursor)
-	if err != nil {
-		return fmt.Errorf("set document journal cursor: %w", err)
-	}
-	return nil
+			int64(gen), cursor)
+		if err != nil {
+			return fmt.Errorf("set document journal cursor: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) ResetDocumentReconcileCursor(ctx context.Context, gen vector.GenerationID) error {

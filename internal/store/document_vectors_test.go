@@ -307,7 +307,7 @@ func testDocumentVectorObsoleteCleanup(t *testing.T) {
 	reclaimed, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "rebuild-worker", now.Add(5*time.Second), time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, reclaimed)
-	assert.Equal(t, claim.Token, reclaimed.Token)
+	assert.NotEqual(t, claim.Token, reclaimed.Token, "recreated publications get a new token incarnation")
 	assert.Equal(t, 1, reclaimed.AttemptCount)
 
 	t.Run("retired makes every token obsolete", func(t *testing.T) {
@@ -941,6 +941,32 @@ func testDocumentVectorRenewAndStaleFence(t *testing.T) {
 	_, err = f.Store.RenewDocumentVectorChunkClaim(t.Context(), generation.ID, claim.Token, claim.LeaseOwner, claim.LeaseFence, renewedUntil, time.Minute)
 	require.ErrorIs(t, err, store.ErrDocumentVectorClaimLost)
 	assert.NotEqual(t, claim.LeaseFence, takeover.LeaseFence)
+}
+
+func TestDocumentVectorClaimReleaseAllowsImmediateTakeover(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, generation := seedDocumentVectorGenerationWithChunks(t, 1)
+	now := time.Date(2026, time.August, 20, 11, 12, 13, 0, time.UTC)
+	claim, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-a", now, time.Minute)
+	require.NoError(err)
+	require.NotNil(claim)
+
+	require.NoError(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, claim.Token, claim.LeaseOwner, claim.LeaseFence, now.Add(time.Second)))
+	reclaimed, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-b", now.Add(time.Second), time.Minute)
+	require.NoError(err)
+	require.NotNil(reclaimed)
+	assert.Equal(claim.Token, reclaimed.Token)
+	assert.Equal(claim.LeaseFence+1, reclaimed.LeaseFence)
+	assert.Equal("worker-b", reclaimed.LeaseOwner)
+
+	var state string
+	var errorCode, retryAt sql.NullString
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT state, error_code, next_retry_at FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generation.ID, claim.Token).Scan(&state, &errorCode, &retryAt))
+	assert.Equal("pending", state)
+	assert.False(errorCode.Valid)
+	assert.False(retryAt.Valid)
+	require.ErrorIs(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, claim.Token, claim.LeaseOwner, claim.LeaseFence, now.Add(2*time.Second)), store.ErrDocumentVectorClaimLost)
 }
 
 func testDocumentVectorFailureLifecycle(t *testing.T) {

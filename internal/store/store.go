@@ -2215,6 +2215,29 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	// Pre-revision workers cleared embed_gen when source or contextual inputs
+	// changed. Their vectors and the new embedding_revision column both start
+	// at zero, so baseline unstamped messages once before a later rebuild can
+	// publish a new-generation vector and accidentally make an old-generation
+	// vector look current again.
+	if err := s.runOnceMigration(
+		ctx, migrationMessageEmbeddingRevisionBaseline, 1, false,
+		func(ctx context.Context) error {
+			return s.backfillMessageEmbeddingRevisionBaseline(ctx)
+		},
+	); err != nil {
+		return fmt.Errorf("backfill message embedding revisions: %w", err)
+	}
+
+	// Archives that classified rooms before derived cleanup existed have cold
+	// rooms whose vectors were never pruned, and no cleanup target to say so.
+	if err := s.runOnceMigration(
+		ctx, migrationConversationPolicyCleanupSeed, 1, false,
+		s.seedConversationPolicyCleanup,
+	); err != nil {
+		return fmt.Errorf("seed conversation policy cleanup: %w", err)
+	}
+
 	// Backfill content_changed_at for rows that predate the column, in
 	// committed batches (backfillContentChangedAt). Gated on the ledger
 	// because the scan never finds work after the first completed run; no

@@ -28,7 +28,8 @@ func (s *Store) runConversationPolicyMaintenance(ctx context.Context, fn func(co
 }
 
 type conversationPolicyLifecycle struct {
-	revision int64
+	participants []int64
+	revision     int64
 	// A contact-only merge must not bootstrap unrelated chat policy. Its actual
 	// self resolver may still change, so compare it again after the mutation.
 	checkSelfOnly bool
@@ -63,8 +64,32 @@ func (s *Store) captureSourceConversationPolicyTx(ctx context.Context, tx *logge
 
 func (s *Store) captureConversationPolicyRoomsTx(ctx context.Context, tx *loggedTx, rooms []int64) (conversationPolicyLifecycle, error) {
 	var state conversationPolicyLifecycle
-	state.activityRooms = slices.Clone(rooms)
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(value AS BIGINT)),0) FROM archive_metadata WHERE key='conversation_policy_revision'`).Scan(&state.revision)
+	var err error
+	if len(rooms) > 0 {
+		if err = queryInChunksContext(ctx, tx, rooms, nil,
+			`WITH target_rooms AS (SELECT id FROM conversations WHERE id IN (%s))
+			 SELECT cp.participant_id FROM conversation_participants cp
+			 WHERE EXISTS (SELECT 1 FROM target_rooms WHERE id=cp.conversation_id)
+			 UNION SELECT m.sender_id FROM messages m
+			 WHERE m.sender_id IS NOT NULL AND EXISTS (SELECT 1 FROM target_rooms WHERE id=m.conversation_id)
+			 UNION SELECT mr.participant_id FROM message_recipients mr
+			 WHERE EXISTS (SELECT 1 FROM messages m WHERE m.id=mr.message_id
+			               AND EXISTS (SELECT 1 FROM target_rooms WHERE id=m.conversation_id))
+			 ORDER BY participant_id`,
+			func(rows *loggedRows) error {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					return err
+				}
+				state.participants = append(state.participants, id)
+				return nil
+			}); err != nil {
+			return state, err
+		}
+		state.activityRooms = slices.Clone(rooms)
+	}
+	state.participants = sortedInt64Set(mapInt64Set(state.participants))
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(value AS BIGINT)),0) FROM archive_metadata WHERE key='conversation_policy_revision'`).Scan(&state.revision)
 	return state, err
 }
 
@@ -110,5 +135,36 @@ func (s *Store) finishConversationPolicyLifecycleTx(ctx context.Context, tx *log
 			return err
 		}
 	}
-	return nil
+	if _, err = tx.ExecContext(ctx, advanceConversationPolicyCleanupSQL); err != nil {
+		return err
+	}
+	return s.invalidateContextualParticipantMessagesTx(ctx, tx, state.participants)
+}
+
+func mapInt64Set(values []int64) map[int64]struct{} {
+	set := make(map[int64]struct{}, len(values))
+	for _, value := range values {
+		if value > 0 {
+			set[value] = struct{}{}
+		}
+	}
+	return set
+}
+
+// Contextual blocks include historical senders even after they leave the roster.
+// Their supported names can change when a different conversation becomes Cold.
+func (s *Store) invalidateContextualParticipantMessagesTx(ctx context.Context, tx *loggedTx, participantIDs []int64) error {
+	participantIDs = sortedInt64Set(mapInt64Set(participantIDs))
+	return execInChunksContext(ctx, tx, participantIDs, nil, `
+		WITH changed_participants AS (SELECT id FROM participants WHERE id IN (%s))
+		UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1
+		WHERE message_type='beeper'
+		  AND conversation_id IN (
+			SELECT conversation_id FROM conversation_participants
+			WHERE participant_id IN (SELECT id FROM changed_participants)
+			UNION
+			SELECT conversation_id FROM messages
+			WHERE sender_id IN (SELECT id FROM changed_participants)
+		  )
+		  AND `+FullMessageWhere("messages"))
 }

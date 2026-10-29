@@ -43,6 +43,7 @@ func openVectorBackendForRepair(ctx context.Context, s *store.Store, cfg *config
 
 	if s.IsPostgreSQL() {
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
+			PolicyStore:   s,
 			DB:            s.DB(),
 			Dimension:     cfg.Vector.Embeddings.Dimension,
 			SkipExtension: cfg.Vector.SkipExtensionCreate,
@@ -61,10 +62,11 @@ func openVectorBackendForRepair(ctx context.Context, s *store.Store, cfg *config
 		vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 	}
 	sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
-		Path:      vecPath,
-		MainPath:  cfg.DatabaseDSN(),
-		Dimension: cfg.Vector.Embeddings.Dimension,
-		MainDB:    s.DB(),
+		PolicyStore: s,
+		Path:        vecPath,
+		MainPath:    cfg.DatabaseDSN(),
+		Dimension:   cfg.Vector.Embeddings.Dimension,
+		MainDB:      s.DB(),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open vectors.db: %w", err)

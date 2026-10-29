@@ -2039,6 +2039,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		// correct — the scan-and-fill worker (and backstop) will embed and
 		// stamp them. No backfill.
 		{`ALTER TABLE messages ADD COLUMN embed_gen INTEGER`, "embed_gen"},
+		{`ALTER TABLE messages ADD COLUMN embedding_revision INTEGER NOT NULL DEFAULT 0`, "embedding_revision"},
 		// last_modified: row-level last-modified watermark, the embed
 		// worker's optimistic-CAS token. SQLite rejects a non-constant
 		// DEFAULT in ADD COLUMN ("Cannot add a column with non-constant
