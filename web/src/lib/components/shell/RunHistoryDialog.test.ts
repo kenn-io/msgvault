@@ -34,7 +34,7 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
   });
   const controller = new OperationsController(client); controllers.push(controller);
   const onNavigate = vi.fn();
-  render(RunHistoryDialog, { client, controller, state: { ...defaultOperationsState(kind), ...filters }, onNavigate, onclose: vi.fn(), onConfigure: vi.fn() });
+  render(RunHistoryDialog, { client, controller, restorationEpoch: 0, state: { ...defaultOperationsState(kind), ...filters }, onNavigate, onclose: vi.fn(), onConfigure: vi.fn() });
   return { queries, onNavigate, drift: () => { conflict = true; } };
 }
 
@@ -89,7 +89,7 @@ it('refreshes on reopening and retries an unreadable history through Refresh', a
     return failed ? Response.json({}, { status: 500 }) : Response.json({ runs, membership_revision: 1, unavailable_kinds: [] });
   });
   const controller = new OperationsController(client); controllers.push(controller);
-  const props = { client, controller, state: defaultOperationsState(), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() };
+  const props = { client, controller, restorationEpoch: 0, state: defaultOperationsState(), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() };
   const first = render(RunHistoryDialog, props);
   await screen.findByRole('button', { name: 'Open Document extraction run' });
   first.unmount();
@@ -112,7 +112,7 @@ it('retries the selected run detail through Refresh', async () => {
     return failed ? Response.json({}, { status: 500 }) : Response.json({ ...run, supported_actions: [] });
   });
   const controller = new OperationsController(client); controllers.push(controller);
-  render(RunHistoryDialog, { client, controller, state: { ...defaultOperationsState(), operationRunID: run.id }, onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+  render(RunHistoryDialog, { client, controller, restorationEpoch: 0, state: { ...defaultOperationsState(), operationRunID: run.id }, onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
   await screen.findByText('Unable to load operation detail.');
   failed = false;
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
@@ -131,7 +131,7 @@ it('restores older archived runs after narrowing dates through All or Clear', as
     return Response.json({ runs: matches ? [oldRun] : [], membership_revision: 1, unavailable_kinds: [] });
   });
   const controller = new OperationsController(client); controllers.push(controller);
-  render(RunHistoryDialog, { client, controller, state: defaultOperationsState(), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+  render(RunHistoryDialog, { client, controller, restorationEpoch: 0, state: defaultOperationsState(), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
   await screen.findByRole('button', { name: 'Open Source sync run' });
   await fireEvent.click(screen.getByRole('button', { name: 'Custom range' }));
   await fireEvent.click(screen.getByRole('radio', { name: 'Relative' }));

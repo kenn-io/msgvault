@@ -47,7 +47,6 @@ export class OperationsController {
   private actionError = $state<string | null>(null);
 
   private readonly client: APIClient;
-  private readonly commitURLState: (patch: Pick<OperationsURLState, 'operationRunID'>) => void;
   private filters: OperationsURLState = defaultOperationsState();
   private filterSignature = '';
   private selectedRunID: string | null = null;
@@ -66,12 +65,8 @@ export class OperationsController {
   private statusAbort?: AbortController;
   private statusRead?: Promise<boolean>;
 
-  constructor(
-    client: APIClient,
-    commitURLState: (patch: Pick<OperationsURLState, 'operationRunID'>) => void = () => undefined
-  ) {
+  constructor(client: APIClient) {
     this.client = client;
-    this.commitURLState = commitURLState;
   }
 
   get snapshot(): Readonly<OperationsSnapshot> {

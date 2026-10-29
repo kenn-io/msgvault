@@ -3085,3 +3085,52 @@ it.each([
   push.mockRestore();
   rendered.unmount(); state.destroy();
 });
+
+it.each(['everything', 'files', 'directory', 'directory_review'] as const)('restores Past runs detail, status, and list focus over %s', async workspace => {
+  window.history.replaceState(null, '', `/?workspace=${workspace}`);
+  const run = jobRun('document_extraction');
+  let holdDetail = false;
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const detail = () => Response.json({ ...run, counters: [], related_status: 'getDocumentIndexStatus', supported_actions: [] });
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane('document_extraction')] });
+    if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], membership_revision: 1, unavailable_kinds: [] });
+    if (path.includes('/operations/runs/')) return holdDetail ? pending : detail();
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    if (path === '/api/v1/people/directory') return Response.json({ people: [] });
+    if (path === '/api/v1/identity/match-candidates') return Response.json({ candidates: [], limit: 100, offset: 0 });
+    if (path === '/api/v1/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'files-1', search_provenance: {} });
+    return operationAuthorityResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(window);
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: /Sync status:/ }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Past runs/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Document extraction run' }));
+    const related = await screen.findByRole('button', { name: 'Open Document index status' });
+    related.focus(); await fireEvent.click(related);
+    await screen.findByRole('region', { name: 'Document index status' });
+    const move = async (direction: 'back' | 'forward') => {
+      const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history[direction](); await popped;
+    };
+    await move('back');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open Document index status' })));
+    await move('forward');
+    await waitFor(() => expect(document.activeElement).toBe(within(screen.getByRole('region', { name: 'Document index status' })).getByRole('button', { name: 'Back' })));
+    await move('back'); await move('back');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open Document extraction run' })));
+    holdDetail = true;
+    await move('forward');
+    await screen.findByText('Loading run…');
+    finish(detail());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open Document index status' })));
+    expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+    expect(state.current.workspace).toBe(workspace);
+  } finally {
+    finish(detail()); rendered.unmount(); state.destroy();
+  }
+});
