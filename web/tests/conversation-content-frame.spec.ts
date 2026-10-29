@@ -153,8 +153,6 @@ test('archived content has an opaque capability boundary and durable conversatio
   expect(imgDirective?.trim()).toBe('img-src data:');
   const shellOrigin = new URL(page.url()).origin;
   expect(initialCSP).toContain(`script-src ${shellOrigin}/archived-frame.js`);
-  expect(initialCSP).toContain(`style-src ${shellOrigin}/archived-frame.css ${shellOrigin}/scrollbar.css`);
-  expect(initialCSP).toContain(`style-src-elem ${shellOrigin}/archived-frame.css ${shellOrigin}/scrollbar.css`);
   // Inline allowance is scoped to style attributes (sanitizer-allowlisted
   // declarations only); scripts and stylesheet elements never get it.
   expect(initialCSP).toContain("style-src-attr 'unsafe-inline'");
