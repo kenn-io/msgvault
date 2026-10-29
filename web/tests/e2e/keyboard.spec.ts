@@ -21,15 +21,15 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
 
 test('operations filters, selection, advertised action, and close work without a pointer', async ({ page }) => {
   const fixture = await installOperations(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true }))}`);
 
-  await tabTo(page, 'Lane:');
+  await tabTo(page, 'Kind:');
   await page.keyboard.press('Enter');
   for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('documents');
 
-  await tabTo(page, 'Lane:', 120, 'Shift+Tab');
+  await tabTo(page, 'Kind:', 120, 'Shift+Tab');
   await page.keyboard.press('Enter');
   for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
@@ -41,8 +41,11 @@ test('operations filters, selection, advertised action, and close work without a
   await tabTo(page, 'Start CardDAV sync');
   await page.keyboard.press('Enter');
   await expect.poll(() => fixture.actionRequests).toEqual(['carddav_sync']);
-  await page.keyboard.press('Escape');
+  await tabTo(page, 'All runs');
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Open CardDAV sync run' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('pointer-free archive journey preserves focus, announcements, and history', async ({ page }) => {
@@ -120,9 +123,10 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect(page.getByRole('button', { name: 'Log in' })).toBeFocused();
   await page.keyboard.press('Enter');
 
-  // Relationships is the default landing workspace. j/k move the ranked
-  // list's selection, Enter opens a cluster into the timeline, a second
-  // Enter opens the reading pane, and Esc walks back one layer at a time.
+  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
+  await tabTo(page, 'People');
+  await page.keyboard.press('Enter');
+
   await expect(page.getByRole('main', { name: 'Relationships' })).toBeVisible();
   await tabTo(page, 'Relationship results');
   const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
@@ -146,9 +150,9 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect.poll(async () => (await exploreHistoryState(page)).relationshipTarget).toBeNull();
   await expect(page.getByRole('heading', { name: 'Beta Person' })).toBeHidden();
 
-  await tabTo(page, 'Everything');
+  await tabTo(page, 'Messages');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
   await page.keyboard.press('/');
   const search = page.getByRole('searchbox', { name: 'Search messages' });
   await expect(search).toBeFocused();
@@ -199,7 +203,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   const files = page.getByRole('grid', { name: 'Files results' });
   await tabTo(page, 'Files results');
   await expect(files).toBeFocused();
-  await tabTo(page, 'Everything', 120, 'Shift+Tab');
+  await tabTo(page, 'Messages', 120, 'Shift+Tab');
   await page.keyboard.press('Enter');
   await tabTo(page, 'Everything results');
   await expect(grid).toBeFocused();
@@ -220,11 +224,11 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   const deletionsURL = page.url();
   await page.goBack();
   await expect(page).toHaveURL(everythingURL);
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
   await expect(grid).toBeFocused();
   await expect(grid).toHaveAttribute('aria-activedescendant', everythingActiveRow!);
   await page.goForward();
   await expect(page).toHaveURL(deletionsURL);
   await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Deletions', exact: true })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Deletions' })).toBeVisible();
 });

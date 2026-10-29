@@ -102,7 +102,8 @@
       SettingsNavigationTarget | undefined,
       string,
       (categoryID: string) => void,
-      () => void
+      () => void,
+      (authority: RelatedOperationStatus) => void
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -1301,7 +1302,8 @@
           settingsNavigationTarget,
           exploreState.current.settingsCategory,
           selectSettingsCategory,
-          () => commitNavigation({ workspace: 'sources' })
+          () => commitNavigation({ workspace: 'sources' }),
+          openOperationAuthority
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} />
@@ -1612,7 +1614,7 @@
 
 {#if runHistory}
   <RunHistoryDialog {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory} {archiveContextKey}
-    onclose={closeRunHistory} onNavigate={openOperationAuthority}
+    onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
     onConfigure={() => { closeRunHistory(); openVisualAttachmentSettings(); }} />
 {/if}
 <FlashBanner />
@@ -1626,6 +1628,7 @@
   <KeyboardHelp
     commands={commandRegistry}
     onclose={() => void closeKeyboardHelp()}
+    onOpenCommands={() => { void closeKeyboardHelp().then(() => { paletteOpen = true; }); }}
   />
 {/if}
 
