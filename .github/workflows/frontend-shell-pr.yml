@@ -5,6 +5,7 @@ on:
     paths:
       - 'web/**'
       - '.github/workflows/frontend-shell.yml'
+      - '.github/workflows/frontend-shell-pr.yml'
 
 permissions:
   contents: read
