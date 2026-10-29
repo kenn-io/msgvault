@@ -1635,7 +1635,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
-	if version < 15 {
+	if version < 16 {
 		// Earlier versions submitted one provider job per extraction attempt.
 		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
 			return fmt.Errorf("backfill document upload counts: %w", err)
