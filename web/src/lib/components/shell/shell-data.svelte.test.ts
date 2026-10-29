@@ -202,15 +202,20 @@ it.each(['undo', 'expire'])('keeps accepted deletions hidden while a prior DELET
 
 it('restores the visible view and reports a failed delete', async () => {
   const saved = view(1, 'Équipe');
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
   const data = new ShellData(createAPIClient(async (input, init) => {
     const request = new Request(input, init);
     if (request.method === 'DELETE') {
-      return Response.json({}, { status: 500 });
+      return pending;
     }
-    return Response.json({ saved_views: [saved, view(2, 'école')] });
+    return Response.json({ saved_views: [saved] });
   }));
   await data.refresh();
   await data.deleteView(saved);
-  expect(await data.expireDelete()).toBe("Couldn't delete Équipe.");
+  const deleting = data.expireDelete();
+  expect(data.views).toEqual([]);
+  finish(Response.json({}, { status: 500 }));
+  expect(await deleting).toBe("Couldn't delete Équipe.");
   expect(data.views).toContainEqual(saved);
 });
