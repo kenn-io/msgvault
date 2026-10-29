@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
-import type { Status as VisualStatus, SyncResult } from '../api/generated/models';
-import { KIND_LANES } from '../../test/operations';
+import type { SyncResult } from '../api/generated/models';
+import { KIND_LANES, visualStatus } from '../../test/operations';
 import { OperationsController } from './controller.svelte';
 import type {
   OperationAction,
@@ -101,43 +101,6 @@ function runsResponse(
 
 function syncResult(): SyncResult {
   return { books: 1, created: 1, updated: 0, removed: 0 };
-}
-
-function visualStatus(): VisualStatus {
-  return {
-    active_leases: 0,
-    converged: 1,
-    convergence_ratio: 1,
-    convergence_total: 1,
-    current: 1,
-    duplicate_cost: {
-      at_least_once: false,
-      detail: 'Synthetic test policy.',
-      provider_idempotent: true
-    },
-    eligible: 1,
-    formats: [],
-    generation: {
-      consented: true,
-      dimension: 3,
-      fingerprint: 'synthetic-generation',
-      id: 1,
-      model: 'synthetic-model',
-      source_fence: 1,
-      state: 'active'
-    },
-    journal_cursor: 1,
-    journal_high_water: 1,
-    journal_lag: 0,
-    reconciliation_complete: true,
-    retryable: 0,
-    stale: 0,
-    terminal: 0,
-    tombstoned: 0,
-    unavailable: 0,
-    unknown_role: 0,
-    usage: { billed_units: 0, input_bytes: 0, requests: 0, usage_available: false }
-  };
 }
 
 function requestOf(input: RequestInfo | URL): Request {
@@ -573,7 +536,7 @@ describe('OperationsController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (request.method === 'POST') {
-        return Response.json(action === 'carddav_sync' ? syncResult() : visualStatus());
+        return Response.json(action === 'carddav_sync' ? syncResult() : { ...visualStatus, converged: 1, convergence_ratio: 1, convergence_total: 1, current: 1, eligible: 1, journal_cursor: 1, journal_high_water: 1, duplicate_cost: { ...visualStatus.duplicate_cost, detail: 'Synthetic test policy.' } });
       }
       reads += 1;
       return Response.json(path.endsWith('/status')

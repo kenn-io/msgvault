@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
 import { lane, lanes } from '../../../test/operations';
+import { normalizeCategory } from '../../settings/layout';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 type Setting = Record<string, unknown>;
@@ -805,4 +806,65 @@ it('refreshes the shared config revision when creating a profile succeeds before
   await screen.findByText('Key store unavailable');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.find(request => request.method === 'PATCH')?.ifMatch).toBe('"s2"'));
+});
+
+it('shows settings from unknown groups under Advanced and defaults unknown URLs to Overview', async () => {
+  const doc = settingsDoc();
+  doc.settings.push(setting('extras.limit', 'extras', 'integer', 4, { label: 'Extra limit' }));
+  const { client } = fixture(doc);
+  render(SettingsWorkspace, { client, category: 'advanced' });
+  expect(await screen.findByLabelText('Extra limit')).toHaveProperty('value', '4');
+  expect(normalizeCategory('nope')).toBe('overview');
+});
+
+it('keeps Build index through a pending or failed coverage refresh', async () => {
+  let reads = 0;
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
+    if (request.url.includes('/search/coverage')) return ++reads === 1
+      ? Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] })
+      : pending;
+  });
+  render(SettingsWorkspace, { client });
+  const name = 'Build index, Message search';
+  await screen.findByRole('button', { name });
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  await waitFor(() => expect(reads).toBe(2));
+  try {
+    expect(screen.getByRole('button', { name })).toBeDefined();
+  } finally {
+    finish(Response.json({ message: 'Unavailable' }, { status: 503 }));
+  }
+  await screen.findByText('Unbuilt');
+  expect(screen.getByRole('button', { name })).toBeDefined();
+});
+
+it.each([['PATCH', true], ['PATCH', false], ['PUT', true], ['PUT', false]] as const)('handles a %s conflict with endpoint changed=%s before sending a staged key', async (method, changedEndpoint) => {
+  let conflict = true;
+  const doc = settingsDoc();
+  const { client, seen } = fixture(doc, request => {
+    if (request.method === method && conflict) {
+      conflict = false;
+      doc.settings.find(item => item.key === (changedEndpoint ? 'vector.embeddings.endpoint' : 'activity.timezone'))!.value = typed(changedEndpoint ? 'https://new.example.test' : 'America/New_York');
+      return Response.json({ message: 'Settings changed' }, { status: 412 });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'search' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
+  await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  const alert = await screen.findByRole('alert');
+  const conflictMessage = alert.textContent;
+  if (method === 'PUT') await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '10m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+  const keys = seen.filter(request => request.method === 'PUT' && request.path.includes('/provider-credentials/'));
+  expect(keys).toHaveLength((method === 'PUT' ? 1 : 0) + (changedEndpoint ? 0 : 1));
+  if (changedEndpoint) expect(conflictMessage).toContain('Enter keys again');
+  else expect(keys.at(-1)!.body).toEqual({ value: 'synthetic-key' });
 });

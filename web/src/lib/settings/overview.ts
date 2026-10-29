@@ -18,6 +18,11 @@ export interface OverviewRow {
 }
 
 const BUILD_VISUAL_CONSENT = 'Sends attachments to your search provider.';
+const COVERAGE_CHIPS: Partial<Record<SearchCoverageValue['status'], OverviewRow['chip']>> = {
+  stale: { tone: 'warning', text: 'Stale' },
+  initializing: { tone: 'info', text: 'Initializing' },
+  unavailable: { tone: 'warning', text: 'Unavailable' },
+};
 
 type Kind = OperationLaneStatus['kind'];
 
@@ -52,7 +57,7 @@ export function overviewRows(
       return { tone: state.tone, text: state.label };
     }
     if (idle) return idle;
-    return { tone: 'success', text: 'On' };
+    return found?.history_availability === 'available' ? { tone: 'success', text: 'On' } : { tone: 'muted', text: 'History unavailable' };
   };
   const rows: OverviewRow[] = [];
   const setup = (kind: Kind): OverviewAction | undefined => kind === 'carddav_sync'
@@ -70,7 +75,7 @@ export function overviewRows(
   rows.push({
     id: 'message_embedding',
     name: 'Message search',
-    chip: chip('message_embedding', messageProgress, coverage?.status === 'stale' ? { tone: 'warning', text: 'Stale' } : buildAvailable && !messagesBuilt ? { tone: 'muted', text: 'Unbuilt' } : undefined),
+    chip: chip('message_embedding', messageProgress, coverage?.status === 'unavailable' && buildAvailable ? { tone: 'muted', text: 'Unbuilt' } : coverage && COVERAGE_CHIPS[coverage.status]),
     action: buildAvailable
       ? { kind: 'start', id: 'messages', label: 'Build index' }
       : on('message_embedding')
