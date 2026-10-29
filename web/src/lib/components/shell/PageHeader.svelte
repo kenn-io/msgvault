@@ -52,6 +52,14 @@
     pointer-events: none;
   }
 
+  /* A bordered table or panel right under the header draws the dividing
+     edge itself. The band reaches down to its top border, and the band's
+     own rule, which would run a few pixels above it, is dropped. */
+  .page-header:has(+ :global(:is(.context-bar, .kit-table-wrapper, .selection-review)))::before {
+    bottom: calc(-1 * (var(--space-5) + var(--space-4)));
+    border-bottom: 0;
+  }
+
   .page-header__row {
     position: relative;
     z-index: 1;
