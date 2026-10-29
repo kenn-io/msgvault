@@ -20,7 +20,7 @@
     running: { tone: 'stale', label: 'Syncing' },
     failed: { tone: 'unclean', label: 'Needs attention' },
   } as const;
-  const status = $derived(STATUS[store.health]);
+  const status = $derived(store.loaded ? STATUS[store.health] : { tone: 'idle', label: 'Loading' } as const);
 </script>
 
 <Menu align="start" onopenchange={(open) => open && void store.refresh()}>
@@ -28,7 +28,7 @@
     <MenuTrigger ariaLabel={`Sync status: ${status.label}`}>
       {#snippet child({ attachment })}
         <button type="button" class="sync-status" class:sync-status--rail={collapsed} {@attach attachment}>
-          <span class="sync-status__dot" aria-hidden="true"><StatusDot status={status.tone} label={status.label} /></span>
+          <span class="sync-status__dot" style:--accent-green={store.loaded ? undefined : 'var(--text-muted)'} aria-hidden="true"><StatusDot status={status.tone} label={status.label} /></span>
           <span class:kit-sr-only={collapsed}>{status.label}</span>
         </button>
       {/snippet}

@@ -19,11 +19,13 @@
   let { view, onOpen, onRename, onDelete, onDescribe = undefined }: Props = $props();
 
   let describing = $state(false);
+  let descriptionView: SavedView;
   let description = $state('');
   let describeError = $state('');
   let describeBusy = $state(false);
 
   function beginDescribe(): void {
+    descriptionView = view;
     description = view.description ?? '';
     describeError = '';
     describing = true;
@@ -32,13 +34,14 @@
   async function saveDescription(): Promise<void> {
     if (!onDescribe || describeBusy) return;
     describeBusy = true;
-    const failure = await onDescribe(view, description);
+    const failure = await onDescribe(descriptionView, description);
     describeBusy = false;
     if (failure) describeError = failure;
     else describing = false;
   }
 
   let renaming = $state(false);
+  let renameView: SavedView;
   let renameBusy = $state(false);
   let draft = $state('');
   let error = $state('');
@@ -54,6 +57,7 @@
   );
 
   async function beginRename(): Promise<void> {
+    renameView = view;
     draft = view.name;
     error = '';
     renaming = true;
@@ -64,13 +68,8 @@
 
   async function commitRename(): Promise<void> {
     if (!renaming || renameBusy) return;
-    const name = draft.trim();
-    if (!name || name === view.name) {
-      renaming = false;
-      return;
-    }
     renameBusy = true;
-    const failure = await onRename(view, name);
+    const failure = await onRename(renameView, draft);
     renameBusy = false;
     if (failure) {
       error = failure;
