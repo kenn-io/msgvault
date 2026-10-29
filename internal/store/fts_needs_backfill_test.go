@@ -108,6 +108,55 @@ func TestStore_BackfillFTS_PreservesCompletedWork(t *testing.T) {
 	assert.False(f.Store.NeedsFTSBackfill())
 }
 
+func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	ids := f.CreateMessages(5001)
+	first, second := ids[0], ids[5000]
+	for _, id := range []int64{first, second} {
+		require.NoError(f.Store.UpsertMessageBody(id,
+			sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
+	}
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assertFTSContains(t, f.Store, "orchard", 2)
+	if isPostgresTestDB() {
+		_, err = f.Store.DB().Exec("UPDATE messages SET search_fts = NULL WHERE id IN ($1, $2)", first, second)
+	} else {
+		_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid IN (?, ?)", first, second)
+	}
+	require.NoError(err)
+
+	interrupted := errors.New("second batch interrupted")
+	restore := f.Store.SetBackfillFTSBatchErrHookForTest(func(fromID, _ int64) error {
+		if fromID >= second {
+			return interrupted
+		}
+		return nil
+	})
+	t.Cleanup(restore)
+	n, err := f.Store.BackfillFTS(nil)
+	require.ErrorIs(err, interrupted)
+	assert.Equal(int64(1), n, "first batch committed before the interruption")
+	matches, total, err := f.Store.SearchMessages("orchard", 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	require.Len(matches, 1)
+	assert.Equal(first, matches[0].ID)
+	assert.True(f.Store.NeedsFTSBackfill(), "second batch still has a missing entry")
+	restore()
+
+	n, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assert.Equal(int64(1), n, "retry indexes only the second-batch gap")
+	assertFTSContains(t, f.Store, "orchard", 2)
+	assert.False(f.Store.NeedsFTSBackfill())
+}
+
 func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
