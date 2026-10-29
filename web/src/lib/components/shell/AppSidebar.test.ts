@@ -1,24 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SavedView } from '../../api/generated/models';
+import { view } from './fixtures.test-support';
 import { parseExploreURLState } from '../../explore/state.svelte';
 import type { JobsStore } from '../../jobs/jobs.svelte';
 import AppSidebar from './AppSidebar.svelte';
 
 const jobs = { items: [], health: 'ok', loaded: true, refresh: vi.fn() } as unknown as JobsStore;
-
-function view(id: number, name: string, presentation = 'table'): SavedView {
-  return {
-    id,
-    name,
-    revision: 1,
-    schema_version: 2,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    canonical_state: { filters: [], grouping: [], presentation, sort: [], columns: [] },
-  };
-}
 
 function renderSidebar(overrides: Record<string, unknown> = {}) {
   const props = {
@@ -64,7 +52,7 @@ describe('AppSidebar', () => {
     const props = renderSidebar();
     const footer = within(screen.getByRole('complementary', { name: 'Sidebar' }));
     expect(footer.getByRole('button', { name: 'Settings' })).toBeTruthy();
-    expect(footer.getByRole('button', { name: /Sync status: Synced/ })).toBeTruthy();
+    expect(footer.getByRole('button', { name: /Sync status: Idle/ })).toBeTruthy();
     expect(footer.queryByRole('button', { name: /Keyboard shortcuts/ })).toBeNull();
     expect(props.onOpenHelp).not.toHaveBeenCalled();
   });
@@ -202,4 +190,13 @@ describe('AppSidebar', () => {
     await rerender({ collapsed: true });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand sidebar' }));
   });
+});
+
+it('shows a saved-view read error above the last rows and offers Retry', async () => {
+  const onRetryViews = vi.fn();
+  renderSidebar({ views: [view(1, 'Budget')], viewsError: 'Unavailable', onRetryViews });
+  expect(screen.getByRole('alert').textContent).toContain("Couldn't load saved views.");
+  expect(screen.getByRole('button', { name: 'Budget' })).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(onRetryViews).toHaveBeenCalledOnce();
 });

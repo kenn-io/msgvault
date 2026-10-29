@@ -21,6 +21,8 @@
     jobs: JobsStore;
     onOpenJob: (target: JobTarget) => void;
     views?: SavedView[];
+    viewsError?: string;
+    onRetryViews?: () => void;
     onNavigate: (id: ExploreWorkspace) => void;
     onToggleCollapsed: () => void;
     onOpenHelp: () => void;
@@ -38,6 +40,8 @@
     jobs,
     onOpenJob,
     views = [],
+    viewsError = undefined,
+    onRetryViews = undefined,
     onNavigate,
     onToggleCollapsed,
     onOpenHelp,
@@ -79,6 +83,12 @@
               {#if !collapsed}<span class="sidebar__label">{item.label}</span>{/if}
             </button>
           </Tooltip>
+          {#if item.id === 'everything' && !collapsed && viewsError}
+            <div class="sidebar__views-error" role="alert">
+              <span>Couldn't load saved views.</span>
+              <button type="button" onclick={onRetryViews}>Retry</button>
+            </div>
+          {/if}
           {#if nested.length > 0}
             <ul class="sidebar__views" aria-label={`${item.label} saved views`}>
               {#each nested as view (view.id)}
@@ -190,6 +200,22 @@
   .sidebar__views {
     margin: var(--space-1) 0 var(--space-3) calc(var(--pane-pad-x) + var(--space-4));
     border-left: 1px solid var(--border-muted);
+  }
+
+  .sidebar__views-error {
+    margin-left: calc(var(--pane-pad-x) + var(--space-4));
+    padding: var(--space-2) var(--pane-pad-x);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .sidebar__views-error button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    text-decoration: underline;
+    cursor: pointer;
   }
 
   .sidebar__item {
