@@ -168,7 +168,7 @@ it.each(['PATCH', 'DELETE'])('refreshes a %s conflict so the next edit uses the 
     return Response.json({}, { status: 404 });
   }));
   data.views = [saved];
-  if (method === 'PATCH') expect(await data.renameView(saved, 'Q3')).toBe('This view changed in another session. Cancel and reopen the editor to review the latest view.');
+  if (method === 'PATCH') expect(await data.renameView(saved, 'Q3')).toBe('This view changed in another session. Cancel this edit and try again.');
   else { await data.deleteView(saved); expect(await data.expireDelete()).toBe("Couldn't delete Budget."); }
   await read;
   await vi.waitFor(() => expect(data.views[0]?.revision).toBe(2));
