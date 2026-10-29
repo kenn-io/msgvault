@@ -79,7 +79,7 @@ describe('SourcesWorkspace', () => {
       source({ id, identifier, display_name, can_sync: false, sync_unavailable_reason: reason, ...extra });
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       unavailable(1, 'import@example.com', 'Imported', 'source_not_schedulable', { source_type: 'mbox' }),
-      unavailable(2, 'busy@example.com', 'Busy', 'sync_already_running', { scheduler_started_at: '2026-07-19T10:00:00Z' }),
+      unavailable(2, 'busy@example.com', 'Busy', 'sync_already_running'),
       unavailable(3, 'down@example.com', 'Down', 'scheduler_unavailable'),
       unavailable(4, 'unset@example.com', 'Unset', 'sync_not_configured'),
       unavailable(5, 'other@example.com', 'Other', 'future_reason')
@@ -272,7 +272,7 @@ describe('SourcesWorkspace', () => {
       statusReads += 1;
       if (statusReads === 1) return Response.json({ sources: [source()] });
       if (statusReads <= 3) return Response.json({ sources: [source()] });
-      if (statusReads === 4) return Response.json({ sources: [source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', ...(running === 'active' ? { active_sync: run('running', 5) } : { latest_sync: run('running', 5) }) })] });
+      if (statusReads === 4) return Response.json({ sources: [source({ can_sync: false, ...(running === 'active' ? { sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 5) } : { latest_sync: run('running', 5) }) })] });
       return Response.json({ sources: [source({ latest_sync: run('completed', 8, { completed_at: '2026-07-19T10:01:00Z' }) })] });
     });
     const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
@@ -310,7 +310,7 @@ describe('SourcesWorkspace', () => {
       // reports sync_already_running while it rebuilds caches.
       if (statusReads <= 3) {
         return Response.json({ sources: [source({
-          can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z', latest_sync: completed()
+          can_sync: false, sync_unavailable_reason: 'sync_already_running', latest_sync: completed()
         })] });
       }
       return Response.json({ sources: [source({ latest_sync: completed() })] });
@@ -687,7 +687,7 @@ describe('SourcesWorkspace', () => {
   it('caps lock-hold polling and offers a manual refresh', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
-    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z' });
+    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       return Response.json({ sources: [held] });
@@ -710,7 +710,7 @@ describe('SourcesWorkspace', () => {
   it('resets the lock-hold poll budget after a real active sync appears', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
-    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z' });
+    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       if (reads === 3) return Response.json({ sources: [source({
@@ -735,7 +735,7 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       if (reads === 1) return Response.json({ sources: [source({
-        can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z'
+        can_sync: false, sync_unavailable_reason: 'sync_already_running'
       })] });
       throw new Error('status unavailable');
     });
@@ -758,7 +758,7 @@ describe('SourcesWorkspace', () => {
       const request = input instanceof Request ? input : new Request(input);
       reads += 1;
       if (reads === 1) return Promise.resolve(Response.json({ sources: [source({
-        can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z'
+        can_sync: false, sync_unavailable_reason: 'sync_already_running'
       })] }));
       timedOutSignals.push(request.signal);
       return new Promise<Response>((_resolve, reject) => {
