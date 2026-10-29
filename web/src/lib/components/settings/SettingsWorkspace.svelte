@@ -211,8 +211,8 @@
     }
   }
 
-  async function focusSetting(categoryID: string, settingKey: string | undefined): Promise<void> {
-    selectCategory(categoryID);
+  async function focusSetting(categoryID: string | undefined, settingKey: string | undefined): Promise<void> {
+    if (categoryID) selectCategory(categoryID);
     await tick();
     const field = settingKey
       ? root?.querySelector<HTMLElement>(`[data-setting-key="${settingKey}"]`)
@@ -237,7 +237,7 @@
     if (target) {
       activeCategory = target.categoryID;
       if (loading || target.settingKey === focusedNavigationSettingKey) return;
-      void focusSetting(target.categoryID, target.settingKey);
+      void focusSetting(undefined, target.settingKey);
       focusedNavigationSettingKey = target.settingKey;
       return;
     }
@@ -378,7 +378,7 @@
         const result = await putSettingsPersonEnrichmentProvider({ name }, providerUpdate(draft), { ...client, headers: { 'If-Match': etag } });
         if (!result.data) {
           if (result.response.status === 412) await loadSettings(true);
-          throw new Error(apiErrorMessage(result.error, "Can't save this provider."));
+          throw new Error(`${name}: ${apiErrorMessage(result.error, "Can't save this provider.")}`);
         }
         providerSaved(result.data, result.response.headers.get('ETag') ?? etag);
         delete providerDrafts[name];
