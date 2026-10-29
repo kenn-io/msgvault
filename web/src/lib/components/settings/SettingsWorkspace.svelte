@@ -295,18 +295,14 @@
   }
   // After a reload that keeps local edits, drop the ones the daemon already
   // holds: a draft equal to the new persisted value, or a clear for a secret
-  // that is no longer configured.
+  // that is no longer configured or a provider key that is no longer stored.
   function pruneSettledDrafts() {
-    const nextDrafts = { ...drafts };
-    for (const key of Object.keys(nextDrafts)) {
-      if (!isChange(find(key), nextDrafts[key])) delete nextDrafts[key];
-    }
-    drafts = nextDrafts;
-    const nextSecrets = { ...secretUpdates };
-    for (const [key, update] of Object.entries(nextSecrets)) {
-      if (update.action === 'clear' && !find(key)?.secret?.configured) delete nextSecrets[key];
-    }
-    secretUpdates = nextSecrets;
+    drafts = Object.fromEntries(Object.entries(drafts).filter(([key, value]) => isChange(find(key), value)));
+    secretUpdates = Object.fromEntries(Object.entries(secretUpdates).filter(([key, update]) => update.action === 'set' || find(key)?.secret?.configured));
+    credentialUpdates = Object.fromEntries(Object.entries(credentialUpdates).filter(([id, update]) => {
+      const source = (settings.find((setting) => setting.credential_id === id)?.secret ?? providers.find((provider) => provider.credential_id === id)?.credential)?.source;
+      return update.action === 'set' || !source || source === 'stored';
+    }));
   }
   function setCredential(id: string, update: SecretUpdate | undefined) {
     if (update) credentialUpdates[id] = update;
@@ -418,9 +414,9 @@
         secretUpdates = {};
         const appearance = savedAppearance(result.settings, new Set(updates.map(({ key }) => key)));
         if (appearance) onAppearanceSaved(appearance);
-
       }
       await saveProviders(false);
+      pruneSettledDrafts();
       for (const [credentialID, update] of Object.entries(credentialUpdates)) {
         const options = { ...client, headers: { 'If-Match': credentialETag } };
         const {

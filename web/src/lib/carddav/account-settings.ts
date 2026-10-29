@@ -13,6 +13,7 @@ export interface CardDAVAccountValues {
 export interface AccountDraft {
   values: CardDAVAccountValues;
   password: string;
+  testedTuple?: string;
   error?: string;
 }
 
