@@ -55,6 +55,9 @@ async function prepare(page: Page, baseURL: string | undefined, row: ReturnType<
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'session', https: false, plain_http_warning: false }
   }));
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [] } }));
+  await page.route('**/api/v1/operations/status', (route) => route.fulfill({ json: { lanes: [] } }));
+  await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/files/search', (route) => route.fulfill({ json: {
     files: [row], total_count: 1, cache_revision: 'cache-files', search_provenance: {}
   } }));
