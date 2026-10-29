@@ -1674,5 +1674,4 @@ describe('session-owned exploration selection', () => {
     ).toThrow('candidate snapshot');
   });
 
-
 });
