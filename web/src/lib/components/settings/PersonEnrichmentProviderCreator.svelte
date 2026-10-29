@@ -133,9 +133,11 @@
       void createProvider();
     }}
   >
+    <small class="creator-disclosure">The provider starts disabled. Review its disclosure policy and add a credential before enabling it.</small>
     <label>
       {providerLabel} name
       <TextInput bind:value={name} ariaLabel={`${providerLabel} name`} autocomplete="off" disabled={saving} required block />
+      <small>Names are durable IDs and cannot change provider kind later.</small>
     </label>
     {#if error}<small class="creator-error" role="alert">{error}</small>{/if}
     <div class="creator-actions">
@@ -178,6 +180,10 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--control-gap);
+  }
+  .creator-disclosure,
+  label small {
+    color: var(--text-muted);
   }
   .creator-error {
     color: var(--status-error-ink);
