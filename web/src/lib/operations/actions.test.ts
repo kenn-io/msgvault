@@ -8,7 +8,6 @@ describe('runOperationAction', () => {
       { connection: 'work', status: result, error_message: 'private arbitrary upstream detail' }, { connection: 'personal', status: 'succeeded' }
     ] }, { status: result === 'conflict' ? 409 : 200 }));
     const action = await runOperationAction('carddav_sync', client);
-    expect(action.message).not.toContain('private arbitrary');
     expect(action).toEqual(result === 'conflict'
       ? { outcome: 'conflict', message: 'The operation could not start because current server state changed.' }
       : { outcome: 'failed', message: 'CardDAV sync partial. Connections needing attention: work.' });
