@@ -10,17 +10,22 @@ export async function selectKitOption(
 }
 
 export async function selectWorkspace(page: Page, label: string): Promise<void> {
+  if (['Directory', 'Reviews', 'Deletions'].includes(label)) {
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
+    await page.getByRole('dialog', { name: 'Messages commands' }).getByRole('option', { name: label === 'Reviews' ? 'Open Reviews' : label, exact: true }).click();
+    return;
+  }
   const opener = page.getByRole('button', { name: 'Open navigation' });
   if (await opener.isVisible()) await opener.click();
   await page
-    .getByRole('navigation', { name: 'Primary' })
+    .getByRole('complementary', { name: 'Sidebar' })
     .getByRole('button', { name: label, exact: true })
     .click();
 }
 
 export async function setTemporaryDensity(
   page: Page,
-  density: 'Auto' | 'Compact' | 'Comfortable'
+  density: 'Compact' | 'Comfortable'
 ): Promise<void> {
   await page.getByRole('button', { name: 'Display' }).click();
   await page.getByRole('menuitemradio', { name: density }).click();
@@ -28,12 +33,9 @@ export async function setTemporaryDensity(
 }
 
 export async function setKitTheme(page: Page, theme: 'light' | 'dark'): Promise<void> {
-  const toggle = page.getByRole('button', { name: /^Change theme \(current:/ });
-  const wanted = theme === 'light' ? 'Light' : 'Dark';
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if ((await toggle.getAttribute('aria-label'))?.includes(`current: ${wanted}`)) break;
-    await toggle.click();
-  }
+  await page.getByRole('button', { name: 'Display', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+  await page.keyboard.press('Escape');
   await expectKitTheme(page, theme);
 }
 

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { installOperations } from './e2e/fixtures/operations';
 import { selectWorkspace } from './kit-ui';
 
 function entry(index: number) {
@@ -34,7 +35,7 @@ test('sidebar rail keeps names and survives reload', async ({ page }) => {
   await page.goto('/?workspace=everything');
   await page.getByRole('button', { name: 'Collapse sidebar' }).click();
   await expect(
-    page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Saved views' })
+    page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Messages' })
   ).toBeVisible();
   await page.reload();
   await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible();
@@ -46,7 +47,7 @@ test('narrow navigation menu traps focus and closes three ways', async ({ page }
   const opener = page.getByRole('button', { name: 'Open navigation' });
 
   await opener.click();
-  await expect(page.getByRole('button', { name: 'Everything' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Messages' })).toBeFocused();
   for (let index = 0; index < 20; index += 1) await page.keyboard.press('Tab');
   await expect(page.getByRole('dialog', { name: 'Navigation' }).locator(':focus')).toHaveCount(1);
   await page.keyboard.press('Escape');
@@ -76,12 +77,12 @@ test('Escape closes the Columns menu before the reading pane', async ({ page }) 
   await page.getByRole('grid', { name: 'Everything results' }).getByRole('row').nth(1).click();
   const readingPane = page.getByRole('complementary', { name: /^Reading pane/ });
   await expect(readingPane).toBeVisible();
-  await page.getByRole('button', { name: 'Columns' }).click();
-  await expect(page.getByRole('button', { name: 'Size' })).toBeVisible();
+  await page.getByRole('button', { name: 'Display' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Size' })).toBeVisible();
 
   await page.keyboard.press('Escape');
 
-  await expect(page.getByRole('button', { name: 'Size' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Size' })).toHaveCount(0);
   await expect(readingPane).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(readingPane).toHaveCount(0);
@@ -89,9 +90,9 @@ test('Escape closes the Columns menu before the reading pane', async ({ page }) 
 
 test('global search from another workspace opens Everything', async ({ page }) => {
   await page.goto('/?workspace=sources');
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill('fixture');
+  await page.getByRole('searchbox', { name: 'Search messages' }).fill('fixture');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
   await page.goBack();
   await expect(page.getByRole('main', { name: 'Sources' })).toBeVisible();
 });
@@ -107,4 +108,29 @@ test('grid shortcuts pressed outside the grid still move the active row', async 
   await page.keyboard.press('j');
 
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-2$/);
+});
+
+
+test('Past runs preserves filters, paging restart, detail, focus, and source history', async ({ page }) => {
+  const fixture = await installOperations(page);
+  await page.goto('/?workspace=everything');
+  await page.getByRole('button', { name: /Sync status:/ }).click();
+  await page.getByRole('menuitem', { name: 'Past runs' }).click();
+  await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
+  await expect(page.getByText('Person embedding history is unavailable.')).toBeVisible();
+  fixture.driftNextPage();
+  await page.getByRole('button', { name: 'Show more' }).click();
+  await page.getByRole('button', { name: 'Restart', exact: true }).click();
+  await page.getByRole('button', { name: 'Show more' }).click();
+  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toBeVisible();
+  const source = page.getByRole('button', { name: 'Open Source sync run' });
+  await source.click();
+  await page.getByRole('button', { name: 'All runs' }).click();
+  await expect(source).toBeFocused();
+  await source.click();
+  await page.getByRole('button', { name: 'Open Sources status' }).click();
+  await expect(page.getByRole('main', { name: 'Sources' })).toBeVisible();
+  await page.getByRole('button', { name: 'Sync history' }).click();
+  await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('kind')).toBe('source_sync');
 });

@@ -150,7 +150,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await page.keyboard.press('Enter');
   await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
   await page.keyboard.press('/');
-  const search = page.getByRole('searchbox', { name: 'Search everything' });
+  const search = page.getByRole('searchbox', { name: 'Search messages' });
   await expect(search).toBeFocused();
   await page.keyboard.type('synthetic');
   await tabTo(page, 'Full text');
@@ -165,7 +165,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   await page.keyboard.type('group by source');
   await page.keyboard.press('Enter');
-  const grouped = page.getByRole('grid', { name: 'Everything grouped by source' });
+  const grouped = page.getByRole('grid', { name: 'Messages grouped by source' });
   await expect(grouped).toBeFocused();
   await tabTo(page, 'Drill into Synthetic chat');
   await page.keyboard.press('Enter');

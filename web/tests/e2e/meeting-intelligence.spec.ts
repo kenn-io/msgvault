@@ -357,7 +357,7 @@ test("rapid search scope changes leave only the final meeting evidence", async (
   });
   await assertMetrics(panel, 5, 4, 1, "1h 40m 45s", "25m 11s");
   const search = page.getByRole("searchbox", {
-    name: "Search everything",
+    name: "Search messages",
     exact: true,
   });
   const firstRequest = page.waitForRequest(
@@ -489,8 +489,8 @@ test('closing the reader removes its scope and cancels a pending continuation', 
     await expect(panel.getByText('Archived action 1', { exact: true })).toBeVisible();
     await expect(page).toHaveURL((url) => url.searchParams.get('workspace') === 'directory');
     await network.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
-    await page.getByRole('button', { name: 'Everything', exact: true }).click();
-    const search = page.getByRole('searchbox', { name: 'Search everything', exact: true });
+    await page.getByRole('button', { name: 'Messages', exact: true }).click();
+    const search = page.getByRole('searchbox', { name: 'Search messages', exact: true });
     await search.fill('Generic');
     await search.press('Enter');
     const finalPanel = page.getByRole('region', { name: 'Meeting activity', exact: true });

@@ -653,3 +653,37 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   }
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
 });
+
+it('keeps the acknowledged named account schedule when refreshing connection summaries fails', async () => {
+  let saved = false;
+  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
+  const { client } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/carddav/connections')) return saved ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ connections: [{ connection: 'work', status: account }] });
+    if (path.endsWith('/carddav/status')) return Response.json(account);
+    if (path.endsWith('/carddav/account')) {
+      saved = true;
+      return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'carddav' });
+  await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
+  await screen.findByDisplayValue('work@example.com');
+  await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
+  await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
+  await screen.findByText('CardDAV account saved. Found 1 address book.');
+  await screen.findByText('Unable to load CardDAV connections.');
+  expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
+});
+
+it('opens live document counts from Overview Details without a past run', async () => {
+  const { client, seen } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents' })] });
+    if (path.endsWith('/documents/status/current')) return Response.json({ status: { profile_exists: true, profile_enabled: true, exact_consent: true, ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0, terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2 } });
+  });
+  render(SettingsWorkspace, { client });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Details, Document extraction' }));
+  expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
+  expect(seen.some(request => request.path === '/api/v1/documents/status/current')).toBe(true);
+});
