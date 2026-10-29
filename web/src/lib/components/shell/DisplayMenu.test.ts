@@ -3,51 +3,84 @@ import { describe, expect, it, vi } from 'vitest';
 
 import DisplayMenu from './DisplayMenu.svelte';
 
-describe('DisplayMenu', () => {
-  it('sets and clears the per-tab density override', async () => {
-    const onDensityChange = vi.fn();
-    render(DisplayMenu, {
-      density: 'daemon',
-      themeOverridden: false,
-      onDensityChange,
-      onUseDaemonTheme: vi.fn(),
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+function renderMenu(overrides: Record<string, unknown> = {}) {
+  const props = {
+    theme: 'system' as const,
+    density: 'compact' as const,
+    onThemeChange: vi.fn(),
+    onDensityChange: vi.fn(),
+    ...overrides,
+  };
+  render(DisplayMenu, props);
+  return props;
+}
 
-    expect(screen.getByRole('group', { name: 'Temporary density' })).toBeTruthy();
+const open = () => fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+
+describe('DisplayMenu', () => {
+  it('sets theme and density from one menu', async () => {
+    const props = renderMenu();
+    await open();
+
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Dark' }));
+    expect(props.onThemeChange).toHaveBeenCalledWith('dark');
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Comfortable' }));
-    expect(onDensityChange).toHaveBeenCalledWith('comfortable');
-    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Auto' }));
-    expect(onDensityChange).toHaveBeenCalledWith('daemon');
+    expect(props.onDensityChange).toHaveBeenCalledWith('comfortable');
+    expect(screen.queryByRole('menuitemradio', { name: 'Auto' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Use daemon theme' })).toBeNull();
   });
 
-  it('shows the active density override as checked', async () => {
-    render(DisplayMenu, {
-      density: 'compact',
-      themeOverridden: false,
-      onDensityChange: vi.fn(),
-      onUseDaemonTheme: vi.fn(),
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+  it('shows the current theme and density as checked', async () => {
+    renderMenu({ theme: 'light', density: 'comfortable' });
+    await open();
 
-    const checked = (name: string) =>
-      screen.getByRole('menuitemradio', { name }).getAttribute('aria-checked');
-    expect(checked('Compact')).toBe('true');
-    expect(checked('Auto')).toBe('false');
-    expect(checked('Comfortable')).toBe('false');
+    const checked = (name: string) => screen.getByRole('menuitemradio', { name }).getAttribute('aria-checked');
+    expect(checked('Light')).toBe('true');
+    expect(checked('System')).toBe('false');
+    expect(checked('Comfortable')).toBe('true');
+    expect(checked('Compact')).toBe('false');
   });
 
-  it('offers the daemon theme only while a theme override is active', async () => {
-    const onUseDaemonTheme = vi.fn();
-    render(DisplayMenu, {
-      density: 'compact',
-      themeOverridden: true,
-      onDensityChange: vi.fn(),
-      onUseDaemonTheme,
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Use daemon theme' }));
-    expect(onUseDaemonTheme).toHaveBeenCalledOnce();
+  it('leaves out columns and reader position where the page has neither', async () => {
+    renderMenu();
+    await open();
+    expect(screen.queryByRole('menuitem', { name: /Subject/ })).toBeNull();
+    expect(screen.queryByRole('menuitemradio', { name: 'Below' })).toBeNull();
   });
+
+  it('toggles a column and keeps one visible', async () => {
+    const onColumnsChange = vi.fn();
+    renderMenu({ columns: ['kind', 'title'], onColumnsChange });
+    await open();
+
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Kind/ }));
+    expect(onColumnsChange).toHaveBeenLastCalledWith(['title']);
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Excerpt/ }));
+    expect(onColumnsChange).toHaveBeenLastCalledWith(['kind', 'title', 'excerpt']);
+  });
+
+  it('does not hide the last column', async () => {
+    const onColumnsChange = vi.fn();
+    renderMenu({ columns: ['title'], onColumnsChange });
+    await open();
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Subject/ }));
+    expect(onColumnsChange).not.toHaveBeenCalled();
+  });
+
+  it('sets the reader position', async () => {
+    const onReaderPositionChange = vi.fn();
+    renderMenu({ readerPosition: 'below', onReaderPositionChange });
+    await open();
+    expect(screen.getByRole('menuitemradio', { name: 'Below' }).getAttribute('aria-checked')).toBe('true');
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Right' }));
+    expect(onReaderPositionChange).toHaveBeenCalledWith('right');
+  });
+});
+
+it('offers Settings defaults while this browser overrides appearance', async () => {
+  const onUseDefaults = vi.fn();
+  renderMenu({ overridden: true, onUseDefaults });
+  await open();
+  await fireEvent.click(screen.getByRole('menuitem', { name: 'Use Settings defaults' }));
+  expect(onUseDefaults).toHaveBeenCalledOnce();
 });

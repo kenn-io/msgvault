@@ -48,7 +48,7 @@ test('Group preserves a deep focused row across density changes', async ({ page 
     scrollAnchor: { key: 'group:source:250', offset: 5 }
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
-  const grid = page.getByRole('grid', { name: 'Everything grouped by source' });
+  const grid = page.getByRole('grid', { name: 'Messages grouped by source' });
   await expect(grid).toHaveAttribute('aria-activedescendant', /source-3A250/);
   await expect(grid.getByText('Source 250')).toBeVisible();
 

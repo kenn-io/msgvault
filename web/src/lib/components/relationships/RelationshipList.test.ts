@@ -320,7 +320,7 @@ describe('RelationshipList', () => {
     expect(screen.queryByRole('grid')).toBeNull();
   });
 
-  it('renders the named degraded state with an Open Everything action instead of the grid', async () => {
+  it('renders the named degraded state with an Open Messages action instead of the grid', async () => {
     const onOpenEverything = vi.fn();
     render(RelationshipList, {
       ...baseProps(),
@@ -333,7 +333,7 @@ describe('RelationshipList', () => {
 
     expect(screen.getByText('Relationship ranking needs the analytical cache/engine')).toBeDefined();
     expect(screen.queryByRole('grid')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Open Everything' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open Messages' }));
     expect(onOpenEverything).toHaveBeenCalledOnce();
   });
 
@@ -348,6 +348,6 @@ describe('RelationshipList', () => {
 
     expect(screen.getByText('Preparing relationship ranking…')).toBeDefined();
     expect(screen.queryByText(/msgvault build-cache/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Open Everything' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open Messages' })).toBeNull();
   });
 });

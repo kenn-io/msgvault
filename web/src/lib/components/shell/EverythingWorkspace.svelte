@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -29,7 +29,7 @@
   import { groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, createAllMatchingSelection, predicateFingerprint } from '../../explore/selection';
   import type { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
-  import ColumnsMenu from '../explore/ColumnsMenu.svelte';
+  import { readerPosition } from '../../explore/reader-position.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import EverythingTable from '../explore/EverythingTable.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
@@ -53,6 +53,7 @@
   type ExplorePreflight = GeneratedExplorePreflightResponse;
 
   interface Props {
+    resultsWidth?: number;
     client: APIClient;
     exploreState: ExploreState;
     loader: ExploreLoader;
@@ -84,6 +85,7 @@
   }
 
   let {
+    resultsWidth = $bindable(0),
     client,
     exploreState,
     loader,
@@ -154,27 +156,8 @@
     return `${count.toLocaleString()} ${count === 1 ? one : many}`;
   });
 
-  function storedPreviewPosition(): 'below' | 'right' {
-    try {
-      return localStorage.getItem('msgvault.reading-pane.position') === 'right' ? 'right' : 'below';
-    } catch {
-      return 'below';
-    }
-  }
-
-  let previewPosition = $state(storedPreviewPosition());
-  let resultsWidth = $state(0);
   const canPreviewRight = $derived(resultsWidth >= 960);
-  const previewRight = $derived(canPreviewRight && previewPosition === 'right');
-
-  function setPreviewPosition(value: string): void {
-    previewPosition = value === 'right' ? 'right' : 'below';
-    try {
-      localStorage.setItem('msgvault.reading-pane.position', previewPosition);
-    } catch {
-      // Keep the control usable when browser storage is unavailable.
-    }
-  }
+  const previewRight = $derived(canPreviewRight && readerPosition.value === 'right');
 
   // coverage, coveragePollAttempts/coveragePollKey, visibleLexicalRowKeys,
   // lexicalCountCache/canonicalQueryHashes, and readingGroupDetail/
@@ -633,8 +616,8 @@
   });
 </script>
 
-<main class="everything-workspace" aria-label="Everything">
-  <PageHeader title="Everything">
+<main class="everything-workspace" aria-label="Messages">
+  <PageHeader title="Messages">
     {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
   </PageHeader>
 
@@ -684,22 +667,6 @@
         scrollAnchor: null,
       })}
   >
-    {#snippet extra()}
-      {#if exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0}
-        <ColumnsMenu
-          columns={exploreState.current.columns}
-          onchange={(columns) => exploreState.replaceTransient({ columns })}
-        />
-      {/if}
-      {#if canPreviewRight}
-        <SegmentedControl
-          ariaLabel="Preview position"
-          options={[{ value: 'below', label: 'Below' }, { value: 'right', label: 'Right' }]}
-          value={previewPosition}
-          onchange={setPreviewPosition}
-        />
-      {/if}
-    {/snippet}
   </ContextBar>
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
 
