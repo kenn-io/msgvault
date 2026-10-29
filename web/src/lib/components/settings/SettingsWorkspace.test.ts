@@ -784,3 +784,25 @@ it('refreshes the shared credential revision after an inference key succeeds bef
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/provider-credentials/vector.embeddings'))).toBe(true));
   expect(seen.find(request => request.path.endsWith('/provider-credentials/vector.embeddings'))?.ifMatch).toBe('"credential-b"');
 });
+
+it('keeps Contacts sync usable and shows message progress during a pending index build', async () => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const { client, seen } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/cli/run')) return pending;
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [lane('message_embedding'), lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'] })] });
+    if (request.url.endsWith('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: ['build_index'] });
+    if (request.url.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded', connections: [] });
+  });
+  render(SettingsWorkspace, { client });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Message search' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  await waitFor(() => expect(seen.some(request => request.path.endsWith('/cli/run'))).toBe(true));
+  expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false);
+  expect(within(document.querySelector('[data-feature="message_embedding"]') as HTMLElement).getByText('Building')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Sync now, Contacts' }));
+  await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false));
+  expect((await screen.findByRole('button', { name: 'Build index, Message search' }) as HTMLButtonElement).disabled).toBe(true);
+  finish(new Response('{"type":"complete"}\n'));
+});
