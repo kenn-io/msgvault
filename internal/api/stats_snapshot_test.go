@@ -58,7 +58,7 @@ func TestHandleStatsReturnsStaleSnapshotWhenSlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		st := &slowStatsStore{mockStore: &mockStore{}, release: make(chan struct{})}
-		defer close(st.release)
+		t.Cleanup(func() { close(st.release) })
 		srv := NewServerWithOptions(ServerOptions{
 			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 			Store:  st,

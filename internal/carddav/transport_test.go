@@ -767,7 +767,10 @@ func TestClientEnforcesResponseAndOperationByteBudgets(t *testing.T) {
 
 func TestClientHonorsRequestAndOperationTimeouts(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"request", "operation"} {
+	for name, configure := range map[string]func(*Client, time.Duration){
+		"request":   func(client *Client, budget time.Duration) { client.requestTimeout = budget },
+		"operation": func(client *Client, budget time.Duration) { client.operationTimeout = budget },
+	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
@@ -779,11 +782,7 @@ func TestClientHonorsRequestAndOperationTimeouts(t *testing.T) {
 				require.True(t, ok)
 				client := newFixtureClient(t, "http://127.0.0.1", "", "")
 				client.dialContext = transport.DialContext
-				if name == "request" {
-					client.requestTimeout = 5 * time.Millisecond
-				} else {
-					client.operationTimeout = 5 * time.Millisecond
-				}
+				configure(client, 5*time.Millisecond)
 				_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: "http://127.0.0.1"})
 				require.Error(t, err)
 			})
