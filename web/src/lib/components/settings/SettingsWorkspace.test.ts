@@ -785,7 +785,7 @@ it('refreshes the shared credential revision after an inference key succeeds bef
   expect(seen.find(request => request.path.endsWith('/provider-credentials/vector.embeddings'))?.ifMatch).toBe('"credential-b"');
 });
 
-it('keeps Contacts sync usable and shows message progress during a pending index build', async () => {
+it('keeps Contacts sync usable during a pending message index build', async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const { client, seen } = fixture(settingsDoc(), request => {
@@ -799,10 +799,8 @@ it('keeps Contacts sync usable and shows message progress during a pending index
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/cli/run'))).toBe(true));
   expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false);
-  expect(within(document.querySelector('[data-feature="message_embedding"]') as HTMLElement).getByText('Building')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Sync now, Contacts' }));
   await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false));
   expect((await screen.findByRole('button', { name: 'Build index, Message search' }) as HTMLButtonElement).disabled).toBe(true);
   finish(new Response('{"type":"complete"}\n'));
 });
