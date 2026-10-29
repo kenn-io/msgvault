@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { selectWorkspace, setKitTheme, setTemporaryDensity } from './kit-ui';
 
@@ -172,7 +173,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.keyboard.press('ArrowDown');
     await expect(filesGrid).toHaveCSS('box-shadow', /0px 0px 0px 2px inset/);
 
-    await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+    await stubOperationStatus(page);
     await selectWorkspace(page, 'Settings');
     const settings = page.getByRole('main', { name: 'Settings' });
     await expect(settings).toBeVisible();

@@ -14,7 +14,8 @@ export function jobLane(kind: OperationLaneStatus['kind'], extra: Partial<Operat
 }
 
 export function sourceStatus(extra: Partial<SourceStatus> = {}): SourceStatus {
-  return { id: 1, identifier: 'archive@example.com', display_name: 'Example archive', source_type: 'gmail', updated_at: '2026-08-30T11:00:00Z', last_sync_at: null, active_sync: null, latest_sync: null, last_successful_sync: null, can_sync: !extra.active_sync && !extra.sync_unavailable_reason, scheduled: false, next_sync_at: null, ...extra };
+  const busy = !!(extra.active_sync || extra.scheduler_queued || extra.scheduler_pending || extra.scheduler_started_at);
+  return { id: 1, identifier: 'archive@example.com', display_name: 'Example archive', source_type: 'gmail', updated_at: '2026-08-30T11:00:00Z', last_sync_at: null, active_sync: null, latest_sync: null, last_successful_sync: null, can_sync: !busy && !extra.sync_unavailable_reason, sync_unavailable_reason: busy ? 'sync_already_running' : undefined, scheduled: false, next_sync_at: null, ...extra };
 }
 
 export function syncRunStatus(extra: Partial<SyncRunStatus> = {}): SyncRunStatus {

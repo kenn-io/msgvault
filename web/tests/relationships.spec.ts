@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { setKitTheme } from './kit-ui';
 import { exploreHistoryState } from './explore-state';
@@ -73,7 +74,7 @@ const imageFile = {
 };
 
 async function prepare(page: Page, personFileBodies: Record<string, unknown>[] = []) {
-  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await stubOperationStatus(page);
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }

@@ -21,7 +21,7 @@ export const RELATED_STATUS: Partial<Record<OperationLaneStatus['kind'], Operati
 };
 
 export function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
-  return { kind, configured: true, lane: KIND_LANES.find(([candidate]) => candidate === kind)![1], history_availability: 'available', supported_actions: [], ...extra };
+  return { kind, related_status: RELATED_STATUS[kind], configured: true, lane: KIND_LANES.find(([candidate]) => candidate === kind)![1], history_availability: 'available', supported_actions: [], ...extra };
 }
 
 export function lanes(...overrides: OperationLaneStatus[]): OperationLaneStatus[] {
