@@ -15,7 +15,7 @@ test('compact workspace links preserve browser navigation and reopen the selecte
   await expect(page).toHaveURL(/\?workspace=files&mode=full_text$/);
   const filesURL = page.url();
 
-  await selectWorkspace(page, 'Everything');
+  await selectWorkspace(page, 'Messages');
   await expect(page.getByText('Synthetic archive subject', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\?workspace=everything&mode=full_text$/);
   await page.goBack();
@@ -73,7 +73,7 @@ test('one registry drives selection, searchable help, palette, and editable susp
   await page.keyboard.press('Shift+A');
   await expect(renderedRow).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-  const palette = page.getByRole('dialog', { name: 'Everything commands' });
+  const palette = page.getByRole('dialog', { name: 'Messages commands' });
   await expect(palette).toBeVisible();
   await palette.getByRole('combobox').fill('clear selection');
   const clearSelection = palette.getByRole('option', { name: /Clear selection/ });
@@ -83,7 +83,7 @@ test('one registry drives selection, searchable help, palette, and editable susp
   await expect(renderedRow).toHaveAttribute('aria-selected', 'false');
   await expect(grid).toBeFocused();
 
-  const search = page.getByRole('searchbox', { name: 'Search everything' });
+  const search = page.getByRole('searchbox', { name: 'Search messages' });
   await search.focus();
   await page.keyboard.press('Shift+A');
   await expect(renderedRow).toHaveAttribute('aria-selected', 'false');
@@ -111,14 +111,14 @@ test('keyboard palette grouping focuses the replacement grid', async ({ page }) 
   const grid = page.getByRole('grid', { name: 'Everything results' });
   await grid.focus();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-  const palette = page.getByRole('dialog', { name: 'Everything commands' });
+  const palette = page.getByRole('dialog', { name: 'Messages commands' });
   await palette.getByRole('combobox').fill('group by source');
   const command = palette.getByRole('option', { name: 'Group by Source' });
   await expect(command).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('Enter');
 
-  const grouped = page.getByRole('grid', { name: 'Everything grouped by source' });
+  const grouped = page.getByRole('grid', { name: 'Messages grouped by source' });
   await expect(palette).toHaveCount(0);
   await expect(grouped).toBeVisible();
   await expect(grouped).toBeFocused();
@@ -148,7 +148,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(selectedRow).toHaveCSS('box-shadow', /2px 0px 0px 0px inset/);
 
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-    const palette = page.getByRole('dialog', { name: 'Everything commands' });
+    const palette = page.getByRole('dialog', { name: 'Messages commands' });
     const activeOption = palette.getByRole('option', { selected: true }).first();
     await expect(activeOption).toBeVisible();
     await expectRenderedContrast(activeOption, 4.5);
@@ -172,6 +172,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.keyboard.press('ArrowDown');
     await expect(filesGrid).toHaveCSS('box-shadow', /0px 0px 0px 2px inset/);
 
+    await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
     await selectWorkspace(page, 'Settings');
     const settings = page.getByRole('main', { name: 'Settings' });
     await expect(settings).toBeVisible();
@@ -244,7 +245,7 @@ test('Deletions keeps the global search shortcut available', async ({ page }) =>
   await selectWorkspace(page, 'Deletions');
   await expect(page.getByRole('heading', { name: 'Deletions', exact: true })).toBeVisible();
   await page.keyboard.press('/');
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toBeFocused();
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toBeFocused();
 });
 
 test('truncated people and filenames disclose full labels on hover', async ({ page }) => {

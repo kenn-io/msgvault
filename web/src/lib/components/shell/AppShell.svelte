@@ -6,7 +6,6 @@
     CommandPalette,
     getThemeMode,
     IconButton,
-    ThemeToggle,
     appShortcuts,
     initShortcuts,
     type PaletteCommand,
@@ -45,7 +44,7 @@
   import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
   import { OperationsController } from '../../operations/controller.svelte';
   import type { OperationSettingsTarget } from '../../operations/labels';
-  import type { OperationRunDetail, OperationsURLState } from '../../operations/models';
+  import { defaultOperationsState, type OperationRunDetail, type OperationsURLState } from '../../operations/models';
   import {
     settingsNavigationTarget as targetForSettingsAuthority,
     type CardDAVSettingsRequest,
@@ -55,15 +54,12 @@
   import {
     createAppearancePreferences,
     type AppearanceDefaults,
-    type DensityPreference,
     type ThemePreference,
   } from '../../theme/preferences.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
   import SaveViewDialog from '../saved-views/SaveViewDialog.svelte';
-  import SavedViewsWorkspace from '../saved-views/SavedViewsWorkspace.svelte';
   import SourcesWorkspace from '../sources/SourcesWorkspace.svelte';
-  import OperationsWorkspace from '../operations/OperationsWorkspace.svelte';
   import DeletionsWorkspace from '../deletions/DeletionsWorkspace.svelte';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
@@ -85,6 +81,13 @@
   import Menu from '@lucide/svelte/icons/menu';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
+
+  import { ShellData, viewIncompatibility, viewState } from './shell-data.svelte';
+  import { readerPosition } from '../../explore/reader-position.svelte';
+  import type { JobTarget } from '../../jobs/jobs';
+  import type { SavedView } from '../../api/generated/models';
+  import RunHistoryDialog from './RunHistoryDialog.svelte';
+  import UndoToast from '../common/UndoToast.svelte';
 
   const media = mediaReadiness();
   interface Props {
@@ -207,42 +210,14 @@
       archiveWasOpen = id !== undefined;
     });
   });
-  const DEFAULT_SORT_NOTICE = 'Newest first is the canonical Everything order.';
+  const DEFAULT_SORT_NOTICE = 'Newest first is the canonical Messages order.';
   const SEARCH_TYPING_DEBOUNCE_MS = 250;
   const debouncedSearchPatch = bufferedCallback((patch: Partial<ExploreURLState>) => {
-    // Typing a search query is itself a user-initiated interaction, even
-    // though it only ever writes committed *draft* state (never a
-    // commit* wrapper) — see the disarming note below. Firing on its own
-    // 250ms after the last keystroke, with no navigation ever committing,
-    // must disarm the one-shot landing fallback exactly like beforeCommit
-    // does; only beforeCommit's own explicit flush of THIS callback (a
-    // navigation committing while the patch is still pending) reached it
-    // before.
-    arrivedWithoutExploreParam = false;
     exploreState.replaceCommittedDraft(patch);
   }, SEARCH_TYPING_DEBOUNCE_MS);
-  // A pending debounced search patch (People/Domains identity search, Files
-  // filename search) applies to whatever state is current when it eventually
-  // fires. If a navigation commits while the patch is still pending, flushing
-  // it first applies the typed text immediately so it is not silently
-  // dropped; the navigation patch is then committed on top and wins for the
-  // fields it touches. Every write to ExploreState funnels through these
-  // wrappers so the pending patch is flushed before any navigation commits.
-  // This shared path is also where the one-shot landing fallback (see
-  // `arrivedWithoutExploreParam` below) gets invalidated: any user-initiated
-  // navigation past the initial landing means a later explicit visit to the
-  // Relationships hub must show its own degraded state, not bounce away.
   function beforeCommit(): void {
     debouncedSearchPatch.flush();
-    arrivedWithoutExploreParam = false;
   }
-  // Transient replaces (active row, scroll anchor) are user navigation too:
-  // apply any pending typed search patch first so it cannot fire later and
-  // clobber the newer transient state with the null active row / scroll
-  // anchor it snapshotted at typing time. Unlike beforeCommit this does not
-  // disarm the landing fallback, because transient replaces also fire
-  // programmatically (e.g. the first loaded row auto-activating); a flush of
-  // a pending patch still disarms it inside the debounced callback itself.
   function replaceTransient(patch: Partial<ExploreURLState>): void {
     debouncedSearchPatch.flush();
     exploreState.replaceTransient(patch);
@@ -304,32 +279,46 @@
     commitWorkspace('settings');
     replaceCommittedNavigation({ settingsCategory: 'carddav' });
   }
-  function openOperations(
-    operationLane: OperationsURLState['operationLane'],
-    operationKind: OperationsURLState['operationKind']
-  ): void {
-    announceOperation('Opening filtered operation history.');
-    commitNavigation({
-      workspace: 'operations',
-      operationLane,
-      operationKind,
-      operationState: '',
-      operationStartedFrom: '',
-      operationStartedBefore: '',
-      operationRunID: null,
-      operationStatus: ''
-    });
-  }
+  let runHistory = $state<OperationsURLState>();
+  let displayOpen = $state(false);
+  let resultsWidth = $state(0);
+  const shellData = new ShellData(untrack(() => client));
+  let pendingViewDelete = $state<SavedView>();
 
+  function openOperations(kind: OperationsURLState['operationKind'] = ''): void {
+    runHistory = defaultOperationsState(kind);
+  }
+  function openJob(target: JobTarget): void {
+    if (target.kind === 'source') commitWorkspace('sources');
+    else if (target.kind === 'contacts') openCardDAVSettings();
+    else if (target.kind === 'status') openOperationAuthority(target.authority);
+    else if (target.kind === 'setting') setUpOperation(target.target);
+  }
+  function deleteView(view: SavedView): void {
+    if (pendingViewDelete) void shellData.commitDelete(pendingViewDelete);
+    shellData.hideView(view);
+    pendingViewDelete = view;
+  }
+  function expireViewDelete(): void {
+    const view = pendingViewDelete;
+    pendingViewDelete = undefined;
+    if (view) void shellData.commitDelete(view);
+  }
+  function undoViewDelete(): void {
+    if (pendingViewDelete) shellData.restoreView(pendingViewDelete);
+    pendingViewDelete = undefined;
+  }
   type RelatedOperationStatus = NonNullable<OperationRunDetail['related_status']>;
 
   function openOperationAuthority(target: RelatedOperationStatus): void {
     if (target === 'listSourceStatus') {
+      runHistory = undefined;
       announceOperation('Opening source status.');
       commitWorkspace('sources');
       return;
     }
     if (target === 'getCardDAVStatus') {
+      runHistory = undefined;
       openCardDAVSettings();
       return;
     }
@@ -342,7 +331,7 @@
       getVisualAttachmentStatus: 'Opening live visual attachment status.'
     };
     announceOperation(statusTargets[target]);
-    commitNavigation({ workspace: 'operations', operationStatus: target });
+    runHistory = { ...(runHistory ?? defaultOperationsState()), operationStatus: target };
   }
 
   function openVisualAttachmentSettings(): void {
@@ -355,7 +344,7 @@
     commitNavigation({ workspace: 'settings', ...target });
   }
 
-  setContext('msgvault:open-carddav-operations', () => openOperations('contacts', 'carddav_sync'));
+  setContext('msgvault:open-carddav-operations', () => openOperations('carddav_sync'));
   setContext('msgvault:hold-settings-leave', (hold: ExploreState['holdLeave'], cancel: ExploreState['cancelHeldLeave']) => {
     exploreState.holdLeave = hold;
     exploreState.cancelHeldLeave = cancel;
@@ -404,7 +393,7 @@
   const factLedgerController = new FactLedgerController(untrack(() => client));
   const operationsController = new OperationsController(
     untrack(() => client),
-    (patch) => commitNavigation(patch)
+    (patch) => { if (runHistory) runHistory = { ...runHistory, ...patch }; }
   );
   // Participant IDs only enter here from a successfully loaded
   // /participants/{id} Relationship detail. It is intentionally ephemeral:
@@ -477,38 +466,11 @@
   });
 
   $effect(() => {
-    if (exploreState.current.workspace !== 'operations') return;
-    const operationState: OperationsURLState = {
-      operationLane: exploreState.current.operationLane,
-      operationKind: exploreState.current.operationKind,
-      operationState: exploreState.current.operationState,
-      operationStartedFrom: exploreState.current.operationStartedFrom,
-      operationStartedBefore: exploreState.current.operationStartedBefore,
-      operationRunID: exploreState.current.operationRunID,
-      operationStatus: exploreState.current.operationStatus
-    };
-    const context = archiveContextKey;
-    untrack(() => { void operationsController.applyURLState(operationState, context); });
+    void exploreState.current.workspace;
+    const active = enabled;
+    untrack(() => { if (active) void shellData.refresh(); });
   });
-  // A default landing (no `explore` param at all — the very first visit,
-  // not a URL that named a workspace) starts on the Relationships hub. If
-  // the analytical engine turns out to be unavailable, that default silently
-  // steps down to Everything instead of leaving a first-time visitor on a
-  // hub that can't rank anything. An explicit URL naming (or renaming, via
-  // the legacy people/domains rewrite) relationships is a deliberate choice
-  // and keeps showing the hub's own degraded state instead.
-  //
-  // This is a one-shot allowance for the INITIAL landing only: it is
-  // invalidated (set false) on the first user-initiated navigation — any
-  // commit* wrapper call (see `beforeCommit` above) or a Back/Forward
-  // popstate (see `handleHistoryFocus` below) — so a user who lands by
-  // default, navigates elsewhere, then explicitly clicks back into
-  // Relationships later is never silently bounced away again.
-  let arrivedWithoutExploreParam = untrack(() => {
-    const parameters = new URLSearchParams(window.location.search);
-    return !parameters.has('workspace') && !parameters.has('explore');
-  });
-  let landingFallbackApplied = false;
+  onMount(() => { shellData.start(); return () => shellData.stop(); });
   let contextualViewerFile = $state<FileViewerTarget>();
   let contextualViewerReturnFocus = $state<HTMLElement>();
   let previousAttachmentID: number | undefined;
@@ -542,13 +504,6 @@
   // behind an {#if}, so it is destroyed and recreated on every switch away
   // from and back to 'everything'.
   const everythingSession = new EverythingSessionState();
-  const archiveStatus = $derived(
-    loader.loading
-      ? { tone: 'working' as const, label: 'Searching', text: 'Searching' }
-      : loader.error || loader.unavailable
-        ? { tone: 'unclean' as const, label: 'Archive needs attention', text: 'Attention' }
-        : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
-  );
   $effect(() => { if (archivedMeeting.error) return reportError(() => client, () => 'message'); });
   $effect(() => { if ((exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) && (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building')) return reportError(() => client, () => loader.errorKind ?? (exploreState.current.query.trim() ? 'search' : 'other')); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
@@ -821,7 +776,7 @@
   function currentGrid(): HTMLElement | null {
     return document.querySelector<HTMLElement>([
       '[role="grid"][aria-label="Everything results"]',
-      '[role="grid"][aria-label^="Everything grouped by"]',
+      '[role="grid"][aria-label^="Messages grouped by"]',
       '[role="grid"][aria-label^="Files grouped by"]',
     ].join(', '));
   }
@@ -973,7 +928,7 @@
       ? 'Sorting isn’t available while grouped.'
       : exploreState.current.workspace === 'files'
         ? 'Use the Sort menu to change the order.'
-        : 'Everything is always shown newest first.';
+        : 'Messages is always shown newest first.';
     document.querySelector<HTMLButtonElement>('[data-sort-menu] button')?.focus();
   }
   function navigateReader(delta: number): void {
@@ -1085,8 +1040,13 @@
     reviewWorkspaceCommand,
     ...groupingCommands,
   ]);
+  const shellCommands = $derived([
+    ...(['everything', 'relationships', 'files', 'sources', 'directory', 'deletions', 'settings'] as ExploreWorkspace[]).map((workspace) => ({ id: `go:${workspace}`, label: workspaceLabel(workspace), section: 'Go to', run: () => openWorkspaceTab(workspace) })),
+    ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: `Open view: ${view.name}`, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
+    { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } }
+  ]);
   const paletteCommands = $derived(
-    commandRegistry.map(
+    [...commandRegistry.map(
       (command): PaletteCommand => ({
         id: command.id,
         label: command.label,
@@ -1095,10 +1055,10 @@
         combo: command.combos[0],
         disabled: command.disabled,
       }),
-    ),
+    ), ...shellCommands],
   );
   function runPalette(command: PaletteCommand): void {
-    commandRegistry.find(({ id }) => id === command.id)?.run();
+    [...commandRegistry, ...shellCommands].find(({ id }) => id === command.id)?.run();
   }
   // KeyboardHelp's search input takes focus before the Modal's trap records
   // where focus came from, so the shell remembers the return target itself.
@@ -1112,13 +1072,9 @@
     await tick();
     const target = keyboardHelpReturnFocus?.isConnected
       ? keyboardHelpReturnFocus
-      : (shellRoot?.querySelector<HTMLElement>('button[aria-label="Keyboard shortcuts"]') ?? drawerOpener());
+      : (shellRoot?.querySelector<HTMLElement>('button[aria-label="Help"]') ?? drawerOpener());
     keyboardHelpReturnFocus = undefined;
     target?.focus();
-  }
-  function applyTemporaryDensity(value: 'daemon' | DensityPreference): void {
-    if (value === 'daemon') appearance.clearTemporary('density');
-    else appearance.setTemporary({ density: value });
   }
   function openRow(row: EntryRow): void {
     // Single-click selects AND opens; re-opening the already-open row must
@@ -1182,20 +1138,6 @@
     }
     void relationshipsController.openTarget(target, predicate);
   });
-  $effect(() => {
-    if (landingFallbackApplied || !arrivedWithoutExploreParam) return;
-    if (exploreState.current.workspace !== 'relationships') return;
-    if (!relationshipsController.degraded || relationshipsController.degraded.readiness === 'building') return;
-    landingFallbackApplied = true;
-    // A committed replace, not a transient one: `committed` is what the
-    // next push rewrites the current history entry from (see
-    // ExploreState.navigate's 'push' branch). Leaving `committed` behind at
-    // the degraded 'relationships' landing would mean the very next push
-    // silently rewrites this entry back to a state the user never actually
-    // saw, so Back would return to the degraded hub instead of wherever
-    // they actually came from.
-    exploreState.replaceCommittedNavigation({ workspace: 'everything' });
-  });
   function openRelationship(participantID: number): void {
     commitNavigation({
       workspace: 'relationships',
@@ -1237,10 +1179,6 @@
       // not survive to later clobber that restored state, so it is discarded
       // rather than flushed.
       debouncedSearchPatch.cancel();
-      // A Back/Forward navigation is user-initiated, same as any commit*
-      // wrapper call — it ends the one-shot landing-fallback allowance (see
-      // `arrivedWithoutExploreParam` above).
-      arrivedWithoutExploreParam = false;
       void restoreHistoryFocus();
     };
     const editableObserver = new MutationObserver(() => queueMicrotask(resyncEditableScope));
@@ -1291,6 +1229,7 @@
     relationshipReviewController.destroy();
     factLedgerController.destroy();
     operationsController.destroy();
+    expireViewDelete();
     if (ownsState) exploreState.destroy();
   });
 </script>
@@ -1306,10 +1245,17 @@
       active={exploreState.current.workspace}
       collapsed={sidebarCollapsed}
       showCollapseToggle
-      status={archiveStatus}
+      jobs={shellData.jobs}
+      views={shellData.views}
+      onPastRuns={() => openOperations()}
+      onOpenJob={openJob}
+      onOpenView={(view) => void openSavedView(viewState(view))}
+      onRenameView={(view, name) => shellData.renameView(view, name)}
+      onDescribeView={(view, description) => shellData.describeView(view, description)}
+      onDeleteView={deleteView}
       onNavigate={openWorkspaceTab}
       onToggleCollapsed={toggleSidebar}
-      onOpenShortcuts={openKeyboardHelp}
+      onOpenHelp={openKeyboardHelp}
     />
   {/if}
   <div class="app-column" inert={drawerOpen}>
@@ -1332,12 +1278,18 @@
         onSubmit={submitGlobalSearch}
       />
       <div class="app-top-bar__end" aria-label="Appearance controls">
-        <ThemeToggle />
         <DisplayMenu
-          density={appearance.temporary.density ?? 'daemon'}
-          themeOverridden={appearance.temporary.theme !== undefined}
-          onDensityChange={applyTemporaryDensity}
-          onUseDaemonTheme={() => appearance.clearTemporary('theme')}
+          bind:open={displayOpen}
+          theme={appearance.current.theme}
+          density={appearance.current.density}
+          overridden={appearance.current.overridden}
+          onThemeChange={(theme) => appearance.setTemporary({ theme })}
+          onDensityChange={(density) => appearance.setTemporary({ density })}
+          onUseDefaults={() => appearance.clearTemporary()}
+          columns={exploreState.current.workspace === 'everything' && exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0 ? exploreState.current.columns : undefined}
+          onColumnsChange={(columns) => replaceTransient({ columns })}
+          readerPosition={exploreState.current.workspace === 'everything' && resultsWidth >= 960 ? readerPosition.value : undefined}
+          onReaderPositionChange={(value) => readerPosition.set(value)}
         />
       </div>
     </header>
@@ -1351,35 +1303,8 @@
           selectSettingsCategory,
           () => commitNavigation({ workspace: 'sources' })
         )}{/if}
-      {:else if exploreState.current.workspace === 'saved_views'}
-        <SavedViewsWorkspace
-          {client}
-          onOpen={(state) => {
-            void openSavedView(state);
-          }}
-        />
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace {client} onOpenOperations={() => openOperations('messages', 'source_sync')} />
-      {:else if exploreState.current.workspace === 'operations'}
-        <OperationsWorkspace
-          {client}
-          controller={operationsController}
-          state={{
-            operationLane: exploreState.current.operationLane,
-            operationKind: exploreState.current.operationKind,
-            operationState: exploreState.current.operationState,
-            operationStartedFrom: exploreState.current.operationStartedFrom,
-            operationStartedBefore: exploreState.current.operationStartedBefore,
-            operationRunID: exploreState.current.operationRunID,
-            operationStatus: exploreState.current.operationStatus
-          }}
-          onStateChange={(patch) => commitNavigation(patch)}
-          onNavigate={openOperationAuthority}
-          onConfigure={openVisualAttachmentSettings}
-          onOverview={() => commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '' })}
-          onSetUp={setUpOperation}
-          onAnnounce={announceOperation}
-        />
+        <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} />
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace
           {client}
@@ -1597,6 +1522,7 @@
         </main>
       {:else}
         <EverythingWorkspace
+          bind:resultsWidth
           {client}
           {exploreState}
           {loader}
@@ -1636,6 +1562,7 @@
       onSaved={(view) => {
         saveViewOpen = false;
         announceOperation(`Saved view ${view.name}.`);
+        void shellData.refresh();
       }}
       onclose={() => {
         saveViewOpen = false;
@@ -1648,13 +1575,20 @@
         active={exploreState.current.workspace}
         collapsed={false}
         showCollapseToggle={false}
-        status={archiveStatus}
+        jobs={shellData.jobs}
+        views={shellData.views}
+        onPastRuns={() => { void closeDrawer().then(() => openOperations()); }}
+        onOpenJob={(target) => { void closeDrawer().then(() => openJob(target)); }}
+        onOpenView={(view) => { void closeDrawer().then(() => openSavedView(viewState(view))); }}
+        onRenameView={(view, name) => shellData.renameView(view, name)}
+        onDescribeView={(view, description) => shellData.describeView(view, description)}
+        onDeleteView={deleteView}
         onNavigate={(id) => {
           openWorkspaceTab(id);
           void closeDrawer();
         }}
         onToggleCollapsed={() => undefined}
-        onOpenShortcuts={() => {
+        onOpenHelp={() => {
           void closeDrawer().then(openKeyboardHelp);
         }}
       />
@@ -1674,7 +1608,16 @@
   <p class="archive-navigation-status" role="alert">{archivedMeeting.error}</p>
 {/if}
 
-<CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Everything commands" onrun={runPalette} />
+{#if runHistory}
+  <RunHistoryDialog {client} controller={operationsController} bind:state={runHistory} {archiveContextKey}
+    onclose={() => (runHistory = undefined)} onNavigate={openOperationAuthority}
+    onConfigure={() => { runHistory = undefined; openVisualAttachmentSettings(); }} />
+{/if}
+{#if pendingViewDelete}
+  {#key pendingViewDelete.id}<UndoToast message={`Deleted ${pendingViewDelete.name}`} onUndo={undoViewDelete} onExpire={expireViewDelete} />{/key}
+{/if}
+
+<CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />
 
 {#if keyboardHelpOpen}
   <KeyboardHelp
