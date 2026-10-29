@@ -5,6 +5,8 @@ import { view } from './fixtures.test-support';
 import { parseExploreURLState } from '../../explore/state.svelte';
 import type { JobsStore } from '../../jobs/jobs.svelte';
 import AppSidebar from './AppSidebar.svelte';
+import { ShellData } from './shell-data.svelte';
+import { createAPIClient } from '../../api/client';
 
 const jobs = { items: [], health: 'ok', loaded: true, refresh: vi.fn() } as unknown as JobsStore;
 
@@ -160,8 +162,8 @@ describe('AppSidebar', () => {
     const onOpenJob = vi.fn();
     const store = {
       items: [
-        { id: 'f', name: 'Work Gmail', state: 'failed', detail: 'Gmail sign-in expired', target: { kind: 'source', id: 4 } },
-        { id: 'r', name: 'Contacts', state: 'running', detail: 'Syncing', target: { kind: 'none' } },
+        { id: 'f', name: 'Work Gmail', state: 'failed', detail: 'Gmail sign-in expired', target: { kind: 'source' } },
+        { id: 'r', name: 'CardDAV sync', state: 'running', detail: 'Syncing', target: { kind: 'status', authority: 'getCardDAVStatus' } },
       ],
       health: 'failed',
       loaded: true,
@@ -171,7 +173,7 @@ describe('AppSidebar', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Sync status: Needs attention/ }));
     expect(store.refresh).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('menuitem', { name: /Work Gmail/ }));
-    expect(onOpenJob).toHaveBeenCalledWith({ kind: 'source', id: 4 });
+    expect(onOpenJob).toHaveBeenCalledWith({ kind: 'source' });
   });
 
   it('opens Help and toggles the rail from the footer', async () => {
@@ -199,4 +201,48 @@ it('shows a saved-view read error above the last rows and offers Retry', async (
   expect(screen.getByRole('button', { name: 'Budget' })).toBeTruthy();
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(onRetryViews).toHaveBeenCalledOnce();
+});
+
+
+it('shows neutral Loading before the first job status fetch', () => {
+  renderSidebar({ jobs: { ...jobs, loaded: false, health: 'unavailable' } });
+  expect(screen.getByRole('button', { name: 'Sync status: Loading' })).toBeTruthy();
+});
+
+it.each(['name', 'description'] as const)('keeps the original %s revision when polling refreshes an open editor', async field => {
+  let saved = { ...view(1, 'Budget threads'), description: 'Original description' };
+  const revisions: string[] = [];
+  const data = new ShellData(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'PATCH') {
+      const revision = request.headers.get('If-Match')!;
+      revisions.push(revision);
+      if (revision !== `"saved-view-1-r${saved.revision}"`) return Response.json({}, { status: 409 });
+      saved = { ...saved, ...await request.json(), revision: saved.revision + 1 };
+      return Response.json(saved);
+    }
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [saved] });
+    return Response.json(path.endsWith('/sources/status') ? { sources: [] } : { lanes: [] });
+  }));
+  await data.refresh();
+  const { rerender } = renderSidebar({
+    views: data.views,
+    onRenameView: (saved: typeof data.views[number], name: string) => data.renameView(saved, name),
+    onDescribeView: (saved: typeof data.views[number], description: string) => data.describeView(saved, description),
+  });
+  await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
+  await fireEvent.click(screen.getByRole('menuitem', { name: field === 'name' ? 'Rename' : 'Edit description…' }));
+  const editor = await screen.findByRole('textbox', { name: field === 'name' ? 'Rename Budget threads' : 'Description' });
+  await fireEvent.input(editor, { target: { value: 'My stale edit' } });
+  saved = { ...saved, [field]: 'Other browser edit', revision: 2 };
+  await data.refresh();
+  await rerender({ views: data.views });
+  if (field === 'name') await fireEvent.keyDown(editor, { key: 'Enter' });
+  else await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('changed in another session');
+  expect(revisions).toEqual(['"saved-view-1-r1"']);
+  expect(saved[field]).toBe('Other browser edit');
+  await waitFor(() => expect(data.views[0]?.revision).toBe(2));
+  data.stop();
 });

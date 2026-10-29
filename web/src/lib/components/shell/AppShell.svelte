@@ -299,7 +299,7 @@
     setRunHistory(defaultOperationsState(kind));
   }
   function openJob(target: JobTarget): void {
-    if (target.kind === 'source') commitWorkspace('sources');
+    if (target.kind === 'source') openOperationAuthority('listSourceStatus');
     else if (target.kind === 'status') openOperationAuthority(target.authority);
     else if (target.kind === 'setting') setUpOperation(target.target);
   }
@@ -310,15 +310,12 @@
   type RelatedOperationStatus = NonNullable<OperationRunDetail['related_status']>;
 
   function openOperationAuthority(target: RelatedOperationStatus): void {
-    if (target === 'listSourceStatus') {
-      closeRunHistory();
-      announceOperation('Opening source status.');
-      commitWorkspace('sources');
-      return;
-    }
-    if (target === 'getCardDAVStatus') {
-      closeRunHistory();
-      openCardDAVSettings();
+    if (target === 'listSourceStatus' || target === 'getCardDAVStatus') {
+      if (target === 'listSourceStatus') {
+        announceOperation('Opening source status.');
+        commitWorkspace('sources');
+      } else openCardDAVSettings();
+      replaceCommittedNavigation({ ...defaultOperationsState(), operationHistory: false });
       return;
     }
     const statusTargets: Record<
@@ -1615,7 +1612,7 @@
 {#if runHistory}
   <RunHistoryDialog {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory} {archiveContextKey}
     onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
-    onConfigure={() => { closeRunHistory(); openVisualAttachmentSettings(); }} />
+    onConfigure={() => { openVisualAttachmentSettings(); replaceCommittedNavigation({ ...defaultOperationsState(), operationHistory: false }); }} />
 {/if}
 <FlashBanner />
 {#if shellData.pending}

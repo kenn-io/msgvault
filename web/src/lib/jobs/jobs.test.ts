@@ -3,7 +3,8 @@ import type { OperationLaneStatus, SourceStatus } from '../api/generated/models'
 import { collectJobs, jobsHealth } from './jobs';
 
 const latest = { id: 'run', lane: 'documents', kind: 'document_extraction', state: 'failed', started_at: '2026-10-28T11:00:00Z', finished_at: '2026-10-28T11:05:00Z', trigger: 'manual', counters: [], error: { code: 'timeout', message: 'Provider request timed out\nprivate detail' } } as const;
-const lane = (kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus => ({ lane: 'documents', kind, configured: true, history_availability: 'available', supported_actions: [], latest: { ...latest, kind, counters: [] }, ...extra });
+const relatedStatus = { source_sync: 'listSourceStatus', carddav_sync: 'getCardDAVStatus', document_extraction: 'getDocumentIndexStatus', document_embedding: 'getDocumentVectorStatus', visual_embedding: 'getVisualAttachmentStatus' } as const;
+const lane = (kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus => ({ lane: 'documents', kind, related_status: relatedStatus[kind as keyof typeof relatedStatus], configured: true, history_availability: 'available', supported_actions: [], latest: { ...latest, kind, counters: [] }, ...extra });
 
 describe('jobs', () => {
   it.each(['carddav_sync', 'document_embedding', 'document_extraction', 'message_embedding', 'person_embedding', 'person_enrichment', 'person_sweep', 'visual_embedding'] as const)('includes %s with the daemon error first', kind => {
