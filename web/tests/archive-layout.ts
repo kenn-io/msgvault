@@ -30,6 +30,7 @@ export async function mockArchiveLayout(page: Page) {
     json: {
       groups: [{ id: 'browser', label: 'Appearance', description: 'How the web app looks.' }],
       settings: [
+        { key: 'activity.timezone', group: 'archive', label: 'Timezone', kind: 'string', value: { string: 'UTC' }, validation: { hint: 'UTC or an IANA name such as America/New_York.', required: true }, restart_required: true },
         { key: 'web.theme', group: 'browser', label: 'Theme', description: 'Light, dark, or follow the system.', kind: 'string', value: { string: 'system' }, options: ['system', 'light', 'dark'], restart_required: true },
         { key: 'web.density', group: 'browser', label: 'Density', description: 'Spacing of tables and toolbars.', kind: 'string', value: { string: 'compact' }, options: ['compact', 'comfortable'], restart_required: true }
       ],

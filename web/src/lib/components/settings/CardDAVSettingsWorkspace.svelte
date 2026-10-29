@@ -60,6 +60,7 @@
         schedule: selectedConnection.status.schedule
       };
     }
+    if (Object.hasOwn(drafts, selected)) return drafts[selected]!.baseline;
     // The settings catalog supplies the default form until connection summaries load.
     const catalog = selected === 'default' ? settings : [];
     function stringValue(key: string): string {

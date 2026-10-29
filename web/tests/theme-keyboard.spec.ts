@@ -175,7 +175,8 @@ for (const theme of ['light', 'dark'] as const) {
     await selectWorkspace(page, 'Settings');
     const settings = page.getByRole('main', { name: 'Settings' });
     await expect(settings).toBeVisible();
-    await expectRenderedContrast(settings.locator('.row__hint').first(), 4.5);
+    await settings.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await expectRenderedContrast(settings.getByText('UTC or an IANA name such as America/New_York.', { exact: true }), 4.5);
     await expectRenderedContrast(settings.locator('.notice--pending'), 4.5);
     await expectRenderedBoundary(settings.locator('.notice--pending'), 'borderLeftColor', 3);
   });

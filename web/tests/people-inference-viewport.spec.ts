@@ -28,7 +28,7 @@ test('People sweep keeps removal unavailable until another profile exists', asyn
     return route.fulfill({ headers: { ETag: '"config-3"' }, json: status });
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  await page.getByRole('button', { name: /^People sweep/ }).click();
+  await page.getByRole('button', { name: 'People lookups', exact: true }).click();
   const remove = page.getByRole('button', { name: 'Remove profile', exact: true });
   await expect(remove).toBeDisabled();
   await page.getByRole('button', { name: 'Disable people sweep', exact: true }).click();
@@ -71,7 +71,7 @@ for (const width of [390, 320]) {
     }));
     await page.setViewportSize({ width, height: 844 });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-    await page.getByRole('button', { name: /^People sweep/ }).click();
+    await page.getByRole('button', { name: 'People lookups', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'People sweep' })).toBeVisible();
     await page.getByRole('button', { name: 'Check provider' }).click();
     await expect(page.getByRole('region', { name: 'Archive disclosure' })).toBeVisible();
