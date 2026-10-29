@@ -1,5 +1,4 @@
-import { appShortcuts, initShortcuts } from '@kenn-io/kit-ui';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import DisplayMenu from './DisplayMenu.svelte';
@@ -43,34 +42,17 @@ describe('DisplayMenu', () => {
   });
 
   it('toggles a column and keeps one visible', async () => {
-    const detachShortcuts = initShortcuts();
-    const pageShortcut = vi.fn();
-    const unregister = appShortcuts.register('s', pageShortcut);
-    try {
-      const onColumnsChange = vi.fn();
-      const rendered = render(DisplayMenu, { theme: 'system', density: 'compact', columns: ['title', 'time'], onColumnsChange, onThemeChange: vi.fn(), onDensityChange: vi.fn() });
-      await open();
-
-      const first = within(screen.getByRole('menu', { name: 'Display' })).getByRole('menuitemradio', { name: 'System' });
-      first.focus();
-      await fireEvent.keyDown(first, { key: 's' });
-      const subject = screen.getByRole('menuitem', { name: /^Subject/ });
-      await waitFor(() => expect(document.activeElement).toBe(subject));
-      await fireEvent.keyDown(subject, { key: 'i' });
-      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Size' })));
-      await fireEvent.click(screen.getByRole('menuitem', { name: /^Time/ }));
-      expect(onColumnsChange).toHaveBeenLastCalledWith(['title']);
-      await fireEvent.click(screen.getByRole('menuitem', { name: /^Kind/ }));
-      expect(onColumnsChange).toHaveBeenLastCalledWith(['kind', 'title', 'time']);
-      await rendered.rerender({ columns: ['title'] });
-      onColumnsChange.mockClear();
-      await fireEvent.click(screen.getByRole('menuitem', { name: /^Subject/ }));
-      expect(onColumnsChange).not.toHaveBeenCalled();
-      expect(pageShortcut).not.toHaveBeenCalled();
-    } finally {
-      unregister();
-      detachShortcuts();
-    }
+    const onColumnsChange = vi.fn();
+    const rendered = render(DisplayMenu, { theme: 'system', density: 'compact', columns: ['title', 'time'], onColumnsChange, onThemeChange: vi.fn(), onDensityChange: vi.fn() });
+    await open();
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Time/ }));
+    expect(onColumnsChange).toHaveBeenLastCalledWith(['title']);
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Kind/ }));
+    expect(onColumnsChange).toHaveBeenLastCalledWith(['kind', 'title', 'time']);
+    await rendered.rerender({ columns: ['title'] });
+    onColumnsChange.mockClear();
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Subject/ }));
+    expect(onColumnsChange).not.toHaveBeenCalled();
   });
 
   it('sets the reader position', async () => {

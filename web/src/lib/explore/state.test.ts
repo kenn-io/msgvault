@@ -1711,12 +1711,11 @@ describe('session-owned exploration selection', () => {
 
 });
 
-it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s through filters and detail', async action => {
+it('gives Past runs filters and detail their own history entries', async () => {
   window.history.replaceState(null, '', '/?workspace=files');
   const state = new ExploreState(window);
   state.commitWorkspace('everything');
   state.replaceSearchDraft('budget', 'full_text');
-  const opening = window.location.href;
   const runID = `op2.${'a'.repeat(32)}.exampleRun`;
   state.openOperationHistory({ operationKind: 'source_sync', operationRunID: runID });
   expect(state.current).toMatchObject({ operationHistory: true, operationKind: 'source_sync', operationRunID: runID });
@@ -1724,28 +1723,46 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   expect(state.current.operationRunID).toBeNull();
   state.openOperationHistory({ operationRunID: runID });
   expect(state.current.operationRunID).toBe(runID);
+  let step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.back();
+  await step;
+  expect(state.current.operationHistory).toBe(true);
+  expect(state.current.operationKind).toBe('carddav_sync');
+  expect(state.current.operationRunID).toBeNull();
+  step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.forward();
+  await step;
+  expect(state.current.operationRunID).toBe(runID);
+  step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.back();
+  await step;
+  step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.back();
+  await step;
+  expect(state.current.operationKind).toBe('source_sync');
+  state.destroy();
+});
+
+it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s after changing filters and detail', async action => {
+  window.history.replaceState(null, '', '/?workspace=files');
+  const state = new ExploreState(window);
+  state.commitWorkspace('everything');
+  state.replaceSearchDraft('budget', 'full_text');
+  const opening = window.location.href;
+  const runID = `op2.${'a'.repeat(32)}.exampleRun`;
+  state.openOperationHistory({ operationKind: 'source_sync', operationRunID: runID });
+  state.openOperationHistory({ operationKind: 'carddav_sync' });
+  state.openOperationHistory({ operationRunID: runID });
   const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
   if (action === 'close') state.closeOperationHistory();
   else window.history.back();
   await popped;
   if (action === 'back') {
-    expect(state.current.operationHistory).toBe(true);
-    expect(state.current.operationKind).toBe('carddav_sync');
-    expect(state.current.operationRunID).toBeNull();
-    let step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.forward();
-    await step;
-    expect(state.current.operationRunID).toBe(runID);
-    step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.back();
-    await step;
-    step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.back();
-    await step;
-    expect(state.current.operationKind).toBe('source_sync');
-    step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.back();
-    await step;
+    for (let entry = 0; entry < 2; entry++) {
+      const step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await step;
+    }
   }
   expect(window.location.href).toBe(opening);
   expect(state.current.operationHistory).toBe(false);
