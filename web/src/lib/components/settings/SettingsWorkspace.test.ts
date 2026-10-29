@@ -483,7 +483,8 @@ it.each(['workspace', 'provider card'])('keeps immediate saves and credential lo
   expect(screen.getByText('1 unsaved change')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
   expect(screen.getByText(note)).toBeDefined();
-  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
+  expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
   expect(writes()).toEqual([
     ['PUT', '/api/v1/settings/provider-credentials/vector.embeddings', '"credential-a"'],
     ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s1"']
