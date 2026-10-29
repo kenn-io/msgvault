@@ -98,7 +98,7 @@ export class ShellData {
       if (!data) {
         if (response.status === 409) {
           void this.refresh();
-          return 'This view changed in another session. Cancel and reopen the editor to review the latest view.';
+          return 'This view changed in another session. Cancel this edit and try again.';
         }
         return failure;
       }
