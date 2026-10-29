@@ -114,7 +114,7 @@ describe('CardDAVController', () => {
     expect(controller.statusError).toBe('Unable to load CardDAV status.');
     expect(controller.canSync).toBe(false);
     expect(controller.books.map(({ id, name }) => ({ id, name }))).toEqual([{ id: 3, name: 'Synthetic book 3' }]);
-    await controller.sync(false);
+    await controller.sync();
     expect(posts).toBe(0);
     controller.destroy();
   });
@@ -498,7 +498,7 @@ describe('CardDAVController', () => {
     expect(controller.status?.active?.id).toBe(9);
   });
 
-  it('sends exact manual and full sync bodies, suppresses duplicates, and reconciles ambiguous results with GET only', async () => {
+  it('sends the manual sync body, suppresses duplicates, and reconciles ambiguous results with GET only', async () => {
     const sync = deferredResponse();
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>((input) => {
@@ -514,9 +514,9 @@ describe('CardDAVController', () => {
     const controller = new CardDAVController(createAPIClient(fetchFn));
     await controller.load();
 
-    const first = controller.sync(false);
+    const first = controller.sync();
     await vi.waitFor(() => expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1));
-    await controller.sync(true);
+    await controller.sync();
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
     const request = requests.find((candidate) => candidate.method === 'POST')!;
     await expect(request.clone().json()).resolves.toEqual({ full: false });
@@ -528,21 +528,6 @@ describe('CardDAVController', () => {
     expect(requests.filter((candidate) => candidate.method === 'GET' && new URL(candidate.url).pathname.endsWith('/runs'))).toHaveLength(2);
     expect(controller.syncError).toBe('Unable to complete CardDAV sync. Current state was refreshed.');
 
-    const fullFetch = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (request.method === 'POST') {
-        await expect(request.clone().json()).resolves.toEqual({ full: true });
-        return Response.json({ books: 1, created: 0, updated: 1, removed: 0 });
-      }
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/status')) return Response.json(idleStatus);
-      if (path.endsWith('/books')) return Response.json({ books: [] });
-      return Response.json({ runs: [] });
-    });
-    const fullController = new CardDAVController(createAPIClient(fullFetch));
-    await fullController.load();
-    await fullController.sync(true);
-    fullController.destroy();
     controller.destroy();
   });
 
@@ -572,9 +557,9 @@ describe('CardDAVController', () => {
     const controller = new CardDAVController(createAPIClient(fetchFn));
     await controller.load();
 
-    const action = controller.sync(false);
+    const action = controller.sync();
     await vi.waitFor(() => expect([statusReads, runsReads]).toEqual([2, 2]));
-    await controller.sync(false);
+    await controller.sync();
     expect(posts).toBe(1);
     statusReconcile.resolve(Response.json({ error: 'unavailable', message: 'unsafe' }, { status: 503 }));
     runsReconcile.resolve(Response.json({ error: 'unavailable', message: 'unsafe' }, { status: 503 }));
@@ -772,7 +757,7 @@ it('uses an explicit selected connection for manual sync while keeping books and
   });
   const controller = new CardDAVController(client);
   await controller.load();
-  await controller.sync(false, 'work');
+  await controller.sync('work');
   expect(
     await requests
       .find((r) => r.method === 'POST')!
@@ -798,7 +783,7 @@ it('scopes selected status, books, history and sync requests to their connection
   });
   const controller = new CardDAVController(client, undefined, 'work');
   await controller.load();
-  await controller.sync(false);
+  await controller.sync();
   expect(
     await requests
       .find((r) => r.method === 'POST')!
@@ -845,7 +830,7 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   });
   const controller = new CardDAVController(client);
   await controller.load();
-  await controller.sync(false);
+  await controller.sync();
   expect(controller.syncError).toContain('work');
   expect(controller.syncError).not.toContain('private upstream');
   expect(controller.syncStatus).toBeNull();

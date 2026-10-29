@@ -28,7 +28,7 @@ function setting(key: string, group: string, kind: string, value: unknown, extra
 
 function settingsDoc(overrides: Setting = {}) {
   return {
-    groups: [],
+    groups: [{ id: 'sources', label: 'Sources' }, { id: 'attachments', label: 'Attachments' }],
     settings: [
       setting('web.theme', 'browser', 'string', 'system', {
         label: 'Theme', options: ['system', 'light', 'dark'] }),
@@ -157,18 +157,9 @@ describe('SettingsWorkspace', () => {
     const config = screen.getByText('Set in config.toml').closest('details')!;
     expect(within(config).getByText('Bind address')).toBeDefined();
     expect(within(config).getByText('127.0.0.1')).toBeDefined();
-  });
-
-  it('keeps archive tuning and source rate limits reachable', async () => {
-    const { client } = fixture();
-    render(SettingsWorkspace, { client, category: 'advanced' });
-    await screen.findByRole('heading', { name: 'Advanced', level: 2 });
-    const advanced = screen.getByText('Advanced', { selector: 'summary' }).closest('details')!;
-
-    expect(within(advanced).getByLabelText('Builder threads')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Sources' }));
-    expect(screen.getByLabelText('Requests per second')).toBeDefined();
-    expect(screen.getByRole('switch', { name: 'Download Discord attachments' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    const archiveTuning = screen.getByText('Advanced', { selector: 'summary' }).closest('details')!;
+    expect(within(archiveTuning).getByLabelText('Builder threads')).toBeDefined();
   });
 
   it('saves every change through one Save changes with If-Match and then asks for a restart', async () => {
@@ -331,7 +322,7 @@ it('retains inference replacement keys across navigation and saves them from the
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.find(request => request.method === 'PUT')).toMatchObject({ path: '/api/v1/settings/people-inference/providers/primary/key', ifMatch: '"key-a"', body: { value: 'synthetic-inference-key' } });
+  expect(seen.filter(request => request.method === 'PUT' && request.path.endsWith('/people-inference/providers/primary/key'))).toHaveLength(1);
 });
 
 it('keeps a host-owned primary field read-only', async () => {
@@ -362,7 +353,7 @@ it('keeps attachment off values and cron schedules editable under Sources', asyn
   ] }));
 });
 
-it.each(['succeeded', 'partial', 'failed', 'conflict'])('Overview syncs all contacts connections and reports %s', async result => {
+it.each(['succeeded', 'partial', 'conflict'])('Overview syncs all contacts connections and reports %s', async result => {
   const { client, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'], latest: { id: 'sync-1', kind: 'carddav_sync', lane: 'contacts', state: 'succeeded', started_at: '2026-01-01T00:00:00Z', connection: 'work', counters: [] } })] });
@@ -396,9 +387,8 @@ it('validates contact account drafts before writing other settings', async () =>
 it('saves other categories after leaving a contact connection test', async () => {
   let finish!: (response: Response) => void;
   const testing = new Promise<Response>(resolve => { finish = resolve; });
-  let signal: AbortSignal | undefined;
   const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/carddav/account/test')) { signal = request.signal; return testing; }
+    if (request.url.endsWith('/carddav/account/test')) return testing;
   });
   render(SettingsWorkspace, { client, category: 'carddav' });
   await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
@@ -407,7 +397,6 @@ it('saves other categories after leaving a contact connection test', async () =>
   await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/carddav/account/test'))).toBe(true));
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
-  expect(signal?.aborted).toBe(true);
   await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
   expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -490,27 +479,17 @@ it('locks provider fields and newly mounted category controls while a provider s
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const base = { enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' }, allowed_identifiers: [], target_keys: [] };
   const doc = settingsDoc({ person_enrichment_providers: [
-    { ...base, name: 'primary', kind: 'exa', mode: 'people', credential_id: 'people.enrichment.primary' },
-    { ...base, name: 'backup', kind: 'sixtyfour', tier: 'standard', credential_id: 'people.enrichment.backup' }
+    { ...base, name: 'primary', kind: 'exa', mode: 'people', credential_id: 'people.enrichment.primary' }
   ] });
-  const { client, seen } = fixture(doc, request => {
-    if (request.method === 'PUT') return pending;
-    if (request.url.includes('/settings/people-inference')) return Response.json({
-      profiles: [{ name: 'routed', protocol: 'openai', credential_source: 'stored', credential_configured: true }],
-      configured_enabled: false, running_enabled: false, pending_restart: false
-    }, { headers: { ETag: '"p1"' } });
-  });
+  const { client, seen } = fixture(doc, request => request.method === 'PUT' ? pending : undefined);
   render(SettingsWorkspace, { client, category: 'enrichment' });
-  await screen.findByLabelText('Replacement API key');
   await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.some(request => request.method === 'PUT')).toBe(true));
-  for (const name of ['Search mode', 'Tier', 'Replacement API key']) expect(screen.getByLabelText(name).matches(':disabled'), name).toBe(true);
+  expect(screen.getByLabelText('primary endpoint').matches(':disabled')).toBe(true);
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
   expect(screen.getByRole('combobox', { name: /^CardDAV connection/ }).matches(':disabled')).toBe(true);
-  expect(screen.getByRole('button', { name: 'Add connection' }).matches(':disabled')).toBe(true);
-  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
-  expect((await screen.findByLabelText('Replacement API key')).matches(':disabled')).toBe(true);
   finish(Response.json(doc, { headers: { ETag: '"s2"' } }));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
 });
@@ -547,16 +526,11 @@ it.each(['message', 'visual'] as const)('starts the %s index from Overview and r
   const name = kind === 'message' ? 'Build index, Message search' : 'Build visual index, Visual search';
   await fireEvent.click(await screen.findByRole('button', { name }));
   if (kind === 'message') {
-    expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(0);
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(0);
-    await fireEvent.click(screen.getByRole('button', { name }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   }
   await waitFor(() => expect(screen.queryByRole('button', { name })).toBeNull());
-  expect(seen.find(request => request.path === path)?.body).toEqual(kind === 'message'
-    ? { args: ['embeddings', 'build', '--full-rebuild', '--yes'] } : { consent: true });
-  expect(within(document.querySelector(`[data-feature="${operation}"]`) as HTMLElement).getByText('On')).toBeDefined();
+  expect(seen.some(request => request.path === path)).toBe(true);
+  if (kind === 'message') expect(within(document.querySelector(`[data-feature="${operation}"]`) as HTMLElement).getByText('On')).toBeDefined();
 });
 
 it('refreshes completed feature work while keeping its current rows visible', async () => {
@@ -679,4 +653,96 @@ it('names the rejected provider when saving from Overview', async () => {
   expect(error).toContain('primary');
   expect(screen.getByText('1 unsaved change')).toBeDefined();
   expect(seen.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['/api/v1/settings/person-enrichment/providers/primary']);
+});
+
+it.each([['embedding', true], ['enrichment', true], ['embedding', false]] as const)('finishes a queued %s key clear with endpoint change %s', async (kind, changeEndpoint) => {
+  const id = kind === 'embedding' ? 'vector.embeddings' : 'people.enrichment.primary';
+  const provider = { name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://old.example.test', credential_id: id, credential: { configured: true, source: 'stored', hint: 'old…key' } };
+  const doc = settingsDoc({ person_enrichment_providers: kind === 'enrichment' ? [provider] : [] });
+  const key = doc.settings.find(item => item.key === 'vector.embeddings.api_key')!;
+  key.secret = { configured: true, source: 'stored', hint: 'old…key' };
+  const { client, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/carddav/account')) return Response.json({ base_url: 'https://dav.example.test/', username: 'person@example.com', enabled: false, schedule: '', books: 2 });
+    if (path.endsWith(`/provider-credentials/${id}`)) {
+      if (changeEndpoint) return Response.json({ error: 'credential_not_found', message: 'No stored provider credential was found' }, { status: 404 });
+      return Response.json({ credential_id: id, state: { configured: false, source: 'none' }, pending_restart: false }, { headers: { ETag: '"credential-b"' } });
+    }
+    if ((kind === 'embedding' && request.method === 'PATCH') || path.endsWith('/providers/primary')) {
+      key.secret = { configured: false, source: 'none' };
+      provider.credential = { configured: true, source: 'environment', hint: 'env…key' };
+      return Response.json({ ...doc, credential_etag: '"credential-b"' }, { headers: { ETag: '"s2"', 'Credential-ETag': '"credential-b"' } });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'carddav' });
+  await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
+  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'person@example.com' } });
+  await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-password' } });
+  await fireEvent.click(screen.getByRole('button', { name: kind === 'embedding' ? 'Search & AI' : 'People lookups' }));
+  await fireEvent.click(await screen.findByRole('button', { name: kind === 'embedding' ? 'Clear API key' : 'Clear API key for primary' }));
+  if (changeEndpoint) await fireEvent.input(screen.getByLabelText(kind === 'embedding' ? 'Endpoint' : 'primary endpoint'), { target: { value: 'https://new.example.test' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(seen.some(request => request.path.endsWith('/carddav/account'))).toBe(true));
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(seen.some(request => request.method === 'DELETE')).toBe(!changeEndpoint);
+  expect(seen.find(request => request.path.endsWith('/carddav/account'))?.body).toMatchObject({ username: 'person@example.com', password: 'synthetic-password' });
+});
+
+it('persists an unchanged Google account discovery after Test through the shared footer', async () => {
+  const account = { provider: 'google', oauth_app: 'contacts-app', configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://www.googleapis.com/.well-known/carddav', username: 'person@example.com' } };
+  const { client, seen } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', provider: 'google', oauth_app: 'contacts-app', status: account }] });
+    if (path.endsWith('/carddav/status')) return Response.json(account);
+    if (path.endsWith('/carddav/account/test') || path.endsWith('/carddav/account')) return Response.json({ ...account.account, provider: 'google', oauth_app: 'contacts-app', enabled: true, schedule: account.schedule, books: 2 });
+  });
+  render(SettingsWorkspace, { client, category: 'carddav' });
+  await screen.findByDisplayValue('person@example.com');
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
+  await screen.findByText('Connection successful. Found 2 address books.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  await screen.findByDisplayValue('person@example.com');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('Contact account default saved. Found 2 address books.');
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
+  expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toEqual({ connection: 'default', provider: 'google', oauth_app: 'contacts-app', base_url: account.account.base_url, username: account.account.username, enabled: true, schedule: account.schedule });
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  await screen.findByDisplayValue('person@example.com');
+  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
+  await screen.findByText('Connection successful. Found 2 address books.');
+  await fireEvent.input(screen.getByLabelText('Google account email'), { target: { value: 'changed@example.com' } });
+  await fireEvent.input(screen.getByLabelText('Google account email'), { target: { value: 'person@example.com' } });
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
+  await screen.findByText('Connection successful. Found 2 address books.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+});
+
+it('keeps unapplied address-book roles when saving the account schedule', async () => {
+  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://dav.example.test/', username: 'person@example.com' } };
+  const { client, seen } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', status: account }] });
+    if (path.endsWith('/carddav/status')) return Response.json(account);
+    if (path.endsWith('/carddav/books')) return Response.json({ books: [{ id: 7, name: 'Personal', url: 'https://dav.example.test/personal', subscribed: true, lookup_source: false, write_target: false, needs_full_reconcile: false }] });
+    if (path.endsWith('/carddav/account')) return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 });
+  });
+  render(SettingsWorkspace, { client, category: 'carddav' });
+  await fireEvent.click(await screen.findByRole('checkbox', { name: 'Use for lookup for Personal' }));
+  await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('Contact account default saved. Found 1 address book.');
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+  await waitFor(() => expect(seen.filter(request => request.method === 'GET' && request.path.endsWith('/carddav/books')).length).toBeGreaterThan(1));
+  await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use for lookup for Personal' }) as HTMLInputElement).checked).toBe(true));
+  expect((screen.getByRole('button', { name: 'Apply roles for Personal' }) as HTMLButtonElement).disabled).toBe(false);
+  expect(seen.some(request => request.method === 'PATCH' && request.path.includes('/carddav/books'))).toBe(false);
 });

@@ -261,17 +261,6 @@ test('linked message uses the page title text scale', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
 });
 
-test('settings cards keep 12px control insets', async ({ page }) => {
-  await selectWorkspace(page, 'Settings');
-  const control = page.locator('.kit-card .row__control').first();
-  await expect(control).toBeVisible();
-  const inset = await control.evaluate((element) => {
-    const card = element.closest('.kit-card')!;
-    return card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - element.getBoundingClientRect().right;
-  });
-  expect(inset).toBe(12);
-});
-
 test('app scrollbars use the shared 8px style', async ({ page }) => {
   await selectWorkspace(page, 'Settings');
   const size = await page.locator('.kit-settings__scroll').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar').width);

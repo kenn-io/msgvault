@@ -174,8 +174,9 @@
       Choose the provider, reconnect, and save this connection to restore it with the same name.
     </p>
   {/if}
-  {#key `${selected}:${resetRevision}`}
+  {#key selected}
     <CardDAVConnectionSettings
+      {resetRevision}
       {client}
       values={selectedValues}
       draft={Object.hasOwn(drafts, selected) ? drafts[selected] : undefined}

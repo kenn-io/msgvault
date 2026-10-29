@@ -109,6 +109,7 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await selectKitOption(page, 'Theme', 'Dark');
   await page.getByRole('button', { name: 'Save changes' }).click();
 
@@ -118,7 +119,7 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   expect(patch.body).toEqual({
     updates: [{ key: 'web.theme', value: { string: 'dark' } }]
   });
-  await expect(page.getByText('Restart the daemon to apply these changes.')).toBeVisible();
+  await expect(page.getByText('Saved. Restart msgvault to apply these changes.')).toBeVisible();
 });
 
 async function installSettingsDaemon(context: BrowserContext): Promise<void> {
@@ -168,22 +169,23 @@ test('Settings keeps its category across reload and Back', async ({ context, pag
   await installSettingsDaemon(context);
   await page.goto('/?workspace=settings');
   const settings = page.getByRole('main', { name: 'Settings' });
-  await settings.getByRole('button', { name: 'Search', exact: true }).click();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
+  await settings.getByRole('button', { name: 'Search & AI', exact: true }).click();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').settingsCategory).toBe('search');
   await page.reload();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
-  await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Appearance' })).toBeVisible();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
+  await settings.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Advanced' })).toBeVisible();
   await page.goBack();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
 });
 
 test('saved appearance reaches this tab, and the default mode only new tabs', async ({ context, page }) => {
   await installSettingsDaemon(context);
   await page.goto('/?workspace=settings');
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await selectKitOption(page, 'Theme', 'Dark');
-  await selectKitOption(page, 'Default search mode', 'Hybrid');
+  await selectKitOption(page, 'Search opens in', 'Best match');
   const before = page.url();
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expectKitTheme(page, 'dark');
@@ -200,6 +202,7 @@ test('a Display menu theme override wins over a saved theme', async ({ context, 
   await installSettingsDaemon(context);
   await page.goto('/?workspace=settings');
   await setKitTheme(page, 'light');
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await selectKitOption(page, 'Theme', 'Dark');
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
