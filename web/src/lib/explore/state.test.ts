@@ -18,24 +18,35 @@ import { createAllMatchingSelection, predicateFingerprint } from './selection';
 import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
-  it.each([0, 3])('lets Back to an unindexed entry leave dirty Settings at index %s without reloading or swallowing Forward', async (index) => {
+  it.each([0, 3])('holds Back to an unindexed entry from dirty Settings at index %s without guessing a direction', async (index) => {
     window.history.replaceState(null, '', '/?workspace=sources');
     window.history.pushState({ exploreIndex: index }, '', '/?workspace=settings');
     const state = new ExploreState(window);
     const go = vi.spyOn(window.history, 'go');
-    state.holdLeave = vi.fn(() => true);
+    const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    let leave!: () => void;
+    let stay: (() => void) | undefined;
+    state.holdLeave = (next, restore) => { leave = next; stay = restore; return true; };
     try {
       window.history.back();
-      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      expect(go).not.toHaveBeenCalled();
-      expect(state.holdLeave).not.toHaveBeenCalled();
+      await popped();
+      expect(state.current.workspace).toBe('settings');
+      stay?.();
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings&mode=full_text');
+
+      window.history.back();
+      await popped();
+      expect(state.current.workspace).toBe('settings');
+      state.holdLeave = undefined;
+      leave();
       expect(state.current.workspace).toBe('sources');
       expect(window.location.search).toBe('?workspace=sources');
+      expect(go).not.toHaveBeenCalled();
 
       window.history.forward();
-      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      await popped();
       expect(state.current.workspace).toBe('settings');
-      expect(window.location.search).toBe('?workspace=settings');
     } finally {
       go.mockRestore();
       state.destroy();
