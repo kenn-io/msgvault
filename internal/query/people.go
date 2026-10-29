@@ -385,7 +385,8 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	personWhere := []string{"true"}
 	populationFrom := "FROM person_entries pe JOIN participants p ON p.id = pe.person_id"
 	if keepInactive {
-		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id"
+		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id" +
+			" WHERE pe.person_id IS NOT NULL OR " + e.sqlNonOwnerParticipant("p.id")
 	}
 	if exactID != nil {
 		personWhere = append(personWhere, "person_id = ?")

@@ -10,6 +10,15 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
+func (e *DuckDBEngine) sqlNonOwnerParticipant(participantIDExpr string) string {
+	owners := quoteIdentitySQLPath(e.parquetPath(datasetOwnerParticipants))
+	clusters := quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters))
+	return `NOT EXISTS (SELECT 1 FROM read_parquet('` + owners + `') op
+		LEFT JOIN read_parquet('` + clusters + `') c ON c.participant_id = op.participant_id
+		WHERE COALESCE(c.canonical_id, op.participant_id) = ` + participantIDExpr + `
+			OR op.participant_id = ` + participantIDExpr + `)`
+}
+
 func identityRequestIsUnfiltered(request ExploreRequest) bool {
 	context := request.Context
 	return len(context.SourceIDs) == 0 &&
