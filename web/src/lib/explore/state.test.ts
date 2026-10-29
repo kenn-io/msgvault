@@ -17,6 +17,50 @@ import { createAllMatchingSelection, predicateFingerprint } from './selection';
 import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
+  it('holds leaving Settings until the draft is discarded', () => {
+    window.history.replaceState(null, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    let leave!: () => void;
+    state.holdLeave = (next) => { leave = next; return true; };
+    try {
+      state.commitWorkspace('sources');
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings');
+      state.holdLeave = undefined;
+      leave();
+      expect(state.current.workspace).toBe('sources');
+      expect(window.location.search).toBe('?workspace=sources&mode=full_text');
+    } finally {
+      state.destroy();
+    }
+  });
+
+  it.each(['back', 'forward'] as const)('holds browser %s from Settings and continues to the requested page', async (direction) => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    try {
+      state.commitWorkspace('settings');
+      if (direction === 'forward') {
+        state.commitWorkspace('sources');
+        window.history.back();
+        await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      }
+      let leave!: () => void;
+      state.holdLeave = (next) => { leave = next; return true; };
+      window.history[direction]();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings&mode=full_text');
+      state.holdLeave = undefined;
+      leave();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(state.current.workspace).toBe('sources');
+      expect(window.location.search).toBe('?workspace=sources&mode=full_text');
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('preserves paused Operations filters from handwritten URLs and saved state', () => {
     const handwritten = new URLSearchParams({ explore: JSON.stringify({ workspace: 'operations', operationState: 'paused' }) });
     expect(parseExploreURLState(handwritten.toString()).operationState).toBe('paused');
