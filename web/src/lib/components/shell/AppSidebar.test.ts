@@ -103,7 +103,7 @@ describe('AppSidebar', () => {
     await fireEvent.input(input, { target: { value: 'Q3 budget' } });
     await fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(onRenameView).toHaveBeenCalledWith(saved, 'Q3 budget'));
-    expect(input.disabled).toBe(true);
+    expect(input.readOnly).toBe(true);
     await fireEvent.keyDown(input, { key: 'Enter' });
     expect(onRenameView).toHaveBeenCalledOnce();
     finish();

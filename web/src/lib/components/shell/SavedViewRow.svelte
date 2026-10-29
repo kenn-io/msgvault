@@ -87,8 +87,9 @@
       error = failure;
       return;
     }
+    const restoreFocus = document.activeElement === input;
     renaming = false;
-    await focusOpen();
+    if (restoreFocus) await focusOpen();
   }
 
   async function cancelRename(): Promise<void> {
@@ -122,7 +123,7 @@
         ariaLabel={`Rename ${view.name}`}
         size="sm"
         block
-        disabled={renameBusy}
+        readonly={renameBusy}
         bind:value={draft}
         bind:inputEl={input}
         onkeydown={renameKeydown}
