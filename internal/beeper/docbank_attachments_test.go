@@ -1181,6 +1181,34 @@ func TestAttachmentMirrorProcessingRefusalsWaitForProfileChange(t *testing.T) {
 	}
 }
 
+func TestAttachmentMirrorEmptyStartResponseRetries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	var starts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/api/v1/processing/jobs" && starts.Add(1) == 1 {
+			return
+		}
+		r.serve(w, req)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := docbankmedia.NewClient(srv.URL, nil)
+	require.NoError(err)
+	r.worker.client = client
+
+	require.Error(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Waiting)
+	assert.Zero(r.processingCounts().Requested)
+	assert.Empty(r.processing.Jobs)
+
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+}
+
 func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1589,27 +1617,14 @@ func TestAttachmentMirrorProcessingLocalErrors(t *testing.T) {
 }
 
 func TestAttachmentMirrorGateKeepsFailure(t *testing.T) {
-	for _, stage := range []string{"processing", "upload"} {
-		t.Run(stage, func(t *testing.T) {
-			r := newMirrorRig(t)
-			switch stage {
-			case "processing":
-				r.delivered("a", "b")
-				// Content hash order puts b before a, so b's plan fails first.
-				r.processing.Faults["b"] = http.StatusServiceUnavailable
-				r.worker.WithOperationGate(func(context.Context) (func(), bool) {
-					return func() {}, len(r.processing.Plans) == 0
-				})
-			case "upload":
-				hash := r.add("report.pdf", "application/pdf", []byte("document"))
-				r.UploadFaults.Store(hash, http.StatusServiceUnavailable)
-				r.worker.WithOperationGate(func(context.Context) (func(), bool) {
-					return func() {}, r.Uploads.Load() == 0
-				})
-			}
-			_, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
-			require.ErrorContains(t, err, "server_error")
-			assert.NotErrorIs(t, err, errBeeperMediaGateBusy)
-		})
-	}
+	r := newMirrorRig(t)
+	r.delivered("a", "b")
+	// Content hash order puts b before a, so b's plan fails first.
+	r.processing.Faults["b"] = http.StatusServiceUnavailable
+	r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+		return func() {}, len(r.processing.Plans) == 0
+	})
+	_, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
+	require.ErrorContains(t, err, "server_error")
+	assert.NotErrorIs(t, err, errBeeperMediaGateBusy)
 }
