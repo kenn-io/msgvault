@@ -79,7 +79,7 @@
   import DisplayMenu from './DisplayMenu.svelte';
   import NavigationDrawer from './NavigationDrawer.svelte';
   import SearchBar from '../search/SearchBar.svelte';
-  import { SIDEBAR_COLLAPSED_KEY, workspaceLabel } from './navigation';
+  import { NAVIGATION_ITEMS, SETTINGS_ITEM, SIDEBAR_COLLAPSED_KEY, workspaceLabel } from './navigation';
   import Menu from '@lucide/svelte/icons/menu';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
@@ -103,7 +103,8 @@
       string,
       (categoryID: string) => void,
       () => void,
-      (authority: RelatedOperationStatus) => void
+      (authority: RelatedOperationStatus) => void,
+      () => void
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -1044,10 +1045,10 @@
     ...groupingCommands,
   ]);
   const shellCommands = $derived([
-    ...(['everything', 'relationships', 'files', 'sources', 'directory', 'deletions', 'settings'] as ExploreWorkspace[]).map((workspace) => ({ id: `go:${workspace}`, label: workspaceLabel(workspace), section: 'Go to', run: () => openWorkspaceTab(workspace) })),
+    ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['directory', 'deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
     ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: `Open view: ${view.name}`, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
     { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
-    ...(['theme', 'density'] as const).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
+    ...(['theme', 'density'] as const).filter(kind => appearance.temporary[kind] !== undefined).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
   ]);
   const paletteCommands = $derived(
     [...commandRegistry.map(
@@ -1308,10 +1309,11 @@
           exploreState.current.settingsCategory,
           selectSettingsCategory,
           () => commitNavigation({ workspace: 'sources' }),
-          openOperationAuthority
+          openOperationAuthority,
+          () => void shellData.jobs.refresh()
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} />
+        <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} onStatus={sources => shellData.jobs.setSources(sources)} />
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace
           {client}

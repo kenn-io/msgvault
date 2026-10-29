@@ -72,6 +72,7 @@
     onOpenStatus = () => undefined,
     onCardDAVRequestConsumed = () => undefined,
     onAppearanceSaved = () => undefined,
+    onStatusChange = () => undefined,
   }: {
     client: APIClient;
     plainHTTPWarning?: boolean;
@@ -83,6 +84,7 @@
     onCategoryChange?: (categoryID: string) => void;
     onCardDAVRequestConsumed?: (key: number) => void;
     onAppearanceSaved?: (saved: SavedAppearance) => void;
+    onStatusChange?: () => void;
   } = $props();
 
   let settings = $state<SettingState[]>([]);
@@ -203,6 +205,8 @@
       buildError = cause instanceof Error ? cause.message : "Can't build the index.";
     } finally {
       delete building[id];
+      statusRevision += 1;
+      onStatusChange();
     }
   }
 
@@ -604,6 +608,7 @@
           {/if}
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
+            {onStatusChange}
             {client}
             {settings}
             {cardDAVRequest}
