@@ -810,12 +810,19 @@ func compareCanonicalDecimals(left, right string) int {
 func (s *Store) MessageMetadataBatch(
 	sourceID int64, sourceMessageIDs []string,
 ) (map[string]MessageMetadataRecord, error) {
+	return s.MessageMetadataBatchContext(context.Background(), sourceID, sourceMessageIDs)
+}
+
+// MessageMetadataBatchContext honors cancellation during MessageMetadataBatch.
+func (s *Store) MessageMetadataBatchContext(ctx context.Context,
+	sourceID int64, sourceMessageIDs []string,
+) (map[string]MessageMetadataRecord, error) {
 	if len(sourceMessageIDs) == 0 {
 		return make(map[string]MessageMetadataRecord), nil
 	}
 
 	result := make(map[string]MessageMetadataRecord)
-	err := queryInChunks(s.db, sourceMessageIDs, []any{sourceID},
+	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{sourceID},
 		`SELECT source_message_id, id, metadata
 		 FROM messages
 		 WHERE source_id = ? AND source_message_id IN (%s)`,

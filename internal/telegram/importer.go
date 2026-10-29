@@ -84,13 +84,16 @@ type ImportSummary struct {
 // does not yet carry, and a later export never overwrites the bodies,
 // recipients, attachments, or reply links an earlier import wrote. Each
 // new message persists atomically — row, body, recipients, edited flag,
-// and search document in one transaction — so an interruption can only
-// lose whole messages, never leave one half-written. Attachments and
-// reply links follow the commit inside their chat; the next run —
-// resumed or not — restores what an interruption left behind. After a run
-// adds messages, one bounded pass retries the source's still-NULL reply
-// links, so a child imported before its parent links once any later
-// export archives the parent.
+// search document, and the message's own recovery state (its reply
+// reference and intended attachment manifest) in one transaction — so an
+// interruption can only lose whole messages, never leave one
+// half-written. Attachments and reply links follow the commit inside
+// their chat; the next run — resumed or not — restores what an
+// interruption left behind, reading the message's archived recovery
+// state rather than the newer export's shape. After every successful
+// run, one bounded pass retries the source's still-NULL reply links, so
+// a child imported before its parent links once any later export
+// archives the parent.
 func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
 	start := time.Now()
 	summary := &ImportSummary{}
@@ -243,16 +246,16 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 		}
 	}
 
-	if summary.MessagesAdded > 0 {
-		// Reply children whose parents were absent at import time stay
-		// unlinked until any export of this source archives the parent.
-		// Retry the remaining NULL links against the grown archive; the
-		// bounded pass reads only replies the archive still carries
-		// unlinked.
-		if err := resolveDeferredReplies(ctx, st, source.ID); err != nil {
-			syncErr = err
-			return summary, err
-		}
+	// Reply children whose parents were absent at import time stay
+	// unlinked until any export of this source archives the parent.
+	// Retry the remaining NULL links on every successful run — a retry
+	// that adds zero messages can still follow a committed parent —
+	// reading only replies the archive still carries unlinked. The
+	// bounded pass fills only NULL links, so a link an earlier import
+	// wrote is never rewritten.
+	if err := resolveDeferredReplies(ctx, st, source.ID); err != nil {
+		syncErr = err
+		return summary, err
 	}
 	refreshStats()
 	summary.ParticipantsResolved = resolver.resolvedCount()
@@ -272,13 +275,19 @@ type pendingReply struct {
 	parentSrcID string
 }
 
-// telegramReplyMetadata is the per-message metadata a reply carries. The
-// referenced id is the parent's source-wide message id
-// ("<chat-id>:<message-id>"), recorded at the child's first import so the
-// deferred pass can resolve the link after any later export archives the
-// parent.
-type telegramReplyMetadata struct {
-	ReferencedMessageID string `json:"referenced_message_id,omitempty"`
+// telegramMessageMetadata is the recovery state a message persists
+// atomically with its row. ReferencedMessageID is the parent's
+// source-wide message id ("<chat-id>:<message-id>") captured at the
+// child's first import, so the deferred pass can resolve the link after
+// any later export archives the parent. AttachmentPartKeys is the
+// message's intended attachment manifest — the source-part keys of the
+// export the first import archived — and bounds every later recovery
+// write: recovery fills exactly the manifest-listed occurrences, never
+// adding keys beyond it. A nil AttachmentPartKeys marks rows persisted
+// before manifests were recorded; those keep the legacy restore rules.
+type telegramMessageMetadata struct {
+	ReferencedMessageID string   `json:"referenced_message_id,omitempty"`
+	AttachmentPartKeys  []string `json:"attachment_part_keys"`
 }
 
 // telegramReplyPageSize bounds one keyset page of the deferred reply pass.
@@ -298,7 +307,7 @@ func resolveDeferredReplies(ctx context.Context, st *store.Store, sourceID int64
 			return fmt.Errorf("telegram: list deferred replies: %w", err)
 		}
 		for _, reply := range unresolved {
-			var metadata telegramReplyMetadata
+			var metadata telegramMessageMetadata
 			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
 				return fmt.Errorf("telegram: decode reply metadata for %s: %w", reply.SourceMessageID, err)
 			}
@@ -317,11 +326,15 @@ func resolveDeferredReplies(ctx context.Context, st *store.Store, sourceID int64
 }
 
 // importChat imports one chat append-only. A message the archive already
-// carries is skipped as a new write; its reply link is still filled when
-// absent, and its attachment rows are re-ensured: a message with no
-// attachment rows is restored from this export, while a populated
-// manifest is kept exactly — only missing fields of keys it already
-// carries are filled, never rewritten or extended.
+// carries is skipped as a new write, and its recovery — reply link and
+// attachments alike — reads the recovery state archived with the message,
+// never the current export's shape: a newer snapshot cannot move a reply
+// reference, turn a non-reply into a reply, or extend an attachment
+// manifest. Attachment rows are re-ensured so an interruption between
+// occurrences is repaired: only the fields of manifest-listed keys the
+// archive lacks are filled, never rewritten or extended. Legacy rows
+// persisted before recovery state existed keep the restore rules their
+// rows can express.
 func importChat(
 	ctx context.Context,
 	st *store.Store,
@@ -361,23 +374,25 @@ func importChat(
 	}
 
 	// One batched lookup decides what this run may import: a message the
-	// archive already carries is skipped whole. Every archived message of
-	// a completed chat is fully written, because each new message — row,
-	// body, recipients, edited flag, and search document — persisted in
-	// one transaction.
+	// archive already carries is skipped whole. The same query returns
+	// each archived message's recovery state — the metadata persisted
+	// atomically with its row — because every archived message of a
+	// completed chat is fully written: row, body, recipients, edited
+	// flag, search document, and recovery state in one transaction.
 	srcIDs := make([]string, 0, len(chat.Messages))
 	for i := range chat.Messages {
 		if !chat.Messages[i].Service && !chat.Messages[i].Unsupported {
 			srcIDs = append(srcIDs, fmt.Sprintf("%d:%d", chat.ID, chat.Messages[i].ID))
 		}
 	}
-	archived, err := st.MessageExistsBatchContext(ctx, sourceID, srcIDs)
+	archived, err := st.MessageMetadataBatchContext(ctx, sourceID, srcIDs)
 	if err != nil {
 		return fmt.Errorf("check existing messages: %w", err)
 	}
 
 	var replies []pendingReply
-	// replyOf records one message's reply link for the post-chat pass.
+	// replyOf records one new message's reply link for the post-chat
+	// pass; at first import the export is the archived snapshot.
 	replyOf := func(m *Message) {
 		if m.ReplyTo != 0 {
 			replies = append(replies, pendingReply{
@@ -404,29 +419,61 @@ func importChat(
 		}
 
 		srcMsgID := fmt.Sprintf("%d:%d", chat.ID, m.ID)
-		messageID, existed := archived[srcMsgID]
 		summary.MessagesProcessed++
 		candidates := attachmentCandidates(m)
-		if existed {
+		if record, existed := archived[srcMsgID]; existed {
+			messageID := record.ID
 			summary.MessagesSkipped++
-			replyOf(m)
+			// Recovery is driven by the recovery state the message
+			// archived at first import, never by this export's shape.
+			var recovery telegramMessageMetadata
+			if record.Metadata.Valid {
+				if err := json.Unmarshal([]byte(record.Metadata.String), &recovery); err != nil {
+					return fmt.Errorf("decode recovery state for %s: %w", srcMsgID, err)
+				}
+			}
+			// The archived reference is the only parent an existing
+			// message may resolve to: an overlapping export cannot move
+			// an unresolved reference to a different parent or turn an
+			// archived non-reply into a reply. The post-chat pass still
+			// fills only NULL links.
+			if recovery.ReferencedMessageID != "" {
+				replies = append(replies, pendingReply{
+					childSrcID:  srcMsgID,
+					parentSrcID: recovery.ReferencedMessageID,
+				})
+			}
 			// Attachment recovery must not depend on checkpoint state:
 			// a failure or interruption after the message commit but
 			// before the first checkpoint leaves the attachment absent,
-			// and this ordinary run is the next run. A message with no
-			// attachment rows is restored from the current export — the
-			// torn-write case; a populated manifest is kept exactly,
-			// filling only missing fields of the source-part keys it
-			// already carries, so media a later export renamed or added
-			// never creates a new occurrence.
+			// and this ordinary run is the next run.
 			if len(candidates) > 0 {
-				archivedKeys, err := st.MessageAttachmentSourcePartKeysContext(ctx, messageID)
-				if err != nil {
-					return fmt.Errorf("load attachment manifest for %s: %w", srcMsgID, err)
-				}
-				restore := archivedKeys
-				if len(archivedKeys) == 0 {
-					restore = nil
+				// The recorded manifest — the source-part keys the
+				// first import intended — bounds the restore: exactly
+				// the manifest-listed occurrences the archive lacks are
+				// filled, so media a later export renamed or added
+				// never creates a new occurrence.
+				var restore map[string]struct{}
+				if recovery.AttachmentPartKeys != nil {
+					restore = make(map[string]struct{}, len(recovery.AttachmentPartKeys))
+					for _, key := range recovery.AttachmentPartKeys {
+						restore[key] = struct{}{}
+					}
+				} else {
+					// Legacy rows predate the recorded manifest. A
+					// message with no attachment rows is restored from
+					// this export — the torn-write case; a populated
+					// row set is kept exactly, filling only missing
+					// fields of the source-part keys it already
+					// carries.
+					archivedKeys, err := st.MessageAttachmentSourcePartKeysContext(ctx, messageID)
+					if err != nil {
+						return fmt.Errorf("load attachment manifest for %s: %w", srcMsgID, err)
+					}
+					restore = archivedKeys
+					if len(archivedKeys) == 0 {
+						restore = nil
+					}
 				}
 				wrote, err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, restore, opts, logger, summary)
 				if err != nil {
@@ -493,19 +540,29 @@ func importChat(
 		if senderID.Valid {
 			data.Recipients = recipientSets(m, senderID.Int64, isFromMe, ownerPID, direct, peerPID, peerName, ownerName)
 		}
-		// The parent reference outlives the chat pass: the deferred
-		// archive-wide pass reads it after any later export archives the
-		// parent this export lacks.
-		if m.ReplyTo != 0 {
-			meta, err := json.Marshal(telegramReplyMetadata{
-				ReferencedMessageID: fmt.Sprintf("%d:%d", chat.ID, m.ReplyTo),
-			}, json.Deterministic(true))
-			if err != nil {
-				return fmt.Errorf("marshal reply metadata for %s: %w", srcMsgID, err)
-			}
-			data.Metadata = &sql.NullString{String: string(meta), Valid: true}
+		// The message's recovery state persists atomically with the row:
+		// the reply reference drives the deferred archive-wide pass after
+		// any later export archives the parent this export lacks, and the
+		// attachment manifest — the source-part keys this export intends,
+		// which at first import is the archived snapshot — bounds every
+		// later recovery write. The manifest records a message without
+		// media as empty, so a later export cannot add media to it.
+		meta := telegramMessageMetadata{
+			AttachmentPartKeys: make([]string, 0, len(candidates)),
 		}
-		messageID, err = st.PersistMessageContext(ctx, data)
+		for _, cand := range candidates {
+			meta.AttachmentPartKeys = append(meta.AttachmentPartKeys,
+				syntheticAttachmentHash(chat.ID, m.ID, cand.RelPath))
+		}
+		if m.ReplyTo != 0 {
+			meta.ReferencedMessageID = fmt.Sprintf("%d:%d", chat.ID, m.ReplyTo)
+		}
+		encoded, err := json.Marshal(meta, json.Deterministic(true))
+		if err != nil {
+			return fmt.Errorf("marshal recovery state for %s: %w", srcMsgID, err)
+		}
+		data.Metadata = &sql.NullString{String: string(encoded), Valid: true}
+		messageID, err := st.PersistMessageContext(ctx, data)
 		if err != nil {
 			// The atomic persist rolled back, so the message is not in
 			// the archive. Failing the chat keeps it out of the
@@ -613,10 +670,11 @@ func recipientSets(
 // is append-only: a missing row is inserted and an occurrence an earlier
 // import populated keeps its stored bytes and metadata even when the file
 // at the same export path now differs or is gone. A nil archivedKeys
-// restores every candidate; a non-nil set — the message's archived
-// manifest — allows only candidates whose source-part key the archive
-// already carries, so media a later export renamed or added never creates
-// a new occurrence. It reports whether any candidate was written.
+// restores every candidate; a non-nil set — the message's recorded
+// manifest, or a legacy row's archived keys — allows only candidates
+// whose source-part key the set carries, so media a later export renamed
+// or added never creates a new occurrence. It reports whether any
+// candidate was written.
 func storeAttachments(
 	ctx context.Context,
 	st *store.Store,

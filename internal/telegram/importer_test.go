@@ -289,6 +289,19 @@ func attachmentRow(t *testing.T, st *store.Store, sourceMessageID string) (path,
 	return
 }
 
+// replyParentSrc returns the source_message_id of one child's reply
+// parent, or "" while the link is unresolved.
+func replyParentSrc(t *testing.T, st *store.Store, child string) string {
+	t.Helper()
+	var parent string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(p.source_message_id, '')
+		FROM messages c
+		LEFT JOIN messages p ON p.id = c.reply_to_message_id
+		WHERE c.source_message_id = ?`), child).Scan(&parent))
+	return parent
+}
+
 // TestImportDirectChatDerivesToRecipients pins the only "to" derivation the
 // export determines: in a personal or bot chat the message's to recipient is
 // the chat's other participant, owner and peer in both directions.
@@ -461,6 +474,129 @@ func TestImportReplyLinkResolvesWhenParentArrivesLater(t *testing.T) {
 		WHERE c.source_message_id = '7000000000000555555:2'`).Scan(&parentSrc))
 	assert.Equal("7000000000000555555:1", parentSrc,
 		"the deferred pass links the reply once the parent is archived")
+}
+
+// TestImportZeroAddRetryResolvesDeferredReply pins the convergence pass
+// on every successful run: a retry that adds zero messages — the parent
+// committed on an earlier run whose checkpoint write failed — still
+// resolves the archived child's link, even though the retry's export
+// never lists the child.
+func TestImportZeroAddRetryResolvesDeferredReply(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	childOnly := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{{
+		"id": 2, "type": "message", "date_unixtime": "1610909810",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"text": "a reply", "reply_to_message_id": 1,
+	}})
+	importRoot(t, st, childOnly)
+	require.Empty(replyParentSrc(t, st, "7000000000000555555:2"),
+		"the absent parent leaves the link unresolved")
+
+	parentOnly := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"text": "the parent",
+	}})
+	remove := failCheckpointWrites(t, st)
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: parentOnly, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(err, "the checkpoint failure fails the run after the parent commits")
+	remove()
+
+	summary := importRoot(t, st, parentOnly)
+	assert.EqualValues(0, summary.MessagesAdded, "the retry adds no messages")
+	assert.Equal("7000000000000555555:1", replyParentSrc(t, st, "7000000000000555555:2"),
+		"the zero-add retry resolves the archived child's link")
+}
+
+// TestImportOverlappingExportKeepsArchivedReplyIntent pins reply
+// recovery from archived intent: a message's reply reference is decided
+// once, at first import, and a newer export can neither move an
+// unresolved reference to a different parent nor turn an archived
+// non-reply into a reply.
+func TestImportOverlappingExportKeepsArchivedReplyIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, st *store.Store)
+	}{
+		{
+			name: "unresolved reference keeps its archived parent",
+			run: func(t *testing.T, st *store.Store) {
+				t.Helper()
+				assert := assert.New(t)
+				require := require.New(t)
+
+				childOnly := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{{
+					"id": 2, "type": "message", "date_unixtime": "1610909810",
+					"from": "Alice Example", "from_id": "user7000000000000555555",
+					"text": "a reply", "reply_to_message_id": 1,
+				}})
+				importRoot(t, st, childOnly)
+				require.Empty(replyParentSrc(t, st, "7000000000000555555:2"),
+					"the absent parent leaves the link unresolved")
+
+				// The newer export archives the referenced parent and a
+				// decoy, and points the child at the decoy.
+				second := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{
+					{
+						"id": 1, "type": "message", "date_unixtime": "1610909800",
+						"from": "Alice Example", "from_id": "user7000000000000555555",
+						"text": "true parent",
+					},
+					{
+						"id": 3, "type": "message", "date_unixtime": "1610909805",
+						"from": "Alice Example", "from_id": "user7000000000000555555",
+						"text": "decoy parent",
+					},
+					{
+						"id": 2, "type": "message", "date_unixtime": "1610909810",
+						"from": "Alice Example", "from_id": "user7000000000000555555",
+						"text": "a reply", "reply_to_message_id": 3,
+					},
+				})
+				importRoot(t, st, second)
+				assert.Equal("7000000000000555555:1", replyParentSrc(t, st, "7000000000000555555:2"),
+					"the link resolves to the archived reference, not the newer export's parent")
+			},
+		},
+		{
+			name: "archived non-reply never gains a link",
+			run: func(t *testing.T, st *store.Store) {
+				t.Helper()
+				assert := assert.New(t)
+				plain := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{{
+					"id": 5, "type": "message", "date_unixtime": "1610909800",
+					"from": "Alice Example", "from_id": "user7000000000000555555",
+					"text": "plain",
+				}})
+				importRoot(t, st, plain)
+
+				second := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{
+					{
+						"id": 4, "type": "message", "date_unixtime": "1610909795",
+						"from": "Alice Example", "from_id": "user7000000000000555555",
+						"text": "later parent",
+					},
+					{
+						"id": 5, "type": "message", "date_unixtime": "1610909800",
+						"from": "Alice Example", "from_id": "user7000000000000555555",
+						"text": "plain", "reply_to_message_id": 4,
+					},
+				})
+				importRoot(t, st, second)
+				assert.Empty(replyParentSrc(t, st, "7000000000000555555:5"),
+					"an archived non-reply stays unlinked")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.run(t, testutil.NewTestStore(t))
+		})
+	}
 }
 
 // TestImportReplyLinksForwardReference pins the post-chat reply pass: a
@@ -752,6 +888,36 @@ func failAttachmentInserts(t *testing.T, st *store.Store) func() {
 		create = `CREATE FUNCTION fail_attachment_inserts() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected attachment failure'; END; $$ LANGUAGE plpgsql;
 CREATE TRIGGER fail_attachment_inserts BEFORE INSERT ON attachments FOR EACH ROW EXECUTE FUNCTION fail_attachment_inserts()`
 		drop = `DROP TRIGGER IF EXISTS fail_attachment_inserts ON attachments; DROP FUNCTION IF EXISTS fail_attachment_inserts()`
+	}
+	_, err := st.DB().Exec(create)
+	require.NoError(t, err)
+	return func() {
+		_, err := st.DB().Exec(drop)
+		require.NoError(t, err)
+	}
+}
+
+// failAttachmentInsertsWithKey installs a database trigger that fails the
+// attachment insert for one source-part key, so a run commits a message,
+// stores the earlier candidates, and then fails a later occurrence's
+// insert. The returned func removes it.
+func failAttachmentInsertsWithKey(t *testing.T, st *store.Store, partKey string) func() {
+	t.Helper()
+	create := `CREATE TRIGGER fail_attachment_part_key BEFORE INSERT ON attachments
+WHEN NEW.source_part_key = '` + partKey + `'
+BEGIN SELECT RAISE(ABORT, 'injected attachment failure'); END`
+	drop := `DROP TRIGGER IF EXISTS fail_attachment_part_key`
+	if st.IsPostgreSQL() {
+		create = `CREATE FUNCTION fail_attachment_part_key() RETURNS trigger AS $$
+BEGIN
+	IF NEW.source_part_key = '` + partKey + `' THEN
+		RAISE EXCEPTION 'injected attachment failure';
+	END IF;
+	RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER fail_attachment_part_key BEFORE INSERT ON attachments
+FOR EACH ROW EXECUTE FUNCTION fail_attachment_part_key()`
+		drop = `DROP TRIGGER IF EXISTS fail_attachment_part_key ON attachments; DROP FUNCTION IF EXISTS fail_attachment_part_key()`
 	}
 	_, err := st.DB().Exec(create)
 	require.NoError(t, err)
@@ -1263,46 +1429,6 @@ func TestImportUnsupportedEntriesAreSkipped(t *testing.T) {
 	assert.EqualValues(1, summary.UnsupportedEntriesSkipped, "the unsupported entry is counted, not imported")
 }
 
-// TestImportLaterAvailableMediaRefreshesMessageFlags pins the recovery rule
-// for media a later export adds to an already-archived text message: the
-// occurrence is inserted and the message's attachment flags are recomputed,
-// so has_attachments and attachment_count match the rows.
-func TestImportLaterAvailableMediaRefreshesMessageFlags(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	assert := assert.New(t)
-	require := require.New(t)
-
-	textOnly := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", []map[string]any{{
-		"id": 1, "type": "message", "date_unixtime": "1610909800",
-		"from": "Alice Example", "from_id": "user7000000000000555555", "text": "no media yet",
-	}})
-	importRoot(t, st, textOnly)
-
-	withPhoto := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", []map[string]any{{
-		"id": 1, "type": "message", "date_unixtime": "1610909800",
-		"from": "Alice Example", "from_id": "user7000000000000555555",
-		"photo": "photos/photo_1.jpg", "text": "no media yet",
-	}})
-	require.NoError(os.MkdirAll(filepath.Join(withPhoto, "photos"), 0o755))
-	require.NoError(os.WriteFile(
-		filepath.Join(withPhoto, "photos", "photo_1.jpg"), []byte("photo-bytes"), 0o644))
-	importRoot(t, st, withPhoto)
-
-	var rows int
-	var hasAttachments bool
-	var attachmentCount int
-	require.NoError(st.DB().QueryRow(`
-		SELECT (SELECT COUNT(*) FROM attachments a
-		        JOIN messages m ON m.id = a.message_id
-		        WHERE m.source_message_id = '7000000000000555555:1'),
-		       has_attachments, attachment_count
-		FROM messages WHERE source_message_id = '7000000000000555555:1'`).
-		Scan(&rows, &hasAttachments, &attachmentCount))
-	assert.Equal(1, rows, "the later-available photo inserts its occurrence")
-	assert.True(hasAttachments, "recovery recomputes has_attachments")
-	assert.Equal(1, attachmentCount, "recovery recomputes attachment_count")
-}
-
 // TestImportOverlappingExportKeepsArchivedAttachmentManifest pins the
 // manifest rule of attachment recovery: a message whose attachment
 // manifest is populated keeps it exactly. Media renamed or added in a
@@ -1365,6 +1491,95 @@ func TestImportOverlappingExportKeepsArchivedAttachmentManifest(t *testing.T) {
 		SELECT attachment_count FROM messages
 		WHERE source_message_id = '7000000000000555555:1'`).Scan(&attachmentCount))
 	assert.Equal(1, attachmentCount, "the flags keep describing the archived manifest")
+}
+
+// TestImportRetryRestoresThumbnailMissingFromPartialManifest pins
+// recovery driven by the archived intent: an interruption between the
+// file insert and the thumbnail insert leaves a partial manifest, and a
+// retry restores exactly the occurrences the first import recorded. A
+// populated row set alone must not read as the whole manifest, and a
+// later export still cannot extend it.
+func TestImportRetryRestoresThumbnailMissingFromPartialManifest(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	message := map[string]any{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"file": "files/report.pdf", "file_name": "report.pdf",
+		"thumbnail": "files/report_thumbnail.jpg", "text": "",
+	}
+	writeMedia := func(root string, msg map[string]any) string {
+		export := writeChatExport(t, root, fixturePersonalChatID, "personal_chat", "Media Chat",
+			[]map[string]any{msg})
+		require.NoError(os.MkdirAll(filepath.Join(export, "files"), 0o755))
+		require.NoError(os.WriteFile(
+			filepath.Join(export, "files", "report.pdf"), []byte("report-bytes"), 0o644))
+		require.NoError(os.WriteFile(
+			filepath.Join(export, "files", "report_thumbnail.jpg"), []byte("thumbnail-bytes"), 0o644))
+		return export
+	}
+	first := writeMedia(t.TempDir(), message)
+
+	partKeys := func() []string {
+		rows, err := st.DB().Query(st.Rebind(`
+			SELECT COALESCE(a.source_part_key, '') FROM attachments a
+			JOIN messages m ON m.id = a.message_id
+			WHERE m.source_message_id = ? ORDER BY a.source_part_key`), "7000000000000555555:1")
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		var keys []string
+		for rows.Next() {
+			var key string
+			require.NoError(rows.Scan(&key))
+			keys = append(keys, key)
+		}
+		require.NoError(rows.Err())
+		return keys
+	}
+	storedPath := func(partKey string) string {
+		var path string
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT COALESCE(a.storage_path, '') FROM attachments a
+			JOIN messages m ON m.id = a.message_id
+			WHERE m.source_message_id = ? AND a.source_part_key = ?`),
+			"7000000000000555555:1", partKey).Scan(&path))
+		return path
+	}
+	fileKey := syntheticAttachmentHash(fixturePersonalChatID, 1, "files/report.pdf")
+	thumbKey := syntheticAttachmentHash(fixturePersonalChatID, 1, "files/report_thumbnail.jpg")
+
+	// The file occurrence commits; the thumbnail insert fails.
+	remove := failAttachmentInsertsWithKey(t, st, thumbKey)
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: first, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(err, "the thumbnail insert failure fails the run")
+	remove()
+	require.Equal([]string{fileKey}, partKeys(), "the interrupted run archives only the file")
+
+	// The retry restores the manifest-listed thumbnail.
+	summary := importRoot(t, st, first)
+	assert.EqualValues(1, summary.MessagesSkipped, "the committed message is skipped")
+	assert.NotEmpty(storedPath(thumbKey), "the retry restores the thumbnail occurrence")
+
+	// A later export adds media to the same message; the recorded
+	// manifest never extends.
+	grown := maps.Clone(message)
+	grown["photo"] = "photos/added.jpg"
+	second := writeMedia(t.TempDir(), grown)
+	require.NoError(os.MkdirAll(filepath.Join(second, "photos"), 0o755))
+	require.NoError(os.WriteFile(
+		filepath.Join(second, "photos", "added.jpg"), []byte("added-bytes"), 0o644))
+	importRoot(t, st, second)
+	assert.ElementsMatch([]string{fileKey, thumbKey}, partKeys(),
+		"an export that adds media never extends the recorded manifest")
+	var attachmentCount int
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_count FROM messages
+		WHERE source_message_id = '7000000000000555555:1'`).Scan(&attachmentCount))
+	assert.Equal(2, attachmentCount, "recovery recomputes the flags over the restored manifest")
 }
 
 // TestImportAudioTitleDoesNotReplaceFilename pins the source-field
