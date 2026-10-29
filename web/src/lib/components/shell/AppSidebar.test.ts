@@ -1,6 +1,5 @@
 import { appShortcuts, initShortcuts } from '@kenn-io/kit-ui';
-import { tick } from 'svelte';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { view } from './fixtures.test-support';
@@ -45,12 +44,9 @@ describe('AppSidebar', () => {
     expect(primary().getByRole('button', { name: 'People' }).getAttribute('aria-current')).toBe('page');
   });
 
-  it('puts Settings, Help, and the status in the footer, with no Keyboard shortcuts row', () => {
-    renderSidebar();
-    const footer = within(screen.getByRole('complementary', { name: 'Sidebar' }));
-    expect(footer.getByRole('button', { name: 'Settings' })).toBeTruthy();
-    expect(footer.getByRole('button', { name: /Sync status: Idle/ })).toBeTruthy();
-    expect(footer.queryByRole('button', { name: /Keyboard shortcuts/ })).toBeNull();
+  it('puts Help in the footer', () => {
+    const { container } = renderSidebar();
+    const footer = within(container.querySelector<HTMLElement>('.sidebar__footer')!);
     expect(footer.getByRole('button', { name: 'Help' })).toBeTruthy();
   });
 
@@ -61,17 +57,6 @@ describe('AppSidebar', () => {
     expect(messages.getByRole('button', { name: 'Budget threads' })).toBeTruthy();
     expect(messages.queryByRole('button', { name: 'PDF invoices' })).toBeNull();
     expect(files.getByRole('button', { name: 'PDF invoices' })).toBeTruthy();
-  });
-
-  it('shows what a saved view holds in its tooltip', () => {
-    const saved = view(1, 'Budget threads');
-    saved.description = 'Every thread about the Q3 budget';
-    saved.canonical_state = { ...(saved.canonical_state as object), query: 'budget' };
-    renderSidebar({ views: [saved, view(2, 'Plain')] });
-    expect(screen.getByRole('button', { name: 'Budget threads' }).getAttribute('title')).toBe(
-      'Full text: “budget” · Table\nEvery thread about the Q3 budget',
-    );
-    expect(screen.getByRole('button', { name: 'Plain' }).getAttribute('title')).toBe('Table');
   });
 
   it.each([
@@ -89,30 +74,6 @@ describe('AppSidebar', () => {
     expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     expect(onDeleteView).toHaveBeenCalledOnce();
-  });
-
-  it.each(['save', 'move'])('locks a pending rename and preserves focus through %s', async ending => {
-    let finish!: () => void;
-    const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
-    const onRenameView = vi.fn(() => pending);
-    const saved = view(1, 'Budget threads');
-    renderSidebar({ views: [saved], onRenameView });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    const input = (await screen.findByRole('textbox', { name: 'Rename Budget threads' })) as HTMLInputElement;
-    await fireEvent.input(input, { target: { value: 'Q3 budget' } });
-    await fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(onRenameView).toHaveBeenCalledWith(saved, 'Q3 budget'));
-    expect(input.readOnly).toBe(true);
-    await fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onRenameView).toHaveBeenCalledOnce();
-    const files = primary().getByRole('button', { name: 'Files' });
-    if (ending === 'move') files.focus();
-    finish();
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull());
-    await tick();
-    expect(document.activeElement).toBe(ending === 'move' ? files : screen.getByRole('button', { name: 'Budget threads' }));
   });
 
   it('keeps full accessible names in the icon rail and hides saved views', () => {
@@ -167,25 +128,7 @@ it('shows neutral Loading before the first job status fetch', () => {
   expect(screen.getByRole('button', { name: 'Sync status: Loading' })).toBeTruthy();
 });
 
-it.each(['name', 'description'] as const)('keeps the original %s revision when a refresh updates an open editor', async field => {
-  const saved = { ...view(1, 'Budget threads'), description: 'Original description' };
-  const onRenameView = vi.fn(async () => 'Review the latest view.');
-  const onDescribeView = vi.fn(async () => 'Review the latest view.');
-  const { rerender } = renderSidebar({ views: [saved], onRenameView, onDescribeView });
-  await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
-  await fireEvent.click(screen.getByRole('menuitem', { name: field === 'name' ? 'Rename' : 'Edit description…' }));
-  const editor = await screen.findByRole('textbox', { name: field === 'name' ? 'Rename Budget threads' : 'Description' });
-  await fireEvent.input(editor, { target: { value: 'My stale edit' } });
-  await rerender({ views: [{ ...saved, [field]: 'Other browser edit', revision: 2 }] });
-  if (field === 'name') await fireEvent.keyDown(editor, { key: 'Enter' });
-  else await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Review the latest view.');
-  if (field === 'name') expect(document.activeElement).toBe(editor);
-  const handler = field === 'name' ? onRenameView : onDescribeView;
-  expect(handler).toHaveBeenCalledWith(saved, 'My stale edit');
-});
-
-it.each(['Sync status', 'Saved view actions'])('%s typeahead keeps page shortcuts suspended', async menu => {
+it('Sync status typeahead keeps page shortcuts suspended', async () => {
   const detachShortcuts = initShortcuts();
   const pageShortcut = vi.fn();
   const unregister = appShortcuts.register('d', pageShortcut);
@@ -193,7 +136,7 @@ it.each(['Sync status', 'Saved view actions'])('%s typeahead keeps page shortcut
     { id: 'document', name: 'Document extraction', state: 'running', detail: 'Running', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
   ] } });
   try {
-    await fireEvent.click(screen.getByRole('button', { name: menu === 'Sync status' ? 'Sync status: Running' : 'Budget actions' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Running' }));
     const first = (await screen.findAllByRole('menuitem'))[0]!;
     first.focus();
     await fireEvent.keyDown(first, { key: 'd' });

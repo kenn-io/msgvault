@@ -14,14 +14,16 @@ describe('jobs', () => {
     expect(job?.state).toBe('failed');
     expect(job?.target).toEqual({ kind: 'history', operationKind: 'document_extraction', operationRunID: jobRun('document_extraction').id });
   });
-  it('routes running jobs to related status or settings', () => {
+  it('routes running and queued jobs to related status or settings', () => {
     const jobs = collectJobs([], [
       lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', finished_at: undefined, error: undefined } }),
       lane('message_embedding', { active: { ...jobRun('message_embedding'), state: 'running', finished_at: undefined, error: undefined } }),
+      lane('person_enrichment', { active: { ...jobRun('person_enrichment'), state: 'queued', finished_at: undefined, error: undefined } }),
     ]);
     expect(jobs.map(job => job.target)).toEqual([
       { kind: 'status', authority: 'getDocumentIndexStatus' },
       { kind: 'setting', target: { settingsCategory: 'search', settingsAuthority: 'semantic_search' } },
+      { kind: 'setting', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
     ]);
   });
   it('counts source sync once per source and includes scheduler errors', () => {
@@ -29,14 +31,19 @@ describe('jobs', () => {
     expect(collectJobs([source], [lane('source_sync')])).toEqual([{ id: 'source:1', name: 'Example archive', state: 'failed', detail: 'Schedule failed', at: undefined, target: { kind: 'source' } }]);
   });
 
-  it('routes queued work to enrichment settings and prioritizes running work and failures', () => {
+  it('sorts failures first and prioritizes running work over queued work in health', () => {
     const running = collectJobs([], [lane('visual_embedding', { active: activeRun })]);
     const queued = collectJobs([], [lane('person_enrichment', { active: { ...jobRun('person_enrichment'), state: 'queued', finished_at: undefined, error: undefined } })]);
-    expect(queued[0]?.target).toEqual({ kind: 'setting', target: { settingsCategory: 'enrichment', settingsAuthority: '' } });
+    const mixed = collectJobs([], [
+      lane('visual_embedding', { active: activeRun }),
+      lane('person_enrichment', { active: { ...jobRun('person_enrichment'), state: 'queued', finished_at: undefined, error: undefined } }),
+      lane('message_embedding'),
+    ]);
+    expect(mixed.map(job => job.id)).toEqual(['message_embedding', 'visual_embedding', 'person_enrichment']);
     expect(queued[0]?.detail).toBe('Queued');
     expect(jobsHealth(queued)).toBe('queued');
     expect(jobsHealth([...queued, ...running])).toBe('running');
-    expect(jobsHealth([...running, ...collectJobs([], [lane('message_embedding')])])).toBe('failed');
+    expect(jobsHealth(mixed)).toBe('failed');
     expect(jobsHealth([])).toBe('ok');
   });
 });

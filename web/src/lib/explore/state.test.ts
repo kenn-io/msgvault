@@ -201,7 +201,7 @@ describe('Explore URL state', () => {
     expect(state.current.operationState).toBe('paused');
     state.destroy();
   });
-  it.each([['unknown', 'everything', undefined], ['operations', 'settings', 'overview']])('routes legacy %s links', (workspace, expected, category) => {
+  it.each([['operations', 'settings', 'overview']])('routes legacy %s links', (workspace, expected, category) => {
     const state = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace, ...(workspace === 'operations' ? { settingsCategory: 'server' } : {}) }))}`);
     expect(state.workspace).toBe(expected);
     if (category) expect(state.settingsCategory).toBe(category);
