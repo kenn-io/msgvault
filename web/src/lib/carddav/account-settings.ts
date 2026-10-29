@@ -11,6 +11,7 @@ export interface CardDAVAccountValues {
 }
 
 export interface AccountDraft {
+  baseline: CardDAVAccountValues;
   values: CardDAVAccountValues;
   password: string;
   testedTuple?: string;
