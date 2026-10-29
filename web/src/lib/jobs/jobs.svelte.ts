@@ -1,7 +1,8 @@
-import { getOperationStatus, listSourceStatus } from '../api/generated/api/api';
-import type { OperationLaneStatus, SourceStatus } from '../api/generated/models';
+import { listSourceStatus } from '../api/generated/api/api';
+import type { SourceStatus } from '../api/generated/models';
 import type { APIClient } from '../api/client';
-import { collectJobs, jobsHealth, type JobItem, type JobsHealth } from './jobs';
+import type { OperationsController } from '../operations/controller.svelte';
+import { collectJobs, jobsHealth, type JobsHealth } from './jobs';
 
 /**
  * What is running and which latest jobs still have errors. The status dot reads
@@ -9,36 +10,38 @@ import { collectJobs, jobsHealth, type JobItem, type JobsHealth } from './jobs';
  * the popover opens.
  */
 export class JobsStore {
-  items = $state<JobItem[]>([]);
+  items = $derived.by(() => collectJobs(this.#sources, this.#operations.snapshot.statusLanes.flatMap(lane => lane.kinds)));
   /** False until the first refresh answers. */
   loaded = $state(false);
-  error = $state<string>();
+  error = $derived.by(() => this.loaded && (this.#sourceError || !this.#operations.snapshot.statusReadable || this.#operations.snapshot.statusError ||
+    this.#operations.snapshot.statusLanes.some(lane => lane.kinds.some(kind => kind.configured && kind.history_availability === 'unavailable')))
+    ? 'Unable to refresh all job status.' : undefined);
   health = $derived.by<JobsHealth>(() => {
     const health = jobsHealth(this.items);
     return health === 'failed' ? health : this.error || !this.loaded ? 'unavailable' : health;
   });
-  #sources: SourceStatus[] = [];
-  #lanes: OperationLaneStatus[] = [];
+  #sources = $state<SourceStatus[]>([]);
+  #sourceError = $state(false);
+  #operations: OperationsController;
   #client: APIClient;
   #controller?: AbortController;
 
-  constructor(client: APIClient) {
+  constructor(client: APIClient, operations: OperationsController) {
     this.#client = client;
+    this.#operations = operations;
   }
 
   async refresh(): Promise<void> {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     const options = { ...this.#client, signal: controller.signal };
-    const [sources, operations] = await Promise.all([
+    const [sources] = await Promise.all([
       listSourceStatus(undefined, options).catch(() => undefined),
-      getOperationStatus(options).catch(() => undefined),
+      this.#operations.refreshStatus(),
     ]);
     if (controller.signal.aborted) return;
     if (sources?.data) this.#sources = sources.data.sources;
-    if (operations?.data) this.#lanes = operations.data.lanes;
-    this.error = !sources?.data || !operations?.data || this.#lanes.some(lane => lane.configured && lane.history_availability === 'unavailable') ? 'Unable to refresh all job status.' : undefined;
-    this.items = collectJobs(this.#sources, this.#lanes);
+    this.#sourceError = !sources?.data;
     this.loaded = true;
   }
 
