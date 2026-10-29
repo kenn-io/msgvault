@@ -1,4 +1,4 @@
-import type { SearchCoverageAction } from '../search/modes';
+import type { SearchCoverageValue } from '../search/modes';
 import type { ChipTone } from '@kenn-io/kit-ui';
 
 import type { EmbeddingStatus, OperationLaneStatus, Status } from '../api/generated/models';
@@ -37,10 +37,10 @@ export function overviewRows(
   lanes: readonly OperationLaneStatus[],
   embedding: EmbeddingStatus | undefined,
   visual: Status | undefined,
-  coverageActions: readonly SearchCoverageAction[] = [],
+  coverage?: Pick<SearchCoverageValue, 'status' | 'actions'>,
 ): OverviewRow[] {
   const on = (kind: Kind): boolean => Boolean(lane(lanes, kind)?.configured);
-  const chip = (kind: Kind, building?: string, unbuilt = false): OverviewRow['chip'] => {
+  const chip = (kind: Kind, building?: string, idle?: OverviewRow['chip']): OverviewRow['chip'] => {
     const found = lane(lanes, kind);
     if (found?.active) {
       const state = operationStateChip(found.active.state);
@@ -51,7 +51,7 @@ export function overviewRows(
       const state = operationStateChip(found.latest.state);
       return { tone: state.tone, text: state.label };
     }
-    if (unbuilt) return { tone: 'muted', text: 'Unbuilt' };
+    if (idle) return idle;
     return { tone: 'success', text: 'On' };
   };
   const rows: OverviewRow[] = [];
@@ -66,11 +66,11 @@ export function overviewRows(
     embedding && messagesBuilt && count(embedding.pending) > 0
       ? `Building ${count(embedding.current).toLocaleString()} of ${count(embedding.eligible).toLocaleString()}`
       : undefined;
-  const buildAvailable = coverageActions.includes('build_index');
+  const buildAvailable = Boolean(coverage?.actions.includes('build_index'));
   rows.push({
     id: 'message_embedding',
     name: 'Message search',
-    chip: chip('message_embedding', messageProgress, buildAvailable && !messagesBuilt),
+    chip: chip('message_embedding', messageProgress, coverage?.status === 'stale' ? { tone: 'warning', text: 'Stale' } : buildAvailable && !messagesBuilt ? { tone: 'muted', text: 'Unbuilt' } : undefined),
     action: buildAvailable
       ? { kind: 'start', id: 'messages', label: 'Build index' }
       : on('message_embedding')

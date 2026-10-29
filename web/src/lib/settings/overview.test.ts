@@ -30,7 +30,7 @@ describe('overviewRows', () => {
   });
 
   it.each([true, false])('gates the message build on server coverage actions (%s)', available => {
-    const rows = overviewRows(lanes(lane('message_embedding')), embeddingStatus, undefined, available ? ['build_index'] : []);
+    const rows = overviewRows(lanes(lane('message_embedding')), embeddingStatus, undefined, { status: available ? 'unavailable' : 'ready', actions: available ? ['build_index'] : [] });
     expect(row(rows, 'message_embedding').action).toEqual(available ? { kind: 'start', id: 'messages', label: 'Build index' } : undefined);
     expect(row(rows, 'message_embedding').chip.text).toBe(available ? 'Unbuilt' : 'On');
   });

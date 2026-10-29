@@ -29,7 +29,7 @@
   import { accountRequest, type AccountDraft, type CardDAVAccountValues } from '../../carddav/account-settings';
   import { runOperationAction } from '../../operations/actions';
   import { pendingSecret } from '../../settings/secrets';
-  import type { SearchCoverageAction } from '../../search/modes';
+  import type { SearchCoverageValue } from '../../search/modes';
   import {
     providerUpdate,
     isChange,
@@ -115,9 +115,8 @@
   let embeddingStatus = $state<EmbeddingStatus>();
   let visualStatus = $state<VisualStatus>();
   let lanes = $state<OperationLaneStatus[]>();
-  let coverageActions = $state<SearchCoverageAction[]>([]);
+  let coverage = $state<SearchCoverageValue>();
   let statusSettled = $state(false);
-  let statusRefreshing = $state(false);
   let building = $state<Record<string, boolean>>({});
   let consumedCategoryRequestKey: number | undefined;
   let focusedNavigationSettingKey: string | undefined;
@@ -138,7 +137,7 @@
     Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length +
     Object.values(providerDrafts).filter(provider => [provider.max_retries, provider.max_requests_per_run, provider.max_requests_per_day, provider.num_results].some(value => String(value) === '')).length,
   );
-  const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus, coverageActions));
+  const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus, coverage));
 
   onMount(() => {
     void loadSettings(false);
@@ -163,12 +162,9 @@
     if (activeCategory !== 'overview') return;
     void statusRevision;
     const controller = new AbortController();
-    const control = untrack(() => root?.querySelector<HTMLElement>('.feature-refresh'));
-    const hadFocus = control?.contains(document.activeElement);
-    statusRefreshing = true;
-    coverageActions = [];
+    coverage = undefined;
     void createExploreAPI(client).coverage([], controller.signal)
-      .then(coverage => { if (!controller.signal.aborted) coverageActions = coverage.actions; })
+      .then(value => { if (!controller.signal.aborted) coverage = value; })
       .catch(() => undefined);
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
       .then(({ data, response }) => {
@@ -188,13 +184,6 @@
       })
       .catch(() => {
         if (!controller.signal.aborted) { lanes = undefined; statusSettled = true; }
-      })
-      .finally(async () => {
-        if (controller.signal.aborted) return;
-        statusRefreshing = false;
-        await tick();
-        const active = document.activeElement;
-        if (hadFocus && (!active || active === document.body || control?.contains(active))) control?.querySelector<HTMLButtonElement>('button')?.focus();
       });
     return () => controller.abort();
   });
@@ -619,7 +608,7 @@
     <PageHeader title="Settings">
       {#snippet actions()}
         {#if activeCategory === 'overview'}
-          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" disabled={statusRefreshing} onclick={() => (statusRevision += 1)}><RefreshCwIcon size={16} /></IconButton></span>
+          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" onclick={() => (statusRevision += 1)}><RefreshCwIcon size={16} /></IconButton></span>
         {/if}
       {/snippet}
     </PageHeader>
