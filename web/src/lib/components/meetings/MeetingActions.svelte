@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card, EmptyState } from '@kenn-io/kit-ui';
+  import { Button, Card, Chip, EmptyState } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -15,11 +15,13 @@
 
   let {
     client,
+    compact = false,
     request = undefined,
     evidence = undefined,
     onOpenMeeting = undefined,
   }: {
     client: APIClient;
+    compact?: boolean;
     request?: MeetingActionsRequest;
     evidence?: ActionsPage;
     onOpenMeeting?: (meeting: MeetingRef) => void;
@@ -71,6 +73,34 @@
   }
 </script>
 
+{#if compact}
+  <section class="compact-actions" aria-label="Action items">
+    <h3>Action items</h3>
+    {#if controller.loading}<p role="status">Loading action items…</p>{/if}
+    {#if controller.error}
+      <p role="alert">{controller.error.message}</p>
+      {#if controller.error.recovery === 'retry' || controller.error.recovery === 'reload'}<Button label="Retry action items" onclick={retry} />{/if}
+    {/if}
+    {#if displayedPage}
+      {#if displayedPage.rows.length === 0}<p>{emptyState(displayedPage.coverage)}</p>{/if}
+      <ul>
+        {#each displayedPage.rows as row (`${row.meeting.message_id}:${row.action.locator}`)}
+          <li>
+            <Chip size="xs" uppercase={false} tone={row.action.status === 'completed' || row.action.status === 'cancelled' ? 'muted' : 'info'}>{row.action.status === 'completed' ? 'Done' : row.action.status === 'pending' ? 'Open' : row.action.status}</Chip>
+            <div>
+              <strong>{row.action.title}</strong>
+              {#if row.action.description}<p>{row.action.description}</p>{/if}
+              <p class="compact-meta">{assignee(row)}{row.action.due_date ? ` · Due ${row.action.due_date}` : ''}</p>
+              {#if !request}<a href={row.meeting.archive_path} onclick={(event) => openMeeting(event, row.meeting)}>{row.meeting.title || 'Open archived meeting'}</a>{/if}
+            </div>
+          </li>
+        {/each}
+      </ul>
+      <details><summary>Evidence coverage</summary><p>{coverageSummary(displayedPage.coverage)}</p></details>
+      {#if request && displayedPage.next_cursor && !controller.error}<Button label="Show more" disabled={controller.loading} onclick={() => void controller.loadMore()} />{/if}
+    {/if}
+  </section>
+{:else}
 <section class="meeting-actions" aria-labelledby={headingID}>
   <Card level="inset" padding="sm">
     <header class="actions-heading">
@@ -134,7 +164,15 @@
   </Card>
 </section>
 
+{/if}
+
 <style>
+  .compact-actions { display: grid; gap: var(--space-3); padding: var(--pane-pad-y) var(--pane-pad-x); border-top: 1px solid var(--border-muted); }
+  .compact-actions h3 { font-size: var(--font-size-sm); }
+  .compact-actions ul { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+  .compact-actions li { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: var(--space-3); align-items: baseline; }
+  .compact-actions li > div { display: grid; gap: var(--space-1); }
+  .compact-meta, .compact-actions details { font-size: var(--font-size-xs); color: var(--text-muted); }
   .meeting-actions { min-width: 0; }
 
   h3,

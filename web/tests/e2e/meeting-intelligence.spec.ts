@@ -69,43 +69,16 @@ test("production imports expose archived actions, duration evidence, and exact c
   daemon,
 }, info) => {
   await page.goto(meetingURL(daemon));
-  const panel = page.getByRole("region", {
-    name: "Meeting activity",
-    exact: true,
-  });
-  await assertMetrics(panel, 5, 4, 1, "1h 40m 45s", "25m 11s");
-  const bases = panel.getByRole("table", { name: "Duration evidence" });
-  await expect(
-    bases.getByRole("row", { name: "Provider duration 2 30m 45s" }),
-  ).toBeVisible();
-  await expect(
-    bases.getByRole("row", { name: "Scheduled 1 1h" }),
-  ).toBeVisible();
-  await expect(
-    bases.getByRole("row", { name: "Transcript span 1 10m" }),
-  ).toBeVisible();
-  await expect(
-    panel
-      .getByRole("table", { name: "Monthly meeting activity" })
-      .getByRole("row", { name: "2026-01 3 3 0 1h 30m 45s 30m 15s" }),
-  ).toBeVisible();
-  await expect(
-    panel.getByText("Send the Circleback recap", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    panel.getByText("Publish the Notion recap", { exact: true }),
-  ).toBeVisible();
-  await expect(panel.getByText('completed (source: true)', { exact: true })).toBeVisible();
-  await expect(
-    panel.getByText(
-      "Coverage: 3 available · 0 partial · 2 unsupported · 0 unavailable",
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await page.screenshot({
-    path: info.outputPath("meeting-overview.png"),
-    fullPage: true,
-  });
+  const summary = page.getByRole('region', { name: 'Meeting summary', exact: true });
+  await expect(summary).toContainText('5 meetings');
+  await expect(summary).toContainText('1h 41m known');
+  await summary.getByRole('button', { name: /Action items/ }).click();
+  const panel = page.getByRole('dialog', { name: 'Action items', exact: true });
+  await expect(panel.getByText('Send the Circleback recap', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Publish the Notion recap', { exact: true })).toBeVisible();
+  await panel.getByText('Evidence coverage', { exact: true }).click();
+  await expect(panel.getByText('Coverage: 3 available · 0 partial · 2 unsupported · 0 unavailable', { exact: true })).toBeVisible();
+  await panel.getByRole('button', { name: 'Close' }).click();
 
   // The production selection UI carries actual emitted row keys and authority.
   const row = page
@@ -172,20 +145,18 @@ test("production imports expose archived actions, duration evidence, and exact c
     .getByRole("button", { name: "Clear selection", exact: true })
     .click();
 
-  await panel.getByRole("combobox", { name: "Source status" }).click();
+  await summary.getByRole('button', { name: /Action items/ }).click();
+  await panel.getByRole('combobox', { name: /^Status/ }).click();
   await page.getByRole("option", { name: "Pending", exact: true }).click();
   await panel
-    .getByRole("textbox", { name: "Assignee email", exact: true })
+    .getByRole("textbox", { name: "Assignee", exact: true })
     .fill("alex@example.com");
-  await panel.getByRole("button", { name: "Apply action filters" }).click();
-  await expect(
-    panel.getByText("1 matching", { exact: true }),
-  ).toBeVisible();
+  await expect(panel.getByText('Send the Circleback recap', { exact: true })).toBeVisible();
   await expect(
     panel.getByText("Publish the Notion recap", { exact: true }),
   ).toHaveCount(0);
   const source = panel.getByRole("link", {
-    name: "Open archived meeting",
+    name: "Circleback provider half hour",
     exact: true,
   });
   await source.click();
@@ -214,22 +185,16 @@ test("production imports expose archived actions, duration evidence, and exact c
   await expect(reader).toHaveCount(0);
   await expect(source).toBeFocused();
   await expect(
-    panel.getByRole("textbox", { name: "Assignee email" }),
+    panel.getByRole("textbox", { name: "Assignee" }),
   ).toHaveValue("alex@example.com");
   await page.goForward();
   await expect(reader).toBeVisible();
-  // An action link inside the single-meeting reader opens its archived source
-  // without losing the originating Everything state.
-  const historyLength = await page.evaluate(() => window.history.length);
-  await reader
-    .getByRole("link", { name: "Open archived meeting", exact: true })
-    .click();
-  await expect
-    .poll(() => page.evaluate(() => window.history.length))
-    .toBe(historyLength + 1);
-  await expect(reader).toBeVisible();
-  await page.goBack();
-  await expect(reader).toBeVisible();
+  await reader.getByRole('button', { name: `More actions for message ${daemon.meetings.circleback.message_id}` }).click();
+  await reader.getByRole('menuitem', { name: 'Export meeting…' }).click();
+  const packet = await downloadContext(page, info, 'reader-context');
+  expect(packet.meetings).toHaveLength(1);
+  expect(packet.meetings[0].meeting.message_id).toBe(daemon.meetings.circleback.message_id);
+  await page.getByRole('dialog', { name: 'Export meeting', exact: true }).getByRole('button', { name: 'Close' }).click();
   await page.reload();
   await expect(
     reader.getByText("Circleback provider half hour", { exact: true }).first(),
@@ -351,11 +316,8 @@ test("rapid search scope changes leave only the final meeting evidence", async (
   daemon,
 }, info) => {
   await page.goto(meetingURL(daemon));
-  const panel = page.getByRole("region", {
-    name: "Meeting activity",
-    exact: true,
-  });
-  await assertMetrics(panel, 5, 4, 1, "1h 40m 45s", "25m 11s");
+  const summary = page.getByRole('region', { name: 'Meeting summary', exact: true });
+  await expect(summary).toContainText('5 meetings');
   const search = page.getByRole("searchbox", {
     name: "Search messages",
     exact: true,
@@ -370,16 +332,10 @@ test("rapid search scope changes leave only the final meeting evidence", async (
   await firstRequest;
   await search.fill("Generic");
   await search.press("Enter");
-  await assertMetrics(panel, 1, 0, 1, "0s", "Unavailable");
-  await expect(
-    panel.getByText("0 matching", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    panel.getByText("Send the Circleback recap", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    panel.getByText("No recorded action items", { exact: true }),
-  ).toBeVisible();
+  await expect(summary).toContainText('1 meetings');
+  await expect(summary).toContainText('1 unknown duration');
+  await summary.getByRole('button', { name: /Action items/ }).click();
+  await expect(page.getByRole('dialog', { name: 'Action items' }).getByText('No recorded action items', { exact: true })).toBeVisible();
   await page.screenshot({
     path: info.outputPath("unknown-duration-final-scope.png"),
     fullPage: true,
@@ -426,7 +382,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 700, height: 560 
     await page.setViewportSize(viewport);
     await page.goto(meetingURL(daemon, { selectedRow: `archive-meeting:${imported.message_id}` }));
     const reader = page.getByRole('dialog', { name: 'Archived meeting', exact: true });
-    const actions = reader.getByRole('region', { name: 'Archived action items', exact: true });
+    const actions = reader.getByRole('region', { name: 'Action items', exact: true });
     await expect(actions.getByText('Archived action 1', { exact: true })).toBeVisible();
     const later = actions.getByText('Archived action 200', { exact: true });
     await later.scrollIntoViewIfNeeded();
@@ -453,12 +409,12 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 700, height: 560 
     })).toBe(true);
     await page.screenshot({ path: info.outputPath(`reader-scroll-${viewport.width}.png`), fullPage: true });
     const continuation = page.waitForResponse(response => response.url().endsWith('/api/v1/meetings/actions') && !!response.request().postDataJSON()?.cursor);
-    await actions.getByRole('button', { name: 'Load more action items', exact: true }).click();
+    await actions.getByRole('button', { name: 'Show more', exact: true }).click();
     expect((await continuation).ok()).toBe(true);
     const final = actions.getByText('Archived action 201', { exact: true });
     await final.scrollIntoViewIfNeeded();
     await expect(final).toBeInViewport();
-    await expect(actions.getByText('Showing 201 of 201 action items', { exact: true })).toBeVisible();
+    await expect(actions.getByRole('button', { name: 'Show more', exact: true })).toHaveCount(0);
     await page.screenshot({ path: info.outputPath(`reader-final-action-${viewport.width}.png`), fullPage: true });
   });
 }
@@ -480,7 +436,7 @@ test('closing the reader removes its scope and cancels a pending continuation', 
   await network.send('Network.emulateNetworkConditions', { offline: false, latency: 1500, downloadThroughput: -1, uploadThroughput: -1 });
   try {
     const pending = page.waitForRequest(request => request.url().endsWith('/api/v1/meetings/actions') && !!request.postDataJSON()?.cursor);
-    await reader.getByRole('button', { name: 'Load more action items', exact: true }).click();
+    await reader.getByRole('button', { name: 'Show more', exact: true }).click();
     const request = await pending;
     const cancelled = page.waitForEvent('requestfailed', { predicate: candidate => candidate === request });
     await reader.getByRole('button', { name: 'Close archived meeting', exact: true }).click();
@@ -493,7 +449,9 @@ test('closing the reader removes its scope and cancels a pending continuation', 
     const search = page.getByRole('searchbox', { name: 'Search messages', exact: true });
     await search.fill('Generic');
     await search.press('Enter');
-    const finalPanel = page.getByRole('region', { name: 'Meeting activity', exact: true });
+    const finalSummary = page.getByRole('region', { name: 'Meeting summary', exact: true });
+    await finalSummary.getByRole('button', { name: /Action items/ }).click();
+    const finalPanel = page.getByRole('dialog', { name: 'Action items', exact: true });
     await expect(finalPanel.getByText('No recorded action items', { exact: true })).toBeVisible();
     await expect(finalPanel.getByText('Archived action 201', { exact: true })).toHaveCount(0);
   } finally {

@@ -21,9 +21,68 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/taskclient"
+	"go.kenn.io/msgvault/internal/tasklinks"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+type wiringTaskOperations struct {
+	api.TaskLinkOperations
+	identities []tasklinks.MessageIdentity
+	created    taskclient.TaskCreate
+}
+
+func (o *wiringTaskOperations) Lookup(_ context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult {
+	o.identities = append(o.identities, identity)
+	return tasklinks.LookupResult{State: tasklinks.StateReady, Complete: true, Tasks: []tasklinks.TaskSummary{}}
+}
+
+func (o *wiringTaskOperations) Create(_ context.Context, _ string, task taskclient.TaskCreate, identity tasklinks.MessageIdentity, _ time.Time) (taskclient.Task, error) {
+	o.identities = append(o.identities, identity)
+	o.created = task
+	return taskclient.Task{ID: "task-1", Title: task.Title}, nil
+}
+
+func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
+	f := storetest.New(t)
+	id := f.CreateMessage("task-wiring-email")
+	ops := &wiringTaskOperations{}
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{}, Store: &storeAPIAdapter{store: f.Store},
+		Logger: slog.New(slog.DiscardHandler), TaskLinkOperations: ops,
+	})
+	path := fmt.Sprintf("/api/v1/messages/%d/tasks", id)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			r := httptest.NewRequest(method, path, strings.NewReader(`{"title":"Follow up","added_at":"2026-07-19T01:02:03Z"}`))
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("X-Request-Id", "task-wiring-request")
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, r)
+			if method == http.MethodGet {
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			} else {
+				require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+				assert.Contains(t, w.Body.String(), `"title":"Follow up"`)
+			}
+		})
+	}
+	require.Len(t, ops.identities, 2)
+	uid, err := f.Store.ArchiveUID()
+	require.NoError(t, err)
+	revision, err := f.Store.ArchiveRevision()
+	require.NoError(t, err)
+	for _, identity := range ops.identities {
+		assert.Equal(t, uid, identity.ArchiveUID)
+		assert.Equal(t, revision, identity.ArchiveRevision)
+		assert.Equal(t, id, identity.MessageID)
+		assert.Equal(t, "gmail", identity.SourceType)
+		assert.Equal(t, "test@example.com", identity.SourceIdentifier)
+		assert.Equal(t, "task-wiring-email", identity.SourceMessageID)
+	}
+	assert.Equal(t, "Follow up", ops.created.Title)
+}
 
 func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
 	t.Helper()
