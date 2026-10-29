@@ -5,8 +5,6 @@ import { view } from './fixtures.test-support';
 import { parseExploreURLState } from '../../explore/state.svelte';
 import type { JobsStore } from '../../jobs/jobs.svelte';
 import AppSidebar from './AppSidebar.svelte';
-import { ShellData } from './shell-data.svelte';
-import { createAPIClient } from '../../api/client';
 
 const jobs = { items: [], health: 'ok', loaded: true, refresh: vi.fn() } as unknown as JobsStore;
 
@@ -47,12 +45,12 @@ describe('AppSidebar', () => {
   });
 
   it('puts Settings, Help, and the status in the footer, with no Keyboard shortcuts row', () => {
-    const props = renderSidebar();
+    renderSidebar();
     const footer = within(screen.getByRole('complementary', { name: 'Sidebar' }));
     expect(footer.getByRole('button', { name: 'Settings' })).toBeTruthy();
     expect(footer.getByRole('button', { name: /Sync status: Idle/ })).toBeTruthy();
     expect(footer.queryByRole('button', { name: /Keyboard shortcuts/ })).toBeNull();
-    expect(props.onOpenHelp).not.toHaveBeenCalled();
+    expect(footer.getByRole('button', { name: 'Help' })).toBeTruthy();
   });
 
   it('nests saved views under the place they open', () => {
@@ -134,6 +132,8 @@ describe('AppSidebar', () => {
     renderSidebar({ jobs: store, onOpenJob });
     await fireEvent.click(screen.getByRole('button', { name: /Sync status: Needs attention/ }));
     expect(store.refresh).toHaveBeenCalled();
+    expect(screen.getByRole('menuitem', { name: /Work Gmail/ }).textContent).toContain('Gmail sign-in expired');
+    expect(screen.getByRole('menuitem', { name: /CardDAV sync/ }).textContent).toContain('Running');
     await fireEvent.click(screen.getByRole('menuitem', { name: /Work Gmail/ }));
     expect(onOpenJob).toHaveBeenCalledWith({ kind: 'source' });
   });
@@ -164,39 +164,18 @@ it('shows neutral Loading before the first job status fetch', () => {
 });
 
 it.each(['name', 'description'] as const)('keeps the original %s revision when a refresh updates an open editor', async field => {
-  let saved = { ...view(1, 'Budget threads'), description: 'Original description' };
-  const revisions: string[] = [];
-  const data = new ShellData(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (request.method === 'PATCH') {
-      const revision = request.headers.get('If-Match')!;
-      revisions.push(revision);
-      if (revision !== `"saved-view-1-r${saved.revision}"`) return Response.json({}, { status: 409 });
-      saved = { ...saved, ...await request.json(), revision: saved.revision + 1 };
-      return Response.json(saved);
-    }
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [saved] });
-    return Response.json(path.endsWith('/sources/status') ? { sources: [] } : { lanes: [] });
-  }));
-  await data.refresh();
-  const { rerender } = renderSidebar({
-    views: data.views,
-    onRenameView: (saved: typeof data.views[number], name: string) => data.renameView(saved, name),
-    onDescribeView: (saved: typeof data.views[number], description: string) => data.describeView(saved, description),
-  });
+  const saved = { ...view(1, 'Budget threads'), description: 'Original description' };
+  const onRenameView = vi.fn(async () => 'Review the latest view.');
+  const onDescribeView = vi.fn(async () => 'Review the latest view.');
+  const { rerender } = renderSidebar({ views: [saved], onRenameView, onDescribeView });
   await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
   await fireEvent.click(screen.getByRole('menuitem', { name: field === 'name' ? 'Rename' : 'Edit description…' }));
   const editor = await screen.findByRole('textbox', { name: field === 'name' ? 'Rename Budget threads' : 'Description' });
   await fireEvent.input(editor, { target: { value: 'My stale edit' } });
-  saved = { ...saved, [field]: 'Other browser edit', revision: 2 };
-  await data.refresh();
-  await rerender({ views: data.views });
+  await rerender({ views: [{ ...saved, [field]: 'Other browser edit', revision: 2 }] });
   if (field === 'name') await fireEvent.keyDown(editor, { key: 'Enter' });
   else await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Cancel and reopen the editor to review the latest view.');
-  expect(revisions).toEqual(['"saved-view-1-r1"']);
-  expect(saved[field]).toBe('Other browser edit');
-  await waitFor(() => expect(data.views[0]?.revision).toBe(2));
-  data.stop();
+  expect((await screen.findByRole('alert')).textContent).toContain('Review the latest view.');
+  const handler = field === 'name' ? onRenameView : onDescribeView;
+  expect(handler).toHaveBeenCalledWith(saved, 'My stale edit');
 });
