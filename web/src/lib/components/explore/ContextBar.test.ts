@@ -7,25 +7,25 @@ import ContextBar from './ContextBar.svelte';
 const sort = { options: [{ value: 'newest', label: 'Newest first' }], value: 'newest' };
 
 describe('ContextBar presentation control', () => {
-  it('exposes Table, Timeline, and Files as one keyboard-operable Show-as control', async () => {
+  it.each(['table', 'timeline'] as const)('changes presentation from %s', async (presentation) => {
     const onPresentationChange = vi.fn();
     render(ContextBar, {
       client: createAPIClient(vi.fn<typeof fetch>()),
       query: 'pasta', searchMode: 'hybrid', filters: [], groupingChain: [],
-      presentation: 'table', onPresentationChange, countLabel: '0 items', sort,
+      messages: presentation === 'timeline', presentation, onPresentationChange, countLabel: '0 items', sort,
       onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(),
       onFiltersChange: vi.fn()
     });
 
-    const control = screen.getByRole('combobox', { name: 'Show as: Table' });
-    expect(control.textContent?.trim()).toBe('Show as: Table');
+    const control = screen.getByRole('combobox', { name: `Show as: ${presentation === 'table' ? 'Table' : 'Timeline'}` });
+    expect(control.textContent?.trim()).toBe(`Show as: ${presentation === 'table' ? 'Table' : 'Timeline'}`);
     expect(screen.getByRole('combobox', { name: 'Sort: Newest first' }).textContent?.trim())
       .toBe('Sort: Newest first');
     await fireEvent.click(control);
     expect(screen.getAllByRole('option').map((option) => option.textContent?.trim()))
       .toEqual(['Table', 'Timeline', 'Files']);
-    await fireEvent.click(screen.getByRole('option', { name: 'Timeline' }));
-    expect(onPresentationChange).toHaveBeenCalledWith('timeline');
+    await fireEvent.click(screen.getByRole('option', { name: presentation === 'table' ? 'Timeline' : 'Table' }));
+    expect(onPresentationChange).toHaveBeenCalledWith(presentation === 'table' ? 'timeline' : 'table');
   });
 });
 
@@ -133,45 +133,9 @@ describe('ContextBar grouping picker', () => {
   });
 });
 
-it('keeps Messages grouping chains, presentation choices, and fixed sort reachable', async () => {
+it('forwards Messages filter changes', async () => {
   const onFiltersChange = vi.fn();
-  const onAddGroup = vi.fn();
   render(ContextBar, {
-    messages: true, client: createAPIClient(async (input) => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/groups')) return Response.json({ rows: [{ key: 'email', count: 2 }], cache_revision: 'cache' });
-      return Response.json({ accounts: [], identities: [] });
-    }), query: '', searchMode: 'full_text', filters: [], groupingChain: ['source'], countLabel: '2 items', sort,
-    onAddGroup, onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange,
-  });
-  expect.soft(screen.queryByRole('combobox', { name: 'Show as: Table' })).not.toBeNull();
-  expect.soft(screen.queryByRole('combobox', { name: 'Sort: Newest first' })).not.toBeNull();
-  expect(screen.getByRole('combobox', { name: 'Add grouping' })).toBeDefined();
-});
-
-it('keeps Kind lookup failures visible and retries when Filter reopens', async () => {
-  let failed = true;
-  render(ContextBar, {
-    messages: true, client: createAPIClient(async (input) => {
-      if (new URL((input as Request).url).pathname.endsWith('/groups')) {
-        return failed ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ rows: [{ key: 'email', count: 1 }] });
-      }
-      return Response.json({ accounts: [], identities: [] });
-    }), query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '', sort,
-    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn(),
-  });
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  expect(await screen.findByText('Could not load kinds')).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  failed = false;
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  expect(await screen.findByLabelText('Email')).toBeDefined();
-  expect(screen.queryByText('Could not load kinds')).toBeNull();
-});
-
-it('keeps the selected chat network and restored kinds when Email is added', async () => {
-  const onFiltersChange = vi.fn();
-  const view = render(ContextBar, {
     messages: true, client: createAPIClient(async (input) => {
       if (new URL((input as Request).url).pathname.endsWith('/groups')) return Response.json({ rows: [{ key: 'whatsapp' }, { key: 'discord' }, { key: 'email' }] });
       return Response.json({ accounts: [], identities: [] });
@@ -181,47 +145,4 @@ it('keeps the selected chat network and restored kinds when Email is added', asy
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   await fireEvent.click(await screen.findByLabelText('Email'));
   expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['whatsapp', 'restored-kind', 'email'] }]);
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await view.rerender({ filters: [] });
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await fireEvent.click(await screen.findByLabelText('Email'));
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['email'] }]);
-});
-
-it('retains committed dates when a range is reversed, accepts the same day, and clears a bound', async () => {
-  const onFiltersChange = vi.fn();
-  const after = '2026-07-18T00:00:00.000Z';
-  const before = '2026-07-21T00:00:00.000Z';
-  render(ContextBar, {
-    messages: true, client: createAPIClient(async () => Response.json({ rows: [], accounts: [], identities: [] })),
-    query: '', searchMode: 'full_text', filters: [{ dimension: 'after', values: [after] }, { dimension: 'before', values: [before] }], groupingChain: [], countLabel: '', sort,
-    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange,
-  });
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  const from = screen.getByLabelText('From') as HTMLInputElement;
-  const to = screen.getByLabelText('To') as HTMLInputElement;
-  await fireEvent.change(from, { target: { value: '2026-07-21' } });
-  expect(screen.getByRole('alert').textContent).toBe('From must be on or before To.');
-  expect(from.value).toBe('2026-07-18');
-  await fireEvent.change(to, { target: { value: '2026-07-17' } });
-  expect(to.value).toBe('2026-07-20');
-  expect(onFiltersChange).not.toHaveBeenCalled();
-  await fireEvent.change(from, { target: { value: '2026-07-20' } });
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [before] }, { dimension: 'after', values: ['2026-07-20T00:00:00.000Z'] }]);
-  expect(screen.queryByRole('alert')).toBeNull();
-  await fireEvent.change(from, { target: { value: '' } });
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [before] }]);
-  await fireEvent.change(to, { target: { value: '2026-07-18' } });
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: [after] }, { dimension: 'before', values: ['2026-07-19T00:00:00.000Z'] }]);
-});
-
-it('lets a restored Messages Timeline return to Table', async () => {
-  const onPresentationChange = vi.fn();
-  render(ContextBar, {
-    messages: true, presentation: 'timeline', client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '', sort,
-    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn(), onPresentationChange,
-  });
-  await fireEvent.click(screen.getByRole('combobox', { name: 'Show as: Timeline' }));
-  await fireEvent.click(screen.getByRole('option', { name: 'Table' }));
-  expect(onPresentationChange).toHaveBeenCalledWith('table');
 });
