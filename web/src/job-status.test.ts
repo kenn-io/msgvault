@@ -103,7 +103,9 @@ it('shows queued enrichment as Queued in the shell job menu', async () => {
   render(App, { session });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Running' }));
   await screen.findByText('Person enrichment');
-  expect(screen.getByRole('menuitem', { name: /Person enrichment/ }).textContent).toContain('Queued');
+  const job = screen.getByRole('menuitem', { name: /Person enrichment/ });
+  expect(job.textContent).toContain('Queued');
+  expect(within(job).queryByText('Running')).toBeNull();
 });
 
 it('refreshes the shell dot after Settings Contacts CardDAV Sync now', async () => {
@@ -135,8 +137,8 @@ it('refreshes the shell dot after Settings Contacts CardDAV Sync now', async () 
   });
   render(App, { session });
   await screen.findByRole('button', { name: 'Sync status: Idle' });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Contacts', exact: true }));
-  const sync = await screen.findByRole('button', { name: 'Sync now', exact: true });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Contacts' }));
+  const sync = await screen.findByRole('button', { name: 'Sync now' });
   await waitFor(() => expect(sync.matches(':disabled')).toBe(false));
   await fireEvent.click(sync);
   await screen.findByText('Contacts unavailable');
