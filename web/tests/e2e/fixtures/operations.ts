@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test';
-import { RELATED_STATUS } from '../../../src/test/operations';
+import { documentStatus, RELATED_STATUS } from '../../../src/test/operations';
 import { readFileSync } from 'node:fs';
 import type {
   OperationLaneStatus,
@@ -100,13 +100,7 @@ export async function installOperations(page: Page): Promise<InstalledOperations
         error: 'document_status_unavailable', message: 'Document status is unavailable.'
       }, 503);
     }
-    return route.fulfill({ json: {
-      status: {
-        profile_exists: true, profile_enabled: true, exact_consent: true,
-        ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
-        terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
-      }
-    } });
+    return route.fulfill({ json: documentStatus });
   });
   await page.route('**/api/v1/documents/vectors/status', (route) => {
     statusRequests.push('/api/v1/documents/vectors/status');
