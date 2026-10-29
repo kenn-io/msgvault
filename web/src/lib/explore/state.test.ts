@@ -134,6 +134,30 @@ describe('Explore URL state', () => {
     }
   });
 
+  it('closes Past runs after restoring dirty Settings from a three-entry Back jump', async () => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    let leave!: () => void;
+    try {
+      state.commitWorkspace('settings');
+      state.openOperationHistory({ operationKind: 'source_sync' });
+      state.commitNavigation({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
+      const settingsIndex = window.history.state.exploreIndex;
+      state.holdLeave = (next) => { leave = next; return true; };
+      window.history.go(-3);
+      await waitFor(() => expect(leave).toBeTypeOf('function'));
+      await waitFor(() => expect(window.history.state.exploreIndex).toBe(settingsIndex));
+      expect(state.current).toMatchObject({ workspace: 'settings', operationHistory: false,
+        operationKind: '', operationRunID: null });
+      expect(parseExploreURLState(window.location.search).operationHistory).toBe(false);
+      state.holdLeave = undefined;
+      leave();
+      await waitFor(() => expect(state.current.workspace).toBe('sources'));
+    } finally {
+      state.destroy();
+    }
+  });
+
   it.each([
     ['back', 'leave'], ['back', 'stay'], ['forward', 'leave'], ['forward', 'stay'],
   ] as const)('holds browser %s from dirty Settings and handles %s', async (direction, outcome) => {
