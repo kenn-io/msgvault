@@ -447,7 +447,7 @@
     <Button label="Discard and leave" tone="info" surface="solid" onclick={discardAndLeave} />
   {:else}
     <span class="unsaved" role="status">
-      {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : ''}`}
+      {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : draftNeedsRestart ? '.' : ''}`}
       {#if draftNeedsRestart}<span>Restart msgvault to apply these changes.</span>{/if}
     </span>
     <Button label="Discard" disabled={saving} onclick={discard} />
