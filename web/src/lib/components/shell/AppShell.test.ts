@@ -761,7 +761,7 @@ describe('AppShell', () => {
       expect(within(bar).queryByText('Counting…')).toBeNull();
     });
 
-    it('shows the Size column after turning it on in the Columns menu', async () => {
+    it('shows the Size column after selecting it with Display typeahead', async () => {
       const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
         rows: [entry(1)], total_count: 1
       })));
@@ -770,6 +770,13 @@ describe('AppShell', () => {
       expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
 
       await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+      const first = within(screen.getByRole('menu', { name: 'Display' })).getByRole('menuitemradio', { name: 'System' });
+      first.focus();
+      await fireEvent.keyDown(first, { key: 's' });
+      const subject = screen.getByRole('menuitem', { name: /^Subject/ });
+      await waitFor(() => expect(document.activeElement).toBe(subject));
+      await fireEvent.keyDown(subject, { key: 'i' });
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Size' })));
       await fireEvent.click(screen.getByRole('menuitem', { name: 'Size' }));
 
       expect(await screen.findByRole('columnheader', { name: 'Size' })).toBeDefined();
@@ -2927,7 +2934,7 @@ it.each([
   await fireEvent.click(await screen.findByRole('menuitem', { name: new RegExp(name) }));
   expect(state.current.workspace).toBe(workspace);
   if (category) expect(state.current.settingsCategory).toBe(category);
-  if (kind === 'document_extraction') expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
+  if (kind === 'document_extraction') expect(state.current.operationStatus).toBe('getDocumentIndexStatus');
   rendered.unmount(); state.destroy();
 });
 
