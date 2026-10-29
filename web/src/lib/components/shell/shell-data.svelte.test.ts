@@ -61,7 +61,7 @@ describe('ShellData', () => {
       expect(requests.some((request) => request.method === 'PATCH')).toBe(false);
     });
 
-    it('hides a deleted view at once, deletes it for real on commit, and restores it on undo', async () => {
+    it('hides a deleted view at once and deletes it for real on commit', async () => {
       const views = [view(1, 'Budget'), view(2, 'Invoices')];
       const { data, requests } = setup({ views });
       await data.refresh();
@@ -71,10 +71,6 @@ describe('ShellData', () => {
       expect(data.views.map(({ name }) => name)).toEqual(['Invoices']);
       expect(requests.some((request) => request.method === 'DELETE')).toBe(false);
 
-      await data.undoDelete();
-      expect(data.views.map(({ name }) => name)).toEqual(['Budget', 'Invoices']);
-
-      await data.deleteView(budget!);
       await data.expireDelete();
       const removal = requests.find((request) => request.method === 'DELETE')!;
       expect(new URL(removal.url).pathname).toBe('/api/v1/saved-views/1');

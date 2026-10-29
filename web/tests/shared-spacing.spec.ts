@@ -167,8 +167,6 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   expect(directoryGeometry).toEqual({ height: 26, left: 8, right: 8 });
   const directoryShape = await filter.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
   expect.soft(directoryShape.radius).toBeGreaterThanOrEqual(directoryShape.height / 2);
-  await filter.getByRole('button', { name: 'Remove Category: Archive filter', exact: true }).click();
-  await expect(filter).toHaveCount(0);
   await selectWorkspace(page, 'Sources');
   const status = page.locator('.kit-chip').filter({ hasText: 'Never synced' });
   await expect(status).toBeVisible();

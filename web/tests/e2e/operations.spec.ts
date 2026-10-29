@@ -53,35 +53,23 @@ test('Past runs keeps focus through detail and history, then restores workspace 
   await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
 });
 
-test('Past runs exposes the dirty Settings leave confirmation before opening Sources', async ({ page }) => {
+test('Past runs reveals the dirty Settings leave prompt for clicks and history jumps', async ({ page }) => {
   await installOperations(page);
-  await page.goto(`/?workspace=settings&explore=${encodeURIComponent(JSON.stringify({ settingsCategory: 'search' }))}`);
-  const settings = page.getByRole('main', { name: 'Settings' });
-  const semanticSearch = settings.getByRole('switch', { name: 'Semantic search', exact: true });
-  await semanticSearch.click();
-  await expect(semanticSearch).toBeChecked();
-  await page.getByRole('button', { name: /Sync status:/ }).click();
-  await page.getByRole('menuitem', { name: 'Past runs' }).click();
-  await page.getByRole('button', { name: 'Open Source sync run' }).click();
-  await page.getByRole('button', { name: 'Open Sources status' }).click();
-  await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeHidden();
-  await expect(settings.getByText('Leave Settings and discard 1 unsaved change?', { exact: true })).toBeVisible();
-});
-
-test('Past runs reveals the Settings leave prompt after a three-entry Back jump', async ({ page }) => {
-  await installOperations(page);
-  await page.goto(`/?workspace=sources&explore=${encodeURIComponent(JSON.stringify({ settingsCategory: 'search' }))}`);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const settings = page.getByRole('main', { name: 'Settings' });
-  await settings.getByRole('switch', { name: 'Semantic search', exact: true }).click();
-  await page.getByRole('button', { name: /Sync status:/ }).click();
-  await page.getByRole('menuitem', { name: 'Past runs' }).click();
-  await page.getByRole('button', { name: 'Open Source sync run' }).click();
-  await page.evaluate(() => window.history.go(-3));
-  await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeHidden();
-  await expect(settings.getByText('Leave Settings and discard 1 unsaved change?', { exact: true })).toBeVisible();
-  await settings.getByRole('button', { name: 'Discard and leave', exact: true }).click();
-  await expect(page.getByRole('main', { name: 'Sources' })).toBeVisible();
+  for (const navigation of ['click', 'history']) {
+    await page.goto(`/?workspace=sources&explore=${encodeURIComponent(JSON.stringify({ settingsCategory: 'search' }))}`);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const settings = page.getByRole('main', { name: 'Settings' });
+    await settings.getByRole('switch', { name: 'Semantic search', exact: true }).click();
+    await page.getByRole('button', { name: /Sync status:/ }).click();
+    await page.getByRole('menuitem', { name: 'Past runs' }).click();
+    await page.getByRole('button', { name: 'Open Source sync run' }).click();
+    if (navigation === 'click') await page.getByRole('button', { name: 'Open Sources status' }).click();
+    else await page.evaluate(() => window.history.go(-3));
+    await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeHidden();
+    await expect(settings.getByText('Leave Settings and discard 1 unsaved change?', { exact: true })).toBeVisible();
+    await settings.getByRole('button', { name: 'Discard and leave', exact: true }).click();
+    await expect(page.getByRole('main', { name: 'Sources' })).toBeVisible();
+  }
 });
 
 test('unconfigured visual status opens Search & AI settings', async ({ page }) => {

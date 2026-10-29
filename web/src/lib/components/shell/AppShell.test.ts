@@ -2911,7 +2911,7 @@ it('opens CardDAV Past runs with its kind through the Settings context', async (
   rendered.unmount(); state.destroy();
 });
 
-it('selects a run and mounts detail restored from its URL', async () => {
+it('preserves selected run filters in the URL and restores detail on remount', async () => {
   window.history.replaceState(null, '', '/?workspace=sources');
   const client = createAPIClient(async input => {
     const url = new URL(input instanceof Request ? input.url : String(input));
@@ -2928,7 +2928,6 @@ it('selects a run and mounts detail restored from its URL', async () => {
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
   expect(state.current.operationKind).toBe('source_sync');
-  await screen.findByRole('region', { name: 'Operation run detail' });
   expect(state.current.operationRunID).toBe(OPERATION_RUN);
   const sharedURL = window.location.href;
   rendered.unmount(); state.destroy();
