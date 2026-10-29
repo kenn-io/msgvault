@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, DateRangePicker, SelectDropdown, resolveRange, type RangeSelection } from '@kenn-io/kit-ui';
-  import { onMount, tick, untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { OperationsController } from '../../operations/controller.svelte';
   import type { OperationAction, OperationsURLState } from '../../operations/models';
@@ -29,12 +29,13 @@
   const stateOptions = [{ value: '', label: 'All states' }, ...['queued', 'running', 'succeeded', 'partial', 'paused', 'failed', 'cancelled'].map(value => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }))];
   const dates = $derived<RangeSelection>({ mode: 'custom', from: local.operationStartedFrom.slice(0, 10), to: local.operationStartedBefore ? dayOffset(local.operationStartedBefore.slice(0, 10), -1).slice(0, 10) : '' });
   const configured = $derived(current.statusLanes.flatMap(lane => lane.kinds).find(lane => lane.related_status === local.operationStatus)?.configured);
-  onMount(() => {
-    if (controller.snapshot.historyReadable || controller.snapshot.runsError) void controller.refresh();
-  });
+  let opening = true;
   $effect(() => {
     const wanted = { ...local };
-    untrack(() => { void controller.applyURLState(wanted); });
+    untrack(() => {
+      void controller.applyURLState(wanted, opening);
+      opening = false;
+    });
   });
   function patchFilter(patch: Partial<OperationsURLState>): void {
     local = { ...local, ...patch, operationRunID: null, operationStatus: '' };

@@ -294,7 +294,8 @@ describe('SettingsWorkspace', () => {
       if (request.method === 'GET' && request.url.endsWith('/settings')) return Response.json(doc, { headers: { ETag: conflicts ? '"s1"' : '"s-reloaded"' } });
       if (request.method === 'PATCH' && conflicts-- > 0) return Response.json({ error: 'conflict' }, { status: 412 });
     });
-    render(SettingsWorkspace, { client, category: 'server' });
+    const onStatusChange = vi.fn();
+    render(SettingsWorkspace, { client, category: 'server', onStatusChange });
     await fireEvent.click(await screen.findByRole('switch', { name: 'Trace every SQL statement' }));
     await fireEvent.click(screen.getByRole('switch', { name: 'Trace every SQL statement' }));
     expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
@@ -306,10 +307,12 @@ describe('SettingsWorkspace', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('The settings changed on disk');
     expect(seen.filter(request => request.method === 'GET' && request.path === '/api/v1/settings')).toHaveLength(2);
     expect(screen.getByText('1 unsaved change')).toBeDefined();
+    expect(onStatusChange).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(seen.filter(entry => entry.method === 'PATCH')).toHaveLength(2));
     const patch = seen.filter(entry => entry.method === 'PATCH').at(-1)!;
     expect(patch.ifMatch).toBe('"s-reloaded"');
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledTimes(2));
   });
 
   it('never treats an emptied number as a value and blocks saving it', async () => {
