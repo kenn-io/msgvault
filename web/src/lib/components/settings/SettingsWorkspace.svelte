@@ -103,7 +103,7 @@
   let embeddingStatus = $state<EmbeddingStatus>();
   let visualStatus = $state<VisualStatus>();
   let lanes = $state<OperationLaneStatus[]>();
-  let coverage = $state<SearchCoverageValue>();
+  let coverage = $state<Pick<SearchCoverageValue, 'status' | 'actions'>>();
   let statusSettled = $state(false);
   let building = $state<Record<string, boolean>>({});
   let consumedCategoryRequestKey: number | undefined;
@@ -133,15 +133,15 @@
     onCategoryChange(categoryID);
   }
 
-  // Overview owns feature status and index actions.
+  // Overview owns feature status and index actions. Status reloads when a build starts or ends.
   let statusRevision = $state(0);
   $effect(() => {
     if (activeCategory !== 'overview') return;
-    void statusRevision;
+    void [statusRevision, Object.keys(building)];
     const controller = new AbortController();
     void createExploreAPI(client).coverage([], controller.signal)
-      .then(value => { if (!controller.signal.aborted) coverage = value; })
-      .catch(() => undefined);
+      .catch(() => coverage ?? { status: 'unavailable' as const, actions: [] })
+      .then(value => { if (!controller.signal.aborted) coverage = value; });
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (!controller.signal.aborted) embeddingStatus = response.ok ? data : undefined;
@@ -174,7 +174,6 @@
       buildError = cause instanceof Error ? cause.message : "Can't build the index.";
     } finally {
       delete building[id];
-      statusRevision += 1;
     }
   }
 
