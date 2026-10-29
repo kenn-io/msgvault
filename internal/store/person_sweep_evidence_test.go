@@ -749,6 +749,6 @@ func TestPersonSweepWithdrawsStoredDocumentEvidence(t *testing.T) {
 		SourceID: f.sourceID, MessageID: id, EvidenceEffect: peoplesweep.EvidenceEffectSourceReimported,
 	}})
 	require.NoError(err)
-	assert.NotContains(changes, documentUnsupported,
+	assert.Empty(changes,
 		"a later source reimport must not reactivate evidence from the retired document lane")
 }
