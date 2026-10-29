@@ -19,7 +19,7 @@ async function metricsResponse(request: Request): Promise<Response> {
     : meetingMetrics());
 }
 
-function handler(detailResponse: () => Response | Promise<Response> = () => Response.json(detail)) {
+function handler(detailResponse: () => Response | Promise<Response> = () => Response.json(detail), ordinary = false) {
   const requests: Request[] = [];
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
@@ -35,8 +35,8 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path.endsWith('/brief-enrollment')) return Response.json({ person_id: 7, enrolled: false });
     if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false });
     if (path.startsWith('/api/v1/people/') || path.startsWith('/api/v1/carddav/')) return Response.json({ error: 'not_found', message: 'Synthetic optional section unavailable.' }, { status: 404 });
-    if (path.endsWith('/conversations/8')) return Response.json({ id: 8, messages: [detail], anchor_id: 42, total: 1, has_before: false, has_after: false });
-    return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+    if (path.endsWith('/conversations/8')) return Response.json({ id: 8, messages: [{ ...detail, from_participant_id: 7, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }] }], anchor_id: 42, total: 1, has_before: false, has_after: false });
+    return Response.json({ rows: ordinary ? [{ key: 'message:42', kind: 'message', message_type: 'meeting_transcript', title: detail.subject, preview: 'Archived', occurred_at: detail.sent_at, conversation_id: 8, anchor_message_id: 42, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', message_count: 1, attachment_count: 0, attachment_size: 0, has_attachments: false, deleted_from_source: false, match: {} }] : [], total_count: ordinary ? 1 : 0, cache_revision: 'cache-1', search_provenance: {} });
   });
   return { client, requests };
 }
@@ -89,10 +89,10 @@ describe('meeting archive reader navigation', () => {
     const { client, requests } = handler(() => new Promise<Response>((resolve) => { resolveDetail = resolve; }));
     const state = stateWithMeetingFilter();
     const view = render(AppShell, { client, state });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Assignee email' }), { target: { value: 'person@example.test' } });
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Source status:/ }), 'Pending');
-    await fireEvent.click(screen.getByRole('button', { name: 'Apply action filters' }));
-    const link = await screen.findByRole('link', { name: 'Open archived meeting' });
+    await fireEvent.click(await screen.findByRole('button', { name: /Action items ·/ }));
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Assignee' }), { target: { value: 'person@example.test' } });
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Status:/ }), 'Pending');
+    const link = await screen.findByRole('link', { name: 'Action provenance title' });
     const filters = state.current.filters;
     link.focus();
     await fireEvent.click(link);
@@ -109,9 +109,9 @@ describe('meeting archive reader navigation', () => {
     const back = historyChange(); window.history.back(); await back;
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archived meeting' })).toBeNull());
     expect(state.current.filters).toEqual(filters);
-    expect(screen.getByText('4 meetings')).toBeDefined();
-    expect((screen.getByRole('textbox', { name: 'Assignee email' }) as HTMLInputElement).value).toBe('person@example.test');
-    expect(screen.getByRole('combobox', { name: 'Source status: Pending' })).toBeDefined();
+    expect(screen.getByRole('region', { name: 'Meeting summary' }).textContent).toContain('4 meetings');
+    expect((screen.getByRole('textbox', { name: 'Assignee' }) as HTMLInputElement).value).toBe('person@example.test');
+    expect(screen.getByRole('combobox', { name: 'Status: Pending' })).toBeDefined();
     const forward = historyChange(); window.history.forward(); await forward;
     await screen.findByRole('dialog', { name: 'Archived meeting' });
     const close = historyChange();
@@ -119,8 +119,12 @@ describe('meeting archive reader navigation', () => {
     await close;
     await waitFor(() => expect(document.activeElement).toBe(link));
     const metricRequests = await Promise.all(requests.filter((request) => request.url.endsWith('/meetings/metrics')).map((request) => request.clone().json()));
-    expect(metricRequests.filter((body) => body.scope?.message_ids === undefined)).toHaveLength(2);
+    const scopeMetrics = metricRequests.filter((body) => body.explore);
+    expect(scopeMetrics.length).toBeGreaterThan(0);
+    for (const body of scopeMetrics) expect(body.explore.predicate.filters).toEqual(filters);
     expect(metricRequests.filter((body) => body.scope?.message_ids?.[0] === 42)).toEqual([{ scope: { message_ids: [42] } }]);
+    const actionRequests = await Promise.all(requests.filter((request) => request.url.endsWith('/meetings/actions')).map((request) => request.clone().json()));
+    expect(actionRequests).toContainEqual(expect.objectContaining({ scope: { message_ids: [42] } }));
     view.unmount(); state.destroy();
   });
 
@@ -141,7 +145,8 @@ describe('meeting archive reader navigation', () => {
     let resolveDetail!: (response: Response) => void;
     const { client, requests } = handler(() => new Promise<Response>((resolve) => { resolveDetail = resolve; }));
     const state = stateWithMeetingFilter(); const view = render(AppShell, { client, state });
-    await fireEvent.click(await screen.findByRole('link', { name: 'Open archived meeting' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Action items ·/ }));
+    await fireEvent.click(await screen.findByRole('link', { name: 'Action provenance title' }));
     await waitFor(() => expect(resolveDetail).toBeDefined());
     state.commitNavigation({ filters: [{ dimension: 'source', values: ['4'] }] });
     await waitFor(() => expect(requests.find((request) => request.url.endsWith('/messages/42'))!.signal.aborted).toBe(true));
@@ -155,7 +160,8 @@ describe('meeting archive reader navigation', () => {
   it('shows missing archive detail without navigating to an invented row', async () => {
     const { client } = handler(() => Response.json({ error: 'not_found', message: 'Archived meeting missing.' }, { status: 404 }));
     const state = stateWithMeetingFilter(); const view = render(AppShell, { client, state });
-    await fireEvent.click(await screen.findByRole('link', { name: 'Open archived meeting' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Action items ·/ }));
+    await fireEvent.click(await screen.findByRole('link', { name: 'Action provenance title' }));
     expect(await screen.findByText('Archived meeting missing.')).toBeDefined();
     expect(state.current.selectedRow).toBeNull();
     view.unmount(); state.destroy();
@@ -188,7 +194,7 @@ describe('meeting archive reader navigation', () => {
     try {
       await fireEvent.click(await screen.findByRole('link', { name: 'Open archived meeting' }));
       const firstReader = await screen.findByRole('dialog', { name: 'Archived meeting' });
-      await fireEvent.click(await within(firstReader).findByRole('link', { name: 'Open archived meeting' }));
+      await fireEvent.click(await within(firstReader).findByRole('link', { name: 'Action provenance title' }));
       await screen.findByRole('complementary', { name: 'Reading pane: Archived follow-up' });
       expect(state.current.selectedRow).toBe('archive-meeting:43');
       const back = historyChange(); window.history.back(); await back;
@@ -219,6 +225,34 @@ describe('meeting archive reader navigation', () => {
      const close = historyChange(); await fireEvent.click(within(reader).getByRole('button', { name: 'Close archived meeting' })); await close;
      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archived meeting' })).toBeNull());
      expect(state.current.directoryPersonID).toBe(7);
-     expect(screen.getByText('4 meetings')).toBeDefined();
+     expect(screen.getByText(/^4 meetings(?: ·|$)/)).toBeDefined();
    } finally { view.unmount(); state.destroy(); vi.unstubAllGlobals(); }
  });
+
+it.each([false, true])('Escape closes Export meeting and keeps its reader open (archived=%s)', async (archived) => {
+  const { client } = handler(undefined, !archived);
+  const state = stateWithMeetingFilter(archived ? 'archive-meeting:42' : 'message:42');
+  const view = render(AppShell, { client, state });
+  try {
+    const reader = await screen.findByRole('complementary', { name: 'Reading pane: Archived review' });
+    await fireEvent.click(await within(reader).findByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
+    const exporting = await screen.findByRole('dialog', { name: 'Export meeting' });
+    await fireEvent.keyDown(within(exporting).getByRole('button', { name: 'Close' }), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Export meeting' })).toBeNull());
+    expect(screen.getByRole('complementary', { name: 'Reading pane: Archived review' })).toBe(reader);
+    expect(state.current.selectedRow).toBe(archived ? 'archive-meeting:42' : 'message:42');
+  } finally { view.unmount(); state.destroy(); }
+});
+
+it.each([['Example', 7], ['Recipient Example', 9]])('opens the exact %s person from the archived meeting reader', async (label, id) => {
+  const { client } = handler(); const state = stateWithMeetingFilter('archive-meeting:42');
+  const view = render(AppShell, { client, state });
+  try {
+    const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
+    await fireEvent.click(await within(reader).findByRole('button', { name: String(label) }));
+    await waitFor(() => expect(state.current.workspace).toBe('relationships'));
+    expect(state.current.relationshipTarget).toBe(`cluster:${id}`);
+    expect(state.current.selectedRow).toBeNull();
+  } finally { view.unmount(); state.destroy(); }
+});

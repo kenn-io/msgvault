@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import { chooseSelectOption } from '../../../test/kit-ui';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -562,7 +563,10 @@ describe('RelationshipsWorkspace', () => {
       await props.controller.openTarget('cluster:1', props.predicate);
       await fireEvent.click((await screen.findByText('Budget request')).closest('[role="row"]')!);
       const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
-      await fireEvent.click(await within(reading).findByRole('button', { name: 'Create Kata issue' }));
+      await fireEvent.click(await within(reading).findByRole('button', { name: 'More actions for message 9' }));
+      await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+      await chooseSelectOption(await screen.findByRole('combobox', { name: /^Provider:/ }), 'Kata');
+      await fireEvent.click(screen.getByRole('button', { name: 'Add quote to Kata…' }));
       const dialog = await screen.findByRole('dialog', { name: 'Kata issue' });
       await within(dialog).findByText('Please send the budget.');
       await fireEvent.input(within(dialog).getByLabelText('Issue title'), { target: { value: 'Send the revised budget' } });
@@ -1032,4 +1036,24 @@ describe('computeHubLayout', () => {
     expect(computeHubLayout(719)).toBe('narrow');
     expect(computeHubLayout(400)).toBe('narrow');
   });
+});
+
+it('opens exact message senders and recipients from a relationship timeline reader', async () => {
+  const onOpenPerson = vi.fn();
+  const { fetchFn } = fetchHandler({
+    '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
+    '/api/v1/relationships/1/timeline': async () => Response.json({ canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [{ key: 'message:42', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Archived email', has_attachments: false, message_count: 1, conversation_id: 8, anchor_message_id: 42 }], total_count: 1 }),
+    '/api/v1/conversations/8': async () => Response.json({ id: 8, messages: [{ id: 42, conversation_id: 8, from: 'Alex Example', from_participant_id: 4, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }], subject: 'Archived email', sent_at: when, body: 'Email body', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Preview' }], anchor_id: 42, total: 1, has_before: false, has_after: false })
+  });
+  const props = { ...baseProps(fetchFn), target: 'cluster:1', onOpenPerson };
+  const view = render(RelationshipsWorkspace, { props });
+  try {
+    await props.controller.openTarget('cluster:1', props.predicate);
+    await fireEvent.click((await screen.findByText('Archived email')).closest('[role="row"]')!);
+    const reader = await screen.findByRole('complementary', { name: 'Reading pane: Archived email' });
+    await fireEvent.click(await within(reader).findByRole('button', { name: 'Alex Example' }));
+    expect(onOpenPerson).toHaveBeenLastCalledWith(4);
+    await fireEvent.click(within(reader).getByRole('button', { name: 'Recipient Example' }));
+    expect(onOpenPerson).toHaveBeenLastCalledWith(9);
+  } finally { view.unmount(); props.controller.destroy(); }
 });

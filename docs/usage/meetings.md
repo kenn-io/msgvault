@@ -63,7 +63,7 @@ The default content budget is 131072 UTF-8 bytes. CLI and API clients can set
 check those fields before treating an export as complete. A missing summary
 stays missing. msgvault does not generate a replacement from the transcript.
 
-A meeting-filtered Messages view shows a count and known duration. Choose **Action items** to open recorded follow-ups, filter by status or exact assignee email, or show more results. Each expanded meeting also lists its own recorded actions below the body. **Open archived meeting** opens the source evidence, and Back returns to the same workspace and scope. Participant and domain reading panes, Directory profiles, and Relationships retain the full meeting activity panel.
+A meeting-filtered Messages view shows a count and known duration. Choose **Action items** to open recorded follow-ups, filter by status or exact assignee email, or show more results. Expand **Meeting metrics** in that dialog for duration evidence, average duration, and monthly activity. Each expanded meeting also lists its own recorded actions below the body. **Open archived meeting** opens the source evidence, and Back returns to the same workspace and scope. Participant and domain reading panes, Directory profiles, and Relationships retain the full meeting activity panel.
 
 Action status is the last archived source status, not a local task list.
 msgvault does not infer assignees, create follow-ups, or mark source tasks done.
