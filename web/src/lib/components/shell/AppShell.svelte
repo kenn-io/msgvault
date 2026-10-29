@@ -1385,6 +1385,7 @@
               scrollAnchor: null,
             })}
           onOpenEverything={() => commitWorkspace('everything')}
+          onOpenPerson={openRelationship}
           onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}
           onAnnounce={announceOperation}
@@ -1644,7 +1645,7 @@
 {#if archiveMeetingID !== undefined && !runHistory}
   <ArchivedMeetingReader {client} message={archivedMeeting.detail?.id === archiveMeetingID ? archivedMeeting.detail : undefined}
     loading={archivedMeeting.loading} error={archivedMeeting.error} predicate={exploreState.predicate()}
-    anchorID={conversationAnchorId} onClose={closeArchivedMeeting}
+    anchorID={conversationAnchorId} onClose={closeArchivedMeeting} onOpenPerson={openRelationship}
     onReload={() => void archivedMeeting.load(archiveMeetingID!)}
     onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)} onAnchorChange={changeConversationAnchor} />
 {:else if archivedMeeting.loading}

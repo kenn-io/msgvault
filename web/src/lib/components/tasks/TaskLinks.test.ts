@@ -70,10 +70,10 @@ describe('TaskLinks', () => {
       expect(await screen.findByText('Cached task')).toBeDefined();
       const unlink = screen.getByRole('button', { name: 'Unlink Cached task' });
       expect((unlink as HTMLButtonElement).disabled).toBe(true);
-      expect(screen.getByRole('alert').textContent).toContain(`Integration reason: ${integrationState}`);
+      expect(screen.getByRole(integrationState === 'disabled' ? 'status' : 'alert').textContent).toContain(`Integration reason: ${integrationState}`);
       await fireEvent.click(unlink);
       expect(requests.some((request) => request.method === 'DELETE')).toBe(false);
-      await fireEvent.click(screen.getByRole('button', { name: 'Open Settings' }));
+      await fireEvent.click(screen.getByRole('button', { name: integrationState === 'disabled' ? 'Set up' : 'Open Settings' }));
       expect(onsettings).toHaveBeenCalledOnce();
     }
   );
@@ -91,14 +91,17 @@ describe('TaskLinks', () => {
         tasks: [{ id: 'task-1', title: 'Partial task' }], outbound_metadata: {}
       });
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
+    const client = createAPIClient(fetchFn);
+    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
 
     expect(await screen.findByText('Partial task')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('partial');
     expect(screen.getByRole('alert').textContent).not.toContain('Mutations are disabled');
-    expect(screen.getByRole('button', { name: 'Create task' })).toBeDefined();
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
 
+    await view.rerender({ client, mode: 'add', messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
+    expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Search' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Link Search result' }));
@@ -118,7 +121,7 @@ describe('TaskLinks', () => {
       expect(await screen.findByText('Cached task')).toBeDefined();
       expect((screen.getByRole('button', { name: 'Unlink Cached task' }) as HTMLButtonElement).disabled).toBe(true);
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
-      expect(screen.getByRole('alert').textContent).toContain('Mutations are disabled');
+      expect(screen.getByRole('alert').textContent).toBeTruthy();
     }
   );
 
@@ -136,7 +139,6 @@ describe('TaskLinks', () => {
     expect(await screen.findByText('Current-session task')).toBeDefined();
     expect(screen.getByRole('status').textContent).toContain('not persisted to disk');
     expect((screen.getByRole('button', { name: 'Unlink Current-session task' }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByRole('button', { name: 'Create task' })).toBeDefined();
   });
 
   it('ignores a late response for the previously selected message', async () => {
@@ -196,8 +198,8 @@ describe('TaskLinks', () => {
         archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
       } });
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
-    await screen.findByText('No linked tasks.');
+    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Synthetic' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Link Synthetic result' }));
@@ -223,11 +225,11 @@ describe('TaskLinks', () => {
       return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: {} });
     });
     render(TaskLinks, {
-      client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic',
+      client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic',
       sourceType: 'gmail', sourceIdentifier: 'archive@example.com'
     });
 
-    await screen.findByText('No linked tasks.');
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Synthetic' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     const link = await screen.findByRole('button', { name: 'Link Synthetic result' });

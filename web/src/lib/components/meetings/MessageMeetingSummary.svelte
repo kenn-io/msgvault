@@ -4,6 +4,7 @@
   import type { APIClient } from '../../api/client';
   import type { MeetingRef } from '../../api/generated/models';
   import { canonicalFingerprint } from '../../explore/selection';
+  import { formatMeetingDuration } from '../../meetings/format';
   import { createMeetingsAPI } from '../../meetings/api';
   import { MeetingsController, type MeetingPanelScope } from '../../meetings/controller.svelte';
   import MeetingActionsDialog from './MeetingActionsDialog.svelte';
@@ -20,10 +21,6 @@
     if (scope.kind === 'explore' && onReloadScope) onReloadScope();
     else void controller.reload();
   }
-  function duration(seconds: number): string {
-    const minutes = Math.round(seconds / 60);
-    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-  }
 </script>
 
 <section class="meeting-summary" aria-label="Meeting summary">
@@ -33,7 +30,7 @@
     {#if controller.metricsError.recovery === 'reload' || controller.metricsError.recovery === 'retry'}<Button label="Reload meeting activity" onclick={reload} />{/if}
   {/if}
   {#if controller.metrics}
-    <span>{controller.metrics.totals.meeting_count} meetings · {duration(controller.metrics.totals.total_known_seconds)} known</span>
+    <span>{controller.metrics.totals.meeting_count} meetings · {formatMeetingDuration(controller.metrics.totals.total_known_seconds)} known</span>
     {#if controller.metrics.totals.unknown_duration_count}<span>· {controller.metrics.totals.unknown_duration_count} unknown duration</span>{/if}
     <Button size="sm" surface="soft" label={controller.actions ? `Action items · ${controller.actions.total_count}` : 'Action items'} onclick={() => open = true} />
   {/if}
