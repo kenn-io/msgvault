@@ -630,7 +630,7 @@ export function parseExploreURLState(search: string): ExploreURLState {
 export class ExploreState {
   current = $state<ExploreURLState>(freshDefaults());
   restorationEpoch = $state(1);
-  holdLeave?: (leave: () => void) => boolean;
+  holdLeave?: (leave: () => void, stay?: () => void) => boolean;
   private readonly browser: ExploreWindow;
   private readonly preferenceStorage: SearchModeStorage | null;
   private configuredDefaultSearchMode: ExploreSearchMode | undefined;
@@ -646,20 +646,35 @@ export class ExploreState {
     }
     const next = this.readURLState();
     const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
-    const delta = nextIndex - this.historyIndex;
-    if (delta !== 0 && this.current.workspace === 'settings' && next.workspace !== 'settings' &&
-      this.holdLeave?.(() => this.browser.history.go(delta))) {
-      this.restoringHeldLeave = true;
-      this.browser.history.go(-delta);
-      return;
-    }
-    this.historyIndex = nextIndex;
+    const commit = () => this.commitPopped(next, nextIndex);
+    if (this.current.workspace === 'settings' && next.workspace !== 'settings' && this.holdPop(nextIndex - this.historyIndex, commit)) return;
+    commit();
+  };
+
+  // An entry from before exploreIndex existed gives no direction, so the
+  // browser stays on it while held: leaving commits it, staying pushes Settings back.
+  private holdPop(delta: number, commit: () => void): boolean {
+    if (delta === 0) return this.holdLeave?.(commit, () => this.pushCommitted()) ?? false;
+    if (!this.holdLeave?.(() => this.browser.history.go(delta))) return false;
+    this.restoringHeldLeave = true;
+    this.browser.history.go(-delta);
+    return true;
+  }
+
+  private commitPopped(next: ExploreURLState, index: number): void {
+    this.historyIndex = index;
     this.current = next;
     this.committed = normalize(this.current);
     this.pendingSearchPriorFocus = undefined;
     this.restorationEpoch += 1;
     this.pendingRestorationEpoch = this.restorationEpoch;
-  };
+  }
+
+  private pushCommitted(): void {
+    const search = serializeExploreURLState(this.committed);
+    const { pathname, hash } = this.browser.location;
+    this.browser.history.pushState(historyEntry(search, this.committed, this.historyIndex), '', `${pathname}${search}${hash}`);
+  }
 
   constructor(
     browser: ExploreWindow = window,

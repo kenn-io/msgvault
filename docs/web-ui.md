@@ -558,7 +558,14 @@ content.
 
 ## Settings and restart behavior
 
-Settings opens on Overview, with status and setup or build actions for background features. Use **Refresh feature status** to update Overview after background work changes. **Build index** appears when offered by the daemon and asks for confirmation before a full rebuild. Its categories are Overview, Server, Search & AI, People lookups, Tasks, Contacts, Sources, and Advanced. Sources includes source and attachment settings. Advanced includes archive settings and Appearance. People lookups includes named enrichment providers and People sweep profiles.
+Settings opens on Overview, with status and setup or build actions for
+background features. Use **Refresh feature status** to update Overview after
+background work changes. **Build index** appears when offered by the daemon and
+asks for confirmation before a full rebuild. Its categories are Overview,
+Server, Search & AI, People lookups, Tasks, Contacts, Sources, and Advanced.
+Sources includes source and attachment settings. Advanced includes archive
+settings and Appearance. People lookups includes named enrichment providers and
+People sweep profiles.
 
 The daemon supplies allowed values and validation. Settings supplies category and selected field labels, groups settings into the category rail and keeps tuning and host-managed values behind disclosures. The selected category is part of the page link, so reload and Back keep it. Old category links open their replacement category; unknown categories open Overview.
 
@@ -587,7 +594,13 @@ stored as a `CRON_TZ=` prefix on the schedule. The CardDAV account form uses
 the same field, and the Sources and CardDAV status views describe stored
 schedules the same way.
 
-The Save changes bar covers ordinary settings, and its edits survive category changes. Some controls save through their own buttons instead: provider credentials, person-enrichment providers, contact accounts, and People sweep. Above them, the page says "These save immediately when you use their buttons — not with Save changes." The Contacts category hides the bar. After a save that needs a restart, Settings shows “Saved. Restart msgvault to apply these changes.”
+The Save changes bar covers ordinary settings, and its edits survive category
+changes. Some controls save through their own buttons instead: provider
+credentials, person-enrichment providers, contact accounts, and People sweep.
+Above them, the page says "These save immediately when you use their buttons —
+not with Save changes." The Contacts category hides the bar. After a save that
+needs a restart, Settings shows “Saved. Restart msgvault to apply these
+changes.”
 
 Saving makes targeted edits to `config.toml` while preserving comments. A stale
 edit is rejected after another browser or a hand edit changes the
