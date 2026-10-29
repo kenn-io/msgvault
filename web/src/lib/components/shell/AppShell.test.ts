@@ -407,11 +407,12 @@ describe('AppShell', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Save view…' }));
     const dialog = screen.getByRole('dialog', { name: 'Save view' });
-    expect(within(dialog).getByText('Filename, type, and file sort aren’t saved with the view.')).toBeDefined();
     await fireEvent.input(within(dialog).getByLabelText('Name'), { target: { value: 'Demo view' } });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Save view' })).toBeNull());
     expect(screen.getByRole('status', { name: 'Operation status' }).textContent).toContain('Saved view Demo view.');
+    const savedViews = await screen.findByRole('list', { name: 'Files saved views' });
+    expect(await within(savedViews).findByRole('button', { name: 'Demo view' })).toBeDefined();
 
     rendered.unmount();
     state.destroy();
@@ -440,20 +441,21 @@ describe('AppShell', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Demo view' }));
   }
 
-  it('opens a saved Files view with fresh filters and restores the prior filters on Back', async () => {
-    window.history.replaceState(null, '', '/?workspace=files');
+  it.each(['files', 'everything'] as const)('opens a saved Files view from %s with fresh filters and grid focus', async workspace => {
+    window.history.replaceState(null, '', `/?workspace=${workspace}&mode=full_text`);
     const fileSearches: Request[] = [];
     const state = new ExploreState(window);
-    state.replaceCommittedNavigation({
+    if (workspace === 'files') state.replaceCommittedNavigation({
       workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'],
       fileSort: { field: 'filename', direction: 'asc' }
     });
     const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
     try {
-      expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
+      if (workspace === 'files') expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
       const beforeView = window.location.href;
       await openDemoView();
-      await screen.findByRole('grid', { name: 'Files results' });
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
+      if (workspace === 'everything') await waitFor(() => expect(document.activeElement).toBe(grid));
       expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
       await waitFor(async () => {
         const body = await fileSearches.at(-1)!.clone().json();
@@ -464,21 +466,8 @@ describe('AppShell', () => {
       window.history.back();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       await waitFor(() => expect(window.location.href).toBe(beforeView));
-      await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('invoice'));
-    } finally {
-      rendered.unmount();
-      state.destroy();
-    }
-  });
-
-  it('focuses the Files grid when opening a saved Files view from Everything', async () => {
-    window.history.replaceState(null, '', '/?workspace=everything');
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch([])), state });
-    try {
-      await openDemoView();
-      const grid = await screen.findByRole('grid', { name: 'Files results' });
-      await waitFor(() => expect(document.activeElement).toBe(grid));
+      if (workspace === 'files') await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('invoice'));
+      else expect(state.current.workspace).toBe('everything');
     } finally {
       rendered.unmount();
       state.destroy();

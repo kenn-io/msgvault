@@ -75,9 +75,9 @@ describe('AppSidebar', () => {
   });
 
   it.each([
-    { schema_version: 3, canonical_state: { presentation: 'files', filters: [{ field: 'source', operator: 'in', values: ['1'] }] }, group: 'Messages' },
-    { schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] }, group: 'Files' },
-  ])('keeps an incompatible schema $schema_version view disabled and deletable under $group', async ({ group, ...incompatible }) => {
+    { reason: 'unsupported schema', schema_version: 3, incompatibility_reason: 'unsupported saved view schema version: Saved View 1 uses schema version 3', canonical_state: { presentation: 'files', filters: [{ field: 'source', operator: 'in', values: ['1'] }] }, group: 'Messages' },
+    { reason: 'invalid state', schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] }, group: 'Files' },
+  ])('keeps a view with $reason disabled and deletable under $group', async ({ group, reason: _reason, ...incompatible }) => {
     const onOpenView = vi.fn();
     const onDeleteView = vi.fn();
     renderSidebar({ views: [{ ...view(1, 'Old view'), ...incompatible }], onOpenView, onDeleteView });
