@@ -323,3 +323,13 @@ it('prunes a removed profile key while keeping another profile key ready to save
   expect(await controller.saveKeys()).toBe(true);
   expect(requests.filter(request => request.url.endsWith('/key')).map(request => new URL(request.url).pathname)).toEqual(['/api/v1/settings/people-inference/providers/routed/key']);
 });
+
+it('opens an accepted constructor profile with an empty replacement key and retains its edit', async () => {
+  const { client } = fixture({ ...status, profiles: [{ ...profile, name: 'constructor' }] });
+  const controller = new PeopleInferenceController(client);
+  render(PeopleInferenceSettings, { client, controller });
+  const key = await screen.findByLabelText('Replacement API key');
+  expect((key as HTMLInputElement).value).toBe('');
+  await fireEvent.input(key, { target: { value: 'synthetic-replacement' } });
+  expect(controller.keyDrafts.constructor).toBe('synthetic-replacement');
+});

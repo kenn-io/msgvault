@@ -166,7 +166,7 @@
     coverageActions = [];
     void createExploreAPI(client).coverage([], controller.signal)
       .then(coverage => { if (!controller.signal.aborted) coverageActions = coverage.actions; })
-      .catch(() => { if (!controller.signal.aborted) coverageActions = []; });
+      .catch(() => undefined);
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (!controller.signal.aborted) embeddingStatus = response.ok ? data : undefined;
@@ -495,7 +495,7 @@
   function setProviderDraft(value: ProviderSetting) {
     const saved = providers.find(provider => provider.name === value.name);
     if (saved && JSON.stringify(providerUpdate(saved)) === JSON.stringify(providerUpdate(value))) delete providerDrafts[value.name];
-    else providerDrafts[value.name] = value;
+    else providerDrafts = { ...providerDrafts, [value.name]: value };
   }
   function rowLabel(setting: SettingState): string {
     if (Object.hasOwn(LABELS, setting.key)) return LABELS[setting.key]!;
@@ -675,7 +675,7 @@
               <h3>Providers</h3>
               <div class="provider-list">
                 {#each providers as provider (provider.name)}
-                  <PersonEnrichmentProviderCard {provider} draft={providerDrafts[provider.name] ?? provider} pendingKey={credentialUpdates[provider.credential_id]} onchange={setProviderDraft} onkey={(update) => setCredential(provider.credential_id, update)} />
+                  <PersonEnrichmentProviderCard {provider} draft={(Object.hasOwn(providerDrafts, provider.name) ? providerDrafts[provider.name] : undefined) ?? provider} pendingKey={credentialUpdates[provider.credential_id]} onchange={setProviderDraft} onkey={(update) => setCredential(provider.credential_id, update)} />
                 {/each}
                 <div class="provider-add">
                   {#each ['exa', 'sixtyfour'] as kind (kind)}
