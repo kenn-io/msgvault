@@ -111,3 +111,57 @@ func TestPersonTrackReturnsStructuredAPIError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "Person profile not found")
 }
+
+func TestPersonTrackSeveralPeopleInOrderAndStopsAtFirstRejection(t *testing.T) {
+	assert := assert.New(t)
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/people/7/tracking":
+			_, _ = w.Write([]byte(`{"person_id":7,"tracked":true,"tracked_at":"2026-08-19T12:00:00Z"}`))
+		case "/api/v1/people/12/tracking":
+			_, _ = w.Write([]byte(`{"person_id":12,"tracked":true,"tracked_at":"2026-08-19T12:00:01Z"}` + "\n"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"person_profile_not_found","message":"Person profile not found"}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+	testCtx := withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+	})
+
+	output, err := runPersonTrackingCommand(testCtx, t, personTrackCmd, false, "7", "12")
+	require.NoError(t, err)
+	assert.Equal("Person 7: tracked\nPerson 12: tracked\n", output)
+
+	output, err = runPersonTrackingCommand(testCtx, t, personTrackCmd, true, "7", "12")
+	require.NoError(t, err)
+	assert.Equal(`{"person_id":7,"tracked":true,"tracked_at":"2026-08-19T12:00:00Z"}`+"\n"+
+		`{"person_id":12,"tracked":true,"tracked_at":"2026-08-19T12:00:01Z"}`+"\n", output)
+
+	paths = nil
+	output, err = runPersonTrackingCommand(testCtx, t, personTrackCmd, false, "7", "99", "12")
+	require.Error(t, err)
+	assert.ErrorContains(err, "track person 99")
+	assert.ErrorContains(err, "Person profile not found")
+	// The helper shares one buffer for output and Cobra's error and usage text.
+	assert.Contains(output, "Person 7: tracked\n")
+	assert.Equal([]string{"/api/v1/people/7/tracking", "/api/v1/people/99/tracking"}, paths)
+}
+
+func TestPersonTrackChecksEveryIDBeforeNetwork(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	t.Cleanup(server.Close)
+	testCtx := withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+	})
+	_, err := runPersonTrackingCommand(testCtx, t, personTrackCmd, false, "7", "x")
+	require.ErrorContains(t, err, "positive integer")
+	assert.Zero(t, requests.Load())
+}
