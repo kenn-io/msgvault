@@ -50,10 +50,12 @@ it.each([true, false])('reports unavailable history only for configured lanes, c
   operations.destroy();
 });
 
-it('keeps a joined global source read alive when the page leaves', async () => {
+it.each(['page', 'owner'] as const)('releases joined source readers when the %s leaves', async leaving => {
   let answer!: (response: Response) => void;
   let request!: Request;
+  let reads = 0;
   const client = createAPIClient(async input => {
+    reads += 1;
     const current = input as Request;
     if (new URL(current.url).pathname.includes('/sources')) {
       request = current;
@@ -67,20 +69,24 @@ it('keeps a joined global source read alive when the page leaves', async () => {
   const pageRead = store.readSources(page.signal);
   const pageLeft = expect(pageRead).rejects.toMatchObject({ name: 'AbortError' });
   const globalRead = store.refresh();
-  page.abort();
-  await pageLeft;
-  expect(request.signal.aborted).toBe(false);
+  if (leaving === 'owner') store.dispose();
+  else page.abort();
+  if (leaving === 'page') await pageLeft;
+  expect(request.signal.aborted).toBe(leaving === 'owner');
   answer(Response.json({ sources: [sourceStatus({ active_sync: syncRunStatus({ status: 'running', completed_at: null }) })] }));
   await globalRead;
-  expect(store.health).toBe('running');
+  await pageLeft;
+  expect(store.health).toBe(leaving === 'page' ? 'running' : 'unavailable');
   store.dispose();
   const after = store.refresh();
   await after;
-  expect(store.health).toBe('running');
+  await expect(store.readSources(new AbortController().signal)).rejects.toMatchObject({ name: 'AbortError' });
+  expect(store.health).toBe(leaving === 'page' ? 'running' : 'unavailable');
+  expect(reads).toBe(2);
   operations.destroy();
 });
 
-it('keeps a superseding source read pending and discards an older completion', async () => {
+it.each(['complete', 'abort', 'timeout'] as const)('adopts the superseding source read while preserving caller %s', async outcome => {
   const answers: ((response: Response) => void)[] = [];
   const requests: Request[] = [];
   const client = createAPIClient(async input => {
@@ -94,14 +100,23 @@ it('keeps a superseding source read pending and discards an older completion', a
   const operations = new OperationsController(client);
   const store = new JobsStore(client, operations);
   const oldRead = store.refresh();
+  const page = new AbortController();
+  const pageRead = store.readSources(page.signal);
+  const pageResult = outcome === 'complete' ? pageRead : expect(pageRead).rejects.toMatchObject({ name: outcome === 'timeout' ? 'TimeoutError' : 'AbortError' });
   const freshRead = store.readSources(new AbortController().signal, true);
   expect(requests[0]!.signal.aborted).toBe(true);
   answers[0]!(Response.json({ sources: [] }));
-  await oldRead;
+  await new Promise(resolve => setTimeout(resolve, 0));
   expect(store.loaded).toBe(false);
   expect(store.error).toBeUndefined();
+  if (outcome !== 'complete') {
+    page.abort(new DOMException('Caller left', outcome === 'timeout' ? 'TimeoutError' : 'AbortError'));
+    await pageResult;
+    expect(requests[1]!.signal.aborted).toBe(false);
+  }
   answers[1]!(Response.json({ sources: [sourceStatus({ source_type: 'mbox', sync_unavailable_reason: 'source_not_schedulable', latest_sync: syncRunStatus({ status: 'running', completed_at: null }) })] }));
-  await freshRead;
+  await Promise.all([oldRead, freshRead, pageResult]);
+  if (outcome === 'complete') expect((await pageRead).data?.sources[0]?.latest_sync?.status).toBe('running');
   expect(store.loaded).toBe(true);
   expect(store.health).toBe('running');
   expect(requests).toHaveLength(2);

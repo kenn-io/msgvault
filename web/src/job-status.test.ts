@@ -112,8 +112,9 @@ it.each(['shell poll', 'Sources read'])('shares running source status through a 
   expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Running');
 });
 
-it.each(['running', 'failed', 'superseded'] as const)('refreshes the shell dot after Build index: %s', async outcome => {
-  window.history.replaceState(null, '', outcome === 'superseded' ? '/?workspace=settings' : '/?workspace=everything&mode=hybrid');
+it.each(['running', 'failed', 'superseded', 'navigated'] as const)('refreshes the shell dot after Build index: %s', async outcome => {
+  const settings = outcome === 'superseded' || outcome === 'navigated';
+  window.history.replaceState(null, '', settings ? '/?workspace=settings' : '/?workspace=everything&mode=hybrid');
   let built = false;
   let hold = false;
   let release!: () => void;
@@ -121,10 +122,21 @@ it.each(['running', 'failed', 'superseded'] as const)('refreshes the shell dot a
   let oldSnapshot!: Response;
   const capturedStatus = new Promise<void>(resolve => { captured = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
+  let finishBuild!: () => void;
+  const buildGate = new Promise<void>(resolve => { finishBuild = resolve; });
+  let sourceRead = false;
   const session = sessionFor(async (request, path) => {
+    if (outcome === 'navigated' && path === '/api/v1/sources/status' && built) {
+      if (!sourceRead) {
+        sourceRead = true;
+        captured();
+        await new Promise<void>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
+      }
+      return Response.json({ sources: [sourceStatus({ active_sync: syncRunStatus({ status: 'running', completed_at: null }), can_sync: false, sync_unavailable_reason: 'sync_already_running' })] });
+    }
     if (path === '/api/v1/operations/status') {
       const snapshot = Response.json({ lanes: [jobLane('message_embedding', {
-        latest: outcome === 'superseded'
+        latest: settings
           ? built ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined } : jobRun('message_embedding')
           : built || outcome === 'running' ? jobRun('message_embedding') : undefined,
         ...(built && outcome === 'running' ? { active: { ...jobRun('message_embedding'), state: 'running', finished_at: undefined, error: undefined } } : {}),
@@ -138,12 +150,13 @@ it.each(['running', 'failed', 'superseded'] as const)('refreshes the shell dot a
     });
     if (request.method === 'POST' && path === '/api/v1/cli/run') {
       built = true;
+      if (outcome === 'navigated') await buildGate;
       return new Response(outcome === 'failed' ? '{"type":"complete","error":"Embedding endpoint failed"}\n' : '{"type":"complete"}\n');
     }
   });
   render(App, { session });
   await screen.findByRole('button', { name: outcome === 'failed' ? 'Sync status: Idle' : 'Sync status: Needs attention' });
-  const build = await screen.findByRole('button', { name: outcome === 'superseded' ? 'Build index, Message search' : 'Build index' });
+  const build = await screen.findByRole('button', { name: settings ? 'Build index, Message search' : 'Build index' });
   if (outcome === 'superseded') {
     hold = true;
     window.dispatchEvent(new Event('focus'));
@@ -152,7 +165,13 @@ it.each(['running', 'failed', 'superseded'] as const)('refreshes the shell dot a
   await fireEvent.click(build);
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   await waitFor(() => expect(built).toBe(true));
-  if (outcome === 'superseded') {
+  if (outcome === 'navigated') {
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Sources' }));
+    await capturedStatus;
+    finishBuild();
+    await within(screen.getByRole('main', { name: 'Sources' })).findByText('Syncing');
+    expect(screen.queryByRole('alert')).toBeNull();
+  } else if (outcome === 'superseded') {
     await within(screen.getByText('Message search').closest('li')!).findByText('On');
     release();
     await waitFor(() => expect(oldSnapshot.bodyUsed).toBe(true));
