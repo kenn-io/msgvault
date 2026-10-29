@@ -32,6 +32,10 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	bccID, err := st.EnsureParticipant("dave@example.com", "Dave", "example.com")
 	require.NoError(err)
 
+	var duplicateID, nameOnlyID int64
+	require.NoError(st.DB().QueryRow(`INSERT INTO participants (email_address, display_name) VALUES ($1, 'Bob') RETURNING id`, "Bob@example.com").Scan(&duplicateID))
+	require.NoError(st.DB().QueryRow(`INSERT INTO participants (email_address, display_name) VALUES (NULL, 'Bob') RETURNING id`).Scan(&nameOnlyID))
+
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
 		SourceID:        source.ID,
@@ -48,8 +52,8 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(st.UpsertMessageBody(messageID,
 		sql.NullString{String: "Portable body", Valid: true},
 		sql.NullString{String: "<p>Portable body</p>", Valid: true}))
-	require.NoError(st.ReplaceMessageRecipients(messageID, "from", []int64{senderID}, []string{"Alice"}))
-	require.NoError(st.ReplaceMessageRecipients(messageID, "to", []int64{toID}, []string{"Bob"}))
+	require.NoError(st.ReplaceMessageRecipients(messageID, "from", []int64{toID}, []string{"Alice"}))
+	require.NoError(st.ReplaceMessageRecipients(messageID, "to", []int64{toID, duplicateID, nameOnlyID}, []string{"Bob", "Bob", "Bob"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "cc", []int64{ccID}, []string{"Carol"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "bcc", []int64{bccID}, []string{"Dave"}))
 	labelID, err := st.EnsureLabel(source.ID, "STARRED", "Starred", "system")
@@ -66,8 +70,8 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	assert.True(message.IsFromMe)
 	assert.Equal("Alice <alice@example.com>", message.From)
 	assert.Equal(senderID, message.FromParticipantID)
-	assert.Equal([]store.ParticipantDisplay{{ParticipantID: toID, Display: "Bob <bob@example.com>"}}, message.ToParticipants)
-	assert.Equal([]string{"Bob <bob@example.com>"}, message.To)
+	assert.ElementsMatch([]store.ParticipantDisplay{{ParticipantID: toID, Display: "Bob <bob@example.com>"}, {ParticipantID: duplicateID, Display: "Bob <Bob@example.com>"}, {ParticipantID: nameOnlyID, Display: "Bob"}}, message.ToParticipants)
+	assert.ElementsMatch([]string{"Bob <bob@example.com>", "Bob <Bob@example.com>", "Bob"}, message.To)
 	assert.Equal([]string{"Carol <carol@example.com>"}, message.Cc)
 	assert.Equal([]string{"Dave <dave@example.com>"}, message.Bcc)
 	assert.Equal([]string{"Starred"}, message.Labels)
@@ -75,6 +79,13 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	assert.Equal("<p>Portable body</p>", message.BodyHTML)
 	require.Len(message.Attachments, 1)
 	assert.Equal("report.pdf", message.Attachments[0].Filename)
+	nameOnlyMessageID, err := st.UpsertMessage(&store.Message{ConversationID: conversationID, SourceID: source.ID, SourceMessageID: "name-only", MessageType: "whatsapp", SenderID: sql.NullInt64{Int64: nameOnlyID, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 7, 19, 13, 0, 0, 0, time.UTC), Valid: true}})
+	require.NoError(err)
+	window, err = st.GetConversationWindow(conversationID, nameOnlyMessageID, 0, 0)
+	require.NoError(err)
+	require.Len(window.Messages, 1)
+	assert.Equal("Bob", window.Messages[0].From)
+	assert.Equal(nameOnlyID, window.Messages[0].FromParticipantID)
 }
 
 func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {

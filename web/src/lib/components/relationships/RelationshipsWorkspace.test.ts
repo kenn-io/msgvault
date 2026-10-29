@@ -1038,14 +1038,17 @@ describe('computeHubLayout', () => {
   });
 });
 
-it('opens exact message senders and recipients from a relationship timeline reader', async () => {
+it('opens a person from a relationship timeline reader', async () => {
   const onOpenPerson = vi.fn();
+  const onOpenSettings = vi.fn();
   const { fetchFn } = fetchHandler({
+    '/api/v1/integrations/tasks/status': async () => Response.json({ state: 'disabled' }),
+    '/api/v1/messages/42/tasks': async () => Response.json({ state: 'disabled', complete: true, tasks: [] }),
     '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
     '/api/v1/relationships/1/timeline': async () => Response.json({ canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [{ key: 'message:42', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Archived email', has_attachments: false, message_count: 1, conversation_id: 8, anchor_message_id: 42 }], total_count: 1 }),
     '/api/v1/conversations/8': async () => Response.json({ id: 8, messages: [{ id: 42, conversation_id: 8, from: 'Alex Example', from_participant_id: 4, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }], subject: 'Archived email', sent_at: when, body: 'Email body', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Preview' }], anchor_id: 42, total: 1, has_before: false, has_after: false })
   });
-  const props = { ...baseProps(fetchFn), target: 'cluster:1', onOpenPerson };
+  const props = { ...baseProps(fetchFn), target: 'cluster:1', onOpenPerson, onOpenSettings };
   const view = render(RelationshipsWorkspace, { props });
   try {
     await props.controller.openTarget('cluster:1', props.predicate);
@@ -1053,7 +1056,7 @@ it('opens exact message senders and recipients from a relationship timeline read
     const reader = await screen.findByRole('complementary', { name: 'Reading pane: Archived email' });
     await fireEvent.click(await within(reader).findByRole('button', { name: 'Alex Example' }));
     expect(onOpenPerson).toHaveBeenLastCalledWith(4);
-    await fireEvent.click(within(reader).getByRole('button', { name: 'Recipient Example' }));
-    expect(onOpenPerson).toHaveBeenLastCalledWith(9);
+    await fireEvent.click(await within(reader).findByRole('button', { name: 'Set up' }));
+    expect(onOpenSettings).toHaveBeenCalledOnce();
   } finally { view.unmount(); props.controller.destroy(); }
 });

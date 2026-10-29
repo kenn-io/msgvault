@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
   import { Button, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
@@ -43,7 +44,7 @@
   let priority = $state('');
   let labels = $state('');
   let error = $state('');
-  let browserRequestID = globalThis.crypto.getRandomValues(new Uint32Array(4)).join('-');
+  let browserRequestID = createBrowserRequestID();
   let addedAt = $state(new Date().toISOString());
   let lastAttemptFingerprint = $state<string>();
   const priorityOptions = [
@@ -88,7 +89,7 @@
     }
   }
   function rotateRetryIdentity(): void {
-    browserRequestID = globalThis.crypto.getRandomValues(new Uint32Array(4)).join('-');
+    browserRequestID = createBrowserRequestID();
     const now = new Date().toISOString();
     addedAt = now > addedAt ? now : new Date(Date.parse(addedAt) + 1).toISOString();
   }

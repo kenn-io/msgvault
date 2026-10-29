@@ -32,8 +32,8 @@
   {#if controller.metrics}
     <span>{controller.metrics.totals.meeting_count} meetings · {formatMeetingDuration(controller.metrics.totals.total_known_seconds)} known</span>
     {#if controller.metrics.totals.unknown_duration_count}<span>· {controller.metrics.totals.unknown_duration_count} unknown duration</span>{/if}
-    <Button size="sm" surface="soft" label={controller.actions ? `Action items · ${controller.actions.total_count}` : 'Action items'} onclick={() => open = true} />
   {/if}
+  <Button size="sm" surface="soft" label={controller.actions ? `Action items · ${controller.actions.total_count}` : 'Action items'} onclick={() => open = true} />
 </section>
 {#if open}<MeetingActionsDialog {client} {controller} onclose={() => open = false} onReload={reload} {onOpenMeeting} />{/if}
 

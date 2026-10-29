@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type { MeetingActionsRequest, MeetingRef } from '../../api/generated/models';
@@ -13,7 +13,9 @@
   } = $props();
   let status = $state(untrack(() => controller.filters.status ?? ''));
   let assignee = $state(untrack(() => controller.filters.assigneeEmail ?? ''));
-  function apply(): void { void controller.setFilters({ status: (status || undefined) as MeetingActionsRequest['status'], assigneeEmail: assignee }); }
+  let assigneeTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(assigneeTimer));
+  function apply(): void { clearTimeout(assigneeTimer); void controller.setFilters({ status: (status || undefined) as MeetingActionsRequest['status'], assigneeEmail: assignee }); }
   const statuses = [{ value: '', label: 'All statuses' }, { value: 'pending', label: 'Pending' }, { value: 'completed', label: 'Completed' }, { value: 'cancelled', label: 'Cancelled' }, { value: 'unknown', label: 'Unknown' }];
 </script>
 
@@ -21,7 +23,7 @@
   <div class="actions-dialog">
     <div class="filters" aria-label="Action item filters">
       <SelectDropdown title="Status" options={statuses} value={status} onchange={(value) => { status = value; apply(); }} />
-      <TextInput ariaLabel="Assignee" placeholder="Assignee email" value={assignee} oninput={(value) => { assignee = value; apply(); }} block />
+      <TextInput ariaLabel="Assignee" placeholder="Assignee email" value={assignee} oninput={(value) => { assignee = value; clearTimeout(assigneeTimer); assigneeTimer = setTimeout(apply, 300); }} block />
     </div>
     {#if controller.metrics}
       <details><summary>Meeting metrics</summary><MeetingMetrics metrics={controller.metrics} /></details>

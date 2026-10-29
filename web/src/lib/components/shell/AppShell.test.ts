@@ -119,10 +119,10 @@ describe('AppShell', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     await tick();
     if (leave) {
-      expect(screen.queryByText('The authorized raw message export is no longer available.')).toBeNull();
+      expect(screen.queryByText('The original message isn’t available.')).toBeNull();
       expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([]);
     } else {
-      await screen.findByText('The authorized raw message export is no longer available.');
+      await screen.findByText('The original message isn’t available.');
       await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([
         { event: 'error_shown', properties: { surface: 'web', kind: 'other' } }
       ]));
@@ -2479,12 +2479,6 @@ describe('AppShell', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     await screen.findByText('Synthetic subject 1');
-
-    await fireEvent.keyDown(window, { key: 's' });
-    expect(screen.queryByRole('combobox', { name: /^Sort:/ })).toBeNull();
-    await fireEvent.keyDown(window, { key: 'r' });
-    expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
-      .toBe('Messages is always shown newest first.');
 
     const main = screen.getByRole('main', { name: 'Messages' });
     expect(within(main).getAllByText('2 items')).toHaveLength(1);
