@@ -120,8 +120,8 @@
       <Button
         tone="info"
         surface="solid"
-        label={saving ? 'Saving…' : 'Save'}
-        ariaLabel={saving ? 'Saving…' : `Save ${sentence}`}
+        label={saving ? 'Saving…' : 'Use key'}
+        ariaLabel={saving ? 'Saving…' : `Use ${sentence}`}
         disabled={draft === '' || saving}
         onclick={() => void submit()}
       />

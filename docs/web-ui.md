@@ -558,7 +558,7 @@ content.
 
 ## Settings and restart behavior
 
-Settings opens on Overview, with status and setup or build actions for background features. Use **Refresh feature status** to update Overview after background work changes. Its categories are Overview, Server, Search & AI, People lookups, Tasks, Contacts, Sources, and Advanced. Sources includes source and attachment settings. Advanced includes archive settings and Appearance. People lookups includes named enrichment providers and People sweep profiles.
+Settings opens on Overview, with status and setup or build actions for background features. Use **Refresh feature status** to update Overview after background work changes. **Build index** appears when offered by the daemon and asks for confirmation before a full rebuild. Its categories are Overview, Server, Search & AI, People lookups, Tasks, Contacts, Sources, and Advanced. Sources includes source and attachment settings. Advanced includes archive settings and Appearance. People lookups includes named enrichment providers and People sweep profiles.
 
 The daemon supplies allowed values and validation. Settings supplies category and selected field labels, groups settings into the category rail and keeps tuning and host-managed values behind disclosures. The selected category is part of the page link, so reload and Back keep it. Old category links open their replacement category; unknown categories open Overview.
 
@@ -570,7 +570,7 @@ Switch it off and the row states what happens instead; switch it on and a
 value input appears, starting from a suggested value. Rows you have changed
 carry an amber dot. A save bar appears at the bottom of the page only while you
 have unsaved changes. It counts them and offers **Discard** and **Save
-changes**. **Save changes** stays disabled while a number field is empty. During a save, fields and resource actions wait; category navigation stays available. When
+changes**. **Save changes** stays disabled while a number field is empty. Enabled providers save before feature settings, disabled providers afterward, and provider keys after their endpoints. During a save, fields and resource actions wait; category navigation stays available. When
 the bar disappears after a save or discard, focus moves to the category
 heading.
 
