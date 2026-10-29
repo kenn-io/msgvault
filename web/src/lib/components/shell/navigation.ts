@@ -31,3 +31,20 @@ export function workspaceLabel(id: ExploreWorkspace): string {
   if (id === 'deletions') return 'Deletions';
   return [...NAVIGATION_ITEMS, SETTINGS_ITEM].find((item) => item.id === id)?.label ?? 'msgvault';
 }
+
+export function relationshipDestination(participantID: number) {
+  return {
+    workspace: 'relationships' as const,
+    query: '',
+    relationshipFacet: 'people' as const,
+    relationshipTarget: `cluster:${participantID}`,
+    relationshipFiles: false,
+    relationshipShowAll: false,
+    analysisTarget: null,
+    selectedIdentifier: null,
+    selectedRow: null,
+    activeRow: null,
+    conversationAnchor: null,
+    scrollAnchor: null,
+  };
+}

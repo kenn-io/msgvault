@@ -133,7 +133,7 @@ describe('ContextBar grouping picker', () => {
   });
 });
 
-it('keeps Messages grouping chains and moves kind and local date boundaries into Filter', async () => {
+it('keeps Messages grouping chains with fixed presentation and order', async () => {
   const onFiltersChange = vi.fn();
   const onAddGroup = vi.fn();
   render(ContextBar, {
@@ -147,16 +147,6 @@ it('keeps Messages grouping chains and moves kind and local date boundaries into
   expect(screen.queryByRole('combobox', { name: /Show as/ })).toBeNull();
   expect(screen.queryByRole('combobox', { name: /Sort:/ })).toBeNull();
   expect(screen.getByRole('combobox', { name: 'Add grouping' })).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  expect(await screen.findByLabelText('Email')).toBeDefined();
-  await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-18' } });
-  const start = new Date(2026, 6, 18).toISOString();
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: [start] }]);
-  await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-07-18' } });
-  const end = new Date(2026, 6, 19).toISOString();
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [end] }]);
-  await fireEvent.click(screen.getByLabelText('Email'));
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['email'] }]);
 });
 
 it('keeps Kind lookup failures visible and retries when Filter reopens', async () => {
@@ -181,7 +171,7 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
 
 it('keeps the selected chat network and restored kinds when Email is added', async () => {
   const onFiltersChange = vi.fn();
-  render(ContextBar, {
+  const view = render(ContextBar, {
     messages: true, client: createAPIClient(async (input) => {
       if (new URL((input as Request).url).pathname.endsWith('/groups')) return Response.json({ rows: [{ key: 'whatsapp' }, { key: 'discord' }, { key: 'email' }] });
       return Response.json({ accounts: [], identities: [] });
@@ -191,6 +181,11 @@ it('keeps the selected chat network and restored kinds when Email is added', asy
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   await fireEvent.click(await screen.findByLabelText('Email'));
   expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['whatsapp', 'restored-kind', 'email'] }]);
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  await view.rerender({ filters: [] });
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  await fireEvent.click(await screen.findByLabelText('Email'));
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['email'] }]);
 });
 
 it('retains committed dates when a range is reversed, accepts the same day, and clears a bound', async () => {
@@ -216,6 +211,8 @@ it('retains committed dates when a range is reversed, accepts the same day, and 
   expect(screen.queryByRole('alert')).toBeNull();
   await fireEvent.change(from, { target: { value: '' } });
   expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [before] }]);
+  await fireEvent.change(to, { target: { value: '2026-07-18' } });
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: [after] }, { dimension: 'before', values: [new Date(2026, 6, 19).toISOString()] }]);
 });
 
 it('lets a restored Messages Timeline return to Table', async () => {

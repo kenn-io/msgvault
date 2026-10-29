@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createBrowserRequestID } from '../../api/request-id';
   import {
     createOrLinkMessageTask as generatedCreateOrLinkMessageTask,
     getTaskIntegrationStatus as generatedGetTaskIntegrationStatus,
@@ -164,7 +165,7 @@
     const retry =
       existingLinkRetry?.taskID === taskID
         ? existingLinkRetry
-        : { taskID, requestID: globalThis.crypto.getRandomValues(new Uint32Array(4)).join('-'), addedAt: new Date().toISOString() };
+        : { taskID, requestID: createBrowserRequestID(), addedAt: new Date().toISOString() };
     existingLinkRetry = retry;
     mutating = true;
     busy = true;
