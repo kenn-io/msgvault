@@ -585,7 +585,6 @@
     }
     try {
       await api.runCoverageAction(action, session.coverage?.status ?? 'unavailable');
-      onStatusChange();
       coverageRetryRevision += 1;
     } catch (cause) {
       session.coverage = {
@@ -597,6 +596,8 @@
         detail: cause instanceof Error ? cause.message : 'The semantic index action failed.',
         actions: ['retry'],
       };
+    } finally {
+      onStatusChange();
     }
   }
 
