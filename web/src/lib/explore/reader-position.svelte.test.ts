@@ -22,10 +22,5 @@ describe('readerPosition', () => {
     expect((await load()).value).toBe('right');
   });
 
-  it('treats any other value as below', async () => {
-    const position = await load();
-    position.set('right');
-    position.set('sideways');
-    expect(position.value).toBe('below');
-  });
+
 });

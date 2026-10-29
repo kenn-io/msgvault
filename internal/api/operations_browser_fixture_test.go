@@ -32,16 +32,21 @@ func TestBrowserOperationFixtureUsesProductionPublicProjection(t *testing.T) {
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "web", "tests", "e2e", "fixtures", "operations-public.json"))
 	require.NoError(t, err)
-	var fixture OperationRunsResponse
+	var fixture struct {
+		OperationRunsResponse
+		JobRuns []OperationRunSummary `json:"job_runs"`
+	}
 	require.NoError(t, json.Unmarshal(raw, &fixture))
 	require.Len(t, fixture.Runs, 5)
+	require.Len(t, fixture.JobRuns, 9)
+	runs := append(fixture.Runs, fixture.JobRuns...)
 
 	archive := &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID}
 	codec := operationTokenCodec{
 		keyring: archive,
-		random:  bytes.NewReader(bytes.Repeat([]byte{0x24}, operationTokenNonceBytes*len(fixture.Runs))),
+		random:  bytes.NewReader(bytes.Repeat([]byte{0x24}, operationTokenNonceBytes*len(runs))),
 	}
-	for index, browserRun := range fixture.Runs {
+	for index, browserRun := range runs {
 		t.Run(string(browserRun.Kind), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)

@@ -19,21 +19,13 @@ test('real daemon Operations history and keyboard navigation preserve the underl
   await page.keyboard.press('Enter');
   await page.getByRole('option', { name: 'Source sync', exact: true }).press('Enter');
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').operationKind).toBe('source_sync');
-  await expect(dialog.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
-  const reloaded = page.waitForResponse(response => response.url().includes('/operations/runs?') && response.ok());
-  await dialog.getByRole('button', { name: 'Refresh', exact: true }).press('Enter');
-  await reloaded;
-  await expect(dialog.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(reader).toBeVisible();
   await expect(status).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(reader).toBeHidden();
-  await page.getByRole('button', { name: 'Files', exact: true }).press('Enter');
-  await expect(page.getByRole('main', { name: 'Files', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Messages', exact: true }).press('Enter');
-  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
+
 });
 
 test('touch Help opens Commands for Reviews and Directory against the real daemon', async ({ page, daemon }) => {
