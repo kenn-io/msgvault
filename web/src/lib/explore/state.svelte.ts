@@ -830,7 +830,17 @@ export class ExploreState {
   closeOperationHistory(): void {
     const depth = this.operationHistoryDepth();
     if (depth) this.browser.history.go(-depth);
-    else this.replaceCommittedNavigation({ operationHistory: false, operationLane: '', operationKind: '',
+    else this.clearOperationHistory();
+  }
+
+  // A held departure keeps Settings current but must not leave Past runs over its confirmation.
+  // Replace in place: history.go would fire popstate and re-enter the held departure.
+  private clearHeldOperationHistory(patch: Partial<ExploreURLState>): void {
+    if (patch.operationHistory === false && this.current.operationHistory) this.clearOperationHistory();
+  }
+
+  private clearOperationHistory(): void {
+    this.replaceCommittedNavigation({ operationHistory: false, operationLane: '', operationKind: '',
       operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' });
   }
 
@@ -912,7 +922,7 @@ export class ExploreState {
       this.cancelHeldLeave?.();
     }
     if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
-      this.holdLeave?.(() => this.navigate(patch, mode))) return;
+      this.holdLeave?.(() => this.navigate(patch, mode))) return this.clearHeldOperationHistory(patch);
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
     if (this.current.workspace === 'files' && patch.workspace !== undefined &&
