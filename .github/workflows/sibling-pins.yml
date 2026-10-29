@@ -8,7 +8,7 @@ name: Sibling pins on main
 # ruleset requires this job, including in merge groups.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
   merge_group:
     types: [checks_requested]
 
