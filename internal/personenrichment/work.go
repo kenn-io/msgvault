@@ -33,6 +33,7 @@ type SuppressionChecker interface {
 // storage owns every run, lease, active-attempt binding, provider job, retry,
 // and pre-egress budget reservation.
 type WorkStore interface {
+	CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
 	StartRun(ctx context.Context, start RunStart) (*DurableRun, bool, error)
 	ListRunningRuns(ctx context.Context, filter RunningRunFilter) ([]DurableRun, error)
 	CompleteRun(ctx context.Context, runID int64, completion RunCompletion) error

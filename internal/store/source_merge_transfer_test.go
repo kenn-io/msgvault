@@ -935,7 +935,7 @@ func TestMergeSourcesReconcilesObservationBackedIdentityMatches(t *testing.T) {
 			providerID := "provider-user-shared"
 			for _, participant := range []int64{left, right} {
 				_, err = st.RecordContactObservationContext(t.Context(), participant, store.ParticipantContactObservationInput{
-					SourceID: &from.ID, AddressKind: store.ContactAddressUsername,
+					SourceID: &from.ID, ConversationID: new(fullObservationTestRoom(t, st, from.ID)), AddressKind: store.ContactAddressUsername,
 					ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("T0EXAMPLE"),
 					ProviderUserID: &providerID, OriginalValue: "shared-user",
 					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
@@ -944,7 +944,7 @@ func TestMergeSourcesReconcilesObservationBackedIdentityMatches(t *testing.T) {
 			}
 			destinationProviderID := "different-provider-user"
 			_, err = st.RecordContactObservationContext(t.Context(), left, store.ParticipantContactObservationInput{
-				SourceID: &into.ID, AddressKind: store.ContactAddressUsername,
+				SourceID: &into.ID, ConversationID: new(fullObservationTestRoom(t, st, into.ID)), AddressKind: store.ContactAddressUsername,
 				ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("T0EXAMPLE"),
 				ProviderUserID: &destinationProviderID, OriginalValue: "shared-user",
 				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},

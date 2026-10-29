@@ -10,13 +10,15 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+// Generic packet bounds use independent identifiers; Cold/Full chat eligibility
+// is exercised with canonical provider observations in conversation_policy_people_test.go.
 func TestPersonMatchPairSummariesContainOnlyTwoBoundedEndpoints(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t).Store
-	left, err := st.EnsureParticipantByIdentifier("beeper", "pair-left", "Pair Left")
+	left, err := st.EnsureParticipantByIdentifier("imessage", "pair-left", "Pair Left")
 	require.NoError(err)
-	right, err := st.EnsureParticipantByIdentifier("beeper", "pair-right", "Pair Right")
+	right, err := st.EnsureParticipantByIdentifier("imessage", "pair-right", "Pair Right")
 	require.NoError(err)
 	summaries, err := st.PersonMatchPairSummariesContext(t.Context(), left, right)
 	require.NoError(err)
@@ -42,9 +44,9 @@ func TestPersonMatchPairSummariesFlagClippedFields(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := storetest.New(t).Store
-			left, err := st.EnsureParticipantByIdentifier("beeper", "clipped-left", "Clipped Left")
+			left, err := st.EnsureParticipantByIdentifier("imessage", "clipped-left", "Clipped Left")
 			require.NoError(err)
-			right, err := st.EnsureParticipantByIdentifier("beeper", "clipped-right", "Clipped Right")
+			right, err := st.EnsureParticipantByIdentifier("imessage", "clipped-right", "Clipped Right")
 			require.NoError(err)
 			value := strings.Repeat("é", tc.limit)
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind(tc.query), value, left)
@@ -66,9 +68,9 @@ func TestPersonMatchPairSummariesKeepIdentifiersFromBothEndpoints(t *testing.T) 
 	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t).Store
-	left, err := st.EnsureParticipantByIdentifier("beeper", "many-identifiers-left", "Many Identifiers Left")
+	left, err := st.EnsureParticipantByIdentifier("imessage", "many-identifiers-left", "Many Identifiers Left")
 	require.NoError(err)
-	right, err := st.EnsureParticipantByIdentifier("beeper", "few-identifiers-right", "Few Identifiers Right")
+	right, err := st.EnsureParticipantByIdentifier("imessage", "few-identifiers-right", "Few Identifiers Right")
 	require.NoError(err)
 	for i := range 65 {
 		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers

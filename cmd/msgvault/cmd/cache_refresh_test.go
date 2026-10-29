@@ -1301,6 +1301,150 @@ func TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testi
 		"repaired cache must be clean (reason: %q)", repaired.Reason)
 }
 
+func TestRecipientSupportRefreshRestagesParticipantProjection(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	c, st := policyCacheFixture(t)
+	_, err := st.DB().Exec(`
+		INSERT INTO participants (id, email_address, display_name)
+		VALUES (3, 'recipient@example.test', 'Synthetic Recipient');
+		INSERT INTO conversation_participants (conversation_id, participant_id)
+		VALUES (2, 3)
+	`)
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(1, "to", []int64{3}, []string{"Synthetic Recipient"}))
+	analyticsDir := c.AnalyticsDir()
+	_, err = buildCache(c.DatabaseDSN(), analyticsDir, true)
+	requirements.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+
+	duckDB, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(c.Data.DataDir, "recipient-refresh-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(duckDB.Close()) }()
+	var beforeName string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT display_name FROM read_parquet(?) WHERE id = 3
+	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet")).Scan(&beforeName))
+	assertions.Equal("Synthetic Recipient", beforeName,
+		"the Full recipient envelope initially supports this participant name")
+
+	requirements.NoError(st.ReplaceMessageRecipients(1, "to", nil, nil))
+	staleness := cacheNeedsBuild(c.DatabaseDSN(), analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasRelatedRowDrift)
+	assertions.False(staleness.HasParticipantDisplayNameDrift,
+		"recipient evidence changes without bumping the participant display-name revision")
+
+	result, err := buildCacheAuto(c.DatabaseDSN(), analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.Zero(result.ExportedCount,
+		"a recipient-only repair must refresh derived projections without re-exporting messages")
+	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
+		"a related-row refresh must not rewrite message facts")
+
+	var afterName string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT display_name FROM read_parquet(?) WHERE id = 3
+	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet")).Scan(&afterName))
+	assertions.Empty(afterName,
+		"removing the last Full recipient name support must withdraw it from participants.parquet")
+	assertions.False(cacheNeedsBuild(c.DatabaseDSN(), analyticsDir).NeedsBuild)
+}
+
+func TestRecipientOnlyRefreshRestagesParticipantIdentifiers(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	ctx := t.Context()
+	c, st := policyCacheFixture(t)
+	participantID, err := st.EnsureParticipantByPhone(
+		"+15550100991", "Synthetic Native Recipient", "whatsapp",
+	)
+	requirements.NoError(err)
+	requirements.NoError(st.EnsureConversationParticipantContext(ctx, 2, participantID, "member"))
+	nativeSource, err := st.GetOrCreateSource("whatsapp", "native-archive@example.test")
+	requirements.NoError(err)
+	nativeConversationID, err := st.EnsureConversation(
+		nativeSource.ID, "native-room", "Synthetic native room",
+	)
+	requirements.NoError(err)
+	nativeMessageID, err := st.UpsertMessageContext(ctx, &store.Message{
+		SourceID: nativeSource.ID, SourceMessageID: "native-message-1",
+		ConversationID: nativeConversationID, MessageType: "whatsapp",
+		SentAt: sql.NullTime{Time: time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC), Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipientsContext(
+		ctx, nativeMessageID, "to", []int64{participantID}, []string{"Synthetic Native Recipient"},
+	))
+	identifierRevision, err := st.ParticipantIdentifierRevisionContext(ctx)
+	requirements.NoError(err)
+	identifierWhere := store.FullParticipantIdentifierWhereSQLite("pi")
+	var eligible int
+	requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*)
+		FROM participant_identifiers pi
+		WHERE pi.participant_id=? AND pi.identifier_type='whatsapp'
+		  AND pi.identifier_value='+15550100991' AND `+identifierWhere),
+		participantID).Scan(&eligible))
+	assertions.Equal(1, eligible,
+		"the native recipient message supports the identifier while the chat room is Cold")
+
+	analyticsDir := c.AnalyticsDir()
+	_, err = buildCache(c.DatabaseDSN(), analyticsDir, true)
+	requirements.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+	duckDB, err := duckdbutil.Open(
+		ctx,
+		duckdbutil.BuilderPolicy(filepath.Join(c.Data.DataDir, "recipient-identifier-refresh-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(duckDB.Close()) }()
+	identifierCount := func() int {
+		var count int
+		requirements.NoError(duckDB.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)
+			WHERE participant_id=? AND identifier_type='whatsapp'
+			  AND identifier_value='+15550100991'`,
+			filepath.Join(analyticsDir, tableParticipantIdentifiers, "*.parquet"), participantID).Scan(&count))
+		return count
+	}
+	assertions.Equal(1, identifierCount(),
+		"the full cache initially publishes the natively supported identifier")
+	var searchableCount int
+	requirements.NoError(duckDB.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)
+		WHERE list_contains(search_values, '+15550100991')`,
+		filepath.Join(analyticsDir, identityindex.DatasetPeople, "*.parquet")).Scan(&searchableCount))
+	assertions.Equal(1, searchableCount, "the identity directory initially searches the native identifier")
+
+	requirements.NoError(st.ReplaceMessageRecipientsContext(ctx, nativeMessageID, "to", nil, nil))
+	afterRevision, err := st.ParticipantIdentifierRevisionContext(ctx)
+	requirements.NoError(err)
+	assertions.Equal(identifierRevision, afterRevision,
+		"removing the last native recipient reference does not change the identifier mapping revision")
+	staleness := cacheNeedsBuild(c.DatabaseDSN(), analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasRelatedRowDrift)
+	assertions.False(staleness.HasParticipantIdentifierDrift)
+
+	result, err := buildCacheAuto(c.DatabaseDSN(), analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.Zero(result.ExportedCount,
+		"recipient-only repair must not re-export message facts")
+	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
+		"recipient-only repair leaves message facts untouched")
+	assertions.Zero(identifierCount(),
+		"derived refresh must withdraw identifiers that no longer pass native history eligibility")
+	requirements.NoError(duckDB.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)
+		WHERE list_contains(search_values, '+15550100991')`,
+		filepath.Join(analyticsDir, identityindex.DatasetPeople, "*.parquet")).Scan(&searchableCount))
+	assertions.Zero(searchableCount,
+		"relationship_people search values must drop the identifier after its last Full support is removed")
+	assertions.False(cacheNeedsBuild(c.DatabaseDSN(), analyticsDir).NeedsBuild)
+}
+
 // TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh pins the
 // staleness contract for identifier-mapping changes without message
 // activity: SetParticipantIdentifier alone must surface as derived-only
@@ -1370,6 +1514,77 @@ func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testin
 	)).Scan(&searchable))
 	assertions.True(searchable,
 		"rebuilt relationship_people search values must include the new identifier")
+
+	repaired := cacheNeedsBuild(dbPath, analyticsDir)
+	assertions.False(repaired.NeedsBuild,
+		"repaired cache must be clean (reason: %q)", repaired.Reason)
+}
+
+// TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants pins
+// the new-participant variant of identifier drift. Creating an identifier
+// without message activity still adds a participants row that the derived
+// refresh must publish; the message dataset must remain untouched.
+func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	requirements.NoError(err)
+	before, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+
+	st, err := store.Open(dbPath)
+	requirements.NoError(err)
+	const newParticipantID int64 = 5
+	// This cache fixture intentionally uses the legacy participant schema, so
+	// seed the new row directly and let the production identifier write create
+	// the drift watermark. The refresh must publish the row even though it has
+	// no message activity yet.
+	_, err = st.DB().Exec(`
+		INSERT INTO participants (id, email_address, domain, display_name)
+		VALUES (?, ?, ?, ?)
+	`, newParticipantID, "new-cache-participant@example.test", "example.test", "New Cache Participant")
+	requirements.NoError(err)
+	err = st.SetParticipantIdentifier(
+		newParticipantID, "slack", "new-cache-participant",
+	)
+	requirements.NoError(err)
+	requirements.NoError(st.Close())
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasParticipantIdentifierDrift)
+	assertions.False(staleness.FullRebuild,
+		"identifier drift that creates a participant must stay derived-only")
+	assertions.True(derivedDriftOnly(staleness))
+	assertions.Contains(staleness.Reason, "participant identifiers changed")
+
+	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.False(result.Skipped)
+
+	after, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	assertions.NotEqual(before.ParticipantIdentifierRevision, after.ParticipantIdentifierRevision)
+	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
+		"derived refresh must not rewrite message facts")
+
+	duckDB, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(tmp, "new-participant-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { require.NoError(t, duckDB.Close()) }()
+	var exportedParticipantName string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT display_name FROM read_parquet(?) WHERE id = ?
+	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet"), newParticipantID).Scan(&exportedParticipantName))
+	assertions.Empty(exportedParticipantName,
+		"the participant name remains hidden while its only evidence is in a cold chat room")
 
 	repaired := cacheNeedsBuild(dbPath, analyticsDir)
 	assertions.False(repaired.NeedsBuild,

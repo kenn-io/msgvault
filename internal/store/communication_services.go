@@ -86,6 +86,10 @@ const (
 	ContactAddressContactURI   ContactAddressKind = "contact_uri"
 	ContactAddressOrgDirectory ContactAddressKind = "org_directory"
 	ContactAddressLanguage     ContactAddressKind = "language"
+	// ContactAddressDisplayName is an importer-only exact-name observation.
+	// It can support a participant display name while its source room is Full,
+	// but it is not a person contact point.
+	ContactAddressDisplayName ContactAddressKind = "display_name"
 	// ContactAddressProviderIdentity is an importer-only observation kind for
 	// a provider identity that has no exportable phone, email, or username.
 	// It is valid in participant observations so matching can use the stable
@@ -99,7 +103,7 @@ func (k ContactAddressKind) Valid() bool {
 		ContactAddressIMPP, ContactAddressURL, ContactAddressSocial,
 		ContactAddressCalendar, ContactAddressContactURI,
 		ContactAddressOrgDirectory, ContactAddressLanguage,
-		ContactAddressProviderIdentity:
+		ContactAddressDisplayName, ContactAddressProviderIdentity:
 		return true
 	default:
 		return false
@@ -110,7 +114,7 @@ func (k ContactAddressKind) Valid() bool {
 // Provider identities remain valid importer evidence, but they are opaque
 // matching keys rather than contact points that profiles may publish.
 func (k ContactAddressKind) Exportable() bool {
-	return k.Valid() && k != ContactAddressProviderIdentity
+	return k.Valid() && k != ContactAddressDisplayName && k != ContactAddressProviderIdentity
 }
 
 var serviceSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)

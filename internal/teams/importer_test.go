@@ -24,6 +24,20 @@ type recordingEnqueuer struct {
 	ids []int64
 }
 
+func TestImporterScopesParticipantResolver(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeTeams, "user@example.test")
+	requirements.NoError(err)
+	runID, err := st.StartSync(source.ID, sourceTypeTeams)
+	requirements.NoError(err)
+	scoped := NewImporter(st, nil).scopedToSync(source.ID, runID)
+	requirements.NoError(st.FailSync(runID, "worker stopped"))
+
+	_, err = scoped.res.resolve(t.Context(), &Identity{ID: "user-a"}, 0)
+	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
+}
+
 func (e *recordingEnqueuer) EnqueueMessages(_ context.Context, ids []int64) error {
 	e.ids = append(e.ids, ids...)
 	return nil

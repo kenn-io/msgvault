@@ -126,6 +126,9 @@ func loadIdentityMatchEvidencePageContext(
 	if err != nil {
 		return fmt.Errorf("load identity match evidence page: %w", err)
 	}
+	if evidence, err = dropUnsupportedGeneratedNameEvidence(ctx, q, evidence); err != nil {
+		return err
+	}
 	for _, item := range evidence {
 		i := index[item.CandidateID]
 		candidates[i].Evidence = append(candidates[i].Evidence, item)

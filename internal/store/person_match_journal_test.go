@@ -17,9 +17,10 @@ import (
 
 func createScoringCandidate(t *testing.T, st *store.Store, suffix string) int64 {
 	t.Helper()
-	left, err := st.EnsureParticipantByIdentifier("beeper", "score-left-"+suffix, "Test Left")
+	// These generic scoring fixtures have independent inputs, without chat-room policy.
+	left, err := st.EnsureParticipantByIdentifier("imessage", "score-left-"+suffix, "Test Left")
 	require.NoError(t, err)
-	right, err := st.EnsureParticipantByIdentifier("beeper", "score-right-"+suffix, "Test Right")
+	right, err := st.EnsureParticipantByIdentifier("imessage", "score-right-"+suffix, "Test Right")
 	require.NoError(t, err)
 	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
 		LeftKind: store.IdentityMatchParticipant, LeftID: left,
@@ -139,6 +140,7 @@ func TestIdentityMatchJudgmentRejectsChangedParticipantSnapshot(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := storetest.New(t).Store
+			st.DB().SetMaxOpenConns(1)
 			createScoringCandidate(t, st, "snapshot")
 			lease, err := st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker-a", time.Minute)
 			require.NoError(err)

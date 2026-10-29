@@ -124,12 +124,15 @@ func defaultPersonSweepCommandDeps() personSweepCommandDeps {
 				if !ok {
 					return nil, errors.New("people sweep production store is unavailable")
 				}
+				if err := initializeConversationPolicy(ctx, st, currentCfg, time.Now()); err != nil {
+					return nil, err
+				}
 				productionConfig := *currentCfg
 				productionConfig.People.Sweep = sweepConfig
 				return newProductionPersonSweepWorker(&productionConfig, st)
 			}
 			deps.openStore = func() (personSweepCommandStore, func(), error) {
-				return openWritableStoreAndInitForInvocation(state)
+				return openInitializedStoreForInvocation(ctx, state)
 			}
 			return deps
 		},

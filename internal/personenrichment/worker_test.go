@@ -2582,3 +2582,50 @@ func TestWorkerSixtyfourDuplicateValues(t *testing.T) {
 		})
 	}
 }
+
+// driftingRequestStore serves the original request input once, then input in
+// which the person's profile URL lost its Full support.
+type driftingRequestStore struct {
+	personenrichment.WorkStore
+
+	loads atomic.Int64
+}
+
+func (s *driftingRequestStore) LoadRequestInput(
+	ctx context.Context, lease personenrichment.WorkLease,
+) (personenrichment.RequestInput, error) {
+	input, err := s.WorkStore.LoadRequestInput(ctx, lease)
+	if err == nil && s.loads.Add(1) > 1 {
+		input.PublicProfileURLs = nil
+	}
+	return input, err
+}
+
+func TestWorkerDoesNotDispatchIdentityThatChangedAfterRequestLoad(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newWorkerFixture(t, "identity-drift", nil)
+	f.enqueue(t)
+	work := &driftingRequestStore{WorkStore: f.store}
+	var network atomic.Int64
+	worker, err := personenrichment.NewWorker(
+		work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+		map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
+			return &functionProvider{start: func(context.Context, personenrichment.Request) (personenrichment.Attempt, error) {
+				network.Add(1)
+				return personenrichment.Attempt{}, errors.New("provider must not be called")
+			}}, nil
+		}}, f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}))
+	requirements.NoError(err)
+
+	processed, err := worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+	checks.Zero(network.Load(), "a request built from superseded identity must not be sent")
+	attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
+		PersonID: f.person.ID, RunID: f.run.ID, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(attempts, 1)
+	checks.Equal("terminal", attempts[0].State)
+}

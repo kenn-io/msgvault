@@ -368,3 +368,113 @@ func TestColdPolicyWorkerStartedBeforeCleanupCannotUndoReset(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, watermark, "discovery restarts from the reset watermark")
 }
+
+func TestPersonColdPolicyPublicationUsesOriginalSemanticVersion(t *testing.T) {
+	b, st, sourceID, _, gen := newPolicyBackend(t)
+	ctx := t.Context()
+	st.DB().SetMaxOpenConns(1)
+	participant, err := st.EnsureParticipant("person@example.invalid", "Synthetic Person", "example.invalid")
+	require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipantWithDisplayNameContext(ctx, participant, new("Synthetic Person"))
+	require.NoError(t, err)
+	doc, err := st.LoadPersonSemanticDocumentContext(ctx, person.ID)
+	require.NoError(t, err)
+	old, err := st.CaptureConversationPolicyWork(ctx)
+	require.NoError(t, err)
+	publications := []vector.PersonEmbedding{{PersonID: person.ID, Revision: doc.Revision, Vector: []float32{1, 0, 0, 0}}}
+	require.NoError(t, b.UpsertPersons(old, gen, publications))
+	person, err = st.UpdatePersonDisplayNameContext(ctx, person.ID, person.Revision, new("Updated Person"))
+	require.NoError(t, err)
+	require.ErrorIs(t, b.UpsertPersons(old, gen, publications), store.ErrConversationPolicyStale)
+	doc, err = st.LoadPersonSemanticDocumentContext(ctx, person.ID)
+	require.NoError(t, err)
+	publications[0].Revision = doc.Revision
+	require.NoError(t, b.UpsertPersons(old, gen, publications))
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	require.ErrorIs(t, b.UpsertPersons(old, gen, publications), store.ErrConversationPolicyStale)
+	fresh, err := st.CaptureConversationPolicyWork(ctx)
+	require.NoError(t, err)
+	require.NoError(t, b.UpsertPersons(fresh, gen, publications))
+}
+
+func TestPersonColdPolicyCleanupPreservesCurrentVersions(t *testing.T) {
+	b, st, _, _, gen := newPolicyBackend(t)
+	ctx := t.Context()
+	st.DB().SetMaxOpenConns(1)
+	id, err := st.EnsureParticipant("cleanup@example.invalid", "Cleanup Person", "example.invalid")
+	require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipantWithDisplayNameContext(ctx, id, new("Cleanup Person"))
+	require.NoError(t, err)
+	doc, err := st.LoadPersonSemanticDocumentContext(ctx, person.ID)
+	require.NoError(t, err)
+	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{{PersonID: person.ID, Revision: doc.Revision, Vector: []float32{1, 0, 0, 0}}}))
+	require.NoError(t, b.ActivateGeneration(ctx, gen, true))
+	next, err := b.CreateGeneration(ctx, "next-person", 4, "")
+	require.NoError(t, err)
+	require.NoError(t, b.UpsertPersons(ctx, next, []vector.PersonEmbedding{{PersonID: person.ID, Revision: doc.Revision, Vector: []float32{1, 0, 0, 0}}}))
+	require.NoError(t, b.ActivateGeneration(ctx, next, true))
+	// An upgrade changes the semantic version even for otherwise unchanged text.
+	_, err = b.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_embeddings(generation_id,person_id,published_revision,dimension,embedded_at) VALUES (?,?,'legacy-version',4,0) ON CONFLICT(generation_id,person_id) DO UPDATE SET published_revision=excluded.published_revision`), int64(gen), person.ID)
+	require.NoError(t, err)
+	n, err := b.PruneIneligiblePersons(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+	var count int
+	require.NoError(t, b.db.QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_embeddings WHERE generation_id=?`), int64(gen)).Scan(&count))
+	assert.Zero(t, count, "retired generations are reconciled too")
+	revisions, err := b.ListPersonRevisions(ctx, next)
+	require.NoError(t, err)
+	assert.Equal(t, map[int64]string{person.ID: doc.Revision}, revisions)
+	n, err = b.PruneIneligiblePersons(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, n)
+}
+
+func TestPersonColdPolicyCleanupBoundsBatch(t *testing.T) {
+	b, st, _, _, gen := newPolicyBackend(t)
+	ctx := t.Context()
+	st.DB().SetMaxOpenConns(1)
+	// Legacy rejected-version markers for people deleted before policy activation.
+	tx, err := b.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	for id := int64(10000); id < 10501; id++ {
+		_, err := tx.ExecContext(ctx, st.Rebind(`INSERT INTO person_embeddings(generation_id,person_id,published_revision,dimension,embedded_at) VALUES (?,?,'legacy',4,0)`), int64(gen), id)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+	n, g, p, more, err := b.prunePersonPolicyBatch(ctx, 0, 0)
+	require.NoError(t, err)
+	assert.Equal(t, int64(500), n)
+	assert.True(t, more)
+	var count int
+	require.NoError(t, b.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_embeddings`).Scan(&count))
+	assert.Equal(t, 1, count)
+	n, _, _, more, err = b.prunePersonPolicyBatch(ctx, g, p)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+	assert.False(t, more)
+}
+
+func TestPersonColdPolicyCleanupRetainsCurrentRevisionAfterPromotion(t *testing.T) {
+	b, st, sourceID, _, gen := newPolicyBackend(t)
+	ctx := t.Context()
+	st.DB().SetMaxOpenConns(1)
+	id, err := st.EnsureParticipant("promotion@example.invalid", "Promotion Person", "example.invalid")
+	require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipantWithDisplayNameContext(ctx, id, new("Promotion Person"))
+	require.NoError(t, err)
+	doc, err := st.LoadPersonSemanticDocumentContext(ctx, person.ID)
+	require.NoError(t, err)
+	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{{PersonID: person.ID, Revision: doc.Revision, Vector: []float32{1, 0, 0, 0}}}))
+	_, err = st.UpdatePersonDisplayNameContext(ctx, person.ID, person.Revision, new("Surviving Full Person"))
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	doc, err = st.LoadPersonSemanticDocumentContext(ctx, person.ID)
+	require.NoError(t, err)
+	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{{PersonID: person.ID, Revision: doc.Revision, Vector: []float32{1, 0, 0, 0}}}))
+	_, err = b.PruneIneligiblePersons(ctx)
+	require.NoError(t, err)
+	revisions, err := b.ListPersonRevisions(ctx, gen)
+	require.NoError(t, err)
+	assert.Equal(t, map[int64]string{person.ID: doc.Revision}, revisions)
+}

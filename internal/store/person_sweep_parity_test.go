@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -364,6 +365,8 @@ func newProductionPersonSweepParityFixture(t *testing.T) *personSweepParityFixtu
 	f.conversationID, err = f.store.EnsureConversationWithType(source.ID,
 		"person-sweep-production-parity", "direct_chat", "Synthetic parity")
 	require.NoError(t, err)
+	// Historical backstop/accounting fixtures intentionally use eligible old input.
+	require.NoError(t, f.store.SetConversationPolicyOverride(t.Context(), source.ID, "person-sweep-production-parity", conversationpolicy.Full))
 	f.aliceID, err = f.store.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	require.NoError(t, err)
 	f.aliasID, err = f.store.EnsureParticipant(

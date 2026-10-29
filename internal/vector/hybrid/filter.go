@@ -8,6 +8,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -166,9 +167,14 @@ func ApplyMessageFilter(
 		f.ListID = structured.ListID
 	}
 
+	// Resolve each address through its own evidence; Full membership alone
+	// does not admit a value supplied only by a Cold room.
+	emailEligible := store.FullParticipantValueWhere("p.id", "'email'", "p.email_address")
 	if structured.Sender != "" {
+		phoneEligible := store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")
+		where := "((p.email_address = ? AND " + emailEligible + ") OR (p.phone_number = ? AND " + phoneEligible + "))"
 		group, err := resolveExactParticipantIDs(ctx, db, rebind,
-			"email_address = ? OR phone_number = ?", structured.Sender, structured.Sender)
+			where, structured.Sender, structured.Sender)
 		if err != nil {
 			return err
 		}
@@ -176,14 +182,14 @@ func ApplyMessageFilter(
 	}
 	if structured.Recipient != "" {
 		group, err := resolveExactParticipantIDs(ctx, db, rebind,
-			"email_address = ?", structured.Recipient)
+			"p.email_address = ? AND "+emailEligible, structured.Recipient)
 		if err != nil {
 			return err
 		}
 		f.RecipientAnyGroups = append(f.RecipientAnyGroups, noMatchGroup(group))
 	}
 	if structured.Domain != "" {
-		group, err := resolveExactParticipantIDs(ctx, db, rebind, "domain = ?", structured.Domain)
+		group, err := resolveExactParticipantIDs(ctx, db, rebind, "p.domain = ? AND "+emailEligible, structured.Domain)
 		if err != nil {
 			return err
 		}
@@ -276,7 +282,7 @@ func resolveExactParticipantIDs(
 	where string,
 	args ...any,
 ) ([]int64, error) {
-	rows, err := db.QueryContext(ctx, rebind("SELECT id FROM participants WHERE "+where), args...)
+	rows, err := db.QueryContext(ctx, rebind("SELECT p.id FROM participants p WHERE "+where), args...)
 	if err != nil {
 		return nil, fmt.Errorf("query exact participants: %w", err)
 	}
@@ -372,10 +378,10 @@ func resolveParticipantIDs(ctx context.Context, db *sql.DB, rebind func(string) 
 	parts := make([]string, 0, len(addrs))
 	args := make([]any, 0, len(addrs))
 	for _, a := range addrs {
-		parts = append(parts, `LOWER(email_address) LIKE ? ESCAPE '\'`)
+		parts = append(parts, `LOWER(p.email_address) LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(strings.ToLower(a))+"%")
 	}
-	q := rebind("SELECT id FROM participants WHERE " + strings.Join(parts, " OR "))
+	q := rebind("SELECT p.id FROM participants p WHERE (" + strings.Join(parts, " OR ") + ") AND " + store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"))
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query participants: %w", err)
