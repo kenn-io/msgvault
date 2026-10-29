@@ -164,7 +164,7 @@ describe('OperationsController', () => {
       operationStartedBefore: '2026-09-01T00:00:00Z'
     });
 
-    const loading = controller.applyURLState(state, 'archive-a');
+    const loading = controller.applyURLState(state);
     expect(controller.snapshot.initialLoading).toBe(true);
     expect((controller.snapshot as { statusReadable?: boolean }).statusReadable).toBe(false);
     expect((controller.snapshot as { historyReadable?: boolean }).historyReadable).toBe(false);
@@ -229,7 +229,7 @@ describe('OperationsController', () => {
     controller.destroy();
   });
 
-  it('aborts and discards stale filter and archive responses', async () => {
+  it('aborts and discards stale filter responses', async () => {
     const deferred = Array.from({ length: 4 }, deferredResponse);
     const requests: Request[] = [];
     let requestIndex = 0;
@@ -238,9 +238,9 @@ describe('OperationsController', () => {
       return deferred[requestIndex++]!.promise;
     });
     const controller = new OperationsController(createAPIClient(fetchFn));
-    const oldLoad = controller.applyURLState(operationState({ operationLane: 'messages' }), 'archive-a');
+    const oldLoad = controller.applyURLState(operationState({ operationLane: 'messages' }));
     await vi.waitFor(() => expect(requests).toHaveLength(2));
-    const newLoad = controller.applyURLState(operationState({ operationLane: 'contacts' }), 'archive-b');
+    const newLoad = controller.applyURLState(operationState({ operationLane: 'contacts' }));
     await vi.waitFor(() => expect(requests).toHaveLength(4));
 
     expect(requests[0]!.signal.aborted).toBe(true);
@@ -409,14 +409,14 @@ describe('OperationsController', () => {
       return Response.json({ error: 'operation_not_found', message: 'synthetic missing detail' }, { status: 404 });
     });
     const controller = new OperationsController(createAPIClient(fetchFn));
-    await controller.applyURLState(operationState({ operationRunID: RUN_ONE }), 'archive-a');
+    await controller.applyURLState(operationState({ operationRunID: RUN_ONE }));
     await controller.runAction('visual_build');
     await controller.runAction('carddav_sync');
     expect(controller.snapshot.detailError).not.toBeNull();
     expect(controller.snapshot.actionConflict).not.toBeNull();
     expect(controller.snapshot.actionError).not.toBeNull();
 
-    await controller.applyURLState(operationState({ operationLane: 'documents' }), 'archive-a');
+    await controller.applyURLState(operationState({ operationLane: 'documents' }));
 
     expect(controller.snapshot).toMatchObject({
       detailError: null,
@@ -654,7 +654,7 @@ describe('OperationsController.refreshStatus', () => {
     }
   });
 
-  it('lets a page-one reload win over a status refresh in flight', async () => {
+  it('keeps a pending status refresh waiting for the page-one reload', async () => {
     const slowStatus = deferredResponse();
     const replacementStatus = deferredResponse();
     let statusReads = 0;
