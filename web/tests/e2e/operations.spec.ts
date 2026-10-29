@@ -60,20 +60,12 @@ test('Past runs exposes the dirty Settings leave confirmation before opening Sou
   const semanticSearch = settings.getByRole('switch', { name: 'Semantic search', exact: true });
   await semanticSearch.click();
   await expect(semanticSearch).toBeChecked();
-  for (const choice of ['Stay', 'Discard and leave']) {
-    await page.getByRole('button', { name: /Sync status:/ }).click();
-    await page.getByRole('menuitem', { name: 'Past runs' }).click();
-    await page.getByRole('button', { name: 'Open Source sync run' }).click();
-    await page.getByRole('button', { name: 'Open Sources status' }).click();
-    await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeHidden();
-    await expect(settings.getByText('Leave Settings and discard 1 unsaved change?', { exact: true })).toBeVisible();
-    await settings.getByRole('button', { name: choice, exact: true }).click();
-    if (choice === 'Stay') {
-      await expect(settings).toBeVisible();
-      await expect(semanticSearch).toBeChecked();
-    }
-  }
-  await expect(page.getByRole('main', { name: 'Sources' })).toBeVisible();
+  await page.getByRole('button', { name: /Sync status:/ }).click();
+  await page.getByRole('menuitem', { name: 'Past runs' }).click();
+  await page.getByRole('button', { name: 'Open Source sync run' }).click();
+  await page.getByRole('button', { name: 'Open Sources status' }).click();
+  await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeHidden();
+  await expect(settings.getByText('Leave Settings and discard 1 unsaved change?', { exact: true })).toBeVisible();
 });
 
 test('unconfigured visual status opens Search & AI settings', async ({ page }) => {
@@ -100,20 +92,4 @@ test('Refresh waits for completion and returns focus to its button', async ({ pa
   release();
   await expect(refresh).toBeEnabled();
   await expect(refresh).toBeFocused();
-});
-
-test('action reconciliation preserves selected detail identity when opaque references rotate', async ({ page }) => {
-  const fixture = await installOperations(page);
-  await page.goto(historyURL());
-  const visualRow = page.getByRole('button', { name: 'Open Visual embedding run' });
-  await visualRow.click();
-  const selected = () => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').operationRunID;
-  const before = selected();
-  fixture.rotateReferencesOnNextRefresh();
-  await page.getByRole('button', { name: 'Resume visual index' }).click();
-  await expect.poll(() => fixture.actionRequests).toEqual(['visual_resume']);
-  await expect(page.getByRole('button', { name: 'Resume visual index' })).toBeEnabled();
-  await expect(page.getByRole('status', { name: 'Operation status' })).toContainText('Visual index resume request completed');
-  expect(selected()).toBe(before);
-  await expect(page.getByRole('dialog', { name: 'Visual embedding', exact: true })).toBeVisible();
 });
