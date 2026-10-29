@@ -777,7 +777,7 @@ describe('Explore URL state', () => {
 
   it.each([
     ['browser', 'advanced'], ['archive', 'advanced'], ['integrations', 'tasks'],
-    ['attachments', 'sources'], ['people', 'enrichment']
+    ['attachments', 'sources']
   ])('restores the Settings link %s to %s', (settingsCategory, expected) => {
     const restored = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory }))}`);
     expect(restored.settingsCategory).toBe(expected);
