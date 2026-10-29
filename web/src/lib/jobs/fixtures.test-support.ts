@@ -1,4 +1,5 @@
 import type { OperationLaneStatus, OperationRunSummary, SourceStatus, SyncRunStatus } from '../api/generated/models';
+import { lane } from '../../test/operations';
 import canonical from '../../../tests/e2e/fixtures/operations-public.json';
 
 const failedRuns = canonical.job_runs as OperationRunSummary[];
@@ -10,7 +11,7 @@ export function jobRun(kind: OperationRunSummary['kind']): OperationRunSummary {
 
 export function jobLane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
   const latest = jobRun(kind);
-  return { lane: latest.lane, kind, related_status: relatedStatus[kind as keyof typeof relatedStatus], configured: true, history_availability: 'available', supported_actions: kind === 'carddav_sync' ? ['carddav_sync'] : [], latest, ...extra };
+  return lane(kind, { related_status: relatedStatus[kind as keyof typeof relatedStatus], ...(kind === 'carddav_sync' ? { supported_actions: ['carddav_sync'] } : {}), latest, ...extra });
 }
 
 export function sourceStatus(extra: Partial<SourceStatus> = {}): SourceStatus {

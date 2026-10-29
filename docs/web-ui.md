@@ -406,7 +406,7 @@ and status polling continues while the tab is visible.
 
 ## Operations
 
-The footer status dot opens running jobs and unresolved failures. It shows **Idle** when the list is empty, **Running** while work runs, and **Needs attention** while a latest run or scheduler reports errors. Failed rows show the daemon's run or item error. If a status read fails, the menu keeps the last known jobs and reports that status is unavailable. Select a job to open its source, contact settings, index status, or owning setting.
+The footer status dot opens queued and running operations, executing source syncs, and unresolved failures. It shows **Idle** when the list is empty, **Queued** while operations await execution, **Running** while work runs, and **Needs attention** while a latest run or scheduler reports errors. Failed rows show the daemon's run or item error. If a status read fails, the menu keeps the last known jobs and reports that status is unavailable. Select a job to open its source, contact settings, index status, or owning setting. Scheduled source syncs enter the list when execution starts.
 
 Choose **Past runs…** in the status menu to browse history. Filter by Kind, including all runs in a lane, State, or dates, and choose **Show more** for the next page. **Refresh** reloads the current history. Run links preserve filters and selection when shared or restored with Back. If history changes during paging, **Restart** reloads the first page. Unavailable history is labeled by kind.
 
@@ -471,7 +471,7 @@ Tab keeps its normal browser meaning. Outside inputs and content viewers:
 | `?` | Open the searchable Keyboard shortcuts dialog |
 | `Cmd/Ctrl+K` | Open the command palette |
 
-Select **Keyboard shortcuts** in the sidebar, or press `?`, to search this list
+Select **Help** in the sidebar, or press `?`, to search this list
 in the app. Destructive keys open a review; they never execute deletion
 immediately. Shortcuts are suspended while typing and inside message/file
 content.
