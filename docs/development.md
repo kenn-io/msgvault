@@ -164,6 +164,7 @@ goroutines, channels, timers, tickers, and fakes. Advance virtual time with
 
 Keep real waits for PostgreSQL and SQLite locks, database clocks, network
 requests, subprocesses, DuckDB, and operating-system events.
+Call Kit's `stacktest.Dump(t)` before failing a timeout while waiting on goroutines.
 
 `make lint` and `make lint-ci` build a pinned golangci-lint with Kit's
 `kennlint` plugin and run its `sleeptest` and `deadlinetest` checks. Outside a
