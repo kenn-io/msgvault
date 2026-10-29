@@ -11,8 +11,61 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestSQLite_BackfillFTS_MissingBatchPlan(t *testing.T) {
+	if isPostgresTestDB() {
+		t.Skip("SQLite query plan")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	query, err := (&store.SQLiteDialect{}).FTSBackfillMissingBatchSQL(t.Context(), f.Store.DB())
+	require.NoError(err)
+	rows, err := f.Store.DB().Query("EXPLAIN QUERY PLAN "+query, 1, 5001)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(rows.Err())
+	plan := strings.Join(details, "\n")
+	assert.Contains(plan, "SEARCH d USING INTEGER PRIMARY KEY (rowid=?)")
+	assert.NotContains(plan, "VIRTUAL TABLE")
+}
+
+func TestSQLite_BackfillFTS_ColumnsizeZero(t *testing.T) {
+	if isPostgresTestDB() {
+		t.Skip("SQLite FTS5 table option")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.DB().Exec(`DROP TABLE messages_fts;
+		CREATE VIRTUAL TABLE messages_fts USING fts5(
+			message_id UNINDEXED, subject, body, from_addr, to_addr, cc_addr, columnsize=0)`)
+	require.NoError(err)
+	ids := f.CreateMessages(2)
+	for _, id := range ids {
+		require.NoError(f.Store.UpsertMessageBody(id,
+			sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
+	}
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid = ?", ids[0])
+	require.NoError(err)
+	n, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assert.Equal(int64(1), n)
+	assertFTSContains(t, f.Store, "orchard", 2)
+	assert.False(f.Store.NeedsFTSBackfill())
+}
 
 func TestStore_BackfillFTS_PreservesCompletedWork(t *testing.T) {
 	require := require.New(t)

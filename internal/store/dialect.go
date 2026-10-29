@@ -217,8 +217,9 @@ type Dialect interface {
 	FTSBackfillBatchSQL() string
 
 	// FTSBackfillMissingBatchSQL populates only missing or outdated search entries
-	// in the same ID range as FTSBackfillBatchSQL.
-	FTSBackfillMissingBatchSQL() string
+	// in the same ID range as FTSBackfillBatchSQL. It selects the presence check
+	// supported by the archive's search tables.
+	FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.DB) (string, error)
 
 	// FTSAvailable reports whether full-text search is available for this database.
 	// For SQLite this probes the FTS5 virtual table; for PostgreSQL it checks

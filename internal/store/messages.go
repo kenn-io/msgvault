@@ -3920,7 +3920,11 @@ func (s *Store) BackfillFTSContext(
 		return 0, nil
 	}
 
-	return s.backfillFTSRangeContext(ctx, s.dialect.FTSBackfillMissingBatchSQL(), minID, maxID, progress)
+	batchSQL, err := s.dialect.FTSBackfillMissingBatchSQL(ctx, s.db.DB)
+	if err != nil {
+		return 0, err
+	}
+	return s.backfillFTSRangeContext(ctx, batchSQL, minID, maxID, progress)
 }
 
 // RebuildFTS fully recreates the FTS index from the underlying message

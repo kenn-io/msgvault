@@ -541,11 +541,11 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 	WHERE m.id = src.id`
 }
 
-func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL() string {
+func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql.DB) (string, error) {
 	return d.FTSBackfillBatchSQL() + fmt.Sprintf(
 		" AND (m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM %d)",
 		CurrentFTSIndexingVersion,
-	)
+	), nil
 }
 
 // FTSAvailable reports whether tsvector search is available.

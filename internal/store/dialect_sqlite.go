@@ -496,9 +496,18 @@ func (d *SQLiteDialect) FTSBackfillBatchSQL() string {
 		WHERE m.id >= ? AND m.id < ?`
 }
 
-func (d *SQLiteDialect) FTSBackfillMissingBatchSQL() string {
-	return d.FTSBackfillBatchSQL() + `
-		AND NOT EXISTS (SELECT 1 FROM messages_fts f WHERE f.rowid = m.id)`
+func (d *SQLiteDialect) FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.DB) (string, error) {
+	// Use indexed IDs without loading stored FTS text. columnsize=0 tables
+	// have no docsize table and use the same fallback as completeness probes.
+	var id int64
+	err := db.QueryRowContext(ctx, "SELECT id FROM messages_fts_docsize LIMIT 0").Scan(&id)
+	predicate := ` AND NOT EXISTS (SELECT 1 FROM messages_fts_docsize d WHERE d.id = m.id)`
+	if d.IsNoSuchTableError(err) {
+		predicate = ` AND NOT EXISTS (SELECT 1 FROM messages_fts f WHERE f.rowid = m.id)`
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("probe FTS indexed IDs: %w", err)
+	}
+	return d.FTSBackfillBatchSQL() + predicate, nil
 }
 
 // FTSAvailable probes for FTS5 by querying the virtual table.
