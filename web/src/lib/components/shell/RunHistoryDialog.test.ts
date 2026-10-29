@@ -8,7 +8,7 @@ import RunHistoryDialog from './RunHistoryDialog.svelte';
 import publicOperations from '../../../../tests/e2e/fixtures/operations-public.json';
 import type { OperationRunsResponse } from '../../api/generated/models';
 
-const fixture = publicOperations as OperationRunsResponse;
+const fixture: OperationRunsResponse = { ...publicOperations as OperationRunsResponse, runs: (publicOperations as OperationRunsResponse).runs.map(candidate => ({ ...candidate, started_at: '2026-10-12T12:00:00Z', ...(candidate.finished_at ? { finished_at: '2026-10-12T12:01:00Z' } : {}) })) };
 const run = fixture.runs.find(run => run.kind === 'document_extraction')!;
 const controllers: OperationsController[] = [];
 afterEach(() => { for (const controller of controllers.splice(0)) controller.destroy(); });
@@ -21,7 +21,13 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
     if (url.pathname === '/api/v1/operations/runs') {
       queries.push(url.searchParams);
       if (conflict && url.searchParams.has('cursor')) return Response.json({ error: 'operation_history_conflict', message: 'History changed' }, { status: 409 });
-      return Response.json({ runs: url.searchParams.has('cursor') ? [fixture.runs.find(run => run.kind === 'source_sync')!] : [run], membership_revision: 1, unavailable_kinds: fixture.unavailable_kinds, next_cursor: url.searchParams.has('cursor') ? undefined : 'next' });
+      const rows = [run, ...fixture.runs.filter(candidate => candidate.id !== run.id)]
+        .filter(candidate => (!url.searchParams.get('kind') || candidate.kind === url.searchParams.get('kind')) &&
+          (!url.searchParams.get('lane') || candidate.lane === url.searchParams.get('lane')) &&
+          (!url.searchParams.get('state') || candidate.state === url.searchParams.get('state')) &&
+          (!url.searchParams.get('started_from') || candidate.started_at >= url.searchParams.get('started_from')!) &&
+          (!url.searchParams.get('started_before') || candidate.started_at < url.searchParams.get('started_before')!));
+      return Response.json({ runs: url.searchParams.has('cursor') ? rows.slice(1) : rows.slice(0, 1), membership_revision: 1, unavailable_kinds: fixture.unavailable_kinds, next_cursor: !url.searchParams.has('cursor') && rows.length > 1 ? 'next' : undefined });
     }
     if (url.pathname.startsWith('/api/v1/operations/runs/')) return Response.json({ ...run, related_status: 'getDocumentIndexStatus', supported_actions: [] });
     return Response.json({}, { status: 404 });
@@ -35,7 +41,7 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
 describe('Past runs', () => {
   it('maps selected dates, kind, lane, state, and cursor to history requests', async () => {
     const { queries } = setup('source_sync', { operationStartedFrom: '2026-10-10T00:00:00Z', operationStartedBefore: '2026-10-13T00:00:00Z' });
-    await screen.findByRole('button', { name: 'Open Document extraction run' });
+    await screen.findByRole('button', { name: 'Open Source sync run' });
     expect(queries[0]?.get('kind')).toBe('source_sync');
     await fireEvent.click(screen.getByRole('button', { name: /2026-10-10/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Oct 11, 2026' }));
