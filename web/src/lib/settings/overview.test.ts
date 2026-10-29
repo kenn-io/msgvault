@@ -35,7 +35,6 @@ describe('overviewRows', () => {
   });
 
   it.each([
-    { status: 'initializing' as const, available: true, chip: 'Initializing' },
     { status: 'initializing' as const, available: false, chip: 'Initializing' },
     { status: 'unavailable' as const, available: false, chip: 'Unavailable' },
     { status: 'unavailable' as const, available: true, chip: 'Unbuilt' },

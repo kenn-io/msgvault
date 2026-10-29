@@ -7,7 +7,7 @@
     patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
   import { Notice, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
-  import { onMount, onDestroy, tick, untrack } from 'svelte';
+  import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
     EmbeddingStatus,
@@ -113,6 +113,19 @@
   const label = $derived(categories.find((candidate) => candidate.id === activeCategory)?.label ?? '');
   const layout = $derived(layoutCategory(activeCategory as CategoryID, settings, groups));
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
+  let pendingLeave = $state<(() => void) | undefined>();
+  const registerLeave = getContext<((hold?: (leave: () => void) => boolean) => void) | undefined>('msgvault:hold-settings-leave');
+  registerLeave?.((leave) => dirtyCount > 0 && (pendingLeave = leave, true));
+  onDestroy(() => registerLeave?.(undefined));
+  function focusStay(node: HTMLElement) {
+    node.querySelector('button')?.focus();
+  }
+  function discardAndLeave() {
+    const leave = pendingLeave;
+    pendingLeave = undefined;
+    discardChanges();
+    leave?.();
+  }
   // An emptied number field is a draft in progress, not a value: it keeps the
   // row on, cannot be saved, and never stands in for the off value.
   const incompleteDrafts = $derived(Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length);
@@ -412,18 +425,28 @@
   }
 </script>
 
+<svelte:window onbeforeunload={(event) => { if (dirtyCount > 0) event.preventDefault(); }} />
+
 {#snippet settingsFooter()}
-  <span class="unsaved" role="status">
-    {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : ''}`}
-  </span>
-  <Button label="Discard" disabled={saving} onclick={discard} />
-  <Button
-    disabled={saving || inference.busy || incompleteDrafts > 0}
-    tone="info"
-    surface="solid"
-    label={saving ? 'Saving…' : 'Save changes'}
-    onclick={() => void saveSettings()}
-  />
+  {#if pendingLeave}
+    <span class="unsaved" role="status">Leave Settings and discard {dirtyCount} unsaved {dirtyCount === 1 ? 'change' : 'changes'}?</span>
+    <span use:focusStay>
+      <Button label="Stay" tone="neutral" surface="outline" onclick={() => (pendingLeave = undefined)} />
+    </span>
+    <Button label="Discard and leave" tone="info" surface="solid" onclick={discardAndLeave} />
+  {:else}
+    <span class="unsaved" role="status">
+      {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : ''}`}
+    </span>
+    <Button label="Discard" disabled={saving} onclick={discard} />
+    <Button
+      disabled={saving || inference.busy || incompleteDrafts > 0}
+      tone="info"
+      surface="solid"
+      label={saving ? 'Saving…' : 'Save changes'}
+      onclick={() => void saveSettings()}
+    />
+  {/if}
 {/snippet}
 
 <!-- One setting: a switch, a key, or a labelled field. -->
@@ -529,7 +552,7 @@
       {categories}
       bind:active={() => activeCategory, selectCategory}
       title=""
-      footer={activeCategory === 'carddav' || dirtyCount === 0 ? undefined : settingsFooter}
+      footer={pendingLeave || (activeCategory !== 'carddav' && dirtyCount > 0) ? settingsFooter : undefined}
     >
       {#snippet panel(activeId)}
         <div class="notices">
