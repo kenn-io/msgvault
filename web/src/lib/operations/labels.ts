@@ -135,9 +135,3 @@ export function operationDuration(run: Pick<OperationRunSummary, 'state' | 'star
   if (minutes === 0) return plural(seconds, 'second');
   return seconds ? `${plural(minutes, 'minute')} ${plural(seconds, 'second')}` : plural(minutes, 'minute');
 }
-
-export const STATUS_AUTHORITY_BY_KIND = {
-  document_extraction: 'getDocumentIndexStatus',
-  document_embedding: 'getDocumentVectorStatus',
-  visual_embedding: 'getVisualAttachmentStatus'
-} as const;

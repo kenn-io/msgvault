@@ -54,7 +54,6 @@
   import SettingField from './SettingField.svelte';
   import Dialog from '../common/Dialog.svelte';
   import OperationRelatedStatus from '../operations/OperationRelatedStatus.svelte';
-  import { STATUS_AUTHORITY_BY_KIND } from '../../operations/labels';
   import type { OperationStatusAuthority } from '../../explore/models';
   import SettingsOverview from './SettingsOverview.svelte';
 
@@ -108,7 +107,7 @@
   let detailsAuthority = $state<OperationStatusAuthority>();
   let lanes = $state<OperationLaneStatus[]>();
   let coverage = $state<Pick<SearchCoverageValue, 'status' | 'actions'>>();
-  const detailsConfigured = $derived(lanes?.find(lane => STATUS_AUTHORITY_BY_KIND[lane.kind as keyof typeof STATUS_AUTHORITY_BY_KIND] === detailsAuthority)?.configured);
+  const detailsConfigured = $derived(lanes?.find(lane => lane.related_status === detailsAuthority)?.configured);
   let statusSettled = $state(false);
   let building = $state<Record<string, boolean>>({});
   let consumedCategoryRequestKey: number | undefined;
