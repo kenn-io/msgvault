@@ -271,7 +271,7 @@ func (h *handlers) prepareCuratedPeopleSearch(
 			if contactErr != nil || contact == nil {
 				continue
 			}
-			if summary.ID == 0 {
+			if summary.ID == 0 || (summary.ActivityCount == 0 && contact.ActivityCount > 0) {
 				summary = *contact
 			}
 			if contact.ActivityCount > 0 && personSummaryMatchesPeopleQuery(*contact, queryText) {

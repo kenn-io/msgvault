@@ -48,6 +48,15 @@ type namedPromotionTestBackend struct {
 	displayName        *string
 }
 
+type perIDPeopleBackend struct {
+	*recordingPeopleBackend
+	contacts map[int64]*query.PersonSummary
+}
+
+func (b *perIDPeopleBackend) GetContact(_ context.Context, participantID int64) (*query.PersonSummary, error) {
+	return b.contacts[participantID], nil
+}
+
 func (b *namedPromotionTestBackend) PromoteWithDisplayName(_ context.Context, participantID int64, displayName *string) (*OperationResult, error) {
 	b.namedParticipantID = participantID
 	b.displayName = displayName
@@ -410,6 +419,37 @@ func TestMCPSearchPeopleIncludesCuratedOnlyDisplayNameAndProfileID(t *testing.T)
 	profile, ok := row["profile"].(map[string]any)
 	require.True(ok)
 	assert.InDelta(float64(7), profile["id"], 0)
+}
+
+func TestMCPSearchPeoplePrefersActiveParticipantSummary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	now := time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC)
+	backend := &perIDPeopleBackend{
+		recordingPeopleBackend: &recordingPeopleBackend{
+			searchPage: &peoplebrowser.SearchPage{Rows: []query.PersonSummary{}},
+			profiles: []store.Person{{
+				ID: 7, VCardUID: "person-7", DisplayName: new("Example Contact"),
+				ParticipantIDs: []int64{11, 12},
+			}},
+		},
+		contacts: map[int64]*query.PersonSummary{
+			11: {ID: 11, ActivityCount: 0},
+			12: {ID: 12, ActivityCount: 3, FirstAt: now, LastAt: now},
+		},
+	}
+
+	result := rawCallTool(t, peopleToolOptions(backend), ToolSearchPeople, map[string]any{"query": "", "limit": 20})
+	require.NotEqual(true, result["isError"], "result: %#v", result)
+	rows, ok := toolStructuredContent(t, result)["rows"].([]any)
+	require.True(ok)
+	require.Len(rows, 1)
+	row, ok := rows[0].(map[string]any)
+	require.True(ok)
+	assert.InDelta(12, row["id"], 0)
+	assert.InDelta(3, row["activity_count"], 0)
+	assert.Equal("2026-08-20T12:30:00Z", row["first_at"])
+	assert.Equal("2026-08-20T12:30:00Z", row["last_at"])
 }
 
 func TestMCPSearchPeopleKeepsObservedPageWhenProfileQuerySpansContactFields(t *testing.T) {

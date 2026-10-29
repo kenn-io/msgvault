@@ -608,7 +608,7 @@ func TestParticipantDetailUsesParticipantNotFoundError(t *testing.T) {
 	assert.Equal(t, "participant_not_found", body.Error)
 }
 
-func TestParticipantDetailDistinguishesDraftOnlyAndMissingPeople(t *testing.T) {
+func TestParticipantDetailReturnsDraftOnlyPerson(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	t.Parallel()
