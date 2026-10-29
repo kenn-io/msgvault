@@ -1,6 +1,6 @@
 <script lang="ts">
   import { downloadRawMessage } from '../../api/download';
-  import { relationshipDestination } from './navigation';
+  import { relationshipDestination, tasksSettingsDestination } from './navigation';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
     Button,
@@ -1312,13 +1312,14 @@
           controller={relationshipsController}
           facet={exploreState.current.relationshipFacet}
           target={exploreState.current.relationshipTarget}
+          bind:reader={() => exploreState.current.relationshipReader, (relationshipReader) => replaceTransient({ relationshipReader })}
           showAll={exploreState.current.relationshipShowAll}
           filesOpen={exploreState.current.relationshipFiles}
           predicate={exploreState.predicate()}
           personFilePresentation={exploreState.current.personFilePresentation}
           personFileDirections={exploreState.current.personFileDirections}
           onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
-          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
+          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipReader: null, relationshipFiles: false })}
           onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
           onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
           onPersonFilePresentationChange={(personFilePresentation) =>
@@ -1337,7 +1338,7 @@
             })}
           onOpenEverything={() => commitWorkspace('everything')}
           onOpenPerson={openRelationship}
-          onOpenSettings={() => commitNavigation({ workspace: 'settings', settingsCategory: 'tasks' })}
+          onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}
           onAnnounce={announceOperation}
@@ -1597,7 +1598,7 @@
   <ArchivedMeetingReader {client} message={archivedMeeting.detail?.id === archiveMeetingID ? archivedMeeting.detail : undefined}
     loading={archivedMeeting.loading} error={archivedMeeting.error} predicate={exploreState.predicate()}
     anchorID={conversationAnchorId} onClose={closeArchivedMeeting} onOpenPerson={openRelationship}
-    onOpenSettings={() => commitNavigation({ workspace: 'settings', settingsCategory: 'tasks' })}
+    onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
     onReload={() => void archivedMeeting.load(archiveMeetingID!)}
     onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)} onAnchorChange={changeConversationAnchor} />
 {:else if archivedMeeting.loading}

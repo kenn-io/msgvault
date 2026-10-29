@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { relationshipDestination } from './lib/components/shell/navigation';
+  import { relationshipDestination, tasksSettingsDestination } from './lib/components/shell/navigation';
   import { defaultExploreURLState, serializeExploreURLState } from './lib/explore/state.svelte';
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
@@ -146,7 +146,7 @@
   <Login {session} />
 {:else if shellMounted}
   {#if messageID !== undefined}
-    <MessagePage client={session.client} {messageID} onOpenPerson={(participantID) => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, ...relationshipDestination(participantID) })}`)} onOpenSettings={() => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, workspace: 'settings', settingsCategory: 'tasks' })}`)} />
+    <MessagePage client={session.client} {messageID} onOpenPerson={(participantID) => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, ...relationshipDestination(participantID) })}`)} onOpenSettings={() => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, ...tasksSettingsDestination() })}`)} />
   {:else}
   <AppShell client={session.client} {appearanceDefaults} {searchModeDefault}>
     {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources, onOpenStatus, onStatusChange, operationsController)}
