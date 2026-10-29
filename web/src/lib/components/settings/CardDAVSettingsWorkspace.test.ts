@@ -45,7 +45,8 @@ describe('CardDAV connection selection', () => {
     rendered.unmount();
   });
 
-  it.each(['constructor'])('isolates passwords, drafts, requests and late results when switching to %s', async name => {
+  it('isolates passwords, drafts, requests and late results when switching connections', async () => {
+    const name = 'constructor';
     const requests: Request[] = [];
     let resolve!: (value: Response) => void;
     const late = new Promise<Response>((done) => {
