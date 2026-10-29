@@ -1561,6 +1561,7 @@
           {changeConversationAnchor}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           onSaveView={() => (saveViewOpen = true)}
+          onStatusChange={() => void shellData.jobs.refresh(true)}
         />
       {/if}
     </div>

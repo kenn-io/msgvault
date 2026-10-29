@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, StatusDot, Tooltip } from '@kenn-io/kit-ui';
+  import { appShortcuts, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, StatusDot, Tooltip } from '@kenn-io/kit-ui';
 
   import type { JobsStore } from '../../jobs/jobs.svelte';
   import type { JobTarget } from '../../jobs/jobs';
@@ -14,6 +14,11 @@
 
   let { onPastRuns, store, collapsed, onOpen }: Props = $props();
 
+  let open = $state(false);
+  $effect(() => {
+    if (open) return appShortcuts.pushScope('sync-status-menu');
+  });
+
   const STATUS = {
     unavailable: { tone: 'stale', label: 'Status unavailable' },
     ok: { tone: 'idle', label: 'Idle' },
@@ -24,7 +29,7 @@
   const status = $derived(store.loaded ? STATUS[store.health] : { tone: 'idle', label: 'Loading' } as const);
 </script>
 
-<Menu align="start" onopenchange={(open) => open && void store.refresh()}>
+<Menu bind:open align="start" onopenchange={(open) => open && void store.refresh()}>
   <Tooltip text={status.label} focusable={false} side={collapsed ? 'right' : 'bottom'}>
     <MenuTrigger ariaLabel={`Sync status: ${status.label}`}>
       {#snippet child({ attachment })}

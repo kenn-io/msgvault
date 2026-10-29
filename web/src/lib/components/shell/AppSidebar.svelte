@@ -9,7 +9,7 @@
   import SavedViewRow from './SavedViewRow.svelte';
   import type { JobsStore } from '../../jobs/jobs.svelte';
   import type { JobTarget } from '../../jobs/jobs';
-  import { viewIsFiles } from './shell-data.svelte';
+  import { viewState } from './shell-data.svelte';
   import SyncStatusMenu from './SyncStatusMenu.svelte';
   import { NAVIGATION_ITEMS, SETTINGS_ITEM, type NavigationItem } from './navigation';
 
@@ -53,8 +53,8 @@
 
   const SettingsIcon = SETTINGS_ITEM.icon;
   const items = NAVIGATION_ITEMS;
-  const messageViews = $derived(views.filter((view) => !viewIsFiles(view)));
-  const fileViews = $derived(views.filter(viewIsFiles));
+  const messageViews = $derived(views.filter((view) => viewState(view).workspace !== 'files'));
+  const fileViews = $derived(views.filter(view => viewState(view).workspace === 'files'));
 
   function nestedViews(item: NavigationItem): SavedView[] {
     if (item.id === 'everything') return messageViews;
