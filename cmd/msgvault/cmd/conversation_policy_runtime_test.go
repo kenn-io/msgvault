@@ -87,6 +87,9 @@ func TestServeConversationPolicyBeforeConsumers(t *testing.T) {
 	requirements.Len(rows, 1)
 	assertions.Equal(room, rows[0].ConversationID)
 	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier)
+	_, pending, err := st.ConversationPolicyCleanupPending(ctx)
+	requirements.NoError(err)
+	assertions.False(pending, "startup must reach real cleanup without vector credentials")
 	cancel()
 	select {
 	case err := <-done:
@@ -130,6 +133,9 @@ func TestConversationPolicyRuntimeMalformedReloadStillExpires(t *testing.T) {
 	after, err := st.ConversationPolicySettingsContext(ctx)
 	requirements.NoError(err)
 	assertions.Equal(before, after)
+	_, pending, err := st.ConversationPolicyCleanupPending(ctx)
+	requirements.NoError(err)
+	assertions.False(pending)
 	cancel()
 	<-done
 }
@@ -260,6 +266,8 @@ func TestConversationPolicyPreviewPreservesArchive(t *testing.T) {
 	requirements.NoError(err)
 	revision, err := st.ConversationPolicyRevision(ctx)
 	requirements.NoError(err)
+	target, pending, err := st.ConversationPolicyCleanupPending(ctx)
+	requirements.NoError(err)
 	preview := newPurgeExcludedMediaLocalCmd(defaultPurgeExcludedMediaDeps(ctx))
 	preview.SetArgs([]string{"--dry-run"})
 	requirements.NoError(preview.ExecuteContext(ctx))
@@ -269,6 +277,10 @@ func TestConversationPolicyPreviewPreservesArchive(t *testing.T) {
 	afterRevision, err := st.ConversationPolicyRevision(ctx)
 	requirements.NoError(err)
 	assertions.Equal(revision, afterRevision)
+	afterTarget, afterPending, err := st.ConversationPolicyCleanupPending(ctx)
+	requirements.NoError(err)
+	assertions.Equal(target, afterTarget)
+	assertions.Equal(pending, afterPending)
 	assertions.Equal(beforeMetadata, metadata(), "preview must not drain dirty hints or write metadata")
 	assertions.Equal(beforeFiles, files(), "preview must not remove loose blobs or repack sealed files")
 	packAfter, err := st.GetAttachmentPackEntry(packedHash)
@@ -288,6 +300,9 @@ func TestConversationPolicyEndToEndScratchArchive(t *testing.T) {
 	rows, err := writer.ListConversationPolicies(ctx)
 	requirements.NoError(err)
 	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier, "standalone writer bootstraps before admitting messages or workers")
+	_, pending, err := writer.ConversationPolicyCleanupPending(ctx)
+	requirements.NoError(err)
+	assertions.False(pending)
 	closeWriter()
 	rows, err = st.ListConversationPolicies(ctx)
 	requirements.NoError(err)
@@ -304,6 +319,9 @@ func observePolicyConsumers(t *testing.T) <-chan string {
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		assert.Equal(t, conversationpolicy.Cold, rows[0].EffectiveTier, name)
+		_, pending, err := st.ConversationPolicyCleanupPending(ctx)
+		require.NoError(t, err)
+		assert.False(t, pending, name)
 		starts <- name
 	}
 	oldAnalytics, oldPeople, oldVector := prepareServeAnalyticsEngine, registerServePersonEnrichmentJob, startServeVectorInit

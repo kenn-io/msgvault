@@ -37,6 +37,16 @@ func (b *VisualBackend) PutUnpublished(ctx context.Context, token visual.VectorT
 	if !finiteVisualVector(vector) {
 		return errors.New("visual vector contains non-finite values")
 	}
+	release, err := b.backend.acquirePolicyPublication(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if b.backend.policyStore != nil {
+		if err := b.backend.policyStore.CheckSQLiteConversationPolicyVisualTokens(ctx, []string{string(token)}); err != nil {
+			return err
+		}
+	}
 	tx, err := b.backend.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -85,6 +95,28 @@ func (b *VisualBackend) DeleteTokens(ctx context.Context, tokens []visual.Vector
 }
 
 func (b *VisualBackend) deleteTokenBatch(ctx context.Context, tokens []visual.VectorToken) error {
+	if b.backend.policyStore != nil {
+		release, err := b.backend.policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyExclusive)
+		if err != nil {
+			return err
+		}
+		defer release()
+		deletable := make([]visual.VectorToken, 0, len(tokens))
+		for _, token := range tokens {
+			published, err := b.backend.policyStore.VisualPolicyTokenPublished(ctx, nil, string(token))
+			if err != nil {
+				return err
+			}
+			if !published {
+				deletable = append(deletable, token)
+			}
+		}
+		tokens = deletable
+		if len(tokens) == 0 {
+			return nil
+		}
+	}
+
 	placeholders := make([]string, 0, len(tokens))
 	args := make([]any, 0, len(tokens))
 	for _, token := range tokens {
@@ -137,7 +169,7 @@ func (b *VisualBackend) Search(ctx context.Context, request visual.SearchRequest
 	if b.backend.mainDB == nil {
 		return nil, errors.New("visual search requires the authoritative archive database")
 	}
-	live, err := sqliteLiveVisualTokens(ctx, b.backend.mainDB, request)
+	live, err := b.sqliteLiveVisualTokens(ctx, b.backend.mainDB, request)
 	if err != nil || len(live) == 0 {
 		return nil, err
 	}
@@ -242,7 +274,7 @@ func (b *VisualBackend) LoadOwnerVector(ctx context.Context, generationID visual
 	return blobToFloat32(raw, visualDimension)
 }
 
-func sqliteLiveVisualTokens(ctx context.Context, db *sql.DB, request visual.SearchRequest) (map[string]struct{}, error) {
+func (b *VisualBackend) sqliteLiveVisualTokens(ctx context.Context, db *sql.DB, request visual.SearchRequest) (map[string]struct{}, error) {
 	query := `
 		SELECT vp.current_vector_token
 		FROM visual_publications vp
@@ -252,7 +284,7 @@ func sqliteLiveVisualTokens(ctx context.Context, db *sql.DB, request visual.Sear
 		JOIN attachments a ON a.id = vp.representative_attachment_id
 		WHERE vp.generation_id = ? AND vg.state = 'active'
 		  AND vp.state = 'current' AND vp.current_vector_token IS NOT NULL
-		  AND ` + store.LiveMessagesWhere("m", true) + `
+		  AND ` + b.backend.liveMessageWhere("m") + `
 		  AND a.message_id = vp.message_id
 		  AND a.attachment_role = 'standalone'`
 	args := []any{int64(request.GenerationID)}

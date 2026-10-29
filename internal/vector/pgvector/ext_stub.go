@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -22,6 +23,8 @@ var ErrNotBuilt = errors.New(
 // builds can compile call sites that reference it. None of the fields
 // are read because Open() always fails.
 type Options struct {
+	// PolicyStore is the authoritative archive; nil is only for archive-free fixtures.
+	PolicyStore   *store.Store
 	DB            *sql.DB
 	Dimension     int
 	SkipMigrate   bool
@@ -116,3 +119,7 @@ func (b *Backend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, _
 // interface. Keeping the assertion here means changes to the interface
 // break stub and real builds in lockstep.
 var _ vector.Backend = (*Backend)(nil)
+
+func (b *Backend) PruneIneligibleEmbeddings(context.Context) (int64, error) { return 0, ErrNotBuilt }
+
+func (b *Backend) PruneIneligiblePersons(context.Context) (int64, error) { return 0, ErrNotBuilt }

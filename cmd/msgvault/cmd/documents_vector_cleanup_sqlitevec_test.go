@@ -10,11 +10,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 func TestRunConfiguredDocumentVectorGenerationCleansRetiredWhenEmbeddingsDisabled(t *testing.T) {
+	testutil.SkipIfPostgres(t, "this test verifies cleanup of a SQLite vector store")
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture, spec, testCtx := documentVectorCommandFixture(t)

@@ -24,3 +24,5 @@ func (b *VisualBackend) LoadOwnerVector(context.Context, visual.GenerationID, vi
 }
 
 var _ visual.Backend = (*VisualBackend)(nil)
+
+func (b *VisualBackend) PruneIneligibleVisuals(context.Context) (int64, error) { return 0, ErrNotBuilt }

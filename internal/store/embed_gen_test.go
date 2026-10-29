@@ -62,6 +62,45 @@ func seedEmbedScopeFixture(t *testing.T, st *store.Store) embedScopeFixture {
 	return fx
 }
 
+func TestMessageEmbeddingRevisionBaselineMigration(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "embedding-revision-baseline")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "revision-baseline", "email_thread", "Revision baseline")
+	requirements.NoError(err)
+	staleID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "legacy-unstamped",
+		ConversationID: conversationID, MessageType: "email",
+	})
+	requirements.NoError(err)
+	currentID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "legacy-stamped",
+		ConversationID: conversationID, MessageType: "email",
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.SetEmbedGen(t.Context(), []int64{currentID}, 7))
+	_, err = st.DB().Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		"message_embedding_revision_baseline_v1")
+	requirements.NoError(err)
+
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	var staleRevision, currentRevision int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), staleID).Scan(&staleRevision))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), currentID).Scan(&currentRevision))
+	assertions.Equal(int64(1), staleRevision, "legacy NULL stamps must invalidate pre-revision vectors")
+	assertions.Zero(currentRevision, "currently stamped vectors keep their original revision")
+
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), staleID).Scan(&staleRevision))
+	assertions.Equal(int64(1), staleRevision, "the baseline migration must be idempotent")
+}
+
 func TestScanForEmbeddingScopedFiltersBySource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -181,24 +220,34 @@ func TestSetEmbedGenIfUnchanged(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	id := seedMessageForLM(t, st)
 	tokenAtRead := baselineLM(t, st, id)
+	var revisionAtRead int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&revisionAtRead))
 
 	_, err := st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "corrected body", id)
 	require.NoError(err)
-	missed, covered, err := st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
+	missed, covered, err := st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{
+		ID: id, LastModified: tokenAtRead, EmbeddingRevision: revisionAtRead,
+	}}, 7)
 	require.NoError(err)
 	assert.Equal([]int64{id}, missed)
 	assert.Zero(covered)
 	assert.False(readEmbedGen(t, st, id).Valid, "a stale token must not stamp the row")
 	tokenAtRead = baselineLM(t, st, id)
+	var currentRevision int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&currentRevision))
 
 	missed, covered, err = st.SetEmbedGenIfUnchanged(context.Background(),
-		[]store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
+		[]store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead, EmbeddingRevision: currentRevision}}, 7)
 	require.NoError(err)
 	assert.Empty(missed)
 	assert.Equal(1, covered)
 	assert.Equal(sql.NullInt64{Int64: 7, Valid: true}, readEmbedGen(t, st, id))
 	coveredToken := readLM(t, st, id)
-	missed, covered, err = st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: coveredToken}}, 7)
+	missed, covered, err = st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{
+		ID: id, LastModified: coveredToken, EmbeddingRevision: currentRevision,
+	}}, 7)
 	require.NoError(err)
 	assert.Empty(missed, "an already covered row is not a CAS miss")
 	assert.Zero(covered, "an already covered row is not newly covered")

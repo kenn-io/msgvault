@@ -2,9 +2,8 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"database/sql"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -320,22 +319,27 @@ func (s *Store) ClaimDocumentVectorChunk(
 		return nil, errors.New("document vector lease duration has no effective database precision")
 	}
 	var claimed *DocumentVectorChunkClaim
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		q := boundQuerier{ctx: ctx, q: tx}
-		state, currentTarget, err := s.lockDocumentVectorGeneration(q, generationID)
-		if err != nil {
-			return err
-		}
-		if state != DocumentVectorGenerationBuilding || !currentTarget {
-			return ErrDocumentVectorInvalidGenerationState
-		}
-		candidates, err := s.listDocumentVectorChunkCandidatesTx(ctx, tx, generationID, afterChunkID, scanLimit)
-		if err != nil {
-			return err
-		}
-		for _, candidate := range candidates {
-			token := documentVectorToken(candidate)
-			result, err := q.Exec(`
+	err := retryContendedWriteErr(ctx, s, "claim document vector chunk", func() error {
+		claimed = nil
+		return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
+			q := boundQuerier{ctx: ctx, q: tx}
+			state, currentTarget, err := s.lockDocumentVectorGeneration(q, generationID)
+			if err != nil {
+				return err
+			}
+			if state != DocumentVectorGenerationBuilding || !currentTarget {
+				return ErrDocumentVectorInvalidGenerationState
+			}
+			candidates, err := s.listDocumentVectorChunkCandidatesTx(ctx, tx, generationID, afterChunkID, scanLimit)
+			if err != nil {
+				return err
+			}
+			for _, candidate := range candidates {
+				token, err := newDocumentVectorToken()
+				if err != nil {
+					return err
+				}
+				result, err := q.Exec(`
 				INSERT INTO document_vector_publications
 					(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
 					 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence,
@@ -343,53 +347,53 @@ func (s *Store) ClaimDocumentVectorChunk(
 					 created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, 1, ?, ?)
 				ON CONFLICT (generation_id, extraction_id, chunk_id) DO NOTHING`,
-				candidate.GenerationID, candidate.ExtractionID, candidate.ExtractionProfileID,
-				candidate.CanonicalBlobHash, candidate.ExtractionInputKey, candidate.ChunkID,
-				candidate.ChunkKey, candidate.ChunkChecksum, candidate.SourceSequence, token,
-				owner, s.dialect.TimestampParam(leaseUntil), s.dialect.TimestampParam(now),
-				s.dialect.TimestampParam(now))
-			if err != nil {
-				return fmt.Errorf("create document vector chunk claim: %w", err)
-			}
-			inserted, err := result.RowsAffected()
-			if err != nil {
-				return fmt.Errorf("read document vector chunk claim result: %w", err)
-			}
-			if inserted == 1 {
-				claimed = documentVectorChunkClaim(candidate, token, owner, 1, leaseUntil, 1)
-				return nil
-			}
+					candidate.GenerationID, candidate.ExtractionID, candidate.ExtractionProfileID,
+					candidate.CanonicalBlobHash, candidate.ExtractionInputKey, candidate.ChunkID,
+					candidate.ChunkKey, candidate.ChunkChecksum, candidate.SourceSequence, token,
+					owner, s.dialect.TimestampParam(leaseUntil), s.dialect.TimestampParam(now),
+					s.dialect.TimestampParam(now))
+				if err != nil {
+					return fmt.Errorf("create document vector chunk claim: %w", err)
+				}
+				inserted, err := result.RowsAffected()
+				if err != nil {
+					return fmt.Errorf("read document vector chunk claim result: %w", err)
+				}
+				if inserted == 1 {
+					claimed = documentVectorChunkClaim(candidate, token, owner, 1, leaseUntil, 1)
+					return nil
+				}
 
-			publication, found, err := s.getDocumentVectorPublicationForClaim(q, candidate)
-			if err != nil {
-				return err
-			}
-			if !found {
-				continue
-			}
-			if publication.token != token {
-				return errors.New("document vector publication token does not match its immutable identity")
-			}
-			switch publication.state {
-			case "ready":
-				continue
-			case "pending":
-				if publication.leaseUntil.Valid && publication.leaseUntil.Time.After(now) {
-					if publication.leaseOwner.String == owner {
-						claimed = documentVectorChunkClaim(candidate, token, owner, publication.leaseFence, publication.leaseUntil.Time, publication.attemptCount)
-						return nil
+				publication, found, err := s.getDocumentVectorPublicationForClaim(q, candidate)
+				if err != nil {
+					return err
+				}
+				if !found {
+					continue
+				}
+				// Keep the current incarnation for retries, including persisted
+				// pre-upgrade tokens. Only a recreated publication gets a new token.
+				token = publication.token
+				switch publication.state {
+				case "ready":
+					continue
+				case "pending":
+					if publication.leaseUntil.Valid && publication.leaseUntil.Time.After(now) {
+						if publication.leaseOwner.String == owner {
+							claimed = documentVectorChunkClaim(candidate, token, owner, publication.leaseFence, publication.leaseUntil.Time, publication.attemptCount)
+							return nil
+						}
+						continue
 					}
-					continue
+				case "failed":
+					if !publication.nextRetryAt.Valid || publication.nextRetryAt.Time.After(now) {
+						continue
+					}
+				default:
+					return fmt.Errorf("document vector publication %q has invalid state %q", token, publication.state)
 				}
-			case "failed":
-				if !publication.nextRetryAt.Valid || publication.nextRetryAt.Time.After(now) {
-					continue
-				}
-			default:
-				return fmt.Errorf("document vector publication %q has invalid state %q", token, publication.state)
-			}
 
-			result, err = q.Exec(`
+				result, err = q.Exec(`
 				UPDATE document_vector_publications
 				SET state = 'pending', lease_owner = ?, lease_fence = lease_fence + 1,
 				    lease_until = ?, attempt_count = attempt_count + 1,
@@ -399,21 +403,22 @@ func (s *Store) ClaimDocumentVectorChunk(
 				      (state = 'pending' AND (lease_until IS NULL OR lease_until <= ?))
 				      OR (state = 'failed' AND next_retry_at IS NOT NULL AND next_retry_at <= ?)
 				  )`, owner, s.dialect.TimestampParam(leaseUntil), s.dialect.TimestampParam(now),
-				generationID, candidate.ExtractionID, candidate.ChunkID, publication.leaseFence,
-				s.dialect.TimestampParam(now), s.dialect.TimestampParam(now))
-			if err != nil {
-				return fmt.Errorf("take over document vector chunk claim: %w", err)
+					generationID, candidate.ExtractionID, candidate.ChunkID, publication.leaseFence,
+					s.dialect.TimestampParam(now), s.dialect.TimestampParam(now))
+				if err != nil {
+					return fmt.Errorf("take over document vector chunk claim: %w", err)
+				}
+				updated, err := result.RowsAffected()
+				if err != nil {
+					return fmt.Errorf("read document vector chunk takeover result: %w", err)
+				}
+				if updated == 1 {
+					claimed = documentVectorChunkClaim(candidate, token, owner, publication.leaseFence+1, leaseUntil, publication.attemptCount+1)
+					return nil
+				}
 			}
-			updated, err := result.RowsAffected()
-			if err != nil {
-				return fmt.Errorf("read document vector chunk takeover result: %w", err)
-			}
-			if updated == 1 {
-				claimed = documentVectorChunkClaim(candidate, token, owner, publication.leaseFence+1, leaseUntil, publication.attemptCount+1)
-				return nil
-			}
-		}
-		return nil
+			return nil
+		})
 	})
 	return claimed, err
 }
@@ -470,6 +475,40 @@ func (s *Store) RenewDocumentVectorChunkClaim(
 	return leaseUntil, nil
 }
 
+// ReleaseDocumentVectorChunkClaim makes an uncompleted claim immediately
+// available for takeover without recording a provider or publication failure.
+func (s *Store) ReleaseDocumentVectorChunkClaim(
+	ctx context.Context,
+	generationID int64,
+	token, owner string,
+	fence int64,
+	now time.Time,
+) error {
+	if err := validateDocumentVectorClaimReference(generationID, token, owner, fence, now); err != nil {
+		return err
+	}
+	now = normalizeDocumentVectorTime(now)
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE document_vector_publications
+			SET lease_owner = NULL, lease_until = NULL, updated_at = ?
+			WHERE generation_id = ? AND token = ? AND state = 'pending'
+			  AND lease_owner = ? AND lease_fence = ?`,
+			s.dialect.TimestampParam(now), generationID, token, owner, fence)
+		if err != nil {
+			return fmt.Errorf("release document vector chunk claim: %w", err)
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read document vector claim release result: %w", err)
+		}
+		if updated != 1 {
+			return ErrDocumentVectorClaimLost
+		}
+		return nil
+	})
+}
+
 func (s *Store) CommitDocumentVectorPublication(
 	ctx context.Context,
 	generationID int64,
@@ -481,73 +520,79 @@ func (s *Store) CommitDocumentVectorPublication(
 		return err
 	}
 	now = normalizeDocumentVectorTime(now)
-	sourceChanged := false
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		q := boundQuerier{ctx: ctx, q: tx}
-		state, currentTarget, err := s.lockDocumentVectorGeneration(q, generationID)
-		if err != nil {
-			return err
-		}
-		publication, found, err := s.getDocumentVectorPublicationByToken(q, generationID, token)
-		if err != nil {
-			return err
-		}
-		if !found || publication.leaseOwner.String != owner || publication.leaseFence != fence {
-			return ErrDocumentVectorClaimLost
-		}
-		if publication.state == "ready" {
-			return nil
-		}
-		if publication.state != "pending" || !publication.leaseUntil.Valid || !publication.leaseUntil.Time.After(now) {
-			return ErrDocumentVectorClaimLost
-		}
-		if state != DocumentVectorGenerationBuilding || !currentTarget {
-			return ErrDocumentVectorInvalidGenerationState
-		}
-		current, err := s.isDocumentVectorPublicationCurrent(q, publication)
-		if err != nil {
-			return err
-		}
-		if !current {
-			result, err := q.Exec(`
+	err := retryContendedWriteErr(ctx, s, "commit document vector publication", func() error {
+		sourceChanged := false
+		err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
+			q := boundQuerier{ctx: ctx, q: tx}
+			state, currentTarget, err := s.lockDocumentVectorGeneration(q, generationID)
+			if err != nil {
+				return err
+			}
+			publication, found, err := s.getDocumentVectorPublicationByToken(q, generationID, token)
+			if err != nil {
+				return err
+			}
+			if !found || publication.leaseOwner.String != owner || publication.leaseFence != fence {
+				return ErrDocumentVectorClaimLost
+			}
+			if publication.state == "ready" {
+				return nil
+			}
+			if publication.state != "pending" || !publication.leaseUntil.Valid || !publication.leaseUntil.Time.After(now) {
+				return ErrDocumentVectorClaimLost
+			}
+			if state != DocumentVectorGenerationBuilding || !currentTarget {
+				return ErrDocumentVectorInvalidGenerationState
+			}
+			current, err := s.isDocumentVectorPublicationCurrent(q, publication)
+			if err != nil {
+				return err
+			}
+			if !current {
+				result, err := q.Exec(`
 				UPDATE document_vector_publications
 				SET state = 'failed', lease_owner = NULL, lease_until = NULL,
 				    next_retry_at = NULL, error_code = 'source_changed',
 				    backend_cleaned_at = NULL, updated_at = ?
 				WHERE generation_id = ? AND token = ? AND state = 'pending'
 				  AND lease_owner = ? AND lease_fence = ?`,
-				s.dialect.TimestampParam(now), generationID, token, owner, fence)
-			if err != nil {
-				return fmt.Errorf("record changed document vector source: %w", err)
+					s.dialect.TimestampParam(now), generationID, token, owner, fence)
+				if err != nil {
+					return fmt.Errorf("record changed document vector source: %w", err)
+				}
+				updated, err := result.RowsAffected()
+				if err != nil || updated != 1 {
+					return ErrDocumentVectorClaimLost
+				}
+				sourceChanged = true
+				return nil
 			}
-			updated, err := result.RowsAffected()
-			if err != nil || updated != 1 {
-				return ErrDocumentVectorClaimLost
-			}
-			sourceChanged = true
-			return nil
-		}
-		result, err := q.Exec(`
+			result, err := q.Exec(`
 			UPDATE document_vector_publications
 			SET state = 'ready', lease_until = NULL, next_retry_at = NULL,
 			    error_code = NULL, updated_at = ?
 			WHERE generation_id = ? AND token = ? AND state = 'pending'
 			  AND lease_owner = ? AND lease_fence = ?`,
-			s.dialect.TimestampParam(now), generationID, token, owner, fence)
+				s.dialect.TimestampParam(now), generationID, token, owner, fence)
+			if err != nil {
+				return fmt.Errorf("commit document vector publication: %w", err)
+			}
+			updated, err := result.RowsAffected()
+			if err != nil || updated != 1 {
+				return ErrDocumentVectorClaimLost
+			}
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("commit document vector publication: %w", err)
+			return err
 		}
-		updated, err := result.RowsAffected()
-		if err != nil || updated != 1 {
-			return ErrDocumentVectorClaimLost
+		if sourceChanged {
+			return ErrDocumentVectorSourceChanged
 		}
 		return nil
 	})
 	if err != nil {
 		return err
-	}
-	if sourceChanged {
-		return ErrDocumentVectorSourceChanged
 	}
 	return nil
 }
@@ -625,7 +670,7 @@ func (s *Store) GetDocumentVectorGenerationStatus(
 	}
 	status := DocumentVectorGenerationStatus{GenerationID: generationID}
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		current := documentVectorPublicationSnapshotCurrentSQL("v", "g")
+		current := documentVectorPublicationSnapshotCurrentSQL()
 		parked := `(v.state = 'failed' AND v.error_code = 'source_changed')`
 		query := `SELECT g.state,
 			COALESCE(SUM(CASE WHEN v.token IS NOT NULL AND g.state <> 'retired' AND NOT (` + parked + `) AND ` + current + ` AND v.state = 'pending' THEN 1 ELSE 0 END), 0),
@@ -810,7 +855,7 @@ func (s *Store) ActivateDocumentVectorGeneration(ctx context.Context, generation
 		return errors.New("document vector activation requires a generation and time")
 	}
 	now = normalizeDocumentVectorTime(now)
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		state, currentTarget, err := s.lockDocumentVectorGeneration(q, generationID)
 		if err != nil {
@@ -1046,7 +1091,7 @@ func (s *Store) ParkObsoleteDocumentVectorTokens(
 		if !found {
 			return ErrDocumentVectorInvalidGenerationState
 		}
-		current := documentVectorPublicationSnapshotCurrentSQL("v", "g")
+		current := documentVectorPublicationSnapshotCurrentSQL()
 		query := `SELECT v.generation_id, v.token
 			FROM document_vector_publications v
 			JOIN document_vector_generations g ON g.id = v.generation_id
@@ -1444,7 +1489,11 @@ func (s *Store) isDocumentVectorPublicationCurrent(q boundQuerier, publication d
 	return current, nil
 }
 
-func documentVectorPublicationSnapshotCurrentSQL(publication, generation string) string {
+func documentVectorPublicationSnapshotCurrentSQL() string {
+	const (
+		publication = "v"
+		generation  = "g"
+	)
 	return `EXISTS (
 		SELECT 1
 		FROM document_index_state ds
@@ -1491,18 +1540,12 @@ func boundedDocumentVectorErrorCode(value string) string {
 	return value
 }
 
-func documentVectorToken(candidate DocumentVectorChunkCandidate) string {
-	hasher := sha256.New()
-	_, _ = hasher.Write([]byte("msgvault-document-vector-token-v1"))
-	var size [8]byte
-	binary.BigEndian.PutUint64(size[:], uint64(candidate.GenerationID)) //nolint:gosec // Generation IDs are positive database keys.
-	_, _ = hasher.Write(size[:])
-	for _, field := range []string{candidate.ExtractionID, candidate.ChunkKey, candidate.ChunkChecksum} {
-		binary.BigEndian.PutUint64(size[:], uint64(len(field)))
-		_, _ = hasher.Write(size[:])
-		_, _ = hasher.Write([]byte(field))
+func newDocumentVectorToken() (string, error) {
+	var value [32]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("create document vector token: %w", err)
 	}
-	return hex.EncodeToString(hasher.Sum(nil))
+	return hex.EncodeToString(value[:]), nil
 }
 
 func documentVectorChunkClaim(

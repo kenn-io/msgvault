@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -70,8 +71,10 @@ func (w *Watermark) SetWatermark(ctx context.Context, gen vector.GenerationID, i
 	}
 	stmt := `INSERT INTO embed_watermark (generation_id, watermark_id) VALUES (?, ?)
 	         ON CONFLICT (generation_id) DO UPDATE SET watermark_id = excluded.watermark_id`
-	if _, err := w.db.ExecContext(ctx, w.rebind(stmt), int64(gen), id); err != nil {
-		return fmt.Errorf("set watermark: %w", err)
-	}
-	return nil
+	return store.PublishConversationPolicyProgress(ctx, w.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, w.rebind(stmt), int64(gen), id); err != nil {
+			return fmt.Errorf("set watermark: %w", err)
+		}
+		return nil
+	})
 }

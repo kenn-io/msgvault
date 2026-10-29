@@ -102,7 +102,8 @@ func testSetupPGSchema(t *testing.T, db *sql.DB) {
 			sent_at TIMESTAMPTZ,
 			deleted_at TIMESTAMPTZ,
 			deleted_from_source_at TIMESTAMPTZ,
-			embed_gen BIGINT
+			embed_gen BIGINT,
+			embedding_revision BIGINT NOT NULL DEFAULT 0
 		);
 		CREATE TABLE message_recipients (
 			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

@@ -25,7 +25,7 @@ type ContextWorkStore interface {
 	LatestEmbeddingChangeSequence(ctx context.Context) (int64, error)
 	ScanForEmbeddingScoped(ctx context.Context, target, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error)
 	SetEmbedGenGroupIfUnchanged(ctx context.Context, stamps []store.EmbedGenStamp, metadata store.EmbedGenMetadataVersion, target int64) (bool, int, error)
-	ResetEmbedGen(ctx context.Context, ids []int64) error
+	ResetEmbedGenCoverage(ctx context.Context, ids []int64) error
 }
 
 var _ ContextWorkStore = (*store.Store)(nil)
@@ -126,6 +126,11 @@ func (w *ContextWorker) RunBackstop(
 func (w *ContextWorker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (result RunResult, retErr error) {
+	var captureErr error
+	ctx, captureErr = w.source.CaptureConversationPolicyWork(ctx)
+	if captureErr != nil {
+		return result, captureErr
+	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
 	)
@@ -772,7 +777,7 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 		diagnostics.completeBatch()
 	}()
 	plans := make([]preparedScopePublication, 0, len(scopes))
-	inputs := make([]DocumentInput, 0)
+	inputs := make([]contextualDocumentInput, 0)
 	targets := make([]preparedDocumentTarget, 0)
 	budget, _ := ctx.Value(contextRunBudgetKey{}).(*contextRunBudget)
 	budgetExhausted := false
@@ -813,7 +818,7 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 		plan.failedDocs = make([]bool, len(scope.docs))
 		plan.preserved = make([]bool, len(scope.docs))
 		plan.resolved = make([]bool, len(scope.docs))
-		scopeInputs := make([]DocumentInput, 0, len(scope.docs))
+		scopeInputs := make([]contextualDocumentInput, 0, len(scope.docs))
 		scopeTargets := make([]preparedDocumentTarget, 0, len(scope.docs))
 		for docIndex, doc := range scope.docs {
 			if record, ok := existingByKey[doc.Key]; ok && record.Kind == doc.Kind &&
@@ -826,7 +831,9 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 			for chunkIndex, chunk := range doc.Chunks {
 				input.Chunks[chunkIndex] = chunk.Text
 			}
-			scopeInputs = append(scopeInputs, input)
+			scopeInputs = append(scopeInputs, contextualDocumentInput{
+				input: input, messageIDs: documentMembers(doc),
+			})
 			scopeTargets = append(scopeTargets, preparedDocumentTarget{docIndex: docIndex})
 		}
 		scopeIndex := len(plans)
@@ -1008,7 +1015,7 @@ func (w *ContextWorker) coverPreparedScopePlan(ctx context.Context, gen vector.G
 	scope := plan.scope
 	failedIDs := failedPreparedDocumentIDs(plan)
 	if len(failedIDs) != 0 {
-		if err := w.deps.Store.ResetEmbedGen(ctx, failedIDs); err != nil {
+		if err := w.deps.Store.ResetEmbedGenCoverage(ctx, failedIDs); err != nil {
 			return fmt.Errorf("reset rejected document coverage: %w", err)
 		}
 	}
@@ -1080,7 +1087,8 @@ func terminalBlankVersions(scope preparedScope) []store.EmbedGenStamp {
 		if _, ok := assembled[version.MessageID]; ok {
 			continue
 		}
-		blank = append(blank, store.EmbedGenStamp{ID: version.MessageID, LastModified: version.LastModified})
+		blank = append(blank, store.EmbedGenStamp{ID: version.MessageID,
+			LastModified: version.LastModified, EmbeddingRevision: version.EmbeddingRevision})
 	}
 	return blank
 }
@@ -1121,16 +1129,31 @@ type contextualDocumentEmbedding struct {
 	embeddedChunks []string
 }
 
+// contextualDocumentInput carries the source messages whose text appears in a
+// provider request. Keep the IDs beside the document while requests are packed,
+// split after size rejections, or retried with truncated input.
+type contextualDocumentInput struct {
+	input      DocumentInput
+	messageIDs []int64
+}
+
 // truncatedContextualDocumentFloorUTF8Bytes is the smallest chunk-text budget
 // the singleton truncation fallback will try before declaring a document
 // permanently too large. Any real document embeds well before this floor.
 const truncatedContextualDocumentFloorUTF8Bytes = 1024
 
-func (w *ContextWorker) embedDocuments(ctx context.Context, inputs []DocumentInput) ([]contextualDocumentEmbedding, error) {
+func (w *ContextWorker) embedDocuments(ctx context.Context, inputs []contextualDocumentInput) ([]contextualDocumentEmbedding, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
-	vectors, err := w.embedDocumentsMeasured(ctx, inputs)
+	documents := make([]DocumentInput, len(inputs))
+	messageIDs := make([]int64, 0)
+	for i, input := range inputs {
+		documents[i] = input.input
+		messageIDs = append(messageIDs, input.messageIDs...)
+	}
+	requestCtx := store.WithConversationPolicyMessageIDs(ctx, messageIDs)
+	vectors, err := w.embedDocumentsMeasured(requestCtx, documents)
 	if len(vectors) > len(inputs) || (err == nil && len(vectors) != len(inputs)) {
 		return nil, fmt.Errorf("contextual batched vector document count mismatch: got %d, expected %d", len(vectors), len(inputs))
 	}
@@ -1177,19 +1200,20 @@ func isSizeRejection(err error) bool {
 	return rejected || errors.Is(err, ErrDocumentTooLarge)
 }
 
-func (w *ContextWorker) embedTruncatedDocument(ctx context.Context, input DocumentInput) ([]contextualDocumentEmbedding, error) {
+func (w *ContextWorker) embedTruncatedDocument(ctx context.Context, input contextualDocumentInput) ([]contextualDocumentEmbedding, error) {
 	budget := 0
-	for _, chunk := range input.Chunks {
+	for _, chunk := range input.input.Chunks {
 		budget += len(chunk)
 	}
 	for budget/2 >= truncatedContextualDocumentFloorUTF8Bytes {
 		budget /= 2
-		truncated := truncateDocumentInput(input, budget)
-		vectors, err := w.embedDocumentsMeasured(ctx, []DocumentInput{truncated})
+		truncated := truncateDocumentInput(input.input, budget)
+		requestCtx := store.WithConversationPolicyMessageIDs(ctx, input.messageIDs)
+		vectors, err := w.embedDocumentsMeasured(requestCtx, []DocumentInput{truncated})
 		if err == nil {
-			if len(vectors) != 1 || len(vectors[0]) != len(input.Chunks) {
+			if len(vectors) != 1 || len(vectors[0]) != len(input.input.Chunks) {
 				return nil, fmt.Errorf("contextual truncated document chunk count mismatch: got %d, expected %d",
-					len(vectors), len(input.Chunks))
+					len(vectors), len(input.input.Chunks))
 			}
 			return []contextualDocumentEmbedding{{vectors: vectors[0], embeddedChunks: truncated.Chunks}}, nil
 		}
@@ -1296,10 +1320,15 @@ func buildDocumentPublication(docs []Document, vectors [][][]float32, preserved 
 		for _, owned := range doc.Chunks {
 			sourceLengths[owned.MessageID] = max(sourceLengths[owned.MessageID], owned.SourceCharEnd)
 		}
+		embeddingRevisions := make(map[int64]int64, len(doc.Versions))
+		for _, version := range doc.Versions {
+			embeddingRevisions[version.MessageID] = version.EmbeddingRevision
+		}
 		for j, owned := range doc.Chunks {
 			chunks = append(chunks, vector.Chunk{MessageID: owned.MessageID,
 				ChunkIndex: owned.ChunkIndex, Vector: vectors[i][j],
-				SourceCharLen: sourceLengths[owned.MessageID], ChunkCharStart: owned.SourceCharStart,
+				EmbeddingRevision: embeddingRevisions[owned.MessageID],
+				SourceCharLen:     sourceLengths[owned.MessageID], ChunkCharStart: owned.SourceCharStart,
 				ChunkCharEnd: owned.SourceCharEnd, SourceBasis: owned.SourceBasis, Truncated: owned.Truncated})
 		}
 	}
@@ -1340,7 +1369,8 @@ func scopeCASTokens(docs []Document) ([]store.EmbedGenStamp, store.EmbedGenMetad
 				return nil, metadata, fmt.Errorf("contextual scope contains duplicate member %d", version.MessageID)
 			}
 			seen[version.MessageID] = struct{}{}
-			versions = append(versions, store.EmbedGenStamp{ID: version.MessageID, LastModified: version.LastModified})
+			versions = append(versions, store.EmbedGenStamp{ID: version.MessageID,
+				LastModified: version.LastModified, EmbeddingRevision: version.EmbeddingRevision})
 		}
 	}
 	sort.Slice(versions, func(i, j int) bool { return versions[i].ID < versions[j].ID })
@@ -1659,7 +1689,7 @@ func (s SourceSnapshot) latestChatBlockScopes(
 		  JOIN message_bodies mb ON mb.message_id = m.id
 		 WHERE m.conversation_id = ?
 		   AND m.message_type = 'beeper'
-		   AND m.deleted_at IS NULL
+		   AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
 		   AND m.deleted_from_source_at IS NULL
 		 ORDER BY m.id DESC
 		 LIMIT ?`), conversationID, blockLimit*chatScopeMaxMessages)
@@ -1793,7 +1823,7 @@ func (s SourceSnapshot) metadataScopesAfter(
 	}
 	where := []string{
 		`m.message_type = 'beeper'`,
-		`m.deleted_at IS NULL`,
+		`m.deleted_at IS NULL AND ` + store.FullMessageWhere("m") + ``,
 		`m.deleted_from_source_at IS NULL`,
 	}
 	args := make([]any, 0)
@@ -1820,7 +1850,7 @@ func (s SourceSnapshot) metadataScopesAfter(
 		  JOIN message_bodies recent_mb ON recent_mb.message_id = recent.id
 		 WHERE recent.conversation_id = m.conversation_id
 		   AND recent.message_type = 'beeper'
-		   AND recent.deleted_at IS NULL
+		   AND recent.deleted_at IS NULL AND ` + store.FullMessageWhere("recent") + `
 		   AND recent.deleted_from_source_at IS NULL
 	) - 1) / ` + strconv.Itoa(chatScopeMaxMessages) + `) * ` +
 		strconv.Itoa(chatScopeMaxMessages) + ` + 1)`
@@ -2023,7 +2053,7 @@ func (s SourceSnapshot) query(ctx context.Context, query string, args ...any) (*
 func (s SourceSnapshot) sourceScopesAfter(
 	ctx context.Context, after int64, limit int, buildScope vector.BuildScope,
 ) ([]contextScope, int64, bool, int, error) {
-	query := `SELECT m.id,COALESCE(m.message_type,''),m.conversation_id,COALESCE(m.sent_at,m.received_at,m.internal_date) FROM messages m WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND m.id > ?`
+	query := `SELECT m.id,COALESCE(m.message_type,''),m.conversation_id,COALESCE(m.sent_at,m.received_at,m.internal_date) FROM messages m WHERE m.deleted_at IS NULL AND ` + store.FullMessageWhere("m") + ` AND m.deleted_from_source_at IS NULL AND m.id > ?`
 	args := []any{after}
 	// Each scope dimension narrows independently: gating the type filter on
 	// IsEmpty would render `IN ()` for a source-only scope, and vice versa.

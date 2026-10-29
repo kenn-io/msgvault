@@ -28,7 +28,20 @@ func (b *VisualBackend) PutUnpublished(ctx context.Context, token visual.VectorT
 	if strings.TrimSpace(string(token)) == "" || len(vector) != visualDimension || !finiteVisualVector(vector) {
 		return errors.New("invalid unpublished visual vector")
 	}
-	_, err := b.backend.db.ExecContext(ctx, `
+	tx, err := b.backend.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := b.backend.checkPolicyPublicationTx(ctx, tx, nil); err != nil {
+		return err
+	}
+	if b.backend.policyStore != nil {
+		if err := b.backend.policyStore.CheckConversationPolicyVisualTokensTx(ctx, tx, []string{string(token)}); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO visual_vectors (vector_token, dimension, embedding, created_at)
 		VALUES ($1, $2, $3::vector, $4)
 		ON CONFLICT (vector_token) DO UPDATE SET
@@ -39,24 +52,51 @@ func (b *VisualBackend) PutUnpublished(ctx context.Context, token visual.VectorT
 	if err != nil {
 		return fmt.Errorf("store unpublished visual vector: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (b *VisualBackend) DeleteTokens(ctx context.Context, tokens []visual.VectorToken) error {
-	values := make([]string, 0, len(tokens))
-	for _, token := range tokens {
-		if token != "" {
-			values = append(values, string(token))
+	for start := 0; start < len(tokens); start += 500 {
+		if err := b.deleteTokenBatch(ctx, tokens[start:min(start+500, len(tokens))]); err != nil {
+			return err
 		}
 	}
-	if len(values) == 0 {
-		return nil
-	}
-	if _, err := b.backend.db.ExecContext(ctx,
-		`DELETE FROM visual_vectors WHERE vector_token = ANY($1::text[])`, values); err != nil {
-		return fmt.Errorf("delete visual vectors: %w", err)
-	}
 	return nil
+}
+
+func (b *VisualBackend) deleteTokenBatch(ctx context.Context, tokens []visual.VectorToken) error {
+	tx, err := b.backend.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if b.backend.policyStore != nil {
+		if err := b.backend.policyStore.LockPostgresConversationPolicyTx(ctx, tx, store.ConversationPolicyExclusive); err != nil {
+			return err
+		}
+	}
+	values := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		if b.backend.policyStore != nil {
+			published, err := b.backend.policyStore.VisualPolicyTokenPublished(ctx, tx, string(token))
+			if err != nil {
+				return err
+			}
+			if published {
+				continue
+			}
+		}
+		values = append(values, string(token))
+	}
+	if len(values) > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM visual_vectors WHERE vector_token=ANY($1::text[])`, values); err != nil {
+			return fmt.Errorf("delete visual vectors: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (b *VisualBackend) Search(ctx context.Context, request visual.SearchRequest) ([]visual.Hit, error) {
@@ -77,7 +117,7 @@ func (b *VisualBackend) Search(ctx context.Context, request visual.SearchRequest
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN attachments a ON a.id = vp.representative_attachment_id
 		WHERE vp.generation_id = $1 AND vg.state = 'active' AND vv.dimension = ` + dimension + `
-		  AND vp.state = 'current' AND ` + store.LiveMessagesWhere("m", true) + `
+		  AND vp.state = 'current' AND ` + b.backend.liveMessageWhere("m") + `
 		  AND a.message_id = vp.message_id AND a.attachment_role = 'standalone'`
 	args := []any{int64(request.GenerationID), vectorLiteral(request.Vector), request.Limit}
 	if request.Person != nil {
