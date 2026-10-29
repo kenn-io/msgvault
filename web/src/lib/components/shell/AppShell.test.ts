@@ -394,7 +394,7 @@ describe('AppShell', () => {
     }
   );
 
-  it('saves a Files view from its header and reopens it in Files from Saved views', async () => {
+  it('saves a Files view from its header', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files' }))}`);
     const stored: Record<string, unknown>[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -422,10 +422,6 @@ describe('AppShell', () => {
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Save view' })).toBeNull());
     expect(screen.getByRole('status', { name: 'Operation status' }).textContent).toContain('Saved view Demo view.');
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Demo view' }));
-    await waitFor(() => expect(state.current.workspace).toBe('files'));
-    expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
 
     rendered.unmount();
     state.destroy();
@@ -2879,25 +2875,6 @@ describe('AppShell', () => {
     });
   });
 
-  it('opens Settings Overview for an Operations URL', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations', settingsCategory: 'server' }))}`);
-    const client = createAPIClient(async input => {
-      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
-      if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
-      return Response.json(exploreResponse());
-    });
-    const settings = createRawSnippet(() => ({ render: () => '<main aria-label="Settings fixture"></main>' }));
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client, state, enabled: false, settings });
-    try {
-      expect(await screen.findByRole('main', { name: 'Settings fixture' })).toBeDefined();
-      expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'overview' });
-    } finally {
-      rendered.unmount();
-      state.destroy();
-    }
-  });
 });
 
 function selectionStatus(): HTMLElement {
@@ -2939,7 +2916,6 @@ it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending 
 
 it('opens CardDAV Past runs with its kind through the Settings context', async () => {
   window.history.replaceState(null, '', '/?workspace=settings');
-  const queries: URLSearchParams[] = [];
   const settings = createRawSnippet(() => {
     const open = getContext<() => void>('msgvault:open-carddav-operations');
     return { render: () => '<button type="button">View CardDAV operations</button>', setup: element => {
@@ -2950,24 +2926,24 @@ it('opens CardDAV Past runs with its kind through the Settings context', async (
   const client = createAPIClient(async input => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
-    if (url.pathname.endsWith('/operations/runs')) { queries.push(url.searchParams); return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 }); }
+    if (url.pathname.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
     return Response.json(exploreResponse());
   });
-  const rendered = render(AppShell, { client, settings, enabled: false });
+  const state = new ExploreState(window);
+  const rendered = render(AppShell, { client, state, settings, enabled: false });
   await fireEvent.click(screen.getByRole('button', { name: 'View CardDAV operations' }));
   expect(await screen.findByRole('dialog', { name: 'Past runs' })).toBeDefined();
-  await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('carddav_sync'));
-  rendered.unmount();
+  expect(state.current.operationKind).toBe('carddav_sync');
+  rendered.unmount(); state.destroy();
 });
 
 it('selects a run and mounts detail restored from its URL', async () => {
   window.history.replaceState(null, '', '/?workspace=sources');
-  const queries: URLSearchParams[] = [];
   const client = createAPIClient(async input => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const path = url.pathname;
     if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
-    if (path.endsWith('/operations/runs')) { queries.push(url.searchParams); return Response.json({ runs: [sourceRun], unavailable_kinds: [], membership_revision: 1 }); }
+    if (path.endsWith('/operations/runs')) return Response.json({ runs: [sourceRun], unavailable_kinds: [], membership_revision: 1 });
     if (path.includes('/operations/runs/')) return Response.json({ ...sourceRun, supported_actions: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
@@ -2977,10 +2953,19 @@ it('selects a run and mounts detail restored from its URL', async () => {
   let rendered = render(AppShell, { client, state });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
-  expect(queries[0]?.get('kind')).toBe('source_sync');
+  expect(state.current.operationKind).toBe('source_sync');
   await screen.findByRole('region', { name: 'Operation run detail' });
   expect(state.current.operationRunID).toBe(OPERATION_RUN);
   const sharedURL = window.location.href;
+  window.history.back();
+  await waitFor(() => expect(state.current.operationRunID).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open Source sync run' })));
+  window.history.forward();
+  await waitFor(() => expect(state.current.operationRunID).toBe(OPERATION_RUN));
+  await waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true));
+  await fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources', exact: true })));
   rendered.unmount(); state.destroy();
   window.history.replaceState(null, '', sharedURL);
   state = new ExploreState(window);

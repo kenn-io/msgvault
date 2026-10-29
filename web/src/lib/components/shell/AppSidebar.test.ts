@@ -76,7 +76,7 @@ describe('AppSidebar', () => {
   });
 
   it.each([
-    { schema_version: 3, canonical_state: { presentation: 'files', filters: { source: ['1'] } }, group: 'Messages' },
+    { schema_version: 3, canonical_state: { presentation: 'files', filters: [{ field: 'source', operator: 'in', values: ['1'] }] }, group: 'Messages' },
     { schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] }, group: 'Files' },
   ])('keeps an incompatible schema $schema_version view disabled and deletable under $group', async ({ group, ...incompatible }) => {
     const onOpenView = vi.fn();

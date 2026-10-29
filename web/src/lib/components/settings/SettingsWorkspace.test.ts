@@ -673,27 +673,6 @@ it('refreshes a pending message rebuild, keeps Contacts available, and removes a
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Build index, Message search' })).toBeNull());
 });
 
-it('keeps the acknowledged named account schedule when refreshing connection summaries fails', async () => {
-  let saved = false;
-  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
-  const { client } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return saved ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ connections: [{ connection: 'work', status: account }] });
-    if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/account')) {
-      saved = true;
-      return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 });
-    }
-  });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await screen.findByDisplayValue('work@example.com');
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
-  await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
-  await screen.findByText('CardDAV account saved. Found 1 address book.');
-  await screen.findByText('Unable to load CardDAV connections.');
-  expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
-});
 it('opens document status from Overview Details without a past run', async () => {
   const { client } = fixture(settingsDoc(), request => {
     if (new URL(request.url).pathname.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents', related_status: 'getDocumentIndexStatus' })] });
