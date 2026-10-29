@@ -1159,6 +1159,52 @@ func TestAttachmentMirrorProcessingMissingJobReplans(t *testing.T) {
 	assert.Empty(r.processingCounts().Outcomes)
 }
 
+func TestAttachmentMirrorProcessingInvalidPollRetriesJob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	var polls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet && req.URL.Path == "/api/v1/processing/jobs/job-a" && polls.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := io.WriteString(w, `{"job_id":"job-a","state":"completed"}`)
+			assert.NoError(err)
+			return
+		}
+		r.serve(w, req)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := docbankmedia.NewClient(srv.URL, nil)
+	require.NoError(err)
+	r.worker.client = client
+
+	require.NoError(r.runBatch(t.Context()))
+	r.processingDue()
+	pollErr := r.runBatch(t.Context())
+	assert.Equal(int32(1), polls.Load())
+	require.ErrorIs(pollErr, docbankmedia.ErrInvalidReceipt)
+
+	var outcome, jobID string
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&outcome, &jobID))
+	assert.Equal("requested", outcome)
+	assert.Equal("job-a", jobID)
+	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+	var retry bool
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT retry FROM docbank_attachment_processing`).Scan(&retry))
+	assert.True(retry)
+	due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", "profile-one", new(store.DocbankAttachmentProcessingCursor), 20)
+	require.NoError(err)
+	assert.Empty(due)
+
+	r.processing.States["job-a"] = [3]string{"completed", "rendition", ""}
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int32(2), polls.Load())
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+}
+
 func TestAttachmentMirrorProcessingRefusals(t *testing.T) {
 	for _, stage := range []string{"plan", "start"} {
 		t.Run(stage, func(t *testing.T) {

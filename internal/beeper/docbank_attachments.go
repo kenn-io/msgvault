@@ -578,6 +578,9 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 				return false, ctx.Err()
 			}
 			answer := processingAnswer(job, err)
+			if d.JobID != "" && jobID == d.JobID && errors.Is(err, docbankmedia.ErrInvalidReceipt) {
+				answer = documentProcessingAnswer{delay: store.BeeperMediaRetryDelay, retry: true}
+			}
 			if answer.blocked {
 				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(err))
 			}
