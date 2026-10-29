@@ -4,10 +4,6 @@ import type { APIClient } from '../api/client';
 import type { OperationsController } from '../operations/controller.svelte';
 import { collectJobs, jobsHealth, type JobsHealth } from './jobs';
 
-export const SOURCE_STATUS_TIMEOUT_MS = 20_000;
-export type SourceRead = Awaited<ReturnType<typeof listSourceStatus>>;
-type PendingSourceRead = { controller: AbortController; promise: Promise<SourceRead>; waiters: number; replacement?: PendingSourceRead };
-
 /**
  * What is running and which latest jobs still have errors. The status dot reads
  * `health`; `JobsPopover` lists `items`. Call `refresh()` on a timer and when
@@ -25,86 +21,32 @@ export class JobsStore {
     return health !== 'ok' ? health : this.error || !this.loaded ? 'unavailable' : health;
   });
   #sources = $state<SourceStatus[]>([]);
-  get sources(): readonly SourceStatus[] { return this.#sources; }
   #sourceError = $state<boolean>();
   #operations: OperationsController;
   #client: APIClient;
-  #sourceRead?: PendingSourceRead;
-  #disposal = new AbortController();
+  #controller?: AbortController;
 
   constructor(client: APIClient, operations: OperationsController) {
     this.#client = client;
     this.#operations = operations;
   }
 
-  async readSources(signal: AbortSignal, supersede = false): Promise<SourceRead> {
-    signal = AbortSignal.any([signal, this.#disposal.signal]);
-    signal.throwIfAborted();
-    if (supersede || !this.#sourceRead) {
-      const previous = this.#sourceRead;
-      const controller = new AbortController();
-      const requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(SOURCE_STATUS_TIMEOUT_MS)]);
-      const read: PendingSourceRead = {
-        controller, waiters: 0,
-        promise: listSourceStatus(undefined, { ...this.#client, signal: requestSignal }).then(result => {
-          requestSignal.throwIfAborted();
-          if (this.#sourceRead === read) {
-            if (result.data) this.#sources = result.data.sources;
-            this.#sourceError = !result.data;
-          }
-          return result;
-        }).catch(error => {
-          if (this.#sourceRead === read && !controller.signal.aborted) this.#sourceError = true;
-          throw error;
-        }).finally(() => { if (this.#sourceRead === read) this.#sourceRead = undefined; }),
-      };
-      this.#sourceRead = read;
-      // Old waiters may resume after this replacement has already answered.
-      if (previous) { previous.replacement = read; previous.controller.abort(); }
-    }
-    return this.#waitForSources(this.#sourceRead, signal);
-  }
-
-  async #waitForSources(read: PendingSourceRead, signal: AbortSignal): Promise<SourceRead> {
-    signal.throwIfAborted();
-    read.waiters += 1;
-    let released = false;
-    const release = () => {
-      if (released) return;
-      released = true;
-      if (--read.waiters === 0 && this.#sourceRead === read) {
-        this.#sourceRead = undefined;
-        read.controller.abort();
-      }
-    };
-    let leave!: () => void;
-    try {
-      return await new Promise<SourceRead>((resolve, reject) => {
-        leave = () => { release(); reject(signal.reason); };
-        signal.addEventListener('abort', leave, { once: true });
-        read.promise.then(resolve, reject);
-      });
-    } catch (error) {
-      signal.throwIfAborted();
-      if (read.replacement) return this.#waitForSources(read.replacement, signal);
-      throw error;
-    } finally {
-      signal.removeEventListener('abort', leave);
-      release();
-    }
-  }
-
   async refresh(supersede = false): Promise<void> {
-    if (this.#disposal.signal.aborted) return;
-    await Promise.all([
-      this.readSources(this.#disposal.signal, supersede).catch(() => undefined),
+    this.#controller?.abort();
+    const controller = (this.#controller = new AbortController());
+    const options = { ...this.#client, signal: controller.signal };
+    const [sources] = await Promise.all([
+      listSourceStatus(undefined, options).catch(() => undefined),
       this.#operations.refreshStatus(supersede),
     ]);
+    if (this.#controller !== controller) return;
+    if (!controller.signal.aborted) {
+      if (sources?.data) this.#sources = sources.data.sources;
+      this.#sourceError = !sources?.data;
+    }
   }
 
   dispose(): void {
-    this.#disposal.abort();
-    this.#sourceRead?.controller.abort();
-    this.#sourceRead = undefined;
+    this.#controller?.abort();
   }
 }
