@@ -79,7 +79,7 @@
     drillGroup: (row: ExploreGroupRow) => void;
     closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
-    openPerson?: (address: string) => void;
+    openPerson?: (participantID: number) => void;
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onSaveView: () => void;

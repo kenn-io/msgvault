@@ -26,7 +26,7 @@
     onToggle?: (id: number) => void;
     onViewModeChange?: (id: number, mode: MessageViewMode) => void;
     client?: APIClient;
-    onOpenPerson?: (address: string) => void;
+    onOpenPerson?: (participantID: number) => void;
     onOpenSettings?: () => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
   }
@@ -74,11 +74,11 @@
       <IdentityAvatar label={message.sender || '?'} size={24} />
       <div class="header-content">
         <span class="header-line">
-          <strong class="sender"><PersonLink name={message.sender || 'Unknown sender'} address={message.senderAddress} {onOpenPerson} /></strong>
+          <strong class="sender"><PersonLink name={message.sender || 'Unknown sender'} participantID={message.senderParticipantID} {onOpenPerson} /></strong>
           <time datetime={message.sentAt} data-mono>{formatDate(message.sentAt)}</time>
         </span>
         {#if message.recipients.length > 0}
-          <span class="recipients">to {#each message.recipients as recipient, index}{#if index > 0}, {/if}<PersonLink name={recipient} {onOpenPerson} />{/each}</span>
+          <span class="recipients">to {#if message.recipientParticipants}{#each message.recipientParticipants as recipient, index}{#if index > 0}, {/if}<PersonLink name={recipient.display} participantID={recipient.participantID} {onOpenPerson} />{/each}{:else}{message.recipients.join(', ')}{/if}</span>
         {/if}
         <button type="button" class="collapse-target" aria-label={`Collapse message ${message.id} from ${message.sender || 'unknown sender'}`} aria-expanded="true" onclick={() => onToggle?.(message.id)}>{message.subject || 'Collapse'}</button>
       </div>

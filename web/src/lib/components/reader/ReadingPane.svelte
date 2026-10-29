@@ -64,7 +64,7 @@
     onReloadMeetings = undefined
   }: {
     client: APIClient;
-    onOpenPerson?: (address: string) => void;
+    onOpenPerson?: (participantID: number) => void;
     selection?: ReadingPaneSelection;
     targetKey?: string;
     status?: ReadingPaneStatus;
@@ -176,6 +176,8 @@
         if (generation === requestGeneration) filesLoading = false;
       });
   });
+
+  onDestroy(() => { requestGeneration += 1; requestController?.abort(); });
 
   function formatDate(value: string): string {
     const parsed = new Date(value);
