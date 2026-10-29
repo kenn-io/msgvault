@@ -84,6 +84,7 @@ export class PeopleInferenceController {
       // Creating a profile and storing its key are separate writes. Keep the
       // saved profile visible so a failed key write can be retried in place.
       this.choose(name);
+      if (key) await this.onChanged();
       if (key) await this.writeKey(name, key);
     }, true);
   }

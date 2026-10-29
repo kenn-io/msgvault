@@ -3,17 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
-import type { OperationLaneStatus } from '../../api/generated/models';
+import { lane } from '../../../test/operations';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
-function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
-  const lanes = {
-    carddav_sync: 'contacts', document_embedding: 'documents', document_extraction: 'documents',
-    message_embedding: 'messages', person_embedding: 'person_facts', person_enrichment: 'person_facts',
-    person_sweep: 'person_facts', source_sync: 'messages', visual_embedding: 'visual_attachments'
-  } as const;
-  return { kind, configured: true, lane: lanes[kind], history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
-}
 
 type Setting = Record<string, unknown>;
 
@@ -766,11 +758,10 @@ it.each(['disable', 'clear schedule'])('retains a named account %s when its conn
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
   const connections = { connections: [{ connection: 'work', status: account }] };
-  const { client, seen } = fixture(settingsDoc(), request => {
+  const { client } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path.endsWith('/carddav/connections')) return ++reads === 2 ? pending : Response.json(connections);
     if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/account')) return Response.json({ ...account.account, enabled: change !== 'disable', schedule: change === 'clear schedule' ? '' : account.schedule, books: 1 });
   });
   render(SettingsWorkspace, { client, category: 'carddav' });
   await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
@@ -785,6 +776,36 @@ it.each(['disable', 'clear schedule'])('retains a named account %s when its conn
   await screen.findByText('Leave blank to keep the stored password.');
   await waitFor(() => expect(screen.getByRole('switch', { name: 'Enabled' })).toHaveProperty('checked', change !== 'disable'));
   if (change === 'clear schedule') expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Off');
+  expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+it('refreshes the shared config revision when creating a profile succeeds before its key fails', async () => {
+  let revision = '"s1"';
+  let created = false;
+  const doc = settingsDoc();
+  const { client, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings' && request.method === 'GET') return Response.json(doc, { headers: { ETag: revision } });
+    if (path.includes('/settings/people-inference')) {
+      if (request.method === 'PUT' && path.endsWith('/key')) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
+      if (request.method === 'PUT') { created = true; revision = '"s2"'; }
+      return Response.json({ profiles: created ? [inferenceProfile] : [], configured_enabled: false, running_enabled: false, pending_restart: created }, { headers: { ETag: revision } });
+    }
+    if (request.method === 'PATCH' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+  });
+  render(SettingsWorkspace, { client, category: 'server' });
+  await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
+  for (const [label, value] of [['Profile name', 'primary'], ['Model ID', 'model-one'], ['API key', 'synthetic-profile-key'], ['Archive data since (YYYY-MM-DD)', '2025-01-01'], ['Retention statement', 'No retention'], ['Training statement', 'No training']]) {
+    await fireEvent.input(await screen.findByLabelText(label), { target: { value } });
+  }
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'Conversation text' }));
+  await fireEvent.click(screen.getByRole('radio', { name: 'Exclude sensitive content' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+  await screen.findByText('Key store unavailable');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toMatchObject({ connection: 'work', enabled: change !== 'disable', schedule: change === 'clear schedule' ? '' : account.schedule }));
+  await waitFor(() => expect(seen.find(request => request.method === 'PATCH')?.ifMatch).toBe('"s2"'));
+  await waitFor(() => expect(screen.queryByText('1 unsaved change')).toBeNull());
 });
