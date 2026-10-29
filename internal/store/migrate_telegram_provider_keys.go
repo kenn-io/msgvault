@@ -304,7 +304,6 @@ func planTelegramCandidateKeyRewrites(
 func (s *Store) applyTelegramCandidateKeyRewrites(
 	ctx context.Context, tx *loggedTx, updates []telegramCandidateKeyUpdate,
 ) (map[int64]struct{}, error) {
-
 	survivors := make(map[int64]struct{}, len(updates))
 	for _, update := range updates {
 		var exists bool

@@ -15,9 +15,8 @@ import (
 // observed Telegram user 482111 under an account-scoped key, a
 // stable-provider candidate was accepted, and a review decision recorded a
 // fingerprint against that evidence. It returns the observing participant,
-// the candidate id, the old and shared keys, and the seeded pre-migration
-// fingerprint.
-func seedTelegramKeyRows(t *testing.T, st *Store) (left, candidateID int64, oldKey, newKey, preFingerprint string) {
+// the candidate id, and the old and shared keys.
+func seedTelegramKeyRows(t *testing.T, st *Store) (left, candidateID int64, oldKey, newKey string) {
 	t.Helper()
 	oldKey = beeperidentity.ProviderKey("telegram", "account", "acct-7", "482111")
 	newKey = beeperidentity.ProviderKey("telegram", "service", "", "482111")
@@ -66,14 +65,14 @@ func seedTelegramKeyRows(t *testing.T, st *Store) (left, candidateID int64, oldK
 		SourceID:     &source.ID,
 	})
 	require.NoError(t, err)
-	preFingerprint, err = IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidate.ID)
+	preFingerprint, err := IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidate.ID)
 	require.NoError(t, err, "fingerprint the pre-migration evidence")
 	_, err = st.DB().Exec(
 		`INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint) VALUES (?, ?)`,
 		candidate.ID, preFingerprint,
 	)
 	require.NoError(t, err)
-	return left, candidate.ID, oldKey, newKey, preFingerprint
+	return left, candidate.ID, oldKey, newKey
 }
 
 func TestInitSchemaRewritesTelegramProviderKeys(t *testing.T) {
@@ -84,7 +83,7 @@ func TestInitSchemaRewritesTelegramProviderKeys(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
 
-	left, candidateID, oldKey, newKey, preFingerprint := seedTelegramKeyRows(t, st)
+	left, candidateID, oldKey, newKey := seedTelegramKeyRows(t, st)
 
 	// A non-numeric Telegram native ID and another network's account-scoped
 	// key must survive untouched.
@@ -102,7 +101,7 @@ func TestInitSchemaRewritesTelegramProviderKeys(t *testing.T) {
 	// The stale-shape observations join the evidence before the decision is
 	// recorded, so the proof is valid against the complete pre-migration
 	// state and only the key rewrite can stale it.
-	preFingerprint, err = IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidateID)
+	preFingerprint, err := IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidateID)
 	require.NoError(err)
 	_, err = st.DB().Exec(
 		`UPDATE identity_match_review_decisions SET evidence_fingerprint = ? WHERE candidate_id = ?`,
@@ -200,7 +199,7 @@ func TestInitSchemaDoesNotRenewStaleTelegramDecisionProofs(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
 
-	_, candidateID, _, _, _ := seedTelegramKeyRows(t, st)
+	_, candidateID, _, newKey := seedTelegramKeyRows(t, st)
 	// The recorded proof went stale before the migration: the evidence
 	// changed after the decision, without any migration involvement.
 	const staleDecision = "recorded-against-older-evidence"
@@ -229,4 +228,12 @@ func TestInitSchemaDoesNotRenewStaleTelegramDecisionProofs(t *testing.T) {
 	require.NoError(err)
 	assert.NotEqual(postFingerprint, decision, "the stale proof still does not match the rewritten evidence")
 	assert.NotEqual(postFingerprint, receipt)
+
+	// The migration itself ran: the gate, not a skipped rewrite, left the
+	// stale proofs untouched.
+	var candidateValue string
+	require.NoError(st.DB().QueryRow(
+		`SELECT normalized_value FROM identity_match_candidates WHERE id = ?`, candidateID,
+	).Scan(&candidateValue))
+	assert.Equal(newKey, candidateValue, "the candidate still converged on the shared key")
 }
