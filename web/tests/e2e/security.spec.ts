@@ -144,7 +144,7 @@ test('daemon API key stays host-managed and never crosses the browser settings w
   });
 
 	await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-	await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+	await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
 	await page.getByRole('button', { name: 'Server', exact: true }).click();
 	await page.getByText('Set in config.toml', { exact: true }).click();
@@ -155,5 +155,5 @@ test('daemon API key stays host-managed and never crosses the browser settings w
 	expect(settingsPatch).toBeUndefined();
 
 	await page.getByRole('button', { name: 'Messages', exact: true }).click();
-	await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+	await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
 });

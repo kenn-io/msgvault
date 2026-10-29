@@ -35,7 +35,7 @@ export class JobsStore {
       if (controller.signal.aborted) return;
       if (sources?.data) this.#sources = sources.data.sources;
       if (operations?.data) this.#lanes = operations.data.lanes;
-      this.error = !sources?.data || !operations?.data ? 'Unable to refresh all job status.' : undefined;
+      this.error = !sources?.data || !operations?.data || this.#lanes.some(lane => lane.configured && lane.history_availability === 'unavailable') ? 'Unable to refresh all job status.' : undefined;
       this.items = collectJobs(this.#sources, this.#lanes);
       this.loaded = true;
     } catch {
