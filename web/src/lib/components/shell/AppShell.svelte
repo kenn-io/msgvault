@@ -108,7 +108,6 @@
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
-    archiveContextKey?: string;
   }
   let {
     client,
@@ -117,7 +116,6 @@
     settings = undefined,
     appearanceDefaults = { theme: 'system', density: 'compact' },
     searchModeDefault = undefined,
-    archiveContextKey = '',
   }: Props = $props();
   const ownsState = untrack(() => providedState === undefined);
   const exploreState = untrack(() => providedState ?? new ExploreState());
@@ -1314,7 +1312,7 @@
           () => void shellData.jobs.refresh(true)
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} onStatus={sources => shellData.jobs.setSources(sources)} />
+        <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} onStatus={() => void shellData.jobs.refresh()} />
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace
           {client}
@@ -1622,7 +1620,7 @@
 {/if}
 
 {#if runHistory}
-  <RunHistoryDialog {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory} {archiveContextKey}
+  <RunHistoryDialog {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory}
     onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
     onConfigure={openVisualAttachmentSettings} />
 {/if}

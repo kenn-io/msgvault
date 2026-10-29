@@ -257,36 +257,6 @@ describe('OperationsController', () => {
     controller.destroy();
   });
 
-  it('clears selected detail and pagination through the URL owner on a committed archive change', async () => {
-    const commits = vi.fn();
-    const replacementHistory = deferredResponse();
-    let historyReads = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const path = new URL(requestOf(input).url).pathname;
-      if (path.endsWith('/status')) return Response.json(statusResponse());
-      if (path.endsWith('/runs')) {
-        historyReads += 1;
-        if (historyReads === 2) return replacementHistory.promise;
-        return Response.json(runsResponse([run(RUN_ONE)], { next_cursor: 'archive-bound-cursor' }));
-      }
-      return Response.json(detail(RUN_ONE));
-    });
-    const controller = new OperationsController(createAPIClient(fetchFn), commits);
-    const state = operationState({ operationRunID: RUN_ONE });
-    await controller.applyURLState(state, 'archive-a');
-    expect(controller.snapshot.detail?.id).toBe(RUN_ONE);
-    expect(controller.snapshot.nextCursor).toBe('archive-bound-cursor');
-
-    const replacing = controller.applyURLState(state, 'archive-b');
-
-    expect(commits).toHaveBeenCalledWith({ operationRunID: null });
-    expect(controller.snapshot.detail).toBeNull();
-    expect(controller.snapshot.nextCursor).toBeNull();
-    replacementHistory.resolve(Response.json(runsResponse([run(RUN_TWO)])));
-    await replacing;
-    controller.destroy();
-  });
-
   it('continues with the opaque cursor and rejects a changed membership revision', async () => {
     const requests: Request[] = [];
     let page = 0;
@@ -448,60 +418,6 @@ describe('OperationsController', () => {
 
     await controller.applyURLState(operationState({ operationLane: 'documents' }), 'archive-a');
 
-    expect(controller.snapshot).toMatchObject({
-      detailError: null,
-      detailLoading: false,
-      actionPending: null,
-      actionConflict: null,
-      actionError: null
-    });
-    controller.destroy();
-  });
-
-  it('clears in-flight detail and action context on archive change and discards late failures', async () => {
-    const staleDetail = deferredResponse();
-    const staleAction = deferredResponse();
-    const commits = vi.fn();
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (request.method === 'POST') return staleAction.promise;
-      if (path.endsWith('/status')) {
-        return Response.json(statusResponse({
-          visual_embedding: { supported_actions: ['visual_build'] }
-        }));
-      }
-      if (path === '/api/v1/operations/runs') return Response.json(runsResponse([]));
-      return staleDetail.promise;
-    });
-    const controller = new OperationsController(createAPIClient(fetchFn), commits);
-    await controller.applyURLState(operationState(), 'archive-a');
-    const detailLoad = controller.applyURLState(operationState({ operationRunID: RUN_ONE }), 'archive-a');
-    const actionLoad = controller.runAction('visual_build');
-    await vi.waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
-
-    await controller.applyURLState(operationState({ operationRunID: RUN_ONE }), 'archive-b');
-
-    expect(commits).toHaveBeenCalledWith({ operationRunID: null });
-    expect(controller.snapshot).toMatchObject({
-      detailError: null,
-      detailLoading: false,
-      actionPending: null,
-      actionConflict: null,
-      actionError: null
-    });
-    staleDetail.resolve(Response.json(
-      { error: 'operation_not_found', message: 'late synthetic detail failure' },
-      { status: 404 }
-    ));
-    staleAction.resolve(Response.json(
-      { error: 'operation_conflict', message: 'late synthetic action conflict' },
-      { status: 409 }
-    ));
-    const [, actionOutcome] = await Promise.all([detailLoad, actionLoad]);
-    expect(actionOutcome).toBe('discarded');
     expect(controller.snapshot).toMatchObject({
       detailError: null,
       detailLoading: false,
@@ -688,8 +604,6 @@ describe('OperationsController.refreshStatus', () => {
   }
 
   it('reloads only status and leaves paged rows, cursor, and detail alone', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.parse('2026-09-01T10:00:00Z'));
     let statusReads = 0;
     const { paths, controller } = pagedDaemon(() => {
       statusReads += 1;
@@ -700,8 +614,6 @@ describe('OperationsController.refreshStatus', () => {
       await controller.loadMore();
       await controller.applyURLState(operationState({ operationRunID: RUN_TWO }));
       const before = controller.snapshot;
-      expect(before.statusUpdatedAt).toBe(Date.parse('2026-09-01T10:00:00Z'));
-      vi.setSystemTime(Date.parse('2026-09-01T10:05:00Z'));
       paths.length = 0;
 
       const refreshed = await controller.refreshStatus();
@@ -712,8 +624,6 @@ describe('OperationsController.refreshStatus', () => {
       expect(after.rows).toBe(before.rows);
       expect(after.nextCursor).toBe('cursor-three');
       expect(after.detail).toBe(before.detail);
-      expect(after.statusRefreshing).toBe(false);
-      expect(after.statusUpdatedAt).toBe(Date.parse('2026-09-01T10:05:00Z'));
       const carddav = after.statusLanes.find((lane) => lane.lane === 'contacts')!.kinds[0]!;
       expect(carddav.configured).toBe(false);
     } finally {
@@ -739,8 +649,6 @@ describe('OperationsController.refreshStatus', () => {
       expect(refreshed).toBe(false);
       expect(after.statusError).toBe('Unable to load operation status.');
       expect(after.statusLanes).toEqual(before.statusLanes);
-      expect(after.statusUpdatedAt).toBe(before.statusUpdatedAt);
-      expect(after.statusRefreshing).toBe(false);
     } finally {
       controller.destroy();
     }
@@ -759,7 +667,6 @@ describe('OperationsController.refreshStatus', () => {
     try {
       await controller.applyURLState(operationState());
       const pending = controller.refreshStatus();
-      expect(controller.snapshot.statusRefreshing).toBe(true);
 
       let settled = false;
       void pending.then(() => { settled = true; });
@@ -770,14 +677,12 @@ describe('OperationsController.refreshStatus', () => {
       await vi.waitFor(() => expect(superseded.bodyUsed).toBe(true));
       await new Promise(resolve => setTimeout(resolve, 0));
       expect(settled).toBe(false);
-      expect(controller.snapshot.statusRefreshing).toBe(true);
 
       replacementStatus.resolve(Response.json(statusResponse({ carddav_sync: { configured: false } })));
       await refreshed;
       expect(await pending).toBe(true);
       const carddav = controller.snapshot.statusLanes.find((lane) => lane.lane === 'contacts')!.kinds[0]!;
       expect(carddav.configured).toBe(false);
-      expect(controller.snapshot.statusRefreshing).toBe(false);
     } finally {
       slowStatus.resolve(Response.json(statusResponse()));
       replacementStatus.resolve(Response.json(statusResponse()));

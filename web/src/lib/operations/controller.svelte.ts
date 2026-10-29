@@ -32,8 +32,6 @@ export class OperationsController {
   private nextCursor = $state<string>();
   private statusReadable = $state(false);
   private historyReadable = $state(false);
-  private statusUpdatedAt = $state<number>();
-  private statusRefreshing = $state(false);
 
   private initialLoading = $state(false);
   private backgroundLoading = $state(false);
@@ -87,8 +85,6 @@ export class OperationsController {
       nextCursor: this.nextCursor ?? null,
       statusReadable: this.statusReadable,
       historyReadable: this.historyReadable,
-      statusUpdatedAt: this.statusUpdatedAt ?? null,
-      statusRefreshing: this.statusRefreshing,
       initialLoading: this.initialLoading,
       backgroundLoading: this.backgroundLoading,
       paging: this.paging,
@@ -169,7 +165,6 @@ export class OperationsController {
     this.statusAbort = request;
     const context = this.contextGeneration;
     const generation = ++this.statusGeneration;
-    this.statusRefreshing = true;
     try {
       const result = await generatedGetOperationStatus({ ...this.client, signal: request.signal });
       if (!this.ownsStatus(request, generation, context)) return this.statusRead ?? false;
@@ -180,7 +175,6 @@ export class OperationsController {
       this.statusKinds = result.data.lanes;
       this.statusReadable = true;
       this.statusError = null;
-      this.statusUpdatedAt = Date.now();
       return true;
     } catch {
       if (!this.ownsStatus(request, generation, context)) return this.statusRead ?? false;
@@ -190,7 +184,6 @@ export class OperationsController {
       if (this.ownsStatus(request, generation, context)) {
         this.statusAbort = undefined;
         this.statusRead = undefined;
-        this.statusRefreshing = false;
       }
     }
   }
@@ -435,7 +428,6 @@ export class OperationsController {
     this.statusAbort = undefined;
     this.statusRead = undefined;
     this.statusGeneration += 1;
-    this.statusRefreshing = false;
   }
 
   private advertisedActions(): Set<OperationAction> {
