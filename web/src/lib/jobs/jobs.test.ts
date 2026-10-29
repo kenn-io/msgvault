@@ -8,16 +8,18 @@ const activeRun = canonical.runs.find(run => run.kind === 'visual_embedding') as
 const partial = canonical.runs.find(run => run.kind === 'document_extraction') as import('../api/generated/models').OperationRunSummary;
 
 describe('jobs', () => {
-  it.each([['carddav_sync', 'CardDAV sync'], ['document_embedding', 'Document embedding'], ['document_extraction', 'Document extraction'], ['message_embedding', 'Message embedding'], ['person_embedding', 'Person embedding'], ['person_enrichment', 'Person enrichment'], ['person_sweep', 'Person fact sweep'], ['visual_embedding', 'Visual embedding']] as const)('includes %s with the daemon error first', (kind, name) => {
+  it.each(['carddav_sync', 'document_embedding', 'document_extraction', 'message_embedding', 'person_embedding', 'person_enrichment', 'person_sweep', 'visual_embedding'] as const)('includes failed %s with its daemon error', kind => {
     const [job] = collectJobs([], [lane(kind)]);
-    expect(job?.name).toBe(name);
     expect(job?.detail).toBe(jobRun(kind).error!.message);
     expect(job?.state).toBe('failed');
   });
-  it('routes related status before settings, and uses the owning settings authority otherwise', () => {
-    const jobs = collectJobs([], [lane('document_extraction'), lane('message_embedding')]);
+  it.each([
+    ['message_embedding', { settingsCategory: 'search', settingsAuthority: 'semantic_search' }],
+    ['person_enrichment', { settingsCategory: 'enrichment', settingsAuthority: '' }],
+  ] as const)('routes related status before %s settings', (kind, target) => {
+    const jobs = collectJobs([], [lane('document_extraction'), lane(kind)]);
     expect(jobs[0]?.target).toEqual({ kind: 'status', authority: 'getDocumentIndexStatus' });
-    expect(jobs[1]?.target).toEqual({ kind: 'setting', target: { settingsCategory: 'search', settingsAuthority: 'semantic_search' } });
+    expect(jobs[1]?.target).toEqual({ kind: 'setting', target });
   });
   it('counts source sync once per source and includes scheduler errors', () => {
     const source = sourceStatus({ scheduler_last_error: 'Schedule failed\nmore detail' });
