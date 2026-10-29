@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-var docbankAttachmentProcessingRecoverableOutcomes = []string{"consent", "stale_authority", "pdf_password_required"}
-
 // DocbankAttachmentProcessing is the saved processing request for a mirrored file.
 type DocbankAttachmentProcessing struct {
 	ContentHash string

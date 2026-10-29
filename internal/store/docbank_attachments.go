@@ -464,28 +464,11 @@ func (s *Store) RecordDocbankAttachment(
 func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
-		processingNow := s.timestampValue(time.Now().UTC())
 		if _, err := q.Exec(`
 			UPDATE docbank_attachment_deliveries
 			SET state = 'sending', reason = '', attempts = 0, next_action_at = NULL
 			WHERE destination_key = ? AND state = 'failed'`, destination); err != nil {
 			return fmt.Errorf("requeue failed attachment mirror deliveries: %w", err)
-		}
-		outcomeArgs := make([]any, len(docbankAttachmentProcessingRecoverableOutcomes))
-		for i, outcome := range docbankAttachmentProcessingRecoverableOutcomes {
-			outcomeArgs[i] = outcome
-		}
-		outcomePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(outcomeArgs)), ",")
-		processingArgs := append([]any{processingNow, destination}, outcomeArgs...)
-		if _, err := q.Exec(`UPDATE docbank_attachment_processing
- SET outcome = '', job_id = '', next_action_at = ?
- WHERE destination_key = ? AND (job_id = '' OR outcome IN (`+outcomePlaceholders+`))`, processingArgs...); err != nil {
-			return fmt.Errorf("retry attachment processing: %w", err)
-		}
-		if _, err := q.Exec(`UPDATE docbank_attachment_processing
- SET next_action_at = ?
- WHERE destination_key = ? AND job_id <> '' AND outcome = 'requested'`, processingNow, destination); err != nil {
-			return fmt.Errorf("restart pending attachment processing: %w", err)
 		}
 		if _, err := q.Exec(`DELETE FROM archive_metadata WHERE key = ?`, beeperMediaScanKey(destination)); err != nil {
 			return fmt.Errorf("reset attachment mirror discovery: %w", err)
