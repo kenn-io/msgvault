@@ -2953,16 +2953,16 @@ it('selects a run and mounts detail restored from its URL', async () => {
 it.each([
   { kind: 'source_sync', authority: 'listSourceStatus', status: 'Needs attention',
     lane: jobLane('source_sync'), sources: [sourceStatus({ display_name: 'Source sync', scheduler_last_error: 'Sync failed' })],
-    steps: [], action: { role: 'menuitem', name: /Source sync/ }, expected: { workspace: 'sources', operationHistory: false } },
+    action: { role: 'menuitem', name: /Source sync/ }, expected: { workspace: 'sources', operationHistory: false } },
   { kind: 'document_extraction', authority: 'getDocumentIndexStatus', status: 'Running',
     lane: jobLane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
-    steps: [], action: { role: 'menuitem', name: /Document extraction/ },
+    action: { role: 'menuitem', name: /Document extraction/ },
     expected: { workspace: 'everything', operationHistory: true, operationStatus: 'getDocumentIndexStatus' } },
   { kind: 'person_sweep', authority: undefined, status: 'Needs attention',
-    lane: jobLane('person_sweep'), sources: [], steps: [],
+    lane: jobLane('person_sweep'), sources: [],
     action: { role: 'menuitem', name: /Person fact sweep/ },
     expected: { workspace: 'everything', operationHistory: true, operationKind: 'person_sweep', operationRunID: jobRun('person_sweep').id } },
-] as const)('opens $kind with one history entry', async ({ kind, authority, status, lane, sources, steps, action, expected }) => {
+] as const)('opens $kind with one history entry', async ({ kind, authority, status, lane, sources, action, expected }) => {
   window.history.replaceState(null, '', '/?workspace=everything&mode=full_text');
   const run = jobRun(kind);
   const client = createAPIClient(async input => {
@@ -2977,7 +2977,6 @@ it.each([
   const state = new ExploreState(window);
   const rendered = render(AppShell, { client, state });
   await fireEvent.click(await screen.findByRole('button', { name: `Sync status: ${status}` }));
-  for (const step of steps) await fireEvent.click(await screen.findByRole(step.role, { name: step.name }));
   const target = await screen.findByRole(action.role, { name: action.name });
   const push = vi.spyOn(window.history, 'pushState').mockClear();
   await fireEvent.click(target);

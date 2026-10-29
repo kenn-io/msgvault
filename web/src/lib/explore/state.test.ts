@@ -149,16 +149,10 @@ describe('Explore URL state', () => {
     expect(state.current.operationState).toBe('paused');
     state.destroy();
   });
-  it.each([['saved_views', 'everything', undefined], ['unknown', 'everything', 'overview']])('routes legacy %s links', (workspace, expected, category) => {
+  it.each([['saved_views', 'everything', undefined], ['unknown', 'everything', undefined], ['operations', 'settings', 'overview']])('routes legacy %s links', (workspace, expected, category) => {
     const state = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace, ...(workspace === 'operations' ? { settingsCategory: 'server' } : {}) }))}`);
     expect(state.workspace).toBe(expected);
     if (category) expect(state.settingsCategory).toBe(category);
-  });
-
-  it('routes legacy operations links to Settings Overview', () => {
-    const state = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations', settingsCategory: 'server' }))}`);
-    expect(state.workspace).toBe('settings');
-    expect(state.settingsCategory).toBe('overview');
   });
 
   it('drops an impossible Directory date when reading the URL', () => {
@@ -1711,11 +1705,12 @@ describe('session-owned exploration selection', () => {
 
 });
 
-it('gives Past runs filters and detail their own history entries', async () => {
+it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s after changing filters and detail', async action => {
   window.history.replaceState(null, '', '/?workspace=files');
   const state = new ExploreState(window);
   state.commitWorkspace('everything');
   state.replaceSearchDraft('budget', 'full_text');
+  const opening = window.location.href;
   const runID = `op2.${'a'.repeat(32)}.exampleRun`;
   state.openOperationHistory({ operationKind: 'source_sync', operationRunID: runID });
   expect(state.current).toMatchObject({ operationHistory: true, operationKind: 'source_sync', operationRunID: runID });
@@ -1733,26 +1728,7 @@ it('gives Past runs filters and detail their own history entries', async () => {
   window.history.forward();
   await step;
   expect(state.current.operationRunID).toBe(runID);
-  step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-  window.history.back();
-  await step;
-  step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-  window.history.back();
-  await step;
-  expect(state.current.operationKind).toBe('source_sync');
-  state.destroy();
-});
 
-it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s after changing filters and detail', async action => {
-  window.history.replaceState(null, '', '/?workspace=files');
-  const state = new ExploreState(window);
-  state.commitWorkspace('everything');
-  state.replaceSearchDraft('budget', 'full_text');
-  const opening = window.location.href;
-  const runID = `op2.${'a'.repeat(32)}.exampleRun`;
-  state.openOperationHistory({ operationKind: 'source_sync', operationRunID: runID });
-  state.openOperationHistory({ operationKind: 'carddav_sync' });
-  state.openOperationHistory({ operationRunID: runID });
   const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
   if (action === 'close') state.closeOperationHistory();
   else window.history.back();
