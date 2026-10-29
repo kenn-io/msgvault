@@ -75,7 +75,7 @@
     grid-column: 1 / -1;
     grid-template-columns: subgrid;
     align-items: center;
-    column-gap: var(--section-gap);
+    gap: var(--control-gap) var(--section-gap);
     min-height: var(--control-height);
     padding: var(--pane-pad-y) var(--pane-pad-x);
   }
@@ -104,11 +104,13 @@
   .row__guide {
     color: var(--link-ink);
     font-size: var(--font-size-sm);
+    line-height: 1.45;
   }
   .row__consent {
     grid-column: 1 / -1;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+    line-height: 1.45;
   }
 
   @media (max-width: 640px) {
