@@ -1,3 +1,4 @@
+import type { SearchCoverageAction } from '../search/modes';
 import type { ChipTone } from '@kenn-io/kit-ui';
 
 import type { EmbeddingStatus, OperationLaneStatus, Status } from '../api/generated/models';
@@ -41,6 +42,7 @@ export function overviewRows(
   lanes: readonly OperationLaneStatus[],
   embedding: EmbeddingStatus | undefined,
   visual: Status | undefined,
+  coverageActions: readonly SearchCoverageAction[] = [],
 ): OverviewRow[] {
   const on = (kind: Kind): boolean => Boolean(lane(lanes, kind)?.configured);
   const chip = (kind: Kind, building?: string): OverviewRow['chip'] => {
@@ -63,12 +65,12 @@ export function overviewRows(
     embedding && messagesBuilt && count(embedding.pending) > 0
       ? `Building ${count(embedding.current).toLocaleString()} of ${count(embedding.eligible).toLocaleString()}`
       : undefined;
-  const needsIndex = on('message_embedding') && embedding !== undefined && !messagesBuilt;
+  const buildAvailable = coverageActions.includes('build_index');
   rows.push({
     id: 'message_embedding',
     name: 'Message search',
-    chip: needsIndex && !lane(lanes, 'message_embedding')?.active && !failed(lane(lanes, 'message_embedding')) ? { tone: 'muted', text: 'Unbuilt' } : chip('message_embedding', messageProgress),
-    action: needsIndex && !lane(lanes, 'message_embedding')?.active
+    chip: buildAvailable && !messagesBuilt && !lane(lanes, 'message_embedding')?.active && !failed(lane(lanes, 'message_embedding')) ? { tone: 'muted', text: 'Unbuilt' } : chip('message_embedding', messageProgress),
+    action: buildAvailable
       ? { kind: 'start', id: 'messages', label: 'Build index' }
       : on('message_embedding')
         ? undefined

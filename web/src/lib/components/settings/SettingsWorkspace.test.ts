@@ -207,7 +207,7 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client, category: 'tasks' });
     await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
     await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
     expect(seen.some((entry) => entry.method === 'PATCH')).toBe(false);
     expect(screen.getByText('1 unsaved change')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -225,10 +225,10 @@ describe('SettingsWorkspace', () => {
     await fireEvent.input(endpoint, { target: { value: 'https://embed.example.test/v1' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
     await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'provider-secret' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(seen.some((entry) => entry.method === 'PUT')).toBe(true));
-    const writes = seen.filter((entry) => entry.method !== 'GET').map((entry) => `${entry.method} ${entry.path}`);
+    const writes = seen.filter((entry) => entry.method !== 'GET' && entry.path !== '/api/v1/search/coverage').map((entry) => `${entry.method} ${entry.path}`);
     expect(writes).toEqual([
       'PATCH /api/v1/settings',
       'PUT /api/v1/settings/provider-credentials/vector.embeddings'
@@ -313,7 +313,7 @@ it('keeps provider endpoints and keys across categories, saves endpoints before 
   await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://new.example.test' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Add API key for primary' }));
   await fireEvent.input(screen.getByLabelText('New API key for primary'), { target: { value: 'synthetic-provider-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save API key for primary' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Use API key for primary' }));
   expect(screen.getByLabelText('primary credential').classList.contains('setting--changed')).toBe(true);
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.click(screen.getByRole('switch', { name: 'Trace every SQL statement' }));
@@ -321,7 +321,7 @@ it('keeps provider endpoints and keys across categories, saves endpoints before 
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   expect((await screen.findByRole('alert')).textContent).toBe('Key store unavailable');
   expect(screen.getByText('1 unsaved change')).toBeDefined();
-  const writes = seen.filter(request => request.method !== 'GET');
+  const writes = seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage');
   expect(writes.map(({ method, path, ifMatch }) => [method, path, ifMatch])).toEqual([
     ['PATCH', '/api/v1/settings', '"s1"'],
     ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s2"'],
@@ -332,7 +332,7 @@ it('keeps provider endpoints and keys across categories, saves endpoints before 
   expect((await screen.findByLabelText('spare endpoint') as HTMLInputElement).value).toBe('https://old.example.test');
   failKey = false;
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.filter(request => request.method === 'PATCH')).toHaveLength(1);
   expect(seen.filter(request => request.path.endsWith('/providers/primary'))).toHaveLength(1);
 });
@@ -351,7 +351,7 @@ it('saves account drafts from Overview and drops their passwords on Discard', as
   expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('synthetic-account-key');
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.filter(request => request.method === 'PUT').map(request => request.body)).toEqual([
     { connection: 'default', base_url: 'https://dav.example.test/', username: 'account@example.com', password: 'synthetic-account-key', enabled: false, schedule: '' }
   ]);
@@ -374,7 +374,7 @@ it('retains inference replacement keys across navigation and saves them from the
   expect((await screen.findByLabelText('Replacement API key') as HTMLInputElement).value).toBe('synthetic-inference-key');
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.find(request => request.method === 'PUT')).toMatchObject({ path: '/api/v1/settings/people-inference/providers/primary/key', ifMatch: '"key-a"', body: { value: 'synthetic-inference-key' } });
 });
 
@@ -448,7 +448,7 @@ it('validates contact account drafts before writing other settings', async () =>
   await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   expect((await screen.findByRole('alert')).textContent).toContain('Password is required');
-  expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
+  expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
   expect(screen.getByText('2 unsaved changes')).toBeDefined();
 });
 
@@ -521,13 +521,13 @@ it('retains a conflicting provider key and retries with the refreshed credential
   render(SettingsWorkspace, { client, category: 'search' });
   await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
   await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
   expect(document.querySelector('[data-setting-key="vector.embeddings.api_key"]')?.classList.contains('setting--changed')).toBe(true);
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   expect((await screen.findByRole('alert')).textContent).toContain('The key changed elsewhere');
   expect(screen.getByText('1 unsaved change')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.filter(request => request.method === 'PUT').map(request => request.ifMatch)).toEqual(['"credential-a"', '"credential-refreshed"']);
   expect(seen.filter(request => request.method === 'PATCH')).toEqual([]);
 });
@@ -539,7 +539,7 @@ it('rejects an invalid new provider name before sending a write', async () => {
   await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: 'bad/name' } });
   await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
   expect((await screen.findByRole('alert')).textContent).toContain('Names can use letters');
-  expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
+  expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
 });
 
 it('locks provider fields and newly mounted category controls while a provider save waits', async () => {
@@ -596,6 +596,7 @@ it.each(['message', 'visual'] as const)('starts the %s index from Overview and r
       kind: operation, configured: true, history_availability: 'available', supported_actions: kind === 'visual' && !built ? ['visual_build'] : []
     }] });
     if (request.url.includes('/embeddings/status')) return Response.json({ active_generation: built ? 1 : null });
+    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: built ? [] : ['build_index'] });
     if (request.url.endsWith(path)) {
       built = true;
       return kind === 'message' ? new Response('{"type":"complete"}\n') : Response.json({});
@@ -604,6 +605,13 @@ it.each(['message', 'visual'] as const)('starts the %s index from Overview and r
   render(SettingsWorkspace, { client });
   const name = kind === 'message' ? 'Build index, Message search' : 'Build visual index, Visual search';
   await fireEvent.click(await screen.findByRole('button', { name }));
+  if (kind === 'message') {
+    expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(0);
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(0);
+    await fireEvent.click(screen.getByRole('button', { name }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  }
   await waitFor(() => expect(screen.queryByRole('button', { name })).toBeNull());
   expect(seen.find(request => request.path === path)?.body).toEqual(kind === 'message'
     ? { args: ['embeddings', 'build', '--full-rebuild', '--yes'] } : { consent: true });
@@ -653,7 +661,7 @@ it.each(['full_text', 'semantic'])('offers approved search defaults and preserve
   else expect(semantic).toBeNull();
   await fireEvent.click(screen.getByRole('option', { name: 'Best match' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.find(request => request.method === 'PATCH')?.body).toEqual({ updates: [{ key: 'web.default_search_mode', value: { string: 'hybrid' } }] });
 });
 
@@ -669,7 +677,48 @@ it('keeps edited People search details visible when switching the feature off', 
   await fireEvent.click(toggle);
   expect((screen.getByLabelText('How long the provider keeps data') as HTMLInputElement).value).toBe('zero');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.find(request => request.method === 'PATCH')?.body).toEqual({ updates: [{ key: 'vector.people.retention_posture', value: { string: 'zero' } }] });
   await waitFor(() => expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull());
+});
+
+
+it.each(['first enable', 'last disable', 'replacement'] as const)('saves valid provider transitions for %s and carries revisions', async transition => {
+  const initiallyOn = transition !== 'first enable';
+  const provider = { name: 'primary', kind: 'exa', enabled: initiallyOn, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment.primary', credential: { configured: false, source: 'none' } };
+  const doc = settingsDoc({ person_enrichment_providers: [provider, { ...provider, name: 'replacement', enabled: false }] });
+  doc.settings.find(item => item.key === 'people.enrichment.enabled')!.value = typed(initiallyOn);
+  let failPatch = transition === 'first enable';
+  const { client, seen } = fixture(doc, request => request.method === 'PATCH' && failPatch ? Response.json({ message: 'Settings write failed' }, { status: 503 }) : undefined);
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await fireEvent.click(await screen.findByRole('switch', { name: 'Enable primary' }));
+  if (transition === 'replacement') await fireEvent.click(screen.getByRole('switch', { name: 'Enable replacement' }));
+  else await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  if (failPatch) {
+    await screen.findByText('Settings write failed');
+    expect(screen.getByText('1 unsaved change')).toBeDefined();
+    expect((doc.person_enrichment_providers[0] as typeof provider).enabled).toBe(true);
+    failPatch = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  }
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
+  const writes = seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage');
+  expect(writes.map(request => [request.method, request.path.split('/').at(-1), request.ifMatch])).toEqual(transition === 'first enable'
+    ? [['PUT', 'primary', '"s1"'], ['PATCH', 'settings', '"s2"'], ['PATCH', 'settings', '"s2"']]
+    : transition === 'last disable' ? [['PATCH', 'settings', '"s1"'], ['PUT', 'primary', '"s2"']]
+    : [['PUT', 'replacement', '"s1"'], ['PUT', 'primary', '"s2"']]);
+  expect(doc.settings.find(item => item.key === 'people.enrichment.enabled')!.value).toEqual(typed(transition !== 'last disable'));
+});
+
+
+it.each([200, 503])('withholds a duplicate first build when coverage returns %s without an advertised action', async status => {
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [{ kind: 'message_embedding', configured: true, supported_actions: [] }] });
+    if (request.url.includes('/embeddings/status')) return Response.json({ active_generation: null });
+    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: [] }, { status });
+  });
+  render(SettingsWorkspace, { client });
+  await screen.findByText('On');
+  expect(screen.queryByRole('button', { name: 'Build index, Message search' })).toBeNull();
 });

@@ -87,7 +87,7 @@ export const LABELS: Readonly<Record<string, string>> = {
   'vector.multimodal.api_key': 'Visual search API key',
   'people.enrichment.enabled': 'Look people up',
   'people.enrichment.schedule': 'Schedule',
-  'integrations.kata.enabled': 'Create tasks from messages',
+  'integrations.kata.enabled': 'Kata tasks and agendas',
   'integrations.kata.endpoint': 'Address',
   'integrations.kata.default_project': 'Project',
   'integrations.kata.api_key': 'API key',

@@ -36,7 +36,7 @@ describe('SecretField', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add task API key' }));
     const dialog = screen.getByRole('dialog', { name: 'Add task API key' });
     expect(dialog.textContent).toContain('Applies right away.');
-    const save = screen.getByRole('button', { name: 'Save task API key' }) as HTMLButtonElement;
+    const save = screen.getByRole('button', { name: 'Use task API key' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     await fireEvent.input(screen.getByLabelText('New task API key'), { target: { value: 'sk-live-0123456789' } });
     expect(save.disabled).toBe(false);
