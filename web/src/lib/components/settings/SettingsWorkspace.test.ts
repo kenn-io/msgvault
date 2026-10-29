@@ -140,6 +140,59 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
 
 afterEach(() => vi.restoreAllMocks());
 
+it('warns before leaving with drafts, keeps them on Stay, and discards before continuing', async () => {
+  const { client } = fixture();
+  let hold: ((leave: () => void) => boolean) | undefined;
+  const { unmount } = render(SettingsWorkspace, {
+    props: { client, category: 'server' },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  const field = await screen.findByLabelText('Stop when idle after');
+  await fireEvent.input(field, { target: { value: '15m' } });
+  const firstLeave = vi.fn();
+  expect(hold?.(firstLeave)).toBe(true);
+  const stay = await screen.findByRole('button', { name: 'Stay' });
+  expect(screen.getByText('Leave Settings and discard 1 unsaved change?')).toBeDefined();
+  expect(document.activeElement).toBe(stay);
+  await fireEvent.click(stay);
+  expect(field).toHaveProperty('value', '15m');
+  expect(firstLeave).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  expect(hold?.(firstLeave)).toBe(true);
+  const latestLeave = vi.fn(() => {
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+  expect(hold?.(latestLeave)).toBe(true);
+  await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
+  expect(firstLeave).not.toHaveBeenCalled();
+  expect(latestLeave).toHaveBeenCalledOnce();
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  expect(screen.getByLabelText('Stop when idle after')).toHaveProperty('value', '20m0s');
+  expect(hold?.(firstLeave)).toBe(false);
+  unmount();
+  expect(hold).toBeUndefined();
+});
+
+it('blocks reload only while Settings has unsaved drafts', async () => {
+  const { client } = fixture();
+  render(SettingsWorkspace, { client, category: 'server' });
+  const field = await screen.findByLabelText('Stop when idle after');
+  const clean = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(clean);
+  expect(clean.defaultPrevented).toBe(false);
+  await fireEvent.input(field, { target: { value: '15m' } });
+  const dirty = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(dirty);
+  expect(dirty.defaultPrevented).toBe(true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  const discarded = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(discarded);
+  expect(discarded.defaultPrevented).toBe(false);
+});
+
 it('keeps a failed Overview action error on Overview', async () => {
   const { client } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('carddav_sync', { supported_actions: ['carddav_sync'] })) });
@@ -403,7 +456,7 @@ it('keeps Contacts sync available while the message index builds and refreshes i
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const { client, seen } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding'), lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'] })) });
-    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: built ? [] : ['build_index'] });
+    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: built ? 'ready' : 'unavailable', actions: built ? [] : ['retry', 'build_index'] });
     if (request.url.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded', connections: [] });
     if (request.url.endsWith('/cli/run')) return pending;
   });

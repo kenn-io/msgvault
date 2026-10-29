@@ -199,7 +199,7 @@ export const defaultExploreURLState: ExploreURLState = {
 
 interface ExploreWindow {
   location: Pick<Location, 'href' | 'pathname' | 'search' | 'hash'>;
-  history: Pick<History, 'state' | 'pushState' | 'replaceState'>;
+  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'back'>;
   addEventListener(type: 'popstate', listener: () => void): void;
   removeEventListener(type: 'popstate', listener: () => void): void;
 }
@@ -630,6 +630,7 @@ export function parseExploreURLState(search: string): ExploreURLState {
 export class ExploreState {
   current = $state<ExploreURLState>(freshDefaults());
   restorationEpoch = $state(1);
+  holdLeave?: (leave: () => void) => boolean;
   private readonly browser: ExploreWindow;
   private readonly preferenceStorage: SearchModeStorage | null;
   private configuredDefaultSearchMode: ExploreSearchMode | undefined;
@@ -637,7 +638,14 @@ export class ExploreState {
   private pendingRestorationEpoch = $state<number | undefined>(1);
   private pendingSearchPriorFocus?: Pick<ExploreURLState, 'activeRow' | 'scrollAnchor'>;
   private readonly handlePopState = (): void => {
-    this.current = this.readURLState();
+    const next = this.readURLState();
+    if (this.current.workspace === 'settings' && next.workspace !== 'settings' &&
+      this.holdLeave?.(() => this.browser.history.back())) {
+      const search = serializeExploreURLState(this.committed);
+      this.browser.history.pushState(historyEntry(search, this.committed), '', `${this.browser.location.pathname}${search}${this.browser.location.hash}`);
+      return;
+    }
+    this.current = next;
     this.committed = normalize(this.current);
     this.pendingSearchPriorFocus = undefined;
     this.restorationEpoch += 1;
@@ -850,6 +858,8 @@ export class ExploreState {
     patch: Partial<ExploreURLState>,
     mode: 'push' | 'replace'
   ): void {
+    if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
+      this.holdLeave?.(() => this.navigate(patch, mode))) return;
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
     if (this.current.workspace === 'files' && patch.workspace !== undefined &&
