@@ -637,6 +637,7 @@ export class ExploreState {
   private committed: ExploreURLState;
   private historyIndex: number;
   private restoringHeldLeave = false;
+  private pendingHeldLeaveRestore?: () => void;
   private pendingRestorationEpoch = $state<number | undefined>(1);
   private pendingSearchPriorFocus?: Pick<ExploreURLState, 'activeRow' | 'scrollAnchor'>;
   private readonly handlePopState = (): void => {
@@ -654,7 +655,10 @@ export class ExploreState {
   // An entry from before exploreIndex existed gives no direction, so the
   // browser stays on it while held: leaving commits it, staying pushes Settings back.
   private holdPop(delta: number, commit: () => void): boolean {
-    if (delta === 0) return this.holdLeave?.(commit, () => this.pushCommitted()) ?? false;
+    if (delta === 0) {
+      this.pendingHeldLeaveRestore = () => this.pushCommitted();
+      return this.holdLeave?.(commit, this.pendingHeldLeaveRestore) ?? false;
+    }
     if (!this.holdLeave?.(() => this.browser.history.go(delta))) return false;
     this.restoringHeldLeave = true;
     this.browser.history.go(-delta);
@@ -662,6 +666,7 @@ export class ExploreState {
   }
 
   private commitPopped(next: ExploreURLState, index: number): void {
+    this.pendingHeldLeaveRestore = undefined;
     this.historyIndex = index;
     this.current = next;
     this.committed = normalize(this.current);
@@ -671,6 +676,7 @@ export class ExploreState {
   }
 
   private pushCommitted(): void {
+    this.pendingHeldLeaveRestore = undefined;
     const search = serializeExploreURLState(this.committed);
     const { pathname, hash } = this.browser.location;
     this.browser.history.pushState(historyEntry(search, this.committed, this.historyIndex), '', `${pathname}${search}${hash}`);
@@ -884,8 +890,10 @@ export class ExploreState {
     patch: Partial<ExploreURLState>,
     mode: 'push' | 'replace'
   ): void {
-    if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
-      this.holdLeave?.(() => this.navigate(patch, mode))) return;
+    if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings') {
+      this.pendingHeldLeaveRestore?.();
+      if (this.holdLeave?.(() => this.navigate(patch, mode))) return;
+    }
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
     if (this.current.workspace === 'files' && patch.workspace !== undefined &&
