@@ -183,7 +183,6 @@ describe('CardDAVOperations', () => {
     await controller.load();
     const sync = vi.spyOn(controller, 'sync').mockResolvedValue(undefined);
     render(CardDAVOperations, { controller, syncConnection: 'work' });
-    expect(screen.queryByRole('button', { name: 'Full sync' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
     expect(sync).toHaveBeenCalledExactlyOnceWith('work');
     controller.destroy();

@@ -26,7 +26,7 @@
   import { settingsNavigationTarget, type CardDAVSettingsRequest, type SettingsNavigationTarget } from '../../carddav/navigation';
   import type { SavedAppearance } from '../../theme/preferences.svelte';
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
-  import { accountRequest, type AccountDraft } from '../../carddav/account-settings';
+  import { accountRequest, type AccountDraft, type CardDAVAccountValues } from '../../carddav/account-settings';
   import { runOperationAction } from '../../operations/actions';
   import { pendingSecret } from '../../settings/secrets';
   import type { SearchCoverageAction } from '../../search/modes';
@@ -100,6 +100,8 @@
   let credentialUpdates = $state<Record<string, SecretUpdate>>({});
   let providerDrafts = $state<Record<string, ProviderSetting>>({});
   let accountDrafts = $state<Record<string, AccountDraft>>({});
+  // Each saved account as the server acknowledged it, shown while connection summaries can't load.
+  let savedAccounts = $state<Record<string, CardDAVAccountValues>>({});
   const inference = new PeopleInferenceController(untrack(() => client), () => loadSettings(true));
   onDestroy(() => inference.destroy());
   let pendingRestart = $state(false);
@@ -129,6 +131,7 @@
       Object.keys(credentialUpdates).length +
       Object.keys(providerDrafts).length + Object.keys(accountDrafts).length + Object.keys(inference.keyDrafts).length,
   );
+  const invalidAccount = $derived(Object.entries(accountDrafts).find(([, draft]) => draft.error));
   // An emptied number field is a draft in progress, not a value: it keeps the
   // row on, cannot be saved, and never stands in for the off value.
   const incompleteDrafts = $derived(
@@ -384,9 +387,6 @@
     error = '';
     accountSaveStatus = '';
     try {
-      for (const [name, draft] of Object.entries(accountDrafts)) {
-        if (draft.error) throw new Error(`${name}: ${draft.error}`);
-      }
       await saveProviders(true);
       if (updates.length > 0) {
         const {
@@ -444,6 +444,7 @@
         const result = await saveCardDAVAccount(accountRequest(draft.values, draft.password, name), client);
         if (!result.data) throw new Error(apiErrorMessage(result.error, "Can't save the contact account."));
         accountSaveStatus = `Contact account ${name} saved. Found ${result.data.books} address ${result.data.books === 1 ? 'book' : 'books'}.`;
+        savedAccounts[name] = { provider: result.data.provider ?? '', oauthApp: result.data.oauth_app ?? '', baseURL: result.data.base_url, username: result.data.username, passwordConfigured: draft.values.passwordConfigured || draft.password !== '', enabled: result.data.enabled, schedule: result.data.schedule ?? '' };
         await loadSettings(true);
         delete accountDrafts[name];
         resetKey += 1;
@@ -529,10 +530,11 @@
 {#snippet settingsFooter()}
   <span class="unsaved" role="status">
     {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : ''}`}
+    {#if invalidAccount}<br /><span>{invalidAccount[0]}: {invalidAccount[1].error}</span>{/if}
   </span>
   <Button label="Discard" disabled={saving} onclick={discard} />
   <Button
-    disabled={saving || inference.busy || incompleteDrafts > 0}
+    disabled={saving || inference.busy || incompleteDrafts > 0 || Boolean(invalidAccount)}
     tone="info"
     surface="solid"
     label={saving ? 'Saving…' : 'Save changes'}
@@ -662,6 +664,7 @@
             {client}
             {settings}
             bind:drafts={accountDrafts}
+            saved={savedAccounts}
             {cardDAVRequest}
             {onCardDAVRequestConsumed}
           />

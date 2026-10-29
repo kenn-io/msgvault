@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import type { Status as VisualStatus, SyncResult } from '../api/generated/models';
+import { KIND_LANES } from '../../test/operations';
 import { OperationsController } from './controller.svelte';
 import type {
   OperationAction,
@@ -17,17 +18,7 @@ import type {
 const RUN_ONE = `op2.${'a'.repeat(32)}.syntheticRunOne`;
 const RUN_TWO = `op2.${'b'.repeat(32)}.syntheticRunTwo`;
 
-const KIND_LANES: ReadonlyArray<readonly [OperationKind, OperationLane]> = [
-  ['source_sync', 'messages'],
-  ['message_embedding', 'messages'],
-  ['person_sweep', 'person_facts'],
-  ['person_embedding', 'person_facts'],
-  ['person_enrichment', 'person_facts'],
-  ['carddav_sync', 'contacts'],
-  ['document_extraction', 'documents'],
-  ['document_embedding', 'documents'],
-  ['visual_embedding', 'visual_attachments']
-];
+
 
 function operationState(overrides: Partial<OperationsURLState> = {}): OperationsURLState {
   return {
