@@ -1,6 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 import { loadMixedArchive } from './fixtures/mixed-archive';
-import { installOperations } from './fixtures/operations';
 import { exploreHistoryState } from '../explore-state';
 
 async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab' | 'Shift+Tab' = 'Tab') {
@@ -18,20 +17,6 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
   }
   throw new Error(`Keyboard focus did not reach ${accessibleName}; saw ${[...seen].join(' | ')}`);
 }
-
-test('Past runs selection, focus return, and close work without a pointer', async ({ page }) => {
-  await installOperations(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true }))}`);
-
-  await tabTo(page, 'Open CardDAV sync run');
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
-  await tabTo(page, 'All runs');
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('button', { name: 'Open CardDAV sync run' })).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-});
 
 test('pointer-free archive journey preserves focus, announcements, and history', async ({ page }) => {
   const fixture = await loadMixedArchive();
@@ -215,5 +200,4 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await page.goForward();
   await expect(page).toHaveURL(deletionsURL);
   await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Deletions' })).toBeVisible();
 });

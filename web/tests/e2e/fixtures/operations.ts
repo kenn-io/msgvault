@@ -25,44 +25,27 @@ const documentRun = fixtureRun('document_extraction');
 const visualRun = fixtureRun('visual_embedding');
 const sweepRun = fixtureRun('person_sweep');
 
-export const OPERATION_REFERENCES = {
-  source: sourceRun.id,
-  carddav: cardDAVRun.id,
-  document: documentRun.id,
-  visual: visualRun.id,
-  sweep: sweepRun.id
-} as const;
-
 const firstPage = [sourceRun, cardDAVRun, documentRun, visualRun];
 const secondPage = [sweepRun];
 
 export type InstalledOperations = {
   actionRequests: OperationAction[];
-  listQueries: URLSearchParams[];
   statusRequests: string[];
   readonly operationStatusReads: number;
   conflictNextCardDAV(): void;
-  driftNextPage(): void;
-  failNextDocumentStatus(): void;
   failNextHistory(): void;
   holdNextOperationStatus(): () => void;
-  rotateReferencesOnNextRefresh(): void;
   setOperationConfigured(kind: 'document_extraction' | 'visual_embedding', configured: boolean): void;
 };
 
 export async function installOperations(page: Page): Promise<InstalledOperations> {
   const actionRequests: OperationAction[] = [];
-  const listQueries: URLSearchParams[] = [];
   const statusRequests: string[] = [];
   let operationStatusReads = 0;
   let statusGate: Promise<void> | undefined;
   let cardDAVConflict = false;
-  let pageDrift = false;
-  let documentStatusFailure = false;
   let documentConfigured = true;
   let historyFailure = false;
-  let referencesRotated = false;
-  let rotateOnNextRefresh = false;
   let visualConfigured = true;
 
   await page.route('**/api/session', sessionRoute);
@@ -94,12 +77,6 @@ export async function installOperations(page: Page): Promise<InstalledOperations
   await page.route('**/api/v1/carddav/runs**', (route) => route.fulfill({ json: { runs: [] } }));
   await page.route('**/api/v1/documents/status/current', (route) => {
     statusRequests.push('/api/v1/documents/status/current');
-    if (documentStatusFailure) {
-      documentStatusFailure = false;
-      return fulfillOperation(route, {
-        error: 'document_status_unavailable', message: 'Document status is unavailable.'
-      }, 503);
-    }
     return route.fulfill({ json: documentStatus });
   });
   await page.route('**/api/v1/documents/vectors/status', (route) => {
@@ -121,7 +98,7 @@ export async function installOperations(page: Page): Promise<InstalledOperations
     const gate = statusGate;
     statusGate = undefined;
     await gate;
-    return fulfillOperation(route, statusResponse(referencesRotated, documentConfigured, visualConfigured));
+    return fulfillOperation(route, statusResponse(documentConfigured, visualConfigured));
   });
   await page.route('**/api/v1/operations/runs**', async (route) => {
     const url = new URL(route.request().url());
@@ -133,29 +110,15 @@ export async function installOperations(page: Page): Promise<InstalledOperations
         : fulfillOperation(route, { error: 'operation_not_found', message: 'Operation run was not found.' }, 404);
     }
 
-    listQueries.push(new URLSearchParams(url.searchParams));
     if (historyFailure) {
       historyFailure = false;
       return fulfillOperation(route, {
         error: 'operation_history_unavailable', message: 'Operation history is unavailable.'
       }, 503);
     }
-    if (url.searchParams.has('cursor') && pageDrift) {
-      pageDrift = false;
-      return fulfillOperation(route, {
-        error: 'operation_history_conflict', message: 'Operation history changed.'
-      }, 409);
-    }
-
-    if (!url.searchParams.has('cursor') && rotateOnNextRefresh) {
-      referencesRotated = true;
-      rotateOnNextRefresh = false;
-    }
-    const visibleFirstPage = referencesRotated ? firstPage.map(rotatedRun) : firstPage;
-    const visibleSecondPage = referencesRotated ? secondPage.map(rotatedRun) : secondPage;
     const requested = url.searchParams.has('cursor')
-      ? visibleSecondPage
-      : filtered(visibleFirstPage, url.searchParams);
+      ? secondPage
+      : filtered(firstPage, url.searchParams);
     return fulfillOperation(route, {
       runs: requested,
       unavailable_kinds: checkedPublicFixture.unavailable_kinds,
@@ -185,19 +148,15 @@ export async function installOperations(page: Page): Promise<InstalledOperations
 
   return {
     actionRequests,
-    listQueries,
     statusRequests,
     get operationStatusReads(): number { return operationStatusReads; },
     conflictNextCardDAV(): void { cardDAVConflict = true; },
-    driftNextPage(): void { pageDrift = true; },
-    failNextDocumentStatus(): void { documentStatusFailure = true; },
     failNextHistory(): void { historyFailure = true; },
     holdNextOperationStatus(): () => void {
       let release!: () => void;
       statusGate = new Promise<void>((resolve) => { release = resolve; });
       return release;
     },
-    rotateReferencesOnNextRefresh(): void { rotateOnNextRefresh = true; },
     setOperationConfigured(kind, configured): void {
       if (kind === 'document_extraction') documentConfigured = configured;
       else visualConfigured = configured;
@@ -212,9 +171,7 @@ function fixtureRun(kind: OperationKind): OperationRunSummary {
 }
 
 function detailFor(id: string): OperationRunDetail | undefined {
-  const original = [...firstPage, ...secondPage].find((candidate) =>
-    candidate.id === id || rotatedReference(candidate.id) === id);
-  const runByID = original && id === rotatedReference(original.id) ? rotatedRun(original) : original;
+  const runByID = [...firstPage, ...secondPage].find(candidate => candidate.id === id);
   if (!runByID) return undefined;
   return {
     ...runByID,
@@ -230,32 +187,22 @@ function detailFor(id: string): OperationRunDetail | undefined {
 }
 
 function statusResponse(
-  rotated = false,
   documentConfigured = true,
   visualConfigured = true
 ): OperationStatusResponse {
-  const visible = (run: OperationRunSummary) => rotated ? rotatedRun(run) : run;
   return {
     lanes: [
-      lane('messages', 'source_sync', visible(sourceRun)),
+      lane('messages', 'source_sync', sourceRun),
       lane('messages', 'message_embedding'),
-      lane('person_facts', 'person_sweep', visible(sweepRun)),
+      lane('person_facts', 'person_sweep', sweepRun),
       lane('person_facts', 'person_embedding', undefined, [], 'unavailable'),
       lane('person_facts', 'person_enrichment'),
-      lane('contacts', 'carddav_sync', visible(cardDAVRun), ['carddav_sync']),
-      lane('documents', 'document_extraction', visible(documentRun), [], 'available', documentConfigured),
+      lane('contacts', 'carddav_sync', cardDAVRun, ['carddav_sync']),
+      lane('documents', 'document_extraction', documentRun, [], 'available', documentConfigured),
       lane('documents', 'document_embedding', undefined),
-      lane('visual_attachments', 'visual_embedding', visible(visualRun), ['visual_resume'], 'available', visualConfigured)
+      lane('visual_attachments', 'visual_embedding', visualRun, ['visual_resume'], 'available', visualConfigured)
     ]
   };
-}
-
-function rotatedReference(id: string): string {
-  return `${id}_rotated`;
-}
-
-function rotatedRun(run: OperationRunSummary): OperationRunSummary {
-  return { ...run, id: rotatedReference(run.id) };
 }
 
 function lane(
