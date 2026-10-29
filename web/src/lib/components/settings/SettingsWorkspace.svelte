@@ -668,7 +668,7 @@
   .settings-fields {
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--space-7);
     min-width: 0;
     margin: 0;
     padding: 0;
@@ -729,6 +729,7 @@
     background: var(--status-warning-bg);
     color: var(--status-warning-ink);
     font-size: var(--font-size-sm);
+    line-height: 1.45;
   }
   .notice--error {
     border-color: var(--status-error-ink);
@@ -755,7 +756,7 @@
   }
   .fields {
     display: grid;
-    gap: var(--field-gap);
+    gap: var(--section-gap);
     min-width: 0;
   }
   .fields--pair {
@@ -772,7 +773,7 @@
      label above the field. */
   .setting {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--control-gap);
     min-width: 0;
     border-radius: var(--radius-sm);
   }
@@ -814,7 +815,7 @@
   .setting__hint {
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-    line-height: var(--line-height-body);
+    line-height: 1.45;
   }
 
   .disclosure summary {
@@ -854,10 +855,12 @@
     margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+    line-height: 1.45;
   }
   .unsaved {
     margin-right: auto;
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
+    line-height: 1.45;
   }
 </style>
