@@ -79,7 +79,6 @@
     drillGroup: (row: ExploreGroupRow) => void;
     closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
-    openPerson?: (participantID: number) => void;
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onSaveView: () => void;
@@ -112,7 +111,6 @@
     onOpenRecording,
     drillGroup,
     closeReadingPane,
-    openPerson = undefined,
     openRelationship,
     changeConversationAnchor,
     onOpenMeeting = undefined,
@@ -846,7 +844,7 @@
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitNavigation({ workspace: 'settings', settingsCategory: 'tasks' })}
-            onOpenPerson={openPerson}
+            onOpenPerson={openRelationship}
             {conversationAnchorId}
             onConversationAnchorChange={changeConversationAnchor}
           />

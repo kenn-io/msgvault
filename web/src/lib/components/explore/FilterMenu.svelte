@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { autoReposition, Button, Checkbox, dismissable, floatingPopoverStyle } from '@kenn-io/kit-ui';
+  import { autoReposition, Button, Checkbox, escapeCloses, floatingPopoverStyle } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -8,7 +8,6 @@
   import type { ExploreFilter } from '../../explore/models';
   import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
-  import { localDayBoundsUTC } from '../relationships/timeline-support';
 
   interface KindOption {
     name: string;
@@ -86,15 +85,7 @@
 
   $effect(() => {
     if (!open) return;
-    const cleanups = [
-      dismissable({
-        owners: () => [panelElement, triggerElement],
-        dismiss: () => (open = false),
-        escapeFocus: () => triggerElement?.querySelector('button'),
-      }),
-      autoReposition(() => [panelElement, triggerElement], position),
-    ];
-    return () => cleanups.forEach((cleanup) => cleanup());
+    return autoReposition(() => [panelElement, triggerElement], position);
   });
 
   onDestroy(() => controller?.abort());
@@ -113,8 +104,8 @@
     const value = filters.find((filter) => filter.dimension === dimension)?.values[0];
     if (!value) return '';
     const date = new Date(value);
-    if (dimension === 'before') date.setMilliseconds(date.getMilliseconds() - 1);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    if (dimension === 'before') date.setUTCMilliseconds(date.getUTCMilliseconds() - 1);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
   }
 
   function changeDate(dimension: 'after' | 'before', input: HTMLInputElement): void {
@@ -129,8 +120,8 @@
     }
     const rest = filters.filter((filter) => filter.dimension !== dimension);
     if (!value) return onChange(rest);
-    const bounds = localDayBoundsUTC(`${value}T12:00:00`);
-    onChange([...rest, { dimension, values: [dimension === 'after' ? bounds.start : bounds.end] }]);
+    const boundary = new Date(`${value}T00:00:00Z`).getTime() + (dimension === 'before' ? 86400000 : 0);
+    onChange([...rest, { dimension, values: [new Date(boundary).toISOString()] }]);
   }
 
   function clear(): void {
@@ -138,6 +129,15 @@
     onChange([]);
   }
 </script>
+
+<svelte:document onmousedown={(event) => {
+  if (open && ![panelElement, triggerElement].some((element) => element?.contains(event.target as Node))) open = false;
+}} />
+<svelte:window onkeydown={(event) => {
+  // kit-ui-check-ignore: observes the nested Kit picker's open state.
+  if (!open || panelElement?.querySelector('[role="combobox"][aria-expanded="true"]')) return;
+  escapeCloses(() => { open = false; triggerElement?.querySelector('button')?.focus(); })(event);
+}} />
 
 <span class="filter-trigger" bind:this={triggerElement}>
   <Button
@@ -166,14 +166,17 @@
       </fieldset>
     {/if}
     {#if kindsStatus}<p role="status">{kindsStatus}</p>{/if}
-    <AccountFilter {client} {filters} {onChange} />
+    <AccountFilter {client} {filters} {onChange} showSingleMailbox />
     <IdentityFilter {client} {filters} {onChange} />
-    <div class="dates">
+    <fieldset class="field">
+      <legend>Dates (UTC)</legend>
+      <div class="dates">
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
       <label>From<input type="date" aria-label="From" value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget)} /></label>
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
       <label>To<input type="date" aria-label="To" value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget)} /></label>
-    </div>
+      </div>
+    </fieldset>
     {#if dateError}<p role="alert">{dateError}</p>{/if}
     {#if filters.length > 0}
       <div class="panel-footer">
