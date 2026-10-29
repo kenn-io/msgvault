@@ -698,7 +698,7 @@ it('keeps the acknowledged named account schedule when refreshing connection sum
 it('opens live document counts from Overview Details without a past run', async () => {
   const { client, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents' })] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents', related_status: 'getDocumentIndexStatus' })] });
     if (path.endsWith('/documents/status/current')) return Response.json({ status: { profile_exists: true, profile_enabled: true, exact_consent: true, ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0, terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2 } });
   });
   render(SettingsWorkspace, { client });

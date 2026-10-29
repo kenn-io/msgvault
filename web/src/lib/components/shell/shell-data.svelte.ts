@@ -5,7 +5,7 @@ import {
 } from '../../api/generated/api/api';
 import type { APIClient } from '../../api/client';
 import { JobsStore } from '../../jobs/jobs.svelte';
-import type { SavedView } from '../../api/generated/models';
+import type { SavedView, PatchSavedViewRequest } from '../../api/generated/models';
 import type { ExploreURLState } from '../../explore/models';
 import { CURRENT_SCHEMA_VERSION, exploreStateFromSavedView, type CanonicalState } from '../../saved-views/canonical';
 
@@ -31,7 +31,7 @@ export class ShellData {
   readonly jobs: JobsStore;
 
   #client: APIClient;
-  #hidden = new Set<number>();
+  #pendingDeletes = new Set<number>();
   #timer: ReturnType<typeof setInterval> | undefined;
   #controller: AbortController | undefined;
 
@@ -61,7 +61,7 @@ export class ShellData {
     void this.jobs.refresh();
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
-    if (views) this.views = views.filter(view => !this.#hidden.has(view.id));
+    if (views) this.views = views.filter(view => !this.#pendingDeletes.has(view.id));
   }
 
   async #loadViews(client: APIClient): Promise<SavedView[] | undefined> {
@@ -77,65 +77,62 @@ export class ShellData {
   async renameView(view: SavedView, name: string): Promise<string | undefined> {
     const trimmed = name.trim();
     if (!trimmed || trimmed === view.name) return undefined;
-    try {
-      const { data, response } = await patchSavedView(
-        { id: view.id },
-        { name: trimmed },
-        { ...this.#client, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
-      );
-      if (!data) {
-        return response.status === 409
-          ? 'This view changed in another session.'
-          : `Couldn't rename ${view.name}.`;
-      }
-      this.views = this.views.map((candidate) => (candidate.id === data.id ? data : candidate));
-      return undefined;
-    } catch {
-      return `Couldn't rename ${view.name}.`;
-    }
+    return this.#patch(view, { name: trimmed }, `Couldn't rename ${view.name}.`);
   }
 
-  /** Changes one saved view's description, returning an error message on failure. */
   async describeView(view: SavedView, description: string): Promise<string | undefined> {
     const trimmed = description.trim();
     if (trimmed === (view.description ?? '')) return undefined;
+    return this.#patch(view, { description: trimmed }, "Couldn't save the description.");
+  }
+
+  async #patch(view: SavedView, body: PatchSavedViewRequest, failure: string): Promise<string | undefined> {
     try {
       const { data, response } = await patchSavedView(
-        { id: view.id },
-        { description: trimmed },
+        { id: view.id }, body,
         { ...this.#client, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
       );
-      if (!data) {
-        return response.status === 409 ? 'This view changed in another session.' : `Couldn't save the description.`;
-      }
-      this.views = this.views.map((candidate) => (candidate.id === data.id ? data : candidate));
+      if (!data) return response.status === 409 ? 'This view changed in another session.' : failure;
+      this.views = this.views.map(candidate => candidate.id === data.id ? data : candidate).sort(viewOrder);
       return undefined;
     } catch {
-      return `Couldn't save the description.`;
+      return failure;
     }
   }
 
   /** Hides a view at once. Call `commitDelete` when the Undo time is up. */
   hideView(view: SavedView): void {
-    this.#hidden.add(view.id);
+    this.#pendingDeletes.add(view.id);
     this.views = this.views.filter((candidate) => candidate.id !== view.id);
   }
 
   restoreView(view: SavedView): void {
-    this.#hidden.delete(view.id);
+    this.#pendingDeletes.delete(view.id);
     if (this.views.some((candidate) => candidate.id === view.id)) return;
-    this.views = [...this.views, view].sort((a, b) => a.id - b.id);
+    this.views = [...this.views, view].sort(viewOrder);
   }
 
-  async commitDelete(view: SavedView): Promise<void> {
+  async commitDelete(view: SavedView): Promise<string | undefined> {
     try {
       const { response } = await deleteSavedView(
         { id: view.id },
-        { ...this.#client, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
+        { ...this.#client, keepalive: true, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
       );
-      if (!response.ok) this.restoreView(view);
+      if (!response.ok) {
+        this.restoreView(view);
+        return `Couldn't delete ${view.name}.`;
+      }
     } catch {
       this.restoreView(view);
+      return `Couldn't delete ${view.name}.`;
+    } finally {
+      this.#pendingDeletes.delete(view.id);
     }
   }
+}
+
+function viewOrder(a: SavedView, b: SavedView): number {
+  const left = a.name.toLowerCase();
+  const right = b.name.toLowerCase();
+  return left < right ? -1 : left > right ? 1 : a.id - b.id;
 }

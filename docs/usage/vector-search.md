@@ -922,7 +922,7 @@ Original attachments remain in the archive.
 MCP clients use `search_visual_attachments` for visual queries,
 `search_document_attachments` for document text, and `search_person_files` for
 attachment metadata. The CLI `person files --lane all` combines those search
-paths for one person. The Web UI's [Operations workspace](/docs/web-ui/#operations) shows
+paths for one person. The Web UI's [Past runs](/docs/web-ui/#operations) shows
 visual coverage and the build or resume actions the daemon currently allows.
 
 ## See Also

@@ -3,7 +3,7 @@
 
   import type { JobsStore } from '../../jobs/jobs.svelte';
   import type { JobTarget } from '../../jobs/jobs';
-  import JobsPopover from '../sources/JobsPopover.svelte';
+  import JobsPopover from './JobsPopover.svelte';
 
   interface Props {
     onPastRuns: () => void;
@@ -14,8 +14,8 @@
 
   let { onPastRuns, store, collapsed, onOpen }: Props = $props();
 
-  // Green when nothing failed in 7 days, amber while a job runs, red after a failure.
   const STATUS = {
+    unavailable: { tone: 'stale', label: 'Status unavailable' },
     ok: { tone: 'idle', label: 'Synced' },
     running: { tone: 'stale', label: 'Syncing' },
     failed: { tone: 'unclean', label: 'Needs attention' },

@@ -114,7 +114,7 @@ describe('ShellData', () => {
       const data = new ShellData(createAPIClient(fetchFn));
       const saved = view(1, 'Budget');
       data.hideView(saved);
-      await data.commitDelete(saved);
+      expect(await data.commitDelete(saved)).toBe("Couldn't delete Budget.");
       expect(data.views).toEqual([saved]);
     });
   });
@@ -137,4 +137,28 @@ it('edits descriptions with the revision and reports a conflict', async () => {
   expect(requests.find(request => request.method === 'PATCH')?.headers.get('If-Match')).toBe('"saved-view-1-r1"');
   const conflicted = new ShellData(createAPIClient(async () => Response.json({}, { status: 409 })));
   expect(await conflicted.describeView(saved, 'Review')).toBe('This view changed in another session.');
+});
+
+it('shows a new view whose id reuses a completed deletion', async () => {
+  const answers = { views: [view(1, 'Budget'), view(2, 'Invoices')] };
+  const { data } = setup(answers);
+  await data.refresh();
+  const saved = data.views[1]!;
+  data.hideView(saved);
+  await data.commitDelete(saved);
+  answers.views = [view(1, 'Budget'), view(2, 'Receipts')];
+  await data.refresh();
+  expect(data.views.map(view => view.name)).toEqual(['Budget', 'Receipts']);
+});
+it('restores an undone view in server name order', async () => {
+  const { data } = setup({ views: [view(2, 'Alpha'), view(1, 'Zeta')] });
+  await data.refresh();
+  const saved = data.views[0]!;
+  data.hideView(saved); data.restoreView(saved);
+  expect(data.views.map(view => view.name)).toEqual(['Alpha', 'Zeta']);
+});
+it('uses a keepalive request when committing a pending deletion', async () => {
+  const { data, requests } = setup();
+  await data.commitDelete(view(1, 'Budget'));
+  expect(requests.find(request => request.method === 'DELETE')?.keepalive).toBe(true);
 });

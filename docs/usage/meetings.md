@@ -31,7 +31,7 @@ Muesli can optionally archive locally retained recordings.
 ## Browse and search
 
 Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to find meetings in
-Everything. Filter to meeting notes or search across notes, email, and chats.
+Messages. Filter to meeting notes or search across notes, email, and chats.
 To search only meetings from the CLI:
 
 ```bash
@@ -48,7 +48,7 @@ aggregates remain email-only unless you choose another message type.
 
 ## Export context and read follow-ups
 
-In Everything, select meeting rows and choose **Export meeting context**. You
+In Messages, select meeting rows and choose **Export meeting context**. You
 can select explicit rows or **Select all matching items** for the current
 search and filters. The export includes exactly that selection. Mixed selections
 fail with **Select meetings only**; narrow selections larger than 100 meetings.
@@ -61,7 +61,7 @@ The default content budget is 131072 UTF-8 bytes. CLI and API clients can set
 check those fields before treating an export as complete. A missing summary
 stays missing. msgvault does not generate a replacement from the transcript.
 
-**Meeting activity and follow-ups** appears in a meeting-filtered Everything
+**Meeting activity and follow-ups** appears in a meeting-filtered Messages
 view, participant and domain reading panes, Directory profiles, and
 Relationships. It follows the current scope. Filter action items by source
 status or exact assignee email, then use **Open archived meeting** to read the

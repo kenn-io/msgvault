@@ -10,7 +10,7 @@ import type {
   OperationStatusResponse as GeneratedOperationStatusResponse,
   OperationUnavailableKind as GeneratedOperationUnavailableKind,
 } from '../api/generated/models';
-import type { OperationStatusAuthority } from '../explore/models';
+import type { ExploreURLState } from '../explore/models';
 
 export type OperationAction = GeneratedOperationAction;
 export type OperationActionOutcome = 'succeeded' | 'conflict' | 'failed' | 'discarded';
@@ -24,15 +24,7 @@ export type OperationStatusResponse = GeneratedOperationStatusResponse;
 export type OperationState = GeneratedOperationState;
 export type OperationUnavailableKind = GeneratedOperationUnavailableKind;
 
-export interface OperationsURLState {
-  operationLane: '' | OperationLane;
-  operationKind: '' | OperationKind;
-  operationState: '' | OperationState;
-  operationStartedFrom: string;
-  operationStartedBefore: string;
-  operationRunID: string | null;
-  operationStatus: '' | OperationStatusAuthority;
-}
+export type OperationsURLState = Pick<ExploreURLState, 'operationLane' | 'operationKind' | 'operationState' | 'operationStartedFrom' | 'operationStartedBefore' | 'operationRunID' | 'operationStatus'>;
 
 export function defaultOperationsState(kind: OperationsURLState['operationKind'] = ''): OperationsURLState {
   return { operationLane: '', operationKind: kind, operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' };

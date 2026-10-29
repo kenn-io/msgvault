@@ -454,7 +454,7 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', '/?workspace=files');
     const fileSearches: Request[] = [];
     const state = new ExploreState(window);
-    state.replaceTransient({
+    state.replaceCommittedNavigation({
       workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'],
       fileSort: { field: 'filename', direction: 'asc' }
     });
@@ -463,6 +463,7 @@ describe('AppShell', () => {
     try {
       const filter = await screen.findByLabelText<HTMLInputElement>('Filter filename');
       expect(filter.value).toBe('invoice');
+      const beforeView = window.location.href;
       await openDemoView();
       await screen.findByRole('grid', { name: 'Files results' });
       expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
@@ -472,6 +473,10 @@ describe('AppShell', () => {
         expect(body).not.toHaveProperty('mime_families');
         expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
       });
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      await waitFor(() => expect(window.location.href).toBe(beforeView));
+      await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('invoice'));
     } finally {
       rendered.unmount();
       state.destroy();
@@ -3029,4 +3034,58 @@ it('opens CardDAV Past runs with its kind through the Settings context', async (
   expect(await screen.findByRole('dialog', { name: 'Past runs' })).toBeDefined();
   await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('carddav_sync'));
   rendered.unmount();
+});
+
+it('shares run selection, restores detail on reload, and returns to history with Back', async () => {
+  window.history.replaceState(null, '', '/?workspace=sources');
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+    if (path.endsWith('/operations/runs')) return Response.json({ runs: [operationSummary()], unavailable_kinds: [], membership_revision: 1 });
+    if (path.includes('/operations/runs/')) return Response.json({ ...operationSummary(), supported_actions: [] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return Response.json(exploreResponse());
+  });
+  let state = new ExploreState(window);
+  let rendered = render(AppShell, { client, state });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
+  await screen.findByRole('region', { name: 'Operation run detail' });
+  expect(state.current.operationRunID).toBe(OPERATION_RUN);
+  const sharedURL = window.location.href;
+  expect(JSON.parse(new URL(sharedURL).searchParams.get('explore')!).operationRunID).toBe(OPERATION_RUN);
+  rendered.unmount(); state.destroy();
+  window.history.replaceState(null, '', sharedURL);
+  state = new ExploreState(window);
+  rendered = render(AppShell, { client, state });
+  await screen.findByRole('region', { name: 'Operation run detail' });
+  window.history.back();
+  await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  await screen.findByRole('button', { name: 'Open Source sync run' });
+  expect(state.current.operationRunID).toBeNull();
+  rendered.unmount(); state.destroy();
+});
+
+it('restores a saved view and shows the delete failure after pagehide flushes Undo', async () => {
+  window.history.replaceState(null, '', '/?workspace=everything');
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'DELETE') return Response.json({}, { status: 500 });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [{ id: 1, name: 'Receipts', schema_version: 2, revision: 1, canonical_state: { presentation: 'table' } }] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(window);
+  const rendered = render(AppShell, { client, state });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Receipts actions' }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+  expect(screen.queryByRole('button', { name: 'Receipts' })).toBeNull();
+  window.dispatchEvent(new Event('pagehide'));
+  await screen.findByText("Couldn't delete Receipts.");
+  await screen.findByRole('button', { name: 'Receipts' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+  rendered.unmount(); state.destroy();
 });

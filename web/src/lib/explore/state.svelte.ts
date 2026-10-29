@@ -19,7 +19,11 @@ import type {
   DirectoryReviewKind,
   IdentityReviewState,
   RelationshipReviewState,
-  RelationshipFacet
+  RelationshipFacet,
+  OperationKind,
+  OperationLane,
+  OperationStatusAuthority,
+  OperationState
 } from './models';
 import { DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue } from './models';
 import { trimAttributeText } from '../directory/attribute-text';
@@ -93,6 +97,12 @@ const RESTORATION_INVALIDATING_FIELDS = new Set<keyof ExploreURLState>([
   'selectedIdentifier',
   'relationshipFacet',
   'relationshipTarget',
+  'operationLane',
+  'operationKind',
+  'operationState',
+  'operationStartedFrom',
+  'operationStartedBefore',
+  'operationStatus',
   'settingsAuthority',
   'settingsCategory'
 ]);
@@ -100,6 +110,41 @@ const FILE_MIME_FAMILIES = new Set<FileMIMEFamily>([
   'image', 'pdf', 'audio', 'video', 'text', 'document', 'archive', 'other'
 ]);
 const PERSON_FILE_DIRECTIONS = new Set<PersonFileDirection>(['from_person', 'to_person', 'group']);
+const OPERATION_LANES = new Set<OperationLane>([
+  'messages', 'person_facts', 'contacts', 'documents', 'visual_attachments'
+]);
+const OPERATION_KINDS = new Set<OperationKind>([
+  'carddav_sync',
+  'document_embedding',
+  'document_extraction',
+  'message_embedding',
+  'person_embedding',
+  'person_enrichment',
+  'person_sweep',
+  'source_sync',
+  'visual_embedding'
+]);
+const OPERATION_STATES = new Set<OperationState>([
+  'cancelled', 'failed', 'partial', 'paused', 'queued', 'running', 'succeeded'
+]);
+const OPERATION_STATUS_AUTHORITIES = new Set<OperationStatusAuthority>([
+  'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
+]);
+const OPERATION_KINDS_BY_LANE: Record<OperationLane, ReadonlySet<OperationKind>> = {
+  messages: new Set(['source_sync', 'message_embedding']),
+  person_facts: new Set(['person_sweep', 'person_embedding', 'person_enrichment']),
+  contacts: new Set(['carddav_sync']),
+  documents: new Set(['document_extraction', 'document_embedding']),
+  visual_attachments: new Set(['visual_embedding'])
+};
+const OPERATION_FILTER_FIELDS = [
+  'operationLane',
+  'operationKind',
+  'operationState',
+  'operationStartedFrom',
+  'operationStartedBefore'
+] as const satisfies ReadonlyArray<keyof ExploreURLState>;
+
 export const defaultExploreURLState: ExploreURLState = {
   schemaVersion: 2,
   workspace: 'everything',
@@ -134,6 +179,14 @@ export const defaultExploreURLState: ExploreURLState = {
   relationshipTarget: null,
   relationshipShowAll: false,
   relationshipFiles: false,
+  operationHistory: false,
+  operationLane: '',
+  operationKind: '',
+  operationState: '',
+  operationStartedFrom: '',
+  operationStartedBefore: '',
+  operationRunID: null,
+  operationStatus: '',
   settingsAuthority: '',
   settingsCategory: 'overview',
   columns: [...DEFAULT_EXPLORE_COLUMNS],
@@ -282,6 +335,39 @@ function directoryDay(value: unknown): string {
   return typeof value === 'string' && isCalendarDate(value) ? value : '';
 }
 
+function operationDateBound(value: unknown): string {
+  if (typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{0,8}[1-9])?Z$/.test(value)) return '';
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return '';
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(value);
+  if (!match) return '';
+  const [, year, month, day, hour, minute, second] = match;
+  const date = new Date(parsed);
+  return date.getUTCFullYear() === Number(year) &&
+    date.getUTCMonth() + 1 === Number(month) &&
+    date.getUTCDate() === Number(day) &&
+    date.getUTCHours() === Number(hour) &&
+    date.getUTCMinutes() === Number(minute) &&
+    date.getUTCSeconds() === Number(second)
+    ? value
+    : '';
+}
+
+function operationDateSortKey(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?Z$/.exec(value);
+  if (!match) return '';
+  const [, year, month, day, hour, minute, second, fraction = ''] = match;
+  return `${year}${month}${day}${hour}${minute}${second}${fraction.padEnd(9, '0')}`;
+}
+
+function operationRunID(value: unknown): string | null {
+  return typeof value === 'string' && value.length <= 4096 &&
+    /^op2\.[a-f0-9]{32}\.[A-Za-z0-9_-]+$/.test(value)
+    ? value
+    : null;
+}
+
 // Authority links select their setting; old category links select its new home.
 function settingsCategory(value: unknown, authority: SettingsNavigationAuthority | ''): string {
   const target = settingsNavigationTarget(authority);
@@ -309,14 +395,6 @@ function normalize(value: unknown): ExploreURLState {
     selection: _selection,
     bulkSelection: _bulkSelection,
     operationCursor: _operationCursor,
-    operationLane: _operationLane,
-    operationKind: _operationKind,
-    operationState: _operationState,
-    operationStartedFrom: _operationStartedFrom,
-    operationStartedBefore: _operationStartedBefore,
-    operationRunID: _operationRunID,
-    operationStatus: _operationStatus,
-
     ...knownAndFuture
   } = value;
   const searchMode =
@@ -366,6 +444,30 @@ function normalize(value: unknown): ExploreURLState {
       ? value.relationshipReviewState
       : 'pending';
   const settingsAuthority = normalizeSettingsNavigationAuthority(value.settingsAuthority);
+  const operationLane = typeof value.operationLane === 'string' &&
+    OPERATION_LANES.has(value.operationLane as OperationLane)
+    ? value.operationLane as OperationLane
+    : '';
+  const candidateOperationKind = typeof value.operationKind === 'string' &&
+    OPERATION_KINDS.has(value.operationKind as OperationKind)
+    ? value.operationKind as OperationKind
+    : '';
+  const operationKind = operationLane !== '' && candidateOperationKind !== '' &&
+    !OPERATION_KINDS_BY_LANE[operationLane].has(candidateOperationKind)
+    ? ''
+    : candidateOperationKind;
+  const operationState = typeof value.operationState === 'string' &&
+    OPERATION_STATES.has(value.operationState as OperationState)
+    ? value.operationState as OperationState
+    : '';
+  let operationStartedFrom = operationDateBound(value.operationStartedFrom);
+  let operationStartedBefore = operationDateBound(value.operationStartedBefore);
+  if (operationStartedFrom !== '' && operationStartedBefore !== '' &&
+    operationDateSortKey(operationStartedFrom) >= operationDateSortKey(operationStartedBefore)) {
+    operationStartedFrom = '';
+    operationStartedBefore = '';
+  }
+
   return {
     ...knownAndFuture,
     schemaVersion: value.schemaVersion === 1
@@ -411,6 +513,17 @@ function normalize(value: unknown): ExploreURLState {
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
+    operationHistory: value.operationHistory === true,
+    operationLane,
+    operationKind,
+    operationState,
+    operationStartedFrom,
+    operationStartedBefore,
+    operationRunID: operationRunID(value.operationRunID),
+    operationStatus: typeof value.operationStatus === 'string' &&
+      OPERATION_STATUS_AUTHORITIES.has(value.operationStatus as OperationStatusAuthority)
+      ? value.operationStatus as OperationStatusAuthority
+      : '',
     settingsAuthority,
     settingsCategory: settingsCategory(value.workspace === 'operations' ? 'overview' : value.settingsCategory, settingsAuthority),
     columns: columns(value.columns),
@@ -683,6 +796,7 @@ export class ExploreState {
       selectedRow: null,
       conversationAnchor: null,
       scrollAnchor: null,
+      operationStatus: '',
       settingsAuthority: ''
     }, 'push');
   }
@@ -699,6 +813,7 @@ export class ExploreState {
       selectedRow: null,
       conversationAnchor: null,
       scrollAnchor: null,
+      operationStatus: '',
       settingsAuthority: ''
     }, 'push');
   }
@@ -786,6 +901,10 @@ export class ExploreState {
       patch.workspace !== 'files' && !('presentation' in patch)) {
       effectivePatch = { ...patch, presentation: defaultExploreURLState.presentation };
     }
+    if (mode === 'push' && OPERATION_FILTER_FIELDS.some((key) =>
+      key in patch && normalize({ ...this.current, ...patch })[key] !== this.current[key])) {
+      effectivePatch = { ...effectivePatch, operationRunID: null };
+    }
     if (
       mode === 'push' ||
       Object.keys(effectivePatch).some((key) => RESTORATION_INVALIDATING_FIELDS.has(key as keyof ExploreURLState))
@@ -809,7 +928,9 @@ export class ExploreState {
     // Preserve per-field reactivity: transient scroll/column changes must not
     // invalidate consumers that only read the canonical server predicate.
     const patchKeys = Object.keys(effectivePatch);
-    const keysToApply = patchKeys;
+    const keysToApply = OPERATION_FILTER_FIELDS.some((key) => key in effectivePatch)
+      ? [...new Set([...patchKeys, ...OPERATION_FILTER_FIELDS, 'operationRunID'])]
+      : patchKeys;
     // Workspace and presentation normalize together (Files owns the 'files' presentation).
     if (patchKeys.includes('workspace') || patchKeys.includes('presentation')) {
       keysToApply.push('workspace', 'presentation');

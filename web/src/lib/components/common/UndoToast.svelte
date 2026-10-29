@@ -15,7 +15,8 @@
 
   onMount(() => {
     const timer = setTimeout(onExpire, durationMs);
-    return () => clearTimeout(timer);
+    window.addEventListener('pagehide', onExpire);
+    return () => { clearTimeout(timer); window.removeEventListener('pagehide', onExpire); };
   });
 </script>
 
