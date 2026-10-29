@@ -200,6 +200,13 @@ test("production imports expose archived actions, duration evidence, and exact c
   ).toHaveValue("alex@example.com");
   await page.goForward();
   await expect(reader).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(reader).toHaveCount(0);
+  await expect(panel).toBeVisible();
+  await expect(source).toBeFocused();
+  await expect(panel.getByRole('textbox', { name: 'Assignee' })).toHaveValue('alex@example.com');
+  await page.goForward();
+  await expect(reader).toBeVisible();
   await reader.getByRole('button', { name: `More actions for message ${daemon.meetings.circleback.message_id}` }).click();
   await reader.getByRole('menuitem', { name: 'Export meeting…' }).click();
   const packet = await downloadContext(page, info, 'reader-context');

@@ -10,7 +10,7 @@
     const handleEscape = (event: KeyboardEvent): void => {
       if (appShortcuts.activeScope() !== scope) return;
       // kit-ui-check-ignore: observes Kit popup roles; renders no popup markup.
-      if (document.querySelector('[role="listbox"], [role="menu"]')) return;
+      if (document.querySelector('[role="listbox"], [role="menu"], [role="dialog"]:not([aria-modal="true"])')) return;
       close(event);
     };
     // Claim Escape before the shell and an underlying reader's window listeners.

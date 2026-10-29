@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Modal, appShortcuts } from '@kenn-io/kit-ui';
+  import { Button, Modal, appShortcuts, escapeCloses } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { MeetingRef, MessageDetail } from '../../api/generated/models';
@@ -20,7 +20,18 @@
     onOpenMeeting: (meeting: MeetingRef) => void;
     onAnchorChange: (id: number) => void;
   } = $props();
-  onMount(() => appShortcuts.pushScope('archived-meeting-reader'));
+  onMount(() => {
+    const popScope = appShortcuts.pushScope('archived-meeting-reader');
+    const close = escapeCloses(onClose);
+    const handleEscape = (event: KeyboardEvent): void => {
+      if (appShortcuts.activeScope() !== 'archived-meeting-reader') return;
+      // kit-ui-check-ignore: observes Kit popup roles; renders no popup markup.
+      if (document.querySelector('[role="listbox"], [role="menu"]')) return;
+      close(event);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => { document.removeEventListener('keydown', handleEscape); popScope(); };
+  });
 </script>
 
 <Modal ariaLabel="Archived meeting" closeLabel="Close archived meeting" title="Archived meeting"
