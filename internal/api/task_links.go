@@ -256,7 +256,7 @@ func writeTaskLinkError(w http.ResponseWriter, err error) {
 }
 
 type archiveUIDReader interface {
-	ArchiveUIDContext(context.Context) (string, error)
+	ArchiveUIDContext(ctx context.Context) (string, error)
 	ArchiveRevision() (string, error)
 }
 
