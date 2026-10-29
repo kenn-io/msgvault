@@ -149,6 +149,7 @@ export class ShellData {
       if (!response.ok) throw new Error(`DELETE ${response.status}`);
       this.#controller?.abort();
       this.#ordered = this.#ordered.filter(candidate => candidate.id !== view.id);
+      await this.refresh();
     } catch {
       this.#deleting = this.#deleting.filter(id => id !== view.id);
       await this.restoreView(view);
