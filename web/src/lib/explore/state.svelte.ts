@@ -645,9 +645,9 @@ export class ExploreState {
       return;
     }
     const next = this.readURLState();
-    const nextIndex = this.browser.history.state?.exploreIndex ?? 0;
+    const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
     const delta = nextIndex - this.historyIndex;
-    if (this.current.workspace === 'settings' && next.workspace !== 'settings' &&
+    if (delta !== 0 && this.current.workspace === 'settings' && next.workspace !== 'settings' &&
       this.holdLeave?.(() => this.browser.history.go(delta))) {
       this.restoringHeldLeave = true;
       this.browser.history.go(-delta);
