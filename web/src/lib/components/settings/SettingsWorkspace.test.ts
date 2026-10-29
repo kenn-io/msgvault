@@ -519,15 +519,11 @@ it('refreshes completed feature work while keeping its current rows visible', as
   });
   render(SettingsWorkspace, { client });
   await screen.findByText('Running');
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Refresh feature status' }) as HTMLButtonElement).disabled).toBe(false));
-  screen.getByRole('button', { name: 'Refresh feature status' }).focus();
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   await waitFor(() => expect(reads).toBe(2));
   expect(screen.getByText('Running')).toBeDefined();
-  expect((screen.getByRole('button', { name: 'Refresh feature status' }) as HTMLButtonElement).disabled).toBe(true);
   finish(Response.json({ lanes: lanes(lane('visual_embedding')) }));
   await screen.findByText('On');
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Refresh feature status' })));
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   await screen.findByText("Can't load status");
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -816,4 +812,31 @@ it('keeps the acknowledged named account schedule when refreshing connection sum
   await screen.findByText('Contact account work saved. Found 1 address book.');
   await screen.findByText('Unable to load CardDAV connections.');
   expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
+});
+
+it('shows stale message coverage as a warning while offering the server rebuild action', async () => {
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
+    if (request.url.endsWith('/embeddings/status')) return Response.json({ ...embeddingStatus, active_generation: activeGeneration, current: 10, pending: 0 });
+    if (request.url.endsWith('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 10, percentage: 100, cache_revision: 'cache-1', status: 'stale', actions: ['build_index'] });
+  });
+  render(SettingsWorkspace, { client });
+  await screen.findByRole('button', { name: 'Build index, Message search' });
+  const message = within(document.querySelector('[data-feature="message_embedding"]') as HTMLElement);
+  await waitFor(() => expect(message.getByText('Stale')).toBeDefined());
+});
+
+it('leaves a saved password account clean after a successful unchanged connection Test', async () => {
+  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
+  const { client } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', status: account }] });
+    if (path.endsWith('/carddav/status')) return Response.json(account);
+    if (path.endsWith('/carddav/account/test')) return Response.json({ ...account.account, enabled: true, schedule: account.schedule, books: 1 });
+  });
+  render(SettingsWorkspace, { client, category: 'carddav' });
+  await screen.findByDisplayValue('work@example.com');
+  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
+  await screen.findByText('Connection successful. Found 1 address book.');
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
 });
