@@ -1732,13 +1732,11 @@ func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
 		tracker := newDaemonIdleTracker(cfg, func() { close(fired) }, testDiscardLogger())
 		require.NotNil(t, tracker)
 
+		started := time.Now()
 		go tracker.Run(t.Context())
 
-		select {
-		case <-fired:
-		case <-time.After(time.Second):
-			require.FailNow(t, "idle tracker did not fire")
-		}
+		<-fired
+		assert.Equal(t, cfg.Server.DaemonIdleTimeout, time.Since(started))
 	})
 }
 

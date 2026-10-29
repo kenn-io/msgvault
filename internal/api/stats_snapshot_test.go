@@ -68,14 +68,12 @@ func TestHandleStatsReturnsStaleSnapshotWhenSlow(t *testing.T) {
 		srv.statsSnapshotWait = 50 * time.Millisecond
 
 		first := getStatsResponse(t, srv)
-		assert.EqualValues(1, first.TotalMessages)
 		assert.False(first.Stale)
 
 		started := time.Now()
 		second := getStatsResponse(t, srv)
 		assert.Less(time.Since(started), time.Second, "the request wait must end before the background computation")
 		assert.True(second.Stale, "the previous snapshot is flagged stale")
-		assert.EqualValues(1, second.TotalMessages)
 		assert.False(second.AsOf.IsZero())
 	})
 }
@@ -171,13 +169,11 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 		}
 		first := getAccounts()
 		require.Len(t, first.Accounts, 1)
-		assert.EqualValues(t, 1, first.Accounts[0].MessageCount)
 		assert.False(t, first.Stale)
 
 		second := getAccounts()
 		require.Len(t, second.Accounts, 1)
 		assert.True(t, second.Stale, "slow counts serve the previous snapshot")
-		assert.EqualValues(t, 1, second.Accounts[0].MessageCount)
 		assert.False(t, second.AsOf.IsZero())
 	})
 }

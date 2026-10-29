@@ -1652,6 +1652,7 @@ func TestAmbiguousUpdateRecoveryCapturesConflictWithoutReplay(t *testing.T) {
 
 	fixture := &mutationFixture{}
 	service, st, personID, _ := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressEmail, OriginalValue: "alice-local@example.test",
