@@ -38,7 +38,7 @@ type DocbankAttachmentProcessingCursor struct {
 }
 
 func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, cursor *DocbankAttachmentProcessingCursor, n int) ([]DocbankAttachmentProcessing, error) {
-	visible, visibleArgs := s.documentSearchVisible(nil)
+	visible := s.documentSearchVisible()
 	processable := documentSearchDelivered + " AND " + visible
 	var result []DocbankAttachmentProcessing
 	for _, unasked := range []bool{false, true} {
@@ -60,11 +60,8 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  WHERE p.destination_key = ? AND p.fingerprint = ? AND p.next_action_at <= ?
  AND ` + processable + `
  ORDER BY p.next_action_at, p.content_hash LIMIT ?`
-			args = append(args, fingerprint, s.timestampValue(time.Now().UTC()))
-			args = append(args, visibleArgs...)
-			args = append(args, n-len(result))
+			args = append(args, fingerprint, s.timestampValue(time.Now().UTC()), n-len(result))
 		} else {
-			args = append(args, visibleArgs...)
 			args = append(args, cursor.afterHash, fingerprint, n-len(result))
 		}
 		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
@@ -111,11 +108,10 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 }
 
 func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, profile string) (DocbankAttachmentProcessingSummary, error) {
-	visible, visibleArgs := s.documentSearchVisible(nil)
+	visible := s.documentSearchVisible()
 	processable := documentSearchDelivered + " AND " + visible
 	result := DocbankAttachmentProcessingSummary{Outcomes: map[string]int64{}}
 	args := []any{"docbank-processing:" + dest + ":" + profile, dest}
-	args = append(args, visibleArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT COALESCE(p.outcome, ''), COUNT(*)
  FROM docbank_attachment_deliveries d LEFT JOIN docbank_attachment_processing p
  ON p.destination_key = d.destination_key AND p.content_hash = d.content_hash

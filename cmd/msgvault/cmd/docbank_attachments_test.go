@@ -107,7 +107,7 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 			want:     "Folder: /msgvault\nDelivered: 1\nSending: 4\nFiles left to examine: 2\nFailed: 3\nforbidden: 3\nretrying: 4",
 		},
 		{
-			name: "error_without_profile", args: []string{"attachments", "status"},
+			name: "last_error", args: []string{"attachments", "status"},
 			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
 			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"upload unavailable"}`,
 			want:     "Last error: upload unavailable",

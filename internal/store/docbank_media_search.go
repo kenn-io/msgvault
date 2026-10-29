@@ -116,7 +116,7 @@ func (s *Store) documentSearchVisible() string {
  SELECT 1 FROM matching_attachments a
  JOIN messages m ON m.id = a.message_id
  JOIN conversations cv ON cv.id = m.conversation_id
- WHERE ` + LiveMessagesWhere("m", true)
+	 WHERE ` + LiveMessagesWhere("m", true)
 	// OFFSET keeps PostgreSQL's visibility check correlated to each receipt.
 	return `EXISTS (` + visible + ` LIMIT 1 OFFSET 0)`
 }
