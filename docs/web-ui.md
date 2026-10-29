@@ -13,33 +13,24 @@ you do not need a separate web application process.
 
 | Your question | Workspace |
 |---|---|
-| Where is that message, conversation, or meeting? | Everything |
-| Who have I been in contact with? | Relationships, People, and Domains |
+| Where is that message, conversation, or meeting? | Messages |
+| Who have I been in contact with? | People |
 | Where is an attachment, image, or video? | Files |
 | What do I know about this person? | Directory |
 | Which identity matches or profile facts need my decision? | Reviews |
-| Can I return to this search later? | Saved views |
-| Did sync, enrichment, or indexing finish? | Operations and Sources |
+| Can I return to this search later? | Saved views under Messages and Files |
+| Did sync, enrichment, or indexing finish? | Status dot, Past runs, and Sources |
 | What is staged for deletion? | Deletions |
 | How do I change the daemon's configuration? | Settings |
 
-The sidebar groups the workspaces as **People** (Relationships, Directory,
-Reviews), **Archive** (Everything, Files, Saved views), and **Manage** (Sources,
-Operations, Deletions, Settings). Its footer shows archive status and opens
-**Keyboard shortcuts**. Choose **Collapse sidebar** to shrink it to an icon rail;
-the browser remembers the choice. Below 900 pixels wide the sidebar becomes a
-menu that **Open navigation** opens.
+The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory, Reviews, and Deletions remain available through the command palette. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
 
-The top bar holds global search, the theme toggle, and the **Display** menu.
-The Display menu sets a temporary density (**Auto**, **Compact**, or
-**Comfortable**) and, after you change the theme, offers **Use daemon theme**.
-Both overrides last for this tab only. [Settings](#settings-and-restart-behavior)
-holds the saved defaults.
+The top bar holds global search and **Display**. Display sets theme and density for this tab. On the ungrouped Messages table, it also shows **Columns**. **Reader position** appears when the results are at least 960 pixels wide. **Use Settings defaults** clears temporary theme and density choices. [Settings](#settings-and-restart-behavior) holds the saved defaults.
 
 Global search works from every workspace. Press `/` outside a text field to
-focus it. In Everything and Files, results follow your query as you type, and
+focus it. In Messages and Files, results follow your query as you type, and
 `Enter` moves focus to the results. In any
-other workspace, `Enter` opens Everything with your query and search mode.
+other workspace, `Enter` opens Messages with your query and search mode.
 
 ## Start and discover the URL
 
@@ -98,8 +89,8 @@ warns that its session cookie travels without TLS. `HttpOnly` and
 ## Explore and search
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Everything workspace with the grouped sidebar, global search, Save view button, and compact email rows in light theme" loading="lazy">
-  <figcaption>Browse archived email in Everything. Select the image to view it at full size.</figcaption>
+  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
+  <figcaption>Browse archived email. Select the image to view it at full size.</figcaption>
 </figure>
 
 The screenshots use a curated public Enron research-data fixture. Authentic
@@ -107,7 +98,7 @@ names and message text are intentional; the repository's `docs-fixtures`
 branch records provenance, attribution, and the content review. This fixture
 contains email only; it does not illustrate chat, calendar, or attachment content.
 
-Everything opens as a compact table of logical entries, newest first: one row
+Messages opens as a compact table of logical entries, newest first: one row
 per email, calendar event, meeting note, other durable item, or chat
 conversation. Raw chat fragments appear only after drilling into a
 conversation. Search, Filters, Show as, and Group by form a shareable view.
@@ -123,10 +114,7 @@ One toolbar sits above the results:
 - **Show as** switches between Table, Timeline, and Files. Choosing Files opens
   the Files workspace.
 - **Group by** adds a grouping level. Add more levels to group within groups.
-- **Sort** offers Newest first, the only order Everything has today.
-- **Columns** shows or hides table columns. It appears for the ungrouped table.
-- **Preview position** appears when the results are wide enough for a side
-  preview.
+- **Sort** offers Newest first, the only order Messages has today.
 - The count at the end reports items, or groups when the view is grouped.
 
 Each active search, filter, and grouping appears as a removable chip below the
@@ -163,7 +151,7 @@ substitute full-text search for either state.
 
 ### Recording matches
 
-With Docbank configured, Everything also searches recording transcripts and
+With Docbank configured, Messages also searches recording transcripts and
 shows matches in **Recordings** above the ordinary results. Recording search
 sends the query text to the configured Docbank service.
 
@@ -198,8 +186,8 @@ the person opening it still needs access to the archive. Links to chat messages
 open a bounded part of the conversation around the selected message, with
 controls to load earlier or later messages.
 
-Click an entry in Everything to open its preview below the results. On wide
-windows, choose **Preview position → Right** to read beside the results.
+Click an entry in Messages to open its preview below the results. On wide
+windows, choose **Display → Reader position → Right** to read beside the results.
 Drag the divider to resize either layout, or focus it and use the arrow keys.
 Double-click the divider to reset its size. The browser remembers your layout
 choice and each layout's size. Narrow windows use the preview below the results
@@ -213,7 +201,7 @@ applies to the open message. Light mode preserves designed email colors.
 
 ## Meeting context and follow-ups
 
-Filter Everything to meetings to see **Meeting activity and follow-ups**.
+Filter Messages to meetings to see **Meeting activity and follow-ups**.
 Select meeting rows to export their context as JSON or Markdown, with transcripts
 included only when requested. Participant/domain reading panes, Directory, and
 Relationships show meeting metrics and recorded actions for their current scope.
@@ -238,8 +226,8 @@ Metadata-only, missing, unsupported, and previewable content remain distinct.
 From a file, navigate to its containing item and then its email or chat
 conversation.
 
-Files shares Everything's toolbar, with **Show as** set to Files. Choose Table
-or Timeline there to return to Everything. **Sort** offers Newest first, Oldest
+Files uses the same toolbar as Messages, with **Show as** set to Files. Choose Table
+or Timeline there to return to Messages. **Sort** offers Newest first, Oldest
 first, Filename A–Z, Filename Z–A, Largest first, and Smallest first. The
 Filename field and the **Type** menu (Images, PDFs, Audio, Video, Text,
 Documents, Archives, Other) narrow the table. Grouping replaces the table with
@@ -345,7 +333,7 @@ Merge history and reversal follow the boundaries documented in
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
-a grouped person or domain in Everything opens its inspector in the current
+a grouped person or domain in Messages opens its inspector in the current
 context, including chronologically ordered related files.
 
 ## Saved views
@@ -357,23 +345,11 @@ grouping, presentation, sort, and visible columns.
 Selection is intentionally not saved. The inspector stays pinned; the browser
 does not save or apply inspector pin preferences.
 
-Choose **Save view…** in the Everything or Files page header, name the view, add
+Choose **Save view…** in the Messages or Files page header, name the view, add
 an optional description, and select **Save**. A view saved from Files does not
-keep the Filename filter, Type filter, or file sort. The Saved views workspace
-lists each view with a summary of its query, filters, grouping, and
-presentation. Each row offers **Open**, **Edit**, and **Delete**; the button
-names include the view's name. **Open** applies the view in Everything, or in
-Files for a Files view. **Edit** changes the name and description. **Delete**
-asks you to confirm with **Confirm delete** and removes the view for every
-connected browser.
+keep the Filename filter, Type filter, or file sort. Open the view from its row under Messages or Files. Its tooltip shows a summary and description. The row's **⋯** menu offers **Rename**, **Edit description…**, and **Delete**. Rename edits the name inline; press Enter to save or Escape to cancel. Delete hides the view and offers **Undo** for eight seconds before removing it for every connected browser.
 
-Each record carries a schema version. An incompatible record remains visible,
-but cannot be opened or edited: automatic migration is not attempted. Select
-**Remove incompatible** for that view, confirm, and save the current context
-again. Updates and deletion use
-the record revision as an optimistic-concurrency guard. If another browser
-changes the view first, msgvault reports a conflict and requires you to reload
-and review the latest revision instead of overwriting it.
+An incompatible view stays dimmed with its reason in the tooltip. Its menu offers only Delete. Updates and deletion carry the record revision. If another browser changes the view first, msgvault reports a conflict or restores the row after a failed deletion.
 
 The daemon validates new definitions against the schema 2 vocabulary. It reads
 schema 1 views with pipes as literal text. A stored view can be opened here,
@@ -397,7 +373,7 @@ remains an error rather than becoming an empty source list.
 A source with a sync error message, item errors, or a scheduler error has
 **Show details for {name}**, which opens the run-level errors, item-level
 errors, and scheduler error. **Sync history** in the page header opens
-Operations filtered to source sync.
+**Past runs** filtered to source sync.
 
 **Sync now** is available only when that source reports the capability. When it
 is not, the Action column says why in words: "Imported file — nothing to sync",
@@ -430,75 +406,19 @@ and status polling continues while the tab is visible.
 
 ## Operations
 
-Operations answers two different questions: what is configured and ready now,
-and what happened during a particular run. Its overview groups work into five
-lanes:
+The footer status dot opens running jobs and failures from the last seven days. It shows **Synced** when the list is empty, **Syncing** while work runs, and **Needs attention** after a recent failure. Failed rows show the first line of the daemon's error. Select a job to open its source, contact settings, index status, or owning setting.
 
-| Lane | Work shown |
-|---|---|
-| Messages | Source sync and message embeddings |
-| Facts | People sweeps, person embeddings, and external enrichment |
-| Contacts | CardDAV sync |
-| Documents | Document extraction and document embeddings |
-| Attachments | Visual embeddings |
+Choose **Past runs…** in the status menu to browse history. Filter by Kind, State, or dates, and choose **Show more** for the next page. If history changes during paging, **Restart** reloads the first page. Unavailable history is labeled by kind.
 
-Each lane lists its kinds of work. A row shows the kind's name, a status chip,
-the latest run's start time, and any actions. When the latest success differs
-from the latest run, the row adds "Last succeeded" and its time. The status chip
-reads:
+Select a run for its timestamps, counters, error, related status, and advertised actions. **All runs** returns to the list. Related status opens Sources, Contacts settings, or live document and visual index counts. **Start CardDAV sync**, **Build visual index**, and **Resume visual index** appear only when the daemon advertises them. Sources keeps **Sync now** and opens filtered history through **Sync history**. Contacts settings opens filtered history through **View CardDAV operations**.
 
-- **Queued** or **Running** while a run is active.
-- **Off** when the work is not configured and no run is active.
-- **Succeeded**, **Partial**, **Failed**, or **Cancelled** for the latest run.
-- **No runs yet** when the work is configured, history is available, and
-  nothing has run.
+Settings Overview shows current feature status. **Details** opens live counts for configured Document extraction, Document search, and Visual search, including features with no past run. Document extraction and document search are configured on the daemon host; see [Document indexing setup](/docs/usage/document-indexing/#configure-the-policy). Document extraction still requires the explicit CLI upload workflow in [Document Indexing](/docs/usage/document-indexing/).
 
-A lane the daemon cannot report shows **Status unavailable**. A kind whose
-history cannot be read shows "History unavailable" instead of looking like no
-work has ever run.
-
-An Off row offers **Set up** when Settings can turn the work on. Message
-embeddings, person embeddings, and visual embeddings open Settings on Search & AI
-and focus their setting. Person enrichment and people sweeps open People lookups.
-Operations also links to Settings Overview. Document extraction and document embeddings are
-configured in `config.toml` on the daemon host, so their rows say so and link to
-[Document indexing setup](/docs/usage/document-indexing/#configure-the-policy)
-and [Document search setup](/docs/usage/document-indexing/#semantic-and-hybrid-document-search).
-Document embeddings also need semantic search.
-
-Rows link to source status, CardDAV settings, or detailed document and visual
-index status. The latter show coverage and the current prerequisites for
-processing. The workspace offers **Start CardDAV sync**, **Build visual
-index**, or **Resume visual index** only when the daemon advertises that
-action. Source **Sync now** remains in Sources. Document extraction still
-requires the explicit CLI upload workflow in
-[Document Indexing](/docs/usage/document-indexing/).
-
-**Refresh operation status** in the page header reloads the status lists every
-five minutes and whenever you select it, and it shows how long ago they were
-updated. It never touches run history. Filter history by lane, kind of work,
-state, and start date. **Reload run history** at the end of the filter row
-restarts history from page one and replaces the loaded rows. History otherwise
-changes only when you change a filter or load more. If paging history becomes
-inconsistent after a change, use **Restart operation history** to load a fresh
-snapshot. The filters and selected run are kept in the URL, so browser Back and
-Forward restore the view.
-
-The run history table lists Kind, Trigger, State, Started, Duration, and
-Counters. Trigger is Manual, Scheduled, or a dash when none was recorded. Queued,
-running, succeeded, partial, failed, and cancelled are distinct states. Counters
-name each unit once, as in "20 messages processed · 20 added", and leave out
-zero counts. "No counters" means none were reported or every count was zero;
-open the run to see them all. A failed or partial run
-shows the daemon's error sentence under its state.
-
-Open a run to inspect its progress, outcome, timestamps, every counter, and
-available diagnostics. For a failed run, the detail shows the error sentence
-first and the machine-readable code beneath it as "Code: {code}".
+Old Operations links open Settings Overview. Old Saved views links open Messages.
 
 ## Deletions
 
-Everything supports explicit row selection and select-all-matching for the
+Messages supports explicit row selection and select-all-matching for the
 current query and filters. **Review for deletion…** in the selection bar, or `d`
 and `D`, opens the Deletions workspace. The daemon first preflights the
 selection and reports any unavailable action before the UI offers a separate
@@ -507,7 +427,7 @@ cannot execute deletion against a provider. Use the explicit
 `msgvault delete-staged` CLI workflow for that final operation.
 
 Without a selection, the workspace says "Nothing selected for deletion" and
-points back to Everything. With one, the **Review selection** panel shows the
+points back to Messages. With one, the **Review selection** panel shows the
 item count and estimated size, how many items can be staged and how many will be
 skipped, and when the review expires, as a relative time such as "in 8 minutes"
 with the exact time in a tooltip. When the daemon reports that staging is
@@ -516,7 +436,7 @@ deletion…**. **Dry run** reports matched, staged, and skipped counts without
 staging anything. **Stage deletion…** opens a confirmation, and only its red
 **Confirm stage deletion** button creates the manifest. Staging covers Gmail and
 Microsoft Graph mail only and does not execute deletion. Arriving from
-Everything runs the review at once and, when staging is available, opens the
+Messages runs the review at once and, when staging is available, opens the
 confirmation.
 
 The manifests table lists ID, Description, Items, Status, and Created. Status is
@@ -606,8 +526,7 @@ edit is rejected after another browser or a hand edit changes the
 configuration; reload before saving again.
 
 A theme or density saved under Advanced applies to the open tab at once, unless a
-Display menu override is active in that tab. The override still wins. To return to the saved values, choose “Use daemon theme” and Temporary
-density “Auto” in the Display menu. A saved default search mode does not change
+Display menu override is active in that tab. The override still wins. To return to the saved values, choose **Use Settings defaults** in Display. A saved default search mode does not change
 the search you have open. Tabs you open later in this browser without a mode in
 their link use it.
 
