@@ -279,7 +279,7 @@ describe('SourcesWorkspace', () => {
       statusReads += 1;
       if (statusReads === 1) return Response.json({ sources: [source()] });
       if (statusReads <= 3) return Response.json({ sources: [source()] });
-      if (statusReads === 4) return Response.json({ sources: [source({ can_sync: false, sync_unavailable_reason: running === 'active' ? 'sync_already_running' : 'source_not_schedulable', ...(running === 'active' ? { active_sync: run('running', 5) } : { latest_sync: run('running', 5) }) })] });
+      if (statusReads === 4) return Response.json({ sources: [source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', ...(running === 'active' ? { active_sync: run('running', 5) } : { latest_sync: run('running', 5) }) })] });
       return Response.json({ sources: [source({ latest_sync: run('completed', 8, { completed_at: '2026-07-19T10:01:00Z' }) })] });
     });
     const rendered = renderSources({ client: createAPIClient(fetchFn) });
