@@ -28,7 +28,7 @@
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import { accountRequest, type AccountDraft } from '../../carddav/account-settings';
   import { runOperationAction } from '../../operations/actions';
-  import { pendingSecret } from '../../settings/secrets';
+  import { pendingSecret, type SecretUpdate } from '../../settings/secrets';
   import type { SearchCoverageAction } from '../../search/modes';
   import {
     providerUpdate,
@@ -60,7 +60,6 @@
   import SettingField from './SettingField.svelte';
   import SettingsOverview from './SettingsOverview.svelte';
 
-  type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
   type SettingUpdate = GeneratedSettingUpdate;
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
   type CredentialResponse = GeneratedProviderCredentialResponse;
@@ -116,7 +115,7 @@
   let coverageActions = $state<SearchCoverageAction[]>([]);
   let statusSettled = $state(false);
   let statusRefreshing = $state(false);
-  let building = $state('');
+  let building = $state<Record<string, boolean>>({});
   let consumedCategoryRequestKey: number | undefined;
   let focusedNavigationSettingKey: string | undefined;
 
@@ -197,15 +196,15 @@
   });
 
   async function build(id: string, run: () => Promise<void>): Promise<void> {
-    if (building) return;
-    building = id;
+    if (building[id]) return;
+    building[id] = true;
     error = '';
     try {
       await run();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Can't build the index.";
     } finally {
-      building = '';
+      delete building[id];
       statusRevision += 1;
 
     }
