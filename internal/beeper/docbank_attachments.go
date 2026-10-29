@@ -528,7 +528,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 	if !time.Now().Before(deadline) {
 		return true, nil
 	}
-	actionCtx, cancel := docbankProcessingActionContext(ctx, deadline)
+	actionCtx, cancel := context.WithDeadline(ctx, deadline)
 	profile, err := w.client.Profile(actionCtx, w.options.DocumentProfile)
 	cancel()
 	if ctx.Err() != nil {
@@ -555,7 +555,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 	var cursor store.DocbankAttachmentProcessingCursor
 	for {
 		if !time.Now().Before(deadline) {
-			return true, failures.reported
+			return true, errors.Join(failures.reported, failures.streak)
 		}
 		var files []store.DocbankAttachmentProcessing
 		err := w.gated(ctx, func() (err error) {
@@ -637,7 +637,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 // askProcessing polls a saved job, or plans and starts one when there is none
 // or Docbank lost it, as restoring an older backup does.
 func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing, deadline time.Time) (docbankmedia.JobStatus, string, error) {
-	ctx, cancel := docbankProcessingActionContext(ctx, deadline)
+	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	if d.JobID != "" {
 		if job, err := w.client.JobStatus(ctx, d.JobID); !docbankmedia.IsNotFound(err) {
@@ -645,14 +645,6 @@ func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAtt
 		}
 	}
 	return w.startProcessing(ctx, d)
-}
-
-func docbankProcessingActionContext(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
-	actionDeadline := time.Now().Add(beeperMediaActionTimeout)
-	if deadline.Before(actionDeadline) {
-		actionDeadline = deadline
-	}
-	return context.WithDeadline(ctx, actionDeadline)
 }
 
 // startProcessing plans the file's processing and starts a job.
