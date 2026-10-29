@@ -15,6 +15,9 @@ const EnvMatrixLoginSecret = "MSGVAULT_MATRIX_LOGIN_SECRET" // #nosec G101 -- en
 // daemon-owned CLI subprocess.
 const EnvDiscordToken = "MSGVAULT_DISCORD_TOKEN" // #nosec G101 -- environment variable name, not a credential value
 
+// EnvTelegramSession carries a Telegram credential to account registration.
+const EnvTelegramSession = "MSGVAULT_TELEGRAM_SESSION" // #nosec G101 -- environment variable name, not a credential value
+
 // EnvSlackToken names the env var used to pass a Slack user token to a
 // daemon-owned CLI subprocess.
 const EnvSlackToken = "MSGVAULT_SLACK_TOKEN" // #nosec G101 -- environment variable name, not a credential value
@@ -27,7 +30,7 @@ const EnvRemoteDeleteOptIn = "MSGVAULT_ENABLE_REMOTE_DELETE"
 
 func EnvAllowed(name string) bool {
 	switch name {
-	case EnvIMAPPassword, EnvBeeperToken, EnvMatrixLoginSecret, EnvDiscordToken, EnvSlackToken, EnvInlineOAuth, EnvRemoteDeleteOptIn:
+	case EnvIMAPPassword, EnvBeeperToken, EnvMatrixLoginSecret, EnvDiscordToken, EnvTelegramSession, EnvSlackToken, EnvInlineOAuth, EnvRemoteDeleteOptIn:
 		return true
 	default:
 		return false

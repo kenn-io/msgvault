@@ -1445,6 +1445,9 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	if name == clirun.EnvTelegramSession {
+		return len(args) > 0 && args[0] == "add-telegram"
+	}
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
@@ -1762,6 +1765,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-plaud",
 		"add-twenty",
 		"add-discord",
+		"add-telegram",
 		"add-granola",
 		"add-omi",
 		"add-imap",

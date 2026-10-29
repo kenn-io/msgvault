@@ -48,6 +48,7 @@ var topLevelCommandGroups = map[string]string{
 	"add-slack":              helpGroupSources,
 	"add-synctech-sms-drive": helpGroupSources,
 	"add-teams":              helpGroupSources,
+	"add-telegram":           helpGroupSources,
 	"add-twenty":             helpGroupSources,
 	"add-twilio":             helpGroupSources,
 	"agent-token":            helpGroupOperations,

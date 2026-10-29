@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
+	telegramapi "go.kenn.io/msgvault/internal/telegram/api"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -1938,4 +1939,47 @@ func TestRemoveAccountMatrixFencesMergeDuringLogout(t *testing.T) {
 	history, err = st.GetSourceByID(history.ID)
 	require.NoError(err)
 	assert.Zero(history.MergedIntoSourceID, "the refused merge must not retire its source")
+}
+
+func TestRemoveAccountCmd_TelegramDeletesSession(t *testing.T) {
+	require := require.New(t)
+
+	tmpDir := t.TempDir()
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
+	source, err := st.GetOrCreateSource("telegram", "user456")
+	require.NoError(err)
+	require.NoError(st.Close())
+	manager := telegramapi.NewSessionStore(filepath.Join(tmpDir, "tokens"), 123, "synthetic-hash", 456)
+	require.NoError(manager.StoreSession(context.Background(), []byte("synthetic-session")))
+	tokenPath := filepath.Join(tmpDir, "tokens", "telegram_456.json")
+	cfg := &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	root := newTestRootCmd()
+	root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", source.Identifier, "--yes", "--type", "telegram"})
+	require.NoError(root.Execute())
+	_, err = os.Stat(tokenPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestRemoveAccountCmd_TelegramPreservesSessionDuringActiveSync(t *testing.T) {
+	require := require.New(t)
+
+	tmpDir := t.TempDir()
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
+	source, err := st.GetOrCreateSource("telegram", "user456")
+	require.NoError(err)
+	_, err = st.StartSync(source.ID, "telegram")
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	manager := telegramapi.NewSessionStore(filepath.Join(tmpDir, "tokens"), 123, "synthetic-hash", 456)
+	require.NoError(manager.StoreSession(context.Background(), []byte("synthetic-session")))
+	cfg := &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	root := newTestRootCmd()
+	root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", source.Identifier, "--yes", "--type", "telegram"})
+	require.NoError(root.Execute())
+	_, err = os.Stat(filepath.Join(tmpDir, "tokens", "telegram_456.json"))
+	assert.NoError(t, err)
 }

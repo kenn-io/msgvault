@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,8 @@ import (
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telegram"
+	telegramapi "go.kenn.io/msgvault/internal/telegram/api"
 )
 
 const (
@@ -314,6 +317,27 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			removeDiscordCredentialAfterCascade(s, discordTokens, discordCredential, hadActiveSync)
 			return nil
 		})
+	} else if source.SourceType == telegram.SourceType {
+		ownerID, parseErr := strconv.ParseInt(strings.TrimPrefix(source.Identifier, "user"), 10, 64)
+		if parseErr != nil || ownerID <= 0 || telegram.OwnerSourceIdentifier(ownerID) != source.Identifier {
+			removeErr = errors.New("invalid Telegram source identifier; credentials were preserved")
+		} else {
+			removeErr = telegramapi.WithLifecycleLockContext(cmd.Context(), cfg.TokensDir(), func() error {
+				var err error
+				hadActiveSync, packedMappingsRemoved, err = s.RemoveSourceSerialized(cmd.Context(), source.ID)
+				if err != nil {
+					return err
+				}
+				if hadActiveSync {
+					fmt.Fprintln(os.Stderr, "Warning: Telegram credential was preserved because the removed source had an active sync")
+					return nil
+				}
+				if err := telegramapi.DeleteSession(cmd.Context(), cfg.TokensDir(), ownerID); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not remove Telegram credential: %v\n", err)
+				}
+				return nil
+			})
+		}
 	} else {
 		hadActiveSync, packedMappingsRemoved, removeErr = s.RemoveSourceSerialized(cmd.Context(), source.ID)
 	}
