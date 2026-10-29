@@ -98,8 +98,8 @@
 </section>
 
 <style>
-  .detail--compact { padding: 0; gap: var(--space-3); }
   .detail { display: grid; align-content: start; gap: var(--space-4); min-width: 0; padding: var(--space-4); }
+  .detail--compact { padding: 0; gap: var(--space-3); }
   header { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); }
   h2, p, dl, dd { margin: 0; }
   header p { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; }
