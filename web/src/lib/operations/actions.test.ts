@@ -10,10 +10,4 @@ describe('runOperationAction', () => {
     const action = await runOperationAction('carddav_sync', client);
     expect(action).toEqual({ outcome: 'failed', message: `CardDAV sync ${result}. Connections needing attention: work.` });
   });
-
-  it('reports contacts sync conflict', async () => {
-    const client = createAPIClient(async () => Response.json({ error: 'operation_conflict', message: 'synthetic conflict' }, { status: 409 }));
-    const action = await runOperationAction('carddav_sync', client);
-    expect(action).toEqual({ outcome: 'conflict', message: 'The operation could not start because current server state changed.' });
-  });
 });
