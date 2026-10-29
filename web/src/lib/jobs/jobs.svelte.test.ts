@@ -1,6 +1,6 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../api/client';
-import { JobsStore } from './jobs.svelte';
+import { JobsStore, SOURCE_STATUS_TIMEOUT_MS } from './jobs.svelte';
 import { jobLane, sourceStatus, syncRunStatus } from './fixtures.test-support';
 import canonical from '../../../tests/e2e/fixtures/operations-public.json';
 import type { OperationRunSummary } from '../api/generated/models';
@@ -141,15 +141,21 @@ it('bounds a hung shared source read and permits a fresh retry', async () => {
   });
   const operations = new OperationsController(client);
   const store = new JobsStore(client, operations);
-  const globalRead = store.refresh();
-  const pageRead = store.readSources(new AbortController().signal);
-  await expect(pageRead).rejects.toMatchObject({ name: 'TimeoutError' });
-  await globalRead;
-  expect(reads).toBe(1);
-  expect(store.error).toBe('Unable to refresh all job status.');
-  await store.refresh();
-  expect(reads).toBe(2);
-  expect(store.error).toBeUndefined();
-  store.dispose();
-  operations.destroy();
-}, 25_000);
+  const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const deadline = vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => nativeTimeout(ms === SOURCE_STATUS_TIMEOUT_MS ? 20 : ms));
+  try {
+    const globalRead = store.refresh();
+    const pageRead = store.readSources(new AbortController().signal);
+    await expect(pageRead).rejects.toMatchObject({ name: 'TimeoutError' });
+    await globalRead;
+    expect(reads).toBe(1);
+    expect(store.error).toBe('Unable to refresh all job status.');
+    await store.refresh();
+    expect(reads).toBe(2);
+    expect(store.error).toBeUndefined();
+  } finally {
+    deadline.mockRestore();
+    store.dispose();
+    operations.destroy();
+  }
+});
