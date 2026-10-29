@@ -30,7 +30,7 @@ describe('overviewRows', () => {
   });
 
   it.each([
-    { status: 'incomplete' as const, available: true, chip: 'Incomplete' },
+    { status: 'incomplete' as const, available: false, chip: 'Incomplete' },
     { status: 'initializing' as const, available: false, chip: 'Initializing' },
     { status: 'unavailable' as const, available: false, chip: 'Unavailable' },
     { status: 'unavailable' as const, available: true, chip: 'Unbuilt' },
