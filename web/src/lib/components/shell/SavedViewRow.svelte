@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, TextInput } from '@kenn-io/kit-ui';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import { tick } from 'svelte';
 
@@ -56,6 +56,9 @@
   let error = $state('');
   let input = $state<HTMLInputElement>();
   let menuOpen = $state(false);
+  $effect(() => {
+    if (menuOpen) return appShortcuts.pushScope('saved-view-menu');
+  });
   let row = $state<HTMLElement>();
   const incompatible = $derived(viewIncompatibility(view));
   const tooltip = $derived(

@@ -38,7 +38,7 @@ func TestBrowserOperationFixtureUsesProductionPublicProjection(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(raw, &fixture))
 	require.Len(t, fixture.Runs, 5)
-	require.Len(t, fixture.JobRuns, 9)
+	require.Len(t, fixture.JobRuns, 8)
 	runs := append(fixture.Runs, fixture.JobRuns...)
 
 	archive := &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID}
