@@ -9,7 +9,12 @@ const telemetryEvents: unknown[] = [];
 const telemetryRequests: Promise<void>[] = [];
 beforeEach(() => { telemetryEvents.length = 0; telemetryRequests.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+  const path = new URL((input as Request).url).pathname;
+  if (path === '/api/v1/integrations/tasks/status') return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
+  if (/^\/api\/v1\/messages\/\d+\/tasks$/.test(path)) return Response.json({ state: 'disabled', complete: false, tasks: [] });
+  return fetchFn(input, init);
+}, telemetryEvents, telemetryRequests);
 function message(id: number, type = 'email') {
   return {
     id,
@@ -116,8 +121,8 @@ describe('ConversationView', () => {
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
-    await fireEvent.click(screen.getByText('⋯'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Show plain text' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 2' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(screen.getByText('Body 2')).toBeDefined();
   });
 

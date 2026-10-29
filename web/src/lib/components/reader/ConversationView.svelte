@@ -22,8 +22,14 @@
     onAnchorChange = undefined,
     start = undefined,
     end = undefined,
+    onOpenPerson = undefined,
+    onOpenSettings = undefined,
+    onOpenMeeting = undefined,
   }: {
     client: APIClient;
+    onOpenPerson?: (address: string) => void;
+    onOpenSettings?: () => void;
+    onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void;
     conversationId: number;
     anchorId: number;
     onAnchorChange?: (anchorId: number) => void;
@@ -258,6 +264,7 @@
       conversationId: message.conversation_id ?? conversationId,
       subject: message.subject,
       sender: message.is_from_me ? 'You' : message.from,
+      senderAddress: message.from,
       recipients: message.to ?? [],
       sentAt: message.sent_at,
       snippet: message.snippet,
@@ -293,6 +300,9 @@
     <div class="message-thread">
       {#each messages as message (message.id)}
         <MessageCard
+          {onOpenPerson}
+          {onOpenSettings}
+          {onOpenMeeting}
           client={apiClient}
           message={archiveDetail(message)}
           expanded={expanded.has(message.id)}

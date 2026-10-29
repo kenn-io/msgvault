@@ -40,7 +40,7 @@
   import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
-  import MeetingPanel from '../meetings/MeetingPanel.svelte';
+  import MessageMeetingSummary from '../meetings/MessageMeetingSummary.svelte';
   import PageHeader from './PageHeader.svelte';
   import {
     exploreMeetingScope,
@@ -79,6 +79,7 @@
     drillGroup: (row: ExploreGroupRow) => void;
     closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
+    openPerson?: (address: string) => void;
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onSaveView: () => void;
@@ -111,6 +112,7 @@
     onOpenRecording,
     drillGroup,
     closeReadingPane,
+    openPerson = undefined,
     openRelationship,
     changeConversationAnchor,
     onOpenMeeting = undefined,
@@ -626,6 +628,7 @@
   </PageHeader>
 
   <ContextBar
+    messages
     {client}
     query={exploreState.current.query}
     searchMode={exploreState.current.searchMode}
@@ -698,7 +701,7 @@
 
   {#if meetingScope}
     <div class="meeting-overview">
-      <MeetingPanel {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
+      <MessageMeetingSummary {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>
   {/if}
@@ -842,8 +845,8 @@
             onClose={closeReadingPane}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
-            onOpenSettings={() => commitWorkspace('settings')}
-            onOpenRelationship={openRelationship}
+            onOpenSettings={() => commitNavigation({ workspace: 'settings', settingsCategory: 'tasks' })}
+            onOpenPerson={openPerson}
             {conversationAnchorId}
             onConversationAnchorChange={changeConversationAnchor}
           />

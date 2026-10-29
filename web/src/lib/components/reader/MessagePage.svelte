@@ -6,7 +6,7 @@
   import ConversationView from './ConversationView.svelte';
   import { reportError } from '../../telemetry/actions';
 
-  let { client, messageID }: { client: APIClient; messageID: number } = $props();
+  let { client, messageID, onOpenPerson }: { client: APIClient; messageID: number; onOpenPerson?: (address: string) => void } = $props();
   const loader = new ArchiveMessageLoader();
   let retry = $state(0);
   $effect(() => { if (loader.error) return reportError(() => client, () => 'message'); });
@@ -27,7 +27,7 @@
     <p role="alert">{loader.error}</p>
     <Button onclick={() => retry += 1}>Retry</Button>
   {:else if loader.detail}
-    <ConversationView {client} conversationId={loader.detail.conversation_id!} anchorId={loader.detail.id!} />
+    <ConversationView {client} {onOpenPerson} conversationId={loader.detail.conversation_id!} anchorId={loader.detail.id!} />
   {:else}
     <p role="status">Loading message…</p>
   {/if}
