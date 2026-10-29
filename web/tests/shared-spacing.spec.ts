@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { selectWorkspace } from './kit-ui';
 
@@ -15,7 +16,7 @@ test.beforeEach(async ({ page }) => {
 
 test('page content sits one header gap below the divider, and full-width panes meet it', async ({ page }) => {
   await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
-  await page.route('**/api/v1/operations/status', (route) => route.fulfill({ json: { lanes: [] } }));
+  await stubOperationStatus(page);
   await page.route('**/api/v1/sources**', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
     id: 1, name: 'Synthetic saved view', schema_version: 2, revision: 1, canonical_state: {},
