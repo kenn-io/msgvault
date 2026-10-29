@@ -116,7 +116,7 @@ func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) 
 	f := storetest.New(t)
 	ctx := t.Context()
 	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "attachments", "documents", "fp"))
-	documents := []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "provider_timeout"}, {MIMEType: "application/pdf", VersionID: "consent"}, {MIMEType: "application/pdf", VersionID: "stale_authority"}, {MIMEType: "application/pdf", VersionID: "pdf_password_required"}, {MIMEType: "application/pdf", VersionID: "not_found"}}
+	documents := []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "provider_timeout"}, {MIMEType: "application/pdf", VersionID: "consent"}, {MIMEType: "application/pdf", VersionID: "stale_authority"}, {MIMEType: "application/pdf", VersionID: "pdf_password_required"}, {MIMEType: "application/pdf", VersionID: "not_found"}, {MIMEType: "application/pdf", VersionID: "pending"}}
 	f.SeedDocumentAttachments(f.CreateMessage("backfill"), documents)
 	for i, outcome := range []string{"provider_timeout", "consent", "stale_authority", "pdf_password_required", "not_found"} {
 		d := store.DocbankAttachmentProcessing{ContentHash: fmt.Sprintf("%064x", 0xabcdef+i), VersionID: outcome, Fingerprint: "fp", Outcome: outcome, JobID: fmt.Sprintf("%064x", i+1)}
@@ -125,48 +125,33 @@ func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) 
 		}
 		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Time{}))
 	}
+	pendingHash := fmt.Sprintf("%064x", 0xabcdf4)
+	pendingJobID := fmt.Sprintf("%064x", 0x5678)
+	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
+		ContentHash: pendingHash, VersionID: "pending", Fingerprint: "fp", Outcome: "requested", JobID: pendingJobID,
+	}, time.Time{}))
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
-	require.Len(due, 4)
+	require.Len(due, 5)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf0), due[0].ContentHash)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf1), due[1].ContentHash)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf2), due[2].ContentHash)
 	assert.Equal(fmt.Sprintf("%064x", 0xabcdf3), due[3].ContentHash)
-	for _, d := range due {
+	for _, d := range due[:4] {
 		assert.Empty(d.Outcome)
 		assert.Empty(d.JobID)
 	}
+	assert.Equal(pendingHash, due[4].ContentHash)
+	assert.Equal("requested", due[4].Outcome)
+	assert.Equal(pendingJobID, due[4].JobID)
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
 	assert.Equal(int64(4), counts.Waiting)
+	assert.Equal(int64(1), counts.Requested)
 	assert.Equal(map[string]int64{"provider_timeout": 1}, counts.Outcomes)
 	var savedOutcome, jobID string
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome, job_id FROM docbank_attachment_processing WHERE content_hash = ?`), fmt.Sprintf("%064x", 0xabcdef)).Scan(&savedOutcome, &jobID))
 	assert.Equal("provider_timeout", savedOutcome)
 	assert.Equal(fmt.Sprintf("%064x", 1), jobID)
-}
-
-func TestDocbankAttachmentProcessingBackfillRestartsPendingJobs(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	ctx := t.Context()
-	hash := fmt.Sprintf("%064x", 0xabcdef)
-	f.SeedDocumentAttachments(f.CreateMessage("pending backfill"), []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "v1"}})
-	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "attachments", "documents", "fp"))
-	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
-		ContentHash: hash, VersionID: "v1", Fingerprint: "fp", Outcome: "requested", JobID: fmt.Sprintf("%064x", 0x5678),
-	}, time.Now().Add(-time.Minute)))
-
-	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
-	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
-	require.NoError(err)
-	require.Len(due, 1)
-	assert.Equal("requested", due[0].Outcome)
-	assert.Empty(due[0].JobID)
-	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
-	require.NoError(err)
-	assert.Equal(int64(1), counts.Requested)
-	assert.Empty(counts.Outcomes)
 }

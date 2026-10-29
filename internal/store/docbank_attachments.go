@@ -483,7 +483,7 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 			return fmt.Errorf("retry attachment processing: %w", err)
 		}
 		if _, err := q.Exec(`UPDATE docbank_attachment_processing
- SET job_id = '', next_action_at = ?
+ SET next_action_at = ?
  WHERE destination_key = ? AND job_id <> '' AND outcome = 'requested'`, processingNow, destination); err != nil {
 			return fmt.Errorf("restart pending attachment processing: %w", err)
 		}
