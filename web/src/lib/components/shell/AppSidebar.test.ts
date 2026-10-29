@@ -75,13 +75,15 @@ describe('AppSidebar', () => {
   });
 
   it.each([
-    { schema_version: 3 },
-    { schema_version: 2, incompatibility_reason: 'Stored filters are incompatible.' },
-  ])('keeps an incompatible schema $schema_version view disabled and deletable', async incompatible => {
+    { schema_version: 3, canonical_state: { presentation: 'files', filters: { source: ['1'] } }, group: 'Messages' },
+    { schema_version: 2, incompatibility_reason: 'Stored filters are incompatible.', canonical_state: { filters: { source: ['1'] } }, group: 'Messages' },
+    { schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] }, group: 'Files' },
+    { schema_version: 2, incompatibility_reason: 'Stored filters are incompatible.', canonical_state: { presentation: 'files', filters: { source: ['1'] } }, group: 'Files' },
+  ])('keeps an incompatible schema $schema_version view disabled and deletable under $group', async ({ group, ...incompatible }) => {
     const onOpenView = vi.fn();
     const onDeleteView = vi.fn();
-    renderSidebar({ views: [{ ...view(1, 'Old view'), ...incompatible, canonical_state: { filters: { source: ['1'] } } }], onOpenView, onDeleteView });
-    const saved = screen.getByRole('button', { name: 'Old view' });
+    renderSidebar({ views: [{ ...view(1, 'Old view'), ...incompatible }], onOpenView, onDeleteView });
+    const saved = within(screen.getByRole('list', { name: `${group} saved views` })).getByRole('button', { name: 'Old view' });
     expect(saved.getAttribute('aria-disabled')).toBe('true');
     await fireEvent.click(saved);
     expect(onOpenView).not.toHaveBeenCalled();
