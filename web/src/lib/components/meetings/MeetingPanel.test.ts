@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { meetingAction, meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
+import { createMeetingsAPI } from '../../meetings/api';
+import { MeetingsController } from '../../meetings/controller.svelte';
 import MeetingPanel from './MeetingPanel.svelte';
 
 function response(request: Request): Response {
@@ -9,6 +11,22 @@ function response(request: Request): Response {
 }
 
 describe('MeetingPanel', () => {
+  it('uses the summary controller without requesting its loaded scope again', async () => {
+    const requests: Request[] = [];
+    const client = createAPIClient(async (input) => {
+      const request = input as Request; requests.push(request); return response(request);
+    });
+    const controller = new MeetingsController(createMeetingsAPI(client));
+    const scope = { kind: 'direct' as const, scope: { message_ids: [42] } };
+    await controller.setScope(scope);
+    const view = render(MeetingPanel, { client, scope, controller, compact: true, showHeading: false });
+    await screen.findByText('4 meetings');
+    expect(requests.filter((request) => request.url.endsWith('/metrics'))).toHaveLength(1);
+    expect((screen.getByText('Meeting metrics', { selector: 'summary' }).closest('details') as HTMLDetailsElement).open).toBe(false);
+    view.unmount();
+    controller.destroy();
+  });
+
   it('shows metrics and scoped source evidence with page-one source filters', async () => {
     const requests: Request[] = [];
     render(MeetingPanel, { client: createAPIClient(async (input) => {
