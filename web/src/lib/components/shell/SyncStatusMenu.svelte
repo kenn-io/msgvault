@@ -17,7 +17,7 @@
   const STATUS = {
     unavailable: { tone: 'stale', label: 'Status unavailable' },
     ok: { tone: 'idle', label: 'Idle' },
-    running: { tone: 'stale', label: 'Running' },
+    running: { tone: 'working', label: 'Running' },
     failed: { tone: 'unclean', label: 'Needs attention' },
   } as const;
   const status = $derived(store.loaded ? STATUS[store.health] : { tone: 'idle', label: 'Loading' } as const);

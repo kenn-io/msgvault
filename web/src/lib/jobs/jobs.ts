@@ -2,7 +2,7 @@ import type { OperationLaneStatus, SourceStatus } from '../api/generated/models'
 import { operationStateChip, OPERATION_KIND_LABELS, OPERATION_SETUP, type OperationSettingsTarget, type RelatedStatus } from '../operations/labels';
 import { syncStatusChip } from '../sources/labels';
 
-export type JobState = 'running' | 'failed';
+export type JobState = 'queued' | 'running' | 'failed';
 export type JobsHealth = 'ok' | 'running' | 'failed' | 'unavailable';
 export type JobTarget =
   | { kind: 'source' }
@@ -45,14 +45,14 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
       ? { kind: 'setting', target: setup.target } : { kind: 'status', authority: lane.related_status! };
     const base = { id: lane.kind, name: OPERATION_KIND_LABELS[lane.kind], target };
     if (lane.active) {
-      items.push({ ...base, state: 'running', detail: 'Running', at: lane.active.started_at });
+      items.push({ ...base, state: lane.active.state === 'queued' ? 'queued' : 'running', detail: operationStateChip(lane.active.state).label, at: lane.active.started_at });
     } else if (lane.configured && lane.latest && operationStateChip(lane.latest.state).tone === 'danger') {
       items.push({ ...base, state: 'failed', detail: firstLine(lane.latest.error?.message, 'Failed'), at: lane.latest.finished_at ?? lane.latest.started_at });
     }
   }
-  return items.sort((a, b) => a.state === b.state ? 0 : a.state === 'failed' ? -1 : 1);
+  return items.sort((a, b) => Number(b.state === 'failed') - Number(a.state === 'failed'));
 }
 export function jobsHealth(items: readonly JobItem[]): JobsHealth {
   if (items.some(item => item.state === 'failed')) return 'failed';
-  return items.some(item => item.state === 'running') ? 'running' : 'ok';
+  return items.some(item => item.state === 'running' || item.state === 'queued') ? 'running' : 'ok';
 }
