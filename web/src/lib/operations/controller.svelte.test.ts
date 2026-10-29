@@ -716,25 +716,39 @@ describe('OperationsController.refreshStatus', () => {
 
   it('lets a page-one reload win over a status refresh in flight', async () => {
     const slowStatus = deferredResponse();
+    const replacementStatus = deferredResponse();
     let statusReads = 0;
     const { controller } = pagedDaemon(() => {
       statusReads += 1;
       if (statusReads === 2) return slowStatus.promise;
-      return Response.json(statusResponse(statusReads === 1 ? {} : { carddav_sync: { configured: false } }));
+      if (statusReads === 3) return replacementStatus.promise;
+      return Response.json(statusResponse());
     });
     try {
       await controller.applyURLState(operationState());
       const pending = controller.refreshStatus();
       expect(controller.snapshot.statusRefreshing).toBe(true);
 
-      await controller.refresh();
-      slowStatus.resolve(Response.json(statusResponse()));
+      let settled = false;
+      void pending.then(() => { settled = true; });
+      const refreshed = controller.refresh();
+      await vi.waitFor(() => expect(statusReads).toBe(3));
+      const superseded = Response.json(statusResponse());
+      slowStatus.resolve(superseded);
+      await vi.waitFor(() => expect(superseded.bodyUsed).toBe(true));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(settled).toBe(false);
+      expect(controller.snapshot.statusRefreshing).toBe(true);
 
-      expect(await pending).toBe(false);
+      replacementStatus.resolve(Response.json(statusResponse({ carddav_sync: { configured: false } })));
+      await refreshed;
+      expect(await pending).toBe(true);
       const carddav = controller.snapshot.statusLanes.find((lane) => lane.lane === 'contacts')!.kinds[0]!;
       expect(carddav.configured).toBe(false);
       expect(controller.snapshot.statusRefreshing).toBe(false);
     } finally {
+      slowStatus.resolve(Response.json(statusResponse()));
+      replacementStatus.resolve(Response.json(statusResponse()));
       controller.destroy();
     }
   });
