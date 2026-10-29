@@ -6,6 +6,7 @@ permissions:
 # The | separator falls back to the module's source repo on any proxy error, not just 404/410.
 env:
   GOPROXY: https://proxy.golang.org|direct
+  GOTRACEBACK: all
   # Compile without absolute source paths, like the Makefile does.
   GOFLAGS: -trimpath
 

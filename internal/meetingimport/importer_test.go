@@ -14,6 +14,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/stacktest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -872,6 +873,7 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 	select {
 	case <-participantStarted:
 	case <-time.After(10 * time.Second):
+		stacktest.Dump(t)
 		require.FailNow("meeting import did not reach attendee insertion")
 	}
 	cancel()
@@ -879,6 +881,7 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 	select {
 	case err = <-done:
 	case <-time.After(10 * time.Second):
+		stacktest.Dump(t)
 		require.FailNow("meeting import did not stop after cancellation")
 	}
 	require.ErrorIs(err, context.Canceled)

@@ -15,7 +15,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.Exec(`
 		CREATE TEMP TABLE synthetic_temperature_activity AS
-		SELECT * FROM (VALUES
+		SELECT *, false AS unsent FROM (VALUES
 			-- Direct chat written by the owner: the explicit edge identifies
 			-- person 2 even when the importer has no conversation roster.
 			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, false, true),
@@ -65,6 +65,25 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	assert.Equal(int64(3), chat)
 	assert.Equal(int64(4), total)
 	assert.Equal(ModalityChat|ModalityMeeting, modality)
+}
+
+func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
+	require := require.New(t)
+	_, db := writeRelationshipBaseFixture(t, true)
+	_, err := db.Exec(`
+		CREATE TEMP TABLE synthetic_unsent_activity AS
+		SELECT * FROM (VALUES
+			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, true, true, true),
+			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, true, true, false, false, true)
+		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,
+			conversation_type, is_from_me, is_direct, is_conversation_member,
+			is_author, is_owner, unsent)
+	`)
+	require.NoError(err)
+	query := buildRelationshipTemperatureDailySQL("synthetic_unsent_activity", time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC))
+	var count int
+	require.NoError(db.QueryRow("SELECT count(*) FROM (" + query + ")").Scan(&count))
+	assert.Zero(t, count, "an owner-authored unsent chat contributes no daily contact activity")
 }
 
 func TestRelationshipTemperatureCurrentHalfLifeKeepsOlderSignalsInWholeGraph(t *testing.T) {

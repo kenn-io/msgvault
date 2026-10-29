@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1703,6 +1704,112 @@ func TestActivityFlagReplayKeepsFormerDraftQueueDrained(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestUnsentCandidatePredicateParity(t *testing.T) {
+	testutil.SkipIfPostgres(t, "analytics candidate SQL is SQLite-only")
+	for _, tc := range []struct {
+		name       string
+		sourceType string
+		evidence   string
+		pending    bool
+	}{
+		{name: "folder_role", sourceType: "imap", evidence: `INSERT INTO labels (source_id, source_label_id, name, system_role)
+			SELECT source_id, 'custom-drafts', 'Drafts', 'drafts' FROM messages WHERE id = ?;
+			INSERT INTO message_labels SELECT ?, last_insert_rowid()`},
+		{name: "gmail_draft_label", sourceType: "gmail", evidence: `INSERT INTO labels (source_id, source_label_id, name)
+			SELECT source_id, 'DRAFT', 'Drafts' FROM messages WHERE id = ?;
+			INSERT INTO message_labels SELECT ?, last_insert_rowid()`},
+		{name: "imap_draft_flag", sourceType: "imap", evidence: `INSERT INTO imap_message_memberships
+			(source_id, mailbox, uidvalidity, uid, message_id, flags)
+			SELECT source_id, 'Drafts', 1, 1, id, '["\\Draft"]' FROM messages WHERE id = ?`},
+		{name: "is_sent_false", sourceType: "gmail", evidence: `UPDATE messages SET is_sent = FALSE WHERE id = ?`},
+		{name: "imap_current", sourceType: "imap", evidence: `INSERT INTO imap_drafts
+			(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision)
+			SELECT 'draft', source_id, id, 'Drafts', 1, 1, 1 FROM messages WHERE id = ?`},
+		{name: "imap_pending", sourceType: "imap", pending: true, evidence: `INSERT INTO imap_drafts
+			(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision,
+			pending_operation, pending_original_message_id, pending_original_mailbox, pending_original_uidvalidity, pending_original_uid,
+			pending_raw, pending_replacement_mailbox, pending_replacement_uidvalidity, pending_replacement_uid, pending_code)
+			SELECT 'draft', source_id, (SELECT MIN(id) FROM messages), 'Drafts', 1, 2, 2,
+			'edit', id, 'Drafts', 1, 1, x'726177', 'Drafts', 1, 2, 'cleanup_pending' FROM messages WHERE id = ?`},
+		{name: "gmail_current", sourceType: "gmail", evidence: `INSERT INTO gmail_drafts
+			(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision)
+			SELECT 'draft', source_id, 'provider-draft', id, 'message', 'thread', 1 FROM messages WHERE id = ?`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			_, err := f.Store.DB().Exec(`UPDATE sources SET source_type = ? WHERE id = ?`, tc.sourceType, f.Source.ID)
+			require.NoError(err)
+			replacement := f.NewMessage().WithSourceMessageID("replacement").WithSentAt(time.Now()).Create(t, f.Store)
+			id := f.NewMessage().WithSourceMessageID("target").WithSentAt(time.Now()).Create(t, f.Store)
+			args := make([]any, strings.Count(tc.evidence, "?"))
+			for i := range args {
+				args[i] = id
+			}
+			_, err = f.Store.DB().Exec(tc.evidence, args...)
+			require.NoError(err)
+			predicate := `SELECT m.id FROM messages m JOIN sources src ON src.id = m.source_id WHERE ` + store.UnsentMessageSQL()
+			sets := make([][]int64, 2)
+			for i, query := range []string{predicate, predicate + ` AND m.id IN (` + store.UnsentCandidateMessageIDsSQL() + `)`} {
+				func() {
+					rows, err := f.Store.DB().Query(query + ` ORDER BY m.id`)
+					require.NoError(err)
+					defer func() { require.NoError(rows.Close()) }()
+					for rows.Next() {
+						var candidate int64
+						require.NoError(rows.Scan(&candidate))
+						sets[i] = append(sets[i], candidate)
+					}
+					require.NoError(rows.Err())
+				}()
+			}
+			want := []int64{id}
+			if tc.pending {
+				want = []int64{replacement, id}
+			}
+			assert.Equal(t, want, sets[1], "the evidence must select its current and pending snapshots")
+			assert.Equal(t, sets[0], sets[1], "candidate filtering must preserve every authoritative unsent ID")
+		})
+	}
+}
+
+func TestActivityDraftSendFlipRequeuesProjection(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, personID := activityProjectionFixture(t)
+	at := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	id := f.NewMessage().WithSentAt(at).Create(t, f.Store)
+	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
+	initial := activityProjectionForMessage(t, f, id, personID, at)
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{initial})
+	require.NoError(err)
+	require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
+	candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	old := activityProjectionFromCandidate(t, candidates[0], personID, at)
+	require.False(candidates[0].Eligible)
+	old.Event = nil
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{old})
+	require.NoError(err)
+	queued, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	require.NoError(err)
+	require.Empty(queued)
+	_, err = f.Store.ReconcileMessageLabels(id, []int64{labels["SENT"]}, true)
+	require.NoError(err)
+	candidates, err = f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.True(candidates[0].Eligible)
+	assert.Greater(candidates[0].Queue.Revision, candidates[0].Queue.ProcessedRevision)
+	fresh := activityProjectionFromCandidate(t, candidates[0], personID, at)
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{fresh})
+	require.NoError(err)
+	var count int
+	require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, id).Scan(&count))
+	assert.Equal(1, count)
 }
 
 func activityProjectionFixture(

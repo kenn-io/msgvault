@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -388,37 +389,41 @@ func TestMarkedCLIRequestCancellationStopsProductionStoreWork(t *testing.T) {
 				Logger: slog.New(slog.DiscardHandler),
 			})
 
-			ctx, cancel := context.WithCancel(context.Background())
-			var body *strings.Reader
-			if tt.body == "" {
-				body = strings.NewReader("")
-			} else {
-				body = strings.NewReader(tt.body)
-			}
-			req := httptest.NewRequest(tt.method, tt.path, body).WithContext(ctx)
-			req.Header.Set("X-Api-Key", "secret-key")
-			req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
-			if tt.body != "" {
-				req.Header.Set("Content-Type", "application/json")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				defer func() { _ = conn.Close() }()
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				var body *strings.Reader
+				if tt.body == "" {
+					body = strings.NewReader("")
+				} else {
+					body = strings.NewReader(tt.body)
+				}
+				req := httptest.NewRequest(tt.method, tt.path, body).WithContext(ctx)
+				req.Header.Set("X-Api-Key", "secret-key")
+				req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+				if tt.body != "" {
+					req.Header.Set("Content-Type", "application/json")
+				}
 
-			waitCount := st.DB().Stats().WaitCount
-			requestDone := make(chan struct{})
-			go func() {
-				srv.Router().ServeHTTP(httptest.NewRecorder(), req)
-				close(requestDone)
-			}()
+				waitCount := st.DB().Stats().WaitCount
+				requestDone := make(chan struct{})
+				go func() {
+					srv.Router().ServeHTTP(httptest.NewRecorder(), req)
+					close(requestDone)
+				}()
 
-			require.Eventually(t, func() bool {
-				return st.DB().Stats().WaitCount > waitCount
-			}, 2*time.Second, 10*time.Millisecond, "handler reaches production database work")
-			cancel()
+				synctest.Wait()
+				require.Greater(t, st.DB().Stats().WaitCount, waitCount, "handler reaches production database work")
+				cancel()
+				synctest.Wait()
 
-			select {
-			case <-requestDone:
-			case <-time.After(2 * time.Second):
-				require.FailNow(t, "production store work continued after marked request cancellation")
-			}
+				select {
+				case <-requestDone:
+				default:
+					require.FailNow(t, "production store work continued after marked request cancellation")
+				}
+			})
 		})
 	}
 }

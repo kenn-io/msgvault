@@ -770,6 +770,68 @@ can override an excluded parent; an explicit child exclude can override an
 included parent. `exclude` wins when the same ID is in both lists. See
 [Discord](/docs/usage/discord/#configure-media-repairs-and-channel-filters).
 
+### Conversation archive tiers (staged)
+
+Conversation policy uses the provider's archived roster, including the same
+participant-count rules as media policy. The model defines four tiers:
+
+| Tier | Intended behavior |
+| --- | --- |
+| `full` | Archive text and use it in search, embeddings and people features. |
+| `cold` | Archive text; explicit lexical search only, without embeddings or people contributions. |
+| `stub` | Keep your own messages, direct replies and explicit mentions of you, plus room metadata. |
+| `skip` | Stop importing room history. |
+
+This release adds settings and inspection only. Every effective tier remains
+`full`; automatic classification and cold exclusions are not enabled yet.
+`stub` and `skip` settings are rejected until retention and purge support ships.
+Saving a `cold` override does not yet hide messages or remove vectors.
+
+Automatic classification is off by default. To turn it on for Beeper, Slack
+(including Slackdump imports), Discord or Teams, set that provider's
+`max_participants` to the largest room you want kept `full`, such as `20`.
+Omitting the key or setting `0` keeps every room `full` unless an override
+says otherwise. This setting is separate from `media_max_participants` and
+`max_media_mb`, which continue to govern attachments.
+
+```toml
+[beeper]
+max_participants = 20
+
+[conversation_policy]
+activity_window_days = 180
+
+[[conversation_policy.overrides]]
+source_type = "beeper"
+source_identifier = "example-account"
+conversation_id = "example-room"
+tier = "cold"
+```
+
+The model selects `full` for a known roster at or below the limit, or recent
+activity: your own post, an explicit mention of you, or a direct reply to your
+message. The activity cutoff is inclusive; future timestamps do not establish
+activity. Larger rooms and rooms with unknown size select `cold` without that
+activity. The activity window defaults to 180 days (also when set to `0`);
+negative values and windows beyond 106751 days are rejected. Other providers
+keep their current behavior.
+
+Inspect archived rooms and save overrides through the daemon:
+
+```sh
+msgvault policy list
+msgvault policy set 1 example-room cold
+msgvault policy reset 1 example-room
+```
+
+`list` prints JSON with source IDs, provider room IDs, roster status, effective
+tiers and selected overrides. Use its source ID and provider ID with `set` or
+`reset`. A saved CLI override wins over config. Reset removes that saved value
+and restores config or automatic selection. Config overrides match the exact
+source type, source identifier and provider room ID; duplicate keys are rejected.
+All saved values are marked staged in this release. These commands do not purge
+messages or contact a provider.
+
 ### Media policy
 
 `[beeper]`, `[inline]`, `[slack]`, `[discord]`, and `[teams]` share one attachment

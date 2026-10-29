@@ -1806,6 +1806,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"logs",
 		"pack-attachments",
 		"purge-excluded-media",
+		"policy",
 		"repair-dates",
 		"repair-identity",
 		"repair-labels",

@@ -545,3 +545,22 @@ func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
 	require.NoError(err, "slow cleanup must run with maintenance timeout disabled")
 	assert.True(deleted)
 }
+
+// TestConversationPolicyMaintenanceLock checks the real maintenance transaction,
+// including this table's indirect cascade through conversations.
+func TestConversationPolicyMaintenanceLock(t *testing.T) {
+	requirements := require.New(t)
+	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	conn, err := st.DB().Conn(t.Context())
+	requirements.NoError(err)
+	defer func() { _ = conn.Close() }()
+	requirements.NoError(st.dialect.BeginExclusive(t.Context(), conn))
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK") }()
+	var locked bool
+	requirements.NoError(conn.QueryRowContext(t.Context(), `
+ SELECT EXISTS (SELECT 1 FROM pg_locks
+ WHERE pid=pg_backend_pid() AND relation='conversation_policy'::regclass
+ AND mode='ExclusiveLock' AND granted)
+ `).Scan(&locked))
+	assert.True(t, locked, "account removal must fence conversation policy writers")
+}

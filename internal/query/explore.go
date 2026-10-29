@@ -314,6 +314,9 @@ func validateResolvedSearch(search SearchSpec) (SearchProvenance, error) {
 func buildExploreConditions(request ExploreRequest) (string, []any) {
 	var conditions []string
 	var args []any
+	if request.SentOnly {
+		conditions = append(conditions, sentIdentityConditions("true"))
+	}
 	appendIntAnyOf := func(values []int64, expression string) {
 		if len(values) == 0 {
 			return

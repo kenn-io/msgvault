@@ -436,6 +436,9 @@ func (s *Server) handleSearchFilesRequest(
 		return
 	}
 	predicate.query.Search = searchSpec
+	if scope != nil || person != nil {
+		predicate.query.SentOnly = true
+	}
 	if scope != nil {
 		if err := applyIdentityScope(&predicate.query.Context, *scope); err != nil {
 			writeError(w, http.StatusConflict, "identity_scope_conflict", err.Error())

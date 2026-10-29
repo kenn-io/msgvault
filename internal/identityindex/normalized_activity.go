@@ -5,7 +5,10 @@ import "fmt"
 // buildSparseRelationshipActivitySQL writes message facts once and keeps only
 // direct canonical edges beside them. Conversation membership stays in the
 // conversation_participants base dataset, where it is stored once per thread.
-func buildSparseRelationshipActivitySQL(path func(string) string, messages string, occurredYear int64) string {
+func buildSparseRelationshipActivitySQL(path func(string) string, messages, recipients string, occurredYear int64, unsentMessages string) string {
+	if unsentMessages == "" {
+		unsentMessages = "(SELECT NULL::BIGINT AS message_id WHERE false)"
+	}
 	return fmt.Sprintf(`
 WITH message_facts AS (
 	SELECT m.id::BIGINT AS message_id, m.conversation_id::BIGINT AS conversation_id,
@@ -16,12 +19,14 @@ WITH message_facts AS (
 	       m.is_from_me::BOOLEAN AS is_from_me, m.attachment_count::INTEGER AS attachment_count,
 	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
 	       (m.deleted_from_source_at IS NOT NULL) AS deleted_from_source,
+	       (u.message_id IS NOT NULL) AS unsent,
 	       year(m.sent_at)::SMALLINT AS occurred_year,
 	       m.sender_id::BIGINT AS sender_id,
 	       m.owner_participant_id::BIGINT AS owner_participant_id
 	FROM %s m
 	JOIN read_parquet('%s') s ON s.id = m.source_id
 	LEFT JOIN read_parquet('%s') c ON c.id = m.conversation_id
+	LEFT JOIN %s u ON u.message_id = m.id
 	WHERE year(m.sent_at) = %d
 ), canon AS (
 	SELECT p.id::BIGINT AS participant_id,
@@ -38,7 +43,7 @@ WITH message_facts AS (
 	       (mr.recipient_type = 'from' AND mr.participant_id = m.owner_participant_id) AS is_sender,
 	       (mr.recipient_type = 'from' AND mr.participant_id = m.owner_participant_id) AS is_owner_sender,
 	       (mr.recipient_type = 'from') AS is_author
-	FROM read_parquet('%s') mr JOIN message_facts m ON m.message_id = mr.message_id
+	FROM %s mr JOIN message_facts m ON m.message_id = mr.message_id
 	UNION ALL
 	SELECT m.message_id, m.sender_id, true,
 	       coalesce(m.sender_id = m.owner_participant_id, false), true
@@ -57,7 +62,7 @@ WITH message_facts AS (
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-       m.deleted_from_source, d.canonical_id, d.participant_domain,
+       m.deleted_from_source, m.unsent, d.canonical_id, d.participant_domain,
        true AS is_direct, false AS is_conversation_member,
        d.is_sender, d.is_author,
        (o.canonical_id IS NOT NULL OR (m.is_from_me AND d.is_owner_sender)) AS is_owner,
@@ -68,7 +73,7 @@ UNION ALL
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-       m.deleted_from_source, NULL::BIGINT AS canonical_id,
+       m.deleted_from_source, m.unsent, NULL::BIGINT AS canonical_id,
        NULL::VARCHAR AS participant_domain,
        EXISTS (SELECT 1 FROM direct_canon d
                WHERE d.message_id = m.message_id AND d.canonical_id IS NULL) AS is_direct,
@@ -77,9 +82,9 @@ SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
 FROM message_facts m`, EntryKindSQL("m.message_type"),
 		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),
 		messages, quoteSQLString(path("sources")),
-		quoteSQLString(path("conversations")), occurredYear,
+		quoteSQLString(path("conversations")), unsentMessages, occurredYear,
 		quoteSQLString(path("participants")), quoteSQLString(path("participant_clusters")),
-		quoteSQLString(path("owner_participants")), quoteSQLString(path("message_recipients")))
+		quoteSQLString(path("owner_participants")), recipients)
 }
 
 // ExpandedActivityRelation restores the logical edge relation on demand from
@@ -106,7 +111,7 @@ func expandedActivityRelation(sparse, roster, participants, clusters, owners str
 		memberCTEs = `, chat_anchors AS (
 	SELECT source_id, conversation_id,
 	       arg_max(message_id, struct_pack(at := occurred_at, id := message_id)) AS message_id
-	FROM facts WHERE is_chat GROUP BY source_id, conversation_id
+	FROM facts WHERE is_chat AND NOT unsent GROUP BY source_id, conversation_id
 ), roster_facts AS NOT MATERIALIZED (
 	SELECT f.*, (
 		NOT f.is_chat OR lower(f.conversation_type) = 'direct_chat'
@@ -149,7 +154,7 @@ canon AS NOT MATERIALIZED (
 SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
        f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
        f.is_chat, f.is_from_me, f.attachment_count, f.has_attachments,
-       f.deleted_from_source, cm.canonical_id, cm.participant_domain,
+       f.deleted_from_source, f.unsent, cm.canonical_id, cm.participant_domain,
        coalesce(d.is_direct, false) AS is_direct,
        true AS is_conversation_member, coalesce(d.is_sender, false) AS is_sender,
        coalesce(d.is_author, false) AS is_author,
@@ -165,7 +170,7 @@ UNION ALL
 SELECT d.message_id, d.conversation_id, d.source_id, d.source_type,
        d.occurred_at, d.message_type, d.conversation_type, d.entry_kind,
        d.is_chat, d.is_from_me, d.attachment_count, d.has_attachments,
-       d.deleted_from_source, d.canonical_id, d.participant_domain,
+       d.deleted_from_source, d.unsent, d.canonical_id, d.participant_domain,
        d.is_direct, false AS is_conversation_member,
        d.is_sender, d.is_author, d.is_owner, d.occurred_year
 FROM direct d
@@ -178,7 +183,7 @@ UNION ALL
 SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
        f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
        f.is_chat, f.is_from_me, f.attachment_count, f.has_attachments,
-       f.deleted_from_source, NULL::BIGINT AS canonical_id,
+       f.deleted_from_source, f.unsent, NULL::BIGINT AS canonical_id,
        NULL::VARCHAR AS participant_domain,
        false AS is_direct, false AS is_conversation_member,
        false AS is_sender, false AS is_author, false AS is_owner,
