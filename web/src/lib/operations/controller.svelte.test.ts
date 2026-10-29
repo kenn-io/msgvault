@@ -18,8 +18,6 @@ import type {
 const RUN_ONE = `op2.${'a'.repeat(32)}.syntheticRunOne`;
 const RUN_TWO = `op2.${'b'.repeat(32)}.syntheticRunTwo`;
 
-
-
 function operationState(overrides: Partial<OperationsURLState> = {}): OperationsURLState {
   return {
     operationLane: '',
