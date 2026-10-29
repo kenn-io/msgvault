@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -318,25 +319,27 @@ func TestConversationWindowRejectsAnchorOutsideTimeRange(t *testing.T) {
 }
 
 func TestConversationWindowCarriesExactParticipantIdentities(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("whatsapp", "archive@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	conversation, err := st.EnsureConversationWithType(source.ID, "identity-group", "group_chat", "Group")
-	require.NoError(t, err)
+	require.NoError(err)
 	participant, err := st.EnsureParticipant("alex@example.com", "Alex Example", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: source.ID, SourceMessageID: "identity", MessageType: "whatsapp", SenderID: sql.NullInt64{Int64: participant, Valid: true}})
-	require.NoError(t, err)
-	require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{participant}, []string{"Alex Example"}))
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(id, "to", []int64{participant}, []string{"Alex Example"}))
 	srv := NewServer(&config.Config{}, st, nil, testLogger())
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversation, id), nil))
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result struct {
-		Messages []map[string]any `json:"messages"`
+		Messages []map[string]json.RawMessage `json:"messages"`
 	}
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
-	require.Len(t, result.Messages, 1)
-	assert.Equal(t, float64(participant), result.Messages[0]["from_participant_id"])
-	assert.Equal(t, []any{map[string]any{"participant_id": float64(participant), "display": "Alex Example <alex@example.com>"}}, result.Messages[0]["to_participants"])
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(result.Messages, 1)
+	assert.JSONEq(strconv.FormatInt(participant, 10), string(result.Messages[0]["from_participant_id"]))
+	assert.JSONEq(fmt.Sprintf(`[{"participant_id":%d,"display":"Alex Example <alex@example.com>"}]`, participant), string(result.Messages[0]["to_participants"]))
 }

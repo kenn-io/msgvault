@@ -35,6 +35,7 @@ type ConversationParticipant struct {
 // ConversationMessage retains the identities used by this message's display labels.
 type ConversationMessage struct {
 	MessageDetail
+
 	FromParticipantID int64                     `json:"from_participant_id,omitempty"`
 	ToParticipants    []ConversationParticipant `json:"to_participants,omitempty"`
 }
