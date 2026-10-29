@@ -24,10 +24,10 @@ func TestProcessingPlansAndProfiles(t *testing.T) {
 	require.NoError(err)
 	profile, err := client.Profile(t.Context(), "documents")
 	require.NoError(err)
-	assert.Equal("profile-one", profile.Fingerprint)
+	assert.Equal(docbanktest.ProcessingFingerprint("profile-one"), profile.Fingerprint)
 	assert.True(profile.Rendition)
 	_, err = client.Profile(t.Context(), "missing")
-	require.ErrorContains(err, "document_profile")
+	require.ErrorContains(err, "not listed by Docbank")
 	require.ErrorContains(err, "missing")
 	fake.Rendition = false
 	profile, err = client.Profile(t.Context(), "documents")
@@ -36,10 +36,10 @@ func TestProcessingPlansAndProfiles(t *testing.T) {
 	selector := docbankmedia.ProcessingSelector{NodeID: 7, ContentVersionID: "version", Profile: "documents"}
 	plan, err := client.PlanProcessing(t.Context(), selector)
 	require.NoError(err)
-	assert.Equal("plan-one", plan.Fingerprint)
+	assert.Equal(docbanktest.ProcessingFingerprint("plan-one"), plan.Fingerprint)
 	jobID, err := client.StartProcessing(t.Context(), selector, plan.Fingerprint)
 	require.NoError(err)
-	assert.Equal("job-version", jobID)
+	assert.Equal(docbanktest.ProcessingJobID("version"), jobID)
 	assert.Equal([]string{"version"}, fake.Plans)
 	assert.Equal(int64(7), fake.NodeIDs["version"])
 	assert.Equal([]string{"version"}, fake.Jobs)
@@ -48,7 +48,7 @@ func TestProcessingPlansAndProfiles(t *testing.T) {
 func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, err := io.WriteString(w, "{\"type\":\"job\",\"job\":{\"id\":\"durable-job\"}}\n")
+		_, err := io.WriteString(w, `{"type":"job","job":{"id":"`+docbanktest.ProcessingJobID("durable-job")+`"}}`+"\n")
 		assert.NoError(t, err)
 		assert.NoError(t, http.NewResponseController(w).Flush())
 		<-r.Context().Done()
@@ -60,11 +60,11 @@ func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {
 	defer cancel()
 	jobID, err := client.StartProcessing(ctx, docbankmedia.ProcessingSelector{NodeID: 7, ContentVersionID: "version", Profile: "documents"}, "plan")
 	require.NoError(t, err)
-	assert.Equal(t, "durable-job", jobID)
+	assert.Equal(t, docbanktest.ProcessingJobID("durable-job"), jobID)
 }
 
 func TestProcessingInvalidReceipts(t *testing.T) {
-	for _, body := range []string{`{}`, `{"type":"done","job":{"id":"job-a"}}`, `{"type":"job","job":{}}`, `broken`} {
+	for _, body := range []string{`{}`, `{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a") + `"}}`, `{"type":"job","job":{}}`, `broken`} {
 		t.Run(body, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, err := io.WriteString(w, body)
