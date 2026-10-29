@@ -17,10 +17,15 @@
     window.addEventListener('pagehide', onExpire);
     return () => { clearTimeout(timer); window.removeEventListener('pagehide', onExpire); };
   });
+
+  /** Catches keyboard focus that the deleted control dropped, so Undo stays reachable. */
+  function claimFocus(node: HTMLElement): void {
+    if (document.activeElement === document.body) node.querySelector('button')?.focus();
+  }
 </script>
 
 <!-- kit-ui-check-ignore: kit FlashBanner has no action button, and Undo must sit in the toast. -->
-<div class="undo-toast" role="status">
+<div class="undo-toast" role="status" {@attach claimFocus}>
   <span class="undo-toast__message">{message}</span>
   <Button size="sm" surface="soft" label="Undo" onclick={onUndo} />
 </div>

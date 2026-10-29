@@ -57,7 +57,7 @@ describe('ShellData', () => {
       const { data, requests } = setup({ views: [view(1, 'Budget')] });
       await data.refresh();
       expect(await data.renameView(data.views[0]!, 'Budget')).toBeUndefined();
-      expect(await data.renameView(data.views[0]!, '   ')).toBeUndefined();
+      expect(await data.renameView(data.views[0]!, '   ')).toBe('Enter a name.');
       expect(requests.some((request) => request.method === 'PATCH')).toBe(false);
     });
 
