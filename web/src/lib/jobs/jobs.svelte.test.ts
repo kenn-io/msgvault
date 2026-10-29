@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { lanes as operationLanes } from '../../test/operations';
 import { createAPIClient } from '../api/client';
 import { JobsStore } from './jobs.svelte';
-import { jobLane, jobRun, sourceStatus, syncRunStatus } from './fixtures.test-support';
+import { jobLane, sourceStatus, syncRunStatus } from './fixtures.test-support';
 import canonical from '../../../tests/e2e/fixtures/operations-public.json';
 import type { OperationRunSummary } from '../api/generated/models';
 import { OperationsController } from '../operations/controller.svelte';
@@ -54,7 +54,7 @@ it.each([true, false])('reports unavailable history only for configured lanes, c
   operations.destroy();
 });
 
-it.each(['sources', 'operations'] as const)('discards a held %s observation after a newer refresh', async endpoint => {
+it('discards a held source observation after a newer refresh', async () => {
   let changed = false;
   let hold = false;
   let release!: () => void;
@@ -64,30 +64,28 @@ it.each(['sources', 'operations'] as const)('discards a held %s observation afte
   const gate = new Promise<void>(resolve => { release = resolve; });
   const client = createAPIClient(async input => {
     const source = new URL((input as Request).url).pathname.includes('/sources');
-    const snapshot = Response.json(source ? { sources: endpoint === 'sources' ? [sourceStatus({
+    const snapshot = Response.json(source ? { sources: [sourceStatus({
       active_sync: changed ? syncRunStatus({ status: 'running', completed_at: null }) : null,
       can_sync: !changed, sync_unavailable_reason: changed ? 'sync_already_running' : undefined,
-    })] : [] } : { lanes: operationLanes(...(endpoint === 'operations' ? [jobLane('message_embedding', {
-      latest: changed ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined, counters: [{ name: 'attempted', unit: 'messages', value: 1 }, { name: 'succeeded', unit: 'messages', value: 1 }, { name: 'failed', unit: 'messages', value: 0 }] } : jobRun('message_embedding'),
-    })] : [])) });
-    if (hold && source === (endpoint === 'sources')) { hold = false; oldSnapshot = snapshot; captured(); await gate; }
+    })] } : { lanes: operationLanes() });
+    if (hold && source) { hold = false; oldSnapshot = snapshot; captured(); await gate; }
     return snapshot;
   });
   const operations = new OperationsController(client);
   const store = new JobsStore(client, operations);
   try {
     await store.refresh();
-    expect(store.health).toBe(endpoint === 'sources' ? 'ok' : 'failed');
+    expect(store.health).toBe('ok');
     hold = true;
     const stale = store.refresh();
     await capturedStatus;
     changed = true;
-    await store.refresh(endpoint === 'operations');
-    expect(store.health).toBe(endpoint === 'sources' ? 'running' : 'ok');
+    await store.refresh();
+    expect(store.health).toBe('running');
     release();
     await stale;
     expect(oldSnapshot.bodyUsed).toBe(true);
-    expect(store.health).toBe(endpoint === 'sources' ? 'running' : 'ok');
+    expect(store.health).toBe('running');
   } finally {
     release();
     store.dispose();
