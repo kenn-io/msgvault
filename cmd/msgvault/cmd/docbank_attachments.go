@@ -67,7 +67,7 @@ func newDocbankCmd(open func(context.Context) (*daemonclient.Client, func(), err
 		}
 		return nil
 	}}
-	backfill := &cobra.Command{Use: "backfill", Short: "Discover stored attachments and retry failed uploads and processing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	backfill := &cobra.Command{Use: "backfill", Short: "Discover attachments and retry failed uploads", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		client, cleanup, err := open(cmd.Context())
 		if err != nil {
 			return err
