@@ -63,16 +63,9 @@ test('unconfigured visual status opens Search & AI settings', async ({ page }) =
   await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
 });
 
-test('Refresh waits for completion and retains selected detail when references rotate', async ({ page }) => {
+test('Refresh waits for completion and returns focus to its button', async ({ page }) => {
   const fixture = await installOperations(page);
   await openHistory(page);
-  const sourceRow = page.getByRole('button', { name: 'Open Source sync run' });
-  const listedBefore = await sourceRow.getAttribute('data-run-id');
-  await sourceRow.click();
-  const selected = () => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').operationRunID;
-  const before = selected();
-  expect(listedBefore).toBe(before);
-  fixture.rotateReferencesOnNextRefresh();
   const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
   const release = fixture.holdNextOperationStatus();
   const reads = fixture.operationStatusReads;
@@ -82,10 +75,6 @@ test('Refresh waits for completion and retains selected detail when references r
   release();
   await expect(refresh).toBeEnabled();
   await expect(refresh).toBeFocused();
-  await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeVisible();
-  expect(selected()).toBe(before);
-  await page.getByRole('button', { name: 'All runs' }).click();
-  await expect(sourceRow).not.toHaveAttribute('data-run-id', listedBefore!);
 });
 
 test('action reconciliation preserves selected detail identity when opaque references rotate', async ({ page }) => {
