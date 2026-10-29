@@ -89,8 +89,7 @@ describe('PeopleInferenceSettings', () => {
     expect(requests[2]!.headers.get('If-Match')).toBe('"credential-a"');
     await expect(requests[1]!.json()).resolves.toEqual(preset);
     failKey = false;
-    controller.keyDrafts = { routed: 'synthetic-replacement' };
-    await controller.saveKeys();
+    await controller.saveKey('synthetic-replacement');
     expect(controller.error).toBe('');
     expect(controller.selectedProfile?.credential_configured).toBe(true);
   });
@@ -215,40 +214,25 @@ describe('PeopleInferenceSettings', () => {
     const controller = new PeopleInferenceController(client);
     await controller.load();
     await checkAndConsent(controller);
-    controller.keyDrafts = { routed: 'synthetic-secret' };
-    await controller.saveKeys();
+    await controller.saveKey('synthetic-secret');
     expect(controller.canSelect).toBe(false);
-    expect(controller.canConsent).toBe(false);
-    controller.keyDrafts = { routed: 'synthetic-replacement' };
-    await controller.saveKeys();
+    await controller.saveKey('synthetic-replacement');
     const keys = requests.filter((request) => request.url.endsWith('/key'));
     expect(keys.map((request) => request.headers.get('If-Match'))).toEqual(['"credential-a"', '"credential-b"']);
   });
 
-  it('reloads the credential revision and retries a pending key with its refreshed metadata', async () => {
-    let conflicted = false;
-    const { client, requests } = fixture(status, request => {
-      if (request.url.endsWith('/key') && !conflicted) {
-        conflicted = true;
-        return Response.json({ message: 'Stale key' }, { status: 412 });
-      }
-      if (request.method === 'GET' && conflicted) return Response.json({ ...status,
-        profiles: [{ ...profile, credential_revision: '"credential-refreshed"' }]
-      }, { headers: { ETag: '"config-a"' } });
+  it('requires reload after a credential conflict without invalidating config edits', async () => {
+    const { client, requests } = fixture(status, (request) => {
+      if (request.url.endsWith('/key')) return Response.json({ message: 'Stale key' }, { status: 412 });
     });
     const controller = new PeopleInferenceController(client);
     await controller.load();
-    controller.keyDrafts = { routed: 'synthetic-key' };
-    expect(await controller.saveKeys()).toBe(false);
+    await controller.saveKey('synthetic-secret');
     expect(controller.error).toContain('credential changed');
-    expect(await controller.saveKeys()).toBe(false);
+    await controller.saveKey('synthetic-replacement');
     expect(requests).toHaveLength(2);
     await controller.disable();
     expect(requests.at(-1)!.headers.get('If-Match')).toBe('"config-a"');
-    await controller.load();
-    expect(controller.keyDrafts.routed).toBe('synthetic-key');
-    expect(await controller.saveKeys()).toBe(true);
-    expect(requests.filter(request => request.url.endsWith('/key')).map(request => request.headers.get('If-Match'))).toEqual(['"credential-a"', '"credential-refreshed"']);
   });
 
   it('does not enable a profile if consent is missing from the server response', async () => {
@@ -292,43 +276,4 @@ describe('PeopleInferenceSettings', () => {
     await waitFor(() => expect(screen.getByRole('combobox', { name: /^Profile:/ }).textContent).toContain('backup'));
     expect(requests.at(-1)!.method).toBe('DELETE');
   });
-});
-
-it('keeps a replacement key pending while a provider check is running', async () => {
-  let finish!: (response: Response) => void;
-  const checked = new Promise<Response>(resolve => { finish = resolve; });
-  const { client, requests } = fixture(status, request => request.url.endsWith('/check') ? checked : undefined);
-  const controller = new PeopleInferenceController(client);
-  await controller.load();
-  controller.keyDrafts = { routed: 'synthetic-replacement' };
-  const checking = controller.check();
-  expect(await controller.saveKeys()).toBe(false);
-  expect(controller.keyDrafts).toEqual({ routed: 'synthetic-replacement' });
-  expect(requests.some(request => request.url.endsWith('/key'))).toBe(false);
-  finish(Response.json({ ok: true, fingerprint: profile.fingerprint }));
-  await checking;
-  expect(await controller.saveKeys()).toBe(true);
-  expect(controller.keyDrafts).toEqual({});
-  expect(requests.filter(request => request.url.endsWith('/key'))).toHaveLength(1);
-});
-
-it('prunes a removed profile key while keeping another profile key ready to save', async () => {
-  const { client, requests } = fixture({ ...status, profiles: [profile, { ...profile, name: 'backup' }] });
-  const controller = new PeopleInferenceController(client);
-  await controller.load();
-  controller.keyDrafts = { backup: 'removed-key', routed: 'surviving-key' };
-  await controller.remove('backup');
-  expect(controller.keyDrafts).toEqual({ routed: 'surviving-key' });
-  expect(await controller.saveKeys()).toBe(true);
-  expect(requests.filter(request => request.url.endsWith('/key')).map(request => new URL(request.url).pathname)).toEqual(['/api/v1/settings/people-inference/providers/routed/key']);
-});
-
-it('opens an accepted constructor profile with an empty replacement key and retains its edit', async () => {
-  const { client } = fixture({ ...status, profiles: [{ ...profile, name: 'constructor' }] });
-  const controller = new PeopleInferenceController(client);
-  render(PeopleInferenceSettings, { client, controller });
-  const key = await screen.findByLabelText('Replacement API key');
-  expect((key as HTMLInputElement).value).toBe('');
-  await fireEvent.input(key, { target: { value: 'synthetic-replacement' } });
-  expect(controller.keyDrafts.constructor).toBe('synthetic-replacement');
 });

@@ -1,14 +1,10 @@
 <script lang="ts">
   import {
-    deleteSettingsProviderCredential as generatedDeleteSettingsProviderCredential,
     getEmbeddingStatus as generatedGetEmbeddingStatus,
     getOperationStatus as generatedGetOperationStatus,
     getSettings as generatedGetSettings,
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
-    putSettingsProviderCredential as generatedPutSettingsProviderCredential,
-    saveCardDAVAccount,
-    putSettingsPersonEnrichmentProvider,
   } from '../../api/generated/api/api';
   import { Notice, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { onMount, onDestroy, tick, untrack } from 'svelte';
@@ -26,12 +22,10 @@
   import { settingsNavigationTarget, type CardDAVSettingsRequest, type SettingsNavigationTarget } from '../../carddav/navigation';
   import type { SavedAppearance } from '../../theme/preferences.svelte';
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
-  import { accountRequest, type AccountDraft, type CardDAVAccountValues } from '../../carddav/account-settings';
   import { runOperationAction } from '../../operations/actions';
   import { pendingSecret } from '../../settings/secrets';
   import type { SearchCoverageValue } from '../../search/modes';
   import {
-    providerUpdate,
     isChange,
     isIncompleteNumber,
     persistedValue,
@@ -65,6 +59,7 @@
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
   type CredentialResponse = GeneratedProviderCredentialResponse;
   type SettingsDocument = GeneratedSettingsResponse;
+  const OWN_SAVE_NOTE = 'These save immediately when you use their buttons — not with Save changes.';
 
   let {
     client,
@@ -96,12 +91,6 @@
   let credentialETag = $state('');
   let drafts = $state<Record<string, unknown>>({});
   let secretUpdates = $state<Record<string, SecretUpdate>>({});
-  // Keys for provider credentials wait here, keyed by credential id, until Save changes.
-  let credentialUpdates = $state<Record<string, SecretUpdate>>({});
-  let providerDrafts = $state<Record<string, ProviderSetting>>({});
-  let accountDrafts = $state<Record<string, AccountDraft>>({});
-  // Each saved account as the server acknowledged it, shown while connection summaries can't load.
-  let savedAccounts = $state<Record<string, CardDAVAccountValues>>({});
   const inference = new PeopleInferenceController(untrack(() => client), () => loadSettings(true));
   onDestroy(() => inference.destroy());
   let pendingRestart = $state(false);
@@ -109,7 +98,7 @@
   let loaded = $state(false);
   let saving = $state(false);
   let error = $state('');
-  let accountSaveStatus = $state('');
+  let buildError = $state('');
   let activeCategory = $state(untrack(() => category));
   let root = $state<HTMLElement>();
   let embeddingStatus = $state<EmbeddingStatus>();
@@ -124,19 +113,10 @@
   const categories: SettingsCategory[] = RAIL.map(({ id, label }) => ({ id, label }));
   const label = $derived(categories.find((candidate) => candidate.id === activeCategory)?.label ?? '');
   const layout = $derived(layoutCategory(activeCategory as CategoryID, settings, groups));
-  const dirtyCount = $derived(
-    Object.keys(drafts).length +
-      Object.keys(secretUpdates).length +
-      Object.keys(credentialUpdates).length +
-      Object.keys(providerDrafts).length + Object.keys(accountDrafts).length + Object.keys(inference.keyDrafts).length,
-  );
-  const invalidAccount = $derived(Object.entries(accountDrafts).find(([, draft]) => draft.error));
+  const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
   // An emptied number field is a draft in progress, not a value: it keeps the
   // row on, cannot be saved, and never stands in for the off value.
-  const incompleteDrafts = $derived(
-    Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length +
-    Object.values(providerDrafts).filter(provider => [provider.max_retries, provider.max_requests_per_run, provider.max_requests_per_day, provider.num_results].some(value => String(value) === '')).length,
-  );
+  const incompleteDrafts = $derived(Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length);
   const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus, coverage));
 
   onMount(() => {
@@ -190,11 +170,11 @@
   async function build(id: string, run: () => Promise<void>): Promise<void> {
     if (building[id]) return;
     building[id] = true;
-    error = '';
+    buildError = '';
     try {
       await run();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Can't build the index.";
+      buildError = cause instanceof Error ? cause.message : "Can't build the index.";
     } finally {
       delete building[id];
       statusRevision += 1;
@@ -286,18 +266,10 @@
   }
   // After a reload that keeps local edits, drop the ones the daemon already
   // holds: a draft equal to the new persisted value, or a clear for a secret
-  // that is no longer configured or a provider key that is no longer stored.
+  // that is no longer configured.
   function pruneSettledDrafts() {
     drafts = Object.fromEntries(Object.entries(drafts).filter(([key, value]) => isChange(find(key), value)));
     secretUpdates = Object.fromEntries(Object.entries(secretUpdates).filter(([key, update]) => update.action === 'set' || find(key)?.secret?.configured));
-    credentialUpdates = Object.fromEntries(Object.entries(credentialUpdates).filter(([id, update]) => {
-      const source = (settings.find((setting) => setting.credential_id === id)?.secret ?? providers.find((provider) => provider.credential_id === id)?.credential)?.source;
-      return update.action === 'set' || !source || source === 'stored';
-    }));
-  }
-  function setCredential(id: string, update: SecretUpdate | undefined) {
-    if (update) credentialUpdates[id] = update;
-    else delete credentialUpdates[id];
   }
   function setSecret(setting: SettingState, value: string) {
     secretUpdates = { ...secretUpdates, [setting.key]: { action: 'set', value } };
@@ -313,10 +285,6 @@
   function discardChanges() {
     drafts = {};
     secretUpdates = {};
-    credentialUpdates = {};
-    providerDrafts = {};
-    accountDrafts = {};
-    inference.keyDrafts = {};
   }
   // The save bar takes the focused button with it, so focus moves to the
   // category heading.
@@ -326,13 +294,10 @@
   }
   function discard() {
     discardChanges();
-    resetKey += 1;
     void focusCategoryHeading();
   }
-  let resetKey = $state(0);
   function isDirty(key: string): boolean {
-    const credentialID = find(key)?.credential_id;
-    return key in drafts || key in secretUpdates || Boolean(credentialID && credentialUpdates[credentialID]);
+    return key in drafts || key in secretUpdates;
   }
 
   const APPEARANCE_FIELDS: Readonly<Record<string, keyof SavedAppearance>> = {
@@ -350,117 +315,42 @@
     return Object.keys(result).length > 0 ? result : undefined;
   }
 
-  // Endpoints save before credentials, which bind to their saved destination.
   async function saveSettings() {
     if (saving || inference.busy || dirtyCount === 0) return;
-    function credentialEndpoint(id: string): unknown {
-      const setting = find(`${id}.endpoint`);
-      return setting ? persistedValue(setting) : providers.find(provider => provider.credential_id === id)?.endpoint;
-    }
-    async function reloadAfterConflict(): Promise<string> {
-      const endpoints = new Map(Object.keys(credentialUpdates).map(id => [id, credentialEndpoint(id)]));
-      await loadSettings(true);
-      let droppedKey = false;
-      credentialUpdates = Object.fromEntries(Object.entries(credentialUpdates).filter(([id, update]) => {
-        if (update.action !== 'set' || endpoints.get(id) === credentialEndpoint(id)) return true;
-        droppedKey = true;
-        return false;
-      }));
-      return droppedKey ? ' Enter keys again for providers whose endpoint changed.' : '';
-    }
     const updates: SettingUpdate[] = [
       ...Object.entries(drafts)
         .filter(([key]) => !find(key)?.read_only)
         .map(([key, value]) => ({ key, value: typedValue(find(key), value) })),
       ...Object.entries(secretUpdates).map(([key, secret]) => ({ key, secret })),
     ];
-    async function saveProviders(enabled: boolean) {
-      for (const [name, draft] of Object.entries(providerDrafts)) {
-        if (draft.enabled !== enabled) continue;
-        const result = await putSettingsPersonEnrichmentProvider({ name }, providerUpdate(draft), { ...client, headers: { 'If-Match': etag } });
-        if (!result.data) {
-          if (result.response.status === 412) {
-            const keyMessage = await reloadAfterConflict();
-            throw new Error(`${name}: ${apiErrorMessage(result.error, "Can't save this provider.")}${keyMessage}`);
-          }
-          throw new Error(`${name}: ${apiErrorMessage(result.error, "Can't save this provider.")}`);
-        }
-        providerSaved(result.data, result.response.headers.get('ETag') ?? etag);
-        delete providerDrafts[name];
-      }
-    }
     saving = true;
     error = '';
-    accountSaveStatus = '';
     try {
-      await saveProviders(true);
-      if (updates.length > 0) {
-        const {
-          data: result,
-          error: responseError,
-          response,
-        } = await generatedPatchSettings({ updates }, { ...client, headers: { 'If-Match': etag } });
-        if (response.status === 412) {
-          const keyMessage = await reloadAfterConflict();
-          error = `The settings changed on disk. The latest are loaded. Review your changes and save again.${keyMessage}`;
-          if (dirtyCount === 0) void focusCategoryHeading();
-          return;
-        }
-        if (!result) {
-          error = apiErrorMessage(responseError, "Can't save settings.");
-          return;
-        }
-        settings = result.settings;
-        providers = result.person_enrichment_providers ?? providers;
-        pendingRestart = result.pending_restart;
-        etag = response.headers.get('ETag') ?? etag;
-        inference.updateConfigRevision(etag);
-        credentialETag = response.headers.get('Credential-ETag') ?? result.credential_etag ?? credentialETag;
-        drafts = {};
-        secretUpdates = {};
-        const appearance = savedAppearance(result.settings, new Set(updates.map(({ key }) => key)));
-        if (appearance) onAppearanceSaved(appearance);
-      }
-      await saveProviders(false);
-      pruneSettledDrafts();
-      for (const [credentialID, update] of Object.entries(credentialUpdates)) {
-        const options = { ...client, headers: { 'If-Match': credentialETag } };
-        const {
-          data,
-          error: responseError,
-          response,
-        } = update.action === 'set'
-          ? await generatedPutSettingsProviderCredential({ credentialId: credentialID }, { value: update.value }, options)
-          : await generatedDeleteSettingsProviderCredential({ credentialId: credentialID }, options);
-        if (response.status === 412) {
-          const keyMessage = await reloadAfterConflict();
-          error = `The key changed elsewhere. The latest is loaded. Review your changes and save again.${keyMessage}`;
-          return;
-        }
-        if (!data) {
-          error = apiErrorMessage(responseError, "Can't save the key.");
-          return;
-        }
-        credentialSaved(data, response.headers.get('ETag') ?? credentialETag);
-        const next = { ...credentialUpdates };
-        delete next[credentialID];
-        credentialUpdates = next;
-      }
-      for (const [name, draft] of Object.entries(accountDrafts)) {
-        const result = await saveCardDAVAccount(accountRequest(draft.values, draft.password, name), client);
-        if (!result.data) throw new Error(apiErrorMessage(result.error, "Can't save the contact account."));
-        accountSaveStatus = `Contact account ${name} saved. Found ${result.data.books} address ${result.data.books === 1 ? 'book' : 'books'}.`;
-        savedAccounts[name] = { provider: result.data.provider ?? '', oauthApp: result.data.oauth_app ?? '', baseURL: result.data.base_url, username: result.data.username, passwordConfigured: draft.values.passwordConfigured || draft.password !== '', enabled: result.data.enabled, schedule: result.data.schedule ?? '' };
+      const {
+        data: result,
+        error: responseError,
+        response,
+      } = await generatedPatchSettings({ updates }, { ...client, headers: { 'If-Match': etag } });
+      if (response.status === 412) {
         await loadSettings(true);
-        delete accountDrafts[name];
-        resetKey += 1;
+        error = 'The settings changed on disk. The latest are loaded. Review your changes and save again.';
+        if (dirtyCount === 0) void focusCategoryHeading();
+        return;
       }
-      if (!(await inference.saveKeys())) {
-        const message = inference.error;
-        inference.error = '';
-        throw new Error(message);
+      if (!result) {
+        error = apiErrorMessage(responseError, "Can't save settings.");
+        return;
       }
+      settings = result.settings;
+      providers = result.person_enrichment_providers ?? providers;
+      pendingRestart = result.pending_restart;
+      etag = response.headers.get('ETag') ?? etag;
+      inference.updateConfigRevision(etag);
+      credentialETag = response.headers.get('Credential-ETag') ?? result.credential_etag ?? credentialETag;
+      discardChanges();
       void focusCategoryHeading();
+      const appearance = savedAppearance(result.settings, new Set(updates.map(({ key }) => key)));
+      if (appearance) onAppearanceSaved(appearance);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Can't save settings.";
     } finally {
@@ -484,7 +374,10 @@
     providers = providers.map((provider) =>
       provider.credential_id === response.credential_id ? { ...provider, credential: response.state } : provider,
     );
-
+  }
+  // A credential binds to its saved endpoint, so an unsaved endpoint blocks it.
+  function credentialDisabledReason(credentialID: string): string {
+    return Object.hasOwn(drafts, `${credentialID}.endpoint`) ? 'Save endpoint settings first before changing this credential.' : '';
   }
   function providerSaved(document: SettingsDocument, nextETag: string) {
     settings = document.settings;
@@ -493,12 +386,6 @@
     etag = nextETag;
     inference.updateConfigRevision(etag);
     credentialETag = document.credential_etag || credentialETag;
-
-  }
-  function setProviderDraft(value: ProviderSetting) {
-    const saved = providers.find(provider => provider.name === value.name);
-    if (saved && JSON.stringify(providerUpdate(saved)) === JSON.stringify(providerUpdate(value))) delete providerDrafts[value.name];
-    else providerDrafts = { ...providerDrafts, [value.name]: value };
   }
   function rowLabel(setting: SettingState): string {
     if (Object.hasOwn(LABELS, setting.key)) return LABELS[setting.key]!;
@@ -536,11 +423,10 @@
 {#snippet settingsFooter()}
   <span class="unsaved" role="status">
     {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : ''}`}
-    {#if invalidAccount}<br /><span>{invalidAccount[0]}: {invalidAccount[1].error}</span>{/if}
   </span>
   <Button label="Discard" disabled={saving} onclick={discard} />
   <Button
-    disabled={saving || inference.busy || incompleteDrafts > 0 || Boolean(invalidAccount)}
+    disabled={saving || inference.busy || incompleteDrafts > 0}
     tone="info"
     surface="solid"
     label={saving ? 'Saving…' : 'Save changes'}
@@ -569,7 +455,17 @@
         {#if setting.kind === 'secret'}
           {@const shown = pendingSecret(setting.secret, secretUpdates[setting.key])}
           {#if setting.credential_id}
-            <ProviderCredentialControl label={text} credentialState={setting.secret} pending={credentialUpdates[setting.credential_id]} onchange={(update) => setCredential(setting.credential_id!, update)} />
+            <ProviderCredentialControl
+              {client}
+              credentialID={setting.credential_id}
+              label={text}
+              credentialState={setting.secret}
+              {credentialETag}
+              disabledReason={credentialDisabledReason(setting.credential_id)}
+              restartRequired={Boolean(setting.restart_required)}
+              onSaved={credentialSaved}
+              onConflict={() => loadSettings(true)}
+            />
           {:else}
           <SecretField
             label={text}
@@ -577,6 +473,7 @@
             hint={shown.hint}
             source={setting.secret?.source}
             disabled={setting.secret?.source === 'environment'}
+            applyNote="Applied when you save changes."
             onreplace={(value) => {
               setSecret(setting, value);
               return true;
@@ -609,6 +506,7 @@
       {#if block.description}<p class="setting__hint">{block.description}</p>{/if}
       {#each block.rows as row, rowIndex (rowIndex)}
         {@const fields = rowFields(row)}
+        {#if fields.some(setting => setting.kind === 'secret' && setting.credential_id)}<p class="own-save">{OWN_SAVE_NOTE}</p>{/if}
         {#if fields.length > 0}
           <div class="fields" class:fields--pair={fields.length > 1}>
             {#each fields as setting (setting.key)}{@render control(setting)}{/each}
@@ -639,7 +537,7 @@
       {categories}
       bind:active={() => activeCategory, selectCategory}
       title=""
-      footer={dirtyCount === 0 ? undefined : settingsFooter}
+      footer={activeCategory === 'carddav' || dirtyCount === 0 ? undefined : settingsFooter}
     >
       {#snippet panel(activeId)}
         <div class="notices">
@@ -647,7 +545,7 @@
             <Notice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
-          {#if accountSaveStatus}<p class="notice" role="status">{accountSaveStatus}</p>{/if}
+          {#if buildError}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
           {#if pendingRestart}
             <p class="notice notice--pending" role="status">Saved. Restart msgvault to apply these changes.</p>
           {/if}
@@ -665,14 +563,13 @@
             <SettingsOverview {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'carddav'}
+          <p class="own-save">{OWN_SAVE_NOTE}</p>
           <CardDAVSettingsWorkspace
-            resetRevision={resetKey}
             {client}
             {settings}
-            bind:drafts={accountDrafts}
-            saved={savedAccounts}
             {cardDAVRequest}
             {onCardDAVRequestConsumed}
+            onSettingsRefresh={() => loadSettings(true)}
           />
         {:else}
           {@render blocks(layout.blocks)}
@@ -680,9 +577,19 @@
           {#if activeId === 'enrichment'}
             <section class="block" aria-label="Providers">
               <h3>Providers</h3>
+              <p class="own-save">{OWN_SAVE_NOTE}</p>
               <div class="provider-list">
                 {#each providers as provider (provider.name)}
-                  <PersonEnrichmentProviderCard {provider} draft={(Object.hasOwn(providerDrafts, provider.name) ? providerDrafts[provider.name] : undefined) ?? provider} pendingKey={credentialUpdates[provider.credential_id]} onchange={setProviderDraft} onkey={(update) => setCredential(provider.credential_id, update)} />
+                  <PersonEnrichmentProviderCard
+                    {client}
+                    {provider}
+                    configETag={etag}
+                    {credentialETag}
+                    onSaved={providerSaved}
+                    onConfigConflict={() => loadSettings(true)}
+                    onCredentialSaved={credentialSaved}
+                    onCredentialConflict={() => loadSettings(true)}
+                  />
                 {/each}
                 <div class="provider-add">
                   {#each ['exa', 'sixtyfour'] as kind (kind)}
@@ -915,6 +822,11 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--control-gap);
+  }
+  .own-save {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
   .unsaved {
     margin-right: auto;
