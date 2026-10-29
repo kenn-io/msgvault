@@ -948,6 +948,264 @@ func TestImportRetriesChatAfterDeferredReplyFailure(t *testing.T) {
 	assert.Equal("7000000000000555555:2", parentSrc, "the retried pass links the reply")
 }
 
+// TestImportRetryWithoutCheckpointRestoresAttachment pins that attachment
+// recovery does not depend on checkpoint state: a run that failed after
+// the message committed but before any checkpoint — the chat never
+// completed and the mid-chat interval never fired — must still have its
+// deferred attachment restored by the next ordinary, non-resumed run.
+func TestImportRetryWithoutCheckpointRestoresAttachment(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Media Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"photo": "photos/photo_1.jpg", "text": "",
+		},
+	})
+	require.NoError(os.MkdirAll(filepath.Join(root, "photos"), 0o755))
+	require.NoError(os.WriteFile(
+		filepath.Join(root, "photos", "photo_1.jpg"), []byte("photo-bytes"), 0o644))
+
+	remove := failAttachmentInserts(t, st)
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(err, "the deferred attachment failure fails the run")
+	remove()
+
+	// No failSyncAt: the failed run left no checkpoint, so the retry is
+	// an ordinary fresh scan, not a resume.
+	summary := importRoot(t, st, root)
+	assert.False(summary.WasResumed, "no checkpoint exists to resume")
+	assert.EqualValues(1, summary.MessagesSkipped, "the committed message is skipped")
+	path, hash := attachmentRow(t, st, "7000000000000555555:1")
+	assert.NotEmpty(path, "the ordinary re-run restores the deferred attachment")
+	assert.NotEmpty(hash)
+}
+
+// failSenderResolution installs a database trigger that fails the
+// participant-identifier insert for one Telegram user, so sender
+// resolution for that user's messages errors. The returned func removes
+// it.
+func failSenderResolution(t *testing.T, st *store.Store, identifier string) func() {
+	t.Helper()
+	create := `CREATE TRIGGER fail_sender_resolution BEFORE INSERT ON participant_identifiers
+WHEN NEW.identifier_value = '` + identifier + `'
+BEGIN SELECT RAISE(ABORT, 'injected sender failure'); END`
+	drop := `DROP TRIGGER IF EXISTS fail_sender_resolution`
+	if st.IsPostgreSQL() {
+		create = `CREATE FUNCTION fail_sender_resolution() RETURNS trigger AS $$
+BEGIN
+	IF NEW.identifier_value = '` + identifier + `' THEN
+		RAISE EXCEPTION 'injected sender failure';
+	END IF;
+	RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER fail_sender_resolution BEFORE INSERT ON participant_identifiers
+FOR EACH ROW EXECUTE FUNCTION fail_sender_resolution()`
+		drop = `DROP TRIGGER IF EXISTS fail_sender_resolution ON participant_identifiers; DROP FUNCTION IF EXISTS fail_sender_resolution()`
+	}
+	_, err := st.DB().Exec(create)
+	require.NoError(t, err)
+	return func() {
+		_, err := st.DB().Exec(drop)
+		require.NoError(t, err)
+	}
+}
+
+// TestImportSenderFailureIsNotPermanent pins that a recoverable sender
+// resolution error is never turned into a permanent NULL sender: the chat
+// aborts before the message commits, so the retry resolves the sender and
+// archives the message whole.
+func TestImportSenderFailureIsNotPermanent(t *testing.T) {
+	st := testutil.NewTestStore(t)
+
+	root := writeChatExport(t, t.TempDir(), "private_group", "Sender Group", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"text": "from alice",
+		},
+	})
+
+	remove := failSenderResolution(t, st, "7000000000000555555")
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(t, err, "a sender resolution failure fails the chat")
+	assert.Contains(t, err.Error(), "resolve sender")
+	var committed int
+	require.NoError(t, st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&committed))
+	assert.Zero(t, committed, "no message commits with an unresolved sender")
+
+	remove()
+	importRoot(t, st, root)
+
+	alicePID, _, err := st.ParticipantByIdentifier("telegram", "7000000000000555555")
+	require.NoError(t, err)
+	var sender sql.NullInt64
+	require.NoError(t, st.DB().QueryRow(`
+		SELECT sender_id FROM messages WHERE source_message_id = '7000000000000555555:1'`).Scan(&sender))
+	assert.True(t, sender.Valid, "the retried chat archives the message with its sender")
+	assert.Equal(t, alicePID, sender.Int64)
+	var fromPID int64
+	require.NoError(t, st.DB().QueryRow(`
+		SELECT mr.participant_id FROM message_recipients mr
+		JOIN messages m ON m.id = mr.message_id
+		WHERE m.source_message_id = '7000000000000555555:1'
+		  AND mr.recipient_type = 'from'`).Scan(&fromPID))
+	assert.Equal(t, alicePID, fromPID, "the retried message records its from recipient")
+}
+
+// failCheckpointWrites installs a database trigger that fails checkpoint
+// persistence only — sync_runs updates that write a new cursor_before —
+// while the sync-generation fence, completion, and failure updates keep
+// succeeding. The returned func removes it.
+func failCheckpointWrites(t *testing.T, st *store.Store) func() {
+	t.Helper()
+	create := `CREATE TRIGGER fail_checkpoint_writes BEFORE UPDATE ON sync_runs
+WHEN NEW.cursor_before IS NOT NULL AND NEW.cursor_before != COALESCE(OLD.cursor_before, '')
+BEGIN SELECT RAISE(ABORT, 'injected checkpoint failure'); END`
+	drop := `DROP TRIGGER IF EXISTS fail_checkpoint_writes`
+	if st.IsPostgreSQL() {
+		create = `CREATE FUNCTION fail_checkpoint_writes() RETURNS trigger AS $$
+BEGIN
+	IF NEW.cursor_before IS DISTINCT FROM OLD.cursor_before THEN
+		RAISE EXCEPTION 'injected checkpoint failure';
+	END IF;
+	RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER fail_checkpoint_writes BEFORE UPDATE ON sync_runs
+FOR EACH ROW EXECUTE FUNCTION fail_checkpoint_writes()`
+		drop = `DROP TRIGGER IF EXISTS fail_checkpoint_writes ON sync_runs; DROP FUNCTION IF EXISTS fail_checkpoint_writes()`
+	}
+	_, err := st.DB().Exec(create)
+	require.NoError(t, err)
+	return func() {
+		_, err := st.DB().Exec(drop)
+		require.NoError(t, err)
+	}
+}
+
+// TestImportCheckpointFailureFailsRun pins that checkpoint-write errors
+// reach the caller: a run whose progress could not persist must fail —
+// at the mid-chat interval and after a chat completes — instead of
+// leaving a silently unresumable import.
+func TestImportCheckpointFailureFailsRun(t *testing.T) {
+	messages := []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555", "text": "one",
+		},
+		{
+			"id": 2, "type": "message", "date_unixtime": "1610909810",
+			"from": "Alice Example", "from_id": "user7000000000000555555", "text": "two",
+		},
+	}
+	for _, tc := range []struct {
+		name    string
+		options func(*ImportOptions)
+	}{
+		{name: "mid-chat interval", options: func(o *ImportOptions) { o.CheckpointEvery = 1 }},
+		{name: "after chat completes", options: func(o *ImportOptions) {}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := writeChatExport(t, t.TempDir(), "personal_chat", "Chat", messages)
+
+			remove := failCheckpointWrites(t, st)
+			opts := ImportOptions{RootDir: root, AttachmentsDir: t.TempDir()}
+			tc.options(&opts)
+			_, err := Import(context.Background(), st, opts)
+			remove()
+			require.Error(t, err, "a checkpoint that did not persist fails the run")
+			assert.Contains(t, err.Error(), "checkpoint")
+
+			// With the trigger gone the same export imports clean.
+			summary := importRoot(t, st, root)
+			var count int
+			require.NoError(t, st.DB().QueryRow(
+				`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&count))
+			assert.Equal(t, 2, count)
+			assert.False(t, summary.WasResumed, "no checkpoint was ever persisted")
+		})
+	}
+}
+
+// TestImportAudioTitleDoesNotReplaceFilename pins the source-field
+// semantics: Telegram documents a file's title as the music title, so it
+// must not become the attachment's storage filename. The export's
+// file_name wins when present; otherwise the storage basename keeps the
+// extension.
+func TestImportAudioTitleDoesNotReplaceFilename(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Music Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"file": "music/song_1.mp3", "media_type": "audio_file",
+			"title": "A Song Title", "performer": "An Artist", "text": "",
+		},
+		{
+			"id": 2, "type": "message", "date_unixtime": "1610909810",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"file": "music/song_2.mp3", "file_name": "Shared Recording.mp3",
+			"media_type": "audio_file", "title": "Another Title", "text": "",
+		},
+	})
+	require.NoError(os.MkdirAll(filepath.Join(root, "music"), 0o755))
+	require.NoError(os.WriteFile(filepath.Join(root, "music", "song_1.mp3"), []byte("one"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(root, "music", "song_2.mp3"), []byte("two"), 0o644))
+	importRoot(t, st, root)
+
+	filenameFor := func(sourceMessageID string) string {
+		var filename string
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT a.filename FROM attachments a
+			JOIN messages m ON m.id = a.message_id
+			WHERE m.source_message_id = ?`), sourceMessageID).Scan(&filename))
+		return filename
+	}
+	assert.Equal("song_1.mp3", filenameFor("7000000000000555555:1"),
+		"the storage basename keeps the extension when file_name is absent")
+	assert.Equal("Shared Recording.mp3", filenameFor("7000000000000555555:2"),
+		"the export's file_name stays authoritative")
+}
+
+// TestImportMalformedPersonalChatErrors pins the chat-id peer derivation
+// exactly: a personal or bot chat whose id is not a peer user id is
+// malformed and fails the chat, rather than guessing a peer from message
+// senders.
+func TestImportMalformedPersonalChatErrors(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Malformed Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555", "text": "hello",
+		},
+	})
+	doc := loadFullExport(t, root)
+	doc.Chats.List[0].ID = -1001234567890
+	saveFullExport(t, root, doc)
+
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(t, err, "a personal chat without a peer user id is malformed")
+	assert.Contains(t, err.Error(), "carries no peer user id")
+
+	var count int
+	require.NoError(t, st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&count))
+	assert.Zero(t, count, "the malformed chat commits nothing")
+}
+
 // TestImportErrorRefreshesCompletedChatStats pins derived state on the
 // error path: a chat committed earlier in the run carries fresh stats even
 // when a later malformed chat fails the whole run.

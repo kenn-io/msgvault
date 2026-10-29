@@ -346,6 +346,10 @@ pass to the command.
 msgvault import-telegram <export-dir>
 ```
 
+The export directory must be readable on the machine running the msgvault
+daemon. With a configured remote, run the import on the daemon host with
+`--local`; msgvault does not upload the export from a client machine.
+
 The exporting user is taken from the export's `personal_information`
 section. Pass `--me <numeric-id>` to override it; single-chat exports do not
 identify the owner, so they require `--me`.
@@ -368,10 +372,11 @@ fresh.
 Each message is stored atomically — the message row, body, recipients, edit
 marker, and search entry commit in one transaction — so an interruption can
 only lose whole messages, never leave one half-written. Attachments and
-reply links are written right after that commit inside their chat; when one
-of those writes fails, the run stops without marking the chat complete and
-the next run reprocesses that whole chat, filling only links still empty.
-Values already stored are never overwritten.
+reply links are written right after that commit inside their chat. Any
+later run restores what an interruption left behind: already-imported
+messages get missing attachment rows re-created from the export and reply
+links filled only where empty. Values already stored are never
+overwritten.
 
 ### Flags
 

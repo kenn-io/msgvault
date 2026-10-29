@@ -82,8 +82,8 @@ type ImportSummary struct {
 // new message persists atomically — row, body, recipients, edited flag,
 // and search document in one transaction — so an interruption can only
 // lose whole messages, never leave one half-written. Attachments and
-// reply links follow the commit inside their chat; a failure there fails
-// the chat, which checkpoint resume then reprocesses whole.
+// reply links follow the commit inside their chat; the next run —
+// resumed or not — restores what an interruption left behind.
 func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
 	start := time.Now()
 	summary := &ImportSummary{}
@@ -212,11 +212,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 		if completed[chat.ID] {
 			continue
 		}
-		// A resumed run reprocesses every chat the checkpoint does not
-		// name as complete, so media rows an interruption cost are
-		// re-ensured for already-archived messages of those chats.
-		ensureMedia := summary.WasResumed
-		if err := importChat(ctx, st, resolver, source.ID, ownerID, ownerPID, ownerName, absRoot, chat, export.Fingerprint(), completed, ensureMedia, opts, logger, &cp, syncID, summary); err != nil {
+		if err := importChat(ctx, st, resolver, source.ID, ownerID, ownerPID, ownerName, absRoot, chat, export.Fingerprint(), completed, opts, logger, &cp, syncID, summary); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				syncErr = err
 				return summary, err
@@ -231,7 +227,12 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 		}
 		completed[chat.ID] = true
 		if !opts.NoResume {
-			_ = saveCheckpoint(st, syncID, absRoot, export.Fingerprint(), completed, &cp, summary)
+			if err := saveCheckpoint(st, syncID, absRoot, export.Fingerprint(), completed, &cp, summary); err != nil {
+				// A checkpoint that did not persist means a later
+				// interruption cannot resume; the caller must hear it.
+				syncErr = fmt.Errorf("telegram: save checkpoint: %w", err)
+				return summary, syncErr
+			}
 		}
 	}
 
@@ -255,9 +256,8 @@ type pendingReply struct {
 
 // importChat imports one chat append-only. A message the archive already
 // carries is skipped as a new write; its reply link is still filled when
-// absent, and a resumed run re-ensures its attachment rows, whose
-// byte-identical export makes the preserving upsert a no-op except for
-// rows an interruption lost.
+// absent, and its attachment rows are re-ensured, which makes the
+// preserving upsert a no-op except for rows an interruption lost.
 func importChat(
 	ctx context.Context,
 	st *store.Store,
@@ -267,7 +267,6 @@ func importChat(
 	chat *Chat,
 	fingerprint string,
 	completed map[int64]bool,
-	ensureMedia bool,
 	opts ImportOptions,
 	logger *slog.Logger,
 	cp *store.Checkpoint,
@@ -279,12 +278,23 @@ func importChat(
 		return fmt.Errorf("ensure conversation: %w", err)
 	}
 	summary.ChatsProcessed++
-	_ = st.EnsureConversationParticipant(convID, ownerPID, "member")
+	if err := st.EnsureConversationParticipant(convID, ownerPID, "member"); err != nil {
+		return fmt.Errorf("ensure owner membership: %w", err)
+	}
 
 	// In a personal or bot chat the export determines each message's
-	// "to" recipient: the chat's other participant.
+	// "to" recipient: the chat's other participant. The peer resolves
+	// before any message commits, so a chat whose peer cannot resolve
+	// fails whole instead of committing recipient-less messages.
 	direct := chat.Type == chatTypePersonalChat || chat.Type == chatTypeBotChat
-	peerPID, peerName := directPeer(ctx, resolver, ownerID, chat, logger)
+	var peerPID int64
+	var peerName string
+	if direct {
+		peerPID, peerName, err = directPeer(ctx, resolver, chat)
+		if err != nil {
+			return fmt.Errorf("resolve chat peer: %w", err)
+		}
+	}
 
 	// One batched lookup decides what this run may import: a message the
 	// archive already carries is skipped whole. Every archived message of
@@ -331,10 +341,13 @@ func importChat(
 		if existed {
 			summary.MessagesSkipped++
 			replyOf(m)
-			if ensureMedia {
-				if err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, opts, logger, summary); err != nil {
-					return fmt.Errorf("re-ensure attachments for %s: %w", srcMsgID, err)
-				}
+			// Attachment recovery must not depend on checkpoint state:
+			// a failure or interruption after the message commit but
+			// before the first checkpoint leaves the attachment absent,
+			// and this ordinary run is the next run. The preserving
+			// upsert is a no-op for rows that are present.
+			if err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, opts, logger, summary); err != nil {
+				return fmt.Errorf("re-ensure attachments for %s: %w", srcMsgID, err)
 			}
 			continue
 		}
@@ -342,13 +355,19 @@ func importChat(
 		senderID := sql.NullInt64{}
 		isFromMe := false
 		if m.FromID != "" {
+			// A sender that cannot resolve fails the chat before the
+			// message commits: append-only skipping would otherwise
+			// make the NULL sender permanent on the next run.
 			pid, isOwner, err := resolver.chatMember(ctx, ownerID, ownerPID, m)
 			if err != nil {
-				logger.Warn("telegram: resolve sender", "sender", m.FromID, "err", err)
-			} else if pid != 0 {
+				return fmt.Errorf("resolve sender for %s: %w", srcMsgID, err)
+			}
+			if pid != 0 {
 				senderID = sql.NullInt64{Int64: pid, Valid: true}
 				isFromMe = isOwner
-				_ = st.EnsureConversationParticipant(convID, pid, "member")
+				if err := st.EnsureConversationParticipant(convID, pid, "member"); err != nil {
+					return fmt.Errorf("ensure sender membership for %s: %w", srcMsgID, err)
+				}
 			}
 		}
 		if isFromMe {
@@ -394,7 +413,7 @@ func importChat(
 
 		// Attachments and their stats are deferred writes that follow the
 		// atomic commit. A failure fails the chat — it is never marked
-		// complete — so checkpoint resume reprocesses it whole.
+		// complete — so the next run reprocesses it whole.
 		if err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, opts, logger, summary); err != nil {
 			return fmt.Errorf("store attachments for %s: %w", srcMsgID, err)
 		}
@@ -407,8 +426,12 @@ func importChat(
 		if !opts.NoResume && summary.MessagesProcessed > 0 &&
 			summary.MessagesProcessed%int64(opts.CheckpointEvery) == 0 {
 			// The in-progress chat is deliberately absent: a resume
-			// reprocesses it from the start.
-			_ = saveCheckpoint(st, syncID, absRoot, fingerprint, completed, cp, summary)
+			// reprocesses it from the start. A checkpoint that fails to
+			// persist fails the chat — a later interruption could not
+			// resume.
+			if err := saveCheckpoint(st, syncID, absRoot, fingerprint, completed, cp, summary); err != nil {
+				return fmt.Errorf("save checkpoint: %w", err)
+			}
 		}
 	}
 
@@ -430,42 +453,21 @@ func importChat(
 // directPeer resolves the other participant of a personal or bot chat.
 // The identity comes from stable chat metadata — in both chat types the
 // export's chat id is the peer's own user id — so an outgoing-only export
-// still names its recipient. The first non-owner user the messages reveal
-// is only a fallback for an export that does not follow that shape. Zero
-// means the export names no peer.
+// still names its recipient. A chat without that shape is malformed and
+// errors rather than guessing a peer from message senders.
 func directPeer(
 	ctx context.Context,
 	resolver *participantResolver,
-	ownerID int64,
 	chat *Chat,
-	logger *slog.Logger,
-) (int64, string) {
-	if chat.ID > 0 {
-		pid, err := resolver.resolve(ctx, "user"+strconv.FormatInt(chat.ID, 10), chat.Name)
-		if err != nil {
-			logger.Warn("telegram: resolve peer from chat id", "chat", chat.ID, "err", err)
-		} else if pid != 0 {
-			return pid, chat.Name
-		}
+) (int64, string, error) {
+	if chat.ID <= 0 {
+		return 0, "", fmt.Errorf("telegram: %s %d carries no peer user id", chat.Type, chat.ID)
 	}
-	for i := range chat.Messages {
-		m := &chat.Messages[i]
-		if m.Service {
-			continue
-		}
-		if kind, id, ok := parseSenderID(m.FromID); ok && kind == "user" && id != strconv.FormatInt(ownerID, 10) {
-			pid, err := resolver.resolve(ctx, m.FromID, m.FromName)
-			if err != nil {
-				logger.Warn("telegram: resolve peer from messages", "sender", m.FromID, "err", err)
-				break
-			}
-			if pid != 0 {
-				return pid, m.FromName
-			}
-			break
-		}
+	pid, err := resolver.resolve(ctx, "user"+strconv.FormatInt(chat.ID, 10), chat.Name)
+	if err != nil {
+		return 0, "", fmt.Errorf("telegram: resolve %s peer: %w", chat.Type, err)
 	}
-	return 0, ""
+	return pid, chat.Name, nil
 }
 
 // recipientSets builds the recipient rows one message's export entry
@@ -564,8 +566,9 @@ func storeAttachments(
 	return nil
 }
 
-// saveCheckpoint persists the completed-chat set. Errors are returned but
-// the caller logs rather than aborts.
+// saveCheckpoint persists the completed-chat set. An error fails the
+// calling run: without a durable checkpoint, a later interruption cannot
+// resume.
 func saveCheckpoint(
 	st *store.Store, syncID int64,
 	absRoot, fingerprint string,

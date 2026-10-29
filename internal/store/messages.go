@@ -3403,13 +3403,6 @@ func (s *Store) SetReplyToContext(ctx context.Context, sourceID int64, childSour
 	})
 }
 
-// SetReplyToIfMissing links a reply to its parent like SetReplyTo, but
-// only where the child's link is still NULL, so an append-only re-import
-// never rewrites a link an earlier import already wrote.
-func (s *Store) SetReplyToIfMissing(sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
-	return s.SetReplyToIfMissingContext(context.Background(), sourceID, childSourceMessageID, parentSourceMessageID)
-}
-
 // SetReplyToIfMissingContext honors cancellation during
 // SetReplyToIfMissing.
 func (s *Store) SetReplyToIfMissingContext(ctx context.Context, sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
