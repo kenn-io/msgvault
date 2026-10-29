@@ -185,13 +185,9 @@ func writePersonTiersPreview(w io.Writer, preview *store.PersonTierPreview) erro
 }
 
 func writePersonTierExplanation(w io.Writer, e *store.PersonTierExplanation) error {
-	exclusion := e.Exclusion
-	if exclusion == "" {
-		exclusion = "-"
-	}
 	_, err := fmt.Fprintf(w, "Person: %d\nName: %s\nTier: %d\nRule: %s\nExclusion: %s\nTracked: %t\nLast counted: %s\nAs of: %s\nProjection: timezone %s, direct limit %d\n"+
 		"Excluded list messages: %d\nLarge-audience inbound messages: %d\n",
-		e.PersonID, personDisplayName(e.DisplayName), e.Tier, e.Rule, exclusion, e.Tracked,
+		e.PersonID, personDisplayName(e.DisplayName), e.Tier, e.Rule, optionalCLIString(e.Exclusion), e.Tracked,
 		optionalCLIString(e.LastContactDate), e.AsOf, e.Projection.Timezone, e.Projection.MaxDirect,
 		e.Signals.ExcludedListEvents, e.Signals.LargeAudienceInboundEvents)
 	if err != nil {

@@ -62,6 +62,11 @@ msgvault person tiers preview --json \
 person in order. It stops at the first person the daemon rejects, such as a
 deleted profile; the people before it stay tracked.
 
+Agents get the same preview and explanations through the read-only
+`preview_person_tiers` and `explain_person_tier` [MCP tools](/docs/usage/chat/#available-tools)
+and the [HTTP API](/docs/api-server/#get-apiv1peopletiers). Neither tracks
+anyone.
+
 msgvault keeps no record of `person untrack`, so someone you untracked earlier
 shows as untracked here. Read the list and pick the IDs yourself.
 
