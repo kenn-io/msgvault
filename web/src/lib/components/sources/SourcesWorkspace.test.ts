@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { tick } from 'svelte';
+import { tick, type ComponentProps } from 'svelte';
+import { JobsStore } from '../../jobs/jobs.svelte';
+import { OperationsController } from '../../operations/controller.svelte';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { formatDateTime } from '../../util/format';
@@ -8,6 +10,11 @@ import SourcesWorkspace from './SourcesWorkspace.svelte';
 import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, []);
+
+function renderSources(props: Omit<ComponentProps<typeof SourcesWorkspace>, 'loadStatus'>) {
+  const jobs = new JobsStore(props.client, new OperationsController(props.client));
+  return render(SourcesWorkspace, { ...props, loadStatus: (signal, supersede) => jobs.readSources(signal, supersede) });
+}
 
 function source(overrides: Record<string, unknown> = {}) {
   return sourceStatus({
@@ -36,7 +43,7 @@ describe('SourcesWorkspace', () => {
     const client = createCaptureClient(async input => (input as Request).method === 'POST'
       ? Response.json({ message: 'Credentials unavailable' }, { status: 500 })
       : Response.json({ sources: [source({ latest_sync: run('failed', 0) })] }), events);
-    render(SourcesWorkspace, { client });
+    renderSources({ client });
     await screen.findByText('Failed');
     expect(events).toEqual([]);
     for (const count of [1, 2]) {
@@ -55,7 +62,7 @@ describe('SourcesWorkspace', () => {
         can_sync: false, sync_unavailable_reason: 'sync_already_running',
         latest_sync: run('failed', 0, { errors_count: 1, error_message: 'Channel unavailable' }) })
     ] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    renderSources({ client: createAPIClient(fetchFn) });
     expect(await screen.findByText('Queued')).toBeDefined();
     expect(screen.getByText('Failed')).toBeDefined();
     expect(screen.getAllByText('Sync queued')).toHaveLength(2);
@@ -66,7 +73,7 @@ describe('SourcesWorkspace', () => {
 
   it('opens source-sync history from Sync history', async () => {
     const onOpenOperations = vi.fn();
-    render(SourcesWorkspace, {
+    renderSources({
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ sources: [] }))),
       onOpenOperations
     });
@@ -84,7 +91,7 @@ describe('SourcesWorkspace', () => {
       unavailable(4, 'unset@example.com', 'Unset', 'sync_not_configured'),
       unavailable(5, 'other@example.com', 'Other', 'future_reason')
     ] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    renderSources({ client: createAPIClient(fetchFn) });
 
     expect(await screen.findByText('Mbox import · import@example.com')).toBeDefined();
     for (const [text, code] of [
@@ -110,7 +117,7 @@ describe('SourcesWorkspace', () => {
       source({ id: 4, identifier: 'd@example.com', display_name: 'Broken', latest_sync: run('failed', 0) }),
       source({ id: 5, identifier: 'e@example.com', display_name: 'New' })
     ] }));
-    render(SourcesWorkspace, {
+    renderSources({
       client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
     });
 
@@ -131,7 +138,7 @@ describe('SourcesWorkspace', () => {
       source({ display_name: 'Archive', latest_sync: failed, scheduler_last_error: 'Lock timeout' }),
       source({ id: 2, identifier: 'clean@example.com', display_name: 'Clean', latest_sync: run('completed', 1) })
     ] }));
-    render(SourcesWorkspace, {
+    renderSources({
       client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
     });
 
@@ -153,7 +160,7 @@ describe('SourcesWorkspace', () => {
     const failed = run('failed', 1, { completed_at: '2026-07-19T11:30:00Z', error_message: 'Mailbox unavailable' });
     let current = source({ latest_sync: failed });
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [current] }));
-    const { container } = render(SourcesWorkspace, {
+    const { container } = renderSources({
       client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
     });
     await fireEvent.click(await screen.findByRole('button', { name: 'Show details for Archive' }));
@@ -171,7 +178,7 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       scheduled: true, schedule: '0 */6 * * *', next_sync_at: '2026-07-19T18:00:00Z'
     })] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    renderSources({ client: createAPIClient(fetchFn) });
     const summary = await screen.findByText('At :00 past every 6th hour');
     expect(summary.getAttribute('title')).toBe('0 */6 * * *');
     expect(screen.queryByText('0 */6 * * *')).toBeNull();
@@ -183,7 +190,7 @@ describe('SourcesWorkspace', () => {
       source({ id: 2, source_type: 'imap', identifier: 'readonly@example.com', display_name: null,
         can_sync: false, sync_unavailable_reason: 'sync_not_configured' })
     ] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    renderSources({ client: createAPIClient(fetchFn) });
 
     expect(await screen.findByRole('table', { name: 'Source status' })).toBeDefined();
     expect(screen.getByText('Archive')).toBeDefined();
@@ -206,7 +213,7 @@ describe('SourcesWorkspace', () => {
       scheduled: false,
       sync_unavailable_reason: 'source_not_schedulable'
     })] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    renderSources({ client: createAPIClient(fetchFn) });
 
     expect(await screen.findByText('On demand · imported through the API')).toBeDefined();
     expect(screen.getByText('On-demand API source')).toBeDefined();
@@ -226,7 +233,7 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       scheduled: true, schedule: '0 */6 * * *', next_sync_at: '2026-07-19T18:00:00Z', latest_sync: latest
     })] }));
-    render(SourcesWorkspace, {
+    renderSources({
       client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
     });
 
@@ -244,7 +251,7 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       last_successful_sync: run('completed', 4, { completed_at: '2026-07-18T08:15:00Z' })
     })] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    renderSources({ client: createAPIClient(fetchFn) });
 
     expect(await screen.findByTitle(formatDateTime('2026-07-18T08:15:00Z', 'long'))).toBeDefined();
     expect(screen.queryByTitle('2026-07-18T08:15:00Z')).toBeNull();
@@ -254,14 +261,14 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       latest_sync: run('completed', 10, { completed_at: '2026-07-17T11:00:00Z' })
     })] }));
-    render(SourcesWorkspace, {
+    renderSources({
       client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
     });
 
     expect(await screen.findByText('This result may be out of date.')).toBeDefined();
   });
 
-  it('keeps polling through idle status races until the accepted run appears and completes', async () => {
+  it.each(['active', 'latest'])('keeps polling through idle races until the accepted %s run completes', async running => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusReads = 0;
     const requests: Request[] = [];
@@ -272,10 +279,10 @@ describe('SourcesWorkspace', () => {
       statusReads += 1;
       if (statusReads === 1) return Response.json({ sources: [source()] });
       if (statusReads <= 3) return Response.json({ sources: [source()] });
-      if (statusReads === 4) return Response.json({ sources: [source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 5) })] });
+      if (statusReads === 4) return Response.json({ sources: [source({ can_sync: false, sync_unavailable_reason: running === 'active' ? 'sync_already_running' : 'source_not_schedulable', ...(running === 'active' ? { active_sync: run('running', 5) } : { latest_sync: run('running', 5) }) })] });
       return Response.json({ sources: [source({ latest_sync: run('completed', 8, { completed_at: '2026-07-19T10:01:00Z' }) })] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
     expect(requests[1]!.method).toBe('POST');
@@ -286,8 +293,8 @@ describe('SourcesWorkspace', () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(screen.getByText('Awaiting accepted sync run…')).toBeDefined();
     await vi.advanceTimersByTimeAsync(1_000);
-    await waitFor(() => expect(screen.getByText('5 processed')).toBeDefined());
-    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => expect(screen.getByText(running === 'active' ? '5 processed' : 'Syncing')).toBeDefined());
+    await vi.advanceTimersByTimeAsync(running === 'active' ? 500 : 1_000);
     await waitFor(() => expect(screen.getByText('Completed')).toBeDefined());
 
     expect(requests.every((request) => request.headers.get('Accept') !== 'text/event-stream')).toBe(true);
@@ -315,7 +322,7 @@ describe('SourcesWorkspace', () => {
       }
       return Response.json({ sources: [source({ latest_sync: completed() })] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
 
     await screen.findByText('5 processed');
     await vi.advanceTimersByTimeAsync(500);
@@ -354,7 +361,7 @@ describe('SourcesWorkspace', () => {
         latest_sync: run('completed', 7, { id: 10, completed_at: '2026-07-19T10:01:00Z' })
       })] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
     await waitFor(() => expect(statusReads).toBe(2));
@@ -374,7 +381,7 @@ describe('SourcesWorkspace', () => {
       reads += 1;
       return Response.json({ sources: [source()] });
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), maxAwaitingPolls: 3
     });
 
@@ -399,7 +406,7 @@ describe('SourcesWorkspace', () => {
         id: 3, source_type: 'granola', identifier: 'default', display_name: 'Granola'
       })] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Granola' }));
 
@@ -420,7 +427,7 @@ describe('SourcesWorkspace', () => {
       }
       return Response.json({ sources: [source()] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
     expect((await screen.findByRole('alert')).textContent).toContain('already running');
@@ -446,7 +453,7 @@ describe('SourcesWorkspace', () => {
         source({ id: 2, identifier: 'other@example.com', display_name: 'Other' })
       ] }));
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
@@ -474,7 +481,7 @@ describe('SourcesWorkspace', () => {
       if (reads === 1) throw new Error('status endpoint unreachable');
       return Response.json({ sources: [source()] });
     });
-    const rendered = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events, requests) });
+    const rendered = renderSources({ client: createCaptureClient(fetchFn, events, requests) });
 
     expect((await screen.findByRole('alert')).textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
@@ -498,7 +505,7 @@ describe('SourcesWorkspace', () => {
       reads += 1;
       return Response.json(reads === 1 ? { sources: {} } : { sources: [source()] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
 
     expect(await screen.findByRole('alert')).toBeDefined();
     await vi.advanceTimersByTimeAsync(8_000);
@@ -525,7 +532,7 @@ describe('SourcesWorkspace', () => {
         source({ id: 2, identifier: 'ready@example.com', display_name: 'Ready' })
       ] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
 
     await screen.findByText('1 processed');
     await fireEvent.click(screen.getByRole('button', { name: 'Sync now Ready' }));
@@ -553,7 +560,7 @@ describe('SourcesWorkspace', () => {
       }
       return new Promise<Response>(() => undefined);
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
     await screen.findByText('5 processed');
     await vi.advanceTimersByTimeAsync(500);
     await waitFor(() => expect(signals).toHaveLength(2));
@@ -573,7 +580,7 @@ describe('SourcesWorkspace', () => {
         request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
       });
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
@@ -593,7 +600,7 @@ describe('SourcesWorkspace', () => {
         request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
       });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn), requestTimeoutMs: 20 });
+    const rendered = renderSources({ client: createAPIClient(fetchFn), requestTimeoutMs: 20 });
 
     expect(screen.queryByText('Loading source status…')).toBeNull();
     expect(fetchFn).not.toHaveBeenCalled();
@@ -616,7 +623,7 @@ describe('SourcesWorkspace', () => {
         request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
       });
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
@@ -646,7 +653,7 @@ describe('SourcesWorkspace', () => {
         latest_sync: run('completed', 3, { completed_at: '2026-07-19T10:01:00Z' })
       })] }));
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
@@ -666,7 +673,7 @@ describe('SourcesWorkspace', () => {
       if (!resolveOld) resolveOld = resolve;
       else resolveNew = resolve;
     }));
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = renderSources({ client: createAPIClient(fetchFn) });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
 
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
@@ -692,7 +699,7 @@ describe('SourcesWorkspace', () => {
       reads += 1;
       return Response.json({ sources: [held] });
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), maxLockHoldPolls: 3
     });
 
@@ -718,7 +725,7 @@ describe('SourcesWorkspace', () => {
       })] });
       return Response.json({ sources: [held] });
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), maxLockHoldPolls: 2
     });
 
@@ -739,7 +746,7 @@ describe('SourcesWorkspace', () => {
       })] });
       throw new Error('status unavailable');
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), maxLockHoldPolls: 1
     });
 
@@ -765,7 +772,7 @@ describe('SourcesWorkspace', () => {
         request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
       });
     });
-    const rendered = render(SourcesWorkspace, {
+    const rendered = renderSources({
       client: createAPIClient(fetchFn), requestTimeoutMs: 20, maxLockHoldPolls: 3
     });
 
