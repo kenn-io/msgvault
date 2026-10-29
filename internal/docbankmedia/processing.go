@@ -98,5 +98,5 @@ func (c *Client) Profile(ctx context.Context, name string) (ProcessingProfile, e
 			return profile.ProcessingProfile, nil
 		}
 	}
-	return ProcessingProfile{}, fmt.Errorf("document_profile %q is not listed by Docbank", name)
+	return ProcessingProfile{}, fmt.Errorf("profile %q is not listed by Docbank", name)
 }

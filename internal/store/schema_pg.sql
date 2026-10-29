@@ -4244,8 +4244,6 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
  outcome TEXT NOT NULL,
  job_id TEXT NOT NULL,
  next_action_at TIMESTAMPTZ,
- generation INTEGER NOT NULL DEFAULT 0,
- retry BOOLEAN NOT NULL DEFAULT FALSE,
  PRIMARY KEY (destination_key, content_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due

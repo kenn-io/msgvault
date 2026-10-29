@@ -478,14 +478,14 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 		outcomePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(outcomeArgs)), ",")
 		processingArgs := append([]any{processingNow, destination}, outcomeArgs...)
 		if _, err := q.Exec(`UPDATE docbank_attachment_processing
- SET outcome = '', job_id = '', next_action_at = ?, generation = generation + 1, retry = FALSE
+ SET outcome = '', job_id = '', next_action_at = ?
  WHERE destination_key = ? AND (job_id = '' OR outcome IN (`+outcomePlaceholders+`))`, processingArgs...); err != nil {
 			return fmt.Errorf("retry attachment processing: %w", err)
 		}
 		if _, err := q.Exec(`UPDATE docbank_attachment_processing
- SET retry = TRUE, generation = generation + 1
- WHERE destination_key = ? AND job_id <> '' AND next_action_at IS NOT NULL AND outcome = 'requested'`, destination); err != nil {
-			return fmt.Errorf("mark attachment processing for backfill: %w", err)
+ SET job_id = '', next_action_at = ?
+ WHERE destination_key = ? AND job_id <> '' AND outcome = 'requested'`, processingNow, destination); err != nil {
+			return fmt.Errorf("restart pending attachment processing: %w", err)
 		}
 		if _, err := q.Exec(`DELETE FROM archive_metadata WHERE key = ?`, beeperMediaScanKey(destination)); err != nil {
 			return fmt.Errorf("reset attachment mirror discovery: %w", err)
