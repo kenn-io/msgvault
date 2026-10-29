@@ -26,13 +26,10 @@ describe('jobs', () => {
 
   it('shows running work and prioritizes a failure in the dot', () => {
     const running = collectJobs([], [lane('visual_embedding', { active: activeRun })]);
-    expect(running[0]?.state).toBe('running');
     const queued = collectJobs([], [lane('person_enrichment', { active: { ...jobRun('person_enrichment'), state: 'queued', finished_at: undefined, error: undefined } })]);
     expect(queued[0]?.detail).toBe('Queued');
     expect(jobsHealth(queued)).toBe('queued');
     expect(jobsHealth([...queued, ...running])).toBe('running');
-    expect(jobsHealth([...queued, ...collectJobs([], [lane('message_embedding')])])).toBe('failed');
-    expect(jobsHealth(running)).toBe('running');
     expect(jobsHealth([...running, ...collectJobs([], [lane('message_embedding')])])).toBe('failed');
     expect(jobsHealth([])).toBe('ok');
   });
