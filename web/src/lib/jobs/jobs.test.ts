@@ -18,7 +18,7 @@ describe('jobs', () => {
     ['message_embedding', { settingsCategory: 'search', settingsAuthority: 'semantic_search' }],
     ['person_enrichment', { settingsCategory: 'enrichment', settingsAuthority: '' }],
   ] as const)('routes related status before %s settings', (kind, target) => {
-    const jobs = collectJobs([], [lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', finished_at: undefined, error: undefined } }), lane(kind, { active: { ...jobRun(kind), state: 'queued', finished_at: undefined, error: undefined } })]);
+    const jobs = collectJobs([], [lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', finished_at: undefined, error: undefined } }), lane(kind, { active: { ...jobRun(kind), state: kind === 'person_enrichment' ? 'queued' : 'running', finished_at: undefined, error: undefined } })]);
     expect(jobs[0]?.target).toEqual({ kind: 'status', authority: 'getDocumentIndexStatus' });
     expect(jobs[1]?.target).toEqual({ kind: 'setting', target });
   });
