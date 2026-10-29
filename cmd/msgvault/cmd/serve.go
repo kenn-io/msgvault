@@ -2014,6 +2014,14 @@ func (a *storeAPIAdapter) ArchiveUIDContext(ctx context.Context) (string, error)
 	return a.store.ArchiveUIDContext(ctx)
 }
 
+func (a *storeAPIAdapter) ArchiveUID() (string, error) {
+	return a.store.ArchiveUID()
+}
+
+func (a *storeAPIAdapter) ArchiveRevision() (string, error) {
+	return a.store.ArchiveRevision()
+}
+
 func (a *storeAPIAdapter) ActiveOperationTokenKey(ctx context.Context) (store.OperationTokenKey, error) {
 	return a.store.ActiveOperationTokenKey(ctx)
 }

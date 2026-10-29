@@ -61,7 +61,7 @@ describe('MessageCard', () => {
         expanded: true
       }
     });
-    expect(screen.queryByRole('list', { name: 'Attachments' }), 'other messages list none').toBeNull();
+    expect(screen.getByRole('link', { name: 'RE1.wav' }).getAttribute('href')).toBe('/api/v1/files/1/content');
     unmount();
 
     render(MessageCard, {
@@ -114,8 +114,8 @@ describe('MessageCard', () => {
       }
     });
 
-    await fireEvent.click(screen.getByText('⋯'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Show plain text' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(onViewModeChange).toHaveBeenCalledWith(42, 'text');
   });
 
@@ -130,8 +130,8 @@ describe('MessageCard', () => {
       }
     });
 
-    await fireEvent.click(screen.getByText('⋯'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Show formatted HTML' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Show formatted HTML' }));
     expect(onViewModeChange).toHaveBeenCalledWith(42, 'html');
   });
 
@@ -234,26 +234,31 @@ describe('MessageCard', () => {
       props: { message: detail({ attachments }), expanded: false, client: createAPIClient(fetchFn) }
     });
 
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
-    const request = fetchFn.mock.calls[0][0] as Request;
+    await waitFor(() => expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/recordings'))).toHaveLength(1));
+    const request = fetchFn.mock.calls.find(([input]) => new URL((input as Request).url).pathname.endsWith('/recordings'))![0] as Request;
     expect(new URL(request.url).pathname).toBe('/api/v1/messages/42/recordings');
   });
 });
 
-it.each([
-  { state: 'ready', shown: true },
-  { state: 'unavailable', shown: false },
-])('shows the Kata action only when the integration is $state, asking once per page', async ({ state, shown }) => {
-  const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ state, project: 'example', message: 'Kata is unavailable' }));
-  const { createAPIClient } = await import('../../api/client');
+it.each([{ state: 'ready', shown: true }, { state: 'unavailable', shown: false }])('offers the Kata task flow when $state', async ({ state, shown }) => {
+  const fetchFn = vi.fn<typeof fetch>(async (input) => {
+    const path = new URL((input as Request).url).pathname;
+    return Response.json(path.endsWith('/issues') ? { issues: [] } : { state, project: 'example' });
+  });
   const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
   const client = createAPIClient(fetchFn);
-  const context = new Map([[kataReadinessKey, new KataReadiness(client)]]);
-  render(MessageCard, { props: { message: detail(), expanded: true, client }, context });
-  render(MessageCard, { props: { message: detail(), expanded: true, client }, context });
-  await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(screen.queryAllByRole('button', { name: 'Create Kata issue' })).toHaveLength(shown ? 2 : 0);
-  expect(screen.queryByText('Kata is unavailable')).toBeNull();
-  expect(fetchFn).toHaveBeenCalledOnce();
+  const readiness = new KataReadiness(client);
+  const context = new Map([[kataReadinessKey, readiness]]);
+  const view = render(MessageCard, { props: { message: detail({ messageType: 'imessage' }), expanded: true, client }, context });
+  if (shown) {
+    await fireEvent.click(await screen.findByRole('button', { name: 'More actions for message 42' }));
+    expect(screen.getByRole('menuitem', { name: 'Add to task…' })).toBeDefined();
+    expect(await screen.findByText('No linked Kata issues.')).toBeDefined();
+  } else {
+    await waitFor(() => expect(readiness.absent).toBe(true));
+    expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
+  }
+  expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/integrations/kata/status'))).toHaveLength(1);
+  view.unmount();
+  readiness.dispose();
 });

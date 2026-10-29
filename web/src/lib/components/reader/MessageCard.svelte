@@ -1,13 +1,15 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
+  import MessageMenu from './MessageMenu.svelte';
+  import PersonLink from './PersonLink.svelte';
+  import MessageTasks from '../tasks/MessageTasks.svelte';
+  import MeetingActions from '../meetings/MeetingActions.svelte';
+  import type { MeetingRef } from '../../api/generated/models';
 
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
   import MessageRecordings from './MessageRecordings.svelte';
-  import KataIssueAction from '../kata/KataIssueAction.svelte';
-  import { EVIDENCE_WINDOW } from '../../kata/evidence';
 
   interface Props {
     message: ArchiveMessageDetail;
@@ -24,6 +26,9 @@
     onToggle?: (id: number) => void;
     onViewModeChange?: (id: number, mode: MessageViewMode) => void;
     client?: APIClient;
+    onOpenPerson?: (address: string) => void;
+    onOpenSettings?: () => void;
+    onOpenMeeting?: (meeting: MeetingRef) => void;
   }
 
   let {
@@ -36,10 +41,14 @@
     bodyError = '',
     onToggle,
     onViewModeChange,
+    onOpenPerson = undefined,
+    onOpenSettings = undefined,
+    onOpenMeeting = undefined,
     client = undefined
   }: Props = $props();
 
-  let menuOpen = $state(false);
+  let tasksRefresh = $state(0);
+  let menuError = $state('');
 
   const hasRenderableHTML = $derived(
     typeof message.bodyHtml === 'string' && message.bodyHtml.trim() !== '' && !sanitizationFailed
@@ -52,10 +61,6 @@
     return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(parsed);
   }
 
-  function selectMode(mode: MessageViewMode): void {
-    menuOpen = false;
-    onViewModeChange?.(message.id, mode);
-  }
 </script>
 
 {#if expanded}
@@ -67,36 +72,17 @@
   >
     <div class="card-header">
       <IdentityAvatar label={message.sender || '?'} size={24} />
-      <button
-        type="button"
-        class="collapse-target"
-        aria-label={`Collapse message ${message.id} from ${message.sender || 'unknown sender'}`}
-        aria-expanded="true"
-        onclick={() => onToggle?.(message.id)}
-      >
+      <div class="header-content">
         <span class="header-line">
-          <strong class="sender">{message.sender || 'Unknown sender'}</strong>
+          <strong class="sender"><PersonLink name={message.sender || 'Unknown sender'} address={message.senderAddress} {onOpenPerson} /></strong>
           <time datetime={message.sentAt} data-mono>{formatDate(message.sentAt)}</time>
         </span>
         {#if message.recipients.length > 0}
-          <span class="recipients" data-mono>to {message.recipients.join(', ')}</span>
+          <span class="recipients">to {#each message.recipients as recipient, index}{#if index > 0}, {/if}<PersonLink name={recipient} {onOpenPerson} />{/each}</span>
         {/if}
-        {#if message.subject}
-          <span class="subject">{message.subject}</span>
-        {/if}
-      </button>
-      {#if hasRenderableHTML}
-        <details class="card-menu" bind:open={menuOpen}>
-          <summary aria-label={`Message ${message.id} display options`}>⋯</summary>
-          <div class="menu-sheet kit-popover-card">
-            {#if viewMode === 'html'}
-              <Button class="menu-action" size="sm" surface="soft" label="Show plain text" onclick={() => selectMode('text')} />
-            {:else}
-              <Button class="menu-action" size="sm" surface="soft" label="Show formatted HTML" onclick={() => selectMode('html')} />
-            {/if}
-          </div>
-        </details>
-      {/if}
+        <button type="button" class="collapse-target" aria-label={`Collapse message ${message.id} from ${message.sender || 'unknown sender'}`} aria-expanded="true" onclick={() => onToggle?.(message.id)}>{message.subject || 'Collapse'}</button>
+      </div>
+      <MessageMenu {client} {message} {hasRenderableHTML} {viewMode} {onViewModeChange} {onOpenSettings} onTasksChange={() => tasksRefresh++} onError={(error) => menuError = error} />
     </div>
 
     {#if message.relatedMessageId}
@@ -104,7 +90,7 @@
         {message.messageType === 'meeting_transcript' ? 'Open conversation' : 'Open meeting'}
       </a>
     {/if}
-    {#if client}<KataIssueAction {client} selector={{ kind: 'message', message_id: message.id, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={message.subject || 'Follow up on this message'} />{/if}
+    {#if menuError}<p class="sanitize-notice" role="alert">{menuError}</p>{/if}
 
     {#if sanitizationFailed}
       <p class="sanitize-notice" role="alert">Could not render HTML formatting. Showing plain text.</p>
@@ -129,7 +115,11 @@
       </section>
     </div>
 
-    {#if message.messageType === 'meeting_transcript' && message.attachments.length > 0}
+    {#if client && !bodyPending && !bodyError}
+      {#if message.messageType === 'meeting_transcript'}<MeetingActions compact {client} request={{ scope: { message_ids: [message.id] }, limit: 200 }} {onOpenMeeting} />{/if}
+      <MessageTasks {client} messageId={message.id} title={message.subject} email={!message.messageType || message.messageType === 'email'} refresh={tasksRefresh} onsettings={onOpenSettings} />
+    {/if}
+    {#if message.attachments.length > 0}
       <ul class="attachments" aria-label="Attachments">
         {#each message.attachments as attachment (attachment.id)}
           <li>
@@ -258,6 +248,8 @@
     padding: var(--space-3) var(--pane-pad-x) 0;
   }
 
+  .header-content { display: grid; min-width: 0; flex: 1; gap: 2px; }
+
   .collapse-target {
     display: grid;
     min-width: 0;
@@ -287,8 +279,7 @@
     white-space: nowrap;
   }
 
-  .recipients,
-  .subject {
+  .recipients {
     overflow: hidden;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
@@ -296,50 +287,6 @@
     white-space: nowrap;
   }
 
-  .subject {
-    color: var(--text-secondary);
-  }
-
-  .card-menu {
-    position: relative;
-    flex: none;
-  }
-
-  .card-menu summary {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    list-style: none;
-  }
-
-  .card-menu summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .card-menu summary:hover {
-    background: var(--bg-surface-hover);
-    color: var(--text-primary);
-  }
-
-  .menu-sheet {
-    position: absolute;
-    z-index: var(--z-popover);
-    top: 26px;
-    right: 0;
-    min-width: 160px;
-    padding: var(--space-2);
-  }
-
-  .menu-sheet :global(.menu-action) {
-    display: flex;
-    width: 100%;
-    justify-content: flex-start;
-  }
 
   .sanitize-notice {
     margin: var(--space-2) var(--pane-pad-x) 0;

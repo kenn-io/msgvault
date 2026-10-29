@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { completeParticipants } from '../../api/generated/api/api';
+  import { personLabel } from '../reader/people';
   import { getCLIMessageRaw as generatedGetCLIMessageRaw } from '../../api/generated/api/api';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
@@ -921,7 +923,7 @@
   function openContextControl(kind: 'filters' | 'grouping' | 'sort'): void {
     const selector =
       kind === 'filters'
-        ? 'button[aria-label="Filters"]'
+        ? exploreState.current.workspace === 'everything' ? 'button[aria-label="Filter"]' : 'button[aria-label="Filters"]'
         : kind === 'grouping'
           ? '[data-group-picker] button'
           : '[data-sort-menu] button';
@@ -1145,6 +1147,18 @@
     }
     void relationshipsController.openTarget(target, predicate);
   });
+  async function openPerson(value: string): Promise<void> {
+    const address = personLabel(value).address;
+    try {
+      const { data } = await completeParticipants({ query: address, limit: 20 }, client);
+      const match = data?.rows.find((row) => row.value.toLowerCase() === address.toLowerCase());
+      if (!match) throw new Error('This person is unavailable.');
+      openRelationship(match.participant_id);
+    } catch (cause) {
+      showFlash(cause instanceof Error ? cause.message : 'This person is unavailable.', { tone: 'danger' });
+    }
+  }
+
   function openRelationship(participantID: number): void {
     commitNavigation({
       workspace: 'relationships',
@@ -1559,6 +1573,7 @@
           {drillGroup}
           closeReadingPane={() => void closeReadingPane()}
           {openRelationship}
+          {openPerson}
           {changeConversationAnchor}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           onSaveView={() => (saveViewOpen = true)}
