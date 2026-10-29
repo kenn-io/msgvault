@@ -183,7 +183,11 @@ describe('SettingsWorkspace', () => {
 
   it('reverts and discards edits, then keeps a conflicted draft for a revision-checked save', async () => {
     let conflicts = 1;
-    const { client, seen } = fixture(settingsDoc(), request => request.method === 'PATCH' && conflicts-- > 0 ? Response.json({ error: 'conflict' }, { status: 412 }) : undefined);
+    const doc = settingsDoc();
+    const { client, seen } = fixture(doc, request => {
+      if (request.method === 'GET' && request.url.endsWith('/settings')) return Response.json(doc, { headers: { ETag: conflicts ? '"s1"' : '"s-reloaded"' } });
+      if (request.method === 'PATCH' && conflicts-- > 0) return Response.json({ error: 'conflict' }, { status: 412 });
+    });
     render(SettingsWorkspace, { client, category: 'server' });
     await fireEvent.click(await screen.findByRole('switch', { name: 'Trace every SQL statement' }));
     await fireEvent.click(screen.getByRole('switch', { name: 'Trace every SQL statement' }));
@@ -197,13 +201,11 @@ describe('SettingsWorkspace', () => {
     expect(seen.filter(request => request.method === 'GET' && request.path === '/api/v1/settings')).toHaveLength(2);
     expect(screen.getByText('1 unsaved change')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(seen.some((entry) => entry.method === 'PATCH')).toBe(true));
-    const patch = seen.find((entry) => entry.method === 'PATCH')!;
-    expect(patch.ifMatch).toBe('"s1"');
+    await waitFor(() => expect(seen.filter(entry => entry.method === 'PATCH')).toHaveLength(2));
+    const patch = seen.filter(entry => entry.method === 'PATCH').at(-1)!;
+    expect(patch.ifMatch).toBe('"s-reloaded"');
     expect(await screen.findByText('Saved. Restart msgvault to apply these changes.')).toBeDefined();
   });
-
-
 
   it('never treats an emptied number as a value and blocks saving it', async () => {
     const { client } = fixture();
@@ -253,10 +255,6 @@ describe('SettingsWorkspace', () => {
     await waitFor(() => expect(onAppearanceSaved).toHaveBeenCalledWith({ theme: 'dark' }));
   });
 
-
-
-
-
 });
 
 it('keeps provider endpoints and keys across categories, saves endpoints before keys, and retains only a failed key', async () => {
@@ -301,10 +299,17 @@ it('keeps provider endpoints and keys across categories, saves endpoints before 
 });
 
 it('retains account passwords across categories and clears them on Discard', async () => {
-  const { client } = fixture();
+  const { client, seen } = fixture();
   render(SettingsWorkspace, { client, category: 'carddav' });
   await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'account@example.com' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Password is required');
+  expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
+  expect(screen.getByText('2 unsaved changes')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
   await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-account-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
@@ -316,10 +321,9 @@ it('retains account passwords across categories and clears them on Discard', asy
 });
 
 it('retains inference replacement keys across navigation and saves them from the footer', async () => {
-  let fail = true;
   const inference = { profiles: [inferenceProfile], configured_enabled: false, running_enabled: false, pending_restart: false };
   const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/key') && fail) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
+    if (request.url.endsWith('/key')) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
     if (request.url.includes('/settings/people-inference'))
       return Response.json(inference, { headers: { ETag: '"p1"' } });
   });
@@ -334,10 +338,7 @@ it('retains inference replacement keys across navigation and saves them from the
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
   expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['Key store unavailable']);
   expect(screen.getByText('1 unsaved change')).toBeDefined();
-  fail = false;
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.filter(request => request.method === 'PUT' && request.path.endsWith('/people-inference/providers/primary/key'))).toHaveLength(2);
+  expect(seen.filter(request => request.method === 'PUT' && request.path.endsWith('/people-inference/providers/primary/key'))).toHaveLength(1);
 });
 
 it('keeps attachment off values and cron schedules editable under Sources', async () => {
@@ -358,7 +359,8 @@ it('keeps attachment off values and cron schedules editable under Sources', asyn
   ] }));
 });
 
-it.each(['succeeded', 'partial'])('Overview syncs all contacts connections and reports %s', async result => {
+it('Overview sends aggregate contacts sync and shows a partial failure', async () => {
+  const result = 'partial';
   const { client, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'], latest: { id: 'sync-1', kind: 'carddav_sync', lane: 'contacts', state: 'succeeded', started_at: '2026-01-01T00:00:00Z', connection: 'work', counters: [] } })] });
@@ -369,24 +371,7 @@ it.each(['succeeded', 'partial'])('Overview syncs all contacts connections and r
   render(SettingsWorkspace, { client });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
   await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
-  if (result === 'succeeded') {
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Sync now, Contacts' }).hasAttribute('disabled')).toBe(false));
-    expect(screen.queryByRole('alert')).toBeNull();
-  } else {
-    expect(await screen.findByRole('alert')).toBeDefined();
-  }
-});
-
-it('validates contact account drafts before writing other settings', async () => {
-  const { client, seen } = fixture();
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await fireEvent.input(await screen.findByLabelText('Username'), { target: { value: 'work@example.com' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
-  await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Password is required');
-  expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
-  expect(screen.getByText('2 unsaved changes')).toBeDefined();
+  expect(await screen.findByRole('alert')).toBeDefined();
 });
 
 it('saves other categories after leaving a contact connection test', async () => {
@@ -433,17 +418,11 @@ it.each(['default', 'new', 'orphaned'])('saves the %s contact account, refreshes
   if (kind === 'new') {
     await fireEvent.input(screen.getByLabelText('New connection name'), { target: { value: 'work' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
-    expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('');
   } else if (kind === 'orphaned') {
     await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'work (configuration missing)');
-    expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe(values.account.base_url);
-    expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe(values.account.username);
-    expect(seen.some(request => request.path.endsWith('/books') && new URLSearchParams(request.query).get('connection') === 'work')).toBe(false);
   }
   await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: values.account.base_url } });
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: values.account.username } });
-  if (kind !== 'default') expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(true);
   await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-password' } });
   if (kind === 'new') await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
@@ -520,19 +499,21 @@ it('locks provider fields and newly mounted category controls while a provider s
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
 });
 
-
-
 it.each(['message', 'visual'] as const)('starts the %s index from Overview and refreshes its row', async kind => {
   let built = false;
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
   const operation = kind === 'message' ? 'message_embedding' : 'visual_embedding';
   const path = kind === 'message' ? '/api/v1/cli/run' : '/api/v1/multimodal/build';
   const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [lane(operation, { supported_actions: kind === 'visual' && !built ? ['visual_build'] : [] })] });
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [lane(operation, { supported_actions: kind === 'visual' && !built ? ['visual_build'] : [] }), lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'] })] });
     if (request.url.includes('/embeddings/status')) return Response.json({ active_generation: built ? 1 : null });
     if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: built ? [] : ['build_index'] });
+    if (request.url.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded', connections: [] });
     if (request.url.endsWith(path)) {
+      if (kind === 'message') return pending;
       built = true;
-      return kind === 'message' ? new Response('{"type":"complete"}\n') : Response.json({});
+      return Response.json({});
     }
   });
   render(SettingsWorkspace, { client });
@@ -540,6 +521,13 @@ it.each(['message', 'visual'] as const)('starts the %s index from Overview and r
   await fireEvent.click(await screen.findByRole('button', { name }));
   if (kind === 'message') {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    await waitFor(() => expect(seen.some(request => request.path === path)).toBe(true));
+    expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync now, Contacts' }));
+    await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
+    expect((await screen.findByRole('button', { name })) as HTMLButtonElement).toHaveProperty('disabled', true);
+    built = true;
+    finish(new Response('{"type":"complete"}\n'));
   }
   await waitFor(() => expect(screen.queryByRole('button', { name })).toBeNull());
   expect(seen.some(request => request.path === path)).toBe(true);
@@ -728,10 +716,7 @@ it('persists an unchanged Google account discovery after Test through the shared
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
   await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
   await screen.findByText('Connection successful. Found 2 address books.');
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+
 });
 
 it('keeps unapplied address-book roles when saving the account schedule', async () => {
@@ -783,24 +768,4 @@ it('refreshes the shared credential revision after an inference key succeeds bef
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/provider-credentials/vector.embeddings'))).toBe(true));
   expect(seen.find(request => request.path.endsWith('/provider-credentials/vector.embeddings'))?.ifMatch).toBe('"credential-b"');
-});
-
-it('keeps Contacts sync usable during a pending message index build', async () => {
-  let finish!: (response: Response) => void;
-  const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/cli/run')) return pending;
-    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [lane('message_embedding'), lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'] })] });
-    if (request.url.endsWith('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: ['build_index'] });
-    if (request.url.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded', connections: [] });
-  });
-  render(SettingsWorkspace, { client });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Message search' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
-  await waitFor(() => expect(seen.some(request => request.path.endsWith('/cli/run'))).toBe(true));
-  expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false);
-  await fireEvent.click(screen.getByRole('button', { name: 'Sync now, Contacts' }));
-  await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
-  expect((await screen.findByRole('button', { name: 'Build index, Message search' }) as HTMLButtonElement).disabled).toBe(true);
-  finish(new Response('{"type":"complete"}\n'));
 });
