@@ -133,7 +133,7 @@ describe('ContextBar grouping picker', () => {
   });
 });
 
-it('keeps Messages grouping chains with fixed presentation and order', async () => {
+it('keeps Messages grouping chains, presentation choices, and fixed sort reachable', async () => {
   const onFiltersChange = vi.fn();
   const onAddGroup = vi.fn();
   render(ContextBar, {
@@ -144,8 +144,8 @@ it('keeps Messages grouping chains with fixed presentation and order', async () 
     }), query: '', searchMode: 'full_text', filters: [], groupingChain: ['source'], countLabel: '2 items', sort,
     onAddGroup, onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange,
   });
-  expect(screen.queryByRole('combobox', { name: /Show as/ })).toBeNull();
-  expect(screen.queryByRole('combobox', { name: /Sort:/ })).toBeNull();
+  expect.soft(screen.queryByRole('combobox', { name: 'Show as: Table' })).not.toBeNull();
+  expect.soft(screen.queryByRole('combobox', { name: 'Sort: Newest first' })).not.toBeNull();
   expect(screen.getByRole('combobox', { name: 'Add grouping' })).toBeDefined();
 });
 

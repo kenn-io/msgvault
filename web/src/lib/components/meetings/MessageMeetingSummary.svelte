@@ -15,8 +15,11 @@
   } = $props();
   const controller = new MeetingsController(createMeetingsAPI(untrack(() => client)));
   const fingerprint = $derived(canonicalFingerprint({ scope, refreshKey }));
+  const scopeFingerprint = $derived(canonicalFingerprint(scope));
   let open = $state(false);
-  $effect.pre(() => { void fingerprint; untrack(() => { open = false; void controller.setScope(scope, refreshKey); }); });
+  $effect.pre(() => { void scopeFingerprint; untrack(() => { open = false; }); });
+  $effect.pre(() => { void fingerprint; untrack(() => { void controller.setScope(scope, refreshKey); }); });
+  $effect(() => { if (!open) untrack(() => { void controller.setFilters({}); }); });
   onDestroy(() => controller.destroy());
   function reload(): void {
     if (scope.kind === 'explore' && onReloadScope) onReloadScope();
@@ -31,7 +34,7 @@
     {#if controller.metricsError.recovery === 'reload' || controller.metricsError.recovery === 'retry'}<Button label="Reload meeting activity" onclick={reload} />{/if}
   {/if}
   {#if controller.metrics}
-    <span>{controller.metrics.totals.meeting_count} meetings · {formatMeetingDuration(controller.metrics.totals.total_known_seconds)} known</span>
+    <span>{controller.metrics.totals.meeting_count} {controller.metrics.totals.meeting_count === 1 ? 'meeting' : 'meetings'} · {formatMeetingDuration(controller.metrics.totals.total_known_seconds)} known</span>
     {#if controller.metrics.totals.unknown_duration_count}<span>· {controller.metrics.totals.unknown_duration_count} unknown duration</span>{/if}
   {/if}
   <Button size="sm" surface="soft" label={controller.actions ? `Action items · ${controller.actions.total_count}` : 'Action items'} onclick={() => open = true} />

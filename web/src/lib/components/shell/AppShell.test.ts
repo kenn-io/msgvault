@@ -2608,6 +2608,42 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('dismisses Filter before grouping after Files → Messages, with nested picker Escape first', async () => {
+    window.history.replaceState(null, '', '/?workspace=files');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/accounts')) return Response.json({ accounts: [{ id: 1, email: 'first@example.com', virtual_accounts: [{ key: 'identity:1:first', source_id: 1, account_address: 'first@example.com', message_count: 1, source_deleted_count: 0 }] }] });
+      return Response.json(exploreResponse());
+    }), state });
+    await fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Group by' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Source' }));
+    const trigger = screen.getByRole('button', { name: 'Filter' });
+    await fireEvent.click(trigger);
+    trigger.focus();
+    await fireEvent.keyDown(trigger, { key: 'Escape' });
+    expect(state.current.groupingChain).toEqual(['source']);
+    expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull();
+    await fireEvent.click(trigger);
+    const account = await screen.findByRole('combobox', { name: /^Account:/ });
+    await waitFor(() => expect(account).toHaveProperty('disabled', false));
+    await fireEvent.click(account);
+    await fireEvent.keyDown(account, { key: 'Escape' });
+    expect(screen.getByRole('dialog', { name: 'Filter' })).toBeDefined();
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(state.current.groupingChain).toEqual(['source']);
+    await fireEvent.keyDown(account, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull();
+    expect(state.current.groupingChain).toEqual(['source']);
+    await fireEvent.keyDown(trigger, { key: 'Escape' });
+    expect(state.current.groupingChain).toEqual([]);
+    await fireEvent.keyDown(window, { key: 's' });
+    expect(screen.getByRole('combobox', { name: 'Sort: Newest first' }).getAttribute('aria-expanded')).toBe('true');
+    rendered.unmount();
+    state.destroy();
+  });
+
   it('selects three rows when Shift+Space is pressed outside the grid', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);

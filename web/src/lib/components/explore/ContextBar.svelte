@@ -107,13 +107,11 @@
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
     {/if}
-    {#if !messages || presentation !== 'table'}
     <SelectDropdown
       value={presentation}
       options={presentationOptions}
       onchange={(value) => onPresentationChange?.(value as ExploreURLState['presentation'])}
     />
-    {/if}
     <div class="group-picker" data-group-picker>
       <SelectDropdown
         value=""
@@ -122,7 +120,7 @@
         onchange={selectGrouping}
       />
     </div>
-    {#if sort && !messages}
+    {#if sort}
       <div data-sort-menu>
         <SelectDropdown
           value={sort.value}

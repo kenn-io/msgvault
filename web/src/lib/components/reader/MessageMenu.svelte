@@ -89,7 +89,8 @@
     title={message.subject || 'Follow up on this message'}
     email={hasOriginal}
     onsettings={onOpenSettings}
-    onclose={() => { taskOpen = false; onTasksChange?.(); }}
+    onclose={() => taskOpen = false}
+    onchanged={onTasksChange}
   />
 {/if}
 {#if client && exportOpen}

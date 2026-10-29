@@ -2035,8 +2035,8 @@ func (a *storeAPIAdapter) ArchiveUIDContext(ctx context.Context) (string, error)
 	return a.store.ArchiveUIDContext(ctx)
 }
 
-func (a *storeAPIAdapter) ArchiveRevision() (string, error) {
-	return a.store.ArchiveRevision()
+func (a *storeAPIAdapter) ArchiveRevisionContext(ctx context.Context) (string, error) {
+	return a.store.ArchiveRevisionContext(ctx)
 }
 
 func (a *storeAPIAdapter) ActiveOperationTokenKey(ctx context.Context) (store.OperationTokenKey, error) {

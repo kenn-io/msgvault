@@ -21,6 +21,77 @@ function detail(overrides: Partial<ArchiveMessageDetail> = {}): ArchiveMessageDe
 }
 
 describe('MessageCard', () => {
+  it.each(['create', 'link', 'kata-create', 'kata-link'])('refreshes both evidence lists after %s succeeds and closes', async (mode) => {
+    const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
+    const { chooseSelectOption } = await import('../../../test/kit-ui');
+    let mutated = false;
+    const client = createAPIClient(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/evidence/prepare')) return Response.json({ evidence: [{ id: 'evidence', excerpt: 'Quoted text', reference: { version: 1, kind: 'message', message_id: 42, message: { start_rune: 0, end_rune: 11, body_sha256: 'a'.repeat(64) } } }] });
+      if (request.method === 'POST') { mutated = true; return Response.json(path.includes('/kata/') ? { issue: { uid: 'issue-1', qualified_ref: 'example#abcd', status: 'open' }, replayed: false } : { task: { id: 'task-1', title: 'Updated task' } }, { status: 201 }); }
+      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (path.includes('/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Existing task' }] });
+      if (path.endsWith('/tasks')) return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: mutated ? 'Updated task' : 'Initial task' }], outbound_metadata: { archive_uid: 'archive-a', conversation_id: 7 } });
+      return Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: mutated ? 'Updated quote' : 'Initial quote', status: 'open' }] });
+    });
+    const readiness = new KataReadiness(client);
+    const view = render(MessageCard, { props: { client, message: detail({ messageType: 'email' }), expanded: true }, context: new Map([[kataReadinessKey, readiness]]) });
+    try {
+      await screen.findByText('Initial task');
+      await screen.findByText(/example#abcd: Initial quote/);
+      await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+      await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+      if (mode.startsWith('kata')) {
+        await chooseSelectOption(screen.getByRole('combobox', { name: /^Provider:/ }), 'Kata');
+        await fireEvent.click(screen.getByRole('button', { name: 'Add quote to Kata…' }));
+        await screen.findByText('Quoted text');
+        if (mode === 'kata-link') {
+          await chooseSelectOption(screen.getByRole('combobox', { name: /^Action:/ }), 'Add to existing issue');
+          await fireEvent.input(screen.getByRole('textbox', { name: 'Kata issue ref' }), { target: { value: 'example#abcd' } });
+        }
+        await fireEvent.click(screen.getByRole('button', { name: mode === 'kata-link' ? 'Add evidence' : 'Create issue' }));
+        await screen.findByText(/Saved to/);
+        expect(screen.getByText('Initial task')).toBeDefined();
+        await fireEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
+      } else if (mode === 'link') {
+        await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+        await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Existing' } });
+        await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+        await fireEvent.click(await screen.findByRole('button', { name: 'Link Existing task' }));
+      } else await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
+      await screen.findByText('Updated task');
+      expect(await screen.findByText(/example#abcd: Updated quote/)).toBeDefined();
+    } finally { view.unmount(); readiness.dispose(); }
+  });
+  it('keeps both evidence lists visible when Add to task is cancelled', async () => {
+    const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
+    const reads: string[] = [];
+    const client = createAPIClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      reads.push(path);
+      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (path.endsWith('/tasks')) {
+        if (reads.filter((value) => value.endsWith('/tasks')).length > 2) return new Promise<Response>(() => {});
+        return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Archived task' }], outbound_metadata: {} });
+      }
+      if (reads.filter((value) => value.endsWith('/issues')).length > 1) return new Promise<Response>(() => {});
+      return Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Archived quote', status: 'open' }] });
+    });
+    const readiness = new KataReadiness(client);
+    const view = render(MessageCard, { props: { client, message: detail({ messageType: 'email' }), expanded: true }, context: new Map([[kataReadinessKey, readiness]]) });
+    try {
+      await screen.findByText('Archived task');
+      await screen.findByText(/example#abcd: Archived quote/);
+      await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+      await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+      await screen.findByRole('button', { name: 'Create task' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByText('Loading linked tasks…')).toBeNull();
+      expect(screen.getByText('Archived task')).toBeDefined();
+      expect(screen.getByText(/example#abcd: Archived quote/)).toBeDefined();
+    } finally { view.unmount(); readiness.dispose(); }
+  });
   it('collapses to one line of sender, snippet, and date that expands on click', async () => {
     const onToggle = vi.fn();
     render(MessageCard, {
