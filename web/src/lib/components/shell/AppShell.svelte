@@ -218,9 +218,11 @@
     exploreState.replaceCommittedDraft(patch);
   }, SEARCH_TYPING_DEBOUNCE_MS);
   function beforeCommit(): void {
+    // Commit pending search text before navigation captures the current state.
     debouncedSearchPatch.flush();
   }
   function replaceTransient(patch: Partial<ExploreURLState>): void {
+    // Apply pending search text before focus or scroll updates replace this entry.
     debouncedSearchPatch.flush();
     exploreState.replaceTransient(patch);
   }

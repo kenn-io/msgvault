@@ -403,7 +403,7 @@ web-test-browser: build web-browser-install
 # Browser gates use local Chromium or the remote Playwright server in CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.
 web-e2e: build web-browser-install
-	cd web && bun run test:e2e $(WEB_E2E_ARGS)
+	cd web && bun run test:e2e
 
 web-build: web-generate
 	cd web && bun run build

@@ -133,7 +133,10 @@
     controller = requestController;
     const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
-      const { data, error: responseError } = await generatedListSourceStatus(undefined, { ...client, signal });
+      const { data, error: responseError } = await generatedListSourceStatus(undefined, {
+        ...client,
+        signal,
+      });
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
       const next = data.sources ?? [];
