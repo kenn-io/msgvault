@@ -43,7 +43,7 @@ describe('keyboard command registry', () => {
     });
     expect(screen.getByText('Select all visible rows')).toBeDefined();
     expect(screen.queryByText('Open filters')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Commands', exact: true }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Commands' }));
     expect(onOpenCommands).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onclose).toHaveBeenCalledOnce();
