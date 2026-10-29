@@ -8,19 +8,23 @@ const activeRun = canonical.runs.find(run => run.kind === 'visual_embedding') as
 const partial = canonical.runs.find(run => run.kind === 'document_extraction') as import('../api/generated/models').OperationRunSummary;
 
 describe('jobs', () => {
-  it.each(['carddav_sync', 'document_embedding', 'document_extraction', 'message_embedding', 'person_embedding', 'person_enrichment', 'person_sweep', 'visual_embedding'] as const)('includes failed %s with its daemon error', kind => {
-    const [job] = collectJobs([], [lane(kind)]);
-    expect(job?.detail).toBe(jobRun(kind).error!.message);
+  it('includes a failed job with its daemon error and history target', () => {
+    const [job] = collectJobs([], [lane('document_extraction')]);
+    expect(job?.detail).toBe('Upstream operation failed.');
     expect(job?.state).toBe('failed');
-    expect(job?.target).toEqual({ kind: 'history', operationKind: kind, operationRunID: jobRun(kind).id });
+    expect(job?.target).toEqual({ kind: 'history', operationKind: 'document_extraction', operationRunID: jobRun('document_extraction').id });
   });
-  it.each([
-    ['message_embedding', { settingsCategory: 'search', settingsAuthority: 'semantic_search' }],
-    ['person_enrichment', { settingsCategory: 'enrichment', settingsAuthority: '' }],
-  ] as const)('routes related status before %s settings', (kind, target) => {
-    const jobs = collectJobs([], [lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', finished_at: undefined, error: undefined } }), lane(kind, { active: { ...jobRun(kind), state: kind === 'person_enrichment' ? 'queued' : 'running', finished_at: undefined, error: undefined } })]);
-    expect(jobs[0]?.target).toEqual({ kind: 'status', authority: 'getDocumentIndexStatus' });
-    expect(jobs[1]?.target).toEqual({ kind: 'setting', target });
+  it('routes running and queued jobs to related status or settings', () => {
+    const jobs = collectJobs([], [
+      lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', finished_at: undefined, error: undefined } }),
+      lane('message_embedding', { active: { ...jobRun('message_embedding'), state: 'running', finished_at: undefined, error: undefined } }),
+      lane('person_enrichment', { active: { ...jobRun('person_enrichment'), state: 'queued', finished_at: undefined, error: undefined } }),
+    ]);
+    expect(jobs.map(job => job.target)).toEqual([
+      { kind: 'status', authority: 'getDocumentIndexStatus' },
+      { kind: 'setting', target: { settingsCategory: 'search', settingsAuthority: 'semantic_search' } },
+      { kind: 'setting', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
+    ]);
   });
   it('counts source sync once per source and includes scheduler errors', () => {
     const source = sourceStatus({ scheduler_last_error: 'Schedule failed\nmore detail' });

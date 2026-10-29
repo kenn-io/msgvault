@@ -26,7 +26,7 @@ describe('keyboard command registry', () => {
     expect(() => createCommandRegistry(handlersFor(ids))).toThrow(/clear-selection.*handler/i);
   });
 
-  it('renders and searches the registry, including selection commands', async () => {
+  it('searches selection commands and opens Commands', async () => {
     const onclose = vi.fn();
     const onOpenCommands = vi.fn();
     render(KeyboardHelp, {
