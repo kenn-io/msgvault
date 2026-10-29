@@ -184,9 +184,9 @@ it('shows Sync now without Full sync and calls sync with the selected connection
   }));
   await controller.load();
   const sync = vi.spyOn(controller, 'sync').mockResolvedValue(undefined);
-  render(CardDAVOperations, { controller });
+  render(CardDAVOperations, { controller, syncConnection: 'work' });
   expect(screen.queryByRole('button', { name: 'Full sync' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-  expect(sync).toHaveBeenCalledExactlyOnceWith(undefined);
+  expect(sync).toHaveBeenCalledExactlyOnceWith('work');
   controller.destroy();
 });
