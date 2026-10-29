@@ -346,7 +346,9 @@ test('right preview resizes, restores its width, and falls back below on narrow 
 
   await page.setViewportSize({ width: 760, height: 900 });
   await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
+  await page.getByRole('button', { name: 'Display', exact: true }).click();
   await expect(position).toHaveCount(0);
+  await page.keyboard.press('Escape');
   const narrowList = (await primary.boundingBox())!;
   expect((await secondary.boundingBox())!.y).toBeGreaterThanOrEqual(narrowList.y + narrowList.height);
   await expect(reading).toBeVisible();

@@ -126,7 +126,7 @@ test('Settings Overview Details closes back to Overview with a status title', as
   const details = page.getByRole('button', { name: 'Details, Document extraction' });
   await details.click();
   const dialog = page.getByRole('dialog');
-  await expect.soft(dialog).toHaveAccessibleName('Document index status');
+  await expect(dialog).toHaveAccessibleName('Document index status');
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(details).toBeVisible();

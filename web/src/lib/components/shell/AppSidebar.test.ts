@@ -4,7 +4,6 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 
 import { view } from './fixtures.test-support';
-import { parseExploreURLState } from '../../explore/state.svelte';
 import type { JobsStore } from '../../jobs/jobs.svelte';
 import AppSidebar from './AppSidebar.svelte';
 
@@ -42,7 +41,7 @@ describe('AppSidebar', () => {
   });
 
   it.each(['directory', 'directory_review'])('keeps People current when opening an old %s link', (workspace) => {
-    renderSidebar({ active: parseExploreURLState(`?workspace=${workspace}`).workspace });
+    renderSidebar({ active: workspace });
     expect(primary().getByRole('button', { name: 'People' }).getAttribute('aria-current')).toBe('page');
   });
 
@@ -190,11 +189,11 @@ it.each(['Sync status', 'Saved view actions'])('%s typeahead keeps page shortcut
   const detachShortcuts = initShortcuts();
   const pageShortcut = vi.fn();
   const unregister = appShortcuts.register('d', pageShortcut);
-  const rendered = renderSidebar({ views: [view(1, 'Budget')], jobs: { ...jobs, health: 'failed', items: [
-    { id: 'document', name: 'Document extraction', state: 'failed', detail: 'Upstream operation failed.', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
+  const rendered = renderSidebar({ views: [view(1, 'Budget')], jobs: { ...jobs, health: 'running', items: [
+    { id: 'document', name: 'Document extraction', state: 'running', detail: 'Running', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
   ] } });
   try {
-    await fireEvent.click(screen.getByRole('button', { name: menu === 'Sync status' ? 'Sync status: Needs attention' : 'Budget actions' }));
+    await fireEvent.click(screen.getByRole('button', { name: menu === 'Sync status' ? 'Sync status: Running' : 'Budget actions' }));
     const first = (await screen.findAllByRole('menuitem'))[0]!;
     first.focus();
     await fireEvent.keyDown(first, { key: 'd' });
