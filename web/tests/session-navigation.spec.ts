@@ -113,6 +113,8 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   await selectKitOption(page, 'Theme', 'Dark');
   await page.getByRole('button', { name: 'Save changes' }).click();
 
+  await expect(page.getByRole('status').filter({ hasText: 'Saved. Restart msgvault to apply these changes.' })).toBeVisible();
+
   const patch = await patchCaptured;
   expect(patch.headers['x-csrf-token']).toBe('csrf-token');
   expect(patch.headers['if-match']).toBe('"etag-a"');

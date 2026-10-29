@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet, tick } from 'svelte';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { OPERATION_SETUP } from '../../operations/labels';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
@@ -1231,8 +1232,10 @@ describe('AppShell', () => {
     });
     try {
       await fireEvent.click(await screen.findByRole('button', { name: 'Set up Person fact sweep' }));
+      const setup = OPERATION_SETUP.person_sweep;
+      if (setup?.kind !== 'settings') throw new Error('Person fact sweep needs a Settings target');
       expect(state.current).toMatchObject({
-        workspace: 'settings', settingsCategory: 'enrichment', settingsAuthority: ''
+        workspace: 'settings', ...setup.target
       });
     } finally {
       rendered.unmount();
