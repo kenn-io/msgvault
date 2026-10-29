@@ -39,6 +39,34 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
 }
 
 describe('Past runs', () => {
+  it('loads document counts and recovery guidance when polling observes configuration', async () => {
+    let configured = false;
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: [{
+        kind: 'document_extraction', lane: 'documents', configured,
+        related_status: 'getDocumentIndexStatus', supported_actions: [], history_availability: 'available'
+      }] });
+      if (path === '/api/v1/operations/runs') return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
+      if (path === '/api/v1/documents/status/current') return Response.json({ status: {
+        profile_exists: true, profile_enabled: false, exact_consent: true,
+        ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
+        terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
+      } });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const controller = new OperationsController(client); controllers.push(controller);
+    render(RunHistoryDialog, { client, controller,
+      state: { ...defaultOperationsState(), operationStatus: 'getDocumentIndexStatus' },
+      onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+    await screen.findByText('Document index needs configuration');
+    configured = true;
+    await controller.refreshStatus();
+    await screen.findByText('4 of 5 owners ready');
+    expect(screen.getByText('Extraction profile needs configuration')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Document indexing setup' }).getAttribute('href')).toBe('https://msgvault.io/docs/usage/document-indexing/#configure-the-policy');
+    expect(screen.queryByText('Document index needs configuration')).toBeNull();
+  });
   it('maps selected dates, kind, lane, state, and cursor to history requests', async () => {
     const { queries } = setup('source_sync', { operationStartedFrom: '2026-10-10T00:00:00Z', operationStartedBefore: '2026-10-13T00:00:00Z' });
     await screen.findByRole('button', { name: 'Open Source sync run' });

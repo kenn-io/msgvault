@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -35,12 +36,13 @@ func TestBrowserOperationFixtureUsesProductionPublicProjection(t *testing.T) {
 	requirements.NoError(err)
 	var fixture struct {
 		OperationRunsResponse
+
 		JobRuns []OperationRunSummary `json:"job_runs"`
 	}
 	requirements.NoError(json.Unmarshal(raw, &fixture))
 	requirements.Len(fixture.Runs, 5)
 	requirements.Len(fixture.JobRuns, 8)
-	runs := append(fixture.Runs, fixture.JobRuns...)
+	runs := slices.Concat(fixture.Runs, fixture.JobRuns)
 
 	archive := &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID}
 	codec := operationTokenCodec{
