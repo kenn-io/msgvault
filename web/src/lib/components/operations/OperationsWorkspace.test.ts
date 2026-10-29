@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import { OPERATION_KIND_LABELS, OPERATION_SETUP } from '../../operations/labels';
+import { OPERATION_KIND_LABELS } from '../../operations/labels';
 import type {
   OperationKind,
   OperationLane,
@@ -194,7 +194,7 @@ describe('OperationsWorkspace', () => {
     ['person_embedding', 'person_facts', { settingsCategory: 'search', settingsAuthority: 'person_embeddings' }],
     ['visual_embedding', 'visual_attachments', { settingsCategory: 'search', settingsAuthority: 'visual_attachments' }],
     ['person_enrichment', 'person_facts', { settingsCategory: 'enrichment', settingsAuthority: '' }],
-    ['person_sweep', 'person_facts', OPERATION_SETUP.person_sweep?.kind === 'settings' ? OPERATION_SETUP.person_sweep.target : undefined]
+    ['person_sweep', 'person_facts', { settingsCategory: 'enrichment', settingsAuthority: '' }]
   ] as const)('sends an Off %s row to Settings', async (kind, lane, target) => {
     const onSetUp = vi.fn();
     renderKinds([off(kind, lane)], { onSetUp });
