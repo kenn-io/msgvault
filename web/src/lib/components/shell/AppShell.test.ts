@@ -2098,6 +2098,7 @@ describe('AppShell', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
       if (path === '/api/v1/relationships') return Response.json({ rows: [] });
       if (path === '/api/v1/participants/11') return Response.json({
         id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
@@ -2138,6 +2139,7 @@ describe('AppShell', () => {
       const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
       if (meetingResponse) return meetingResponse;
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
       if (path === '/api/v1/people/directory') return Response.json({ people: [{
         id: 7, display_name: 'Prior Directory Person', revision: 3, contact_state: 'active', categories: [], organizations: []
       }] });

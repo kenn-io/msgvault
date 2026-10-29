@@ -50,7 +50,7 @@ export class OperationsController {
 
   private readonly client: APIClient;
   private readonly commitURLState: (patch: Pick<OperationsURLState, 'operationRunID'>) => void;
-  private filters: OperationsURLState = emptyURLState();
+  private filters: OperationsURLState = defaultOperationsState();
   private filterSignature = '';
   private archiveContext = '';
   private selectedRunID: string | null = null;
@@ -479,10 +479,10 @@ export class OperationsController {
   }
 }
 
-function emptyURLState(): OperationsURLState {
+export function defaultOperationsState(kind: OperationsURLState['operationKind'] = ''): OperationsURLState {
   return {
     operationLane: '',
-    operationKind: '',
+    operationKind: kind,
     operationState: '',
     operationStartedFrom: '',
     operationStartedBefore: '',

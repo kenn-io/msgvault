@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
-import { OperationsController } from '../../operations/controller.svelte';
-import { defaultOperationsState, type OperationsURLState } from '../../operations/models';
+import { defaultOperationsState, OperationsController } from '../../operations/controller.svelte';
+import type { OperationsURLState } from '../../operations/models';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import RunHistoryDialog from './RunHistoryDialog.svelte';
 

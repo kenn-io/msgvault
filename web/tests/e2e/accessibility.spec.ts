@@ -163,9 +163,8 @@ for (const theme of ['light', 'dark'] as const) {
       await setKitTheme(page, theme);
       await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
 
-      // The Relationships hub is the default landing workspace; walk its
-      // three panes (list, timeline, reading pane) open one at a time so
-      // each incremental layout gets its own axe pass.
+      await selectWorkspace(page, 'People');
+      // Walk each pane so every layout gets its own axe pass.
       const hub = page.getByRole('main', { name: 'Relationships' });
       await expect(hub).toBeVisible();
       const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
@@ -235,13 +234,9 @@ for (const theme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: 'Display' }).click();
     await expect(page.getByRole('menuitemradio', { name: 'Compact' })).toBeVisible();
     await assertNoViolations(page, `Display menu ${theme}`);
+    await expect(page.getByRole('menuitem', { name: /^Size/ })).toBeVisible();
     await page.keyboard.press('Escape');
-
-    await page.getByRole('button', { name: 'Columns' }).click();
-    await expect(page.getByRole('button', { name: 'Size' })).toBeVisible();
-    await assertNoViolations(page, `Columns menu ${theme}`);
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('button', { name: 'Size' })).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: /^Size/ })).toHaveCount(0);
 
     await grid.focus();
     await page.keyboard.press('Home');
@@ -560,6 +555,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.route('**/api/session', (route) => route.fulfill({ json: sessionRequired
         ? { auth_mode: 'required', https: true, plain_http_warning: false }
         : { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+      await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
       await page.route('**/api/v1/settings', (route) => route.fulfill({ json: {
         settings: [
           { key: 'web.theme', value: { string: 'light' } },

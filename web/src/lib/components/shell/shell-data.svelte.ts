@@ -28,10 +28,11 @@ export function viewState(view: SavedView): Partial<ExploreURLState> {
 /** Saved views and live jobs shown in the shell. */
 export class ShellData {
   views = $state<SavedView[]>([]);
+  pending = $state<SavedView>();
+  error = $state<string>();
   readonly jobs: JobsStore;
 
   #client: APIClient;
-  #pendingDeletes = new Set<number>();
   #timer: ReturnType<typeof setInterval> | undefined;
   #controller: AbortController | undefined;
 
@@ -61,7 +62,8 @@ export class ShellData {
     void this.jobs.refresh();
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
-    if (views) this.views = views.filter(view => !this.#pendingDeletes.has(view.id));
+    this.error = views ? undefined : "Couldn't load saved views.";
+    if (views) this.views = views.filter(view => view.id !== this.pending?.id);
   }
 
   async #loadViews(client: APIClient): Promise<SavedView[] | undefined> {
@@ -92,7 +94,14 @@ export class ShellData {
         { id: view.id }, body,
         { ...this.#client, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
       );
-      if (!data) return response.status === 409 ? 'This view changed in another session.' : failure;
+      if (!data) {
+        if (response.status === 409) {
+          void this.refresh();
+          return 'This view changed in another session.';
+        }
+        return failure;
+      }
+      this.#controller?.abort();
       this.views = this.views.map(candidate => candidate.id === data.id ? data : candidate).sort(viewOrder);
       return undefined;
     } catch {
@@ -100,19 +109,31 @@ export class ShellData {
     }
   }
 
-  /** Hides a view at once. Call `commitDelete` when the Undo time is up. */
-  hideView(view: SavedView): void {
-    this.#pendingDeletes.add(view.id);
-    this.views = this.views.filter((candidate) => candidate.id !== view.id);
+  /** Commits the previous deletion before offering Undo for this view. */
+  async deleteView(view: SavedView): Promise<string | undefined> {
+    const error = await this.expireDelete();
+    this.pending = view;
+    this.views = this.views.filter(candidate => candidate.id !== view.id);
+    return error;
   }
 
-  restoreView(view: SavedView): void {
-    this.#pendingDeletes.delete(view.id);
-    if (this.views.some((candidate) => candidate.id === view.id)) return;
+  undoDelete(): void {
+    if (this.pending) this.restoreView(this.pending);
+    this.pending = undefined;
+  }
+
+  async expireDelete(): Promise<string | undefined> {
+    const view = this.pending;
+    this.pending = undefined;
+    if (view) return this.commitDelete(view);
+  }
+
+  private restoreView(view: SavedView): void {
+    if (this.views.some(candidate => candidate.id === view.id)) return;
     this.views = [...this.views, view].sort(viewOrder);
   }
 
-  async commitDelete(view: SavedView): Promise<string | undefined> {
+  private async commitDelete(view: SavedView): Promise<string | undefined> {
     try {
       const { response } = await deleteSavedView(
         { id: view.id },
@@ -120,13 +141,14 @@ export class ShellData {
       );
       if (!response.ok) {
         this.restoreView(view);
+        if (response.status === 409) void this.refresh();
         return `Couldn't delete ${view.name}.`;
       }
+      this.#controller?.abort();
+      this.views = this.views.filter(candidate => candidate.id !== view.id);
     } catch {
       this.restoreView(view);
       return `Couldn't delete ${view.name}.`;
-    } finally {
-      this.#pendingDeletes.delete(view.id);
     }
   }
 }

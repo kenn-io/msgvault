@@ -16,7 +16,7 @@
 
   const STATUS = {
     unavailable: { tone: 'stale', label: 'Status unavailable' },
-    ok: { tone: 'idle', label: 'Synced' },
+    ok: { tone: 'idle', label: 'Idle' },
     running: { tone: 'stale', label: 'Syncing' },
     failed: { tone: 'unclean', label: 'Needs attention' },
   } as const;

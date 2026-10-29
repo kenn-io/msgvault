@@ -26,10 +26,6 @@ export type OperationUnavailableKind = GeneratedOperationUnavailableKind;
 
 export type OperationsURLState = Pick<ExploreURLState, 'operationLane' | 'operationKind' | 'operationState' | 'operationStartedFrom' | 'operationStartedBefore' | 'operationRunID' | 'operationStatus'>;
 
-export function defaultOperationsState(kind: OperationsURLState['operationKind'] = ''): OperationsURLState {
-  return { operationLane: '', operationKind: kind, operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' };
-}
-
 export interface OperationStatusLane {
   readonly lane: OperationLane;
   readonly kinds: readonly OperationLaneStatus[];
