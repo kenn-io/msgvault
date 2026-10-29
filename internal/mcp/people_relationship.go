@@ -94,7 +94,7 @@ func (h *handlers) getPersonRelationship(
 			Annual:       []identityindex.AnnualTemperatureSummary{}, CacheRevision: contact.CacheRevision,
 		}
 		if hasYear {
-			response.Year, response.Timezone, response.Days = new(int(year)), timezone, []query.RelationshipCalendarDay{}
+			response.Year, response.Timezone = new(int(year)), timezone
 		}
 		return jsonResult(response)
 	}
