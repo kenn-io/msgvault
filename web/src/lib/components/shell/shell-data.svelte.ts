@@ -18,10 +18,6 @@ export function viewIncompatibility(view: SavedView): string {
   return view.incompatibility_reason ?? '';
 }
 
-export function viewIsFiles(view: SavedView): boolean {
-  return (view.canonical_state as CanonicalState | undefined)?.presentation === 'files';
-}
-
 export function viewState(view: SavedView): Partial<ExploreURLState> {
   return exploreStateFromSavedView(view.canonical_state as CanonicalState, view.schema_version);
 }
