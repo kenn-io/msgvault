@@ -29,7 +29,7 @@ test('page content sits one header gap below the divider, and full-width panes m
     await selectWorkspace(page, label);
     if (label === 'People') await expect(page.getByText('No relationships found', { exact: true })).toBeVisible();
     if (label === 'Directory') await expect(page.getByText('No people found', { exact: true })).toBeVisible();
-    if (label === 'Messages') await expect(page.getByRole('grid', { name: 'Everything results' }).getByText(row.title, { exact: true })).toBeVisible();
+    if (label === 'Messages') await expect(page.getByRole('grid', { name: 'Messages results' }).getByText(row.title, { exact: true })).toBeVisible();
     if (label === 'Files') await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
     if (label === 'Reviews') await expect(page.getByText('No identity matches in this queue.', { exact: true })).toBeVisible();
     if (label === 'Deletions') await expect(page.getByText('No staged deletions', { exact: true })).toBeVisible();
@@ -51,7 +51,7 @@ test('page content sits one header gap below the divider, and full-width panes m
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {
   await selectWorkspace(page, 'Messages');
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.focus();
   await page.keyboard.press('Shift+A');
   const bar = page.locator('.selection-bar');

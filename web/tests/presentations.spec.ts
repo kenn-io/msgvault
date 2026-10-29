@@ -2,6 +2,12 @@ import { expect, test } from '@playwright/test';
 import { selectKitOption, selectWorkspace } from './kit-ui';
 import { exploreHistoryState } from './explore-state';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
+});
+
 function fileRow(id: number, title: string) {
   return {
     id, key: `source:1:message:m${id}:file:${id}`, entry_key: `source:1:message:m${id}`,
@@ -63,7 +69,7 @@ test('Show as Files opens the Files workspace with the same context, and Back re
   });
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const everything = page.getByRole('grid', { name: 'Everything results' });
+  const everything = page.getByRole('grid', { name: 'Messages results' });
   await expect(everything).toBeVisible();
   await page.getByRole('searchbox', { name: 'Search messages' }).fill('pasta');
   await page.getByRole('button', { name: 'Search', exact: true }).click();

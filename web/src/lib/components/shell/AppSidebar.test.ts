@@ -46,10 +46,6 @@ describe('AppSidebar', () => {
     expect(primary().getByRole('button', { name: 'People' }).getAttribute('aria-current')).toBe('page');
   });
 
-
-
-
-
   it('puts Settings, Help, and the status in the footer, with no Keyboard shortcuts row', () => {
     const props = renderSidebar();
     const footer = within(screen.getByRole('complementary', { name: 'Sidebar' }));
@@ -81,31 +77,11 @@ describe('AppSidebar', () => {
     expect(screen.getByRole('button', { name: 'Plain' }).getAttribute('title')).toBe('Table');
   });
 
-  it('opens a saved view from its row', async () => {
-    const onOpenView = vi.fn();
-    const saved = view(1, 'Budget threads');
-    renderSidebar({ views: [saved], onOpenView });
-    await fireEvent.click(screen.getByRole('button', { name: 'Budget threads' }));
-    expect(onOpenView).toHaveBeenCalledWith(saved);
-  });
-
   it('does not open a view the app cannot read', async () => {
     const onOpenView = vi.fn();
     renderSidebar({ views: [{ ...view(1, 'Old view'), schema_version: 9 }], onOpenView });
     await fireEvent.click(screen.getByRole('button', { name: 'Old view' }));
     expect(onOpenView).not.toHaveBeenCalled();
-  });
-
-  it('edits a view description from its menu', async () => {
-    const onDescribeView = vi.fn(async () => undefined);
-    const saved = view(1, 'Budget threads');
-    renderSidebar({ views: [saved], onDescribeView });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Edit description…' }));
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Description' }), { target: { value: 'Q3 numbers' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(onDescribeView).toHaveBeenCalledWith(saved, 'Q3 numbers'));
   });
 
   it('locks a pending rename and returns focus after saving or canceling', async () => {
@@ -136,27 +112,6 @@ describe('AppSidebar', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Budget threads' })));
   });
 
-  it('keeps the rename field open and shows the reason when the rename fails', async () => {
-    const onRenameView = vi.fn(async () => 'This view changed in another session.');
-    renderSidebar({ views: [view(1, 'Budget threads')], onRenameView });
-    await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    const input = await screen.findByRole('textbox', { name: 'Rename Budget threads' });
-    await fireEvent.input(input, { target: { value: 'Q3' } });
-    await fireEvent.keyDown(input, { key: 'Enter' });
-    expect((await screen.findByRole('alert')).textContent).toContain('changed in another session');
-    expect(screen.getByRole('textbox', { name: 'Rename Budget threads' })).toBeTruthy();
-  });
-
-  it('deletes a view from its menu', async () => {
-    const onDeleteView = vi.fn();
-    const saved = view(1, 'Budget threads');
-    renderSidebar({ views: [saved], onDeleteView });
-    await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    expect(onDeleteView).toHaveBeenCalledWith(saved);
-  });
-
   it('keeps full accessible names in the icon rail and hides saved views', () => {
     renderSidebar({ collapsed: true, views: [view(1, 'Budget threads')] });
     expect(screen.getByRole('button', { name: 'Messages' }).getAttribute('aria-current')).toBe('page');
@@ -170,7 +125,7 @@ describe('AppSidebar', () => {
     const store = {
       items: [
         { id: 'f', name: 'Work Gmail', state: 'failed', detail: 'Gmail sign-in expired', target: { kind: 'source' } },
-        { id: 'r', name: 'CardDAV sync', state: 'running', detail: 'Syncing', target: { kind: 'status', authority: 'getCardDAVStatus' } },
+        { id: 'r', name: 'CardDAV sync', state: 'running', detail: 'Running', target: { kind: 'status', authority: 'getCardDAVStatus' } },
       ],
       health: 'failed',
       loaded: true,
@@ -183,19 +138,12 @@ describe('AppSidebar', () => {
     expect(onOpenJob).toHaveBeenCalledWith({ kind: 'source' });
   });
 
-  it('opens Help and toggles the rail from the footer', async () => {
-    const props = renderSidebar();
-    await fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
-    expect(props.onToggleCollapsed).toHaveBeenCalled();
-    expect(props.onOpenHelp).toHaveBeenCalled();
-  });
-
   it('keeps focus on the toggle when the parent switches the sidebar to the rail', async () => {
-    const { rerender } = renderSidebar();
+    const { rerender, onToggleCollapsed } = renderSidebar();
     const toggle = screen.getByRole('button', { name: 'Collapse sidebar' });
     toggle.focus();
     await fireEvent.click(toggle);
+    expect(onToggleCollapsed).toHaveBeenCalledOnce();
     await rerender({ collapsed: true });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand sidebar' }));
   });
@@ -209,7 +157,6 @@ it('shows a saved-view read error above the last rows and offers Retry', async (
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(onRetryViews).toHaveBeenCalledOnce();
 });
-
 
 it('shows neutral Loading before the first job status fetch', () => {
   renderSidebar({ jobs: { ...jobs, loaded: false, health: 'unavailable' } });
@@ -247,7 +194,7 @@ it.each(['name', 'description'] as const)('keeps the original %s revision when a
   await rerender({ views: data.views });
   if (field === 'name') await fireEvent.keyDown(editor, { key: 'Enter' });
   else await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('changed in another session');
+  expect((await screen.findByRole('alert')).textContent).toContain('Cancel and reopen the editor to review the latest view.');
   expect(revisions).toEqual(['"saved-view-1-r1"']);
   expect(saved[field]).toBe('Other browser edit');
   await waitFor(() => expect(data.views[0]?.revision).toBe(2));

@@ -112,7 +112,7 @@ test("production imports expose archived actions, duration evidence, and exact c
     .getByRole("row")
     .filter({ hasText: "Generic unknown duration" });
   await expect(row).toBeVisible();
-  await page.getByRole("grid", { name: "Everything results" }).focus();
+  await page.getByRole("grid", { name: "Messages results" }).focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("Space");
   const meetingContext = page.getByRole("button", {
