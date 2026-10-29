@@ -48,13 +48,13 @@ describe('DisplayMenu', () => {
 
   it('toggles a column and keeps one visible', async () => {
     const onColumnsChange = vi.fn();
-    const rendered = render(DisplayMenu, { theme: 'system', density: 'compact', columns: ['kind', 'title'], onColumnsChange, onThemeChange: vi.fn(), onDensityChange: vi.fn() });
+    const rendered = render(DisplayMenu, { theme: 'system', density: 'compact', columns: ['title', 'time'], onColumnsChange, onThemeChange: vi.fn(), onDensityChange: vi.fn() });
     await open();
 
-    await fireEvent.click(screen.getByRole('menuitem', { name: /^Kind/ }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Time/ }));
     expect(onColumnsChange).toHaveBeenLastCalledWith(['title']);
-    await fireEvent.click(screen.getByRole('menuitem', { name: /^Excerpt/ }));
-    expect(onColumnsChange).toHaveBeenLastCalledWith(['kind', 'title', 'excerpt']);
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Kind/ }));
+    expect(onColumnsChange).toHaveBeenLastCalledWith(['kind', 'title', 'time']);
     await rendered.rerender({ columns: ['title'] });
     onColumnsChange.mockClear();
     await fireEvent.click(screen.getByRole('menuitem', { name: /^Subject/ }));

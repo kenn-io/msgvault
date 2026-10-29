@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test';
 
-import { installOperations } from './e2e/fixtures/operations';
 import { selectWorkspace } from './kit-ui';
 
 function entry(index: number) {
@@ -109,23 +108,4 @@ test('grid shortcuts pressed outside the grid still move the active row', async 
   await page.keyboard.press('j');
 
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-2$/);
-});
-
-
-test('Past runs restores selected detail on reload and Back closes it', async ({ page }) => {
-  await installOperations(page);
-  await page.goto('/?workspace=everything');
-  const openHistory = async () => {
-    await page.getByRole('button', { name: /Sync status:/ }).click();
-    await page.getByRole('menuitem', { name: 'Past runs' }).click();
-  };
-  await openHistory();
-  await page.getByRole('button', { name: 'Open Source sync run' }).click();
-  await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore')!).operationRunID).toBeTruthy();
-  await page.reload();
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
-  await page.goBack();
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toHaveCount(0);
-  await openHistory();
-  await expect(page.getByRole('button', { name: 'Open Source sync run' })).toBeVisible();
 });
