@@ -175,12 +175,6 @@
         disabled={!controller.canSync || !connectionReady}
         onclick={() => void controller.sync(false, syncConnection)}
       />
-      <Button
-        label={controller.syncPending ? 'Checking CardDAV state…' : 'Full sync'}
-        disabled={!controller.canSync || !connectionReady}
-        tone="info"
-        onclick={() => void controller.sync(true, syncConnection)}
-      />
       <Button label="View CardDAV operations" surface="soft" onclick={openOperations} />
     </div>
   </div>

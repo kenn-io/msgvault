@@ -1087,13 +1087,16 @@ changed from Settings; `config.toml` remains authoritative.
 | `density` | `compact` | Table density: `compact` or `comfortable` |
 
 Browser-managed settings are validated and written with optimistic concurrency.
-Only the `[web]` keys apply right away; every other `config.toml` category takes
-effect after the daemon restarts, and the Settings page says so once per
-category. Two things saved from the Settings page are not `config.toml` rows and
-apply right away: person-enrichment provider API keys, and the CardDAV account,
-which has its own save action. A "Saved. Restart the daemon" banner means the
-file is saved but the running daemon still has its old value. Changing `server.api_key` requires a confirmation and takes
-effect only after restart, which also invalidates browser sessions.
+Use **Save changes** for setting values, provider API keys, and contact account
+edits. Creating providers and People sweep profiles, testing connections, and
+starting syncs remain explicit actions that run when selected.
+
+The `[web]` values, person-enrichment provider keys, and contact accounts apply
+once saved. Other settings and embedding provider keys take effect after the
+daemon restarts. A restart banner appears after saving when the running daemon
+still has an old value.
+Changing `server.api_key` takes effect after restart, which also invalidates
+browser sessions.
 
 ### `[integrations.tasks]`
 
