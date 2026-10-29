@@ -81,9 +81,6 @@ export const LABELS: Readonly<Record<string, string>> = {
   'server.daemon_idle_timeout': 'Stop when idle after',
   'server.daemon_auto_restart': 'Restart after an update',
   'log.enabled': 'Keep logs',
-  'activity.timezone': 'Timezone',
-  'activity.schedule': 'Schedule',
-  'vector.enabled': 'Semantic search',
   'vector.embeddings.endpoint': 'Endpoint',
   'vector.embeddings.model': 'Model',
   'vector.embeddings.api_key': 'API key',
@@ -102,7 +99,6 @@ export const LABELS: Readonly<Record<string, string>> = {
   'integrations.tasks.endpoint': 'Address',
   'integrations.tasks.default_project': 'Project',
   'integrations.tasks.api_key': 'API key',
-  'sync.rate_limit_qps': 'Requests per second',
   'web.default_search_mode': 'Search opens in',
 };
 
