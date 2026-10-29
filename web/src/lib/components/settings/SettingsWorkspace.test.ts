@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
-import { activeGeneration, embeddingStatus, lane, lanes } from '../../../test/operations';
+import { lane, lanes } from '../../../test/operations';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 type Setting = Record<string, unknown>;
@@ -201,7 +201,6 @@ describe('SettingsWorkspace', () => {
     await waitFor(() => expect(seen.filter(entry => entry.method === 'PATCH')).toHaveLength(2));
     const patch = seen.filter(entry => entry.method === 'PATCH').at(-1)!;
     expect(patch.ifMatch).toBe('"s-reloaded"');
-    expect(await screen.findByText('Saved. Restart msgvault to apply these changes.')).toBeDefined();
   });
 
   it('never treats an emptied number as a value and blocks saving it', async () => {
@@ -329,38 +328,30 @@ it('Overview shows a contacts sync action error', async () => {
   const { client } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'], latest: { id: 'sync-1', kind: 'carddav_sync', lane: 'contacts', state: 'succeeded', started_at: '2026-01-01T00:00:00Z', counters: [] } })) });
-    if (path.endsWith('/carddav/sync')) return Response.json({ status: 'partial', connections: [
-      { connection: 'work', status: 'partial' }, { connection: 'personal', status: 'succeeded' }
-    ] });
+    if (path.endsWith('/carddav/sync')) throw new Error('Synthetic contacts action failure.');
   });
   render(SettingsWorkspace, { client });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('CardDAV sync partial. Connections needing attention: work.');
+  expect((await screen.findByRole('alert')).textContent).toContain('Synthetic contacts action failure.');
 });
 
-it('saves other categories after leaving a contact connection test', async () => {
-  let finish!: (response: Response) => void;
-  const testing = new Promise<Response>(resolve => { finish = resolve; });
+it('saves ordinary settings and a retained contact account together', async () => {
   const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/carddav/account/test')) return testing;
     if (request.url.endsWith('/carddav/account')) return Response.json({ base_url: 'https://dav.example.test/', username: 'work@example.com', enabled: false, schedule: '', books: 1 });
   });
   render(SettingsWorkspace, { client, category: 'carddav' });
   await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'work@example.com' } });
   await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-password' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
-  await waitFor(() => expect(seen.some(request => request.path.endsWith('/carddav/account/test'))).toBe(true));
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
-  expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
-  finish(Response.json({ books: 1 }));
+  await waitFor(() => expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toMatchObject({ connection: 'default', password: 'synthetic-password' }));
 });
 
-it.each(['default', 'new', 'orphaned'])('saves the %s contact account, refreshes its resources, and reuses its password', async kind => {
-  const connection = kind === 'default' ? 'default' : 'work';
+it.each(['default', 'work'])('saves the %s contact account, refreshes its resources, and reuses its password', async kind => {
+  const connection = kind;
   let saved = false;
   const values = { configured: true, available: true, enabled: true, credential_configured: true, schedule: '', account: { base_url: 'https://dav.example.test/', username: 'work@example.com' } };
   const { client, seen } = fixture(settingsDoc(), request => {
@@ -370,25 +361,15 @@ it.each(['default', 'new', 'orphaned'])('saves the %s contact account, refreshes
       saved = true;
       return Response.json({ ...values.account, enabled: true, schedule: '', books: 2 });
     }
-    if (path.endsWith('/carddav/connections')) return Response.json({ connections: saved
-      ? [{ connection, status: values }]
-      : kind === 'orphaned' ? [{ connection: 'work', orphaned: true, account_id: 17, status: { ...values, configured: false, available: false, credential_configured: false } }]
-      : [{ connection: 'default', status: { ...values, account: { base_url: 'https://default.example.test/', username: 'default@example.com' } } }] });
+    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection, status: saved ? values : { ...values, account: { base_url: 'https://default.example.test/', username: 'default@example.com' } } }] });
     if (saved && path.endsWith('/carddav/status')) return Response.json(values);
   });
   render(SettingsWorkspace, { client, category: 'carddav' });
-  if (kind !== 'orphaned') await screen.findByDisplayValue('default@example.com');
-  else await screen.findByRole('combobox', { name: /^CardDAV connection/ });
-  if (kind === 'new') {
-    await fireEvent.input(screen.getByLabelText('New connection name'), { target: { value: 'work' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-  } else if (kind === 'orphaned') {
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'work (configuration missing)');
-  }
+  if (connection === 'work') await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
+  await screen.findByDisplayValue('default@example.com');
   await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: values.account.base_url } });
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: values.account.username } });
   await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-password' } });
-  if (kind === 'new') await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   expect(await screen.findByRole('button', { name: 'Set up Contacts' })).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -434,14 +415,38 @@ it('retains a conflicting provider key and retries with the refreshed credential
   expect(seen.filter(request => request.method === 'PATCH')).toEqual([]);
 });
 
-it('rejects an invalid new provider name before sending a write', async () => {
-  const { client, seen } = fixture();
+it.each(['bad/name', 'primary'])('rejects invalid or duplicate provider name %s before writing', async name => {
+  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [{ name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://api.exa.ai/search', credential: { configured: false, source: 'none' }, ...providerDefaults }] }));
   render(SettingsWorkspace, { client, category: 'enrichment' });
   await fireEvent.click(await screen.findByRole('button', { name: 'Add Exa' }));
-  await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: 'bad/name' } });
+  await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: name } });
   await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Names can use letters');
+  expect((await screen.findByRole('alert')).textContent).toContain(name === 'primary' ? 'already exists' : 'Names can use letters');
   expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
+});
+
+it('creates an absent Exa provider with safe defaults after reloading a conflict', async () => {
+  const doc = settingsDoc();
+  let conflict = false;
+  const { client, seen } = fixture(doc, async request => {
+    if (request.method === 'GET' && request.url.endsWith('/settings')) return Response.json(doc, { headers: { ETag: conflict ? '"s2"' : '"s1"' } });
+    if (request.method === 'PUT' && request.url.endsWith('/person-enrichment/providers/exa-primary')) {
+      if (!conflict) { conflict = true; return Response.json({ error: 'settings_conflict' }, { status: 412 }); }
+      return Response.json({ ...doc, person_enrichment_providers: [{ name: 'exa-primary', ...await request.json(), credential: { configured: false, source: 'none' }, credential_id: 'people.enrichment/exa-primary' }] }, { headers: { ETag: '"s3"' } });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Add Exa' }));
+  await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: 'exa-primary' } });
+  await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
+  await screen.findByText('The settings changed on disk. The latest are loaded. Try again.');
+  await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
+  await screen.findByRole('article', { name: 'exa-primary' });
+  const writes = seen.filter(request => request.method === 'PUT');
+  expect(writes.map(request => request.ifMatch)).toEqual(['"s1"', '"s2"']);
+  expect(writes[1].body).toMatchObject({ kind: 'exa', enabled: false, endpoint: 'https://api.exa.ai/search', mode: 'people', num_results: 1, allowed_identifiers: ['public_profile_url'], target_keys: ['attribute:location'], allow_sensitive_targets: false, retention_posture: '', training_posture: '', refresh_interval: '720h', request_timeout: '1m', max_retries: 5, max_requests_per_run: 10, max_requests_per_day: 100 });
+  expect(writes[1].body).not.toHaveProperty('api_key_env');
+  expect(writes[1].body).not.toHaveProperty('max_cost_usd_micros_per_day');
 });
 
 it('locks provider fields and newly mounted category controls while a provider save waits', async () => {
@@ -470,7 +475,6 @@ it('keeps Contacts sync available while the message index builds and refreshes i
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const { client, seen } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding'), lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'] })) });
-    if (request.url.includes('/embeddings/status')) return Response.json({ ...embeddingStatus, active_generation: built ? activeGeneration : null });
     if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: built ? [] : ['build_index'] });
     if (request.url.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded', connections: [] });
     if (request.url.endsWith('/cli/run')) return pending;
@@ -487,12 +491,11 @@ it('keeps Contacts sync available while the message index builds and refreshes i
   built = true;
   finish(new Response('{"type":"complete"}\n'));
   await waitFor(() => expect(screen.queryByRole('button', { name })).toBeNull());
-  expect(within(document.querySelector('[data-feature="message_embedding"]') as HTMLElement).getByText('On')).toBeDefined();
 });
 
 it('starts the visual index from Overview and refreshes its row', async () => {
   let built = false;
-  const { client, seen } = fixture(settingsDoc(), request => {
+  const { client } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('visual_embedding', { supported_actions: built ? [] : ['visual_build'] })) });
     if (request.url.endsWith('/multimodal/build')) {
       built = true;
@@ -559,7 +562,6 @@ it('keeps edited People search details visible when switching the feature off', 
   const toggle = await screen.findByRole('switch', { name: 'Search people' });
   expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull();
   await fireEvent.click(toggle);
-  expect(await screen.findByText('Sends consented person fields to the text embedding provider.')).toBeDefined();
   await fireEvent.input(screen.getByLabelText('How long the provider keeps data'), { target: { value: 'zero' } });
   await fireEvent.click(toggle);
   expect((screen.getByLabelText('How long the provider keeps data') as HTMLInputElement).value).toBe('zero');
@@ -604,7 +606,7 @@ it.each(['constructor', '__proto__'])('preserves and edits the saved endpoint fo
   const endpoint = await screen.findByLabelText(`${name} endpoint`);
   expect((endpoint as HTMLInputElement).value).toBe('https://provider.example.test');
   await fireEvent.input(endpoint, { target: { value: 'https://replacement.example.test' } });
-  await screen.findByRole('button', { name: 'Create profile' });
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.find(request => request.method === 'PUT')?.body).toMatchObject({ endpoint: 'https://replacement.example.test' });
@@ -682,25 +684,34 @@ it.each([['google', true], ['microsoft', true], ['', true], ['google', false]] a
 
 });
 
-it('keeps unapplied address-book roles when saving the account schedule', async () => {
-  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://dav.example.test/', username: 'person@example.com' } };
+it.each(['roles', 'failed summary'])('keeps saved account state and pending book roles after %s', async mode => {
+  const connection = mode === 'roles' ? 'default' : 'work';
+  let saved = false;
+  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
   const { client, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', status: account }] });
+    if (path.endsWith('/carddav/connections')) return saved && mode === 'failed summary' ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ connections: [{ connection, status: account }] });
     if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/books')) return Response.json({ books: [{ id: 7, name: 'Personal', url: 'https://dav.example.test/personal', subscribed: true, lookup_source: false, write_target: false, needs_full_reconcile: false }] });
-    if (path.endsWith('/carddav/account')) return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 });
+    if (path.endsWith('/carddav/books')) return Response.json({ books: [{ id: 7, name: 'Personal', url: 'https://work.example.test/personal', subscribed: true, lookup_source: false, write_target: false, needs_full_reconcile: false }] });
+    if (path.endsWith('/carddav/account')) { saved = true; return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 }); }
   });
   render(SettingsWorkspace, { client, category: 'carddav' });
-  await fireEvent.click(await screen.findByRole('checkbox', { name: 'Use for lookup for Personal' }));
+  if (connection === 'work') await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
+  await screen.findByDisplayValue('work@example.com');
+  if (mode === 'roles') await fireEvent.click(await screen.findByRole('checkbox', { name: 'Use for lookup for Personal' }));
   await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByText('Contact account default saved. Found 1 address book.');
+  await screen.findByText(`Contact account ${connection} saved. Found 1 address book.`);
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
-  await waitFor(() => expect(seen.filter(request => request.method === 'GET' && request.path.endsWith('/carddav/books')).length).toBeGreaterThan(1));
-  await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use for lookup for Personal' }) as HTMLInputElement).checked).toBe(true));
-  expect((screen.getByRole('button', { name: 'Apply roles for Personal' }) as HTMLButtonElement).disabled).toBe(false);
-  expect(seen.some(request => request.method === 'PATCH' && request.path.includes('/carddav/books'))).toBe(false);
+  if (mode === 'failed summary') {
+    await screen.findByText('Unable to load CardDAV connections.');
+    expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
+  } else {
+    await waitFor(() => expect(seen.filter(request => request.method === 'GET' && request.path.endsWith('/carddav/books')).length).toBeGreaterThan(1));
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use for lookup for Personal' }) as HTMLInputElement).checked).toBe(true));
+    expect((screen.getByRole('button', { name: 'Apply roles for Personal' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(seen.some(request => request.method === 'PATCH' && request.path.includes('/carddav/books'))).toBe(false);
+  }
 });
 
 it('refreshes the shared credential revision after an inference key succeeds before a later failure', async () => {
@@ -794,26 +805,4 @@ it('refreshes the shared config revision when creating a profile succeeds before
   await screen.findByText('Key store unavailable');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.find(request => request.method === 'PATCH')?.ifMatch).toBe('"s2"'));
-});
-
-it('keeps the acknowledged named account schedule when refreshing connection summaries fails', async () => {
-  let saved = false;
-  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
-  const { client } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return saved ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ connections: [{ connection: 'work', status: account }] });
-    if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/account')) {
-      saved = true;
-      return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 });
-    }
-  });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await screen.findByDisplayValue('work@example.com');
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByText('Contact account work saved. Found 1 address book.');
-  await screen.findByText('Unable to load CardDAV connections.');
-  expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
 });

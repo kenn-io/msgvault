@@ -219,7 +219,7 @@
   function startFeature(action: Extract<OverviewAction, { kind: 'start' }>): void {
     void build(action.id, async () => {
       if (action.id === 'messages') return createExploreAPI(client).runCoverageAction('build_index', 'initializing');
-      const result = await runOperationAction(action.id === 'contacts' ? 'carddav_sync' : action.id, client);
+      const result = await runOperationAction(action.id, client);
       if (result.outcome !== 'succeeded') throw new Error(result.message);
     });
   }

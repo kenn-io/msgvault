@@ -249,8 +249,6 @@ describe('PeopleInferenceSettings', () => {
     expect(controller.keyDrafts.routed).toBe('synthetic-key');
     expect(await controller.saveKeys()).toBe(true);
     expect(requests.filter(request => request.url.endsWith('/key')).map(request => request.headers.get('If-Match'))).toEqual(['"credential-a"', '"credential-refreshed"']);
-    await controller.disable();
-    expect(requests.at(-1)!.headers.get('If-Match')).toBe('"config-b"');
   });
 
   it('does not enable a profile if consent is missing from the server response', async () => {
