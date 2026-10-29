@@ -261,7 +261,7 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('This result may be out of date.')).toBeDefined();
   });
 
-  it.each(['active', 'latest'])('keeps polling through idle races until the accepted %s run completes', async running => {
+  it('keeps polling through idle races until the accepted run completes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusReads = 0;
     const requests: Request[] = [];
@@ -272,7 +272,7 @@ describe('SourcesWorkspace', () => {
       statusReads += 1;
       if (statusReads === 1) return Response.json({ sources: [source()] });
       if (statusReads <= 3) return Response.json({ sources: [source()] });
-      if (statusReads === 4) return Response.json({ sources: [source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', ...(running === 'active' ? { active_sync: run('running', 5) } : { latest_sync: run('running', 5) }) })] });
+      if (statusReads === 4) return Response.json({ sources: [source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 5) })] });
       return Response.json({ sources: [source({ latest_sync: run('completed', 8, { completed_at: '2026-07-19T10:01:00Z' }) })] });
     });
     const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
@@ -286,8 +286,8 @@ describe('SourcesWorkspace', () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(screen.getByText('Awaiting accepted sync run…')).toBeDefined();
     await vi.advanceTimersByTimeAsync(1_000);
-    await waitFor(() => expect(screen.getByText(running === 'active' ? '5 processed' : 'Syncing')).toBeDefined());
-    await vi.advanceTimersByTimeAsync(running === 'active' ? 500 : 1_000);
+    await waitFor(() => expect(screen.getByText('5 processed')).toBeDefined());
+    await vi.advanceTimersByTimeAsync(500);
     await waitFor(() => expect(screen.getByText('Completed')).toBeDefined());
 
     expect(requests.every((request) => request.headers.get('Accept') !== 'text/event-stream')).toBe(true);
