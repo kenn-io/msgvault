@@ -190,6 +190,7 @@ it.each(['name', 'description'] as const)('keeps the original %s revision when a
   if (field === 'name') await fireEvent.keyDown(editor, { key: 'Enter' });
   else await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   expect((await screen.findByRole('alert')).textContent).toContain('Review the latest view.');
+  if (field === 'name') expect(document.activeElement).toBe(editor);
   const handler = field === 'name' ? onRenameView : onDescribeView;
   expect(handler).toHaveBeenCalledWith(saved, 'My stale edit');
 });

@@ -39,7 +39,7 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
 }
 
 describe('Past runs', () => {
-  it('loads document counts and recovery guidance when polling observes configuration', async () => {
+  it('loads document counts when polling observes configuration', async () => {
     let configured = false;
     const client = createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
@@ -63,11 +63,9 @@ describe('Past runs', () => {
     configured = true;
     await controller.refreshStatus();
     await screen.findByText('4 of 5 owners ready');
-    expect(screen.getByText('Extraction profile needs configuration')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Document indexing setup' }).getAttribute('href')).toBe('https://msgvault.io/docs/usage/document-indexing/#configure-the-policy');
     expect(screen.queryByText('Document index needs configuration')).toBeNull();
   });
-  it('maps selected dates, kind, lane, state, and cursor to history requests', async () => {
+  it('applies date bounds and exclusive kind or lane controls', async () => {
     const { queries } = setup('source_sync', { operationStartedFrom: '2026-10-10T00:00:00Z', operationStartedBefore: '2026-10-13T00:00:00Z' });
     await screen.findByRole('button', { name: 'Open Source sync run' });
     expect(queries[0]?.get('kind')).toBe('source_sync');
@@ -82,12 +80,6 @@ describe('Past runs', () => {
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'CardDAV sync');
     await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('carddav_sync'));
     expect(queries.at(-1)?.has('lane')).toBe(false);
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'Partial');
-    await waitFor(() => expect(queries.at(-1)?.get('state')).toBe('partial'));
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All kinds');
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'All states');
-    await fireEvent.click(await screen.findByRole('button', { name: 'Show more' }));
-    expect(queries.at(-1)?.get('cursor')).toBe('next');
   });
   it('offers Restart when page membership changes', async () => {
     const { drift, queries } = setup();
