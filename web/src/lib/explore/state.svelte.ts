@@ -819,6 +819,10 @@ export class ExploreState {
 
   openOperationHistory(state: Partial<ExploreURLState>): void {
     const opening = !this.current.operationHistory;
+    if (opening) {
+      this.committed = normalize(this.current);
+      this.pendingSearchPriorFocus = undefined;
+    }
     this.navigate({ ...state, operationHistory: true }, opening ? 'push' : 'replace');
     this.committed = normalize(this.current);
     if (opening) this.browser.history.replaceState({ ...this.browser.history.state, operationHistoryOwned: true }, '');

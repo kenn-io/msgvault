@@ -331,6 +331,8 @@ describe('OperationsController', () => {
     const peerBefore = `${RUN_ONE}-peer`;
     const peerAfter = `${RUN_TWO}-peer`;
     let historyReads = 0;
+    let detailReads = 0;
+    const refreshDetail = deferredResponse();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(requestOf(input).url).pathname;
       if (path.endsWith('/status')) return Response.json(statusResponse());
@@ -340,7 +342,7 @@ describe('OperationsController', () => {
           ? runsResponse([run(RUN_ONE), run(peerBefore)])
           : runsResponse([run(peerAfter)]));
       }
-      return Response.json(detail(RUN_ONE));
+      return ++detailReads === 1 ? Response.json(detail(RUN_ONE)) : refreshDetail.promise;
     });
     const controller = new OperationsController(createAPIClient(fetchFn), commits);
     await controller.applyURLState(operationState());
@@ -348,7 +350,14 @@ describe('OperationsController', () => {
     expect(controller.snapshot.detail?.id).toBe(RUN_ONE);
     commits.mockClear();
 
-    await controller.refresh();
+    const refreshing = controller.refresh();
+    await vi.waitFor(() => expect(controller.snapshot.detailLoading).toBe(true));
+    try {
+      expect(controller.snapshot.detail?.id).toBe(RUN_ONE);
+    } finally {
+      refreshDetail.resolve(Response.json(detail(RUN_ONE)));
+      await refreshing;
+    }
 
     expect(controller.snapshot.rows.map((item) => item.id)).toEqual([peerAfter]);
     expect(controller.snapshot.detail?.id).toBe(RUN_ONE);
