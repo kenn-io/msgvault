@@ -47,8 +47,6 @@ describe('Past runs', () => {
     await screen.findByRole('button', { name: 'Open Document extraction run' });
     expect(queries[0]?.get('kind')).toBe('source_sync');
     expect(screen.getByText('Person embedding history is unavailable.')).toBeDefined();
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'Document extraction');
-    await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('document_extraction'));
     await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'Partial');
     await waitFor(() => expect(queries.at(-1)?.get('state')).toBe('partial'));
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All kinds');
@@ -76,7 +74,7 @@ describe('Past runs', () => {
   });
 });
 
-it('filters all document runs through Kind without adding a fourth control', async () => {
+it('filters document lanes and individual kinds', async () => {
   const { queries } = setup();
   await screen.findByRole('button', { name: 'Open Document extraction run' });
   await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All documents');

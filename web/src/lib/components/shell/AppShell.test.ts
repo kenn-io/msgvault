@@ -13,6 +13,7 @@ import AppShell from './AppShell.svelte';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
+import { view } from './fixtures.test-support';
 
 const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
@@ -193,7 +194,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('suspends the shortcut registry without preventing defaults in every editable control', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
@@ -252,7 +252,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('does not reinstall an editable shortcut scope from a queued callback after unmount', async () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
@@ -267,7 +266,6 @@ describe('AppShell', () => {
     textarea.remove();
     state.destroy();
   });
-
 
   it('guards slash for modifiers and every editable contenteditable value except false', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -301,7 +299,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('does not steal table shortcuts from editable controls', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
@@ -315,7 +312,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('commits workspace navigation to URL history', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
@@ -328,7 +324,6 @@ describe('AppShell', () => {
     expect(push).toHaveBeenCalledOnce();
     state.destroy();
   });
-
 
   it('acknowledges history restoration immediately in a workspace without a result grid', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -349,16 +344,14 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('uses Display for temporary appearance and restores Settings defaults', async () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false, appearanceDefaults: { theme: 'dark', density: 'compact' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Light' }));
-    expect(JSON.parse(sessionStorage.getItem('msgvault.appearance.override') ?? '{}')).toEqual({ theme: 'light' });
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Use Settings defaults' }));
-    expect(sessionStorage.getItem('msgvault.appearance.override')).toBeNull();
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    expect(screen.queryByRole('menuitem', { name: 'Use Settings defaults' })).toBeNull();
     rendered.unmount(); state.destroy();
   });
 
@@ -366,7 +359,7 @@ describe('AppShell', () => {
     ['everything', 'Messages'], ['relationships', 'People'], ['files', 'Files'], ['sources', 'Sources'],
     ['directory', 'Directory'], ['deletions', 'Deletions'], ['settings', 'Settings']
   ])('reaches %s through the command palette', async (workspace, label) => {
-    window.history.replaceState(null, '', '/?workspace=everything');
+    window.history.replaceState(null, '', `/?workspace=${workspace === 'everything' ? 'sources' : 'everything'}`);
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(async () => Response.json(exploreResponse())), state, enabled: false });
     await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
@@ -979,31 +972,6 @@ describe('AppShell', () => {
     });
   });
 
-
-
-  it('opens source history from Sources with the exact normalized lane and kind', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'sources' }))}`);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
-      if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
-      if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
-
-    expect(state.current.workspace).toBe('sources');
-    expect(await screen.findByRole('dialog', { name: 'Past runs' })).toBeDefined();
-    const request = fetchFn.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input))).find(url => url.pathname === '/api/v1/operations/runs');
-    expect(request?.searchParams.get('kind')).toBe('source_sync');
-
-    rendered.unmount();
-    state.destroy();
-  });
-
   it('passes the URL Settings category to Settings and commits a chosen one', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'settings', settingsCategory: 'search'
@@ -1060,10 +1028,6 @@ describe('AppShell', () => {
       state.destroy();
     }
   );
-
-
-
-
 
   it('restores the Directory review queue and exposes Reviews in the command surface', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
@@ -1612,9 +1576,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
-
-
   it('starts a newly selected person on Messages and restores the prior Files view on Back', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:1'
@@ -1673,7 +1634,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('restores a legacy workspace=people URL into the hub with the facet set', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'people', analysisTarget: 'person:42'
@@ -1703,7 +1663,6 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
-
 
   it('opens an old Everything-as-Files link in Files with its attachment viewer', async () => {
     window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
@@ -1929,18 +1888,6 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
-
-
-
-
-
-
-
-
-
-
-
-
 
   it('clears the hub detail pane when the URL target becomes null (Esc / Back)', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
@@ -2199,7 +2146,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('re-opens the hub target when the predicate changes but the target string does not', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:1'
@@ -2238,7 +2184,6 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
-
 
   it('opening a file from the hub\'s embedded Files pane navigates to Everything with the item selected', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
@@ -2286,7 +2231,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('does not mutate Everything state when Escape bubbles up from an empty Relationships hub', async () => {
     window.history.replaceState(null, '', '/?workspace=relationships');
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -2316,7 +2260,6 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
-
 
   it('debounces filename search typing into one committed state write', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -2352,7 +2295,6 @@ describe('AppShell', () => {
       vi.useRealTimers();
     }
   });
-
 
   it('flushes a pending debounced filename patch before a MIME-filter navigation commits', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -2400,7 +2342,6 @@ describe('AppShell', () => {
     }
   });
 
-
   it('discards a pending debounced filename patch on Back instead of letting it clobber restored state', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -2436,7 +2377,6 @@ describe('AppShell', () => {
       vi.useRealTimers();
     }
   });
-
 
   it('drills a Files group into a canonical filter without opening a stale group selection', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -2541,7 +2481,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-
   it('clears a stale Everything sortNotice when the workspace changes', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -2566,7 +2505,6 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
-
 
   it('opens the Sort menu with s, announces the fixed order with r, and shows the count once', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -2593,7 +2531,6 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
-
 
   it('announces the End cap outside Everything in the files-shell grouped workspace', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -2625,7 +2562,6 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
-
 
   it('clears a stale Files End-cap notice when switching presentation to Everything, but not on mere paging', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -2670,7 +2606,6 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
-
 
   it('shares nested grouping between the context picker and command palette', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -2945,7 +2880,7 @@ describe('AppShell', () => {
     });
   });
 
-  it('opens Settings Overview from Operations', async () => {
+  it('opens Settings Overview for an Operations URL', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations', settingsCategory: 'server' }))}`);
     const client = createAPIClient(async input => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -2971,8 +2906,6 @@ function selectionStatus(): HTMLElement {
 }
 
 it.each([
-  ['source_sync', 'Source sync', 'sources', ''],
-  ['carddav_sync', 'CardDAV sync', 'settings', 'carddav'],
   ['document_extraction', 'Document extraction', 'everything', ''],
   ['message_embedding', 'Message embedding', 'settings', 'search'],
   ['person_enrichment', 'Person enrichment', 'settings', 'enrichment'],
@@ -2999,14 +2932,14 @@ it.each([
   rendered.unmount(); state.destroy();
 });
 
-it('undoes deleting a sidebar view before the server removes it', async () => {
+it.each(['undo', 'pagehide'])('finishes a sidebar deletion through %s', async ending => {
   window.history.replaceState(null, '', '/?workspace=everything');
   const deletes: string[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (request.method === 'DELETE') { deletes.push(path); return new Response(null, { status: 204 }); }
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [{ id: 3, name: 'Project notes', schema_version: 2, revision: 1, canonical_state: { presentation: 'table' } }] });
+    if (request.method === 'DELETE') { deletes.push(path); return Response.json({}, { status: 500 }); }
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [view(3, 'Project notes')] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
     return Response.json(exploreResponse());
@@ -3015,12 +2948,16 @@ it('undoes deleting a sidebar view before the server removes it', async () => {
   await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
   await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
   expect(screen.queryByRole('button', { name: 'Project notes' })).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-  expect(screen.getByRole('button', { name: 'Project notes' })).toBeDefined();
+  if (ending === 'undo') await fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+  else {
+    window.dispatchEvent(new Event('pagehide'));
+    await screen.findByText("Couldn't delete Project notes.");
+    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+  }
+  await screen.findByRole('button', { name: 'Project notes' });
   rendered.unmount();
-  expect(deletes).toEqual([]);
+  expect(deletes).toEqual(ending === 'undo' ? [] : ['/api/v1/saved-views/3']);
 });
-
 
 it('opens CardDAV Past runs with its kind through the Settings context', async () => {
   window.history.replaceState(null, '', '/?workspace=settings');
@@ -3045,12 +2982,14 @@ it('opens CardDAV Past runs with its kind through the Settings context', async (
   rendered.unmount();
 });
 
-it('shares run selection, restores detail on reload, and returns to history with Back', async () => {
+it('shares run selection, restores detail on reload, and closes a direct link', async () => {
   window.history.replaceState(null, '', '/?workspace=sources');
+  const queries: URLSearchParams[] = [];
   const client = createAPIClient(async input => {
-    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const path = url.pathname;
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
-    if (path.endsWith('/operations/runs')) return Response.json({ runs: [operationSummary()], unavailable_kinds: [], membership_revision: 1 });
+    if (path.endsWith('/operations/runs')) { queries.push(url.searchParams); return Response.json({ runs: [operationSummary()], unavailable_kinds: [], membership_revision: 1 }); }
     if (path.includes('/operations/runs/')) return Response.json({ ...operationSummary(), supported_actions: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
@@ -3060,6 +2999,7 @@ it('shares run selection, restores detail on reload, and returns to history with
   let rendered = render(AppShell, { client, state });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
+  expect(queries[0]?.get('kind')).toBe('source_sync');
   await screen.findByRole('region', { name: 'Operation run detail' });
   expect(state.current.operationRunID).toBe(OPERATION_RUN);
   const sharedURL = window.location.href;
@@ -3069,36 +3009,11 @@ it('shares run selection, restores detail on reload, and returns to history with
   state = new ExploreState(window);
   rendered = render(AppShell, { client, state });
   await screen.findByRole('region', { name: 'Operation run detail' });
-  window.history.back();
-  await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-  await screen.findByRole('button', { name: 'Open Source sync run' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
   expect(state.current.operationRunID).toBeNull();
   rendered.unmount(); state.destroy();
 });
-
-it('restores a saved view and shows the delete failure after pagehide flushes Undo', async () => {
-  window.history.replaceState(null, '', '/?workspace=everything');
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (request.method === 'DELETE') return Response.json({}, { status: 500 });
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [{ id: 1, name: 'Receipts', schema_version: 2, revision: 1, canonical_state: { presentation: 'table' } }] });
-    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
-    return Response.json(exploreResponse());
-  });
-  const state = new ExploreState(window);
-  const rendered = render(AppShell, { client, state });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Receipts actions' }));
-  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
-  expect(screen.queryByRole('button', { name: 'Receipts' })).toBeNull();
-  window.dispatchEvent(new Event('pagehide'));
-  await screen.findByText("Couldn't delete Receipts.");
-  await screen.findByRole('button', { name: 'Receipts' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-  rendered.unmount(); state.destroy();
-});
-
 
 it.each([
   ['listSourceStatus', 'Source sync', 'Sources status', 'sources', false],

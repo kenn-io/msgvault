@@ -200,7 +200,7 @@ export const defaultExploreURLState: ExploreURLState = {
 
 interface ExploreWindow {
   location: Pick<Location, 'href' | 'pathname' | 'search' | 'hash'>;
-  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'go'>;
+  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'go' | 'back'>;
   addEventListener(type: 'popstate', listener: () => void): void;
   removeEventListener(type: 'popstate', listener: () => void): void;
 }
@@ -460,6 +460,10 @@ function normalize(value: unknown): ExploreURLState {
     OPERATION_STATES.has(value.operationState as OperationState)
     ? value.operationState as OperationState
     : '';
+  const operationStatus = typeof value.operationStatus === 'string' &&
+      OPERATION_STATUS_AUTHORITIES.has(value.operationStatus as OperationStatusAuthority)
+      ? value.operationStatus as OperationStatusAuthority
+      : '';
   let operationStartedFrom = operationDateBound(value.operationStartedFrom);
   let operationStartedBefore = operationDateBound(value.operationStartedBefore);
   if (operationStartedFrom !== '' && operationStartedBefore !== '' &&
@@ -513,17 +517,15 @@ function normalize(value: unknown): ExploreURLState {
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
-    operationHistory: value.operationHistory === true,
+    operationHistory: value.operationHistory === true || !!(operationRunID(value.operationRunID) || operationStatus ||
+      operationLane || operationKind || operationState || operationStartedFrom || operationStartedBefore),
     operationLane,
     operationKind,
     operationState,
     operationStartedFrom,
     operationStartedBefore,
     operationRunID: operationRunID(value.operationRunID),
-    operationStatus: typeof value.operationStatus === 'string' &&
-      OPERATION_STATUS_AUTHORITIES.has(value.operationStatus as OperationStatusAuthority)
-      ? value.operationStatus as OperationStatusAuthority
-      : '',
+    operationStatus,
     settingsAuthority,
     settingsCategory: settingsCategory(value.workspace === 'operations' ? 'overview' : value.settingsCategory, settingsAuthority),
     columns: columns(value.columns),
@@ -815,6 +817,19 @@ export class ExploreState {
     }, 'push');
   }
 
+  openOperationHistory(state: Partial<ExploreURLState>): void {
+    const opening = !this.current.operationHistory;
+    this.navigate({ ...state, operationHistory: true }, opening ? 'push' : 'replace');
+    this.committed = normalize(this.current);
+    if (opening) this.browser.history.replaceState({ ...this.browser.history.state, operationHistoryOwned: true }, '');
+  }
+
+  closeOperationHistory(): void {
+    if (this.browser.history.state?.operationHistoryOwned === true) this.browser.history.back();
+    else this.replaceCommittedNavigation({ operationHistory: false, operationLane: '', operationKind: '',
+      operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' });
+  }
+
   commitNavigation(patch: Partial<ExploreURLState>): void {
     const selectionChanged = 'selectedRow' in patch && patch.selectedRow !== this.current.selectedRow;
     this.navigate(selectionChanged && !('conversationAnchor' in patch)
@@ -900,7 +915,7 @@ export class ExploreState {
       patch.workspace !== 'files' && !('presentation' in patch)) {
       effectivePatch = { ...patch, presentation: defaultExploreURLState.presentation };
     }
-    if (mode === 'push' && OPERATION_FILTER_FIELDS.some((key) =>
+    if (OPERATION_FILTER_FIELDS.some((key) =>
       key in patch && normalize({ ...this.current, ...patch })[key] !== this.current[key])) {
       effectivePatch = { ...effectivePatch, operationRunID: null };
     }
@@ -921,7 +936,7 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow) }, '', committedURL);
+      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow), ...this.operationHistoryState(priorEntry) }, '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -945,7 +960,11 @@ export class ExploreState {
       this.browser.history.pushState(history, '', url);
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
-    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow) }, '', url);
+    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow), ...this.operationHistoryState(this.current) }, '', url);
+  }
+
+  private operationHistoryState(state: ExploreURLState): { operationHistoryOwned: true } | null {
+    return state.operationHistory && this.browser.history.state?.operationHistoryOwned === true ? { operationHistoryOwned: true } : null;
   }
 
   private archiveHistoryState(selectedRow: string | null): { [ARCHIVE_MEETING_HISTORY_KEY]: ArchiveMeetingHistory } | null {

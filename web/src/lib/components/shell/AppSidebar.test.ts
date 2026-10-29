@@ -108,8 +108,10 @@ describe('AppSidebar', () => {
     await waitFor(() => expect(onDescribeView).toHaveBeenCalledWith(saved, 'Q3 numbers'));
   });
 
-  it('renames a view in place on Enter and cancels on Escape', async () => {
-    const onRenameView = vi.fn(async () => undefined);
+  it('locks a pending rename and returns focus after saving or canceling', async () => {
+    let finish!: () => void;
+    const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
+    const onRenameView = vi.fn(() => pending);
     const saved = view(1, 'Budget threads');
     renderSidebar({ views: [saved], onRenameView });
 
@@ -119,7 +121,11 @@ describe('AppSidebar', () => {
     await fireEvent.input(input, { target: { value: 'Q3 budget' } });
     await fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(onRenameView).toHaveBeenCalledWith(saved, 'Q3 budget'));
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull());
+    expect(input.disabled).toBe(true);
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onRenameView).toHaveBeenCalledOnce();
+    finish();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Budget threads' })));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
@@ -127,6 +133,7 @@ describe('AppSidebar', () => {
     await fireEvent.keyDown(again, { key: 'Escape' });
     expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull();
     expect(onRenameView).toHaveBeenCalledOnce();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Budget threads' })));
   });
 
   it('keeps the rename field open and shows the reason when the rename fails', async () => {
@@ -209,7 +216,7 @@ it('shows neutral Loading before the first job status fetch', () => {
   expect(screen.getByRole('button', { name: 'Sync status: Loading' })).toBeTruthy();
 });
 
-it.each(['name', 'description'] as const)('keeps the original %s revision when polling refreshes an open editor', async field => {
+it.each(['name', 'description'] as const)('keeps the original %s revision when a refresh updates an open editor', async field => {
   let saved = { ...view(1, 'Budget threads'), description: 'Original description' };
   const revisions: string[] = [];
   const data = new ShellData(createAPIClient(async input => {

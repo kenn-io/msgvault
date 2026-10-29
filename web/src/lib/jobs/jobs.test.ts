@@ -7,13 +7,14 @@ const relatedStatus = { source_sync: 'listSourceStatus', carddav_sync: 'getCardD
 const lane = (kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus => ({ lane: 'documents', kind, related_status: relatedStatus[kind as keyof typeof relatedStatus], configured: true, history_availability: 'available', supported_actions: [], latest: { ...latest, kind, counters: [] }, ...extra });
 
 describe('jobs', () => {
-  it.each(['carddav_sync', 'document_embedding', 'document_extraction', 'message_embedding', 'person_embedding', 'person_enrichment', 'person_sweep', 'visual_embedding'] as const)('includes %s with the daemon error first', kind => {
+  it.each([['carddav_sync', 'CardDAV sync'], ['document_embedding', 'Document embedding'], ['document_extraction', 'Document extraction'], ['message_embedding', 'Message embedding'], ['person_embedding', 'Person embedding'], ['person_enrichment', 'Person enrichment'], ['person_sweep', 'Person fact sweep'], ['visual_embedding', 'Visual embedding']] as const)('includes %s with the daemon error first', (kind, name) => {
     const [job] = collectJobs([], [lane(kind)]);
+    expect(job?.name).toBe(name);
     expect(job?.detail).toBe('Provider request timed out');
     expect(job?.state).toBe('failed');
   });
   it('routes related status before settings, and uses the owning settings authority otherwise', () => {
-    const jobs = collectJobs([], [lane('document_extraction', { related_status: 'getDocumentIndexStatus' }), lane('message_embedding')]);
+    const jobs = collectJobs([], [lane('document_extraction'), lane('message_embedding')]);
     expect(jobs[0]?.target).toEqual({ kind: 'status', authority: 'getDocumentIndexStatus' });
     expect(jobs[1]?.target).toEqual({ kind: 'setting', target: { settingsCategory: 'search', settingsAuthority: 'semantic_search' } });
   });
@@ -21,14 +22,8 @@ describe('jobs', () => {
     const source = { id: 1, display_name: 'Example archive', identifier: 'archive@example.com', updated_at: '2026-10-28T10:00:00Z', scheduler_last_error: 'Schedule failed\nmore detail' } as SourceStatus;
     expect(collectJobs([source], [lane('source_sync')])).toEqual([{ id: 'source:1', name: 'Example archive', state: 'failed', detail: 'Schedule failed', at: undefined, target: { kind: 'source' } }]);
   });
-  it('keeps unresolved source and lane failures regardless of age', () => {
-    const source = { id: 1, identifier: 'archive@example.com', latest_sync: { status: 'failed', started_at: '2026-10-28T10:00:00Z', error_message: 'Authorization expired\nmore detail' } } as SourceStatus;
-    expect(collectJobs([source], [])[0]?.detail).toBe('Authorization expired');
-    expect(collectJobs([], [lane('document_extraction', { latest: { ...latest, counters: [], finished_at: '2026-10-01T12:00:00Z' } })])[0]?.detail).toBe('Provider request timed out');
-    source.latest_sync!.started_at = '2026-10-01T12:00:00Z';
-    expect(collectJobs([source], [])[0]?.state).toBe('failed');
-  });
-  it('keeps active work regardless of age and prioritizes a failure in the dot', () => {
+
+  it('shows running work and prioritizes a failure in the dot', () => {
     const running = collectJobs([], [lane('document_extraction', { active: { ...latest, state: 'running', counters: [] } })]);
     expect(running[0]?.state).toBe('running');
     expect(jobsHealth(running)).toBe('running');

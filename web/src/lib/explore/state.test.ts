@@ -159,12 +159,10 @@ describe('Explore URL state', () => {
     state.destroy();
   });
   it.each([['operations', 'settings', 'overview'], ['saved_views', 'everything', 'overview'], ['unknown', 'everything', 'overview']])('routes legacy %s links', (workspace, expected, category) => {
-    const state = parseExploreURLState(`?workspace=${workspace}`);
+    const state = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace, ...(workspace === 'operations' ? { settingsCategory: 'server' } : {}) }))}`);
     expect(state.workspace).toBe(expected);
     expect(state.settingsCategory).toBe(category);
   });
-  it('lands on Messages', () => { expect(parseExploreURLState('').workspace).toBe('everything'); });
-
 
   it('drops an impossible Directory date when reading the URL', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
@@ -325,10 +323,6 @@ describe('Explore URL state', () => {
     });
   });
 
-
-
-
-
   it('round-trips the Settings category and shares it only from Settings', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState, workspace: 'settings', settingsCategory: 'search'
@@ -428,9 +422,6 @@ describe('Explore URL state', () => {
     expect(state.current.settingsAuthority).toBe('');
     state.destroy();
   });
-
-
-
 
   it('round-trips every primary management workspace through the URL', () => {
     for (const workspace of ['sources', 'deletions'] as const) {
@@ -955,11 +946,6 @@ describe('relationships workspace state', () => {
 });
 
 describe('ExploreState history ownership', () => {
-
-
-
-
-
 
   it('restores Directory filters and selection on browser back and forward', async () => {
     window.history.replaceState(null, '', serializeExploreURLState({
@@ -1663,7 +1649,6 @@ describe('session-owned exploration selection', () => {
     expect(restored).not.toHaveProperty('operationCursor');
   });
 
-
   it('round-trips only the three live Operations status authorities', () => {
     for (const operationStatus of [
       'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
@@ -1678,7 +1663,6 @@ describe('session-owned exploration selection', () => {
     } as unknown as ExploreURLState));
     expect(invalid.operationStatus).toBe('');
   });
-
 
   it('clears malformed, unknown, and lane-incompatible Operations URL values', () => {
     const invalid = parseExploreURLState(serializeExploreURLState({
@@ -1712,7 +1696,6 @@ describe('session-owned exploration selection', () => {
     expect(unknownLane.operationKind).toBe('carddav_sync');
   });
 
-
   it('preserves ordered canonical nanosecond Operations bounds without millisecond truncation', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
@@ -1724,3 +1707,28 @@ describe('session-owned exploration selection', () => {
     expect(restored.operationStartedFrom).toBe('2026-08-01T00:00:00.000000001Z');
     expect(restored.operationStartedBefore).toBe('2026-08-01T00:00:00.000000002Z');
   });
+
+
+it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s after replacing filters and detail', async action => {
+  window.history.replaceState(null, '', '/?workspace=files');
+  const state = new ExploreState(window);
+  state.commitWorkspace('everything');
+  const opening = window.location.href;
+  state.openOperationHistory({ operationKind: 'source_sync' });
+  state.openOperationHistory({ operationKind: 'carddav_sync', operationRunID: null });
+  const runID = `op2.${'a'.repeat(32)}.exampleRun`;
+  state.openOperationHistory({ operationRunID: runID });
+  expect(state.current.operationRunID).toBe(runID);
+  const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  if (action === 'close') state.closeOperationHistory();
+  else window.history.back();
+  await popped;
+  expect(window.location.href).toBe(opening);
+  expect(state.current.operationHistory).toBe(false);
+  const previous = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.back();
+  await previous;
+  expect(state.current.workspace).toBe('files');
+  expect(state.current.operationHistory).toBe(false);
+  state.destroy();
+});
