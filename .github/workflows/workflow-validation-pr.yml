@@ -1,0 +1,15 @@
+name: Workflow validation
+
+cache-mode: read
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    uses: ./.github/workflows/workflow-validation.yml

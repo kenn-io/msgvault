@@ -9,3 +9,4 @@ paths:
   .github/workflows/*-pr.yml:
     ignore:
       - 'unexpected key "cache-mode" for "job" section'
+      - 'unexpected key "cache-mode" for "workflow" section'
