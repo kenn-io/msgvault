@@ -745,7 +745,7 @@ func TestPersonSweepWithdrawsStoredDocumentEvidence(t *testing.T) {
 	assert.True(found)
 
 	changes, err = f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, []peoplesweep.ArchiveChange{{
-		PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceConversationText,
+		PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceDocumentText,
 		SourceID: f.sourceID, MessageID: id, EvidenceEffect: peoplesweep.EvidenceEffectSourceReimported,
 	}})
 	require.NoError(err)

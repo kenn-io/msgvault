@@ -1270,14 +1270,12 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 		assert.Equal(test.unavailable, page.UnavailableKinds)
 	}
 
-	for _, lane := range []operations.Lane{operations.LaneVisualAttachments} {
-		w := doGet(srv, "/api/v1/operations/runs?lane="+string(lane))
-		require.Equal(http.StatusOK, w.Code)
-		var page OperationRunsResponse
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
-		assert.Empty(page.Runs)
-		assert.Empty(page.UnavailableKinds)
-	}
+	w := doGet(srv, "/api/v1/operations/runs?lane="+string(operations.LaneVisualAttachments))
+	require.Equal(http.StatusOK, w.Code)
+	var page OperationRunsResponse
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+	assert.Empty(page.Runs)
+	assert.Empty(page.UnavailableKinds)
 	require.NotEmpty(firstCursor)
 	crossArchive := NewServerWithOptions(ServerOptions{
 		Config:                 &config.Config{},
@@ -1285,7 +1283,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 		OperationHistoryReader: st,
 		Logger:                 testLogger(),
 	})
-	w := doGet(crossArchive, "/api/v1/operations/runs?limit=1&cursor="+firstCursor)
+	w = doGet(crossArchive, "/api/v1/operations/runs?limit=1&cursor="+firstCursor)
 	assert.Equal(http.StatusBadRequest, w.Code)
 	assert.Equal("invalid_cursor", decodeErrorEnvelope(t, w).Error)
 }

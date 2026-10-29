@@ -224,11 +224,15 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 			case "content refresh", "revoked":
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)
-				var kinds []string
+				found := false
 				for _, source := range sources {
-					kinds = append(kinds, source.Kind)
+					if source.Kind != "docbank_rendition" {
+						continue
+					}
+					found = true
+					assert.Equal(kataevidence.SourceKeys(ref), kataevidence.SourceKeys(source))
 				}
-				assert.Contains(kinds, "docbank_rendition")
+				assert.True(found)
 			case "reused attachment":
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)
