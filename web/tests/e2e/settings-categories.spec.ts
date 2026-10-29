@@ -43,7 +43,7 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
   expect((await saved).ok()).toBe(true);
   await page.unroute('**/api/v1/settings');
   await page.getByRole('button', { name: 'Overview', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
+  await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Server', exact: true }).click();
@@ -64,7 +64,9 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
   await page.getByRole('button', { name: 'Search & AI', exact: true }).click();
   await page.getByRole('button', { name: 'Add API key', exact: true }).click();
   await page.getByLabel('New API key', { exact: true }).fill('synthetic-pending-key');
-  await page.getByRole('button', { name: 'Save API key', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Use API key', exact: true })).toHaveText('Use key');
+  await page.screenshot({ path: join(captureDir, 'use-key-dialog-1440-dark.png') });
+  await page.getByRole('button', { name: 'Use API key', exact: true }).click();
   await expect(page.locator('[data-setting-key="vector.embeddings.api_key"]')).toHaveClass(/setting--changed/);
   const people = page.getByRole('switch', { name: 'Search people', exact: true });
   await people.click();
@@ -83,7 +85,7 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
       await page.getByRole('button', { name: 'Advanced', exact: true }).click();
       await selectKitOption(page, 'Theme', 'Light');
       await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-      await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
+      await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
     }
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
@@ -105,6 +107,30 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 
+  await page.route('**/api/v1/search/coverage', route => route.fulfill({ json: { eligible_count: 7, embedded_count: 0, percentage: 0, cache_revision: 'synthetic-confirmation', status: 'initializing', actions: ['build_index'] } }));
+  await page.route('**/api/v1/operations/status', async route => {
+    const response = await route.fetch();
+    const status = await response.json();
+    await route.fulfill({ json: { ...status, lanes: status.lanes.map((lane: { kind: string }) => lane.kind === 'message_embedding' ? { ...lane, configured: true } : lane) } });
+  });
+  for (const theme of ['dark', 'light']) {
+    await page.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await selectKitOption(page, 'Theme', theme === 'dark' ? 'Dark' : 'Light');
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
+    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    await page.getByRole('button', { name: 'Build index, Message search', exact: true }).click();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+      await expect(page.getByRole('button', { name: 'Confirm full rebuild', exact: true })).toBeVisible();
+      await page.screenshot({ path: join(captureDir, `message-build-confirmation-${width}-${theme}.png`) });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  }
+  await page.unroute('**/api/v1/search/coverage');
+  await page.unroute('**/api/v1/operations/status');
+
   const baseDist = process.env.MSGVAULT_SETTINGS_BASE_DIST;
   if (baseDist) {
     await page.route('**/*', async route => {
@@ -120,7 +146,7 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
       await page.goto(`${daemon.origin}/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'browser' }))}`);
       await selectKitOption(page, 'Theme', theme === 'dark' ? 'Dark' : 'Light');
       await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-      await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
+      await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
       for (const [name, settingsCategory] of Object.entries(categories)) {
@@ -132,4 +158,56 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
     }
     }
   }
+});
+
+test('People lookup setup saves valid configurations through first enable, last disable, and replacement', async ({ page, daemon }) => {
+  await loginToMeetingArchive(page, daemon);
+  await selectWorkspace(page, 'Settings');
+  await page.getByRole('button', { name: 'People lookups', exact: true }).click();
+  async function add(name: string) {
+    await page.getByRole('button', { name: 'Add Exa', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Exa name', exact: true }).fill(name);
+    await page.getByRole('button', { name: 'Add Exa', exact: true }).click();
+    await expect(page.getByRole('switch', { name: `Enable ${name}`, exact: true })).toBeVisible();
+    const card = page.getByRole('article', { name, exact: true });
+    await card.getByText('Advanced', { exact: true }).click();
+    await card.getByRole('textbox', { name: `${name} endpoint`, exact: true }).fill('https://provider.example.test');
+    await card.getByRole('textbox', { name: 'How long the provider keeps data', exact: true }).fill('zero');
+    await card.getByRole('textbox', { name: 'Whether the provider trains on data', exact: true }).fill('none');
+  }
+  const writes: string[] = [];
+  page.on('request', request => { if (['PUT', 'PATCH'].includes(request.method())) writes.push(`${request.method()} ${new URL(request.url()).pathname}`); });
+  async function save(order: string[]) {
+    writes.length = 0;
+    const patched = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/v1/settings'));
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    expect((await patched).status()).toBe(200);
+    await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
+    expect(writes).toEqual(order);
+  }
+  const providerPath = '/api/v1/settings/person-enrichment/providers/';
+  await add('primary');
+  await page.getByRole('switch', { name: 'Enable primary', exact: true }).click();
+  await page.getByRole('switch', { name: 'Look people up', exact: true }).click();
+  await save([`PUT ${providerPath}primary`, 'PATCH /api/v1/settings']);
+  await page.reload();
+  await expect(page.getByRole('switch', { name: 'Look people up', exact: true })).toBeChecked();
+  await expect(page.getByRole('switch', { name: 'Enable primary', exact: true })).toBeChecked();
+  await page.getByRole('switch', { name: 'Enable primary', exact: true }).click();
+  await page.getByRole('switch', { name: 'Look people up', exact: true }).click();
+  await save(['PATCH /api/v1/settings', `PUT ${providerPath}primary`]);
+  await page.getByRole('switch', { name: 'Enable primary', exact: true }).click();
+  await page.getByRole('switch', { name: 'Look people up', exact: true }).click();
+  await save([`PUT ${providerPath}primary`, 'PATCH /api/v1/settings']);
+  await page.getByRole('switch', { name: 'Enable primary', exact: true }).click();
+  await add('replacement');
+  await page.getByRole('switch', { name: 'Enable replacement', exact: true }).click();
+  writes.length = 0;
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
+  expect(writes).toEqual([`PUT ${providerPath}replacement`, `PUT ${providerPath}primary`]);
+  await page.reload();
+  await expect(page.getByRole('switch', { name: 'Look people up', exact: true })).toBeChecked();
+  await expect(page.getByRole('switch', { name: 'Enable primary', exact: true })).not.toBeChecked();
+  await expect(page.getByRole('switch', { name: 'Enable replacement', exact: true })).toBeChecked();
 });

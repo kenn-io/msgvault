@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button, Chip } from '@kenn-io/kit-ui';
+  import BuildIndexAction from '../search/BuildIndexAction.svelte';
 
   import type { OverviewAction, OverviewRow } from '../../settings/overview';
 
@@ -31,6 +32,8 @@
       <span class="row__action">
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${row.name}`} onclick={() => onSetUp(action)} />
+        {:else if action?.kind === 'start' && action.id === 'messages'}
+          <BuildIndexAction size="sm" surface="soft" ariaLabel="Build index, Message search" disabled={working !== ''} onconfirm={() => onStart(action)} />
         {:else if action?.kind === 'start'}
           <Button
             size="sm"
