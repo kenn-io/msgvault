@@ -64,33 +64,6 @@ async function downloadContext(page: Page, info: TestInfo, label: string) {
 
 // Regressions caught here include missing production projections, loss of raw
 // provider field presence, synthetic zero durations, and source-deletion loss.
-test('Back keeps focus in Action items while its filtered source link reloads', async ({ page, daemon }) => {
-  let release!: () => void;
-  const pending = new Promise<void>(resolve => { release = resolve; });
-  await page.route('**/api/v1/meetings/actions', async route => {
-    if (route.request().postDataJSON()?.assignee_email) await pending;
-    await route.continue();
-  });
-  await page.goto(meetingURL(daemon));
-  await page.getByRole('region', { name: 'Meeting summary', exact: true }).getByRole('button', { name: /Action items/ }).click();
-  const panel = page.getByRole('dialog', { name: 'Action items', exact: true });
-  await panel.getByRole('combobox', { name: /^Status/ }).click();
-  await page.getByRole('option', { name: 'Pending', exact: true }).click();
-  await expect(panel.getByText('Publish the Notion recap', { exact: true })).toHaveCount(0);
-  const request = page.waitForRequest(request => request.url().endsWith('/meetings/actions') && request.postDataJSON()?.assignee_email === 'alex@example.com');
-  await panel.getByRole('textbox', { name: 'Assignee', exact: true }).fill('alex@example.com');
-  const source = panel.getByRole('link', { name: 'Circleback provider half hour', exact: true });
-  await source.click();
-  await expect(page.getByRole('dialog', { name: 'Archived meeting', exact: true })).toBeVisible();
-  await request;
-  await page.goBack();
-  await expect(page.getByRole('dialog', { name: 'Archived meeting', exact: true })).toHaveCount(0);
-  await expect(panel).toBeFocused();
-  release();
-  await expect(source).toBeVisible();
-  await expect(panel).toBeFocused();
-});
-
 test("production imports expose archived actions, duration evidence, and exact context downloads", async ({
   page,
   daemon,
@@ -175,11 +148,16 @@ test("production imports expose archived actions, duration evidence, and exact c
   await summary.getByRole('button', { name: /Action items/ }).click();
   await panel.getByRole('combobox', { name: /^Status/ }).click();
   await page.getByRole("option", { name: "Pending", exact: true }).click();
-  const assigneeResponse = page.waitForResponse(response => response.url().endsWith('/meetings/actions') && response.request().postDataJSON()?.assignee_email === 'alex@example.com');
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v1/meetings/actions', async route => {
+    if (route.request().postDataJSON()?.assignee_email) await pending;
+    await route.continue();
+  });
+  const assigneeRequest = page.waitForRequest(request => request.url().endsWith('/meetings/actions') && request.postDataJSON()?.assignee_email === 'alex@example.com');
   await panel
     .getByRole("textbox", { name: "Assignee", exact: true })
     .fill("alex@example.com");
-  await assigneeResponse;
   await expect(panel.getByText('Send the Circleback recap', { exact: true })).toBeVisible();
   await expect(
     panel.getByText("Publish the Notion recap", { exact: true }),
@@ -210,9 +188,13 @@ test("production imports expose archived actions, duration evidence, and exact c
     path: info.outputPath("source-deleted-reader.png"),
     fullPage: true,
   });
+  await assigneeRequest;
   await page.goBack();
   await expect(reader).toHaveCount(0);
-  await expect(source).toBeFocused();
+  await expect(panel).toBeFocused();
+  release();
+  await expect(source).toBeVisible();
+  await expect(panel).toBeFocused();
   await expect(
     panel.getByRole("textbox", { name: "Assignee" }),
   ).toHaveValue("alex@example.com");
