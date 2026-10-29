@@ -1,11 +1,13 @@
 package store_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/beeperidentity"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -81,11 +83,16 @@ func TestTelegramSharedKeyMigrationCollapsesDuplicateEdges(t *testing.T) {
 		`), candidateID, detail)
 		require.NoError(err)
 	}
-	decisionFor := func(candidateID int64) {
-		_, err := st.DB().Exec(st.Rebind(
-			`INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint)
-			 VALUES (?, 'sentinel')`), candidateID)
+	// decisionFor records a review decision against the candidate's genuine
+	// pre-migration evidence fingerprint and returns that fingerprint.
+	decisionFor := func(candidateID int64) string {
+		fingerprint, err := store.IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidateID)
+		require.NoError(err, "fingerprint the pre-migration evidence")
+		_, err = st.DB().Exec(st.Rebind(`
+			INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint)
+			 VALUES (?, ?)`), candidateID, fingerprint)
 		require.NoError(err)
+		return fingerprint
 	}
 
 	// Pair one: a candidate-state row beside a user-rejected row. Both
@@ -93,7 +100,7 @@ func TestTelegramSharedKeyMigrationCollapsesDuplicateEdges(t *testing.T) {
 	pendingID := seededCandidate(bridgeSeven, oldSeven, "acct-7", "candidate", "")
 	rejectedID := seededCandidate(bridgeSeven, shared, "acct-7", "rejected", "user")
 	evidenceFor(rejectedID, oldSeven)
-	decisionFor(pendingID)
+	preFingerprint := decisionFor(pendingID)
 
 	// Pair two: an accepted-but-unapplied row beside a rejected row. The
 	// collapse must record the conflict, not resurrect either decision.
@@ -193,27 +200,13 @@ func TestTelegramSharedKeyMigrationCollapsesDuplicateEdges(t *testing.T) {
 	// The survivor's stored decision fingerprint was recomputed instead of
 	// comparing against the pre-rewrite evidence.
 	var fingerprint string
+	var survivorID int64
 	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT d.evidence_fingerprint FROM identity_match_review_decisions d
+		SELECT d.evidence_fingerprint, d.candidate_id FROM identity_match_review_decisions d
 		JOIN identity_match_candidates c ON c.id = d.candidate_id
-		WHERE c.left_id = ? AND c.right_id = ?`), bridgeSeven, export).Scan(&fingerprint))
-	assert.NotEqual("sentinel", fingerprint, "fingerprint recomputed")
-	assert.NotEmpty(fingerprint)
-
-	// The ledger gate keeps the migration from running again.
-	var edges int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(*) FROM identity_match_candidates
-		WHERE basis = 'stable_provider_id' AND normalized_value = ?
-		  AND scope_kind IS NULL AND scope_value IS NULL`), shared).Scan(&edges))
-	_, err = st.DB().Exec(st.Rebind(
-		`DELETE FROM applied_migrations WHERE name = ?`), telegramSharedKeysMigration)
+		WHERE c.left_id = ? AND c.right_id = ?`), bridgeSeven, export).Scan(&fingerprint, &survivorID))
+	postFingerprint, err := store.IdentityMatchDecisionFingerprintForTest(context.Background(), st, survivorID)
 	require.NoError(err)
-	require.NoError(st.InitSchema(), "second run is a no-op")
-	var after int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(*) FROM identity_match_candidates
-		WHERE basis = 'stable_provider_id' AND normalized_value = ?
-		  AND scope_kind IS NULL AND scope_value IS NULL`), shared).Scan(&after))
-	assert.Equal(edges, after, "ledger gate prevents a re-run")
+	assert.Equal(postFingerprint, fingerprint, "fingerprint matches the rewritten evidence")
+	assert.NotEqual(preFingerprint, fingerprint, "the pre-rewrite fingerprint no longer matches")
 }

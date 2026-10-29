@@ -43,7 +43,6 @@ func TestParseFullExport(t *testing.T) {
 	direct := chats[0]
 	assert.EqualValues(7000000000000555555, direct.ID)
 	assert.Equal("personal_chat", direct.Type)
-	assert.Equal("direct_chat", direct.ConvType())
 
 	require.Len(direct.Messages, 4, "service message retained for classification")
 	assert.False(direct.Messages[0].Service)
@@ -64,7 +63,7 @@ func TestParseFullExport(t *testing.T) {
 	// date_unixtime (string) preferred; date fallback tolerated.
 	group := chats[1]
 	assert.EqualValues(-1009999999999, group.ID, "negative group id")
-	assert.Equal("group_chat", group.ConvType())
+	assert.Equal("public_supergroup", group.Type)
 	require.Len(group.Messages, 6)
 	assert.Equal("voice_messages/voice_message_1@01-01-2020_12-00-00.ogg", group.Messages[0].File)
 	assert.Equal("voice_message", group.Messages[0].MediaType)
@@ -74,11 +73,11 @@ func TestParseFullExport(t *testing.T) {
 
 	channel := chats[2]
 	assert.EqualValues(-1001111111111, channel.ID)
-	assert.Equal("channel", channel.ConvType())
+	assert.Equal("private_channel", channel.Type)
 
 	left := chats[3]
 	assert.EqualValues(7000000000000444444, left.ID, "left chat parsed")
-	assert.Equal("direct_chat", left.ConvType())
+	assert.Equal("bot_chat", left.Type)
 }
 
 func TestParseSingleChatRoot(t *testing.T) {
@@ -90,7 +89,7 @@ func TestParseSingleChatRoot(t *testing.T) {
 	require.Len(chats, 1)
 	chat := chats[0]
 	assert.EqualValues(-1008888888888, chat.ID)
-	assert.Equal("group_chat", chat.ConvType())
+	assert.Equal("private_group", chat.Type)
 	require.Len(chat.Messages, 2)
 	assert.Equal("single chat body", chat.Messages[0].Text)
 	assert.Equal("sticker", chat.Messages[1].MediaType, "sticker_emoji implies sticker media")

@@ -72,50 +72,55 @@ func stableCandidatePairState(t *testing.T, st *store.Store, a, b int64) string 
 	return state
 }
 
+// TestExportAndBeeperObservationLinkToOneParticipant pins that the shared
+// Telegram provider key links the export's participant and a Beeper bridge
+// participant into one accepted identity in either arrival order.
 func TestExportAndBeeperObservationLinkToOneParticipant(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	assert := assert.New(t)
-	require := require.New(t)
-	alice := "7000000000000555555"
+	t.Run("bridge first", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		assert := assert.New(t)
+		require := require.New(t)
+		alice := "7000000000000555555"
 
-	// The Beeper side first: a bridge participant carrying the shared key.
-	bridgePID, err := st.EnsureParticipantByIdentifier("beeper", "beeper:7:acct-7:22:@alice:beeper.local", "Alice Example")
-	require.NoError(err)
-	beeperObservationFor(t, st, bridgePID, beeperidentity.TelegramStableProviderKey(alice), "telegram")
+		// The Beeper side first: a bridge participant carrying the shared key.
+		bridgePID, err := st.EnsureParticipantByIdentifier("beeper", "beeper:7:acct-7:22:@alice:beeper.local", "Alice Example")
+		require.NoError(err)
+		beeperObservationFor(t, st, bridgePID, beeperidentity.TelegramStableProviderKey(alice), "telegram")
 
-	importFullFixture(t, st)
-	exportPID := telegramSenderParticipantID(t, st, alice)
+		importFullFixture(t, st)
+		exportPID := telegramSenderParticipantID(t, st, alice)
 
-	assert.Equal("accepted",
-		stableCandidatePairState(t, st, bridgePID, exportPID),
-		"shared key auto-links export and bridge observations")
+		assert.Equal("accepted",
+			stableCandidatePairState(t, st, bridgePID, exportPID),
+			"shared key auto-links export and bridge observations")
 
-	// Both participants carry the same provider key now.
-	var keys int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(DISTINCT participant_id) FROM participant_contact_observations
-		WHERE provider_user_id = ?`), beeperidentity.TelegramStableProviderKey(alice)).Scan(&keys))
-	assert.Equal(2, keys, "both participants observed under the shared key")
-}
+		// Both participants carry the same provider key now.
+		var keys int
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT COUNT(DISTINCT participant_id) FROM participant_contact_observations
+			WHERE provider_user_id = ?`), beeperidentity.TelegramStableProviderKey(alice)).Scan(&keys))
+		assert.Equal(2, keys, "both participants observed under the shared key")
+	})
 
-func TestLinkResolvesInReverseOrder(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	assert := assert.New(t)
-	require := require.New(t)
-	alice := "7000000000000555555"
+	t.Run("export first", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		assert := assert.New(t)
+		require := require.New(t)
+		alice := "7000000000000555555"
 
-	importFullFixture(t, st)
-	exportPID := telegramSenderParticipantID(t, st, alice)
+		importFullFixture(t, st)
+		exportPID := telegramSenderParticipantID(t, st, alice)
 
-	// The bridge side arrives after the export: the shared matcher entry
-	// point links it the same way.
-	bridgePID, err := st.EnsureParticipantByIdentifier("beeper", "beeper:7:acct-7:22:@alice:beeper.local", "Alice Example")
-	require.NoError(err)
-	result := beeperObservationFor(t, st, bridgePID, beeperidentity.TelegramStableProviderKey(alice), "telegram")
-	require.NoError(beeper.MatchProviderIdentity(context.Background(), st, bridgePID, result))
-	assert.Equal("accepted",
-		stableCandidatePairState(t, st, bridgePID, exportPID),
-		"both import orders accept the same link")
+		// The bridge side arrives after the export: the shared matcher entry
+		// point links it the same way.
+		bridgePID, err := st.EnsureParticipantByIdentifier("beeper", "beeper:7:acct-7:22:@alice:beeper.local", "Alice Example")
+		require.NoError(err)
+		result := beeperObservationFor(t, st, bridgePID, beeperidentity.TelegramStableProviderKey(alice), "telegram")
+		require.NoError(beeper.MatchProviderIdentity(context.Background(), st, bridgePID, result))
+		assert.Equal("accepted",
+			stableCandidatePairState(t, st, bridgePID, exportPID),
+			"both import orders accept the same link")
+	})
 }
 
 func TestDifferentNetworkSameNumericIDDoesNotLink(t *testing.T) {

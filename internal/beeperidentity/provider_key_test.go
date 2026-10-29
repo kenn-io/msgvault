@@ -15,6 +15,7 @@ func TestProviderKeyRoundTrip(t *testing.T) {
 		{"telegram", "account", "acct-7", "482111"},
 		{"matrix", "server", "beeper.local", "@alice:beeper.local"},
 		{"slack", "workspace", "T0123456789", "U0123456789"},
+		{"telegram", "account", "a:b", "482111"}, // a delimiter inside a component stays one component
 		{"", "", "", ""},
 	}
 	for _, c := range cases {
@@ -43,18 +44,6 @@ func TestDecodeProviderKeyRejectsMalformed(t *testing.T) {
 		_, _, _, _, ok := DecodeProviderKey(key)
 		assert.False(t, ok, "%q must not decode", key)
 	}
-}
-
-func TestProviderKeyDelimitersCannotForgeSplits(t *testing.T) {
-	assert := assert.New(t)
-	// A scope value containing the delimiter stays one component.
-	key := ProviderKey("telegram", "account", "a:b", "482111")
-	service, scopeKind, scopeValue, native, ok := DecodeProviderKey(key)
-	assert.True(ok)
-	assert.Equal("telegram", service)
-	assert.Equal("account", scopeKind)
-	assert.Equal("a:b", scopeValue)
-	assert.Equal("482111", native)
 }
 
 // TestTelegramIdentityCanonicalForms pins the one accepted form of a

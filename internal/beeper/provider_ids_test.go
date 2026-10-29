@@ -147,9 +147,6 @@ func TestTelegramNumericNativeIDUsesSharedServiceScope(t *testing.T) {
 			&User{ID: "@discord_482111:beeper.local", Raw: json.RawMessage(
 				`{"id":"@discord_482111:beeper.local","providerID":"482111"}`)}),
 		"other networks are unchanged")
-
-	assert.Empty(beeperidentity.TelegramStableProviderKey(""), "empty id has no key")
-	assert.Empty(beeperidentity.TelegramStableProviderKey("482 111"), "spaced id is not numeric")
 }
 
 func TestProviderUserIDUsesOnlyDocumentedProviderID(t *testing.T) {

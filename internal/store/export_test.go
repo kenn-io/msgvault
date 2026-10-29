@@ -361,6 +361,23 @@ func RefreshSourceMessageAttributionForTest(s *Store, sourceID int64) error {
 	})
 }
 
+// IdentityMatchDecisionFingerprintForTest returns the evidence fingerprint
+// the review path stores beside an accepted decision and the Telegram key
+// migration refreshes, so migration tests can seed genuine fingerprints and
+// assert their exact replacement.
+func IdentityMatchDecisionFingerprintForTest(ctx context.Context, s *Store, candidateID int64) (string, error) {
+	var fingerprint string
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		candidate, err := getIdentityMatchCandidateTx(ctx, tx, candidateID)
+		if err != nil {
+			return err
+		}
+		fingerprint, err = identityMatchFingerprintContext(ctx, tx, candidate, false)
+		return err
+	})
+	return fingerprint, err
+}
+
 // Owner-address SQL builders, exported for their isolation test.
 var (
 	OwnerEmailMatch      = ownerEmailMatch

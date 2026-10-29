@@ -15,8 +15,9 @@ import (
 // observed Telegram user 482111 under an account-scoped key, a
 // stable-provider candidate was accepted, and a review decision recorded a
 // fingerprint against that evidence. It returns the observing participant,
-// the candidate id, and the old and shared keys.
-func seedTelegramKeyRows(t *testing.T, st *Store) (left, candidateID int64, oldKey, newKey string) {
+// the candidate id, the old and shared keys, and the seeded pre-migration
+// fingerprint.
+func seedTelegramKeyRows(t *testing.T, st *Store) (left, candidateID int64, oldKey, newKey, preFingerprint string) {
 	t.Helper()
 	oldKey = beeperidentity.ProviderKey("telegram", "account", "acct-7", "482111")
 	newKey = beeperidentity.ProviderKey("telegram", "service", "", "482111")
@@ -65,12 +66,14 @@ func seedTelegramKeyRows(t *testing.T, st *Store) (left, candidateID int64, oldK
 		SourceID:     &source.ID,
 	})
 	require.NoError(t, err)
+	preFingerprint, err = IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidate.ID)
+	require.NoError(t, err, "fingerprint the pre-migration evidence")
 	_, err = st.DB().Exec(
-		`INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint) VALUES (?, 'sentinel')`,
-		candidate.ID,
+		`INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint) VALUES (?, ?)`,
+		candidate.ID, preFingerprint,
 	)
 	require.NoError(t, err)
-	return left, candidate.ID, oldKey, newKey
+	return left, candidate.ID, oldKey, newKey, preFingerprint
 }
 
 func TestInitSchemaRewritesTelegramProviderKeys(t *testing.T) {
@@ -81,7 +84,7 @@ func TestInitSchemaRewritesTelegramProviderKeys(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
 
-	left, candidateID, oldKey, newKey := seedTelegramKeyRows(t, st)
+	left, candidateID, oldKey, newKey, preFingerprint := seedTelegramKeyRows(t, st)
 
 	// A non-numeric Telegram native ID and another network's account-scoped
 	// key must survive untouched.
@@ -148,8 +151,10 @@ func TestInitSchemaRewritesTelegramProviderKeys(t *testing.T) {
 		`SELECT evidence_fingerprint FROM identity_match_review_decisions WHERE candidate_id = ?`,
 		candidateID,
 	).Scan(&fingerprint))
-	assert.NotEqual("sentinel", fingerprint, "fingerprint recomputed")
-	assert.NotEmpty(fingerprint)
+	postFingerprint, err := IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidateID)
+	require.NoError(err)
+	assert.Equal(postFingerprint, fingerprint, "fingerprint matches the rewritten evidence")
+	assert.NotEqual(preFingerprint, fingerprint, "the pre-rewrite fingerprint no longer matches")
 
 	// No old keys remain anywhere the matcher looks.
 	var remaining int

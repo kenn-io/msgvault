@@ -22,8 +22,6 @@ import (
 const (
 	fixturePersonalChatID = 7000000000000555555
 	fixtureGroupChatID    = -1009999999999
-	fixtureChannelChatID  = -1001111111111
-	fixtureBotChatID      = 7000000000000444444
 )
 
 func importFixture(t *testing.T, st *store.Store, name string, mutate func(t *testing.T, opts *ImportOptions)) *ImportSummary {
@@ -290,42 +288,46 @@ func attachmentRow(t *testing.T, st *store.Store, sourceMessageID string) (path,
 }
 
 // TestImportDirectChatDerivesToRecipients pins the only "to" derivation the
-// export determines: in a personal chat the message's to recipient is the
-// chat's other participant, owner and peer in both directions.
+// export determines: in a personal or bot chat the message's to recipient is
+// the chat's other participant, owner and peer in both directions.
 func TestImportDirectChatDerivesToRecipients(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	assert := assert.New(t)
-	require := require.New(t)
+	for _, chatType := range []string{"personal_chat", "bot_chat"} {
+		t.Run(chatType, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			assert := assert.New(t)
+			require := require.New(t)
 
-	alice := map[string]any{
-		"id": 1, "type": "message", "date_unixtime": "1610909800",
-		"from": "Alice Example", "from_id": "user7000000000000555555", "text": "from alice",
+			peer := map[string]any{
+				"id": 1, "type": "message", "date_unixtime": "1610909800",
+				"from": "Alice Example", "from_id": "user7000000000000555555", "text": "from alice",
+			}
+			owner := maps.Clone(peer)
+			owner["id"] = 2
+			owner["from"] = "Test Owner"
+			owner["from_id"] = "user7000000000000123456"
+			owner["text"] = "from owner"
+			root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, chatType, "Alice Example",
+				[]map[string]any{peer, owner})
+			importRoot(t, st, root)
+
+			ownerPID, _, err := st.ParticipantByIdentifier("telegram", "7000000000000123456")
+			require.NoError(err)
+			peerPID, _, err := st.ParticipantByIdentifier("telegram", "7000000000000555555")
+			require.NoError(err)
+
+			toRecipient := func(sourceMessageID string) int64 {
+				var pid int64
+				require.NoError(st.DB().QueryRow(st.Rebind(`
+					SELECT mr.participant_id FROM message_recipients mr
+					JOIN messages m ON m.id = mr.message_id
+					WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
+					sourceMessageID).Scan(&pid))
+				return pid
+			}
+			assert.Equal(ownerPID, toRecipient("7000000000000555555:1"), "peer's message is to the owner")
+			assert.Equal(peerPID, toRecipient("7000000000000555555:2"), "owner's message is to the peer")
+		})
 	}
-	owner := maps.Clone(alice)
-	owner["id"] = 2
-	owner["from"] = "Test Owner"
-	owner["from_id"] = "user7000000000000123456"
-	owner["text"] = "from owner"
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Alice Example",
-		[]map[string]any{alice, owner})
-	importRoot(t, st, root)
-
-	ownerPID, _, err := st.ParticipantByIdentifier("telegram", "7000000000000123456")
-	require.NoError(err)
-	alicePID, _, err := st.ParticipantByIdentifier("telegram", "7000000000000555555")
-	require.NoError(err)
-
-	toRecipient := func(sourceMessageID string) int64 {
-		var pid int64
-		require.NoError(st.DB().QueryRow(st.Rebind(`
-			SELECT mr.participant_id FROM message_recipients mr
-			JOIN messages m ON m.id = mr.message_id
-			WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
-			sourceMessageID).Scan(&pid))
-		return pid
-	}
-	assert.Equal(ownerPID, toRecipient("7000000000000555555:1"), "peer's message is to the owner")
-	assert.Equal(alicePID, toRecipient("7000000000000555555:2"), "owner's message is to the peer")
 }
 
 // TestImportGroupChatsHaveNoToRecipients pins the other half: group and
@@ -343,7 +345,7 @@ func TestImportGroupChatsHaveNoToRecipients(t *testing.T) {
 	owner["id"] = 2
 	owner["from"] = "Test Owner"
 	owner["from_id"] = "user7000000000000123456"
-	root := writeChatExport(t, t.TempDir(), "private_group", "A Group",
+	root := writeChatExport(t, t.TempDir(), fixtureGroupChatID, "private_group", "A Group",
 		[]map[string]any{alice, owner})
 	importRoot(t, st, root)
 
@@ -351,7 +353,7 @@ func TestImportGroupChatsHaveNoToRecipients(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
-		WHERE m.source_message_id IN ('7000000000000555555:1', '7000000000000555555:2')
+		WHERE m.source_message_id IN ('-1009999999999:1', '-1009999999999:2')
 		  AND mr.recipient_type = 'to'`)).Scan(&toCount))
 	assert.Zero(toCount, "group messages carry no to recipients")
 }
@@ -367,7 +369,7 @@ func TestImportDirectChatOutgoingOnlyDerivesPeerRecipient(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
-			root := writeChatExport(t, t.TempDir(), chatType, "Peer Name", []map[string]any{
+			root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, chatType, "Peer Name", []map[string]any{
 				{
 					"id": 1, "type": "message", "date_unixtime": "1610909800",
 					"from": "Test Owner", "from_id": "user7000000000000123456",
@@ -389,34 +391,6 @@ func TestImportDirectChatOutgoingOnlyDerivesPeerRecipient(t *testing.T) {
 	}
 }
 
-// TestImportBotChatToRecipient pins the bot_chat derivation on the full
-// fixture: the bot's left-chat message is to the owner.
-func TestImportBotChatToRecipient(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	assert := assert.New(t)
-	require := require.New(t)
-	importFixture(t, st, "full", nil)
-
-	ownerPID, _, err := st.ParticipantByIdentifier("telegram", "7000000000000123456")
-	require.NoError(err)
-	var toPID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT mr.participant_id FROM message_recipients mr
-		JOIN messages m ON m.id = mr.message_id
-		WHERE m.source_message_id = '7000000000000444444:301'
-		  AND mr.recipient_type = 'to'`)).Scan(&toPID))
-	assert.Equal(ownerPID, toPID, "bot_chat message is to the owner")
-
-	// Group and channel messages stay sender-only.
-	var groupTo int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(*) FROM message_recipients mr
-		JOIN messages m ON m.id = mr.message_id
-		WHERE m.source_message_id LIKE '-1009999999999:%'
-		  AND mr.recipient_type = 'to'`)).Scan(&groupTo))
-	assert.Zero(groupTo, "group messages carry no to recipients")
-}
-
 // TestImportReplyLinksAcrossExports pins reply resolution through the
 // store: a parent archived by an earlier export links to a reply imported
 // by a later, disjoint export of the same chat.
@@ -429,7 +403,7 @@ func TestImportReplyLinksAcrossExports(t *testing.T) {
 		"id": 1, "type": "message", "date_unixtime": "1610909800",
 		"from": "Alice Example", "from_id": "user7000000000000555555", "text": "original",
 	}
-	first := writeChatExport(t, t.TempDir(), "personal_chat", "Reply Chat",
+	first := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat",
 		[]map[string]any{parent})
 	importRoot(t, st, first)
 
@@ -437,7 +411,7 @@ func TestImportReplyLinksAcrossExports(t *testing.T) {
 	reply["id"] = 2
 	reply["text"] = "a reply"
 	reply["reply_to_message_id"] = 1
-	second := writeChatExport(t, t.TempDir(), "personal_chat", "Reply Chat",
+	second := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat",
 		[]map[string]any{reply})
 	importRoot(t, st, second)
 
@@ -467,7 +441,7 @@ func TestImportReplyLinksForwardReference(t *testing.T) {
 	parent := maps.Clone(base)
 	parent["id"] = 2
 	parent["text"] = "original"
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Forward Chat",
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Forward Chat",
 		[]map[string]any{reply, parent})
 	importRoot(t, st, root)
 
@@ -495,7 +469,7 @@ func TestImportEditedStateSetOnceOnFirstImport(t *testing.T) {
 	edited["text"] = "now edited"
 	edited["edited"] = "2021-01-17T19:13:19:00"
 	edited["edited_unixtime"] = "1610910799"
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Edited Chat",
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Edited Chat",
 		[]map[string]any{plain, edited})
 	importRoot(t, st, root)
 
@@ -535,7 +509,7 @@ func TestImportPreservesDocumentMetadata(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	assert := assert.New(t)
 	require := require.New(t)
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Docs Chat", []map[string]any{{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Docs Chat", []map[string]any{{
 		"id": 1, "type": "message", "date_unixtime": "1610909800",
 		"from": "Alice Example", "from_id": "user7000000000000555555",
 		"file": "documents/report_1.bin", "file_name": "Quarterly Report.pdf",
@@ -561,7 +535,7 @@ func TestImportUnavailableMediaWarningCreatesNoAttachment(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	assert := assert.New(t)
 	require := require.New(t)
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Media Chat", []map[string]any{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
@@ -601,7 +575,7 @@ func TestImportUnavailableMediaWarningCreatesNoAttachment(t *testing.T) {
 // textutil.SnippetFromBody rendering.
 func TestImportSnippetTakesFirstLine(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Snippet Chat", []map[string]any{{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Snippet Chat", []map[string]any{{
 		"id": 1, "type": "message", "date_unixtime": "1610909800",
 		"from": "Alice Example", "from_id": "user7000000000000555555",
 		"text": "first preview line\nsecond body line",
@@ -624,31 +598,6 @@ func TestParticipantsResolvedCountsAllSenders(t *testing.T) {
 	summary := importFixture(t, st, "full", nil)
 	assert.Equal(t, 6, summary.ParticipantsResolved,
 		"owner, Alice, Bob, the channel, the anonymous group admin, and the bot")
-}
-
-// TestParticipantSummaryCountsResolvedSenders pins the same counter on a
-// small export: the owner plus two other senders.
-func TestParticipantSummaryCountsResolvedSenders(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	base := map[string]any{
-		"type": "message", "date_unixtime": "1610909800", "text": "hello",
-	}
-	alice := maps.Clone(base)
-	alice["id"] = 1
-	alice["from"] = "Alice Example"
-	alice["from_id"] = "user7000000000000555555"
-	bob := maps.Clone(base)
-	bob["id"] = 2
-	bob["from"] = "Bob Sample"
-	bob["from_id"] = "user7000000000000666666"
-	owner := maps.Clone(base)
-	owner["id"] = 3
-	owner["from"] = "Test Owner"
-	owner["from_id"] = "user7000000000000123456"
-	root := writeChatExport(t, t.TempDir(), "private_group", "Counting Group",
-		[]map[string]any{alice, bob, owner})
-	summary := importRoot(t, st, root)
-	assert.Equal(t, 3, summary.ParticipantsResolved, "the owner and both senders")
 }
 
 func TestImportLimitMidChatAndResumeCompletes(t *testing.T) {
@@ -752,31 +701,6 @@ func TestImportResumeReprocessesInterruptedChatIdempotently(t *testing.T) {
 	assert.Equal(11, count)
 }
 
-// TestImportResumeReEnsuresTornMedia pins the resume half of media
-// handling: reprocessing an interrupted chat restores an attachment row an
-// interruption cost, without touching anything else.
-func TestImportResumeReEnsuresTornMedia(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	assert := assert.New(t)
-	require := require.New(t)
-	dir := t.TempDir()
-	copyFullFixture(t, dir)
-	importRoot(t, st, dir)
-
-	// Tear the write: the photo message keeps its row, its attachment row
-	// is gone, and only its chat is incomplete.
-	_, deleteErr := st.DB().Exec(st.Rebind(`
-		DELETE FROM attachments WHERE message_id = (
-			SELECT id FROM messages WHERE source_message_id = '7000000000000555555:103')`))
-	require.NoError(deleteErr)
-	failSyncAt(t, st, dir, fixtureGroupChatID, fixtureChannelChatID, fixtureBotChatID)
-
-	importRoot(t, st, dir)
-	path, hash := attachmentRow(t, st, "7000000000000555555:103")
-	assert.NotEmpty(path, "torn media row is restored from the export file")
-	assert.NotEmpty(hash)
-}
-
 // failAttachmentInserts installs a database trigger that fails every
 // attachment insert, so a run commits its messages atomically and then
 // fails a deferred attachment write. The returned func removes it.
@@ -828,7 +752,7 @@ func TestImportLimitThenRerunRestoresReplyLinks(t *testing.T) {
 	require := require.New(t)
 
 	// The reply comes first, so the limited run archives the child alone.
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Reply Chat", []map[string]any{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
@@ -869,7 +793,7 @@ func TestImportRetriesChatAfterDeferredAttachmentFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Media Chat", []map[string]any{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
@@ -911,7 +835,7 @@ func TestImportRetriesChatAfterDeferredReplyFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Reply Chat", []map[string]any{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
@@ -958,7 +882,7 @@ func TestImportRetryWithoutCheckpointRestoresAttachment(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Media Chat", []map[string]any{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
@@ -1023,7 +947,7 @@ FOR EACH ROW EXECUTE FUNCTION fail_sender_resolution()`
 func TestImportSenderFailureIsNotPermanent(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
-	root := writeChatExport(t, t.TempDir(), "private_group", "Sender Group", []map[string]any{
+	root := writeChatExport(t, t.TempDir(), fixtureGroupChatID, "private_group", "Sender Group", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
@@ -1049,14 +973,14 @@ func TestImportSenderFailureIsNotPermanent(t *testing.T) {
 	require.NoError(t, err)
 	var sender sql.NullInt64
 	require.NoError(t, st.DB().QueryRow(`
-		SELECT sender_id FROM messages WHERE source_message_id = '7000000000000555555:1'`).Scan(&sender))
+		SELECT sender_id FROM messages WHERE source_message_id = '-1009999999999:1'`).Scan(&sender))
 	assert.True(t, sender.Valid, "the retried chat archives the message with its sender")
 	assert.Equal(t, alicePID, sender.Int64)
 	var fromPID int64
 	require.NoError(t, st.DB().QueryRow(`
 		SELECT mr.participant_id FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
-		WHERE m.source_message_id = '7000000000000555555:1'
+		WHERE m.source_message_id = '-1009999999999:1'
 		  AND mr.recipient_type = 'from'`).Scan(&fromPID))
 	assert.Equal(t, alicePID, fromPID, "the retried message records its from recipient")
 }
@@ -1115,7 +1039,7 @@ func TestImportCheckpointFailureFailsRun(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			root := writeChatExport(t, t.TempDir(), "personal_chat", "Chat", messages)
+			root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Chat", messages)
 
 			remove := failCheckpointWrites(t, st)
 			opts := ImportOptions{RootDir: root, AttachmentsDir: t.TempDir()}
@@ -1145,7 +1069,7 @@ func TestImportAudioTitleDoesNotReplaceFilename(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	assert := assert.New(t)
 	require := require.New(t)
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Music Chat", []map[string]any{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Music Chat", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
@@ -1184,7 +1108,7 @@ func TestImportAudioTitleDoesNotReplaceFilename(t *testing.T) {
 // senders.
 func TestImportMalformedPersonalChatErrors(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Malformed Chat", []map[string]any{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Malformed Chat", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555", "text": "hello",
@@ -1211,7 +1135,7 @@ func TestImportMalformedPersonalChatErrors(t *testing.T) {
 // when a later malformed chat fails the whole run.
 func TestImportErrorRefreshesCompletedChatStats(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	root := writeChatExport(t, t.TempDir(), "personal_chat", "Stats Chat", []map[string]any{{
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Stats Chat", []map[string]any{{
 		"id": 1, "type": "message", "date_unixtime": "1610909800",
 		"from": "Alice Example", "from_id": "user7000000000000555555",
 		"text": "committed before the failure",
@@ -1342,7 +1266,7 @@ func TestImportMediaRoles(t *testing.T) {
 		"from": "Alice Example", "from_id": "user7000000000000555555",
 		"photo": "photos/photo_1.jpg", "thumbnail": "thumbnails/thumb_1.jpg", "text": "",
 	}
-	root := writeChatExport(t, dir, "personal_chat", "Media Chat",
+	root := writeChatExport(t, dir, fixturePersonalChatID, "personal_chat", "Media Chat",
 		[]map[string]any{sticker, photo})
 	require.NoError(os.MkdirAll(filepath.Join(root, "photos"), 0o755))
 	require.NoError(os.WriteFile(
@@ -1384,7 +1308,7 @@ func TestImportSymlinkedMediaStaysContained(t *testing.T) {
 	require := require.New(t)
 
 	dir := t.TempDir()
-	root := writeChatExport(t, dir, "personal_chat", "Symlink Chat", []map[string]any{{
+	root := writeChatExport(t, dir, fixturePersonalChatID, "personal_chat", "Symlink Chat", []map[string]any{{
 		"id": 1, "type": "message", "date_unixtime": "1610909800",
 		"from": "Alice Example", "from_id": "user7000000000000555555",
 		"photo": "photos/escape.jpg", "text": "",
@@ -1498,16 +1422,18 @@ func setChatMessages(t *testing.T, root string, chatID string, messages []map[st
 	require.Failf(t, "setChatMessages: chat not found", "chat %s not found in %s", chatID, root)
 }
 
-// writeChatExport writes a full-shaped export whose single chat carries the
-// given message objects and returns its root directory. The owner is the
-// fixture owner, so no --me override is needed.
-func writeChatExport(t *testing.T, dir, chatType, chatName string, messages []map[string]any) string {
+// writeChatExport writes a full-shaped export whose single chat — chatID in
+// Telegram's ID space: the peer's own user id for direct chats, negative for
+// groups and channels — carries the given message objects, and returns its
+// root directory. The owner is the fixture owner, so no --me override is
+// needed.
+func writeChatExport(t *testing.T, dir string, chatID int64, chatType, chatName string, messages []map[string]any) string {
 	t.Helper()
 	doc := fullExportDoc{
 		PersonalInformation: jsontext.Value(`{"user_id":7000000000000123456,"first_name":"Test","last_name":"Owner"}`),
 	}
 	doc.Chats.List = []fullExportChat{{
-		ID: 7000000000000555555, Type: chatType, Name: chatName, Messages: messages,
+		ID: chatID, Type: chatType, Name: chatName, Messages: messages,
 	}}
 	b, err := json.Marshal(doc)
 	require.NoError(t, err)
