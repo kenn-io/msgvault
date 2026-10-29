@@ -329,7 +329,6 @@ describe('OperationsController', () => {
   });
 
   it('keeps selected detail identity when its same-timestamp row leaves the refreshed page', async () => {
-    const commits = vi.fn();
     const peerBefore = `${RUN_ONE}-peer`;
     const peerAfter = `${RUN_TWO}-peer`;
     let historyReads = 0;
@@ -346,11 +345,10 @@ describe('OperationsController', () => {
       }
       return ++detailReads === 1 ? Response.json(detail(RUN_ONE)) : refreshDetail.promise;
     });
-    const controller = new OperationsController(createAPIClient(fetchFn), commits);
+    const controller = new OperationsController(createAPIClient(fetchFn));
     await controller.applyURLState(operationState());
     await controller.applyURLState(operationState({ operationRunID: RUN_ONE }));
     expect(controller.snapshot.detail?.id).toBe(RUN_ONE);
-    commits.mockClear();
 
     const refreshing = controller.refresh();
     await vi.waitFor(() => expect(controller.snapshot.detailLoading).toBe(true));
@@ -363,7 +361,6 @@ describe('OperationsController', () => {
 
     expect(controller.snapshot.rows.map((item) => item.id)).toEqual([peerAfter]);
     expect(controller.snapshot.detail?.id).toBe(RUN_ONE);
-    expect(commits).not.toHaveBeenCalled();
     controller.destroy();
   });
 

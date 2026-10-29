@@ -824,7 +824,6 @@ export class ExploreState {
       this.pendingSearchPriorFocus = undefined;
     }
     this.navigate({ ...state, operationHistory: true }, 'push');
-    this.committed = normalize(this.current);
     if (opening) this.browser.history.replaceState({ ...this.browser.history.state, operationHistoryDepth: 1 }, '');
   }
 
