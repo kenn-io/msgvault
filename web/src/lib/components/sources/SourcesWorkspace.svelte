@@ -31,6 +31,7 @@
     maxLockHoldPolls = 8,
     now = () => new Date(),
     onOpenOperations = () => undefined,
+    onStatus = () => undefined,
   }: {
     client: APIClient;
     requestTimeoutMs?: number;
@@ -38,6 +39,7 @@
     maxLockHoldPolls?: number;
     now?: () => Date;
     onOpenOperations?: () => void;
+    onStatus?: (sources: Source[]) => void;
   } = $props();
   let sources = $state<Source[]>([]);
   const expanded = new SvelteSet<number>();
@@ -138,6 +140,7 @@
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
       const next = data.sources ?? [];
+      onStatus(next);
       let nextDelay: number | undefined;
       let lockHoldPoll = false;
       let advanced = false;
