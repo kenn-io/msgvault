@@ -654,20 +654,20 @@ it.each([['embedding', true], ['enrichment', true], ['embedding', false]] as con
   expect(seen.some(request => request.method === 'DELETE')).toBe(!changeEndpoint);
 });
 
-it.each(['google', ''] as const)('keeps the unchanged %s account Test save behavior', async provider => {
-  const account = { provider, oauth_app: provider === 'google' ? 'contacts-app' : '', configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://www.googleapis.com/.well-known/carddav', username: 'person@example.com' } };
+it.each([['google', true], ['microsoft', true], ['', true], ['google', false]] as const)('keeps the unchanged %s account Test save behavior when enabled=%s', async (provider, enabled) => {
+  const account = { provider, oauth_app: provider === 'google' ? 'contacts-app' : '', configured: true, available: provider !== 'microsoft', credential_configured: provider !== 'microsoft', enabled, scheduled: true, schedule: '0 2 * * *', account: { base_url: provider === 'microsoft' ? 'https://graph.microsoft.com/v1.0' : provider === 'google' ? 'https://www.googleapis.com/.well-known/carddav' : 'https://work.example.test/', username: 'person@example.com' } };
   const { client, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', provider, oauth_app: account.oauth_app, status: account }] });
     if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/account/test') || path.endsWith('/carddav/account')) return Response.json({ ...account.account, provider, oauth_app: account.oauth_app, enabled: true, schedule: account.schedule, books: 2 });
+    if (path.endsWith('/carddav/account/test') || path.endsWith('/carddav/account')) return Response.json({ ...account.account, provider, oauth_app: account.oauth_app, enabled, schedule: account.schedule, books: 2 });
   });
   render(SettingsWorkspace, { client, category: 'carddav' });
   await screen.findByDisplayValue('person@example.com');
   expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
   await screen.findByText('Connection successful. Found 2 address books.');
-  if (provider !== 'google') {
+  if (provider === '' || !enabled) {
     expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
     return;
   }
@@ -678,7 +678,7 @@ it.each(['google', ''] as const)('keeps the unchanged %s account Test save behav
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await screen.findByText('Contact account default saved. Found 2 address books.');
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toEqual({ connection: 'default', provider, oauth_app: account.oauth_app, base_url: account.account.base_url, username: account.account.username, enabled: true, schedule: account.schedule });
+  expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toEqual({ connection: 'default', provider, ...(provider === 'google' ? { oauth_app: account.oauth_app } : {}), base_url: account.account.base_url, username: account.account.username, enabled, schedule: account.schedule });
 
 });
 
