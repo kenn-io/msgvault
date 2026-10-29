@@ -87,6 +87,10 @@
     return value.toISOString().replace('.000Z', 'Z');
   }
   function changeDates(selection: RangeSelection): void {
+    if (selection.mode === 'relative' && selection.days === 0) {
+      patchFilter({ operationStartedFrom: '', operationStartedBefore: '' });
+      return;
+    }
     const range = selection.mode === 'custom' ? selection : resolveRange(selection);
     patchFilter({ operationStartedFrom: range.from ? `${range.from}T00:00:00Z` : '', operationStartedBefore: range.to ? dayOffset(range.to, 1) : '' });
   }
@@ -114,6 +118,9 @@
         <SelectDropdown title="Kind" value={local.operationKind || (local.operationLane ? `lane:${local.operationLane}` : '')} options={kindOptions} onchange={(value) => patchFilter({ operationLane: value.startsWith('lane:') ? value.slice(5) as OperationsURLState['operationLane'] : '', operationKind: value.startsWith('lane:') ? '' : value as OperationsURLState['operationKind'] })} />
         <SelectDropdown title="State" value={local.operationState} options={stateOptions} onchange={(value) => patchFilter({ operationState: value as OperationsURLState['operationState'] })} />
         <DateRangePicker selection={dates} onSelect={changeDates} maxDate={new Date().toISOString().slice(0, 10)} />
+        {#if local.operationStartedFrom || local.operationStartedBefore}
+          <Button size="sm" surface="soft" label="Clear operation dates" onclick={() => patchFilter({ operationStartedFrom: '', operationStartedBefore: '' })} />
+        {/if}
       </div>
       {#if current.initialLoading || current.backgroundLoading}<p class="muted" role="status">Loading…</p>{/if}
       {#if current.historyReadable && current.rows.length === 0 && !current.runsError && !current.conflict}<p class="muted">No runs match.</p>{/if}
