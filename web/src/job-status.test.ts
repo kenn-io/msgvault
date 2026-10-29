@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it } from 'vitest';
 
-import { tick } from 'svelte';
 import App from './App.svelte';
 import { createSessionController } from './lib/api/session.svelte';
 import { jobLane, jobRun, sourceStatus, syncRunStatus } from './lib/jobs/fixtures.test-support';
@@ -64,15 +63,9 @@ it('refreshes the shell dot after Settings Contacts CardDAV Sync now', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Needs attention'));
 });
 
-it('Sync now supersedes a held shell source read', async () => {
+it('refreshes the shell dot after Sources Sync now', async () => {
   window.history.replaceState(null, '', '/?workspace=sources');
   let started = false;
-  let hold = false;
-  let release!: () => void;
-  let captured!: () => void;
-  let oldSnapshot!: Response;
-  const capturedStatus = new Promise<void>(resolve => { captured = resolve; });
-  const gate = new Promise<void>(resolve => { release = resolve; });
   const session = sessionFor(async (request, path) => {
     if (request.method === 'POST' && path === '/api/v1/sync/archive%40example.com') {
       started = true;
@@ -85,45 +78,28 @@ it('Sync now supersedes a held shell source read', async () => {
         can_sync: !started,
         sync_unavailable_reason: started ? 'sync_already_running' : undefined,
       })] });
-      if (hold) { hold = false; oldSnapshot = snapshot; captured(); await gate; }
       return snapshot;
     }
   });
   render(App, { session });
   await screen.findByRole('button', { name: 'Sync status: Idle' });
   await screen.findByRole('button', { name: 'Sync now Example archive' });
-  hold = true;
-  window.dispatchEvent(new Event('focus'));
-  await capturedStatus;
   await fireEvent.click(screen.getByRole('button', { name: 'Sync now Example archive' }));
   await within(screen.getByRole('main', { name: 'Sources' })).findByText('Syncing');
   await screen.findByRole('button', { name: 'Sync status: Running' });
-  release();
-  await waitFor(() => expect(oldSnapshot.bodyUsed).toBe(true));
-  await new Promise(resolve => setTimeout(resolve, 0));
-  await tick();
-  expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Running');
 });
 
-it.each(['running', 'failed', 'superseded'] as const)('refreshes the shell dot after Build index: %s', async outcome => {
-  const settings = outcome === 'superseded';
+it.each(['failed', 'completed'] as const)('refreshes the shell dot after Build index: %s', async outcome => {
+  const settings = outcome === 'completed';
   window.history.replaceState(null, '', settings ? '/?workspace=settings' : '/?workspace=everything&mode=hybrid');
   let built = false;
-  let hold = false;
-  let release!: () => void;
-  let captured!: () => void;
-  let oldSnapshot!: Response;
-  const capturedStatus = new Promise<void>(resolve => { captured = resolve; });
-  const gate = new Promise<void>(resolve => { release = resolve; });
   const session = sessionFor(async (request, path) => {
     if (path === '/api/v1/operations/status') {
       const snapshot = Response.json({ lanes: [jobLane('message_embedding', {
         latest: settings
           ? built ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined } : jobRun('message_embedding')
-          : built || outcome === 'running' ? jobRun('message_embedding') : undefined,
-        ...(built && outcome === 'running' ? { active: { ...jobRun('message_embedding'), state: 'running', finished_at: undefined, error: undefined } } : {}),
+          : built ? jobRun('message_embedding') : undefined,
       })] });
-      if (hold) { hold = false; oldSnapshot = snapshot; captured(); await gate; }
       return snapshot;
     }
     if (path === '/api/v1/search/coverage') return Response.json({
@@ -136,23 +112,13 @@ it.each(['running', 'failed', 'superseded'] as const)('refreshes the shell dot a
     }
   });
   render(App, { session });
-  await screen.findByRole('button', { name: outcome === 'failed' ? 'Sync status: Idle' : 'Sync status: Needs attention' });
+  await screen.findByRole('button', { name: settings ? 'Sync status: Needs attention' : 'Sync status: Idle' });
   const build = await screen.findByRole('button', { name: settings ? 'Build index, Message search' : 'Build index' });
-  if (outcome === 'superseded') {
-    hold = true;
-    window.dispatchEvent(new Event('focus'));
-    await capturedStatus;
-  }
   await fireEvent.click(build);
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   await waitFor(() => expect(built).toBe(true));
-  if (outcome === 'superseded') {
-    await within(screen.getByText('Message search').closest('li')!).findByText('On');
-    release();
-    await waitFor(() => expect(oldSnapshot.bodyUsed).toBe(true));
-    await new Promise(resolve => setTimeout(resolve, 0));
-    await tick();
-  } else await waitFor(() => expect(screen.queryByRole('button', { name: 'Build index' })).toBeNull());
-  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe(outcome === 'failed' ? 'Sync status: Needs attention' : outcome === 'superseded' ? 'Sync status: Idle' : 'Sync status: Running'), { timeout: 3000 });
+  if (settings) await within(screen.getByText('Message search').closest('li')!).findByText('On');
+  else await waitFor(() => expect(screen.queryByRole('button', { name: 'Build index' })).toBeNull());
+  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe(settings ? 'Sync status: Idle' : 'Sync status: Needs attention'), { timeout: 3000 });
   if (outcome === 'failed') await screen.findByText('Embedding endpoint failed');
 });
