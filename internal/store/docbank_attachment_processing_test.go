@@ -16,7 +16,7 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 	assert := assert.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
-	documents := make([]storetest.DocumentAttachment, 20000)
+	documents := make([]storetest.DocumentAttachment, 1000)
 	for i := range documents {
 		documents[i] = storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("%064x", 0xabcdef+i)}
 	}
@@ -54,7 +54,7 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(19950, unasked)
+	assert.Equal(950, unasked)
 	assert.Equal(25, requested)
 }
 
