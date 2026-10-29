@@ -1,8 +1,8 @@
 <script lang="ts">
+  import type { SecretUpdate } from '../../settings/secrets';
   import { Chip, Toggle } from '@kenn-io/kit-ui';
   import type { PersonEnrichmentProviderSetting as ProviderSetting } from '../../api/generated/models';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
-  type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
   let { provider, draft, pendingKey, onchange, onkey }: {
     provider: ProviderSetting; draft: ProviderSetting; pendingKey?: SecretUpdate;
     onchange: (value: ProviderSetting) => void; onkey: (update: SecretUpdate | undefined) => void;
