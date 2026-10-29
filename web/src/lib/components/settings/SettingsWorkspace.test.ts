@@ -169,7 +169,7 @@ it('shows the restart cue before saving only while a restart-required draft is p
   expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
   await fireEvent.click(screen.getByRole('switch', { name: 'Keep logs' }));
   expect(within(footer).getByText('Restart msgvault to apply these changes.')).toBeDefined();
-  expect(within(footer).getByText('2 unsaved changes')).toBeDefined();
+  expect(within(footer).getByText('2 unsaved changes.')).toBeDefined();
   expect(seen.some(request => request.method === 'PATCH')).toBe(false);
   await fireEvent.click(screen.getByRole('switch', { name: 'Keep logs' }));
   expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
