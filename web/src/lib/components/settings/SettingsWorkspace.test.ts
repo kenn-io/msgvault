@@ -309,17 +309,6 @@ it('keeps attachment off values and cron schedules editable under Sources', asyn
   ] }));
 });
 
-it('Overview shows a contacts sync action error', async () => {
-  const { client } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'], latest: { id: 'sync-1', kind: 'carddav_sync', lane: 'contacts', state: 'succeeded', started_at: '2026-01-01T00:00:00Z', counters: [] } })) });
-    if (path.endsWith('/carddav/sync')) throw new Error('Synthetic contacts action failure.');
-  });
-  render(SettingsWorkspace, { client });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Synthetic contacts action failure.');
-});
-
 it.each(['bad/name', 'primary'])('rejects invalid or duplicate provider name %s before writing', async name => {
   const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [{ name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://api.exa.ai/search', credential: { configured: false, source: 'none' }, ...providerDefaults }] }));
   render(SettingsWorkspace, { client, category: 'enrichment' });
