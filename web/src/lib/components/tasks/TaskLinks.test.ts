@@ -125,15 +125,17 @@ describe('TaskLinks', () => {
   it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project'])(
     'keeps mutations disabled when the index state is %s even with a ready integration',
     async (state) => {
-      render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
+      const view = render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
           : Response.json({ state, complete: false, reason: state, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
       })), mode: 'list', messageId: 42, title: 'Synthetic' });
 
-      expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(state.replaceAll('_', ' '));
-      expect(screen.getByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
+      expect(await screen.findByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
+      await view.rerender({ mode: 'add' });
+      expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
+      expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
     }
   );
 

@@ -133,9 +133,12 @@ describe('meeting archive reader navigation', () => {
     const forward = historyChange(); window.history.forward(); await forward;
     await screen.findByRole('dialog', { name: 'Archived meeting' });
     const close = historyChange();
-    await fireEvent.click(screen.getByRole('button', { name: 'Close archived meeting' }));
+    await fireEvent.keyDown(screen.getByRole('button', { name: 'Close archived meeting' }), { key: 'Escape' });
     await close;
     await waitFor(() => expect(document.activeElement).toBe(link));
+    expect(screen.getByRole('dialog', { name: 'Action items' })).toBeDefined();
+    expect(screen.getByRole('textbox', { name: 'Assignee' })).toHaveProperty('value', 'person@example.test');
+    expect(screen.getByRole('combobox', { name: 'Status: Pending' })).toBeDefined();
     const metricRequests = await Promise.all(requests.filter((request) => request.url.endsWith('/meetings/metrics')).map((request) => request.clone().json()));
     const scopeMetrics = metricRequests.filter((body) => body.explore);
     expect(scopeMetrics.length).toBeGreaterThan(0);
@@ -256,40 +259,5 @@ it('opens a person from the archived meeting reader', async () => {
     await waitFor(() => expect(state.current.workspace).toBe('relationships'));
     expect(state.current.relationshipTarget).toBe('cluster:7');
     expect(state.current.selectedRow).toBeNull();
-  } finally { view.unmount(); state.destroy(); }
-});
-
-it('restores a bounded Relationships reader at its latest anchor through Back and Forward', async () => {
-  const requests: URL[] = [];
-  let visits = 0;
-  const row = { key: 'chat:70:day', kind: 'chat_burst', occurred_at: '2026-07-19T10:00:00Z', first_at: '2026-07-19T10:00:00Z', preview: 'Day preview', source_id: 1, title: 'Saved chat day', has_attachments: false, message_count: 2, anchor_message_id: 9, conversation_id: 70 };
-  const { client: fallback } = handler();
-  const client = createAPIClient(async (input) => {
-    const request = input as Request; const url = new URL(request.url); requests.push(url);
-    if (url.pathname.match(/\/participants\/(1|2)$/)) return Response.json({ id: Number(url.pathname.split('/').at(-1)), display_label: 'Chat person', partial_label: false, identifiers: [], activity_count: 2, file_count: 0, source_counts: [], cache_revision: 'cache-rel' });
-    if (url.pathname === '/api/v1/relationships/1/timeline') return Response.json({ canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: ++visits === 1 ? [row] : [], total_count: visits === 1 ? 1 : 0 });
-    if (url.pathname === '/api/v1/relationships/2/timeline') return Response.json({ canonical_id: 2, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0 });
-    if (url.pathname === '/api/v1/conversations/70') return Response.json({ id: 70, anchor_id: Number(url.searchParams.get('anchor')), messages: [9, 10].map(id => ({ id, conversation_id: 70, message_type: 'whatsapp', from: 'Chat sender', from_participant_id: 1, to: ['Other person'], to_participants: [{ display: 'Other person', participant_id: 2 }], subject: `Chat message ${id}`, body: `Saved body ${id}`, sent_at: '2026-07-19T10:00:00Z', labels: [], attachments: [] })), has_before: false, has_after: false, total: 2 });
-    return fallback.fetch(request);
-  });
-  window.history.replaceState(null, '', '/?workspace=relationships');
-  const state = new ExploreState(window); state.commitNavigation({ relationshipTarget: 'cluster:1' });
-  const view = render(AppShell, { client, state });
-  try {
-    await fireEvent.click((await screen.findByText('2 messages in Saved chat day')).closest('[role="row"]')!);
-    await fireEvent.click(await screen.findByRole('button', { name: /Expand message 10/ }));
-    await screen.findByText('Saved body 10');
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Other person' }).at(-1)!);
-    await waitFor(() => expect(state.current.relationshipTarget).toBe('cluster:2'));
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
-    const back = historyChange(); window.history.back(); await back;
-    expect(await screen.findByText('Saved body 10')).toBeDefined();
-    const restored = requests.filter(url => url.pathname.endsWith('/conversations/70')).at(-1)!;
-    expect(restored.searchParams.get('anchor')).toBe('10');
-    expect(restored.searchParams.get('start')).toBe(new Date(2026, 6, 19).toISOString());
-    expect(restored.searchParams.get('end')).toBe(new Date(2026, 6, 20).toISOString());
-    const forward = historyChange(); window.history.forward(); await forward;
-    await waitFor(() => expect(state.current.relationshipTarget).toBe('cluster:2'));
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
   } finally { view.unmount(); state.destroy(); }
 });

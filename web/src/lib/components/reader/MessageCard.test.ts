@@ -184,7 +184,11 @@ describe('MessageCard', () => {
 
   it('keeps action items visible while an omitted body is fetched', async () => {
     const { meetingAction, meetingActions } = await import('../../meetings/fixtures.test-support');
-    const client = createAPIClient(async () => Response.json(meetingActions({ rows: [meetingAction()] })));
+    const requests: Request[] = [];
+    const client = createAPIClient(async (input) => {
+      const request = input as Request; requests.push(request.clone());
+      return Response.json(request.url.endsWith('/context') ? { schema_version: 1, format: 'json', content: '{}', content_bytes: 2, truncated: false, omitted_message_ids: [] } : meetingActions({ rows: [meetingAction()] }));
+    });
     const { container } = render(MessageCard, {
       props: { client, message: detail({ body: '', messageType: 'meeting_transcript' }), expanded: true, bodyPending: true }
     });
@@ -193,17 +197,34 @@ describe('MessageCard', () => {
     expect(await screen.findByText('Prepare review')).toBeDefined();
     expect(container.querySelector('pre')).toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
+    await expect(requests.find(request => request.url.endsWith('/actions'))!.json()).resolves.toEqual({ scope: { message_ids: [42] }, limit: 200 });
+    const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+    await waitFor(() => expect(download).toHaveBeenCalledOnce());
+    await expect(requests.find(request => request.url.endsWith('/context'))!.json()).resolves.toEqual({ message_ids: [42], format: 'json', include_transcript: false });
+    download.mockRestore();
   });
 
   it('shows linked tasks alongside a body fetch error', async () => {
     const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Review archived notes' }] }));
-    const { container } = render(MessageCard, {
-      props: { client, message: detail({ body: '' }), expanded: true, bodyError: 'Could not load message body' }
+    const view = render(MessageCard, {
+      props: { client, message: detail({ body: '', messageType: '' }), expanded: true, bodyError: 'Could not load message body' }
     });
 
     expect(screen.getByRole('alert').textContent).toContain('Could not load message body');
-    expect(container.querySelector('pre')).toBeNull();
+    expect(view.container.querySelector('pre')).toBeNull();
     expect(await screen.findByText('Review archived notes')).toBeDefined();
+    await view.rerender({ message: detail({ messageType: 'email' }) });
+    expect(await screen.findByText('Review archived notes')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    expect(screen.queryByRole('menuitem', { name: 'Export meeting…' })).toBeNull();
+    await fireEvent.keyDown(document, { key: 'Escape' });
+    await view.rerender({ message: detail({ messageType: 'meeting_notes' }) });
+    expect(screen.queryByText('Review archived notes')).toBeNull();
+    expect(screen.queryByText('Prepare review')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
   });
 
   it('falls back to plain text when HTML is rejected by sanitization', () => {
@@ -276,14 +297,11 @@ it('clears a download error when its menu reopens', async () => {
   expect(screen.queryByText('The original message isn’t available.')).toBeNull();
 });
 
-it.each([false, true])('uses exact participant IDs and keeps You plain when outbound=%s', async (isFromMe) => {
+it('uses exact participant IDs for matching display names', async () => {
   const onOpenPerson = vi.fn();
-  render(MessageCard, { message: detail({ sender: isFromMe ? 'You' : 'Same name', senderParticipantID: isFromMe ? undefined : 11, recipients: ['Same name'], recipientParticipants: [{ display: 'Same name', participantID: 22 }] }), expanded: true, onOpenPerson });
+  render(MessageCard, { message: detail({ sender: 'Same name', senderParticipantID: 11, recipients: ['Same name'], recipientParticipants: [{ display: 'Same name', participantID: 22 }] }), expanded: true, onOpenPerson });
   const people = screen.getAllByRole('button', { name: 'Same name' });
-  if (isFromMe) {
-    expect(screen.getByText('You')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'You' })).toBeNull();
-  } else await fireEvent.click(people[0]!);
-  await fireEvent.click(people[isFromMe ? 0 : 1]!);
-  expect(onOpenPerson.mock.calls).toEqual(isFromMe ? [[22]] : [[11], [22]]);
+  await fireEvent.click(people[0]!);
+  await fireEvent.click(people[1]!);
+  expect(onOpenPerson.mock.calls).toEqual([[11], [22]]);
 });

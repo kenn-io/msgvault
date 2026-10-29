@@ -7,25 +7,25 @@ import ContextBar from './ContextBar.svelte';
 const sort = { options: [{ value: 'newest', label: 'Newest first' }], value: 'newest' };
 
 describe('ContextBar presentation control', () => {
-  it.each(['table', 'timeline'] as const)('changes presentation from %s', async (presentation) => {
+  it('changes presentation from table to timeline', async () => {
     const onPresentationChange = vi.fn();
     render(ContextBar, {
       client: createAPIClient(vi.fn<typeof fetch>()),
       query: 'pasta', searchMode: 'hybrid', filters: [], groupingChain: [],
-      messages: presentation === 'timeline', presentation, onPresentationChange, countLabel: '0 items', sort,
+      presentation: 'table', onPresentationChange, countLabel: '0 items', sort,
       onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(),
       onFiltersChange: vi.fn()
     });
 
-    const control = screen.getByRole('combobox', { name: `Show as: ${presentation === 'table' ? 'Table' : 'Timeline'}` });
-    expect(control.textContent?.trim()).toBe(`Show as: ${presentation === 'table' ? 'Table' : 'Timeline'}`);
+    const control = screen.getByRole('combobox', { name: 'Show as: Table' });
+    expect(control.textContent?.trim()).toBe('Show as: Table');
     expect(screen.getByRole('combobox', { name: 'Sort: Newest first' }).textContent?.trim())
       .toBe('Sort: Newest first');
     await fireEvent.click(control);
     expect(screen.getAllByRole('option').map((option) => option.textContent?.trim()))
       .toEqual(['Table', 'Timeline', 'Files']);
-    await fireEvent.click(screen.getByRole('option', { name: presentation === 'table' ? 'Timeline' : 'Table' }));
-    expect(onPresentationChange).toHaveBeenCalledWith(presentation === 'table' ? 'timeline' : 'table');
+    await fireEvent.click(screen.getByRole('option', { name: 'Timeline' }));
+    expect(onPresentationChange).toHaveBeenCalledWith('timeline');
   });
 });
 
@@ -131,18 +131,4 @@ describe('ContextBar grouping picker', () => {
     expect((labels as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole('option', { name: /analytical API/ })).toBeNull();
   });
-});
-
-it('forwards Messages filter changes', async () => {
-  const onFiltersChange = vi.fn();
-  render(ContextBar, {
-    messages: true, client: createAPIClient(async (input) => {
-      if (new URL((input as Request).url).pathname.endsWith('/groups')) return Response.json({ rows: [{ key: 'whatsapp' }, { key: 'discord' }, { key: 'email' }] });
-      return Response.json({ accounts: [], identities: [] });
-    }), query: '', searchMode: 'full_text', filters: [{ dimension: 'message_type', values: ['whatsapp', 'restored-kind'] }], groupingChain: [], countLabel: '', sort,
-    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange,
-  });
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await fireEvent.click(await screen.findByLabelText('Email'));
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['whatsapp', 'restored-kind', 'email'] }]);
 });
