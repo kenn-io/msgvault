@@ -71,7 +71,9 @@ func TestHandleStatsReturnsStaleSnapshotWhenSlow(t *testing.T) {
 		assert.EqualValues(1, first.TotalMessages)
 		assert.False(first.Stale)
 
+		started := time.Now()
 		second := getStatsResponse(t, srv)
+		assert.Less(time.Since(started), time.Second, "the request wait must end before the background computation")
 		assert.True(second.Stale, "the previous snapshot is flagged stale")
 		assert.EqualValues(1, second.TotalMessages)
 		assert.False(second.AsOf.IsZero())
@@ -151,6 +153,33 @@ func newSlowAccountsServer(t *testing.T) (*Server, *slowCountsStore, int64) {
 		Logger: testLogger(),
 	})
 	return srv, slow, src.ID
+}
+
+func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, slow, _ := newSlowAccountsServer(t)
+		t.Cleanup(func() { close(slow.release) })
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		srv.statsSnapshotWait = 50 * time.Millisecond
+		getAccounts := func() cliAccountsResponse {
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var resp cliAccountsResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			return resp
+		}
+		first := getAccounts()
+		require.Len(t, first.Accounts, 1)
+		assert.EqualValues(t, 1, first.Accounts[0].MessageCount)
+		assert.False(t, first.Stale)
+
+		second := getAccounts()
+		require.Len(t, second.Accounts, 1)
+		assert.True(t, second.Stale, "slow counts serve the previous snapshot")
+		assert.EqualValues(t, 1, second.Accounts[0].MessageCount)
+		assert.False(t, second.AsOf.IsZero())
+	})
 }
 
 func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
