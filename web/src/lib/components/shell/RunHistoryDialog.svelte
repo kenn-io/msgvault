@@ -1,10 +1,10 @@
 <script lang="ts">
   import { Button, DateRangePicker, SelectDropdown, resolveRange, type RangeSelection } from '@kenn-io/kit-ui';
-  import { tick, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { OperationsController } from '../../operations/controller.svelte';
   import type { OperationsURLState } from '../../operations/models';
-  import { OPERATION_KIND_LABELS, STATUS_AUTHORITY_BY_KIND, type RelatedStatus } from '../../operations/labels';
+  import { OPERATION_KIND_LABELS, type RelatedStatus } from '../../operations/labels';
   import { operationFocusAnchor, resolveOperationFocusAnchor, type OperationFocusAnchor } from '../../operations/focus';
   import OperationRelatedStatus from '../operations/OperationRelatedStatus.svelte';
   import OperationRunDetail from '../operations/OperationRunDetail.svelte';
@@ -25,10 +25,13 @@
   let invokingRow: HTMLButtonElement | undefined;
   let relatedFocus: string | undefined;
   const current = $derived(controller.snapshot);
-  const kindOptions = [{ value: '', label: 'All kinds' }, ...Object.entries(OPERATION_KIND_LABELS).map(([value, label]) => ({ value, label }))];
+  const kindOptions = [{ value: '', label: 'All kinds' }, { value: 'lane:messages', label: 'All messages' }, { value: 'lane:person_facts', label: 'All people' }, { value: 'lane:contacts', label: 'All contacts' }, { value: 'lane:documents', label: 'All documents' }, { value: 'lane:visual_attachments', label: 'All visual attachments' }, ...Object.entries(OPERATION_KIND_LABELS).map(([value, label]) => ({ value, label }))];
   const stateOptions = [{ value: '', label: 'All states' }, ...['queued', 'running', 'succeeded', 'partial', 'paused', 'failed', 'cancelled'].map(value => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }))];
   const dates = $derived<RangeSelection>({ mode: 'custom', from: local.operationStartedFrom.slice(0, 10), to: local.operationStartedBefore ? dayOffset(local.operationStartedBefore.slice(0, 10), -1).slice(0, 10) : '' });
-  const configured = $derived(current.statusLanes.flatMap(lane => lane.kinds).find(lane => STATUS_AUTHORITY_BY_KIND[lane.kind as keyof typeof STATUS_AUTHORITY_BY_KIND] === local.operationStatus)?.configured);
+  const configured = $derived(current.statusLanes.flatMap(lane => lane.kinds).find(lane => lane.related_status === local.operationStatus)?.configured);
+  onMount(() => {
+    if (controller.snapshot.historyReadable || controller.snapshot.runsError) void controller.refresh();
+  });
   $effect(() => {
     const wanted = { ...local };
     const context = archiveContextKey;
@@ -88,15 +91,16 @@
       {/if}
     {:else}
       <div class="filters" aria-label="Operation filters">
-        <SelectDropdown title="Kind" value={local.operationKind} options={kindOptions} onchange={(value) => patchFilter({ operationKind: value as OperationsURLState['operationKind'] })} />
+        <SelectDropdown title="Kind" value={local.operationKind || (local.operationLane ? `lane:${local.operationLane}` : '')} options={kindOptions} onchange={(value) => patchFilter({ operationLane: value.startsWith('lane:') ? value.slice(5) as OperationsURLState['operationLane'] : '', operationKind: value.startsWith('lane:') ? '' : value as OperationsURLState['operationKind'] })} />
         <SelectDropdown title="State" value={local.operationState} options={stateOptions} onchange={(value) => patchFilter({ operationState: value as OperationsURLState['operationState'] })} />
         <DateRangePicker selection={dates} onSelect={changeDates} maxDate={new Date().toISOString().slice(0, 10)} />
       </div>
       {#if current.initialLoading || current.backgroundLoading}<p class="muted" role="status">Loading…</p>{/if}
       {#if current.historyReadable && current.rows.length === 0 && !current.runsError && !current.conflict}<p class="muted">No runs match.</p>{/if}
-      <div class="runs"><OperationRunTable rows={current.rows} compact onSelect={selectRun} /></div>
+      <div class="runs"><OperationRunTable rows={current.rows} onSelect={selectRun} /></div>
       {#if current.nextCursor}<Button size="sm" surface="soft" label={current.paging ? 'Loading…' : 'Show more'} disabled={current.paging} onclick={() => void controller.loadMore()} />{/if}
     {/if}
+    {#if !local.operationStatus}<Button size="sm" surface="soft" label="Refresh" disabled={current.initialLoading || current.backgroundLoading || current.detailLoading} onclick={() => void controller.refresh()} />{/if}
     {#each current.unavailableKinds as unavailable (unavailable.kind)}<p class="muted" role="status">{OPERATION_KIND_LABELS[unavailable.kind]} history is unavailable.</p>{/each}
     {#if current.statusError}<p class="error" role="alert">{current.statusError}</p>{/if}
     {#if current.runsError}<p class="error" role="alert">{current.runsError}</p>{/if}

@@ -159,6 +159,14 @@ export interface ExploreURLState {
   relationshipTarget: string | null;
   relationshipShowAll: boolean;
   relationshipFiles: boolean;
+  operationHistory: boolean;
+  operationLane: '' | OperationLane;
+  operationKind: '' | OperationKind;
+  operationState: '' | OperationState;
+  operationStartedFrom: string;
+  operationStartedBefore: string;
+  operationRunID: string | null;
+  operationStatus: '' | OperationStatusAuthority;
   settingsAuthority: '' | SettingsNavigationAuthority;
   settingsCategory: string;
   columns: ExploreColumn[];

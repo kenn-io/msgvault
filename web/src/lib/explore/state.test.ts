@@ -1634,3 +1634,93 @@ describe('session-owned exploration selection', () => {
   });
 
 });
+
+  it('round-trips normalized Operations filters and an opaque selected run without a cursor', () => {
+    const operationRunID = `op2.${'a'.repeat(32)}.syntheticCiphertext_1`;
+    const restored = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      workspace: 'everything',
+      operationLane: 'documents',
+      operationKind: 'document_extraction',
+      operationState: 'partial',
+      operationStartedFrom: '2026-08-01T00:00:00Z',
+      operationStartedBefore: '2026-09-01T00:00:00.1Z',
+      operationRunID,
+      operationStatus: 'getDocumentIndexStatus',
+      operationCursor: 'must-not-survive'
+    } as ExploreURLState));
+
+    expect(restored).toMatchObject({
+      workspace: 'everything',
+      operationLane: 'documents',
+      operationKind: 'document_extraction',
+      operationState: 'partial',
+      operationStartedFrom: '2026-08-01T00:00:00Z',
+      operationStartedBefore: '2026-09-01T00:00:00.1Z',
+      operationRunID
+    });
+    expect(restored.operationStatus).toBe('getDocumentIndexStatus');
+    expect(restored).not.toHaveProperty('operationCursor');
+  });
+
+
+  it('round-trips only the three live Operations status authorities', () => {
+    for (const operationStatus of [
+      'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
+    ] as const) {
+      const restored = parseExploreURLState(serializeExploreURLState({
+        ...defaultExploreURLState, workspace: 'everything', operationStatus
+      }));
+      expect(restored.operationStatus).toBe(operationStatus);
+    }
+    const invalid = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState, workspace: 'everything', operationStatus: 'getCardDAVStatus'
+    } as unknown as ExploreURLState));
+    expect(invalid.operationStatus).toBe('');
+  });
+
+
+  it('clears malformed, unknown, and lane-incompatible Operations URL values', () => {
+    const invalid = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      workspace: 'everything',
+      operationLane: 'contacts',
+      operationKind: 'document_embedding',
+      operationState: 'future_state',
+      operationStartedFrom: '2026-08-01',
+      operationStartedBefore: '2026-09-01T02:00:00+02:00',
+      operationRunID: 'not-an-opaque-reference'
+    } as unknown as ExploreURLState));
+
+    expect(invalid).toMatchObject({
+      workspace: 'everything',
+      operationLane: 'contacts',
+      operationKind: '',
+      operationState: '',
+      operationStartedFrom: '',
+      operationStartedBefore: '',
+      operationRunID: null
+    });
+
+    const unknownLane = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      workspace: 'everything',
+      operationLane: 'future_lane',
+      operationKind: 'carddav_sync'
+    } as unknown as ExploreURLState));
+    expect(unknownLane.operationLane).toBe('');
+    expect(unknownLane.operationKind).toBe('carddav_sync');
+  });
+
+
+  it('preserves ordered canonical nanosecond Operations bounds without millisecond truncation', () => {
+    const restored = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      workspace: 'everything',
+      operationStartedFrom: '2026-08-01T00:00:00.000000001Z',
+      operationStartedBefore: '2026-08-01T00:00:00.000000002Z'
+    }));
+
+    expect(restored.operationStartedFrom).toBe('2026-08-01T00:00:00.000000001Z');
+    expect(restored.operationStartedBefore).toBe('2026-08-01T00:00:00.000000002Z');
+  });

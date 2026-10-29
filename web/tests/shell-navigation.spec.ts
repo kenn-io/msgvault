@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { installOperations } from './e2e/fixtures/operations';
-import { selectWorkspace } from './kit-ui';
+import { selectKitOption, selectWorkspace } from './kit-ui';
 
 function entry(index: number) {
   return {
@@ -118,6 +118,10 @@ test('Past runs preserves filters, paging restart, detail, focus, and source his
   await page.getByRole('menuitem', { name: 'Past runs' }).click();
   await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
   await expect(page.getByText('Person embedding history is unavailable.')).toBeVisible();
+  await selectKitOption(page, 'Kind', 'All documents');
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('documents');
+  await selectKitOption(page, 'Kind', 'All kinds');
+  await expect.poll(() => fixture.listQueries.at(-1)?.has('lane')).toBe(false);
   fixture.driftNextPage();
   await page.getByRole('button', { name: 'Show more' }).click();
   await page.getByRole('button', { name: 'Restart', exact: true }).click();
@@ -127,6 +131,12 @@ test('Past runs preserves filters, paging restart, detail, focus, and source his
   await source.click();
   await page.getByRole('button', { name: 'All runs' }).click();
   await expect(source).toBeFocused();
+  await source.click();
+  await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore')!).operationRunID).toBeTruthy();
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('button', { name: 'All runs' })).toHaveCount(0);
   await source.click();
   await page.getByRole('button', { name: 'Open Sources status' }).click();
   await expect(page.getByRole('main', { name: 'Sources' })).toBeVisible();

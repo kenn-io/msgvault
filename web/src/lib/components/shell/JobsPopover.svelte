@@ -16,7 +16,8 @@
   } = $props();
 </script>
 
-{#if store.items.length === 0}
+{#if store.error}<p class="empty" role="alert">{store.error}</p>{/if}
+{#if store.items.length === 0 && !store.error}
   <p class="empty">{store.loaded ? 'Nothing running, nothing failed' : 'Loading…'}</p>
 {:else}
   {#each store.items as item (item.id)}

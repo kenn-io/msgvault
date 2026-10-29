@@ -15,6 +15,7 @@ export interface OverviewRow {
   name: string;
   chip: { tone: ChipTone; text: string };
   action?: OverviewAction;
+  relatedStatus?: 'getDocumentIndexStatus' | 'getDocumentVectorStatus' | 'getVisualAttachmentStatus';
 }
 
 const BUILD_VISUAL_CONSENT = 'Sends attachments to your search provider.';
@@ -126,5 +127,8 @@ export function overviewRows(
   rows.push(configuredRow('document_embedding', 'Document search'));
 
   rows.unshift({ id: 'source_sync', name: 'Source sync', chip: chip('source_sync'), action: { kind: 'sources' } });
-  return rows;
+  return rows.map(row => {
+    const status = lanes.find(lane => lane.kind === row.id && lane.configured)?.related_status;
+    return { ...row, relatedStatus: status && status !== 'listSourceStatus' && status !== 'getCardDAVStatus' ? status : undefined };
+  });
 }

@@ -2,7 +2,6 @@
   import { Button, Chip } from '@kenn-io/kit-ui';
   import BuildIndexAction from '../search/BuildIndexAction.svelte';
 
-  import { STATUS_AUTHORITY_BY_KIND } from '../../operations/labels';
   import type { OperationStatusAuthority } from '../../explore/models';
   import type { OverviewAction, OverviewRow } from '../../settings/overview';
 
@@ -28,14 +27,14 @@
 <ul class="overview" aria-label="Features">
   {#each rows as row (row.id)}
     {@const action = row.action}
-    {@const authority = STATUS_AUTHORITY_BY_KIND[row.id as keyof typeof STATUS_AUTHORITY_BY_KIND]}
+    {@const authority = row.relatedStatus}
     <li class="row" data-feature={row.id}>
       <span class="row__name">
         {row.name}
       </span>
       <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
       <span class="row__action">
-        {#if authority && row.chip.text !== 'Off'}<Button size="sm" surface="soft" label="Details" ariaLabel={`Details, ${row.name}`} onclick={() => onDetails(authority)} />{/if}
+        {#if authority}<Button size="sm" surface="soft" label="Details" ariaLabel={`Details, ${row.name}`} onclick={() => onDetails(authority)} />{/if}
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${row.name}`} onclick={() => onSetUp(action)} />
         {:else if action?.kind === 'start' && action.id === 'messages'}

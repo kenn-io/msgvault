@@ -4,6 +4,8 @@
   import {
     Button,
     CommandPalette,
+    FlashBanner,
+    showFlash,
     getThemeMode,
     IconButton,
     appShortcuts,
@@ -279,14 +281,22 @@
     commitWorkspace('settings');
     replaceCommittedNavigation({ settingsCategory: 'carddav' });
   }
-  let runHistory = $state<OperationsURLState>();
+  const runHistory = $derived(exploreState.current.operationHistory || exploreState.current.operationRunID || exploreState.current.operationStatus || exploreState.current.operationLane || exploreState.current.operationKind || exploreState.current.operationState || exploreState.current.operationStartedFrom || exploreState.current.operationStartedBefore
+    ? { operationLane: exploreState.current.operationLane, operationKind: exploreState.current.operationKind, operationState: exploreState.current.operationState, operationStartedFrom: exploreState.current.operationStartedFrom, operationStartedBefore: exploreState.current.operationStartedBefore, operationRunID: exploreState.current.operationRunID, operationStatus: exploreState.current.operationStatus }
+    : undefined);
+  function setRunHistory(state: OperationsURLState): void {
+    commitNavigation({ ...state, operationHistory: true });
+  }
+  function closeRunHistory(): void {
+    commitNavigation({ ...defaultOperationsState(), operationHistory: false });
+  }
   let displayOpen = $state(false);
   let resultsWidth = $state(0);
   const shellData = new ShellData(untrack(() => client));
   let pendingViewDelete = $state<SavedView>();
 
   function openOperations(kind: OperationsURLState['operationKind'] = ''): void {
-    runHistory = defaultOperationsState(kind);
+    setRunHistory(defaultOperationsState(kind));
   }
   function openJob(target: JobTarget): void {
     if (target.kind === 'source') commitWorkspace('sources');
@@ -295,14 +305,18 @@
     else if (target.kind === 'setting') setUpOperation(target.target);
   }
   function deleteView(view: SavedView): void {
-    if (pendingViewDelete) void shellData.commitDelete(pendingViewDelete);
+    if (pendingViewDelete) void commitViewDelete(pendingViewDelete);
     shellData.hideView(view);
     pendingViewDelete = view;
+  }
+  async function commitViewDelete(view: SavedView): Promise<void> {
+    const error = await shellData.commitDelete(view);
+    if (error) showFlash(error, { tone: 'danger', durationMs: 8000 });
   }
   function expireViewDelete(): void {
     const view = pendingViewDelete;
     pendingViewDelete = undefined;
-    if (view) void shellData.commitDelete(view);
+    if (view) void commitViewDelete(view);
   }
   function undoViewDelete(): void {
     if (pendingViewDelete) shellData.restoreView(pendingViewDelete);
@@ -312,13 +326,13 @@
 
   function openOperationAuthority(target: RelatedOperationStatus): void {
     if (target === 'listSourceStatus') {
-      runHistory = undefined;
+      closeRunHistory();
       announceOperation('Opening source status.');
       commitWorkspace('sources');
       return;
     }
     if (target === 'getCardDAVStatus') {
-      runHistory = undefined;
+      closeRunHistory();
       openCardDAVSettings();
       return;
     }
@@ -331,7 +345,7 @@
       getVisualAttachmentStatus: 'Opening live visual attachment status.'
     };
     announceOperation(statusTargets[target]);
-    runHistory = { ...(runHistory ?? defaultOperationsState()), operationStatus: target };
+    setRunHistory({ ...(runHistory ?? defaultOperationsState()), operationStatus: target });
   }
 
   function openVisualAttachmentSettings(): void {
@@ -393,7 +407,7 @@
   const factLedgerController = new FactLedgerController(untrack(() => client));
   const operationsController = new OperationsController(
     untrack(() => client),
-    (patch) => { if (runHistory) runHistory = { ...runHistory, ...patch }; }
+    (patch) => { if (runHistory) setRunHistory({ ...runHistory, ...patch }); }
   );
   // Participant IDs only enter here from a successfully loaded
   // /participants/{id} Relationship detail. It is intentionally ephemeral:
@@ -692,7 +706,7 @@
   }
   async function openSavedView(state: Partial<ExploreURLState>): Promise<void> {
     selection.clear();
-    replaceCommittedNavigation(state);
+    commitNavigation(state);
     await tick();
     const grid = focusableResultsGrid();
     if (grid) grid.focus();
@@ -1609,10 +1623,11 @@
 {/if}
 
 {#if runHistory}
-  <RunHistoryDialog {client} controller={operationsController} bind:state={runHistory} {archiveContextKey}
-    onclose={() => (runHistory = undefined)} onNavigate={openOperationAuthority}
-    onConfigure={() => { runHistory = undefined; openVisualAttachmentSettings(); }} />
+  <RunHistoryDialog {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory} {archiveContextKey}
+    onclose={closeRunHistory} onNavigate={openOperationAuthority}
+    onConfigure={() => { closeRunHistory(); openVisualAttachmentSettings(); }} />
 {/if}
+<FlashBanner />
 {#if pendingViewDelete}
   {#key pendingViewDelete.id}<UndoToast message={`Deleted ${pendingViewDelete.name}`} onUndo={undoViewDelete} onExpire={expireViewDelete} />{/key}
 {/if}
