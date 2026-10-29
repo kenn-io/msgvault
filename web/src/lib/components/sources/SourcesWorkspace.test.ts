@@ -11,9 +11,9 @@ import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, []);
 
-function renderSources(props: Omit<ComponentProps<typeof SourcesWorkspace>, 'loadStatus'>) {
+function renderSources(props: Omit<ComponentProps<typeof SourcesWorkspace>, 'jobs'>) {
   const jobs = new JobsStore(props.client, new OperationsController(props.client));
-  return render(SourcesWorkspace, { ...props, loadStatus: (signal, supersede) => jobs.readSources(signal, supersede) });
+  return render(SourcesWorkspace, { ...props, jobs });
 }
 
 function source(overrides: Record<string, unknown> = {}) {
@@ -86,7 +86,7 @@ describe('SourcesWorkspace', () => {
       source({ id, identifier, display_name, can_sync: false, sync_unavailable_reason: reason, ...extra });
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       unavailable(1, 'import@example.com', 'Imported', 'source_not_schedulable', { source_type: 'mbox' }),
-      unavailable(2, 'busy@example.com', 'Busy', 'sync_already_running'),
+      unavailable(2, 'busy@example.com', 'Busy', 'sync_already_running', { scheduler_started_at: '2026-07-19T10:00:00Z' }),
       unavailable(3, 'down@example.com', 'Down', 'scheduler_unavailable'),
       unavailable(4, 'unset@example.com', 'Unset', 'sync_not_configured'),
       unavailable(5, 'other@example.com', 'Other', 'future_reason')
@@ -302,6 +302,36 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
+  it.each(['loaded', 'failed first load'] as const)('handles a global idle-to-running observation after %s without restarting backoff', async initial => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const client = createAPIClient(async () => {
+      reads += 1;
+      if (reads === 1 && initial === 'failed first load') return Response.json({ message: 'Status unavailable' }, { status: 503 });
+      return Response.json({ sources: [source(reads === 1 ? {} : {
+        can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 5),
+      })] });
+    });
+    const operations = new OperationsController(client);
+    const jobs = new JobsStore(client, operations);
+    const rendered = render(SourcesWorkspace, { client, jobs });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reads).toBe(1);
+    await jobs.readSources(new AbortController().signal);
+    await tick();
+    expect(screen.getByText('5 processed')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(reads).toBe(initial === 'loaded' ? 3 : 2);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(reads).toBe(initial === 'loaded' ? 4 : 2);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(reads).toBe(initial === 'loaded' ? 4 : 2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads).toBe(initial === 'loaded' ? 5 : 2);
+    if (initial === 'failed first load') expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
+    rendered.unmount(); jobs.dispose(); operations.destroy();
+  });
+
   it('keeps polling while the scheduler still holds the sync lock after a run completes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusReads = 0;
@@ -317,7 +347,7 @@ describe('SourcesWorkspace', () => {
       // reports sync_already_running while it rebuilds caches.
       if (statusReads <= 3) {
         return Response.json({ sources: [source({
-          can_sync: false, sync_unavailable_reason: 'sync_already_running', latest_sync: completed()
+          can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z', latest_sync: completed()
         })] });
       }
       return Response.json({ sources: [source({ latest_sync: completed() })] });
@@ -694,7 +724,7 @@ describe('SourcesWorkspace', () => {
   it('caps lock-hold polling and offers a manual refresh', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
-    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
+    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z' });
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       return Response.json({ sources: [held] });
@@ -717,7 +747,7 @@ describe('SourcesWorkspace', () => {
   it('resets the lock-hold poll budget after a real active sync appears', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
-    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
+    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z' });
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       if (reads === 3) return Response.json({ sources: [source({
@@ -742,7 +772,7 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       if (reads === 1) return Response.json({ sources: [source({
-        can_sync: false, sync_unavailable_reason: 'sync_already_running'
+        can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z'
       })] });
       throw new Error('status unavailable');
     });
@@ -765,7 +795,7 @@ describe('SourcesWorkspace', () => {
       const request = input instanceof Request ? input : new Request(input);
       reads += 1;
       if (reads === 1) return Promise.resolve(Response.json({ sources: [source({
-        can_sync: false, sync_unavailable_reason: 'sync_already_running'
+        can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_started_at: '2026-07-19T10:00:00Z'
       })] }));
       timedOutSignals.push(request.signal);
       return new Promise<Response>((_resolve, reject) => {
