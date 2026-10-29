@@ -19,6 +19,7 @@ export interface OverviewRow {
 
 const BUILD_VISUAL_CONSENT = 'Sends attachments to your search provider.';
 const COVERAGE_CHIPS: Partial<Record<SearchCoverageValue['status'], OverviewRow['chip']>> = {
+  incomplete: { tone: 'warning', text: 'Incomplete' },
   stale: { tone: 'warning', text: 'Stale' },
   initializing: { tone: 'info', text: 'Initializing' },
   unavailable: { tone: 'warning', text: 'Unavailable' },

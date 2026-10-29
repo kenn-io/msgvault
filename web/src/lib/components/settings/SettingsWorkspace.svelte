@@ -83,7 +83,6 @@
     onAppearanceSaved?: (saved: SavedAppearance) => void;
   } = $props();
 
-
   let settings = $state<SettingState[]>([]);
   let groups = $state<SettingGroupState[]>([]);
   let providers = $state<ProviderSetting[]>([]);
@@ -123,8 +122,6 @@
     void loadSettings(false);
   });
 
-  // A parent re-render that leaves the category unchanged must not undo a
-  // category chosen or requested locally.
   let followedCategory = untrack(() => category);
   $effect(() => {
     if (category === followedCategory) return;
@@ -178,7 +175,6 @@
     } finally {
       delete building[id];
       statusRevision += 1;
-
     }
   }
 
@@ -253,8 +249,6 @@
   function currentValue(setting: SettingState): unknown {
     return Object.hasOwn(drafts, setting.key) ? drafts[setting.key] : persistedValue(setting);
   }
-  // A draft that equals the persisted value is not a change: the row stays
-  // clean, Save stays disabled, and no no-op PATCH can mark a restart pending.
   function setDraft(key: string, value: unknown) {
     const setting = find(key);
     if (setting && !isChange(setting, value)) {
@@ -376,7 +370,6 @@
       provider.credential_id === response.credential_id ? { ...provider, credential: response.state } : provider,
     );
   }
-  // A credential binds to its saved endpoint, so an unsaved endpoint blocks it.
   function credentialDisabledReason(credentialID: string): string {
     return Object.hasOwn(drafts, `${credentialID}.endpoint`) ? 'Save endpoint settings first before changing this credential.' : '';
   }
@@ -405,7 +398,6 @@
   }
   // Rows that only matter once something else is on stay out of the way until then.
   function visible(setting: SettingState): boolean {
-
     if (setting.key.startsWith('vector.people.') && setting.key !== 'vector.people.enabled') {
       return isDirty(setting.key) || Boolean(currentValue(find('vector.people.enabled') ?? setting));
     }
@@ -449,7 +441,6 @@
     {#if isSwitch(setting)}
       <Toggle ariaLabel={text} checked={on} onchange={(checked) => setDraft(setting.key, checked)} />
       <span class="setting__label">{text}</span>
-
     {:else}
       <span class="setting__label">{text}</span>
       <div class="setting__control">
@@ -496,6 +487,7 @@
       </div>
       {#if setting.validation?.hint}<small class="setting__hint">{setting.validation.hint}</small>{/if}
     {/if}
+    {#if isDirty(setting.key)}<span class="kit-sr-only"> (unsaved)</span>{/if}
   </div>
 {/snippet}
 
@@ -546,7 +538,7 @@
             <Notice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
-          {#if buildError}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
+          {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
           {#if pendingRestart}
             <p class="notice notice--pending" role="status">Saved. Restart msgvault to apply these changes.</p>
           {/if}
