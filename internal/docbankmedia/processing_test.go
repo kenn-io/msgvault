@@ -103,7 +103,7 @@ func TestStartProcessingMalformedResponsesRetry(t *testing.T) {
 			require.NoError(err)
 			_, err = client.StartProcessing(t.Context(), docbankmedia.ProcessingSelector{NodeID: 7}, "plan")
 			require.Error(err)
-			assert.NotErrorIs(err, docbankmedia.ErrInvalidReceipt)
+			require.NotErrorIs(err, docbankmedia.ErrInvalidReceipt)
 			assert.True(docbankmedia.Retryable(err))
 		})
 	}
