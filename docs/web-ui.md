@@ -406,6 +406,8 @@ and status polling continues while the tab is visible.
 
 ## Operations
 
+While the tab is visible, job status refreshes every 30 seconds on every page and when the window regains focus.
+
 The footer status dot opens queued and running jobs and unresolved failures. It shows **Idle** when the list is empty, **Queued** while work awaits execution, **Running** while work runs, and **Needs attention** while a latest run failed or the scheduler reports an error. Failed rows show the daemon's run or item error. If a status read fails, the menu keeps the last known jobs and reports that status is unavailable. Select a job to open its source, contact settings, index status, or owning setting. Scheduled source syncs show Queued while waiting to execute. A previous sync failure stays visible until execution starts.
 
 Choose **Past runs…** in the status menu to browse history. Filter by Kind, including all runs in a lane, State, or dates, and choose **Show more** for the next page. **Refresh** reloads the current history. Run links preserve filters and selection when shared or restored with Back. If history changes during paging, **Restart** reloads the first page. Unavailable history is labeled by kind.

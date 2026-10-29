@@ -3003,6 +3003,16 @@ it('shares run selection, restores detail on reload, and closes a direct link', 
   expect(queries[0]?.get('kind')).toBe('source_sync');
   await screen.findByRole('region', { name: 'Operation run detail' });
   expect(state.current.operationRunID).toBe(OPERATION_RUN);
+  const back = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.back();
+  await back;
+  await screen.findByRole('dialog', { name: 'Past runs' });
+  expect(state.current.operationRunID).toBeNull();
+  expect(state.current.operationKind).toBe('source_sync');
+  const forward = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.forward();
+  await forward;
+  await screen.findByRole('region', { name: 'Operation run detail' });
   const sharedURL = window.location.href;
   expect(JSON.parse(new URL(sharedURL).searchParams.get('explore')!).operationRunID).toBe(OPERATION_RUN);
   rendered.unmount(); state.destroy();
