@@ -23,10 +23,11 @@ describe('SecretField', () => {
   });
 
   it('marks a set key without a hint and names where an environment key comes from', () => {
-    render(SecretField, { label: 'Task API key', configured: true, source: 'environment', onreplace: () => true });
+    render(SecretField, { label: 'Task API key', configured: true, source: 'environment', disabled: true, onreplace: () => true });
 
     expect(screen.getByLabelText('Task API key').textContent).toBe('••••••••');
     expect(screen.getByText('From an environment variable on the daemon host.')).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Replace task API key' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('takes a new key through the dialog and closes when it is accepted', async () => {
