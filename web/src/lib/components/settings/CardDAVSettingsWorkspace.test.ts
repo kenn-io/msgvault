@@ -229,3 +229,23 @@ it('restores an orphaned connection with its retained name and account details',
   }));
   expect(drafts.work?.error).toBeUndefined();
 });
+
+it('discards a new connection selection and returns to the saved default account', async () => {
+  const client = createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path.endsWith('/connections')) return Response.json({ connections: [{ connection: 'default', provider: '', status: status('default') }] });
+    if (path.endsWith('/status')) return Response.json(status('default'));
+    if (path.endsWith('/books')) return Response.json({ books: [] });
+    if (path.endsWith('/runs')) return Response.json({ runs: [] });
+    return Response.json({ conflicts: [] });
+  });
+  const { rerender } = render(CardDAVSettingsWorkspace, { client, settings: [] });
+  await screen.findByDisplayValue('default@example.com');
+  await fireEvent.input(screen.getByLabelText('New connection name'), { target: { value: 'work' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'draft@example.com' } });
+  await rerender({ client, settings: [], drafts: {}, resetRevision: 1 });
+  await waitFor(() => expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('default@example.com'));
+  await fireEvent.click(screen.getByRole('combobox', { name: /^CardDAV connection/ }));
+  expect(screen.queryByRole('option', { name: 'work' })).toBeNull();
+});

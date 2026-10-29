@@ -98,8 +98,14 @@
   }
   $effect(() => {
     void resetRevision;
-    void loadConnections();
+    void reloadConnections();
   });
+  // A reset drops unsaved new connection work once the saved connections are known.
+  async function reloadConnections(): Promise<void> {
+    newConnection = undefined;
+    await loadConnections();
+    if (!connectionOptions.some(option => option.value === selected)) selected = 'default';
+  }
   function addConnection(): void {
     if (!/^[a-z][a-z0-9_-]{0,63}$/.test(newName) || newName === 'default') {
       connectionError = 'Choose a connection name with 1–64 lowercase letters, digits, underscores or hyphens, starting with a letter. The name default is reserved.';
