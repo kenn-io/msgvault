@@ -1047,6 +1047,37 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Requested)
 }
 
+func TestAttachmentMirrorBackfillRestartsRecoverableJobFailures(t *testing.T) {
+	for _, outcome := range []string{"consent", "stale_authority", "pdf_password_required"} {
+		t.Run(outcome, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			r := newMirrorRig(t)
+			r.delivered("a")
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal([]string{"a"}, r.processing.Plans)
+
+			r.processing.States["job-a"] = [3]string{"failed", "rendition", outcome}
+			require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+			r.processingDue()
+			require.NoError(r.runBatch(t.Context()))
+
+			assert.Equal([]string{"a", "a"}, r.processing.Plans)
+			assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+			assert.Equal([]string{"job-a"}, r.processing.Polls)
+			assert.Equal(int64(1), r.processingCounts().Requested)
+			assert.Empty(r.processingCounts().Outcomes)
+
+			r.processing.States["job-a"] = [3]string{"failed", "rendition", outcome}
+			r.processingDue()
+			require.NoError(r.runBatch(t.Context()))
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal([]string{"a", "a"}, r.processing.Plans)
+			assert.Equal(map[string]int64{outcome: 1}, r.processingCounts().Outcomes)
+		})
+	}
+}
+
 func TestAttachmentMirrorProcessingMissingJobReplans(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

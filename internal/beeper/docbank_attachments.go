@@ -574,10 +574,20 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			if !answer.retry {
 				d.Outcome = answer.outcome
 			}
-			d.Fingerprint, d.JobID = profile.Fingerprint, jobID
+			previousJobID := d.JobID
+			d.Fingerprint = profile.Fingerprint
 			var next time.Time
-			if answer.delay != 0 {
-				next = time.Now().UTC().Add(answer.delay)
+			if d.Retry && previousJobID != "" && jobID == previousJobID && store.IsDocbankAttachmentProcessingRecoverableOutcome(d.Outcome) {
+				d.Outcome = ""
+				d.JobID = ""
+				d.Retry = false
+				next = time.Now().UTC()
+			} else {
+				d.JobID = jobID
+				d.Retry = d.Retry && previousJobID != "" && jobID == previousJobID && (answer.retry || d.Outcome == "requested")
+				if answer.delay != 0 {
+					next = time.Now().UTC().Add(answer.delay)
+				}
 			}
 			if saveErr := w.gated(ctx, func() error {
 				return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)
