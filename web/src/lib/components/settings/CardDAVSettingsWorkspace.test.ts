@@ -45,7 +45,7 @@ describe('CardDAV connection selection', () => {
     rendered.unmount();
   });
 
-  it('isolates passwords, drafts, requests and late results when switching connections', async () => {
+  it.each(['work', 'constructor'])('isolates passwords, drafts, requests and late results when switching to %s', async name => {
     const requests: Request[] = [];
     let resolve!: (value: Response) => void;
     const late = new Promise<Response>((done) => {
@@ -57,7 +57,7 @@ describe('CardDAV connection selection', () => {
       const url = new URL(request.url);
       if (url.pathname.endsWith('/connections'))
         return Response.json({
-          connections: ['default', 'work'].map((connection) => ({
+          connections: ['default', name].map((connection) => ({
             connection,
             provider: '',
             status: status(connection)
@@ -84,12 +84,13 @@ describe('CardDAV connection selection', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
     await waitFor(() => expect(requests.some((r) => new URL(r.url).pathname.endsWith('/test'))).toBe(true));
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'work');
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), name);
     await waitFor(() =>
-      expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('work@example.com')
+      expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe(`${name}@example.com`)
     );
     expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
-    expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe('https://work.example.test/');
+    expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe(`https://${name}.example.test/`);
+    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-named-password' } });
     resolve(
       Response.json({
         base_url: 'https://draft.example.test/',
@@ -112,6 +113,8 @@ describe('CardDAV connection selection', () => {
       )
     );
     expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('synthetic-default-password');
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), name);
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('synthetic-named-password');
   });
   it('creates a named form without borrowing the default credential', async () => {
     const bodies: Record<string, unknown>[] = [];
@@ -136,8 +139,8 @@ describe('CardDAV connection selection', () => {
       if (path.endsWith('/runs')) return Response.json({ runs: [] });
       return Response.json({ conflicts: [] });
     });
-    const drafts: Record<string, AccountDraft> = {};
-    render(CardDAVSettingsWorkspace, { client, settings: [], drafts });
+    let drafts: Record<string, AccountDraft> = {};
+    render(CardDAVSettingsWorkspace, { client, settings: [], get drafts() { return drafts; }, set drafts(value) { drafts = value; } });
     await waitFor(() => expect(screen.getByRole('combobox', { name: /^CardDAV connection/ })).toBeDefined());
     await fireEvent.input(screen.getByLabelText('New connection name'), {
       target: { value: 'work' }
@@ -203,8 +206,8 @@ it('restores an orphaned connection with its retained name and account details',
     if (url.pathname.endsWith('/conflicts')) return Response.json({ conflicts: [] });
     throw new Error(`Unexpected ${request.method} ${url.pathname}`);
   });
-  const drafts: Record<string, AccountDraft> = {};
-  render(CardDAVSettingsWorkspace, { client, settings: [], drafts });
+  let drafts: Record<string, AccountDraft> = {};
+  render(CardDAVSettingsWorkspace, { client, settings: [], get drafts() { return drafts; }, set drafts(value) { drafts = value; } });
   await screen.findByText('Runtime unavailable');
   await chooseSelectOption(
     screen.getByRole('combobox', { name: /^CardDAV connection/ }),
