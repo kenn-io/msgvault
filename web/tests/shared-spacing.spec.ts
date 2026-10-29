@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Relationships', exact: true })).toBeVisible();
 });
 
-test('every page header divider meets the next visible content boundary', async ({ page }) => {
+test('page content sits one header gap below the divider, and full-width panes meet it', async ({ page }) => {
   await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
   await page.route('**/api/v1/operations/status', (route) => route.fulfill({ json: { lanes: [] } }));
   await page.route('**/api/v1/sources**', (route) => route.fulfill({ json: { sources: [] } }));
@@ -48,7 +48,7 @@ test('every page header divider meets the next visible content boundary', async 
       return next!.getBoundingClientRect().top - divider;
     });
   }
-  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, 0])));
+  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['Relationships', 'Settings'].includes(label) ? 0 : 12])));
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {

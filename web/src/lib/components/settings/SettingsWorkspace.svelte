@@ -791,6 +791,7 @@
     background: var(--bg-surface);
   }
   .settings-header {
+    --page-header-gap: 0px;
     padding: var(--space-5) var(--page-gutter) var(--field-gap);
   }
   .settings :global(.kit-settings) {

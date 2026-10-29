@@ -385,7 +385,7 @@
   .detail-pane { min-width: 0; border-left: 1px solid var(--border-default); background: var(--bg-surface); }
   .notice { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: var(--pane-pad-y) var(--pane-pad-x); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
   .notice--error { border-color: var(--status-error-ink); background: var(--status-error-bg); color: var(--status-error-ink); }
-  .focused-detail > :global(.page-header) { margin-bottom: var(--space-5); }
+  .focused-detail > :global(.page-header) { margin-bottom: var(--space-7); }
   .focused-detail > p { margin: 0; }
   .focused-detail { min-height: 0; background: var(--bg-surface); }
 
