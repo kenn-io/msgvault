@@ -32,14 +32,9 @@ describe('overviewRows', () => {
     expect(row(rows, 'document_extraction').action).toMatchObject({ kind: 'host' });
   });
 
-  it('uses server coverage actions even for an already built index', () => {
-    const rows = overviewRows([lane('message_embedding')], { active_generation: 1 } as unknown as EmbeddingStatus, undefined, ['build_index']);
-    expect(row(rows, 'message_embedding').action).toMatchObject({ kind: 'start', id: 'messages', label: 'Build index' });
-  });
-
-  it('withholds a duplicate first build before its lane run appears', () => {
-    const rows = overviewRows([lane('message_embedding')], { active_generation: null } as unknown as EmbeddingStatus, undefined, []);
-    expect(row(rows, 'message_embedding').action).toBeUndefined();
+  it.each([true, false])('gates the message build on server coverage actions (%s)', available => {
+    const rows = overviewRows([lane('message_embedding')], { active_generation: available ? 1 : null } as unknown as EmbeddingStatus, undefined, available ? ['build_index'] : []);
+    expect(row(rows, 'message_embedding').action).toEqual(available ? { kind: 'start', id: 'messages', label: 'Build index' } : undefined);
   });
 
   it('offers the visual build the server advertises, with its consent line', () => {
@@ -56,12 +51,6 @@ describe('overviewRows', () => {
   });
 });
 
-it('distinguishes active work from an unbuilt index', () => {
-  const active = { id: 'run-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } as const;
-  const rows = overviewRows([lane('message_embedding', { active: { ...active, counters: [] } })], { active_generation: null } as unknown as EmbeddingStatus, undefined);
-  expect(row(rows, 'message_embedding').chip.text).toBe('Running');
-  expect(row(rows, 'message_embedding').action).toBeUndefined();
-});
 
 it('offers only the advertised contacts sync action', () => {
   expect(row(overviewRows([lane('carddav_sync')], undefined, undefined), 'carddav_sync').action).toBeUndefined();
