@@ -16,6 +16,10 @@ export function lane(kind: OperationLaneStatus['kind'], extra: Partial<Operation
   return { kind, configured: true, lane: KIND_LANES.find(([candidate]) => candidate === kind)![1], history_availability: 'available', supported_actions: [], ...extra };
 }
 
+export function lanes(...overrides: OperationLaneStatus[]): OperationLaneStatus[] {
+  return KIND_LANES.map(([kind]) => overrides.find(candidate => candidate.kind === kind) ?? lane(kind, { configured: false }));
+}
+
 export const activeGeneration = { id: 1, dimension: 3, model: 'synthetic-model', state: 'active' };
 
 export const embeddingStatus: EmbeddingStatus = {
