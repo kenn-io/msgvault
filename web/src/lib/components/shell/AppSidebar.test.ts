@@ -1,3 +1,4 @@
+import { appShortcuts, initShortcuts } from '@kenn-io/kit-ui';
 import { tick } from 'svelte';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
@@ -23,7 +24,7 @@ function renderSidebar(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   const view = render(AppSidebar, props);
-  return { ...props, rerender: view.rerender, container: view.container };
+  return { ...props, rerender: view.rerender, container: view.container, unmount: view.unmount };
 }
 
 const primary = () => within(screen.getByRole('navigation', { name: 'Primary' }));
@@ -191,4 +192,25 @@ it.each(['name', 'description'] as const)('keeps the original %s revision when a
   expect((await screen.findByRole('alert')).textContent).toContain('Review the latest view.');
   const handler = field === 'name' ? onRenameView : onDescribeView;
   expect(handler).toHaveBeenCalledWith(saved, 'My stale edit');
+});
+
+it.each(['Sync status', 'Saved view actions'])('%s typeahead keeps page shortcuts suspended', async menu => {
+  const detachShortcuts = initShortcuts();
+  const pageShortcut = vi.fn();
+  const unregister = appShortcuts.register('d', pageShortcut);
+  const rendered = renderSidebar({ views: [view(1, 'Budget')], jobs: { ...jobs, health: 'failed', items: [
+    { id: 'document', name: 'Document extraction', state: 'failed', detail: 'Upstream operation failed.', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
+  ] } });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: menu === 'Sync status' ? 'Sync status: Needs attention' : 'Budget actions' }));
+    const first = (await screen.findAllByRole('menuitem'))[0]!;
+    first.focus();
+    await fireEvent.keyDown(first, { key: 'd' });
+    expect(pageShortcut).not.toHaveBeenCalled();
+    expect(screen.getByRole('menu').contains(document.activeElement)).toBe(true);
+  } finally {
+    rendered.unmount();
+    unregister();
+    detachShortcuts();
+  }
 });
