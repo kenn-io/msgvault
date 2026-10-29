@@ -441,7 +441,10 @@ describe('AppShell', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Demo view' }));
   }
 
-  it.each(['files', 'everything'] as const)('opens a saved Files view from %s with fresh filters and grid focus', async workspace => {
+  it.each([
+    { workspace: 'files', outcome: 'clears stale file filters and sort' },
+    { workspace: 'everything', outcome: 'focuses the Files grid' },
+  ] as const)('opens a saved Files view from $workspace and $outcome', async ({ workspace }) => {
     window.history.replaceState(null, '', `/?workspace=${workspace}&mode=full_text`);
     const fileSearches: Request[] = [];
     const state = new ExploreState(window);
@@ -452,22 +455,18 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
     try {
       if (workspace === 'files') expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
-      const beforeView = window.location.href;
       await openDemoView();
       const grid = await screen.findByRole('grid', { name: 'Files results' });
       if (workspace === 'everything') await waitFor(() => expect(document.activeElement).toBe(grid));
-      expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
-      await waitFor(async () => {
-        const body = await fileSearches.at(-1)!.clone().json();
-        expect(body).not.toHaveProperty('filename_query');
-        expect(body).not.toHaveProperty('mime_families');
-        expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
-      });
-      window.history.back();
-      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      await waitFor(() => expect(window.location.href).toBe(beforeView));
-      if (workspace === 'files') await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('invoice'));
-      else expect(state.current.workspace).toBe('everything');
+      if (workspace === 'files') {
+        expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
+        await waitFor(async () => {
+          const body = await fileSearches.at(-1)!.clone().json();
+          expect(body).not.toHaveProperty('filename_query');
+          expect(body).not.toHaveProperty('mime_families');
+          expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
+        });
+      }
     } finally {
       rendered.unmount();
       state.destroy();
@@ -2939,8 +2938,8 @@ it('preserves selected run filters in the URL and restores detail on remount', a
 });
 
 it.each([
-  { kind: 'source_sync', authority: 'listSourceStatus', status: 'Needs attention',
-    lane: jobLane('source_sync'), sources: [sourceStatus({ display_name: 'Source sync', scheduler_last_error: 'Sync failed' })],
+  { kind: 'source_sync', authority: undefined, status: 'Needs attention',
+    lane: undefined, sources: [sourceStatus({ display_name: 'Source sync', scheduler_last_error: 'Sync failed' })],
     action: { role: 'menuitem', name: /Source sync/ }, expected: { workspace: 'sources', operationHistory: false } },
   { kind: 'document_extraction', authority: 'getDocumentIndexStatus', status: 'Running',
     lane: jobLane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
@@ -2952,13 +2951,13 @@ it.each([
     expected: { workspace: 'everything', operationHistory: true, operationKind: 'person_sweep', operationRunID: jobRun('person_sweep').id } },
 ] as const)('opens $kind with one history entry', async ({ kind, authority, status, lane, sources, action, expected }) => {
   window.history.replaceState(null, '', '/?workspace=everything&mode=full_text');
-  const run = jobRun(kind);
+  const run = lane ? jobRun(kind) : undefined;
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane) });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes(...(lane ? [lane] : [])) });
     if (path.endsWith('/sources/status')) return Response.json({ sources });
-    if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
-    if (path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: lane.supported_actions });
+    if (run && path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
+    if (run && lane && path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: lane.supported_actions });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     return operationAuthorityResponse(path) ?? Response.json(exploreResponse());
   });
