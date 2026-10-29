@@ -176,7 +176,7 @@
     width: auto;
   }
 
-  .sidebar:not(.sidebar--rail) :global(.kit-tooltip) {
+  .sidebar:not(.sidebar--rail) :global(.kit-tooltip:not(.saved-view-reason)) {
     display: none;
   }
 

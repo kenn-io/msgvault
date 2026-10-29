@@ -176,3 +176,22 @@ it('shares the successful Sources read with the shell instead of repeating it', 
   await screen.findByRole('button', { name: 'Sync status: Running' });
   expect(reads).toBe(2);
 });
+
+it('updates an already open Sources row from the status menu failure', async () => {
+  window.history.replaceState(null, '', '/?workspace=sources');
+  let failed = false;
+  const session = sessionFor((_request, path) => {
+    if (path === '/api/v1/sources/status') return Response.json({ sources: [sourceStatus({
+      latest_sync: syncRunStatus(failed ? { status: 'failed', errors_count: 1, error_message: 'Mailbox unavailable' } : {}),
+    })] });
+  });
+  render(App, { session });
+  const sources = await screen.findByRole('main', { name: 'Sources' });
+  await within(sources).findByText('Completed');
+  failed = true;
+  await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Idle' }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: /Example archive/ }));
+  await fireEvent.click(await within(sources).findByRole('button', { name: 'Show details for Example archive' }));
+  await within(sources).findByText('Mailbox unavailable');
+  expect(within(sources).queryByText('Completed')).toBeNull();
+});

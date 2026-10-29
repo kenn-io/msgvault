@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appShortcuts, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, TextInput, Tooltip } from '@kenn-io/kit-ui';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import { tick } from 'svelte';
 
@@ -132,10 +132,11 @@
       {#if error}<span class="saved-view__error" role="alert">{error}</span>{/if}
     </div>
   {:else}
+    {#snippet openView()}
     <button
       type="button"
       class="saved-view__open"
-      title={tooltip}
+      title={incompatible ? undefined : tooltip}
       aria-disabled={incompatible ? 'true' : undefined}
       onclick={() => {
         if (!incompatible) onOpen(view);
@@ -143,6 +144,12 @@
     >
       <span>{view.name}</span>
     </button>
+    {/snippet}
+    {#if incompatible}
+      <Tooltip text={incompatible} side="right" class="saved-view-reason">{@render openView()}</Tooltip>
+    {:else}
+      {@render openView()}
+    {/if}
     <span class="saved-view__menu">
       <Menu align="end" bind:open={menuOpen}>
         <MenuTrigger ariaLabel={`${view.name} actions`} title="Actions">
@@ -184,6 +191,8 @@
   .saved-view:hover {
     background: var(--bg-surface-hover);
   }
+
+  .saved-view > :global(.kit-tooltip-trigger) { flex: 1; }
 
   .saved-view__open {
     display: flex;

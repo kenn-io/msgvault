@@ -1708,7 +1708,7 @@ describe('session-owned exploration selection', () => {
 
 });
 
-it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s after replacing filters and detail', async action => {
+it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s through filters and detail', async action => {
   window.history.replaceState(null, '', '/?workspace=files');
   const state = new ExploreState(window);
   state.commitWorkspace('everything');
@@ -1723,6 +1723,25 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   if (action === 'close') state.closeOperationHistory();
   else window.history.back();
   await popped;
+  if (action === 'back') {
+    expect(state.current.operationHistory).toBe(true);
+    expect(state.current.operationKind).toBe('carddav_sync');
+    expect(state.current.operationRunID).toBeNull();
+    let step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.forward();
+    await step;
+    expect(state.current.operationRunID).toBe(runID);
+    step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.back();
+    await step;
+    step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.back();
+    await step;
+    expect(state.current.operationKind).toBe('source_sync');
+    step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.back();
+    await step;
+  }
   expect(window.location.href).toBe(opening);
   expect(state.current.operationHistory).toBe(false);
   const previous = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));

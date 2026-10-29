@@ -6,10 +6,10 @@
   import { Button, Chip, IconButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
-  import { SOURCE_STATUS_TIMEOUT_MS, type SourceRead } from '../../jobs/jobs.svelte';
+  import { SOURCE_STATUS_TIMEOUT_MS, type JobsStore } from '../../jobs/jobs.svelte';
   import { scheduleSummary } from '../../settings/cron';
   import { sourceTypeLabel, syncRunning, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
@@ -26,7 +26,7 @@
   const STALE_LAST_RESULT_MS = 24 * 60 * 60 * 1000;
   let {
     client,
-    loadStatus,
+    jobs,
     requestTimeoutMs = SOURCE_STATUS_TIMEOUT_MS,
     maxAwaitingPolls = 6,
     maxLockHoldPolls = 8,
@@ -34,14 +34,14 @@
     onOpenOperations = () => undefined,
   }: {
     client: APIClient;
-    loadStatus: (signal: AbortSignal, supersede: boolean) => Promise<SourceRead>;
+    jobs: JobsStore;
     requestTimeoutMs?: number;
     maxAwaitingPolls?: number;
     maxLockHoldPolls?: number;
     now?: () => Date;
     onOpenOperations?: () => void;
   } = $props();
-  let sources = $state<Source[]>([]);
+  const sources = $derived(jobs.sources);
   const expanded = new SvelteSet<number>();
   let loading = $state(true);
   let lockStatusStale = $state(false);
@@ -61,6 +61,9 @@
   let hasLoadedStatus = false;
   let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
   let disposed = false;
+  $effect(() => { void jobs.sources; untrack(() => {
+    if (hasLoadedStatus && controller === undefined && timer === undefined) schedulePoll(MIN_POLL_MS);
+  }); });
   onMount(() => {
     const visibilityChanged = (): void => {
       if (document.hidden) {
@@ -133,10 +136,10 @@
     controller = requestController;
     const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
-      const { data, error: responseError } = await loadStatus(signal, supersede);
+      const { data, error: responseError } = await jobs.readSources(signal, supersede);
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
-      const next = data.sources ?? [];
+      const next = jobs.sources;
       let nextDelay: number | undefined;
       let lockHoldPoll = false;
       let advanced = false;
@@ -188,7 +191,6 @@
         lockHoldPolls = 0;
         lockStatusStale = false;
       }
-      sources = next;
       statusError = '';
       hasLoadedStatus = true;
       if (nextDelay !== undefined) {

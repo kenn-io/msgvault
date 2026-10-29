@@ -823,13 +823,14 @@ export class ExploreState {
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
     }
-    this.navigate({ ...state, operationHistory: true }, opening ? 'push' : 'replace');
+    this.navigate({ ...state, operationHistory: true }, 'push');
     this.committed = normalize(this.current);
-    if (opening) this.browser.history.replaceState({ ...this.browser.history.state, operationHistoryOwned: true }, '');
+    if (opening) this.browser.history.replaceState({ ...this.browser.history.state, operationHistoryDepth: 1 }, '');
   }
 
   closeOperationHistory(): void {
-    if (this.browser.history.state?.operationHistoryOwned === true) this.browser.history.back();
+    const depth = this.operationHistoryDepth();
+    if (depth) this.browser.history.go(-depth);
     else this.replaceCommittedNavigation({ operationHistory: false, operationLane: '', operationKind: '',
       operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' });
   }
@@ -961,14 +962,20 @@ export class ExploreState {
     if (mode === 'push') this.historyIndex += 1;
     const history = historyEntry(search, this.current, this.historyIndex);
     if (mode === 'push') {
-      this.browser.history.pushState(history, '', url);
+      this.browser.history.pushState({ ...history, ...this.operationHistoryState(next, 1) }, '', url);
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
     } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow), ...this.operationHistoryState(this.current) }, '', url);
   }
 
-  private operationHistoryState(state: ExploreURLState): { operationHistoryOwned: true } | null {
-    return state.operationHistory && this.browser.history.state?.operationHistoryOwned === true ? { operationHistoryOwned: true } : null;
+  private operationHistoryDepth(): number {
+    const depth = this.browser.history.state?.operationHistoryDepth;
+    return Number.isSafeInteger(depth) && depth > 0 ? depth : 0;
+  }
+
+  private operationHistoryState(state: ExploreURLState, step = 0): { operationHistoryDepth: number } | null {
+    const depth = this.operationHistoryDepth();
+    return state.operationHistory && depth ? { operationHistoryDepth: depth + step } : null;
   }
 
   private archiveHistoryState(selectedRow: string | null): { [ARCHIVE_MEETING_HISTORY_KEY]: ArchiveMeetingHistory } | null {
