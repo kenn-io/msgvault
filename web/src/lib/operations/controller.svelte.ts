@@ -149,7 +149,11 @@ export class OperationsController {
 
   async refresh(): Promise<boolean> {
     if (this.disposed) return false;
-    return this.loadPageOne(this.loaded);
+    const results = await Promise.all([
+      this.loadPageOne(this.loaded),
+      this.selectedRunID ? this.loadDetail(this.selectedRunID) : Promise.resolve(true),
+    ]);
+    return results.every(Boolean);
   }
 
   async refreshStatus(): Promise<boolean> {
@@ -273,9 +277,8 @@ export class OperationsController {
 
     if (reconcile && this.ownsAction(request, generation, context)) {
       const readable = await this.refresh();
-      const detailReadable = this.selectedRunID ? await this.loadDetail(this.selectedRunID) : undefined;
       if (!this.ownsAction(request, generation, context)) return 'discarded';
-      const reconciled = readable && detailReadable !== false;
+      const reconciled = readable;
       if (uncertain) {
         this.actionError = reconciled
           ? 'The operation result is uncertain. Current state was refreshed.'

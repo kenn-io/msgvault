@@ -2,7 +2,7 @@ import type { OperationLaneStatus, SourceStatus } from '../api/generated/models'
 import { OPERATION_KIND_LABELS, OPERATION_SETUP, type OperationSettingsTarget, type RelatedStatus } from '../operations/labels';
 
 export type JobState = 'running' | 'failed';
-export type JobsHealth = 'ok' | 'running' | 'failed';
+export type JobsHealth = 'ok' | 'running' | 'failed' | 'unavailable';
 export type JobTarget =
   | { kind: 'source'; id: number }
   | { kind: 'contacts'; connection: string }
@@ -17,12 +17,9 @@ export interface JobItem {
   at?: string;
   target: JobTarget;
 }
-export const FAILURE_WINDOW_DAYS = 7;
-const WINDOW_MS = FAILURE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 const firstLine = (message: string | null | undefined, fallback: string): string => message?.split(/\r?\n/)[0]?.trim() || fallback;
-const recent = (time: string | null | undefined, now: number): boolean => Boolean(time && now - Date.parse(time) <= WINDOW_MS);
 
-export function collectJobs(sources: readonly SourceStatus[], lanes: readonly OperationLaneStatus[], now: number): JobItem[] {
+export function collectJobs(sources: readonly SourceStatus[], lanes: readonly OperationLaneStatus[]): JobItem[] {
   const items: JobItem[] = [];
   for (const source of sources) {
     const base = { id: `source:${source.id}`, name: source.display_name || source.identifier, target: { kind: 'source' as const, id: source.id } };
@@ -33,8 +30,12 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
       const run = source.latest_sync;
       const failedAt = run?.completed_at ?? run?.started_at;
       const runFailed = run && (run.status === 'failed' || run.status === 'partial' || run.errors_count > 0);
-      if (runFailed && recent(failedAt, now) || source.scheduler_last_error && recent(source.updated_at, now)) {
-        items.push({ ...base, state: 'failed', detail: firstLine(runFailed ? run.error_message || source.scheduler_last_error : source.scheduler_last_error, 'Sync failed'), at: runFailed ? failedAt ?? undefined : source.updated_at });
+      if (runFailed || source.scheduler_last_error) {
+        const diagnostics = runFailed
+          ? [run.error_message, ...(run.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).filter(Boolean).join(' · ')
+          : '';
+        const fallback = runFailed && (run.status === 'completed' || run.status === 'partial') ? 'Finished with errors' : 'Sync failed';
+        items.push({ ...base, state: 'failed', detail: diagnostics || firstLine(source.scheduler_last_error, fallback), at: runFailed ? failedAt ?? undefined : undefined });
       }
     }
   }
@@ -46,7 +47,7 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
     const base = { id: lane.kind, name: OPERATION_KIND_LABELS[lane.kind], target };
     if (lane.active) {
       items.push({ ...base, state: 'running', detail: 'Running', at: lane.active.started_at });
-    } else if (lane.latest && (lane.latest.state === 'failed' || lane.latest.state === 'partial') && recent(lane.latest.finished_at ?? lane.latest.started_at, now)) {
+    } else if (lane.latest && (lane.latest.state === 'failed' || lane.latest.state === 'partial')) {
       items.push({ ...base, state: 'failed', detail: firstLine(lane.latest.error?.message, lane.latest.state === 'partial' ? 'Finished with errors' : 'Failed'), at: lane.latest.finished_at ?? lane.latest.started_at });
     }
   }
