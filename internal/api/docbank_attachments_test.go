@@ -158,7 +158,7 @@ func TestDocbankAttachmentStatus(t *testing.T) {
 	cfg.Integrations.Docbank.DocumentProfile = "documents"
 	require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "destination", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "a"}, ""))
 	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(t.Context(), "destination", "documents", "fp"))
-	require.NoError(f.Store.RecordDocbankAttachmentProcessing(t.Context(), "destination", store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: "a", Fingerprint: "fp", Outcome: "requested", JobID: "job-a"}, time.Time{}))
+	require.NoError(f.Store.RecordDocbankAttachmentProcessing(t.Context(), "destination", store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: "a", Fingerprint: "fp", Outcome: "requested", JobID: "job-a"}, time.Now().UTC().Add(time.Minute)))
 	var processing DocbankAttachmentStatus
 	require.NoError(json.Unmarshal(get().Body.Bytes(), &processing))
 	assert.Equal(lastError, processing.LastError)

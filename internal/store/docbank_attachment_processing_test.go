@@ -23,7 +23,7 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 	f.SeedDocumentAttachments(f.CreateMessage("backlog"), documents)
 	for i := range 50 {
 		hash := fmt.Sprintf("%064x", 0xabcdef+i)
-		d := store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: hash, Fingerprint: "fp", Outcome: "extracted"}
+		d := store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: hash, Fingerprint: "fp", Outcome: "extracted", JobID: "job-" + hash}
 		var next time.Time
 		if i < 25 {
 			d.Outcome, d.JobID = "requested", "job-"+hash
