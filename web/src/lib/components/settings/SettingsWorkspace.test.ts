@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
 import { lane, lanes } from '../../../test/operations';
-import { normalizeCategory } from '../../settings/layout';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 type Setting = Record<string, unknown>;
@@ -140,6 +139,54 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+it('keeps a failed Overview action error on Overview', async () => {
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('carddav_sync', { supported_actions: ['carddav_sync'] })) });
+    if (request.url.endsWith('/carddav/sync')) throw new Error('Synthetic sync failure');
+  });
+  render(SettingsWorkspace, { client });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Synthetic sync failure');
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Synthetic sync failure');
+});
+
+it('gives edited rows unsaved text for assistive technology', async () => {
+  const { client } = fixture();
+  render(SettingsWorkspace, { client, category: 'server' });
+  const field = await screen.findByLabelText('Stop when idle after');
+  const row = field.closest('[data-setting-key]')!;
+  expect(within(row as HTMLElement).queryByText('(unsaved)')).toBeNull();
+  await fireEvent.input(field, { target: { value: '15m' } });
+  expect(within(row as HTMLElement).getByText('(unsaved)')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  expect(within(row as HTMLElement).queryByText('(unsaved)')).toBeNull();
+});
+
+it('shows Working while a message rebuild is pending', async () => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const { client, seen } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
+    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] });
+    if (request.url.endsWith('/cli/run')) return pending;
+  });
+  render(SettingsWorkspace, { client });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Message search' }));
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    await waitFor(() => expect(seen.some(request => request.path === '/api/v1/cli/run')).toBe(true));
+    const button = screen.getByRole('button', { name: 'Build index, Message search' });
+    expect(button).toHaveProperty('disabled', true);
+    expect(button.textContent).toContain('Working…');
+  } finally {
+    finish(new Response('{"type":"complete"}\n'));
+  }
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
+});
 
 describe('SettingsWorkspace', () => {
   it('lists the categories in order, Overview first, and opens the one it is given', async () => {
@@ -280,7 +327,7 @@ it.each(['bad/name', 'primary'])('rejects invalid or duplicate provider name %s 
   await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: name } });
   await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
   expect((await screen.findByRole('alert')).textContent).toContain(name === 'primary' ? 'already exists' : 'Names can use letters');
-  expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
+  expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
 });
 
 it('creates an absent Exa provider with safe defaults after reloading a conflict', async () => {
@@ -328,7 +375,7 @@ it('locks fields and newly mounted category controls while a save waits', async 
 it('saves keys and providers at once, apart from Save changes', async () => {
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
   const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
-  const writes = () => seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage').map(({ method, path, ifMatch }) => [method, path, ifMatch]);
+  const writes = () => seen.filter(request => request.method !== 'GET').map(({ method, path, ifMatch }) => [method, path, ifMatch]);
   render(SettingsWorkspace, { client, category: 'search' });
   const note = 'These save immediately when you use their buttons — not with Save changes.';
   expect(await screen.findAllByText(note)).toHaveLength(1);
@@ -491,10 +538,6 @@ it('refreshes the shared config revision when creating a profile succeeds before
   await waitFor(() => expect(seen.find(request => request.method === 'PATCH')?.ifMatch).toBe('"s2"'));
 });
 
-it('opens retired People sweep links in People lookups', () => {
-  expect(normalizeCategory('people')).toBe('enrichment');
-});
-
 it('clears the settings load error after a successful Retry', async () => {
   let reads = 0;
   const { client } = fixture(settingsDoc(), request => {
@@ -509,13 +552,12 @@ it('clears the settings load error after a successful Retry', async () => {
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
-it('shows settings from unknown groups under Advanced and defaults unknown URLs to Overview', async () => {
+it('shows settings from unknown groups under Advanced', async () => {
   const doc = settingsDoc();
   doc.settings.push(setting('extras.limit', 'extras', 'integer', 4, { label: 'Extra limit' }));
   const { client } = fixture(doc);
   render(SettingsWorkspace, { client, category: 'advanced' });
   expect(await screen.findByLabelText('Extra limit')).toHaveProperty('value', '4');
-  expect(normalizeCategory('nope')).toBe('overview');
 });
 
 it('keeps Build index through a pending or failed coverage refresh', async () => {

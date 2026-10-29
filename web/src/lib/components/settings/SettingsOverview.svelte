@@ -33,7 +33,11 @@
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${row.name}`} onclick={() => onSetUp(action)} />
         {:else if action?.kind === 'start' && action.id === 'messages'}
-          <BuildIndexAction size="sm" surface="soft" ariaLabel="Build index, Message search" disabled={Boolean(working[action.id])} onconfirm={() => onStart(action)} />
+          {#if working[action.id]}
+            <Button size="sm" surface="soft" tone="info" ariaLabel="Build index, Message search" label="Working…" disabled />
+          {:else}
+            <BuildIndexAction size="sm" surface="soft" ariaLabel="Build index, Message search" disabled={Boolean(working[action.id])} onconfirm={() => onStart(action)} />
+          {/if}
         {:else if action?.kind === 'start'}
           <Button
             size="sm"
