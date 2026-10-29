@@ -50,7 +50,6 @@ export class OperationsController {
   private readonly commitURLState: (patch: Pick<OperationsURLState, 'operationRunID'>) => void;
   private filters: OperationsURLState = defaultOperationsState();
   private filterSignature = '';
-  private archiveContext = '';
   private selectedRunID: string | null = null;
   private loaded = false;
   private disposed = false;
@@ -100,22 +99,17 @@ export class OperationsController {
     });
   }
 
-  async applyURLState(state: OperationsURLState, archiveContext = ''): Promise<void> {
+  async applyURLState(state: OperationsURLState): Promise<void> {
     if (this.disposed) return;
     const filters = copyURLState(state);
     const signature = filterFingerprint(filters);
-    const archiveChanged = archiveContext !== this.archiveContext;
-    const clearSelectionForArchive = archiveChanged && this.filterSignature !== '' &&
-      filters.operationRunID !== null;
-    if (clearSelectionForArchive) filters.operationRunID = null;
     const filtersChanged = signature !== this.filterSignature;
     const selectionChanged = filters.operationRunID !== this.selectedRunID;
 
-    if (archiveChanged || filtersChanged || !this.loaded) {
+    if (filtersChanged || !this.loaded) {
       this.invalidateContext();
       this.filters = filters;
       this.filterSignature = signature;
-      this.archiveContext = archiveContext;
       this.selectedRunID = filters.operationRunID;
       this.rows = [];
       this.unavailableKinds = [];
@@ -125,11 +119,6 @@ export class OperationsController {
       this.historyReadable = false;
       this.conflict = null;
       this.restartRequired = false;
-      if (archiveChanged) {
-        this.statusKinds = [];
-        this.statusReadable = false;
-      }
-      if (clearSelectionForArchive) this.commitURLState({ operationRunID: null });
       await Promise.all([
         this.loadPageOne(false),
         filters.operationRunID ? this.loadDetail(filters.operationRunID) : Promise.resolve()
