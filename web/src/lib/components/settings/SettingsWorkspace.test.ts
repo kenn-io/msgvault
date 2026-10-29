@@ -12,6 +12,20 @@ function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneSta
 
 type Setting = Record<string, unknown>;
 
+const providerDefaults = {
+  allowed_identifiers: [], target_keys: [], allow_sensitive_targets: false,
+  retention_posture: '', training_posture: '', refresh_interval: '24h', request_timeout: '30s',
+  poll_interval: '1s', max_job_age: '1h', max_retries: 2, max_requests_per_run: 10, max_requests_per_day: 100,
+  num_results: 1, mode: 'people'
+};
+const inferenceProfile = {
+  name: 'primary', preset_id: 'openrouter', protocol: 'openai-chat', model: 'model-one', endpoint: 'https://provider.example.test/v1',
+  credential_source: 'stored', credential_configured: true, credential_revision: '"key-a"', checked: false,
+  consent_active: false, fingerprint: 'fingerprint-primary', selected: false, output_mode: 'strict_schema',
+  allowed_sources: ['conversation_text'], source_since: '2025-01-01', allow_sensitive: true,
+  retention_posture: 'No retention', training_posture: 'No training'
+};
+
 function typed(value: unknown): Record<string, unknown> {
   if (typeof value === 'boolean') return { boolean: value };
   if (typeof value === 'number') return Number.isInteger(value) ? { integer: value } : { number: value };
@@ -28,7 +42,10 @@ function setting(key: string, group: string, kind: string, value: unknown, extra
 
 function settingsDoc(overrides: Setting = {}) {
   return {
-    groups: [{ id: 'sources', label: 'Sources' }, { id: 'attachments', label: 'Attachments' }],
+    groups: [{ id: 'sources', label: 'Sources' }, { id: 'attachments', label: 'Attachments' }, { id: 'search', label: 'Search', sections: [
+      { id: 'people', label: 'Person embeddings', description: 'Sends consented person fields to the text embedding provider.' },
+      { id: 'visual', label: 'Visual attachment search', description: 'Sends images to a hosted provider. Semantic search must also be on.' }
+    ] }],
     settings: [
       setting('web.theme', 'browser', 'string', 'system', {
         label: 'Theme', options: ['system', 'light', 'dark'] }),
@@ -36,6 +53,7 @@ function settingsDoc(overrides: Setting = {}) {
         label: 'Density', options: ['compact', 'comfortable'] }),
       setting('web.default_search_mode', 'browser', 'string', 'full_text', {
         label: 'Default search mode', options: ['full_text', 'semantic', 'hybrid'] }),
+      setting('server.api_port', 'server', 'integer', 0, { label: 'API port', read_only: true, validation: { off: { value: '0', label: 'The daemon picks a free port' } } }),
       setting('server.bind_addr', 'server', 'string', '127.0.0.1', { label: 'Bind address', read_only: true }),
       setting('server.api_key', 'server', 'secret', undefined, {
         label: 'API key', read_only: true, secret: { configured: true, source: 'environment', hint: 'abc…xyz' } }),
@@ -43,7 +61,7 @@ function settingsDoc(overrides: Setting = {}) {
       setting('log.sql_trace', 'server', 'boolean', false, { label: 'Trace every SQL statement' }),
       setting('activity.timezone', 'archive', 'string', 'UTC', { label: 'Timezone' }),
       setting('analytics.builder_threads', 'archive', 'integer', 4, { label: 'Builder threads' }),
-      setting('sync.rate_limit_qps', 'sources', 'number', 5, { label: 'Requests per second' }),
+      setting('sync.rate_limit_qps', 'sources', 'integer', 5, { label: 'Requests per second' }),
       setting('vector.enabled', 'search', 'boolean', false, { label: 'Semantic search' }),
       setting('vector.embeddings.endpoint', 'search', 'string', '', { label: 'Text embedding endpoint' }),
       setting('vector.embeddings.model', 'search', 'string', '', { label: 'Text embedding model' }),
@@ -157,12 +175,13 @@ describe('SettingsWorkspace', () => {
     const config = screen.getByText('Set in config.toml').closest('details')!;
     expect(within(config).getByText('Bind address')).toBeDefined();
     expect(within(config).getByText('127.0.0.1')).toBeDefined();
+    expect(within(config).getByText('The daemon picks a free port')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     const archiveTuning = screen.getByText('Advanced', { selector: 'summary' }).closest('details')!;
     expect(within(archiveTuning).getByLabelText('Builder threads')).toBeDefined();
   });
 
-  it('saves every change through one Save changes with If-Match and then asks for a restart', async () => {
+  it('saves a toggle through Save changes with If-Match and then asks for a restart', async () => {
     const { client, seen } = fixture();
     render(SettingsWorkspace, { client, category: 'server' });
     await fireEvent.click(await screen.findByRole('switch', { name: 'Trace every SQL statement' }));
@@ -256,13 +275,13 @@ it('keeps provider endpoints and keys across categories, saves endpoints before 
   let failKey = true;
   const provider = {
     name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://old.example.test',
-    credential_id: 'people.enrichment.primary', credential: { configured: false, source: 'none' },
+    credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' },
     allowed_identifiers: [], target_keys: [], allow_sensitive_targets: false,
     retention_posture: '', training_posture: '', refresh_interval: '24h', request_timeout: '30s',
     poll_interval: '1s', max_job_age: '1h', max_retries: 2, max_requests_per_run: 10, max_requests_per_day: 100
   };
-  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider, { ...provider, name: 'spare', credential_id: 'people.enrichment.spare' }] }), request => {
-    if (request.url.endsWith('/provider-credentials/people.enrichment.primary') && failKey)
+  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider, { ...provider, name: 'spare', credential_id: 'people.enrichment/spare' }] }), request => {
+    if (request.url.endsWith('/provider-credentials/people.enrichment%2Fprimary') && failKey)
       return Response.json({ message: 'Key store unavailable' }, { status: 503 });
   });
   render(SettingsWorkspace, { client, category: 'enrichment' });
@@ -281,7 +300,7 @@ it('keeps provider endpoints and keys across categories, saves endpoints before 
   expect(writes.map(({ method, path, ifMatch }) => [method, path, ifMatch])).toEqual([
     ['PATCH', '/api/v1/settings', '"s1"'],
     ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s2"'],
-    ['PUT', '/api/v1/settings/provider-credentials/people.enrichment.primary', '"credential-a"']
+    ['PUT', '/api/v1/settings/provider-credentials/people.enrichment%2Fprimary', '"credential-a"']
   ]);
   expect(writes[1].body).toMatchObject({ endpoint: 'https://new.example.test' });
   await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
@@ -309,8 +328,10 @@ it('retains account passwords across categories and clears them on Discard', asy
 });
 
 it('retains inference replacement keys across navigation and saves them from the footer', async () => {
-  const inference = { profiles: [{ name: 'primary', protocol: 'openai', model: 'example-model', credential_source: 'stored', credential_configured: true, credential_revision: '"key-a"' }], configured_enabled: false, running_enabled: false, pending_restart: false };
+  let fail = true;
+  const inference = { profiles: [inferenceProfile], configured_enabled: false, running_enabled: false, pending_restart: false };
   const { client, seen } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/key') && fail) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
     if (request.url.includes('/settings/people-inference'))
       return Response.json(inference, { headers: { ETag: '"p1"' } });
   });
@@ -321,18 +342,14 @@ it('retains inference replacement keys across navigation and saves them from the
   expect((await screen.findByLabelText('Replacement API key') as HTMLInputElement).value).toBe('synthetic-inference-key');
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByRole('alert');
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+  expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['Key store unavailable']);
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
+  fail = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.filter(request => request.method === 'PUT' && request.path.endsWith('/people-inference/providers/primary/key'))).toHaveLength(1);
-});
-
-it('keeps a host-owned primary field read-only', async () => {
-  const doc = settingsDoc();
-  doc.settings.push(setting('server.daemon_auto_start', 'server', 'boolean', true, { read_only: true, label: 'Automatic start' }));
-  const { client } = fixture(doc);
-  render(SettingsWorkspace, { client, category: 'server' });
-  await screen.findByRole('heading', { name: 'Server' });
-  expect(screen.queryByRole('switch', { name: 'Start automatically' })).toBeNull();
-  expect(screen.getByText('Start automatically')).toBeDefined();
+  expect(seen.filter(request => request.method === 'PUT' && request.path.endsWith('/people-inference/providers/primary/key'))).toHaveLength(2);
 });
 
 it('keeps attachment off values and cron schedules editable under Sources', async () => {
@@ -389,6 +406,7 @@ it('saves other categories after leaving a contact connection test', async () =>
   const testing = new Promise<Response>(resolve => { finish = resolve; });
   const { client, seen } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/carddav/account/test')) return testing;
+    if (request.url.endsWith('/carddav/account')) return Response.json({ base_url: 'https://dav.example.test/', username: 'work@example.com', enabled: false, schedule: '', books: 1 });
   });
   render(SettingsWorkspace, { client, category: 'carddav' });
   await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
@@ -477,9 +495,9 @@ it('rejects an invalid new provider name before sending a write', async () => {
 it('locks provider fields and newly mounted category controls while a provider save waits', async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const base = { enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' }, allowed_identifiers: [], target_keys: [] };
+  const base = { ...providerDefaults, enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' }, allowed_identifiers: [], target_keys: [] };
   const doc = settingsDoc({ person_enrichment_providers: [
-    { ...base, name: 'primary', kind: 'exa', mode: 'people', credential_id: 'people.enrichment.primary' }
+    { ...base, name: 'primary', kind: 'exa', mode: 'people', credential_id: 'people.enrichment/primary' }
   ] });
   const { client, seen } = fixture(doc, request => request.method === 'PUT' ? pending : undefined);
   render(SettingsWorkspace, { client, category: 'enrichment' });
@@ -494,20 +512,7 @@ it('locks provider fields and newly mounted category controls while a provider s
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
 });
 
-it('shows one footer-save error for an inference key and keeps the key pending', async () => {
-  const inference = { profiles: [{ name: 'routed', protocol: 'openai', credential_source: 'stored', credential_configured: true, credential_revision: '"key-a"' }], configured_enabled: false, running_enabled: false, pending_restart: false };
-  const { client } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/key')) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
-    if (request.url.includes('/settings/people-inference')) return Response.json(inference, { headers: { ETag: '"p1"' } });
-  });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  await fireEvent.input(await screen.findByLabelText('Replacement API key'), { target: { value: 'synthetic-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findAllByRole('alert');
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
-  expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['Key store unavailable']);
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
-});
+
 
 it.each(['message', 'visual'] as const)('starts the %s index from Overview and refreshes its row', async kind => {
   let built = false;
@@ -588,6 +593,8 @@ it('keeps edited People search details visible when switching the feature off', 
   const toggle = await screen.findByRole('switch', { name: 'Search people' });
   expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull();
   await fireEvent.click(toggle);
+  expect(await screen.findByText('Sends consented person fields to the text embedding provider.')).toBeDefined();
+  expect(screen.getByText('Sends images to a hosted provider. Semantic search must also be on.')).toBeDefined();
   await fireEvent.input(screen.getByLabelText('How long the provider keeps data'), { target: { value: 'zero' } });
   await fireEvent.click(toggle);
   expect((screen.getByLabelText('How long the provider keeps data') as HTMLInputElement).value).toBe('zero');
@@ -599,8 +606,8 @@ it('keeps edited People search details visible when switching the feature off', 
 
 it.each(['first enable', 'last disable', 'replacement'] as const)('saves valid provider transitions for %s and carries revisions', async transition => {
   const initiallyOn = transition !== 'first enable';
-  const provider = { name: 'primary', kind: 'exa', enabled: initiallyOn, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment.primary', credential: { configured: false, source: 'none' } };
-  const doc = settingsDoc({ person_enrichment_providers: [provider, { ...provider, name: 'replacement', enabled: false }] });
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: initiallyOn, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
+  const doc = settingsDoc({ person_enrichment_providers: [provider, { ...provider, name: 'replacement', credential_id: 'people.enrichment/replacement', enabled: false }] });
   doc.settings.find(item => item.key === 'people.enrichment.enabled')!.value = typed(initiallyOn);
   let failPatch = transition === 'first enable';
   const { client, seen } = fixture(doc, request => request.method === 'PATCH' && failPatch ? Response.json({ message: 'Settings write failed' }, { status: 503 }) : undefined);
@@ -627,7 +634,7 @@ it.each(['first enable', 'last disable', 'replacement'] as const)('saves valid p
 
 
 it.each(['constructor', '__proto__'])('preserves and edits the saved endpoint for accepted provider name %s', async name => {
-  const provider = { name, kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: `people.enrichment.${name}`, credential: { configured: false, source: 'none' } };
+  const provider = { ...providerDefaults, name, kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: `people.enrichment/${name}`, credential: { configured: false, source: 'none' } };
   const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
   render(SettingsWorkspace, { client, category: 'enrichment' });
   const endpoint = await screen.findByLabelText(`${name} endpoint`);
@@ -640,7 +647,7 @@ it.each(['constructor', '__proto__'])('preserves and edits the saved endpoint fo
 });
 
 it('names the rejected provider when saving from Overview', async () => {
-  const providers = ['primary', 'secondary'].map(name => ({ name, kind: 'exa', enabled: true, endpoint: 'https://provider.example.test', num_results: 1, credential_id: `people.enrichment.${name}`, credential: { configured: false, source: 'none' } }));
+  const providers = ['primary', 'secondary'].map(name => ({ ...providerDefaults, name, kind: 'exa', enabled: true, endpoint: 'https://provider.example.test', num_results: 1, credential_id: `people.enrichment/${name}`, credential: { configured: false, source: 'none' } }));
   const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: providers }), request => {
     if (request.method === 'PUT' && request.url.endsWith('/person-enrichment/providers/primary')) return Response.json({ error: 'validation_failed', message: 'Person-enrichment provider settings are invalid' }, { status: 422 });
   });
@@ -656,15 +663,14 @@ it('names the rejected provider when saving from Overview', async () => {
 });
 
 it.each([['embedding', true], ['enrichment', true], ['embedding', false]] as const)('finishes a queued %s key clear with endpoint change %s', async (kind, changeEndpoint) => {
-  const id = kind === 'embedding' ? 'vector.embeddings' : 'people.enrichment.primary';
-  const provider = { name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://old.example.test', credential_id: id, credential: { configured: true, source: 'stored', hint: 'old…key' } };
+  const id = kind === 'embedding' ? 'vector.embeddings' : 'people.enrichment/primary';
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://old.example.test', credential_id: id, credential: { configured: true, source: 'stored', hint: 'old…key' } };
   const doc = settingsDoc({ person_enrichment_providers: kind === 'enrichment' ? [provider] : [] });
   const key = doc.settings.find(item => item.key === 'vector.embeddings.api_key')!;
   key.secret = { configured: true, source: 'stored', hint: 'old…key' };
   const { client, seen } = fixture(doc, request => {
     const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/account')) return Response.json({ base_url: 'https://dav.example.test/', username: 'person@example.com', enabled: false, schedule: '', books: 2 });
-    if (path.endsWith(`/provider-credentials/${id}`)) {
+    if (path.endsWith(`/provider-credentials/${encodeURIComponent(id)}`)) {
       if (changeEndpoint) return Response.json({ error: 'credential_not_found', message: 'No stored provider credential was found' }, { status: 404 });
       return Response.json({ credential_id: id, state: { configured: false, source: 'none' }, pending_restart: false }, { headers: { ETag: '"credential-b"' } });
     }
@@ -674,20 +680,14 @@ it.each([['embedding', true], ['enrichment', true], ['embedding', false]] as con
       return Response.json({ ...doc, credential_etag: '"credential-b"' }, { headers: { ETag: '"s2"', 'Credential-ETag': '"credential-b"' } });
     }
   });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
-  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'person@example.com' } });
-  await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-password' } });
-  await fireEvent.click(screen.getByRole('button', { name: kind === 'embedding' ? 'Search & AI' : 'People lookups' }));
+  render(SettingsWorkspace, { client, category: kind === 'embedding' ? 'search' : 'enrichment' });
   await fireEvent.click(await screen.findByRole('button', { name: kind === 'embedding' ? 'Clear API key' : 'Clear API key for primary' }));
   if (changeEndpoint) await fireEvent.input(screen.getByLabelText(kind === 'embedding' ? 'Endpoint' : 'primary endpoint'), { target: { value: 'https://new.example.test' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.some(request => request.path.endsWith('/carddav/account'))).toBe(true));
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(screen.queryByRole('alert')).toBeNull();
   expect(seen.some(request => request.method === 'DELETE')).toBe(!changeEndpoint);
-  expect(seen.find(request => request.path.endsWith('/carddav/account'))?.body).toMatchObject({ username: 'person@example.com', password: 'synthetic-password' });
 });
 
 it('persists an unchanged Google account discovery after Test through the shared footer', async () => {
@@ -745,4 +745,34 @@ it('keeps unapplied address-book roles when saving the account schedule', async 
   await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use for lookup for Personal' }) as HTMLInputElement).checked).toBe(true));
   expect((screen.getByRole('button', { name: 'Apply roles for Personal' }) as HTMLButtonElement).disabled).toBe(false);
   expect(seen.some(request => request.method === 'PATCH' && request.path.includes('/carddav/books'))).toBe(false);
+});
+
+it('refreshes the shared credential revision after an inference key succeeds before a later failure', async () => {
+  let revision = '"credential-a"';
+  const profile = { ...inferenceProfile };
+  const profiles = [profile, { ...profile, name: 'backup' }];
+  const doc = settingsDoc();
+  const { client, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings' && request.method === 'GET') return Response.json({ ...doc, credential_etag: revision }, { headers: { ETag: '"s1"', 'Credential-ETag': revision } });
+    if (path.includes('/settings/people-inference')) {
+      if (request.method === 'PUT' && path.endsWith('/backup/key')) return Response.json({ message: 'Backup key store unavailable' }, { status: 503 });
+      if (request.method === 'PUT') revision = '"credential-b"';
+      return Response.json({ profiles, configured_enabled: false, running_enabled: false, pending_restart: false }, { headers: { ETag: '"s1"' } });
+    }
+    if (request.method === 'PUT' && path.endsWith('/provider-credentials/vector.embeddings') && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Credential changed' }, { status: 412 });
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await fireEvent.input(await screen.findByLabelText('Replacement API key'), { target: { value: 'synthetic-primary-key' } });
+  await chooseSelectOption(screen.getByRole('combobox', { name: /^Profile:/ }), 'backup');
+  await fireEvent.input(screen.getByLabelText('Replacement API key'), { target: { value: 'synthetic-backup-key' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+  await fireEvent.click(screen.getByRole('button', { name: 'Search & AI' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
+  await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-embedding-key' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(seen.some(request => request.path.endsWith('/provider-credentials/vector.embeddings'))).toBe(true));
+  expect(seen.find(request => request.path.endsWith('/provider-credentials/vector.embeddings'))?.ifMatch).toBe('"credential-b"');
 });

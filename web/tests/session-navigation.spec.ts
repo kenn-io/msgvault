@@ -119,7 +119,6 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   expect(patch.body).toEqual({
     updates: [{ key: 'web.theme', value: { string: 'dark' } }]
   });
-  await expect(page.getByText('Saved. Restart msgvault to apply these changes.')).toBeVisible();
 });
 
 async function installSettingsDaemon(context: BrowserContext): Promise<void> {

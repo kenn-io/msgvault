@@ -36,7 +36,7 @@ export class PeopleInferenceController {
   async saveKeys(): Promise<boolean> {
     if (Object.keys(this.keyDrafts).length > 0) this.clearCheck();
     for (const [name, key] of Object.entries(this.keyDrafts)) {
-      if (!(await this.run(() => this.writeKey(name, key)))) return false;
+      if (!(await this.run(() => this.writeKey(name, key), true))) return false;
       delete this.keyDrafts[name];
     }
     return true;
