@@ -237,7 +237,7 @@ describe('Explore URL state', () => {
       ...defaultExploreURLState, workspace: 'everything', settingsCategory: 'search'
     });
     expect(elsewhere).not.toContain('settingsCategory');
-    for (const invalid of ['<script>', 42, '', 'Search']) {
+    for (const invalid of ['<script>', 42, '', 'Search', 'toString']) {
       expect(parseExploreURLState(serializeExploreURLState({
         ...defaultExploreURLState, workspace: 'settings', settingsCategory: invalid
       } as unknown as ExploreURLState)).settingsCategory).toBe('overview');
@@ -1669,7 +1669,7 @@ describe('session-owned exploration selection', () => {
 
 it.each([
   ['browser', 'advanced'], ['archive', 'advanced'], ['integrations', 'tasks'],
-  ['attachments', 'sources'], ['people', 'enrichment'], ['toString', 'overview']
+  ['attachments', 'sources'], ['people', 'enrichment']
 ])('restores the Settings link %s to %s', (settingsCategory, expected) => {
   const restored = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory }))}`);
   expect(restored.settingsCategory).toBe(expected);

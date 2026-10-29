@@ -101,6 +101,8 @@ describe('CardDAVAccountSettings', () => {
       values: { ...refreshedValues, enabled: false }, password: '', error: undefined
     })));
     expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(false);
+    await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
+    expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(true);
   });
 
   it('locks the complete account tuple while a connection test is pending', async () => {
@@ -204,10 +206,9 @@ describe('CardDAVAccountSettings', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('network down'));
   });
 
-  it('aborts a deferred account request and never refreshes after destruction', async () => {
+  it('aborts a deferred connection test after destruction', async () => {
     const deferred = deferredResponse();
     let signal: AbortSignal | undefined;
-    const onSaved = vi.fn();
     const fetchFn: typeof fetch = async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const body = await request.clone().json();
@@ -225,15 +226,13 @@ describe('CardDAVAccountSettings', () => {
     expect(signal?.aborted).toBe(true);
     deferred.resolve(Response.json({ base_url: 'https://old.example.test/', username: 'alice', enabled: false, books: 1 }));
     await Promise.resolve();
-
   });
 });
 
-function expectAccountControlsLocked(activeLabel: 'Testing…' | 'Saving…'): void {
+function expectAccountControlsLocked(activeLabel: 'Testing…'): void {
   for (const label of ['Base URL', 'Username', 'Password', 'Schedule']) {
     expect((screen.getByLabelText(label) as HTMLInputElement).disabled).toBe(true);
   }
   expect((screen.getByRole('switch', { name: 'Enabled' }) as HTMLInputElement).disabled).toBe(true);
   expect((screen.getByRole('button', { name: activeLabel }) as HTMLButtonElement).disabled).toBe(true);
-
 }
