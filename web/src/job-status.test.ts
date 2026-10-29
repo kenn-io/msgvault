@@ -102,10 +102,16 @@ it.each(['failed', 'completed'] as const)('refreshes the shell dot after Build i
       })] });
       return snapshot;
     }
-    if (path === '/api/v1/search/coverage') return Response.json({
-      eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1',
-      status: 'initializing', actions: built ? [] : ['build_index'],
-    });
+    if (path === '/api/v1/search/coverage') {
+      if (built && outcome === 'completed') return Response.json({
+        eligible_count: 10, embedded_count: 10, percentage: 100, cache_revision: 'cache-2',
+        status: 'ready', actions: [],
+      });
+      return Response.json({
+        eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1',
+        status: 'initializing', actions: built ? [] : ['build_index'],
+      });
+    }
     if (request.method === 'POST' && path === '/api/v1/cli/run') {
       built = true;
       return new Response(outcome === 'failed' ? '{"type":"complete","error":"Embedding endpoint failed"}\n' : '{"type":"complete"}\n');
