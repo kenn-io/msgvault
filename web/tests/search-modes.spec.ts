@@ -23,6 +23,7 @@ test('URL mode overrides the remembered default and remains selected through a n
   await page.route('**/api/session', (route) =>
     route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } })
   );
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [] } }));
   await page.route('**/api/v1/search/coverage', (route) => route.fulfill({ json: {
     status: 'incomplete', eligible_count: 2, embedded_count: 1, percentage: 50,
     vector_generation: 7, cache_revision: 'cache-1', actions: []
