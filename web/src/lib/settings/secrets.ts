@@ -1,5 +1,3 @@
-export type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
-
 /** The shortest value that gets a hint: six of twelve characters leaves as much hidden as shown. */
 const HINT_MINIMUM_LENGTH = 12;
 
@@ -16,7 +14,7 @@ export function maskSecret(value: string): string {
 }
 
 /** Show a pending replacement or removal before the saved secret state. */
-export function pendingSecret(saved: { configured: boolean; hint?: string } | undefined, pending: SecretUpdate | undefined): { configured: boolean; hint: string } {
+export function pendingSecret(saved: { configured: boolean; hint?: string } | undefined, pending: { action: 'set'; value: string } | { action: 'clear' } | undefined): { configured: boolean; hint: string } {
   if (pending?.action === 'set') return { configured: true, hint: maskSecret(pending.value) };
   if (pending?.action === 'clear') return { configured: false, hint: '' };
   return { configured: saved?.configured ?? false, hint: saved?.hint ?? '' };

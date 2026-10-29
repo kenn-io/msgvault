@@ -28,7 +28,7 @@
       <span class="row__name">
         {row.name}
       </span>
-      <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{action?.kind === 'start' && working[action.id] ? (action.id === 'messages' ? 'Building' : 'Working…') : row.chip.text}</Chip></span>
+      <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
       <span class="row__action">
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${row.name}`} onclick={() => onSetUp(action)} />
