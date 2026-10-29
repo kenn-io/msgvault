@@ -294,10 +294,7 @@
   }
   let displayOpen = $state(false);
   let resultsWidth = $state(0);
-  const operationsController = new OperationsController(
-    untrack(() => client),
-    (patch) => { if (runHistory) setRunHistory({ ...runHistory, ...patch }); }
-  );
+  const operationsController = new OperationsController(untrack(() => client));
   const shellData = new ShellData(untrack(() => client), operationsController);
 
   function openOperations(kind: OperationsURLState['operationKind'] = ''): void {
@@ -497,7 +494,7 @@
       onPagingNotice: (message) => {
         sortNotice = message ?? DEFAULT_SORT_NOTICE;
       },
-      onRestorationFocus: () => focusGrid(),
+      onRestorationFocus: () => { if (!exploreState.current.operationHistory) focusGrid(); },
       onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, exploreState.current.workspace === 'everything' && !media?.absent ? undefined : count), signal); },
     },
   );
@@ -758,6 +755,7 @@
   }
   async function restoreHistoryFocus(): Promise<void> {
     await tick();
+    if (exploreState.current.operationHistory) return;
     if (exploreState.current.workspace === 'everything') {
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
@@ -1496,7 +1494,7 @@
                 exploreState.acknowledgeRestoration(epoch);
                 // Like Everything, a restored list without an open item takes keyboard focus,
                 // unless the person has already moved focus somewhere.
-                if (exploreState.current.selectedRow === null && document.activeElement === document.body) {
+                if (!exploreState.current.operationHistory && exploreState.current.selectedRow === null && document.activeElement === document.body) {
                   filesGrid()?.focus();
                 }
               }}
@@ -1620,7 +1618,7 @@
 {/if}
 
 {#if runHistory}
-  <RunHistoryDialog {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory}
+  <RunHistoryDialog {client} controller={operationsController} restorationEpoch={exploreState.restorationEpoch} bind:state={() => runHistory!, setRunHistory}
     onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
     onConfigure={openVisualAttachmentSettings} />
 {/if}

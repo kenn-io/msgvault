@@ -3,7 +3,6 @@
 
   import {
     OPERATION_ACTION_LABELS,
-    OPERATION_KIND_LABELS,
     RELATED_STATUS_LABELS,
     counterLabel,
     counterValue,
@@ -16,19 +15,13 @@
   import { formatDateTime } from '../../util/format';
 
   let {
-    compact = false,
     detail,
     actionPending = null,
-    showClose = true,
-    onClose = () => undefined,
     onNavigate = () => undefined,
     onAction = () => undefined
   }: {
-    compact?: boolean;
     detail: OperationRunDetail;
     actionPending?: OperationAction | null;
-    showClose?: boolean;
-    onClose?: () => void;
     onNavigate?: (target: RelatedStatus, button: HTMLButtonElement) => void;
     onAction?: (action: OperationAction) => void;
   } = $props();
@@ -36,14 +29,7 @@
   const stateChip = $derived(operationStateChip(detail.state));
 </script>
 
-<section class="detail" class:detail--compact={compact} aria-label="Operation run detail">
-  {#if !compact}<header>
-    <div>
-      <p>Run detail</p>
-      <h2>{OPERATION_KIND_LABELS[detail.kind]}</h2>
-    </div>
-    {#if showClose}<Button size="sm" surface="soft" label="Close operation detail" onclick={onClose} />{/if}
-  </header>{/if}
+<section class="detail" aria-label="Operation run detail">
 
   <dl class="facts">
     {#if detail.connection}<div><dt>Connection</dt><dd>{detail.connection}</dd></div>{/if}
@@ -55,7 +41,7 @@
   </dl>
 
   <section aria-labelledby="detail-counters-heading">
-    <svelte:element this={compact ? 'h2' : 'h3'} id="detail-counters-heading" class="counter-heading">Counters</svelte:element>
+    <h2 id="detail-counters-heading" class="counter-heading">Counters</h2>
     {#if detail.counters.length === 0}
       <p class="muted">No counters reported.</p>
     {:else}
@@ -98,12 +84,8 @@
 </section>
 
 <style>
-  .detail { display: grid; align-content: start; gap: var(--space-4); min-width: 0; padding: var(--space-4); }
-  .detail--compact { padding: 0; gap: var(--space-3); }
-  header { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); }
+  .detail { display: grid; align-content: start; gap: var(--space-3); min-width: 0; padding: 0; }
   h2, p, dl, dd { margin: 0; }
-  header p { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; }
-  h2 { font-size: var(--font-size-lg); }
   .counter-heading { margin: 0 0 var(--space-2); font-size: var(--font-size-sm); }
   .facts, .counters { display: grid; gap: var(--space-2); }
   .facts div, .counters div { display: grid; grid-template-columns: minmax(100px, .45fr) 1fr; gap: var(--space-3); }
