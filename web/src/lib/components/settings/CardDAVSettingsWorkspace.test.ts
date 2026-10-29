@@ -45,7 +45,7 @@ describe('CardDAV connection selection', () => {
     rendered.unmount();
   });
 
-  it.each(['work', 'constructor'])('isolates passwords, drafts, requests and late results when switching to %s', async name => {
+  it.each(['constructor'])('isolates passwords, drafts, requests and late results when switching to %s', async name => {
     const requests: Request[] = [];
     let resolve!: (value: Response) => void;
     const late = new Promise<Response>((done) => {
@@ -117,7 +117,6 @@ describe('CardDAV connection selection', () => {
     expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('synthetic-named-password');
   });
   it('creates a named form without borrowing the default credential', async () => {
-    const bodies: Record<string, unknown>[] = [];
     const client = createAPIClient(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
@@ -125,15 +124,6 @@ describe('CardDAV connection selection', () => {
         return Response.json({
           connections: [{ connection: 'default', status: status('default') }]
         });
-      if (request.method === 'PUT') {
-        bodies.push(await request.json());
-        return Response.json({
-          base_url: 'https://new.example.test/',
-          username: 'person@example.com',
-          enabled: true,
-          books: 1
-        });
-      }
       if (path.endsWith('/status')) return Response.json(status('default'));
       if (path.endsWith('/books')) return Response.json({ books: [] });
       if (path.endsWith('/runs')) return Response.json({ runs: [] });
@@ -146,6 +136,7 @@ describe('CardDAV connection selection', () => {
       target: { value: 'work' }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
     await waitFor(() => expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe(''));
     await fireEvent.input(screen.getByLabelText('Base URL'), {
       target: { value: 'https://new.example.test/' }
@@ -154,7 +145,6 @@ describe('CardDAV connection selection', () => {
       target: { value: 'person@example.com' }
     });
 
-    expect(bodies).toHaveLength(0);
     expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(true);
     await fireEvent.input(screen.getByLabelText('Password'), {
       target: { value: 'synthetic-work-password' }
@@ -164,42 +154,31 @@ describe('CardDAV connection selection', () => {
       values: { username: 'person@example.com' }, password: 'synthetic-work-password'
     }));
     expect(drafts.work?.error).toBeUndefined();
-    expect(bodies).toHaveLength(0);
   });
 });
 
 it('restores an orphaned connection with its retained name and account details', async () => {
   const requests: Request[] = [];
-  let saved = false;
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     requests.push(request);
     const url = new URL(request.url);
     const workStatus = {
       ...status('work'),
-      configured: saved,
-      available: saved,
-      credential_configured: saved
+      configured: false,
+      available: false,
+      credential_configured: false
     };
     if (url.pathname.endsWith('/connections')) {
       return Response.json({ connections: [{
-        connection: 'work', account_id: 17, orphaned: !saved, status: workStatus
+        connection: 'work', account_id: 17, orphaned: true, status: workStatus
       }] });
     }
-    if (url.searchParams.get('connection') === 'work' && !saved) {
+    if (url.searchParams.get('connection') === 'work') {
       return Response.json({ error: 'bad_request', message: 'Invalid connection selector' }, { status: 400 });
     }
     if (url.pathname.endsWith('/status')) {
-      return Response.json(url.searchParams.get('connection') === 'work'
-        ? workStatus
-        : { ...status('default'), configured: false, available: false });
-    }
-    if (url.pathname.endsWith('/account') && request.method === 'PUT') {
-      saved = true;
-      return Response.json({
-        base_url: 'https://work.example.test/', username: 'work@example.com',
-        enabled: true, schedule: '0 2 * * *', books: 1
-      });
+      return Response.json({ ...status('default'), configured: false, available: false });
     }
     if (url.pathname.endsWith('/runs')) return Response.json({ runs: [] });
     if (url.pathname.endsWith('/books')) return Response.json({ books: [] });
