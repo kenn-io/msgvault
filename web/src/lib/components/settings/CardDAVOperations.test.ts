@@ -175,7 +175,7 @@ it('labels history from the API connection rather than the account ID', async ()
   controller.destroy();
 });
 
-it('offers one sync action and lets the daemon choose reconciliation', async () => {
+it('shows Sync now without Full sync and calls sync with the selected connection', async () => {
   const controller = new CardDAVController(createAPIClient(async input => {
     const path = new URL((input as Request).url).pathname;
     if (path.endsWith('/status')) return Response.json({ configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' });
