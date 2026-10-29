@@ -21,6 +21,10 @@ on:
       - '.github/workflows/docker-pr.yml'
 permissions: read-all
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     uses: kenn-io/msgvault/.github/workflows/docker.yml@main
