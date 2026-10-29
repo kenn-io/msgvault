@@ -4,6 +4,8 @@ import { createRawSnippet } from 'svelte';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import NavigationDrawer from './NavigationDrawer.svelte';
+import AppShell from './AppShell.svelte';
+import { createAPIClient } from '../../api/client';
 
 const items = createRawSnippet(() => ({
   render: () =>
@@ -37,10 +39,21 @@ describe('NavigationDrawer', () => {
     unregister();
   });
 
-  it('closes when the scrim is selected', async () => {
-    const onclose = vi.fn();
-    render(NavigationDrawer, { onclose, children: items });
-    await fireEvent.click(screen.getByRole('button', { name: 'Close navigation' }));
-    expect(onclose).toHaveBeenCalledOnce();
+  it('closes from the scrim and returns focus to the navigation opener', async () => {
+    const width = window.innerWidth;
+    window.innerWidth = 480;
+    const client = createAPIClient(async () => Response.json({ saved_views: [], sources: [], lanes: [], rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} }));
+    const rendered = render(AppShell, { client, enabled: false });
+    try {
+      const opener = screen.getByRole('button', { name: 'Open navigation' });
+      await fireEvent.click(opener);
+      await screen.findByRole('dialog', { name: 'Navigation' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Close navigation' }));
+      await vi.waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
+      expect(document.activeElement).toBe(opener);
+    } finally {
+      rendered.unmount();
+      window.innerWidth = width;
+    }
   });
 });
