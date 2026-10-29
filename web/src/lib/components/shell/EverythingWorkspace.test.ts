@@ -1,3 +1,4 @@
+import { lanes } from '../../../test/operations';
 import { recordingMessage, recordingTranscript, recordingSearchReport } from '../../archive/recording-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
@@ -20,7 +21,7 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
   if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
-  if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+  if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
   return fetchFn(input, init);
 }, telemetryEvents);
 

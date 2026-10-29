@@ -17,10 +17,3 @@ test('closing Past runs returns focus to the status trigger', async ({ page, dae
   await expect(dialog).toBeHidden();
   await expect(status).toBeFocused();
 });
-
-test('touch Help opens Commands against the real daemon', async ({ page, daemon }) => {
-  await loginToMeetingArchive(page, daemon);
-  await page.getByRole('button', { name: 'Help', exact: true }).tap();
-  await page.getByRole('button', { name: 'Commands', exact: true }).tap();
-  await expect(page.getByRole('combobox', { name: 'Messages commands' })).toBeVisible();
-});

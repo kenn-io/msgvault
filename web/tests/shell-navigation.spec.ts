@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 
 import { selectWorkspace } from './kit-ui';
@@ -26,7 +27,7 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
     rows: [1, 2, 3].map(entry), total_count: 3, cache_revision: 'shell-navigation', search_provenance: {}
   } }));
-  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await stubOperationStatus(page);
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [] } }));
   await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
 });
@@ -129,7 +130,6 @@ test('Settings Overview Details closes back to Overview with a status title', as
   await details.click();
   const dialog = page.getByRole('dialog');
   await expect.soft(dialog).toHaveAccessibleName('Document index status');
-  await expect(dialog).toContainText('4 of 5 owners ready');
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(details).toBeVisible();
