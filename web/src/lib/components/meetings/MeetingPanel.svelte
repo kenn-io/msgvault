@@ -10,17 +10,19 @@
   import MeetingActionFilters from './MeetingActionFilters.svelte';
   import MeetingMetrics from './MeetingMetrics.svelte';
 
-  let { client, scope, refreshKey = '', showHeading = true, onReloadScope = undefined, onOpenMeeting = undefined }: {
+  let { client, scope, refreshKey = '', showHeading = true, compact = false, controller: suppliedController, onReloadScope = undefined, onOpenMeeting = undefined }: {
     client: APIClient;
     scope: MeetingPanelScope;
     /** UI invalidation only; the server still resolves the durable identity. */
     refreshKey?: string;
     showHeading?: boolean;
+    compact?: boolean;
+    controller?: MeetingsController;
     /** Explore owners must reload the corresponding result before publishing new authority. */
     onReloadScope?: () => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
   } = $props();
-  const controller = new MeetingsController(createMeetingsAPI(untrack(() => client)));
+  const controller = untrack(() => suppliedController ?? new MeetingsController(createMeetingsAPI(client)));
   const headingID = $props.id();
   const scopeFingerprint = $derived(canonicalFingerprint({ scope, refreshKey }));
   const errors = $derived.by(() => {
@@ -31,9 +33,9 @@
 
   $effect.pre(() => {
     void scopeFingerprint;
-    untrack(() => { void controller.setScope(scope, refreshKey); });
+    if (!suppliedController) untrack(() => { void controller.setScope(scope, refreshKey); });
   });
-  onDestroy(() => controller.destroy());
+  onDestroy(() => { if (!suppliedController) controller.destroy(); });
 
   function reload(): void {
     if (scope.kind === 'explore' && onReloadScope) onReloadScope();
@@ -42,6 +44,21 @@
 
 </script>
 
+{#if compact}
+  <div class="meeting-dialog">
+    <MeetingActionFilters compact {controller} />
+    {#if controller.metrics}
+      <details><summary>Meeting metrics</summary><MeetingMetrics metrics={controller.metrics} /></details>
+    {/if}
+    {#if controller.actionsError}
+      <p role="alert">{controller.actionsError.message}</p>
+      {#if controller.actionsError.recovery === 'reload' || controller.actionsError.recovery === 'retry'}<Button label="Reload meeting activity" onclick={reload} />{/if}
+    {/if}
+    {#if controller.actions}<MeetingActions compact {client} evidence={controller.actions} {onOpenMeeting} />{/if}
+    {#if controller.actionsLoading}<p role="status">Loading action items…</p>{/if}
+    {#if controller.actions?.next_cursor && !controller.actionsError}<Button label="Show more" disabled={controller.actionsLoading} onclick={() => void controller.loadMore()} />{/if}
+  </div>
+{:else}
 <Card level="default" padding="none" class="meeting-panel-card">
   <section
     class="meeting-panel"
@@ -87,8 +104,12 @@
     </section>
   </section>
 </Card>
+{/if}
 
 <style>
+  .meeting-dialog { display: grid; gap: var(--space-4); }
+  .meeting-dialog details, .meeting-dialog p { font-size: var(--font-size-sm); }
+  .meeting-dialog summary { cursor: pointer; margin-bottom: var(--space-3); }
   :global(.meeting-panel-card) { width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
   .meeting-panel, .overview-section, .actions-section { min-width: 0; }
   .meeting-panel { display: grid; }

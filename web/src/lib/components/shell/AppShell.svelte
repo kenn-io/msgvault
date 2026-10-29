@@ -1570,7 +1570,6 @@
           {drillGroup}
           closeReadingPane={() => void closeReadingPane()}
           {openRelationship}
-          openPerson={openRelationship}
           {changeConversationAnchor}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           onSaveView={() => (saveViewOpen = true)}
