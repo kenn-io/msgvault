@@ -37,9 +37,7 @@ type DocbankAttachmentProcessingSummary struct {
 }
 
 func (s *Store) SaveDocbankAttachmentProcessingFingerprint(ctx context.Context, dest, profile, fingerprint string) error {
-	_, err := s.db.ExecContext(ctx, s.Rebind(`INSERT INTO archive_metadata (key, value) VALUES (?, ?)
- ON CONFLICT (key) DO UPDATE SET value = excluded.value`), "docbank-processing:"+dest+":"+profile, fingerprint)
-	return err
+	return s.SetArchiveMarker(ctx, "docbank-processing:"+dest+":"+profile, fingerprint)
 }
 
 // DocbankAttachmentProcessingCursor visits unasked files once, after polling due jobs.

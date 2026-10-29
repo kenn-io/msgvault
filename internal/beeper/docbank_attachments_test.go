@@ -1047,6 +1047,71 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Requested)
 }
 
+func TestAttachmentMirrorBackfillFencesFirstProcessingRequest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	r.processing.Reasons["a"] = "not_found"
+
+	planStarted := make(chan struct{})
+	releasePlan := make(chan struct{})
+	defer func() {
+		select {
+		case <-releasePlan:
+		default:
+			close(releasePlan)
+		}
+	}()
+	blockedPlan := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/api/v1/processing/plans" && !blockedPlan {
+			blockedPlan = true
+			close(planStarted)
+			<-releasePlan
+			r.processing.Faults["a"] = http.StatusNotFound
+			r.serve(w, req)
+			r.processing.Faults["a"] = 0
+			return
+		}
+		r.serve(w, req)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := docbankmedia.NewClient(srv.URL, nil)
+	require.NoError(err)
+	r.worker.client = client
+
+	type result struct {
+		more bool
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		more, err := r.worker.RunBatch(t.Context())
+		done <- result{more: more, err: err}
+	}()
+	select {
+	case <-planStarted:
+	case got := <-done:
+		require.NoError(got.err)
+		assert.Fail("worker returned before the first plan request")
+		return
+	}
+
+	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+	close(releasePlan)
+	got := <-done
+	require.NoError(got.err)
+	assert.False(got.more)
+
+	r.processing.Faults["a"] = 0
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "a"}, r.processing.Plans)
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Empty(r.processingCounts().Outcomes)
+}
+
 func TestAttachmentMirrorBackfillRestartsRecoverableJobFailures(t *testing.T) {
 	for _, outcome := range []string{"consent", "stale_authority", "pdf_password_required"} {
 		t.Run(outcome, func(t *testing.T) {
