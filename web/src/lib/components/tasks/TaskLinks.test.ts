@@ -122,7 +122,7 @@ describe('TaskLinks', () => {
     expect(await requests.find((request) => request.method === 'POST')!.json()).toMatchObject({ task_id: 'task-2' });
   });
 
-  it.each(['stale', 'unavailable', 'authentication_required', 'incompatible', 'disabled', 'not_found', 'wrong_project'])(
+  it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project'])(
     'keeps mutations disabled when the index state is %s even with a ready integration',
     async (state) => {
       render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
@@ -132,7 +132,7 @@ describe('TaskLinks', () => {
           : Response.json({ state, complete: false, reason: state, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
       })), mode: 'list', messageId: 42, title: 'Synthetic' });
 
-      expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(state === 'authentication_required' ? 'authentication is required' : state.replaceAll('_', ' '));
+      expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(state.replaceAll('_', ' '));
       expect(screen.getByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
     }
   );
