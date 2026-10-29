@@ -46,6 +46,7 @@ export async function mockArchiveLayout(page: Page) {
       total_count: 1, cache_revision: 'cache-theme', search_provenance: {}
     }
   }));
+  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({
     json: { saved_views: [] }
   }));

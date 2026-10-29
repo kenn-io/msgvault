@@ -8,13 +8,12 @@
     onUndo: () => void;
     /** Runs when the time is up, which is the moment to make the change final. */
     onExpire: () => void;
-    durationMs?: number;
   }
 
-  let { message, onUndo, onExpire, durationMs = 8000 }: Props = $props();
+  let { message, onUndo, onExpire }: Props = $props();
 
   onMount(() => {
-    const timer = setTimeout(onExpire, durationMs);
+    const timer = setTimeout(onExpire, 8000);
     window.addEventListener('pagehide', onExpire);
     return () => { clearTimeout(timer); window.removeEventListener('pagehide', onExpire); };
   });

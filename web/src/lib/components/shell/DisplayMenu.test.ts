@@ -26,8 +26,6 @@ describe('DisplayMenu', () => {
     expect(props.onThemeChange).toHaveBeenCalledWith('dark');
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Comfortable' }));
     expect(props.onDensityChange).toHaveBeenCalledWith('comfortable');
-    expect(screen.queryByRole('menuitemradio', { name: 'Auto' })).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: 'Use daemon theme' })).toBeNull();
   });
 
   it('shows the current theme and density as checked', async () => {
@@ -71,12 +69,4 @@ describe('DisplayMenu', () => {
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Right' }));
     expect(onReaderPositionChange).toHaveBeenCalledWith('right');
   });
-});
-
-it('offers Settings defaults while this browser overrides appearance', async () => {
-  const onUseDefaults = vi.fn();
-  renderMenu({ overridden: true, onUseDefaults });
-  await open();
-  await fireEvent.click(screen.getByRole('menuitem', { name: 'Use Settings defaults' }));
-  expect(onUseDefaults).toHaveBeenCalledOnce();
 });

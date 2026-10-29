@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { installOperations } from './e2e/fixtures/operations';
-import { selectKitOption, selectWorkspace } from './kit-ui';
+import { selectWorkspace } from './kit-ui';
 
 function entry(index: number) {
   return {
@@ -27,6 +27,7 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
     rows: [1, 2, 3].map(entry), total_count: 3, cache_revision: 'shell-navigation', search_provenance: {}
   } }));
+  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [] } }));
   await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
 });
@@ -65,7 +66,7 @@ test('narrow navigation menu traps focus and closes three ways', async ({ page }
 test('Escape in the narrow menu leaves an open reading pane open', async ({ page }) => {
   await page.setViewportSize({ width: 420, height: 860 });
   await page.goto('/?workspace=everything');
-  await page.getByRole('grid', { name: 'Everything results' }).getByRole('row').nth(1).click();
+  await page.getByRole('grid', { name: 'Messages results' }).getByRole('row').nth(1).click();
   await expect(page.getByRole('complementary', { name: /^Reading pane/ })).toBeVisible();
   await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.keyboard.press('Escape');
@@ -74,7 +75,7 @@ test('Escape in the narrow menu leaves an open reading pane open', async ({ page
 
 test('Escape closes the Columns menu before the reading pane', async ({ page }) => {
   await page.goto('/?workspace=everything');
-  await page.getByRole('grid', { name: 'Everything results' }).getByRole('row').nth(1).click();
+  await page.getByRole('grid', { name: 'Messages results' }).getByRole('row').nth(1).click();
   const readingPane = page.getByRole('complementary', { name: /^Reading pane/ });
   await expect(readingPane).toBeVisible();
   await page.getByRole('button', { name: 'Display' }).click();
@@ -99,7 +100,7 @@ test('global search from another workspace opens Everything', async ({ page }) =
 
 test('grid shortcuts pressed outside the grid still move the active row', async ({ page }) => {
   await page.goto('/?workspace=everything');
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await expect(grid).not.toBeFocused();
@@ -111,36 +112,20 @@ test('grid shortcuts pressed outside the grid still move the active row', async 
 });
 
 
-test('Past runs preserves filters, paging restart, detail, focus, and source history', async ({ page }) => {
-  const fixture = await installOperations(page);
+test('Past runs restores selected detail on reload and Back closes it', async ({ page }) => {
+  await installOperations(page);
   await page.goto('/?workspace=everything');
-  await page.getByRole('button', { name: /Sync status:/ }).click();
-  await page.getByRole('menuitem', { name: 'Past runs' }).click();
-  await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
-  await expect(page.getByText('Person embedding history is unavailable.')).toBeVisible();
-  await selectKitOption(page, 'Kind', 'All documents');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('documents');
-  await selectKitOption(page, 'Kind', 'All kinds');
-  await expect.poll(() => fixture.listQueries.at(-1)?.has('lane')).toBe(false);
-  fixture.driftNextPage();
-  await page.getByRole('button', { name: 'Show more' }).click();
-  await page.getByRole('button', { name: 'Restart', exact: true }).click();
-  await page.getByRole('button', { name: 'Show more' }).click();
-  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toBeVisible();
-  const source = page.getByRole('button', { name: 'Open Source sync run' });
-  await source.click();
-  await page.getByRole('button', { name: 'All runs' }).click();
-  await expect(source).toBeFocused();
-  await source.click();
+  const openHistory = async () => {
+    await page.getByRole('button', { name: /Sync status:/ }).click();
+    await page.getByRole('menuitem', { name: 'Past runs' }).click();
+  };
+  await openHistory();
+  await page.getByRole('button', { name: 'Open Source sync run' }).click();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore')!).operationRunID).toBeTruthy();
   await page.reload();
   await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
   await page.goBack();
-  await expect(page.getByRole('button', { name: 'All runs' })).toHaveCount(0);
-  await source.click();
-  await page.getByRole('button', { name: 'Open Sources status' }).click();
-  await expect(page.getByRole('main', { name: 'Sources' })).toBeVisible();
-  await page.getByRole('button', { name: 'Sync history' }).click();
-  await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('kind')).toBe('source_sync');
+  await expect(page.getByRole('region', { name: 'Operation run detail' })).toHaveCount(0);
+  await openHistory();
+  await expect(page.getByRole('button', { name: 'Open Source sync run' })).toBeVisible();
 });

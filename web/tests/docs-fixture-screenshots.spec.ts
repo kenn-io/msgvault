@@ -11,7 +11,7 @@ const exploreURL = (workspace: 'everything' | 'relationships') =>
   `/?workspace=${workspace}`;
 
 async function waitForOverview(page: import('@playwright/test').Page) {
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid).toBeVisible();
   await expect.poll(async () => await grid.locator('[data-row-key]').count()).toBeGreaterThan(1);
   await expect(grid.locator('[data-row-key]').first()).toBeVisible();

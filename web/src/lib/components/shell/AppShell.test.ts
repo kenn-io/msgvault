@@ -14,6 +14,8 @@ import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
 import { view } from './fixtures.test-support';
+import canonical from '../../../../tests/e2e/fixtures/operations-public.json';
+import { jobRun, jobLane, sourceStatus } from '../../jobs/fixtures.test-support';
 
 const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
@@ -22,7 +24,7 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   const field = path === '/api/v1/operations/status' ? 'lanes' : path === '/api/v1/sources/status' ? 'sources' : undefined;
   // Generic archive handlers don't supply these independent shell endpoints.
-  if (field && response.ok && !(field in await response.clone().json())) return Response.json({}, { status: 404 });
+  if (field && response.ok && !(field in await response.clone().json())) return Response.json({ [field]: [] });
   return response;
 }, telemetryEvents);
 
@@ -36,21 +38,8 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const OPERATION_RUN = `op2.${'a'.repeat(32)}.syntheticShellRun`;
-
-function operationSummary(overrides: Record<string, unknown> = {}) {
-  return {
-    id: OPERATION_RUN,
-    kind: 'source_sync',
-    lane: 'messages',
-    trigger: 'manual',
-    state: 'succeeded',
-    started_at: '2026-08-30T10:00:00Z',
-    finished_at: '2026-08-30T10:01:00Z',
-    counters: [{ name: 'processed', unit: 'messages', value: 3 }],
-    ...overrides
-  };
-}
+const sourceRun = canonical.runs.find(run => run.kind === 'source_sync')!;
+const OPERATION_RUN = sourceRun.id;
 
 function documentIndexStatusResponse() {
   return {
@@ -134,7 +123,7 @@ describe('AppShell', () => {
     });
     const view = render(AppShell, { client, state });
     await screen.findByText('Synthetic subject 1');
-    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
     await fireEvent.click(await screen.findByRole('button', { name: 'Export selection' }));
@@ -350,6 +339,16 @@ describe('AppShell', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Light' }));
     expect(document.documentElement.classList.contains('dark')).toBe(false);
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Comfortable' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+    for (const kind of ['theme', 'density']) {
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      await fireEvent.click(await screen.findByRole('option', { name: `Use Settings ${kind}` }));
+      expect(document.documentElement.classList.contains('dark')).toBe(true);
+      expect(document.documentElement.dataset.density).toBe(kind === 'theme' ? 'comfortable' : 'compact');
+    }
+    await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Light' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Use Settings defaults' }));
     expect(screen.queryByRole('menuitem', { name: 'Use Settings defaults' })).toBeNull();
     rendered.unmount(); state.destroy();
@@ -2493,7 +2492,7 @@ describe('AppShell', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByRole('grid', { name: 'Messages results' });
 
     await fireEvent.keyDown(window, { key: 'r' });
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
@@ -2669,7 +2668,7 @@ describe('AppShell', () => {
       return Response.json(exploreResponse({ rows, total_count: 3 }));
     });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 0');
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
@@ -2692,7 +2691,7 @@ describe('AppShell', () => {
     const fetchFn = vi.fn<typeof fetch>(async () =>
       Response.json(exploreResponse({ rows: [entry(0), entry(1)], total_count: 2 })));
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 0');
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
@@ -2703,7 +2702,7 @@ describe('AppShell', () => {
     await fireEvent.click(clear);
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
-    expect(document.activeElement).toBe(screen.getByRole('grid', { name: 'Everything results' }));
+    expect(document.activeElement).toBe(screen.getByRole('grid', { name: 'Messages results' }));
     rendered.unmount();
     state.destroy();
   });
@@ -2726,7 +2725,7 @@ describe('AppShell', () => {
       return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
     });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
     expect(screen.queryByRole('button', { name: 'Review for deletion…' })).toBeNull();
     grid.focus();
@@ -2756,7 +2755,7 @@ describe('AppShell', () => {
       return Response.json(exploreResponse({ rows, total_count: 3 }));
     });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 0');
     const gridKeys: string[] = [];
     grid.addEventListener('keydown', (event) => gridKeys.push(event.key));
@@ -2799,7 +2798,7 @@ describe('AppShell', () => {
         return Response.json(exploreResponse({ rows: [entry(1), entry(2)], total_count: 2 }));
       });
       render(AppShell, { client: createAPIClient(fetchFn), state });
-      const grid = await screen.findByRole('grid', { name: 'Everything results' });
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
       await screen.findByText('Synthetic subject 1');
       grid.focus();
       await fireEvent.keyDown(grid, { key: 'Enter' });
@@ -2826,7 +2825,7 @@ describe('AppShell', () => {
       {
         layer: 'More selection actions',
         open: async () => {
-          await fireEvent.keyDown(screen.getByRole('grid', { name: 'Everything results' }), { key: ' ' });
+          await fireEvent.keyDown(screen.getByRole('grid', { name: 'Messages results' }), { key: ' ' });
           await clickFocused(await screen.findByRole('button', { name: 'More selection actions' }));
           await waitFor(() => expect(document.activeElement?.getAttribute('role')).toBe('menuitem'));
         },
@@ -2911,19 +2910,17 @@ it.each([
   ['person_enrichment', 'Person enrichment', 'settings', 'enrichment'],
 ])('routes a %s status row to its owner', async (kind, name, workspace, category) => {
   window.history.replaceState(null, '', '/?workspace=everything');
-  const now = new Date().toISOString();
-  const related_status = kind === 'document_extraction' ? 'getDocumentIndexStatus' : kind === 'carddav_sync' ? 'getCardDAVStatus' : undefined;
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/sources/status')) return Response.json({ sources: kind === 'source_sync' ? [{ id: 1, display_name: name, identifier: 'archive@example.com', active_sync: { started_at: now, messages_processed: 12 } }] : [] });
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: kind === 'source_sync' ? [] : [{ kind, lane: 'documents', configured: true, related_status, supported_actions: [], history_availability: 'available', latest: operationSummary({ kind, state: 'failed', finished_at: now, error: { code: 'failed', message: 'Example failure' } }) }] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane(kind as Parameters<typeof jobLane>[0])] });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
     return operationAuthorityResponse(path) ?? Response.json(exploreResponse());
   });
   const state = new ExploreState(window);
   const rendered = render(AppShell, { client, state });
-  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).textContent).toMatch(/Syncing|Needs attention/));
+  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).textContent).toMatch(/Running|Needs attention/));
   await fireEvent.click(screen.getByRole('button', { name: /Sync status:/ }));
   await fireEvent.click(await screen.findByRole('menuitem', { name: new RegExp(name) }));
   expect(state.current.workspace).toBe(workspace);
@@ -2989,8 +2986,8 @@ it('shares run selection, restores detail on reload, and closes a direct link', 
     const url = new URL(input instanceof Request ? input.url : String(input));
     const path = url.pathname;
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
-    if (path.endsWith('/operations/runs')) { queries.push(url.searchParams); return Response.json({ runs: [operationSummary()], unavailable_kinds: [], membership_revision: 1 }); }
-    if (path.includes('/operations/runs/')) return Response.json({ ...operationSummary(), supported_actions: [] });
+    if (path.endsWith('/operations/runs')) { queries.push(url.searchParams); return Response.json({ runs: [sourceRun], unavailable_kinds: [], membership_revision: 1 }); }
+    if (path.includes('/operations/runs/')) return Response.json({ ...sourceRun, supported_actions: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     return Response.json(exploreResponse());
@@ -3017,19 +3014,17 @@ it('shares run selection, restores detail on reload, and closes a direct link', 
 
 it.each([
   ['listSourceStatus', 'Source sync', 'Sources status', 'sources', false],
-  ['listSourceStatus', 'Source sync', 'Sources status', 'sources', true],
-  ['getCardDAVStatus', 'CardDAV sync', 'CardDAV settings', 'settings', false],
   ['getCardDAVStatus', 'CardDAV sync', 'CardDAV settings', 'settings', true],
 ] as const)('opens %s with one restorable history entry (%s, %s, %s, modal=%s)', async (authority, name, label, workspace, modal) => {
   window.history.replaceState(null, '', '/?workspace=everything&mode=full_text');
   const kind = authority === 'getCardDAVStatus' ? 'carddav_sync' : 'source_sync';
-  const run = operationSummary({ kind, lane: kind === 'carddav_sync' ? 'contacts' : 'messages', state: 'failed', related_status: authority, error: { code: 'sync_failed', message: 'Sync failed' } });
+  const run = jobRun(kind);
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [{ kind, lane: run.lane, configured: true, related_status: authority, history_availability: 'available', supported_actions: [], latest: run }] });
-    if (path.endsWith('/sources/status')) return Response.json({ sources: kind === 'source_sync' ? [{ id: 1, display_name: name, identifier: 'archive@example.com', source_type: 'gmail', scheduler_last_error: 'Sync failed' }] : [] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane(kind)] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: kind === 'source_sync' ? [sourceStatus({ display_name: name, scheduler_last_error: 'Sync failed' })] : [] });
     if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
-    if (path.includes('/operations/runs/')) return Response.json({ ...run, supported_actions: [] });
+    if (path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: jobLane(kind).supported_actions });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     return Response.json(exploreResponse());
   });

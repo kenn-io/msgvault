@@ -114,7 +114,7 @@ for (const theme of ['light', 'dark'] as const) {
     await assertNoViolations(page, `Deletions manifest detail ${theme}`);
 
     await selectWorkspace(page, 'Messages');
-    const grid = page.getByRole('grid', { name: 'Everything results' });
+    const grid = page.getByRole('grid', { name: 'Messages results' });
     await grid.focus();
     await page.keyboard.press('Space');
     await page.keyboard.press('d');
@@ -190,7 +190,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.keyboard.press('Escape');
 
       await selectWorkspace(page, 'Messages');
-      const grid = page.getByRole('grid', { name: 'Everything results' });
+      const grid = page.getByRole('grid', { name: 'Messages results' });
       await expect(grid.locator('[data-row-key]').first()).toBeVisible();
       await assertNoViolations(page, `Everything ${theme}/${density}`);
       await grid.focus();
@@ -228,7 +228,7 @@ for (const theme of ['light', 'dark'] as const) {
     await installMixedArchive(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await setKitTheme(page, theme);
-    const grid = page.getByRole('grid', { name: 'Everything results' });
+    const grid = page.getByRole('grid', { name: 'Messages results' });
     await expect(grid.locator('[data-row-key]').first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Display' }).click();
@@ -588,7 +588,7 @@ for (const theme of ['light', 'dark'] as const) {
 
       sessionRequired = false;
       await page.reload();
-      const grid = page.getByRole('grid', { name: 'Everything results' });
+      const grid = page.getByRole('grid', { name: 'Messages results' });
       await expect(grid).toHaveAttribute('aria-busy', 'true');
       await expect(page.getByTestId('everything-skeleton').first()).toBeVisible();
       await assertNoViolations(page, `loading ${theme}/${density}`);

@@ -601,6 +601,7 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
     }),
   );
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [] } }));
+  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
   await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [] } }));
   return {
