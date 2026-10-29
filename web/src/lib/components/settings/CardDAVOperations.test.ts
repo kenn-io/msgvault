@@ -53,7 +53,7 @@ describe('CardDAVOperations', () => {
     expect(screen.getByText('Manual sync only')).toBeDefined();
     expect(screen.getByText('Partial')).toBeDefined();
     expect(screen.getByText('2 books · 1 created · 3 updated · 1 removed')).toBeDefined();
-    expect(screen.getByText('Full reconciliation required')).toBeDefined();
+    expect(screen.getByText('Next sync reconciles this book')).toBeDefined();
     expect(screen.getByText('No CardDAV sync history yet.')).toBeDefined();
     expect(rendered.container.textContent).not.toContain(forbidden);
     expect(rendered.container.innerHTML).not.toContain(forbidden);
@@ -187,6 +187,6 @@ it('offers one sync action and lets the daemon choose reconciliation', async () 
   render(CardDAVOperations, { controller });
   expect(screen.queryByRole('button', { name: 'Full sync' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-  expect(sync).toHaveBeenCalledExactlyOnceWith(false, undefined);
+  expect(sync).toHaveBeenCalledExactlyOnceWith(undefined);
   controller.destroy();
 });
