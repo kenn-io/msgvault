@@ -13,41 +13,12 @@ import (
 	"go.kenn.io/msgvault/internal/teams"
 )
 
-func TestSlackSummariesReportMediaErrors(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		print func(*bytes.Buffer, *slack.ImportSummary)
-	}{
-		{"sync", func(out *bytes.Buffer, sum *slack.ImportSummary) {
-			cmd := &cobra.Command{}
-			cmd.SetOut(out)
-			printSlackSummary(cmd, "workspace", sum)
-		}},
-		{"backfill", func(out *bytes.Buffer, sum *slack.ImportSummary) {
-			writeSlackMediaBackfillSummary(out, "workspace", sum)
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			var out bytes.Buffer
-			tc.print(&out, &slack.ImportSummary{
-				Errors: 2, FirstMediaError: "F123: \x1b[31mslack file GET: status 503\x1b[0m\n",
-			})
-			assert.Contains(out.String(), ", 2 errors, first media error: F123: slack file GET: status 503 \n")
-			assert.NotContains(out.String(), "\x1b")
-			assert.Equal(1, strings.Count(out.String(), "\n"))
-			out.Reset()
-			tc.print(&out, &slack.ImportSummary{})
-			assert.NotContains(out.String(), "errors")
-			assert.NotContains(out.String(), "first media error")
-		})
-	}
-}
-
 func TestProviderSyncSummariesReportPolicySkips(t *testing.T) {
 	tests := []struct {
 		name  string
 		print func(*cobra.Command)
+		empty func(*cobra.Command)
+		want  string
 	}{
 		{
 			name: "beeper",
@@ -58,17 +29,31 @@ func TestProviderSyncSummariesReportPolicySkips(t *testing.T) {
 		{
 			name: "slack",
 			print: func(cmd *cobra.Command) {
-				printSlackSummary(cmd, "workspace", &slack.ImportSummary{AttachmentsSkipped: 2})
+				printSlackSummary(cmd, "workspace", &slack.ImportSummary{
+					AttachmentsSkipped: 2, Errors: 2, FirstMediaError: "F123: \x1b[31mslack file GET: status 503\x1b[0m\n",
+				})
 			},
+			empty: func(cmd *cobra.Command) {
+				printSlackSummary(cmd, "workspace", &slack.ImportSummary{})
+			},
+			want: ", 2 errors, first media error: F123: slack file GET: status 503 \n",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			var output bytes.Buffer
 			cmd := &cobra.Command{}
 			cmd.SetOut(&output)
 			tt.print(cmd)
-			assert.Contains(t, output.String(), "2 media skipped by policy")
+			assert.Contains(output.String(), "2 media skipped by policy")
+			if tt.empty != nil {
+				assert.Contains(output.String(), tt.want)
+				output.Reset()
+				tt.empty(cmd)
+				assert.NotContains(output.String(), "errors")
+				assert.NotContains(output.String(), "first media error")
+			}
 		})
 	}
 }
@@ -90,6 +75,8 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 	tests := []struct {
 		name  string
 		print func(*bytes.Buffer)
+		empty func(*bytes.Buffer)
+		want  string
 	}{
 		{
 			name: "discord sync",
@@ -112,8 +99,14 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 		{
 			name: "slack backfill",
 			print: func(out *bytes.Buffer) {
-				writeSlackMediaBackfillSummary(out, "workspace", &slack.ImportSummary{AttachmentsSkipped: 2})
+				writeSlackMediaBackfillSummary(out, "workspace", &slack.ImportSummary{
+					AttachmentsSkipped: 2, Errors: 2, FirstMediaError: "F123: \x1b[31mslack file GET: status 503\x1b[0m\n",
+				})
 			},
+			empty: func(out *bytes.Buffer) {
+				writeSlackMediaBackfillSummary(out, "workspace", &slack.ImportSummary{})
+			},
+			want: ", 2 errors, first media error: F123: slack file GET: status 503 \n",
 		},
 		{
 			name: "teams backfill",
@@ -124,10 +117,18 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			var output bytes.Buffer
 			tt.print(&output)
-			assert.Contains(t, output.String(), "2")
-			assert.Contains(t, strings.ToLower(output.String()), "skipped by policy")
+			assert.Contains(output.String(), "2")
+			assert.Contains(strings.ToLower(output.String()), "skipped by policy")
+			if tt.empty != nil {
+				assert.Contains(output.String(), tt.want)
+				output.Reset()
+				tt.empty(&output)
+				assert.NotContains(output.String(), "errors")
+				assert.NotContains(output.String(), "first media error")
+			}
 		})
 	}
 }

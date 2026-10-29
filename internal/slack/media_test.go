@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -22,38 +23,49 @@ import (
 func TestSlackMediaFailureDetails(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		status int
-		reason string
-		skip   bool
+		name           string
+		transport      *recordingTransport
+		reason         string
+		storageFailure bool
+		skip           bool
+		retry          bool
 	}{
-		{"empty body", http.StatusOK, "slack file GET: empty response body", true},
-		{"server error", http.StatusServiceUnavailable, "slack file GET: status 503", true},
-		{"successful retry", http.StatusServiceUnavailable, "slack file GET: status 503", false},
+		{name: "server error", transport: &recordingTransport{status: http.StatusServiceUnavailable}, reason: "slack file GET: status 503", skip: true},
+		{name: "successful retry", transport: &recordingTransport{status: http.StatusServiceUnavailable}, reason: "slack file GET: status 503", retry: true},
+		{name: "download URL stripped", transport: &recordingTransport{err: errors.New("dial tcp: i/o timeout")}, reason: "dial tcp: i/o timeout"},
+		{name: "long reason", transport: &recordingTransport{err: errors.New(strings.Repeat("界", 250))}, reason: strings.Repeat("界", 250)},
+		{name: "invalid UTF-8 storage path", transport: &recordingTransport{body: "pdf bytes"}, storageFailure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.storageFailure && runtime.GOOS != "linux" {
+				t.Skip("requires a filesystem that accepts invalid UTF-8 filenames")
+			}
 			require := require.New(t)
 			assert := assert.New(t)
 			f := testWorkspace(t)
+			fileURL := "https://files.slack.com/files-pri/T01-F_FAILURE/" + strings.Repeat("x", 400)
 			f.conv("C01").Msgs[6].Files = []map[string]any{{
 				"id": "F_FAILURE", "name": "report.pdf", "mimetype": "application/pdf", "size": 5,
-				"url_private": "https://files.slack.com/files-pri/T01-F_FAILURE/report.pdf",
-				"permalink":   "https://testers.slack.com/files/F_FAILURE",
+				"url_private": fileURL, "permalink": "https://testers.slack.com/files/F_FAILURE",
 			}}
 			srv := f.serve()
 			defer srv.Close()
 			client := NewClient(srv.URL, "xoxp-test")
 			client.disableRateLimits()
-			failed := &recordingTransport{status: tc.status}
-			client.mediaTransport = failed
+			client.mediaTransport = tc.transport
 			st := testutil.NewTestStore(t)
 			imp := NewImporter(st, client, "T01")
-			opts := ImportOptions{TeamID: "T01", UserID: "UME", AttachmentsDir: t.TempDir()}
+			dir := t.TempDir()
+			if tc.storageFailure {
+				blocker := filepath.Join(dir, string([]byte{0xff}))
+				require.NoError(os.WriteFile(blocker, []byte("block"), 0600))
+				dir = filepath.Join(blocker, "attachments")
+			}
+			opts := ImportOptions{TeamID: "T01", UserID: "UME", AttachmentsDir: dir}
 			sum, err := imp.Import(t.Context(), opts)
 			require.NoError(err)
 			assert.Equal(1, sum.Errors)
-			assert.Equal("F_FAILURE: "+tc.reason, sum.FirstMediaError)
-			assert.Equal([]string{"https://files.slack.com/files-pri/T01-F_FAILURE/report.pdf"}, failed.requests)
+			assert.Equal([]string{fileURL}, tc.transport.requests)
 			var state, reason, metadata string
 			require.NoError(st.DB().QueryRow(st.Rebind(`
 				SELECT attachment_state, attachment_skip_reason, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
@@ -61,13 +73,25 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata))
 			assert.Equal("failed", state)
 			assert.Equal("fetch_failure", reason)
-			var detail map[string]any
+			var detail map[string]string
 			require.NoError(json.Unmarshal([]byte(metadata), &detail))
-			assert.Equal(tc.reason, detail["fetch_error"])
 			var itemError string
 			require.NoError(st.DB().QueryRow(`SELECT error_message FROM sync_run_items WHERE error_kind = 'slack_media_error'`).Scan(&itemError))
-			assert.Equal("F_FAILURE: "+tc.reason, itemError)
-			if !tc.skip {
+			if tc.storageFailure {
+				assert.Contains(detail["fetch_error"], "\ufffd")
+				assert.True(utf8.ValidString(itemError))
+				assert.True(utf8.ValidString(sum.FirstMediaError))
+				assert.Equal("F_FAILURE: "+detail["fetch_error"], itemError)
+			} else {
+				assert.Equal(tc.reason, detail["fetch_error"])
+				assert.Equal("F_FAILURE: "+tc.reason, itemError)
+				if tc.name == "long reason" {
+					assert.Equal("F_FAILURE: "+strings.Repeat("界", 186)+"...", sum.FirstMediaError)
+				} else {
+					assert.Equal("F_FAILURE: "+tc.reason, sum.FirstMediaError)
+				}
+			}
+			if tc.retry {
 				client.mediaTransport = &recordingTransport{body: "pdf bytes"}
 				backfill, err := imp.BackfillMedia(t.Context(), opts)
 				require.NoError(err)
@@ -78,6 +102,8 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 				`), "slack:F_FAILURE").Scan(&state, &metadata))
 				assert.Equal("stored", state)
 				assert.NotContains(metadata, "fetch_error")
+			}
+			if !tc.skip {
 				return
 			}
 
@@ -99,63 +125,6 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			assert.Equal("skipped", state)
 			assert.Equal("size_cap", reason)
 			assert.NotContains(metadata, "fetch_error")
-		})
-	}
-}
-
-func TestSlackMediaErrorText(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name           string
-		storageFailure bool
-	}{
-		{"invalid UTF-8 storage path", true},
-		{"long download URL", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := testWorkspace(t)
-			fileURL := "https://files.slack.com/files-pri/T01-F_ERROR/" + strings.Repeat("x", 400)
-			f.conv("C01").Msgs[6].Files = []map[string]any{{
-				"id": "F_ERROR", "name": "report.pdf", "mimetype": "application/pdf", "size": 5,
-				"url_private": fileURL, "permalink": "https://testers.slack.com/files/F_ERROR",
-			}}
-			srv := f.serve()
-			defer srv.Close()
-			client := NewClient(srv.URL, "xoxp-test")
-			client.disableRateLimits()
-			transport := &recordingTransport{err: errors.New("dial tcp: i/o timeout")}
-			dir := t.TempDir()
-			if tc.storageFailure {
-				transport = &recordingTransport{body: "pdf bytes"}
-				blocker := filepath.Join(dir, string([]byte{0xff}))
-				require.NoError(os.WriteFile(blocker, []byte("block"), 0600))
-				dir = filepath.Join(blocker, "attachments")
-			}
-			client.mediaTransport = transport
-			st := testutil.NewTestStore(t)
-			imp := NewImporter(st, client, "T01")
-			sum, err := imp.Import(t.Context(), ImportOptions{TeamID: "T01", UserID: "UME", AttachmentsDir: dir})
-			require.NoError(err)
-			assert.Equal([]string{fileURL}, transport.requests)
-			var metadata, itemError string
-			require.NoError(st.DB().QueryRow(`SELECT CAST(attachment_metadata AS TEXT) FROM attachments WHERE source_attachment_id = 'slack:F_ERROR'`).Scan(&metadata))
-			var detail map[string]string
-			require.NoError(json.Unmarshal([]byte(metadata), &detail))
-			require.NoError(st.DB().QueryRow(`SELECT error_message FROM sync_run_items WHERE error_kind = 'slack_media_error'`).Scan(&itemError))
-			assert.True(utf8.ValidString(itemError))
-			assert.True(utf8.ValidString(sum.FirstMediaError))
-			assert.Equal("F_ERROR: "+detail["fetch_error"], itemError)
-			assert.LessOrEqual(utf8.RuneCountInString(sum.FirstMediaError), 200)
-			if tc.storageFailure {
-				assert.Contains(detail["fetch_error"], "\ufffd")
-			} else {
-				assert.Equal("F_ERROR: dial tcp: i/o timeout", sum.FirstMediaError)
-				assert.Equal("dial tcp: i/o timeout", detail["fetch_error"])
-				assert.NotContains(detail["fetch_error"], fileURL)
-				assert.Equal(itemError, sum.FirstMediaError)
-			}
 		})
 	}
 }
@@ -249,10 +218,12 @@ func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
 	require.Len(rt.requests, 1)
 
 	// A redirect — even one a compromised response injects — is refused.
-	rt.redirect = "https://attacker.example/steal"
-	_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
-	require.ErrorIs(err, errOffHost)
-	assert.Len(rt.requests, 2, "the redirect target must not be followed")
+	for i, host := range []string{"attacker.example", "files.slack.com"} {
+		rt.redirect = "https://" + host + "/redirect"
+		_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
+		require.ErrorContains(err, "slack file GET: refusing redirect to "+host)
+		assert.Len(rt.requests, i+2, "the redirect target must not be followed")
+	}
 }
 
 func TestDownloadFileSizeCap(t *testing.T) {
@@ -260,7 +231,11 @@ func TestDownloadFileSizeCap(t *testing.T) {
 	c := NewClient("", "xoxp-test")
 	c.mediaTransport = rt
 	_, err := c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 10)
-	assert.ErrorIs(t, err, ErrAssetTooLarge)
+	require.ErrorIs(t, err, ErrAssetTooLarge)
+
+	rt.body = ""
+	_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 10)
+	assert.ErrorContains(t, err, "empty response body")
 }
 
 func TestImportWithoutFileScopeDefersDownloads(t *testing.T) {

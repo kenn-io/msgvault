@@ -92,7 +92,7 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 	client := &http.Client{
 		Timeout: attachmentpolicy.DownloadTimeout(maxBytes),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return fmt.Errorf("refusing redirect to %s: %w", req.URL.Host, errOffHost)
+			return fmt.Errorf("slack file GET: refusing redirect to %s", req.URL.Host)
 		},
 	}
 	if c.mediaTransport != nil {
