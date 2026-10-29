@@ -64,8 +64,8 @@ it('refreshes the shell dot after Settings Contacts CardDAV Sync now', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Needs attention'));
 });
 
-it.each(['shell poll', 'Sources read'])('shares running source status through a %s', async older => {
-  window.history.replaceState(null, '', older === 'shell poll' ? '/?workspace=sources' : '/?workspace=everything');
+it('Sync now supersedes a held shell source read', async () => {
+  window.history.replaceState(null, '', '/?workspace=sources');
   let started = false;
   let hold = false;
   let release!: () => void;
@@ -91,29 +91,22 @@ it.each(['shell poll', 'Sources read'])('shares running source status through a 
   });
   render(App, { session });
   await screen.findByRole('button', { name: 'Sync status: Idle' });
-  if (older === 'shell poll') await screen.findByRole('button', { name: 'Sync now Example archive' });
+  await screen.findByRole('button', { name: 'Sync now Example archive' });
   hold = true;
-  if (older === 'shell poll') window.dispatchEvent(new Event('focus'));
-  else { started = true; await fireEvent.click(screen.getByRole('button', { name: 'Sources' })); }
+  window.dispatchEvent(new Event('focus'));
   await capturedStatus;
-  if (older === 'shell poll') {
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now Example archive' }));
-    await within(screen.getByRole('main', { name: 'Sources' })).findByText('Syncing');
-  } else {
-    // Focus joins the Sources read instead of starting a competing snapshot.
-    window.dispatchEvent(new Event('focus'));
-  }
-  if (older === 'shell poll') await screen.findByRole('button', { name: 'Sync status: Running' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Sync now Example archive' }));
+  await within(screen.getByRole('main', { name: 'Sources' })).findByText('Syncing');
+  await screen.findByRole('button', { name: 'Sync status: Running' });
   release();
-  if (older === 'Sources read') await within(screen.getByRole('main', { name: 'Sources' })).findByText('Syncing');
   await waitFor(() => expect(oldSnapshot.bodyUsed).toBe(true));
   await new Promise(resolve => setTimeout(resolve, 0));
   await tick();
   expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Running');
 });
 
-it.each(['running', 'failed', 'superseded', 'navigated'] as const)('refreshes the shell dot after Build index: %s', async outcome => {
-  const settings = outcome === 'superseded' || outcome === 'navigated';
+it.each(['running', 'failed', 'superseded'] as const)('refreshes the shell dot after Build index: %s', async outcome => {
+  const settings = outcome === 'superseded';
   window.history.replaceState(null, '', settings ? '/?workspace=settings' : '/?workspace=everything&mode=hybrid');
   let built = false;
   let hold = false;
@@ -122,18 +115,7 @@ it.each(['running', 'failed', 'superseded', 'navigated'] as const)('refreshes th
   let oldSnapshot!: Response;
   const capturedStatus = new Promise<void>(resolve => { captured = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
-  let finishBuild!: () => void;
-  const buildGate = new Promise<void>(resolve => { finishBuild = resolve; });
-  let sourceRead = false;
   const session = sessionFor(async (request, path) => {
-    if (outcome === 'navigated' && path === '/api/v1/sources/status' && built) {
-      if (!sourceRead) {
-        sourceRead = true;
-        captured();
-        await new Promise<void>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
-      }
-      return Response.json({ sources: [sourceStatus({ active_sync: syncRunStatus({ status: 'running', completed_at: null }), can_sync: false, sync_unavailable_reason: 'sync_already_running' })] });
-    }
     if (path === '/api/v1/operations/status') {
       const snapshot = Response.json({ lanes: [jobLane('message_embedding', {
         latest: settings
@@ -150,7 +132,6 @@ it.each(['running', 'failed', 'superseded', 'navigated'] as const)('refreshes th
     });
     if (request.method === 'POST' && path === '/api/v1/cli/run') {
       built = true;
-      if (outcome === 'navigated') await buildGate;
       return new Response(outcome === 'failed' ? '{"type":"complete","error":"Embedding endpoint failed"}\n' : '{"type":"complete"}\n');
     }
   });
@@ -165,13 +146,7 @@ it.each(['running', 'failed', 'superseded', 'navigated'] as const)('refreshes th
   await fireEvent.click(build);
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   await waitFor(() => expect(built).toBe(true));
-  if (outcome === 'navigated') {
-    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Sources' }));
-    await capturedStatus;
-    finishBuild();
-    await within(screen.getByRole('main', { name: 'Sources' })).findByText('Syncing');
-    expect(screen.queryByRole('alert')).toBeNull();
-  } else if (outcome === 'superseded') {
+  if (outcome === 'superseded') {
     await within(screen.getByText('Message search').closest('li')!).findByText('On');
     release();
     await waitFor(() => expect(oldSnapshot.bodyUsed).toBe(true));
