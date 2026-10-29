@@ -219,7 +219,7 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client, category: 'tasks' });
     await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
     await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
     expect(seen.some((entry) => entry.method === 'PATCH')).toBe(false);
     expect(screen.getByText('1 unsaved change')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -242,69 +242,6 @@ describe('SettingsWorkspace', () => {
     expect(onCategoryChange).not.toHaveBeenCalled();
   });
 
-});
-
-it('keeps provider endpoints and keys across categories, saves endpoints before keys, and retains only a failed key', async () => {
-  let failKey = true;
-  const provider = {
-    name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://old.example.test',
-    credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' },
-    allowed_identifiers: [], target_keys: [], allow_sensitive_targets: false,
-    retention_posture: '', training_posture: '', refresh_interval: '24h', request_timeout: '30s',
-    poll_interval: '1s', max_job_age: '1h', max_retries: 2, max_requests_per_run: 10, max_requests_per_day: 100
-  };
-  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider, { ...provider, name: 'spare', credential_id: 'people.enrichment/spare' }] }), request => {
-    if (request.url.endsWith('/provider-credentials/people.enrichment%2Fprimary') && failKey)
-      return Response.json({ message: 'Key store unavailable' }, { status: 503 });
-  });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://new.example.test' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Add API key for primary' }));
-  await fireEvent.input(screen.getByLabelText('New API key for primary'), { target: { value: 'synthetic-provider-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Use API key for primary' }));
-  expect(screen.getByLabelText('primary credential').classList.contains('setting--changed')).toBe(true);
-  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
-  await fireEvent.click(screen.getByRole('switch', { name: 'Trace every SQL statement' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  expect((await screen.findByRole('alert')).textContent).toBe('Key store unavailable');
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
-  const writes = seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage');
-  expect(writes.map(({ method, path, ifMatch }) => [method, path, ifMatch])).toEqual([
-    ['PATCH', '/api/v1/settings', '"s1"'],
-    ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s2"'],
-    ['PUT', '/api/v1/settings/provider-credentials/people.enrichment%2Fprimary', '"credential-a"']
-  ]);
-  expect(writes[1].body).toMatchObject({ endpoint: 'https://new.example.test' });
-  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
-  expect((await screen.findByLabelText('spare endpoint') as HTMLInputElement).value).toBe('https://old.example.test');
-  failKey = false;
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.filter(request => request.method === 'PATCH')).toHaveLength(1);
-  expect(seen.filter(request => request.path.endsWith('/providers/primary'))).toHaveLength(1);
-});
-
-it('retains account passwords across categories and clears them on Discard', async () => {
-  const { client, seen } = fixture();
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
-  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'account@example.com' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
-  await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
-  expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(true);
-  expect(await screen.findByText(/default: Password is required/)).toBeDefined();
-  expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
-  expect(screen.getByText('2 unsaved changes')).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-account-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('synthetic-account-key');
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
 });
 
 it('keeps attachment off values and cron schedules editable under Sources', async () => {
@@ -334,86 +271,6 @@ it('Overview shows a contacts sync action error', async () => {
   render(SettingsWorkspace, { client });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
   expect((await screen.findByRole('alert')).textContent).toContain('Synthetic contacts action failure.');
-});
-
-it('saves ordinary settings and a retained contact account together', async () => {
-  const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/carddav/account')) return Response.json({ base_url: 'https://dav.example.test/', username: 'work@example.com', enabled: false, schedule: '', books: 1 });
-  });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
-  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'work@example.com' } });
-  await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-password' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
-  await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
-  await waitFor(() => expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toMatchObject({ connection: 'default', password: 'synthetic-password' }));
-});
-
-it.each(['default', 'work'])('saves the %s contact account, refreshes its resources, and reuses its password', async kind => {
-  const connection = kind;
-  let saved = false;
-  const values = { configured: true, available: true, enabled: true, credential_configured: true, schedule: '', account: { base_url: 'https://dav.example.test/', username: 'work@example.com' } };
-  const { client, seen } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('carddav_sync', { lane: 'contacts', configured: saved, supported_actions: saved ? ['carddav_sync'] : [] })) });
-    if (path.endsWith('/carddav/account')) {
-      saved = true;
-      return Response.json({ ...values.account, enabled: true, schedule: '', books: 2 });
-    }
-    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection, status: saved ? values : { ...values, account: { base_url: 'https://default.example.test/', username: 'default@example.com' } } }] });
-    if (saved && path.endsWith('/carddav/status')) return Response.json(values);
-  });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  if (connection === 'work') await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await screen.findByDisplayValue('default@example.com');
-  await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: values.account.base_url } });
-  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: values.account.username } });
-  await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'synthetic-password' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  expect(await screen.findByRole('button', { name: 'Set up Contacts' })).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  expect(await screen.findByText(`Contact account ${connection} saved. Found 2 address books.`)).toBeDefined();
-  expect(await screen.findByRole('button', { name: 'Sync now, Contacts' })).toBeDefined();
-  expect(screen.queryByRole('button', { name: 'Set up Contacts' })).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  if (connection === 'work') await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await waitFor(() => expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe(values.account.username));
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
-  const conflictReads = seen.filter(request => request.path.endsWith('/carddav/conflicts')).length;
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.filter(request => request.path.endsWith('/carddav/account'))).toHaveLength(2));
-  await waitFor(() => expect(seen.filter(request => request.path.endsWith('/carddav/conflicts')).length).toBeGreaterThan(conflictReads));
-  const writes = seen.filter(request => request.path.endsWith('/carddav/account'));
-  expect(writes[0].body).toMatchObject({ connection, password: 'synthetic-password' });
-  expect(writes[1].body).toEqual({ connection, base_url: values.account.base_url, username: values.account.username, enabled: true, schedule: '0 3 * * *' });
-});
-
-it('retains a conflicting provider key and retries with the refreshed credential revision', async () => {
-  let conflict = true;
-  const doc = settingsDoc();
-  const { client, seen } = fixture(doc, request => {
-    if (request.method === 'GET' && request.url.endsWith('/settings')) return Response.json(doc, { headers: {
-      ETag: '"config-current"', 'Credential-ETag': conflict ? '"credential-a"' : '"credential-refreshed"'
-    } });
-    if (request.method === 'PUT' && conflict) {
-      conflict = false;
-      return Response.json({ message: 'Stale key' }, { status: 412 });
-    }
-  });
-  render(SettingsWorkspace, { client, category: 'search' });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
-  await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
-  expect(document.querySelector('[data-setting-key="vector.embeddings.api_key"]')?.classList.contains('setting--changed')).toBe(true);
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('The key changed elsewhere');
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.filter(request => request.method === 'PUT').map(request => request.ifMatch)).toEqual(['"credential-a"', '"credential-refreshed"']);
-  expect(seen.filter(request => request.method === 'PATCH')).toEqual([]);
 });
 
 it.each(['bad/name', 'primary'])('rejects invalid or duplicate provider name %s before writing', async name => {
@@ -450,24 +307,56 @@ it('creates an absent Exa provider with safe defaults after reloading a conflict
   expect(writes[1].body).not.toHaveProperty('max_cost_usd_micros_per_day');
 });
 
-it('locks provider fields and newly mounted category controls while a provider save waits', async () => {
+it('locks fields and newly mounted category controls while a save waits', async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const base = { ...providerDefaults, enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' }, allowed_identifiers: [], target_keys: [] };
-  const doc = settingsDoc({ person_enrichment_providers: [
-    { ...base, name: 'primary', kind: 'exa', mode: 'people', credential_id: 'people.enrichment/primary' }
-  ] });
-  const { client, seen } = fixture(doc, request => request.method === 'PUT' ? pending : undefined);
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false));
+  const doc = settingsDoc();
+  const { client, seen } = fixture(doc, request => request.method === 'PATCH' ? pending : undefined);
+  render(SettingsWorkspace, { client, category: 'server' });
+  await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.some(request => request.method === 'PUT')).toBe(true));
-  expect(screen.getByLabelText('primary endpoint').matches(':disabled')).toBe(true);
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  expect(screen.getByRole('combobox', { name: /^CardDAV connection/ }).matches(':disabled')).toBe(true);
+  await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
+  expect(screen.getByLabelText('Stop when idle after').matches(':disabled')).toBe(true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+  expect(screen.getByLabelText('Builder threads').matches(':disabled')).toBe(true);
   finish(Response.json(doc, { headers: { ETag: '"s2"' } }));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+});
+
+it('saves keys and providers at once, apart from Save changes', async () => {
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
+  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
+  const writes = () => seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage').map(({ method, path, ifMatch }) => [method, path, ifMatch]);
+  render(SettingsWorkspace, { client, category: 'search' });
+  const note = 'These save immediately when you use their buttons — not with Save changes.';
+  expect(await screen.findAllByText(note)).toHaveLength(1);
+  await fireEvent.input(screen.getByLabelText('Endpoint'), { target: { value: 'https://new.example.test' } });
+  expect((screen.getByRole('button', { name: 'Add API key' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText('Save endpoint settings first before changing this credential.')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
+  expect(screen.getByRole('dialog').textContent).toContain('Applies right away.');
+  await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+
+  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
+  expect(screen.getAllByText(note).length).toBeGreaterThan(0);
+  await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+  expect(screen.getByText('Save provider settings first before changing this credential.')).toBeDefined();
+  await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
+  await waitFor(() => expect(seen.some(request => request.path.endsWith('/providers/primary'))).toBe(true));
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  expect(screen.getByText(note)).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  expect(writes()).toEqual([
+    ['PUT', '/api/v1/settings/provider-credentials/vector.embeddings', '"credential-a"'],
+    ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s1"']
+  ]);
+  expect(seen.find(request => request.path.endsWith('/providers/primary'))?.body).toMatchObject({ endpoint: 'https://changed.example.test' });
 });
 
 it('keeps Contacts sync available while the message index builds and refreshes its row', async () => {
@@ -572,214 +461,6 @@ it('keeps edited People search details visible when switching the feature off', 
   await waitFor(() => expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull());
 });
 
-it.each(['first enable', 'last disable', 'replacement'] as const)('saves valid provider transitions for %s and carries revisions', async transition => {
-  const initiallyOn = transition !== 'first enable';
-  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: initiallyOn, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
-  const doc = settingsDoc({ person_enrichment_providers: [provider, { ...provider, name: 'replacement', credential_id: 'people.enrichment/replacement', enabled: false }] });
-  doc.settings.find(item => item.key === 'people.enrichment.enabled')!.value = typed(initiallyOn);
-  let failPatch = transition === 'first enable';
-  const { client, seen } = fixture(doc, request => request.method === 'PATCH' && failPatch ? Response.json({ message: 'Settings write failed' }, { status: 503 }) : undefined);
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  await fireEvent.click(await screen.findByRole('switch', { name: 'Enable primary' }));
-  if (transition === 'replacement') await fireEvent.click(screen.getByRole('switch', { name: 'Enable replacement' }));
-  else await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  if (failPatch) {
-    await screen.findByText('Settings write failed');
-    expect(screen.getByText('1 unsaved change')).toBeDefined();
-    expect((doc.person_enrichment_providers[0] as typeof provider).enabled).toBe(true);
-    failPatch = false;
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  }
-  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  const writes = seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage');
-  expect(writes.map(request => [request.method, request.path.split('/').at(-1), request.ifMatch])).toEqual(transition === 'first enable'
-    ? [['PUT', 'primary', '"s1"'], ['PATCH', 'settings', '"s2"'], ['PATCH', 'settings', '"s2"']]
-    : transition === 'last disable' ? [['PATCH', 'settings', '"s1"'], ['PUT', 'primary', '"s2"']]
-    : [['PUT', 'replacement', '"s1"'], ['PUT', 'primary', '"s2"']]);
-  expect(doc.settings.find(item => item.key === 'people.enrichment.enabled')!.value).toEqual(typed(transition !== 'last disable'));
-});
-
-it.each(['constructor', '__proto__'])('preserves and edits the saved endpoint for accepted provider name %s', async name => {
-  const provider = { ...providerDefaults, name, kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: `people.enrichment/${name}`, credential: { configured: false, source: 'none' } };
-  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  const endpoint = await screen.findByLabelText(`${name} endpoint`);
-  expect((endpoint as HTMLInputElement).value).toBe('https://provider.example.test');
-  await fireEvent.input(endpoint, { target: { value: 'https://replacement.example.test' } });
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.find(request => request.method === 'PUT')?.body).toMatchObject({ endpoint: 'https://replacement.example.test' });
-});
-
-it('names the rejected provider when saving from Overview', async () => {
-  const providers = ['primary', 'secondary'].map(name => ({ ...providerDefaults, name, kind: 'exa', enabled: true, endpoint: 'https://provider.example.test', num_results: 1, credential_id: `people.enrichment/${name}`, credential: { configured: false, source: 'none' } }));
-  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: providers }), request => {
-    if (request.method === 'PUT' && request.url.endsWith('/person-enrichment/providers/primary')) return Response.json({ error: 'validation_failed', message: 'Person-enrichment provider settings are invalid' }, { status: 422 });
-  });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  const card = await screen.findByRole('article', { name: 'primary' });
-  await fireEvent.input(within(card).getByLabelText('Results per request'), { target: { value: '2' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  const error = (await screen.findByRole('alert')).textContent;
-  expect(error).toContain('primary');
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
-  expect(seen.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['/api/v1/settings/person-enrichment/providers/primary']);
-});
-
-it.each([['embedding', true], ['enrichment', true], ['embedding', false]] as const)('finishes a queued %s key clear with endpoint change %s', async (kind, changeEndpoint) => {
-  const id = kind === 'embedding' ? 'vector.embeddings' : 'people.enrichment/primary';
-  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://old.example.test', credential_id: id, credential: { configured: true, source: 'stored', hint: 'old…key' } };
-  const doc = settingsDoc({ person_enrichment_providers: kind === 'enrichment' ? [provider] : [] });
-  const key = doc.settings.find(item => item.key === 'vector.embeddings.api_key')!;
-  key.secret = { configured: true, source: 'stored', hint: 'old…key' };
-  const { client, seen } = fixture(doc, request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith(`/provider-credentials/${encodeURIComponent(id)}`)) {
-      if (changeEndpoint) return Response.json({ error: 'credential_not_found', message: 'No stored provider credential was found' }, { status: 404 });
-      return Response.json({ credential_id: id, state: { configured: false, source: 'none' }, pending_restart: false }, { headers: { ETag: '"credential-b"' } });
-    }
-    if ((kind === 'embedding' && request.method === 'PATCH') || path.endsWith('/providers/primary')) {
-      key.secret = { configured: false, source: 'none' };
-      provider.credential = { configured: true, source: 'environment', hint: 'env…key' };
-      return Response.json({ ...doc, credential_etag: '"credential-b"' }, { headers: { ETag: '"s2"', 'Credential-ETag': '"credential-b"' } });
-    }
-  });
-  render(SettingsWorkspace, { client, category: kind === 'embedding' ? 'search' : 'enrichment' });
-  await fireEvent.click(await screen.findByRole('button', { name: kind === 'embedding' ? 'Clear API key' : 'Clear API key for primary' }));
-  if (changeEndpoint) await fireEvent.input(screen.getByLabelText(kind === 'embedding' ? 'Endpoint' : 'primary endpoint'), { target: { value: 'https://new.example.test' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(screen.queryByRole('alert')).toBeNull();
-  expect(seen.some(request => request.method === 'DELETE')).toBe(!changeEndpoint);
-});
-
-it.each([['google', true], ['microsoft', true], ['', true], ['google', false]] as const)('keeps the unchanged %s account Test save behavior when enabled=%s', async (provider, enabled) => {
-  const account = { provider, oauth_app: provider === 'google' ? 'contacts-app' : '', configured: true, available: provider !== 'microsoft', credential_configured: provider !== 'microsoft', enabled, scheduled: true, schedule: '0 2 * * *', account: { base_url: provider === 'microsoft' ? 'https://graph.microsoft.com/v1.0' : provider === 'google' ? 'https://www.googleapis.com/.well-known/carddav' : 'https://work.example.test/', username: 'person@example.com' } };
-  const { client, seen } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', provider, oauth_app: account.oauth_app, status: account }] });
-    if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/account/test') || path.endsWith('/carddav/account')) return Response.json({ ...account.account, provider, oauth_app: account.oauth_app, enabled, schedule: account.schedule, books: 2 });
-  });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await screen.findByDisplayValue('person@example.com');
-  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
-  await screen.findByText('Connection successful. Found 2 address books.');
-  if (provider === '' || !enabled) {
-    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
-    return;
-  }
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  await screen.findByDisplayValue('person@example.com');
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByText('Contact account default saved. Found 2 address books.');
-  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toEqual({ connection: 'default', provider, ...(provider === 'google' ? { oauth_app: account.oauth_app } : {}), base_url: account.account.base_url, username: account.account.username, enabled, schedule: account.schedule });
-
-});
-
-it.each(['roles', 'failed summary'])('keeps saved account state and pending book roles after %s', async mode => {
-  const connection = mode === 'roles' ? 'default' : 'work';
-  let saved = false;
-  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
-  const { client, seen } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return saved && mode === 'failed summary' ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ connections: [{ connection, status: account }] });
-    if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/books')) return Response.json({ books: [{ id: 7, name: 'Personal', url: 'https://work.example.test/personal', subscribed: true, lookup_source: false, write_target: false, needs_full_reconcile: false }] });
-    if (path.endsWith('/carddav/account')) { saved = true; return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 }); }
-  });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  if (connection === 'work') await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await screen.findByDisplayValue('work@example.com');
-  if (mode === 'roles') await fireEvent.click(await screen.findByRole('checkbox', { name: 'Use for lookup for Personal' }));
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByText(`Contact account ${connection} saved. Found 1 address book.`);
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
-  if (mode === 'failed summary') {
-    await screen.findByText('Unable to load CardDAV connections.');
-    expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
-  } else {
-    await waitFor(() => expect(seen.filter(request => request.method === 'GET' && request.path.endsWith('/carddav/books')).length).toBeGreaterThan(1));
-    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use for lookup for Personal' }) as HTMLInputElement).checked).toBe(true));
-    expect((screen.getByRole('button', { name: 'Apply roles for Personal' }) as HTMLButtonElement).disabled).toBe(false);
-    expect(seen.some(request => request.method === 'PATCH' && request.path.includes('/carddav/books'))).toBe(false);
-  }
-});
-
-it('refreshes the shared credential revision after an inference key succeeds before a later failure', async () => {
-  let revision = '"credential-a"';
-  const profile = { ...inferenceProfile };
-  const profiles = [profile, { ...profile, name: 'backup' }];
-  const doc = settingsDoc();
-  const { client, seen } = fixture(doc, request => {
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/settings' && request.method === 'GET') return Response.json({ ...doc, credential_etag: revision }, { headers: { ETag: '"s1"', 'Credential-ETag': revision } });
-    if (path.includes('/settings/people-inference')) {
-      if (request.method === 'PUT' && path.endsWith('/backup/key')) return Response.json({ message: 'Key store unavailable' }, { status: 503 });
-      if (request.method === 'PUT') revision = '"credential-b"';
-      return Response.json({ profiles, configured_enabled: false, running_enabled: false, pending_restart: false }, { headers: { ETag: '"s1"' } });
-    }
-    if (request.method === 'PUT' && path.endsWith('/provider-credentials/vector.embeddings') && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Credential changed' }, { status: 412 });
-  });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  await fireEvent.input(await screen.findByLabelText('Replacement API key'), { target: { value: 'synthetic-primary-key' } });
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Profile:/ }), 'backup');
-  await fireEvent.input(screen.getByLabelText('Replacement API key'), { target: { value: 'synthetic-backup-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Profile:/ }), 'backup');
-  expect((await screen.findByLabelText('Replacement API key') as HTMLInputElement).value).toBe('synthetic-backup-key');
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
-  expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['Key store unavailable']);
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
-  expect(seen.filter(request => request.method === 'PUT' && request.path.endsWith('/people-inference/providers/backup/key'))).toHaveLength(1);
-  await fireEvent.click(screen.getByRole('button', { name: 'Search & AI' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
-  await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-embedding-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.some(request => request.path.endsWith('/provider-credentials/vector.embeddings'))).toBe(true));
-  expect(seen.find(request => request.path.endsWith('/provider-credentials/vector.embeddings'))?.ifMatch).toBe('"credential-b"');
-});
-
-it.each(['disable', 'clear schedule'])('retains a named account %s when its connection summary arrives after a category round trip', async change => {
-  let reads = 0;
-  let finish!: (response: Response) => void;
-  const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
-  const connections = { connections: [{ connection: 'work', status: account }] };
-  const { client } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return ++reads === 2 ? pending : Response.json(connections);
-    if (path.endsWith('/carddav/status')) return Response.json(account);
-  });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await screen.findByDisplayValue('work@example.com');
-  if (change === 'disable') await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
-  else await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Off');
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  await waitFor(() => expect(reads).toBe(2));
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  finish(Response.json(connections));
-  await screen.findByText('Leave blank to keep the stored password.');
-  await waitFor(() => expect(screen.getByRole('switch', { name: 'Enabled' })).toHaveProperty('checked', change !== 'disable'));
-  if (change === 'clear schedule') expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Off');
-  expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
-});
-
 it('refreshes the shared config revision when creating a profile succeeds before its key fails', async () => {
   let revision = '"s1"';
   let created = false;
@@ -839,32 +520,4 @@ it('keeps Build index through a pending or failed coverage refresh', async () =>
   }
   await screen.findByText('Unbuilt');
   expect(screen.getByRole('button', { name })).toBeDefined();
-});
-
-it.each([['PATCH', true], ['PATCH', false], ['PUT', true], ['PUT', false]] as const)('handles a %s conflict with endpoint changed=%s before sending a staged key', async (method, changedEndpoint) => {
-  let conflict = true;
-  const doc = settingsDoc();
-  const { client, seen } = fixture(doc, request => {
-    if (request.method === method && conflict) {
-      conflict = false;
-      doc.settings.find(item => item.key === (changedEndpoint ? 'vector.embeddings.endpoint' : 'activity.timezone'))!.value = typed(changedEndpoint ? 'https://new.example.test' : 'America/New_York');
-      return Response.json({ message: 'Settings changed' }, { status: 412 });
-    }
-  });
-  render(SettingsWorkspace, { client, category: 'search' });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
-  await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Use API key' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
-  await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  const alert = await screen.findByRole('alert');
-  const conflictMessage = alert.textContent;
-  if (method === 'PUT') await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '10m' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
-  const keys = seen.filter(request => request.method === 'PUT' && request.path.includes('/provider-credentials/'));
-  expect(keys).toHaveLength((method === 'PUT' ? 1 : 0) + (changedEndpoint ? 0 : 1));
-  if (changedEndpoint) expect(conflictMessage).toContain('Enter keys again');
-  else expect(keys.at(-1)!.body).toEqual({ value: 'synthetic-key' });
 });

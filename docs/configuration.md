@@ -1069,12 +1069,11 @@ changed from Settings; `config.toml` remains authoritative.
 | `density` | `compact` | Table density: `compact` or `comfortable` |
 
 Browser-managed settings are validated and written with optimistic concurrency.
-Use **Save changes** for setting values, provider API keys, and contact account
-edits. Creating providers and People sweep profiles, testing connections, and
-starting syncs remain explicit actions that run when selected.
+Use **Save changes** for setting values. Provider API keys, providers, contact
+accounts, and People sweep profiles save through their own buttons.
 
 The `[web]` values, person-enrichment provider keys, and contact accounts apply
-once saved. Other settings and embedding provider keys take effect after the
+right away. Other settings and embedding provider keys take effect after the
 daemon restarts. A restart banner appears after saving when the running daemon
 still has an old value.
 Changing `server.api_key` takes effect after restart, which also invalidates
