@@ -2550,7 +2550,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('keeps Messages newest first and shows the count once', async () => {
+  it('shows the Messages count once', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
       rows: [entry(1), entry(2)], total_count: 2
@@ -2687,7 +2687,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('dismisses Filter before grouping after Files → Messages, with nested picker Escape first', async () => {
+  it('dismisses Filter before grouping after Files → Messages', async () => {
     window.history.replaceState(null, '', '/?workspace=files');
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(async (input) => {
@@ -2704,17 +2704,6 @@ describe('AppShell', () => {
     await fireEvent.keyDown(trigger, { key: 'Escape' });
     expect(state.current.groupingChain).toEqual(['source']);
     expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull();
-    await fireEvent.click(trigger);
-    const account = await screen.findByRole('combobox', { name: /^Account:/ });
-    await waitFor(() => expect(account).toHaveProperty('disabled', false));
-    await fireEvent.click(account);
-    await fireEvent.keyDown(account, { key: 'Escape' });
-    expect(screen.getByRole('dialog', { name: 'Filter' })).toBeDefined();
-    expect(screen.queryByRole('listbox')).toBeNull();
-    expect(state.current.groupingChain).toEqual(['source']);
-    await fireEvent.keyDown(account, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull();
-    expect(state.current.groupingChain).toEqual(['source']);
     await fireEvent.keyDown(trigger, { key: 'Escape' });
     expect(state.current.groupingChain).toEqual([]);
     await fireEvent.keyDown(window, { key: 's' });

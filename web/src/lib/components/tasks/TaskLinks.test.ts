@@ -130,10 +130,10 @@ describe('TaskLinks', () => {
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
           : Response.json({ state, complete: false, reason: state, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
-      })), mode: 'add', messageId: 42, title: 'Synthetic' });
+      })), mode: 'list', messageId: 42, title: 'Synthetic' });
 
       expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(state === 'authentication_required' ? 'authentication is required' : state.replaceAll('_', ' '));
-      expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
     }
   );
 
