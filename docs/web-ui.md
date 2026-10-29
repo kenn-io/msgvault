@@ -598,7 +598,7 @@ The Save changes bar covers ordinary settings, and its edits survive category
 changes. Some controls save through their own buttons instead: provider
 credentials, person-enrichment providers, contact accounts, and People sweep.
 Above them, the page says "These save immediately when you use their buttons —
-not with Save changes." The Contacts category hides the bar. After a save that
+not with Save changes." The bar stays visible on Contacts while ordinary settings have unsaved changes. After a save that
 needs a restart, Settings shows “Saved. Restart msgvault to apply these
 changes.”
 
