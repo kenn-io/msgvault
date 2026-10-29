@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
@@ -158,4 +158,16 @@ describe('AccountFilter', () => {
     });
     await waitFor(() => expect(onChange).toHaveBeenCalledWith([source]));
   });
+});
+
+it('offers ordinary confirmed mailboxes with their catalog keys', async () => {
+  const onChange = vi.fn();
+  render(AccountFilter, { client: createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/accounts') ? { accounts: [
+    { id: 1, email: 'first@example.com', virtual_accounts: [{ key: 'identity:1:first', source_id: 1, account_address: 'first@example.com', message_count: 3, source_deleted_count: 0 }] },
+    { id: 2, email: 'second@example.com', virtual_accounts: [{ key: 'identity:2:second', source_id: 2, account_address: 'second@example.com', message_count: 4, source_deleted_count: 0 }] },
+  ] } : { rows: [] })), filters: [], onChange, showSingleMailbox: true });
+  await fireEvent.click(await screen.findByRole('combobox', { name: /^Account:/ }));
+  expect(screen.getByRole('option', { name: 'first@example.com / first@example.com (3)' })).toBeDefined();
+  await fireEvent.click(screen.getByRole('option', { name: 'second@example.com / second@example.com (4)' }));
+  expect(onChange).toHaveBeenCalledWith([{ dimension: 'account', values: ['identity:2:second'] }]);
 });
