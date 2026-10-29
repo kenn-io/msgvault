@@ -17,7 +17,7 @@ describe('jobs', () => {
     ['message_embedding', { settingsCategory: 'search', settingsAuthority: 'semantic_search' }],
     ['person_enrichment', { settingsCategory: 'enrichment', settingsAuthority: '' }],
   ] as const)('routes related status before %s settings', (kind, target) => {
-    const jobs = collectJobs([], [lane('document_extraction'), lane(kind)]);
+    const jobs = collectJobs([], [lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running' } }), lane(kind, { active: { ...jobRun(kind), state: 'queued' } })]);
     expect(jobs[0]?.target).toEqual({ kind: 'status', authority: 'getDocumentIndexStatus' });
     expect(jobs[1]?.target).toEqual({ kind: 'setting', target });
   });
@@ -54,4 +54,9 @@ it.each([
   { name: 'scheduler running before a sync row exists', source: { scheduler_started_at: '2026-08-30T11:00:00Z', sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['running', 'Syncing']] },
 ])('$name', ({ source, lanes, expected }) => {
   expect(collectJobs(source ? [sourceStatus(source as Partial<SourceStatus>)] : [], lanes).map(({ state, detail }) => [state, detail])).toEqual(expected);
+});
+
+it.each(['message_embedding', 'person_enrichment', 'person_sweep'] as const)('opens the failed %s run instead of its setup', kind => {
+  const run = jobRun(kind);
+  expect(collectJobs([], [lane(kind)])[0]?.target).toEqual({ kind: 'history', operationKind: kind, operationRunID: run.id });
 });

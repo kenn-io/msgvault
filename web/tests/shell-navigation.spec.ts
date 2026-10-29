@@ -93,3 +93,45 @@ test('grid shortcuts pressed outside the grid still move the active row', async 
 
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-2$/);
 });
+
+test('desktop saved-view deletion keeps keyboard focus on Undo', async ({ page }) => {
+  const saved = { id: 3, name: 'Project notes', revision: 1, schema_version: 2,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [], columns: [] } };
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [saved] } }));
+  await page.goto('/?workspace=everything');
+  const row = page.getByRole('button', { name: 'Project notes', exact: true });
+  await row.focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Project notes actions' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+  await expect(undo).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(row).toBeVisible();
+  await expect(undo).toBeHidden();
+});
+
+test('Settings Overview Details closes back to Overview with a status title', async ({ page }) => {
+  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [{
+    kind: 'document_extraction', lane: 'documents', configured: true,
+    related_status: 'getDocumentIndexStatus', supported_actions: [], history_availability: 'available'
+  }] } }));
+  await page.route('**/api/v1/documents/status/current', route => route.fulfill({ json: { status: {
+    profile_exists: true, profile_enabled: true, exact_consent: true,
+    ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
+    terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
+  } } }));
+  await page.goto('/?workspace=settings');
+  const details = page.getByRole('button', { name: 'Details, Document extraction' });
+  await details.click();
+  const dialog = page.getByRole('dialog');
+  await expect.soft(dialog).toHaveAccessibleName('Document index status');
+  await expect(dialog).toContainText('4 of 5 owners ready');
+  await dialog.getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(details).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Settings' })).toBeVisible();
+});

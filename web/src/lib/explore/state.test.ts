@@ -1757,3 +1757,15 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   expect(state.current.operationHistory).toBe(false);
   state.destroy();
 });
+
+it('opens a selected run with its kind and clears selection on a later filter change', () => {
+  window.history.replaceState(null, '', '/?workspace=everything');
+  const state = new ExploreState(window);
+  const runID = `op2.${'a'.repeat(32)}.exampleRun`;
+  try {
+    state.openOperationHistory({ operationKind: 'person_sweep', operationRunID: runID });
+    expect(state.current).toMatchObject({ operationHistory: true, operationKind: 'person_sweep', operationRunID: runID });
+    state.openOperationHistory({ operationKind: 'carddav_sync' });
+    expect(state.current.operationRunID).toBeNull();
+  } finally { state.destroy(); }
+});

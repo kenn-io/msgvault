@@ -3012,7 +3012,7 @@ it.each([
   const run = jobRun(kind);
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane(kind)] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane(kind, kind === 'document_extraction' ? { active: { ...run, state: 'running' } } : {})] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: kind === 'source_sync' ? [sourceStatus({ display_name: name, scheduler_last_error: 'Sync failed' })] : [] });
     if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
     if (path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: jobLane(kind).supported_actions });
@@ -3021,8 +3021,8 @@ it.each([
   });
   const state = new ExploreState(window);
   const rendered = render(AppShell, { client, state });
-  await screen.findByRole('button', { name: 'Sync status: Needs attention' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Needs attention' }));
+  const statusName = kind === 'document_extraction' ? 'Sync status: Running' : 'Sync status: Needs attention';
+  await fireEvent.click(await screen.findByRole('button', { name: statusName }));
   if (fromHistory) {
     await fireEvent.click(screen.getByRole('menuitem', { name: /Past runs/ }));
     await fireEvent.click(await screen.findByRole('button', { name: `Open ${name} run` }));
@@ -3036,8 +3036,49 @@ it.each([
   if (category) expect(state.current.settingsCategory).toBe(category);
   if (kind === 'document_extraction') expect(state.current.operationStatus).toBe('getDocumentIndexStatus');
   expect(state.current.operationHistory).toBe(kind === 'document_extraction');
-  if (kind === 'document_extraction') await screen.findByRole('dialog', { name: 'Past runs' });
+  if (kind === 'document_extraction') await screen.findByRole('dialog', { name: 'Document index status' });
   else expect(screen.queryByRole('dialog')).toBeNull();
   push.mockRestore();
   rendered.unmount(); state.destroy();
+});
+
+it('opens a failed People sweep from job status at that run', async () => {
+  window.history.replaceState(null, '', '/?workspace=everything');
+  const run = jobRun('person_sweep');
+  const client = createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane('person_sweep')] });
+    if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
+    if (path.includes('/operations/runs/')) return Response.json({ ...run, supported_actions: [] });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(window);
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Needs attention' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Person fact sweep/ }));
+    await screen.findByRole('region', { name: 'Operation run detail' });
+    expect(state.current).toMatchObject({ workspace: 'everything', operationHistory: true, operationKind: 'person_sweep', operationRunID: run.id });
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it.each(['', '   '])('keeps the saved-view rename editor open for an empty name %j', async name => {
+  window.history.replaceState(null, '', '/?workspace=everything');
+  const client = createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [view(3, 'Project notes')] });
+    return Response.json(exploreResponse());
+  });
+  const rendered = render(AppShell, { client });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+    const input = await screen.findByRole('textbox', { name: 'Rename Project notes' });
+    await fireEvent.input(input, { target: { value: name } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    await screen.findByText('Enter a name.');
+    expect(screen.getByRole('textbox', { name: 'Rename Project notes' })).toBe(input);
+    expect(document.activeElement).toBe(input);
+  } finally { rendered.unmount(); }
 });

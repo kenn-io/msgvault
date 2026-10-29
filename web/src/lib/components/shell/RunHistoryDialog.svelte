@@ -4,7 +4,7 @@
   import type { APIClient } from '../../api/client';
   import type { OperationsController } from '../../operations/controller.svelte';
   import type { OperationAction, OperationsURLState } from '../../operations/models';
-  import { OPERATION_KIND_LABELS, type RelatedStatus } from '../../operations/labels';
+  import { OPERATION_KIND_LABELS, RELATED_STATUS_LABELS, type RelatedStatus } from '../../operations/labels';
   import { operationFocusAnchor, resolveOperationFocusAnchor, type OperationFocusAnchor } from '../../operations/focus';
   import OperationRelatedStatus from '../operations/OperationRelatedStatus.svelte';
   import OperationRunDetail from '../operations/OperationRunDetail.svelte';
@@ -94,13 +94,13 @@
   }
 </script>
 
-<Dialog title={current.detail && local.operationRunID ? OPERATION_KIND_LABELS[current.detail.kind] : 'Past runs'} {onclose}>
+<Dialog title={local.operationStatus ? RELATED_STATUS_LABELS[local.operationStatus] : current.detail && local.operationRunID ? OPERATION_KIND_LABELS[current.detail.kind] : 'Past runs'} {onclose}>
   <div class="history" bind:this={root}>
     {#if local.operationStatus}
       {#if current.statusReadable || current.statusError}
         {#key `${local.operationStatus}:${configured}`}
           <OperationRelatedStatus {client} authority={local.operationStatus} {configured}
-            onClose={() => void closeRelatedStatus()} {onConfigure} />
+            onClose={local.operationRunID ? () => void closeRelatedStatus() : onclose} {onConfigure} />
         {/key}
       {:else}<p class="muted" role="status">Loading status…</p>{/if}
     {:else if local.operationRunID}
