@@ -59,7 +59,7 @@
 <style>
   .overview {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) max-content max-content;
+    grid-template-columns: minmax(max-content, 1fr) max-content minmax(0, max-content);
     margin: 0;
     padding: 0;
     border: 1px solid var(--border-default);
