@@ -110,7 +110,7 @@ func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {
 	assert.Empty(due)
 }
 
-func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) {
+func TestDocbankAttachmentProcessingBackfillPreservesSavedOutcomes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -129,29 +129,27 @@ func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) 
 	pendingJobID := fmt.Sprintf("%064x", 0x5678)
 	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
 		ContentHash: pendingHash, VersionID: "pending", Fingerprint: "fp", Outcome: "requested", JobID: pendingJobID,
-	}, time.Time{}))
+	}, time.Now().Add(time.Hour)))
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
-	require.Len(due, 5)
-	assert.Equal(fmt.Sprintf("%064x", 0xabcdf0), due[0].ContentHash)
-	assert.Equal(fmt.Sprintf("%064x", 0xabcdf1), due[1].ContentHash)
-	assert.Equal(fmt.Sprintf("%064x", 0xabcdf2), due[2].ContentHash)
-	assert.Equal(fmt.Sprintf("%064x", 0xabcdf3), due[3].ContentHash)
-	for _, d := range due[:4] {
-		assert.Empty(d.Outcome)
-		assert.Empty(d.JobID)
-	}
-	assert.Equal(pendingHash, due[4].ContentHash)
-	assert.Equal("requested", due[4].Outcome)
-	assert.Equal(pendingJobID, due[4].JobID)
+	assert.Empty(due)
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
-	assert.Equal(int64(4), counts.Waiting)
+	assert.Zero(counts.Waiting)
 	assert.Equal(int64(1), counts.Requested)
-	assert.Equal(map[string]int64{"provider_timeout": 1}, counts.Outcomes)
+	assert.Equal(map[string]int64{
+		"provider_timeout":      1,
+		"consent":               1,
+		"stale_authority":       1,
+		"pdf_password_required": 1,
+		"not_found":             1,
+	}, counts.Outcomes)
 	var savedOutcome, jobID string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome, job_id FROM docbank_attachment_processing WHERE content_hash = ?`), fmt.Sprintf("%064x", 0xabcdef)).Scan(&savedOutcome, &jobID))
-	assert.Equal("provider_timeout", savedOutcome)
-	assert.Equal(fmt.Sprintf("%064x", 1), jobID)
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome, job_id FROM docbank_attachment_processing WHERE content_hash = ?`), fmt.Sprintf("%064x", 0xabcdf0)).Scan(&savedOutcome, &jobID))
+	assert.Equal("consent", savedOutcome)
+	assert.Equal(fmt.Sprintf("%064x", 2), jobID)
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome, job_id FROM docbank_attachment_processing WHERE content_hash = ?`), pendingHash).Scan(&savedOutcome, &jobID))
+	assert.Equal("requested", savedOutcome)
+	assert.Equal(pendingJobID, jobID)
 }
