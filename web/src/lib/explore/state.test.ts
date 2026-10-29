@@ -1826,3 +1826,30 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   expect(state.current.operationHistory).toBe(false);
   state.destroy();
 });
+
+it('keeps relationship readers in their own history entries, including same-target entries', async () => {
+  window.history.replaceState(null, '', '/?workspace=relationships');
+  const state = new ExploreState(window);
+  const reader = { target: 'cluster:1', row: { key: 'chat:70:day', kind: 'chat_burst' as const, occurred_at: '2026-07-19T10:00:00Z', preview: 'Day preview', source_id: 1, title: 'Saved day', has_attachments: false, message_count: 2, conversation_id: 70, anchor_message_id: 9 }, anchorId: 9, bounds: { start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z' } };
+  const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  try {
+    state.commitNavigation({ relationshipTarget: 'cluster:1' });
+    state.replaceTransient({ relationshipReader: reader });
+    state.replaceTransient({ relationshipReader: { ...reader, anchorId: 10 } });
+    expect(state.current.relationshipReader?.anchorId).toBe(10);
+    expect(serializeExploreURLState(state.current)).not.toContain('relationshipReader');
+    expect(parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify(state.current))}`).relationshipReader).toBeNull();
+    state.commitNavigation({ relationshipReader: null });
+    const back = popped(); window.history.back(); await back;
+    expect(state.current.relationshipReader).toEqual({ ...reader, anchorId: 10 });
+    const forward = popped(); window.history.forward(); await forward;
+    expect(state.current.relationshipReader).toBeNull();
+    state.replaceTransient({ relationshipReader: reader });
+    state.commitNavigation({ relationshipTarget: 'cluster:2' });
+    expect(state.current.relationshipReader).toBeNull();
+    const returnToReader = popped(); window.history.back(); await returnToReader;
+    expect(state.current.relationshipReader).toEqual(reader);
+    state.commitWorkspace('files');
+    expect(state.current.relationshipReader).toBeNull();
+  } finally { state.destroy(); }
+});

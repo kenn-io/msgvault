@@ -20,6 +20,7 @@ import type {
   IdentityReviewState,
   RelationshipReviewState,
   RelationshipFacet,
+  RelationshipReader,
   OperationKind,
   OperationLane,
   OperationStatusAuthority,
@@ -64,7 +65,8 @@ const TRANSIENT_HISTORY_FIELDS = [
   'columns',
   'columnWidths',
   'activeRow',
-  'scrollAnchor'
+  'scrollAnchor',
+  'relationshipReader'
 ] as const satisfies ReadonlyArray<keyof ExploreURLState>;
 const RESTORATION_INVALIDATING_FIELDS = new Set<keyof ExploreURLState>([
   'workspace',
@@ -177,6 +179,7 @@ export const defaultExploreURLState: ExploreURLState = {
   selectedIdentifier: null,
   relationshipFacet: 'people',
   relationshipTarget: null,
+  relationshipReader: null,
   relationshipShowAll: false,
   relationshipFiles: false,
   operationHistory: false,
@@ -389,6 +392,25 @@ function legacyRelationshipTarget(
   return null;
 }
 
+function relationshipReader(value: unknown, workspace: string, target: string | null): RelationshipReader | null {
+  if (!target || workspace !== 'relationships' || !isRecord(value) || value.target !== target || !isRecord(value.row)) return null;
+  const row = value.row;
+  if (!['key', 'kind', 'occurred_at', 'preview', 'title'].every(key => typeof row[key] === 'string') ||
+    typeof row.source_id !== 'number' || typeof row.message_count !== 'number' || typeof row.has_attachments !== 'boolean') return null;
+  return {
+    target,
+    row: { key: row.key as string, kind: row.kind as string, occurred_at: row.occurred_at as string,
+      preview: row.preview as string, title: row.title as string, source_id: row.source_id,
+      message_count: row.message_count, has_attachments: row.has_attachments,
+      ...(typeof row.conversation_id === 'number' ? { conversation_id: row.conversation_id } : {}),
+      ...(typeof row.anchor_message_id === 'number' ? { anchor_message_id: row.anchor_message_id } : {}),
+      ...(typeof row.first_at === 'string' ? { first_at: row.first_at } : {}) },
+    ...(typeof value.anchorId === 'number' ? { anchorId: value.anchorId } : {}),
+    ...(isRecord(value.bounds) && typeof value.bounds.start === 'string' && typeof value.bounds.end === 'string'
+      ? { bounds: { start: value.bounds.start, end: value.bounds.end } } : {}),
+  };
+}
+
 function normalize(value: unknown): ExploreURLState {
   if (!isRecord(value)) return freshDefaults();
   const {
@@ -515,6 +537,7 @@ function normalize(value: unknown): ExploreURLState {
     selectedIdentifier: typeof value.selectedIdentifier === 'string' ? value.selectedIdentifier : null,
     relationshipFacet,
     relationshipTarget,
+    relationshipReader: relationshipReader(value.relationshipReader, normalizedWorkspace, relationshipTarget),
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
     operationHistory: value.operationHistory === true || !!(operationRunID(value.operationRunID) || operationStatus ||
@@ -575,8 +598,8 @@ const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<Expl
   settingsAuthority: ['settings'],
   settingsCategory: ['settings']
 };
-// Keyboard focus and scroll position live only in browser history.
-const SESSION_ONLY_FIELDS = new Set<keyof ExploreURLState>(['activeRow', 'scrollAnchor']);
+// Reader, keyboard focus, and scroll position live only in browser history.
+const SESSION_ONLY_FIELDS = new Set<keyof ExploreURLState>(['activeRow', 'scrollAnchor', 'relationshipReader']);
 
 function sharedDetails(state: ExploreURLState): Record<string, unknown> {
   return Object.fromEntries(Object.entries(state).filter(([key, value]) => {
@@ -619,6 +642,7 @@ export function parseExploreURLState(search: string): ExploreURLState {
   }
   return normalize({
     ...(isRecord(details) ? details : {}),
+    relationshipReader: null,
     ...(parameters.has('workspace') ? { workspace: parameters.get('workspace') } : {}),
     ...(parameters.has('mode') ? { searchMode: parameters.get('mode') } : {}),
   });
@@ -973,6 +997,7 @@ export class ExploreState {
     if (patchKeys.includes('workspace') || patchKeys.includes('presentation')) {
       keysToApply.push('workspace', 'presentation');
     }
+    if (patchKeys.includes('workspace') || patchKeys.includes('relationshipTarget')) keysToApply.push('relationshipReader');
     for (const key of keysToApply) {
       if (key in next) this.current[key] = next[key];
     }

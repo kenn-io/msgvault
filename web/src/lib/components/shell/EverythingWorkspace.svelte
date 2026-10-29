@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tasksSettingsDestination } from './navigation';
   import { Button } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
@@ -843,7 +844,7 @@
             onClose={closeReadingPane}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
-            onOpenSettings={() => commitNavigation({ workspace: 'settings', settingsCategory: 'tasks' })}
+            onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
             onOpenPerson={openRelationship}
             {conversationAnchorId}
             onConversationAnchorChange={changeConversationAnchor}

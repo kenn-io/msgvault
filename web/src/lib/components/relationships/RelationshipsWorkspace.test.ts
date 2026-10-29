@@ -402,51 +402,18 @@ describe('RelationshipsWorkspace', () => {
     }
   });
 
-  it('clears the reading pane when the target is cleared externally, not through this component\'s own Esc handler', async () => {
+  it('restores a saved reader before its timeline loads and clears it on intentional close', async () => {
     const { fetchFn } = fetchHandler({
-      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
-      '/api/v1/relationships/1/timeline': async () => Response.json({
-        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel',
-        rows: [{ key: 'message:1', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Subject', has_attachments: false, message_count: 1 }],
-        total_count: 1
-      })
+      '/api/v1/conversations/70': async () => Response.json({ id: 70, anchor_id: 9, has_before: false, has_after: false, total: 1, messages: [{ id: 9, from: 'Example sender', subject: 'Saved subject', body: 'Saved message body', sent_at: when, to: [], labels: [], attachments: [] }] }),
     });
-    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
-    const { rerender } = render(RelationshipsWorkspace, { props });
-    await props.controller.openTarget('cluster:1', props.predicate);
-
-    await fireEvent.click((await screen.findByText('Subject')).closest('[role="row"]')!);
-    await screen.findByRole('complementary', { name: /Reading pane/ });
-
-    // AppShell's own hydration effect clears the target directly on a
-    // Back/Forward popstate — never through this component's handleEscape.
-    await rerender({ ...props, target: null });
-
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
-  });
-
-  it('clears the reading pane when Back/Forward jumps straight between two targets without clearing to null', async () => {
-    const { fetchFn } = fetchHandler({
-      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
-      '/api/v1/relationships/1/timeline': async () => Response.json({
-        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel',
-        rows: [{ key: 'message:1', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Subject', has_attachments: false, message_count: 1 }],
-        total_count: 1
-      })
-    });
-    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
-    const { rerender } = render(RelationshipsWorkspace, { props });
-    await props.controller.openTarget('cluster:1', props.predicate);
-
-    await fireEvent.click((await screen.findByText('Subject')).closest('[role="row"]')!);
-    await screen.findByRole('complementary', { name: /Reading pane/ });
-
-    // A history hop can rewrite the URL from one open relationship directly
-    // to another, so the target prop moves between two non-null values —
-    // the previous target's message must not stay open under the new one.
-    await rerender({ ...props, target: 'cluster:2' });
-
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
+    const props = { ...baseProps(fetchFn), target: 'cluster:1', reader: { target: 'cluster:1', row: { key: 'message:9', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Saved subject', has_attachments: false, message_count: 1, conversation_id: 70, anchor_message_id: 9 }, anchorId: 9 } };
+    const view = render(RelationshipsWorkspace, { props });
+    try {
+      const pane = await screen.findByRole('complementary', { name: /Reading pane/ });
+      expect(await within(pane).findByText('Saved message body')).toBeDefined();
+      await fireEvent.click(within(pane).getByRole('button', { name: 'Close reading pane' }));
+      expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
+    } finally { view.unmount(); props.controller.destroy(); }
   });
 
   it('does not scope the embedded FilesWorkspace to the previous cluster while a fast target switch is still resolving', async () => {

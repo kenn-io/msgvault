@@ -38,6 +38,7 @@ export function relationshipDestination(participantID: number) {
     query: '',
     relationshipFacet: 'people' as const,
     relationshipTarget: `cluster:${participantID}`,
+    relationshipReader: null,
     relationshipFiles: false,
     relationshipShowAll: false,
     analysisTarget: null,
@@ -46,5 +47,15 @@ export function relationshipDestination(participantID: number) {
     activeRow: null,
     conversationAnchor: null,
     scrollAnchor: null,
+  };
+}
+
+export function tasksSettingsDestination() {
+  return {
+    workspace: 'settings' as const,
+    settingsCategory: 'tasks' as const,
+    settingsAuthority: '' as const,
+    selectedRow: null,
+    conversationAnchor: null,
   };
 }
