@@ -434,10 +434,11 @@ func TestBeeperMediaStepTimeout(t *testing.T) {
 	submitter.actionTimeout = beeperMediaActionTimeout
 	runPasses(t, submitter, 3)
 
-	docbank.mu.Lock()
-	assert.Len(docbank.uploads, 1, "the timed-out item waits for its backoff")
-	docbank.mu.Unlock()
-	for _, row := range occurrenceRows(t, world.st, "destination-timeout") {
+	// A timed-out request can still reach the server. Check the worker's saved
+	// state: the failed item waits for its backoff while the next item completes.
+	rows = occurrenceRows(t, world.st, "destination-timeout")
+	require.Len(rows, 2)
+	for _, row := range rows {
 		if row.MessageID == timedOut {
 			assert.Equal("pending", row.State)
 			assert.Equal("timeout", row.ErrorCode)
