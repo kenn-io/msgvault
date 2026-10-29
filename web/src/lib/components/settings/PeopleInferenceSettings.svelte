@@ -10,6 +10,7 @@
   let name = $state('');
   let model = $state('');
   let key = $state('');
+  let replacementKey = $state('');
   let allowedSources = $state<string[]>([]);
   let sourceSince = $state('');
   let sourceUntil = $state('');
@@ -48,6 +49,11 @@
       retentionPosture = '';
       trainingPosture = '';
     }
+  }
+
+  async function saveReplacementKey(): Promise<void> {
+    await controller.saveKey(replacementKey);
+    replacementKey = '';
   }
 
   function setSource(source: string, checked: boolean): void {
@@ -111,7 +117,7 @@
         <h3>Profile setup</h3>
         <SelectDropdown title="Profile" value={controller.selectedName} disabled={controller.busy}
           options={controller.status.profiles.map((profile) => ({ value: profile.name, label: profile.name }))}
-          onchange={(value) => { removeConfirmationName = ''; controller.choose(value); }} />
+          onchange={(value) => { removeConfirmationName = ''; replacementKey = ''; controller.choose(value); }} />
         {#if controller.selectedProfile}
           {@const profile = controller.selectedProfile}
           <dl>
@@ -122,7 +128,10 @@
             <div><dt>Consent</dt><dd>{profile.consent_active ? 'Granted for this profile' : 'Not granted'}</dd></div>
           </dl>
           {#if profile.protocol !== 'codex_app_server' && profile.credential_source !== 'env'}
-            <label>Replacement API key<TextInput type="password" value={(Object.hasOwn(controller.keyDrafts, profile.name) ? controller.keyDrafts[profile.name] : undefined) ?? ''} oninput={(value) => { if (value) controller.keyDrafts = { ...controller.keyDrafts, [profile.name]: value }; else delete controller.keyDrafts[profile.name]; }} autocomplete="new-password" block /></label>
+            <form class="replacement-key" onsubmit={(event) => { event.preventDefault(); void saveReplacementKey(); }}>
+              <label>Replacement API key<TextInput type="password" bind:value={replacementKey} autocomplete="new-password" required block /></label>
+              <Button type="submit" disabled={controller.busy} label="Save API key" />
+            </form>
           {/if}
           <div class="actions">
             <Button disabled={controller.busy || !profile.credential_configured || profile.protocol === 'codex_app_server'} onclick={() => void controller.check()} label="Check provider" />
@@ -171,7 +180,7 @@
 <style>
   .people-inference { display: grid; gap: var(--space-5); min-width: 0; overflow-wrap: anywhere; }
   header p { color: var(--text-muted); margin-block: var(--space-2); }
-  .form, .profile, .disclosure { display: grid; gap: var(--space-3); min-width: 0; }
+  .form, .profile, .disclosure, .replacement-key { display: grid; gap: var(--space-3); min-width: 0; }
   .form, .profile { border: 1px solid var(--border-muted); border-radius: var(--radius-md); padding: var(--space-4); }
   label { display: grid; gap: var(--space-1); min-width: 0; }
   label:has(input[type='radio']) { display: flex; align-items: center; }

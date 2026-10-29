@@ -1,26 +1,115 @@
 <script lang="ts">
-  import { Chip, Toggle } from '@kenn-io/kit-ui';
-  import type { PersonEnrichmentProviderSetting as ProviderSetting } from '../../api/generated/models';
+  import { putSettingsPersonEnrichmentProvider as generatedPutSettingsPersonEnrichmentProvider } from '../../api/generated/api/api';
+  import { Button, Chip, Toggle } from '@kenn-io/kit-ui';
+  import { untrack } from 'svelte';
+  import type { APIClient } from '../../api/client';
+  import type {
+    PersonEnrichmentProviderSetting as ProviderSetting,
+    ProviderCredentialResponse as CredentialResponse,
+    SettingsResponse as SettingsDocument,
+  } from '../../api/generated/models';
+  import { providerUpdate } from '../../settings/catalog';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
-  type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
-  let { provider, draft, pendingKey, onchange, onkey }: {
-    provider: ProviderSetting; draft: ProviderSetting; pendingKey?: SecretUpdate;
-    onchange: (value: ProviderSetting) => void; onkey: (update: SecretUpdate | undefined) => void;
+  let {
+    client,
+    provider,
+    configETag,
+    credentialETag,
+    onSaved,
+    onConfigConflict,
+    onCredentialSaved,
+    onCredentialConflict,
+  }: {
+    client: APIClient;
+    provider: ProviderSetting;
+    configETag: string;
+    credentialETag: string;
+    onSaved: (document: SettingsDocument, etag: string) => void;
+    onConfigConflict: () => void | Promise<void>;
+    onCredentialSaved: (response: CredentialResponse, etag: string) => void;
+    onCredentialConflict: () => void | Promise<void>;
   } = $props();
+  let draft = $state<ProviderSetting>(cloneProvider(untrack(() => provider)));
+  let observedProvider = $state<ProviderSetting>(untrack(() => provider));
+  let dirty = $state(false);
+  let saving = $state(false);
+  let error = $state('');
+  const endpointDirty = $derived(
+    draft.endpoint !== provider.endpoint || draft.poll_endpoint !== provider.poll_endpoint,
+  );
+  $effect(() => {
+    const next = provider;
+    if (next === observedProvider) return;
+    observedProvider = next;
+    if (!dirty) draft = cloneProvider(next);
+  });
+  async function saveProvider() {
+    if (saving) return;
+    saving = true;
+    error = '';
+    try {
+      const {
+        data,
+        error: responseError,
+        response,
+      } = await generatedPutSettingsPersonEnrichmentProvider({ name: provider.name }, providerUpdate(draft), {
+        ...client,
+        headers: { 'If-Match': configETag },
+      });
+      if (response.status === 412) {
+        await onConfigConflict();
+        error = 'The settings changed on disk. The latest are loaded. Review this provider and save again.';
+        return;
+      }
+      if (!data) {
+        error = apiErrorMessage(responseError, "Can't save this provider.");
+        return;
+      }
+      const saved = data.person_enrichment_providers?.find((candidate) => candidate.name === provider.name);
+      if (saved) {
+        draft = cloneProvider(saved);
+        observedProvider = saved;
+      }
+      dirty = false;
+      onSaved(data, response.headers.get('ETag') ?? configETag);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : "Can't save this provider.";
+    } finally {
+      saving = false;
+    }
+  }
+  function edit(next: ProviderSetting) {
+    dirty = true;
+    draft = next;
+  }
   function setString(field: keyof ProviderSetting, value: string) {
-    onchange({ ...draft, [field]: value });
+    edit({ ...draft, [field]: value });
   }
   function setNumber(field: keyof ProviderSetting, value: string) {
-    onchange({ ...draft, [field]: value === '' ? '' : Number(value) } as ProviderSetting);
+    edit({ ...draft, [field]: Number(value) });
   }
   function setList(field: 'allowed_identifiers' | 'target_keys', value: string) {
-    onchange({
+    edit({
       ...draft,
       [field]: value
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean),
     });
+  }
+  function cloneProvider(value: ProviderSetting): ProviderSetting {
+    return {
+      ...value,
+      allowed_identifiers: [...(value.allowed_identifiers ?? [])],
+      target_keys: [...(value.target_keys ?? [])],
+    };
+  }
+  function apiErrorMessage(responseError: unknown, fallback: string): string {
+    if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {
+      const message = (responseError as { message?: unknown }).message;
+      if (typeof message === 'string' && message) return message;
+    }
+    return fallback;
   }
 </script>
 <article class="provider-card" aria-labelledby={`provider-${provider.name}`}>
@@ -31,14 +120,21 @@
     <Toggle
       ariaLabel={`Enable ${provider.name}`}
       checked={draft.enabled}
-      onchange={(enabled) => {
-        onchange({ ...draft, enabled });
-      }}
+      onchange={(enabled) => edit({ ...draft, enabled })}
     />
   </header>
-  <div class="field" class:setting--changed={pendingKey !== undefined} aria-label={`${provider.name} credential`}>
+  <div class="field" aria-label={`${provider.name} credential`}>
     <span>API key</span>
-    <ProviderCredentialControl label={`API key for ${provider.name}`} credentialState={provider.credential} pending={pendingKey} onchange={onkey} />
+    <ProviderCredentialControl
+      {client}
+      credentialID={provider.credential_id}
+      label={`API key for ${provider.name}`}
+      credentialState={provider.credential}
+      {credentialETag}
+      disabledReason={endpointDirty ? 'Save provider settings first before changing this credential.' : ''}
+      onSaved={onCredentialSaved}
+      onConflict={onCredentialConflict}
+    />
   </div>
   <details class="advanced">
     <summary>Advanced</summary>
@@ -179,13 +275,19 @@
         <Toggle
           ariaLabel={`Allow sensitive fields for ${provider.name}`}
           checked={draft.allow_sensitive_targets}
-          onchange={(allow_sensitive_targets) => {
-                onchange({ ...draft, allow_sensitive_targets });
-          }}
+          onchange={(allow_sensitive_targets) => edit({ ...draft, allow_sensitive_targets })}
         />
       </div>
     </div>
   </details>
+  {#if error}<p class="provider-error" role="alert">{error}</p>{/if}
+  <footer>
+    <Button
+      disabled={saving}
+      label={saving ? 'Saving…' : `Save ${provider.name} provider`}
+      onclick={() => void saveProvider()}
+    />
+  </footer>
 </article>
 
 <style>
@@ -205,7 +307,8 @@
   .grow {
     flex: 1;
   }
-  h4 {
+  h4,
+  .provider-error {
     margin: 0;
   }
   h4 {
@@ -218,15 +321,13 @@
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
   }
-  .setting--changed > span::after {
-    content: '';
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin-left: var(--space-4);
-    border-radius: 50%;
-    background: var(--accent-amber);
-    vertical-align: middle;
+  footer {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .provider-error {
+    color: var(--status-error-ink);
+    font-size: var(--font-size-sm);
   }
   .advanced summary {
     color: var(--text-secondary);

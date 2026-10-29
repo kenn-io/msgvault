@@ -1,33 +1,37 @@
 <script lang="ts">
   import {
+    saveCardDAVAccount as generatedSaveCardDAVAccount,
     testCardDAVAccount as generatedTestCardDAVAccount,
   } from '../../api/generated/api/api';
   import { Button, SettingsSection, TextInput, Toggle, SelectDropdown } from '@kenn-io/kit-ui';
+  import ZapIcon from '@lucide/svelte/icons/zap';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
   import { authorizeGoogleContacts } from '../../settings/google-authorization';
   import { shellQuote } from '../../settings/shell-quote';
-  import { accountRequest, type CardDAVAccountValues, type AccountDraft } from '../../carddav/account-settings';
+  import type { CardDAVAccountValues } from '../../carddav/account-settings';
   import CronField from './CronField.svelte';
-  type Action = 'test' | 'authorize';
+  type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
+  type Action = 'test' | 'save' | 'authorize';
   let {
     client,
     values,
     connection = undefined,
-    draft = undefined,
-    onDraft,
+    onSaved = () => undefined,
   }: {
     client: APIClient;
     values: CardDAVAccountValues;
     connection?: string;
-    draft?: AccountDraft;
-    onDraft: (draft: AccountDraft | undefined) => void;
+    onSaved?: () => void | Promise<void>;
   } = $props();
-  const initialValues = untrack(() => draft?.values ?? values);
+  const initialValues = untrack(() => values);
   let provider = $state(initialValues.provider);
   let oauthApp = $state(initialValues.oauthApp);
-  let persistedProvider = $state(untrack(() => values.provider));
-  let persistedOAuthApp = $state(untrack(() => values.oauthApp));
+  let persistedProvider = $state(initialValues.provider);
+  let persistedOAuthApp = $state(initialValues.oauthApp);
+  const googleURL = 'https://www.googleapis.com/.well-known/carddav';
+  const graphURL = 'https://graph.microsoft.com/v1.0';
   const google = $derived(provider === 'google');
   const microsoft = $derived(provider === 'microsoft');
   const oauth = $derived(google || microsoft);
@@ -41,19 +45,19 @@
   function authorizationCommand(shell: 'posix' | 'cmd'): string {
     return `msgvault carddav authorize-${provider} ${shellQuote(username || 'you@example.com', shell)}${google && oauthApp ? ` --oauth-app ${shellQuote(oauthApp, shell)}` : ''}`;
   }
-  let password = $state(untrack(() => draft?.password ?? ''));
-  let persistedBaseURL = $state(untrack(() => values.baseURL));
-  let persistedUsername = $state(untrack(() => values.username));
-  let persistedPasswordConfigured = $state(untrack(() => values.passwordConfigured));
+  let password = $state('');
+  let persistedBaseURL = $state(initialValues.baseURL);
+  let persistedUsername = $state(initialValues.username);
+  let persistedPasswordConfigured = $state(initialValues.passwordConfigured);
   let enabled = $state(initialValues.enabled);
   let schedule = $state(initialValues.schedule);
-  let persistedEnabled = $state(untrack(() => values.enabled));
-  let persistedSchedule = $state(untrack(() => values.schedule));
+  let persistedEnabled = $state(initialValues.enabled);
+  let persistedSchedule = $state(initialValues.schedule);
   const uid = $props.id();
   let activeAction = $state<Action | undefined>();
   let error = $state('');
   let status = $state('');
-  let testedTuple = $state(untrack(() => draft?.testedTuple ?? ''));
+  let testedTuple = $state('');
   let requestController: AbortController | undefined;
   let actionGeneration = 0;
   let disposed = false;
@@ -89,6 +93,19 @@
     persistedPasswordConfigured = next.passwordConfigured;
     persistedEnabled = next.enabled;
     persistedSchedule = next.schedule;
+  }
+  function requestBody(): CardDAVAccountRequest {
+    const body: CardDAVAccountRequest = {
+      connection,
+      base_url: baseURL,
+      username,
+      enabled,
+      schedule,
+    };
+    if (google) { body.provider = 'google'; body.oauth_app = oauthApp; body.base_url = googleURL; }
+    else if (microsoft) { body.provider = 'microsoft'; body.base_url = graphURL; }
+    else if (password !== '') body.password = password;
+    return body;
   }
   function identityTuple(): string {
     return `${provider}\u0000${oauthApp}\u0000${baseURL}\u0000${username}`;
@@ -139,7 +156,7 @@
     error = '';
     status = '';
     try {
-      const { data, error: responseError } = await generatedTestCardDAVAccount(accountRequest({ provider, oauthApp, baseURL, username, passwordConfigured: persistedPasswordConfigured, enabled, schedule }, password, connection), {
+      const { data, error: responseError } = await generatedTestCardDAVAccount(requestBody(), {
         ...client,
         signal: controller.signal,
       });
@@ -157,12 +174,48 @@
       }
     }
   }
-  $effect(() => {
-    const currentValues: CardDAVAccountValues = { provider, oauthApp, baseURL, username, passwordConfigured: persistedPasswordConfigured, enabled, schedule };
-    const changed = provider !== persistedProvider || oauthApp !== persistedOAuthApp || baseURL !== persistedBaseURL || username !== persistedUsername || enabled !== persistedEnabled || schedule !== persistedSchedule || password !== '';
-    const needsPassword = passwordRequiredForSave() && password === '';
-    onDraft(changed || (oauth && enabled && testedTuple === identityTuple()) ? { baseline: { provider: persistedProvider, oauthApp: persistedOAuthApp, baseURL: persistedBaseURL, username: persistedUsername, passwordConfigured: persistedPasswordConfigured, enabled: persistedEnabled, schedule: persistedSchedule }, values: currentValues, password, testedTuple, error: needsPassword ? 'Password is required for a new or changed CardDAV account.' : (!oauth && !baseURL) || !username ? 'Enter the contact account URL and username.' : undefined } : undefined);
-  });
+  async function saveAccount() {
+    if (activeAction !== undefined || !validatePassword(true)) return;
+    requestController?.abort();
+    const controller = new AbortController();
+    requestController = controller;
+    const generation = ++actionGeneration;
+    activeAction = 'save';
+    error = '';
+    status = '';
+    try {
+      const { data, error: responseError } = await generatedSaveCardDAVAccount(requestBody(), {
+        ...client,
+        signal: controller.signal,
+      });
+      if (!current(generation, controller.signal)) return;
+      if (!data) throw new Error(apiErrorMessage(responseError, 'Unable to save the CardDAV account.'));
+      const passwordConfigured = persistedPasswordConfigured || password !== '';
+      baseURL = data.base_url;
+      username = data.username;
+      enabled = data.enabled;
+      schedule = data.schedule ?? '';
+      persistedProvider = provider;
+      persistedOAuthApp = oauthApp;
+      persistedBaseURL = data.base_url;
+      persistedUsername = data.username;
+      persistedPasswordConfigured = passwordConfigured;
+      persistedEnabled = data.enabled;
+      persistedSchedule = data.schedule ?? '';
+      password = '';
+      testedTuple = '';
+      status = `CardDAV account saved. Found ${data.books} address ${data.books === 1 ? 'book' : 'books'}.`;
+      void onSaved();
+    } catch (cause) {
+      if (!current(generation, controller.signal)) return;
+      error = cause instanceof Error ? cause.message : 'Unable to save the CardDAV account.';
+    } finally {
+      if (current(generation)) {
+        if (requestController === controller) requestController = undefined;
+        activeAction = undefined;
+      }
+    }
+  }
   function apiErrorMessage(responseError: unknown, fallback: string): string {
     if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {
       const message = (
@@ -191,7 +244,16 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}<p class="status" role="status">{status}</p>{/if}
 
-  <form onsubmit={(event) => event.preventDefault()}>
+  <p class="posture">
+    <ZapIcon size={12} aria-hidden="true" />
+    Saving the account applies right away. No daemon restart is needed.
+  </p>
+  <form
+    onsubmit={(event) => {
+      event.preventDefault();
+      void saveAccount();
+    }}
+  >
     <label>
       Provider
       <SelectDropdown title="CardDAV provider" value={provider} options={[{ value: '', label: 'Other CardDAV server' }, { value: 'google', label: 'Google Contacts' }, { value: 'microsoft', label: 'Microsoft 365 or Outlook.com' }]} onchange={selectProvider} disabled={activeAction !== undefined} />
@@ -270,6 +332,13 @@
         label={activeAction === 'test' ? 'Testing…' : 'Test CardDAV connection'}
         onclick={() => void testConnection()}
       />
+      <Button
+        type="submit"
+        disabled={activeAction !== undefined}
+        tone="info"
+        surface="solid"
+        label={activeAction === 'save' ? 'Saving…' : 'Save CardDAV account'}
+      />
     </div>
   </form>
 </SettingsSection>
@@ -280,6 +349,18 @@
   form {
     display: grid;
     gap: var(--space-5);
+  }
+  .posture {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 var(--space-5);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .posture :global(svg) {
+    flex-shrink: 0;
+    color: var(--accent-green);
   }
   .fields {
     display: grid;
