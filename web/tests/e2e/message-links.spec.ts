@@ -18,6 +18,8 @@ for (const messageType of ['email', 'whatsapp']) {
       if (url.pathname === '/api/v1/settings') return route.fulfill({ json: { settings: [], pending_restart: false } });
       if (url.pathname === '/api/v1/telemetry/events') return route.fulfill({ status: 202, json: { status: 'disabled' } });
       if (url.pathname === '/api/v1/integrations/kata/status') return route.fulfill({ json: { state: 'disabled', project: '' } });
+      if (url.pathname === '/api/v1/integrations/tasks/status') return route.fulfill({ json: { state: 'disabled', message: 'Tasks disabled.' } });
+      if (url.pathname === '/api/v1/messages/42001/tasks') return route.fulfill({ json: { state: 'disabled', complete: false, tasks: [] } });
       archiveRequests.push(url.pathname);
       if (url.pathname === '/api/v1/messages/42001') return route.fulfill({ json: message });
       if (url.pathname === '/api/v1/conversations/71') {

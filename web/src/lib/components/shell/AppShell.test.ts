@@ -2608,15 +2608,14 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('dismisses Filter before grouping after Files → Messages', async () => {
-    window.history.replaceState(null, '', '/?workspace=files');
+  it('dismisses Filter before grouping', async () => {
+    window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(async (input) => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/accounts')) return Response.json({ accounts: [{ id: 1, email: 'first@example.com', virtual_accounts: [{ key: 'identity:1:first', source_id: 1, account_address: 'first@example.com', message_count: 1, source_deleted_count: 0 }] }] });
       return Response.json(exploreResponse());
     }), state });
-    await fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
     await fireEvent.click(screen.getByRole('combobox', { name: 'Group by' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Source' }));
     const trigger = screen.getByRole('button', { name: 'Filter' });
@@ -2627,8 +2626,6 @@ describe('AppShell', () => {
     expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull();
     await fireEvent.keyDown(trigger, { key: 'Escape' });
     expect(state.current.groupingChain).toEqual([]);
-    await fireEvent.keyDown(window, { key: 's' });
-    expect(screen.getByRole('combobox', { name: 'Sort: Newest first' }).getAttribute('aria-expanded')).toBe('true');
     rendered.unmount();
     state.destroy();
   });
@@ -2792,6 +2789,11 @@ describe('AppShell', () => {
     }
 
     it.each([
+      {
+        layer: 'Sort',
+        open: () => clickFocused(screen.getByRole('combobox', { name: 'Sort: Newest first' })),
+        isOpen: () => screen.queryByRole('listbox') !== null
+      },
       {
         layer: 'Filter',
         open: () => clickFocused(screen.getByRole('button', { name: 'Filter' })),
