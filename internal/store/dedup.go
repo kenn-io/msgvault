@@ -731,6 +731,11 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 func (s *Store) UndoDedup(batchID string) (int64, error) {
 	var restored int64
 	err := s.withTx(func(tx *loggedTx) error {
+		// Take the recipient lock before any message row, as recipient
+		// replacement does, so restoring cannot deadlock with it.
+		if err := s.lockRecipientContextInvalidationTxContext(context.Background(), tx); err != nil {
+			return err
+		}
 		rows, err := tx.Query(`SELECT id FROM messages WHERE delete_batch_id = ? AND deleted_at IS NOT NULL ORDER BY id`, batchID)
 		if err != nil {
 			return err

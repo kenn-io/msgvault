@@ -3647,7 +3647,14 @@ func (s *Store) ClearMessageDeletedFromSourceContext(ctx context.Context, source
 		// The restored envelope supports shared participant values again.
 		return invalidateEnvelopeContextOnlyWith(q, "support.source_id=? AND support.source_message_id=?", sourceID, sourceMessageID)
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		// Take the recipient lock before the message row, as recipient
+		// replacement does, so restoring cannot deadlock with it.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		return write(boundQuerier{ctx: ctx, q: tx})
+	})
 }
 
 // MarkMessagesDeletedBatch marks multiple messages as deleted from the source in a single transaction.

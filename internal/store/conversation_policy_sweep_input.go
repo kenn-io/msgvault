@@ -160,6 +160,12 @@ func (s *Store) lockPersonSweepPolicyInputsTx(ctx context.Context, tx *loggedTx)
 	if len(refs) == 0 {
 		return nil
 	}
+	// Recipient replacement takes this lock before message and person rows.
+	// Taking it before the cited-message locks keeps one order and avoids a
+	// PostgreSQL deadlock with a concurrent replacement.
+	if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+		return err
+	}
 	var messages, attachments []int64
 	for _, ref := range refs {
 		messages = append(messages, ref.MessageID)
