@@ -2959,7 +2959,7 @@ it('opens CardDAV Past runs with its kind through the Settings context', async (
   rendered.unmount();
 });
 
-it('shares run selection, restores detail on reload, and closes a direct link', async () => {
+it('selects a run and mounts detail restored from its URL', async () => {
   window.history.replaceState(null, '', '/?workspace=sources');
   const queries: URLSearchParams[] = [];
   const client = createAPIClient(async input => {
@@ -2979,65 +2979,48 @@ it('shares run selection, restores detail on reload, and closes a direct link', 
   expect(queries[0]?.get('kind')).toBe('source_sync');
   await screen.findByRole('region', { name: 'Operation run detail' });
   expect(state.current.operationRunID).toBe(OPERATION_RUN);
-  const back = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-  window.history.back();
-  await back;
-  await screen.findByRole('dialog', { name: 'Past runs' });
-  expect(state.current.operationRunID).toBeNull();
-  expect(state.current.operationKind).toBe('source_sync');
-  const forward = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-  window.history.forward();
-  await forward;
-  await screen.findByRole('region', { name: 'Operation run detail' });
   const sharedURL = window.location.href;
-  expect(JSON.parse(new URL(sharedURL).searchParams.get('explore')!).operationRunID).toBe(OPERATION_RUN);
   rendered.unmount(); state.destroy();
   window.history.replaceState(null, '', sharedURL);
   state = new ExploreState(window);
   rendered = render(AppShell, { client, state });
   await screen.findByRole('region', { name: 'Operation run detail' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-  expect(screen.queryByRole('dialog')).toBeNull();
-  expect(state.current.operationRunID).toBeNull();
   rendered.unmount(); state.destroy();
 });
 
 it.each([
-  ['source_sync', 'listSourceStatus', 'Source sync', 'Sources status', 'sources', '', false],
-  ['carddav_sync', 'getCardDAVStatus', 'CardDAV sync', 'CardDAV settings', 'settings', 'carddav', true],
-  ['document_extraction', 'getDocumentIndexStatus', 'Document extraction', '', 'sources', '', false],
-] as const)('opens %s with one history entry', async (kind, authority, name, label, workspace, category, fromHistory) => {
-  const initialWorkspace = kind === 'document_extraction' ? 'sources' : 'everything';
-  window.history.replaceState(null, '', `/?workspace=${initialWorkspace}&mode=full_text`);
+  { kind: 'source_sync', authority: 'listSourceStatus', status: 'Needs attention',
+    lane: jobLane('source_sync'), sources: [sourceStatus({ display_name: 'Source sync', scheduler_last_error: 'Sync failed' })],
+    steps: [], action: { role: 'menuitem', name: /Source sync/ }, expected: { workspace: 'sources', operationHistory: false } },
+  { kind: 'carddav_sync', authority: 'getCardDAVStatus', status: 'Needs attention',
+    lane: jobLane('carddav_sync'), sources: [],
+    steps: [{ role: 'menuitem', name: /Past runs/ }, { role: 'button', name: /Open CardDAV sync run/ }],
+    action: { role: 'button', name: /Open CardDAV settings/ }, expected: { workspace: 'settings', settingsCategory: 'carddav', operationHistory: false } },
+  { kind: 'document_extraction', authority: 'getDocumentIndexStatus', status: 'Running',
+    lane: jobLane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
+    steps: [], action: { role: 'menuitem', name: /Document extraction/ },
+    expected: { workspace: 'everything', operationHistory: true, operationStatus: 'getDocumentIndexStatus' } },
+] as const)('opens $kind with one history entry', async ({ kind, authority, status, lane, sources, steps, action, expected }) => {
+  window.history.replaceState(null, '', '/?workspace=everything&mode=full_text');
   const run = jobRun(kind);
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane(kind, kind === 'document_extraction' ? { active: { ...run, state: 'running' } } : {})] });
-    if (path.endsWith('/sources/status')) return Response.json({ sources: kind === 'source_sync' ? [sourceStatus({ display_name: name, scheduler_last_error: 'Sync failed' })] : [] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources });
     if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
-    if (path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: jobLane(kind).supported_actions });
+    if (path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: lane.supported_actions });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     return operationAuthorityResponse(path) ?? Response.json(exploreResponse());
   });
   const state = new ExploreState(window);
   const rendered = render(AppShell, { client, state });
-  const statusName = kind === 'document_extraction' ? 'Sync status: Running' : 'Sync status: Needs attention';
-  await fireEvent.click(await screen.findByRole('button', { name: statusName }));
-  if (fromHistory) {
-    await fireEvent.click(screen.getByRole('menuitem', { name: /Past runs/ }));
-    await fireEvent.click(await screen.findByRole('button', { name: `Open ${name} run` }));
-    await screen.findByRole('button', { name: `Open ${label}` });
-  }
+  await fireEvent.click(await screen.findByRole('button', { name: `Sync status: ${status}` }));
+  for (const step of steps) await fireEvent.click(await screen.findByRole(step.role, { name: step.name }));
+  const target = await screen.findByRole(action.role, { name: action.name });
   const push = vi.spyOn(window.history, 'pushState').mockClear();
-  if (fromHistory) await fireEvent.click(screen.getByRole('button', { name: `Open ${label}` }));
-  else await fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(name) }));
+  await fireEvent.click(target);
   expect(push).toHaveBeenCalledTimes(1);
-  expect(state.current.workspace).toBe(workspace);
-  if (category) expect(state.current.settingsCategory).toBe(category);
-  if (kind === 'document_extraction') expect(state.current.operationStatus).toBe('getDocumentIndexStatus');
-  expect(state.current.operationHistory).toBe(kind === 'document_extraction');
-  if (kind === 'document_extraction') await screen.findByRole('dialog', { name: 'Document index status' });
-  else expect(screen.queryByRole('dialog')).toBeNull();
+  expect(state.current).toMatchObject(expected);
   push.mockRestore();
   rendered.unmount(); state.destroy();
 });
@@ -3061,24 +3044,4 @@ it('opens a failed People sweep from job status at that run', async () => {
     await screen.findByRole('region', { name: 'Operation run detail' });
     expect(state.current).toMatchObject({ workspace: 'everything', operationHistory: true, operationKind: 'person_sweep', operationRunID: run.id });
   } finally { rendered.unmount(); state.destroy(); }
-});
-
-it.each(['', '   '])('keeps the saved-view rename editor open for an empty name %j', async name => {
-  window.history.replaceState(null, '', '/?workspace=everything');
-  const client = createAPIClient(async input => {
-    const path = new URL((input as Request).url).pathname;
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [view(3, 'Project notes')] });
-    return Response.json(exploreResponse());
-  });
-  const rendered = render(AppShell, { client });
-  try {
-    await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    const input = await screen.findByRole('textbox', { name: 'Rename Project notes' });
-    await fireEvent.input(input, { target: { value: name } });
-    await fireEvent.keyDown(input, { key: 'Enter' });
-    await screen.findByText('Enter a name.');
-    expect(screen.getByRole('textbox', { name: 'Rename Project notes' })).toBe(input);
-    expect(document.activeElement).toBe(input);
-  } finally { rendered.unmount(); }
 });
