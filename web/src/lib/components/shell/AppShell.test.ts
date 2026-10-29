@@ -3426,11 +3426,14 @@ describe('AppShell', () => {
     const settings = createRawSnippet(() => ({ render: () => '<main aria-label="Settings fixture"></main>' }));
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client, state, enabled: false, settings });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Settings overview' }));
-    expect(await screen.findByRole('main', { name: 'Settings fixture' })).toBeDefined();
-    expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'overview' });
-    rendered.unmount();
-    state.destroy();
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Settings overview' }));
+      expect(await screen.findByRole('main', { name: 'Settings fixture' })).toBeDefined();
+      expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'overview' });
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
   });
 });
 

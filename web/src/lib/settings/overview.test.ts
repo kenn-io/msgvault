@@ -11,6 +11,11 @@ function row(rows: ReturnType<typeof overviewRows>, id: string) {
 }
 
 describe('overviewRows', () => {
+  it('shows incomplete message coverage', () => {
+    const rows = overviewRows(lanes(lane('message_embedding')), undefined, undefined, { status: 'incomplete', actions: ['build_index'] });
+    expect(row(rows, 'message_embedding').chip).toEqual({ tone: 'warning', text: 'Incomplete' });
+  });
+
   it('lists every background feature, off ones with a way to turn them on', () => {
     const rows = overviewRows(lanes(lane('message_embedding', { configured: false })), undefined, undefined);
 
@@ -30,14 +35,14 @@ describe('overviewRows', () => {
   });
 
   it.each([
-    { status: 'initializing' as const, available: true, built: false, chip: 'Initializing' },
-    { status: 'initializing' as const, available: false, built: false, chip: 'Initializing' },
-    { status: 'unavailable' as const, available: false, built: false, chip: 'Unavailable' },
-    { status: 'unavailable' as const, available: true, built: false, chip: 'Unbuilt' },
-    { status: 'ready' as const, available: false, built: true, chip: 'On' },
-    { status: 'stale' as const, available: true, built: true, chip: 'Stale' },
-  ])('gates the message build and chip on server coverage ($status)', ({ status, available, built, chip }) => {
-    const rows = overviewRows(lanes(lane('message_embedding')), { ...embeddingStatus, active_generation: built ? activeGeneration : null }, undefined, { status, actions: available ? ['build_index'] : [] });
+    { status: 'initializing' as const, available: true, chip: 'Initializing' },
+    { status: 'initializing' as const, available: false, chip: 'Initializing' },
+    { status: 'unavailable' as const, available: false, chip: 'Unavailable' },
+    { status: 'unavailable' as const, available: true, chip: 'Unbuilt' },
+    { status: 'ready' as const, available: false, chip: 'On' },
+    { status: 'stale' as const, available: true, chip: 'Stale' },
+  ])('gates the message build and chip on server coverage ($status)', ({ status, available, chip }) => {
+    const rows = overviewRows(lanes(lane('message_embedding')), undefined, undefined, { status, actions: available ? ['build_index'] : [] });
     expect(row(rows, 'message_embedding').action).toEqual(available ? { kind: 'start', id: 'messages', label: 'Build index' } : undefined);
     expect(row(rows, 'message_embedding').chip.text).toBe(chip);
   });
