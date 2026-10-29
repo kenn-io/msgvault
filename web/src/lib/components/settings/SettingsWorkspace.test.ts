@@ -769,3 +769,32 @@ it('refreshes the shared credential revision after an inference key succeeds bef
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/provider-credentials/vector.embeddings'))).toBe(true));
   expect(seen.find(request => request.path.endsWith('/provider-credentials/vector.embeddings'))?.ifMatch).toBe('"credential-b"');
 });
+
+it.each(['disable', 'clear schedule'])('retains a named account %s when its connection summary arrives after a category round trip', async change => {
+  let reads = 0;
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
+  const connections = { connections: [{ connection: 'work', status: account }] };
+  const { client, seen } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/carddav/connections')) return ++reads === 2 ? pending : Response.json(connections);
+    if (path.endsWith('/carddav/status')) return Response.json(account);
+    if (path.endsWith('/carddav/account')) return Response.json({ ...account.account, enabled: change !== 'disable', schedule: change === 'clear schedule' ? '' : account.schedule, books: 1 });
+  });
+  render(SettingsWorkspace, { client, category: 'carddav' });
+  await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
+  await screen.findByDisplayValue('work@example.com');
+  if (change === 'disable') await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
+  else await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Off');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  await waitFor(() => expect(reads).toBe(2));
+  await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'work');
+  finish(Response.json(connections));
+  await screen.findByText('Leave blank to keep the stored password.');
+  await waitFor(() => expect(screen.getByRole('switch', { name: 'Enabled' })).toHaveProperty('checked', change !== 'disable'));
+  if (change === 'clear schedule') expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Off');
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toMatchObject({ connection: 'work', enabled: change !== 'disable', schedule: change === 'clear schedule' ? '' : account.schedule }));
+});
