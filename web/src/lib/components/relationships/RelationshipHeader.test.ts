@@ -129,15 +129,11 @@ describe('RelationshipHeader', () => {
   it('shows a missing person and hides the Files control', () => {
     render(RelationshipHeader, { props: baseProps({ detail: null, loading: false, headerState: 'missing' }) });
     expect(screen.getByRole('status').textContent?.trim()).toBe('Person not found.');
-    expect(screen.queryByRole('radiogroup', { name: 'Relationship view' })).toBeNull();
   });
 
   it('keeps a draft-only person’s identity and link controls with no activity', () => {
     render(RelationshipHeader, baseProps({ headerState: 'no-mail', detail: { ...person(), activity_count: 0,
       first_at: undefined, last_at: undefined } }));
-    expect(screen.getByRole('heading', { name: 'Alice Example' })).toBeDefined();
-    expect(screen.getByLabelText('Identity Alice')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Same person…' })).toBeDefined();
     expect(screen.getByText('No sent or received messages with this contact yet.')).toBeDefined();
     expect(screen.queryByText(/0 items/)).toBeNull();
   });

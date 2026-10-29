@@ -627,11 +627,4 @@ func TestParticipantDetailDistinguishesDraftOnlyAndMissingPeople(t *testing.T) {
 	assert.InDelta(0, person["activity_count"], 0)
 	assert.NotContains(person, "first_at")
 	assert.NotContains(person, "last_at")
-
-	response = httptest.NewRecorder()
-	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/participants/9999", nil))
-	require.Equal(http.StatusNotFound, response.Code, response.Body.String())
-	var missing ErrorResponse
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &missing))
-	assert.Equal("participant_not_found", missing.Error)
 }

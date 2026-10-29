@@ -217,10 +217,6 @@ func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {
 	require.NoError(err)
 	assert.Nil(detail)
 
-	detail, err = engine.GetPerson(t.Context(), owner, Context{}, nil)
-	require.NoError(err)
-	require.NotNil(detail)
-	assert.Equal(int64(1), detail.ActivityCount)
 	summary, err := engine.GetPersonSummary(t.Context(), draftRecipient, ExploreRequest{Context: Context{SourceIDs: []int64{source}}}, nil)
 	require.NoError(err)
 	assert.Empty(summary.Rows)

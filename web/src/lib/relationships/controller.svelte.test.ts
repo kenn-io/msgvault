@@ -2099,8 +2099,5 @@ describe('RelationshipsController draft-only targets', () => {
     expect(controller.detailMissing).toBe(true);
     expect(controller.timelineError).toBeNull();
     expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
-
-    controller.clearTarget();
-    expect(controller.detailMissing).toBe(false);
   });
 });

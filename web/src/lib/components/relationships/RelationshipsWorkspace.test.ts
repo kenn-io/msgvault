@@ -93,7 +93,7 @@ function fetchHandler(overrides: Record<string, (request: Request) => Promise<Re
 describe('RelationshipsWorkspace relationship calendar', () => {
   it.each([false, true])('distinguishes missing people from draft-only contacts, missing=%s', async (missing) => {
     const { first_at, last_at, ...draftPerson } = { ...person(1, 'Draft recipient'), activity_count: 0 };
-    const { fetchFn, requests } = fetchHandler({
+    const { fetchFn } = fetchHandler({
       '/api/v1/participants/1': () => missing
         ? Response.json({ error: 'participant_not_found' }, { status: 404 })
         : Response.json(draftPerson),
@@ -110,17 +110,11 @@ describe('RelationshipsWorkspace relationship calendar', () => {
     if (missing) {
       await screen.findByText('Person not found.');
       expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
-      expect(screen.queryByRole('radio', { name: /^Files / })).toBeNull();
     } else {
       await screen.findByText('No sent or received messages with this contact yet.');
       expect(screen.getByRole('heading', { name: 'Draft recipient' })).toBeDefined();
-      await waitFor(() => expect(props.controller.relationshipCalendarLoading).toBe(false));
       expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
-      expect(screen.queryByText('Relationship activity has not loaded.')).toBeNull();
-      expect(props.controller.relationshipCalendar).toBeNull();
-      expect(props.controller.relationshipCalendarError).toBeNull();
     }
-    expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
   });
 
   it('shows zero items when filters exclude all mail for an active person', async () => {

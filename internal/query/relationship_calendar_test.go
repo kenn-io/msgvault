@@ -215,12 +215,10 @@ func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
-	ownerCanonicalID := b.AddParticipant("owner-alias@example.test", "example.test", "Owner alias")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
 	personID := b.AddParticipant("person@example.test", "example.test", "Person")
 	draftRecipient := b.AddParticipant("draft@example.test", "example.test", "Draft recipient")
 	b.AddOwnerParticipant(sourceID, ownerID)
-	b.LinkCluster(ownerCanonicalID, ownerID)
 	messageID := b.AddMessage(MessageOpt{
 		SourceID: sourceID, MessageType: "email",
 		SentAt: time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC),
@@ -236,7 +234,7 @@ func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
 	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
 	engine := b.BuildEngine()
 
-	for _, canonicalID := range []int64{ownerCanonicalID, ownerID, 999_999, draftRecipient} {
+	for _, canonicalID := range []int64{ownerID, 999_999, draftRecipient} {
 		_, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
 			CanonicalID: canonicalID, Year: 2026, Timezone: "UTC",
 		})

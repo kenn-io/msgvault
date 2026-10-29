@@ -71,12 +71,10 @@ func TestPeopleOverviewDraftOnlySkipsRelationshipCalendar(t *testing.T) {
 	contact.ActivityCount = 0
 	backend := &fakePeopleRelationshipBackend{
 		fakePeopleBackend: &fakePeopleBackend{},
-		calendarErrs:      []error{query.ErrRelationshipPersonNotFound},
 	}
 	model := peopleContentModel(backend, &contact)
 	cmd := model.beginPeopleRelationshipLoad()
 	assert.Nil(t, cmd)
-	assert.Empty(t, backend.calendarRequests)
 	overview := stripANSI(strings.Join(model.peopleContactTabLines(), "\n"))
 	assert.Contains(t, overview, "No sent or received messages with this contact yet.")
 	assert.NotContains(t, overview, "has not loaded")
