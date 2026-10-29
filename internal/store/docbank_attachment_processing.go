@@ -48,7 +48,7 @@ type DocbankAttachmentProcessingCursor struct {
 }
 
 func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, cursor *DocbankAttachmentProcessingCursor, n int) ([]DocbankAttachmentProcessing, error) {
-	visible, _ := s.documentSearchVisible(nil)
+	visible, visibleArgs := s.documentSearchVisible(nil)
 	processable := documentSearchDelivered + " AND " + visible
 	var result []DocbankAttachmentProcessing
 	for _, unasked := range []bool{false, true} {
@@ -63,7 +63,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  WHERE d.destination_key = ? AND ` + processable + ` AND d.content_hash > ?
  AND (p.destination_key IS NULL OR p.fingerprint <> ?)
  ORDER BY d.content_hash LIMIT ?`
-		args := []any{dest, cursor.afterHash, fingerprint, n - len(result)}
+		args := []any{dest}
 		if !unasked {
 			query = `SELECT d.content_hash, d.node_id, d.version_id, p.fingerprint, p.outcome, p.job_id,
  p.generation, p.retry
@@ -72,7 +72,12 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  WHERE p.destination_key = ? AND p.fingerprint = ? AND p.next_action_at <= ?
  AND ` + processable + `
  ORDER BY p.next_action_at, p.content_hash LIMIT ?`
-			args = []any{dest, fingerprint, s.timestampValue(time.Now().UTC()), n - len(result)}
+			args = append(args, fingerprint, s.timestampValue(time.Now().UTC()))
+			args = append(args, visibleArgs...)
+			args = append(args, n-len(result))
+		} else {
+			args = append(args, visibleArgs...)
+			args = append(args, cursor.afterHash, fingerprint, n-len(result))
 		}
 		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 		if err != nil {
@@ -119,15 +124,17 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 }
 
 func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, profile string) (DocbankAttachmentProcessingSummary, error) {
-	visible, _ := s.documentSearchVisible(nil)
+	visible, visibleArgs := s.documentSearchVisible(nil)
 	processable := documentSearchDelivered + " AND " + visible
 	result := DocbankAttachmentProcessingSummary{Outcomes: map[string]int64{}}
+	args := []any{"docbank-processing:" + dest + ":" + profile, dest}
+	args = append(args, visibleArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT COALESCE(p.outcome, ''), COUNT(*)
  FROM docbank_attachment_deliveries d LEFT JOIN docbank_attachment_processing p
  ON p.destination_key = d.destination_key AND p.content_hash = d.content_hash
  AND p.fingerprint = (SELECT value FROM archive_metadata WHERE key = ?)
  WHERE d.destination_key = ? AND `+processable+` GROUP BY COALESCE(p.outcome, '')`),
-		"docbank-processing:"+dest+":"+profile, dest)
+		args...)
 	if err != nil {
 		return result, err
 	}
