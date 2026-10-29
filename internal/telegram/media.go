@@ -31,16 +31,47 @@ type attachmentCandidate struct {
 	MediaType string
 }
 
+// mediaWarningMarkers are the parenthesized fragments Telegram Desktop
+// writes in place of a media path when the export's size threshold or
+// media-type filters kept the bytes out: "(Photo unavailable, please try
+// again later)", "(File exceeds maximum size. Change data exporting
+// settings to download.)", and their siblings, each optionally prefixed
+// by the file's own name. The official export schema notes media paths
+// may be replaced by such warnings, so a value carrying one is warning
+// text, not a path.
+var mediaWarningMarkers = []string{
+	"(File unavailable",
+	"(File exceeds maximum size",
+	"(File not included",
+	"(Photo unavailable",
+	"(Photo exceeds maximum size",
+	"(Photo not included",
+}
+
+// isMediaPath reports whether a photo, file, or thumbnail value is an
+// export-relative media path rather than Telegram's unavailability
+// warning text.
+func isMediaPath(value string) bool {
+	for _, marker := range mediaWarningMarkers {
+		if strings.Contains(value, marker) {
+			return false
+		}
+	}
+	return true
+}
+
 // attachmentCandidates lists a message's media in export order: photo,
-// file, then thumbnail.
+// file, then thumbnail. A value Telegram replaced with unavailability
+// warning text is not a path and yields no candidate, so it creates no
+// attachment row and leaves the message's attachment flags unset.
 func attachmentCandidates(m *Message) []attachmentCandidate {
 	var out []attachmentCandidate
-	if m.Photo != "" {
+	if m.Photo != "" && isMediaPath(m.Photo) {
 		out = append(out, attachmentCandidate{
 			RelPath: m.Photo, Filename: filepath.Base(m.Photo), MediaType: mediaTypeOr(m, "photo"),
 		})
 	}
-	if m.File != "" {
+	if m.File != "" && isMediaPath(m.File) {
 		// The export's file_name and mime_type are authoritative document
 		// metadata; the storage basename and title are fallbacks.
 		filename := m.FileName
@@ -54,7 +85,7 @@ func attachmentCandidates(m *Message) []attachmentCandidate {
 			RelPath: m.File, Filename: filename, MIMEType: m.MimeType, MediaType: mediaTypeOr(m, ""),
 		})
 	}
-	if m.Thumbnail != "" {
+	if m.Thumbnail != "" && isMediaPath(m.Thumbnail) {
 		out = append(out, attachmentCandidate{
 			RelPath: m.Thumbnail, Filename: filepath.Base(m.Thumbnail), MediaType: "thumbnail",
 		})

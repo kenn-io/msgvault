@@ -94,14 +94,17 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
-	Message                   *Message
-	Conversation              *ConversationPersistData
-	Delivery                  *MessageDeliveryEvidence
-	Metadata                  *sql.NullString
-	BodyText                  sql.NullString
-	BodyHTML                  sql.NullString
-	RawMIME                   []byte
-	RawFormat                 string
+	Message      *Message
+	Conversation *ConversationPersistData
+	Delivery     *MessageDeliveryEvidence
+	Metadata     *sql.NullString
+	BodyText     sql.NullString
+	BodyHTML     sql.NullString
+	RawMIME      []byte
+	RawFormat    string
+	// Edited, when Valid, persists the source's edit marker in the same
+	// transaction as the message row; the plain upsert never writes it.
+	Edited                    sql.NullBool
 	Recipients                []RecipientSet
 	LabelIDs                  []int64
 	LabelRefs                 []MessageLabelRef
@@ -2407,6 +2410,12 @@ func (s *Store) persistMessageWith(
 			return 0, fmt.Errorf("set metadata: %w", err)
 		}
 	}
+	if data.Edited.Valid {
+		if _, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`,
+			data.Edited.Bool, messageID); err != nil {
+			return 0, fmt.Errorf("set edited state: %w", err)
+		}
+	}
 
 	if err := upsertMessageBody(
 		q, s.dialect, s.fts5Available, messageID, data.BodyText, data.BodyHTML,
@@ -3389,6 +3398,27 @@ func (s *Store) SetReplyToContext(ctx context.Context, sourceID int64, childSour
 			UPDATE messages SET reply_to_message_id =
 			  (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)
 			WHERE source_id = ? AND source_message_id = ?`,
+			sourceID, parentSourceMessageID, sourceID, childSourceMessageID)
+		return err
+	})
+}
+
+// SetReplyToIfMissing links a reply to its parent like SetReplyTo, but
+// only where the child's link is still NULL, so an append-only re-import
+// never rewrites a link an earlier import already wrote.
+func (s *Store) SetReplyToIfMissing(sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
+	return s.SetReplyToIfMissingContext(context.Background(), sourceID, childSourceMessageID, parentSourceMessageID)
+}
+
+// SetReplyToIfMissingContext honors cancellation during
+// SetReplyToIfMissing.
+func (s *Store) SetReplyToIfMissingContext(ctx context.Context, sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
+	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		_, err := q.Exec(`
+			UPDATE messages SET reply_to_message_id =
+			  (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)
+			WHERE source_id = ? AND source_message_id = ?
+			  AND reply_to_message_id IS NULL`,
 			sourceID, parentSourceMessageID, sourceID, childSourceMessageID)
 		return err
 	})

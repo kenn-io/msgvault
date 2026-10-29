@@ -38,8 +38,10 @@ type ExportReader struct {
 	dec         *jsontext.Decoder
 	owner       ownerInfo
 	fingerprint string
-	// single marks a root that is one chat object rather than a full export
-	// with chats/left_chats containers.
+	// single marks a root whose result.json is one chat object rather
+	// than a full export. It is detected by the presence of chat fields
+	// (id, name, messages), because a full export's chats/left_chats
+	// containers are optional and may both be absent.
 	single     bool
 	singleRead bool
 	// inList marks a decoder positioned inside a chats/left_chats list
@@ -81,15 +83,15 @@ func (r *ExportReader) OwnerName() string { return r.owner.Name }
 // Fingerprint is the hex SHA-256 of result.json's bytes.
 func (r *ExportReader) Fingerprint() string { return r.fingerprint }
 
-// scanIdentity runs the first pass: the owner's identity, whether the root is
-// a full export, and the fingerprint of every byte in the file.
+// scanIdentity runs the first pass: the owner's identity, whether the root
+// is a single-chat export, and the fingerprint of every byte in the file.
 func (r *ExportReader) scanIdentity() error {
 	if _, err := r.file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("telegram: rewind export: %w", err)
 	}
 	hash := sha256.New()
 	tee := io.TeeReader(r.file, hash)
-	owner, hasChatLists, err := scanOwner(jsontext.NewDecoder(tee))
+	owner, singleChat, err := scanOwner(jsontext.NewDecoder(tee))
 	if err != nil {
 		return err
 	}
@@ -99,7 +101,7 @@ func (r *ExportReader) scanIdentity() error {
 		return fmt.Errorf("telegram: read export tail: %w", err)
 	}
 	r.owner = owner
-	r.single = !hasChatLists
+	r.single = singleChat
 	r.fingerprint = hex.EncodeToString(hash.Sum(nil))
 	return nil
 }
@@ -220,9 +222,11 @@ type ownerInfo struct {
 }
 
 // scanOwner streams the top-level object once, reading
-// personal_information.user_id and reporting whether the root carries a
-// chats/left_chats container (a full export) or is a single chat object.
-func scanOwner(dec *jsontext.Decoder) (owner ownerInfo, hasChatLists bool, err error) {
+// personal_information.user_id and reporting whether the root is a single
+// chat object. Chat shape, not the optional chats/left_chats containers,
+// decides that: a full export without them carries zero chats, while a
+// single-chat root always carries chat fields (id, name, messages).
+func scanOwner(dec *jsontext.Decoder) (owner ownerInfo, singleChat bool, err error) {
 	if err := expectObjectOpen(dec, "export"); err != nil {
 		return owner, false, err
 	}
@@ -242,8 +246,8 @@ func scanOwner(dec *jsontext.Decoder) (owner ownerInfo, hasChatLists bool, err e
 				return owner, false, fmt.Errorf("telegram: parse personal_information: %w", err)
 			}
 			owner = ownerInfo{ID: info.UserID, Name: strings.TrimSpace(info.FirstName + " " + info.LastName)}
-		case "chats", "left_chats":
-			hasChatLists = true
+		case "id", "name", "messages":
+			singleChat = true
 			if err := dec.SkipValue(); err != nil {
 				return owner, false, fmt.Errorf("telegram: skip %s: %w", keyToken.String(), err)
 			}
@@ -256,7 +260,7 @@ func scanOwner(dec *jsontext.Decoder) (owner ownerInfo, hasChatLists bool, err e
 	if _, err := dec.ReadToken(); err != nil { // consume '}'
 		return owner, false, fmt.Errorf("telegram: close export object: %w", err)
 	}
-	return owner, hasChatLists, nil
+	return owner, singleChat, nil
 }
 
 // expectObjectOpen reads and validates the opening object token.

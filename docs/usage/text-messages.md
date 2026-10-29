@@ -365,9 +365,13 @@ therefore do not propagate to already-imported messages. An interrupted run
 resumes over the same export bytes, chat by chat; `--no-resume` starts
 fresh.
 
-A write an interruption left unfinished — a body, recipients, an edit
-marker, a search entry, or a reply link — is completed on the next run from
-the export's current bytes; values already stored are never overwritten.
+Each message is stored atomically — the message row, body, recipients, edit
+marker, and search entry commit in one transaction — so an interruption can
+only lose whole messages, never leave one half-written. Attachments and
+reply links are written right after that commit inside their chat; when one
+of those writes fails, the run stops without marking the chat complete and
+the next run reprocesses that whole chat, filling only links still empty.
+Values already stored are never overwritten.
 
 ### Flags
 

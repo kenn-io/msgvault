@@ -41,7 +41,7 @@ func TestParseFullExport(t *testing.T) {
 	require.Len(chats, 4, "chats plus left chats")
 
 	direct := chats[0]
-	assert.EqualValues(7000000000000987654, direct.ID)
+	assert.EqualValues(7000000000000555555, direct.ID)
 	assert.Equal("personal_chat", direct.Type)
 	assert.Equal("direct_chat", direct.ConvType())
 

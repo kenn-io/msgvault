@@ -20,7 +20,7 @@ import (
 
 // Chat ids of the full fixture, in export order.
 const (
-	fixturePersonalChatID = 7000000000000987654
+	fixturePersonalChatID = 7000000000000555555
 	fixtureGroupChatID    = -1009999999999
 	fixtureChannelChatID  = -1001111111111
 	fixtureBotChatID      = 7000000000000444444
@@ -94,7 +94,7 @@ func TestImportFullExport(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`
 		SELECT b.body_text FROM message_bodies b
 		JOIN messages m ON m.id = b.message_id
-		WHERE m.source_message_id = '7000000000000987654:102'`,
+		WHERE m.source_message_id = '7000000000000555555:102'`,
 	).Scan(&body))
 	assert.Equal("see https://example.org/docs and @alice", body, "flattened entity text")
 
@@ -112,7 +112,7 @@ func TestImportFullExport(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`
 		SELECT COUNT(*) FROM attachments a
 		JOIN messages m ON m.id = a.message_id
-		WHERE m.source_message_id IN ('7000000000000987654:103', '-1009999999999:201')
+		WHERE m.source_message_id IN ('7000000000000555555:103', '-1009999999999:201')
 		  AND a.storage_path <> ''`,
 	).Scan(&stored))
 	assert.Equal(2, stored, "photo and voice stored")
@@ -127,6 +127,38 @@ func TestImportFullExport(t *testing.T) {
 		  AND COALESCE(a.storage_path, '') = ''`,
 	).Scan(&missing))
 	assert.Equal(2, missing, "traversal and absolute paths recorded as missing")
+}
+
+// TestImportFullExportWithoutOptionalChats pins root detection on the
+// documented shape: chats and left_chats are optional containers, so a
+// full export without them imports zero chats instead of being misread as
+// one chat object.
+func TestImportFullExportWithoutOptionalChats(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	root := t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(root, "result.json"), []byte(`{
+		"about": "Here is all your data",
+		"personal_information": {
+			"user_id": 7000000000000123456,
+			"first_name": "Test",
+			"last_name": "Owner"
+		}
+	}`), 0o644))
+
+	summary, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	require.NoError(err)
+	assert.Zero(summary.ChatsProcessed)
+	assert.Zero(summary.MessagesProcessed)
+
+	var count int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&count))
+	assert.Zero(count)
 }
 
 func TestImportSingleChatRequiresOwnerOverride(t *testing.T) {
@@ -189,7 +221,7 @@ func TestImportDifferentRootAddsOnlyNew(t *testing.T) {
 	// A newer export from a different directory adds one message.
 	second := t.TempDir()
 	copyFullFixture(t, second)
-	appendMessage(t, second, "7000000000000987654", 105, "fresh message from a newer export")
+	appendMessage(t, second, "7000000000000555555", 105, "fresh message from a newer export")
 
 	summary := importRoot(t, st, second)
 	assert.EqualValues(1, summary.MessagesAdded, "only the new message is added")
@@ -215,12 +247,12 @@ func TestImportOverlapNeverMutatesArchivedRows(t *testing.T) {
 	copyFullFixture(t, dir)
 	importRoot(t, st, dir)
 
-	storedPath, storedHash := attachmentRow(t, st, "7000000000000987654:103")
+	storedPath, storedHash := attachmentRow(t, st, "7000000000000555555:103")
 	require.NotEmpty(storedPath, "photo bytes stored on first import")
 
 	// A newer export drops the photo, rewrites the body, and turns the
 	// message into a reply to one that did not exist before.
-	setChatMessages(t, dir, "7000000000000987654", []map[string]any{
+	setChatMessages(t, dir, "7000000000000555555", []map[string]any{
 		{
 			"id": 103, "type": "message", "date_unixtime": "1610909950",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
@@ -233,17 +265,17 @@ func TestImportOverlapNeverMutatesArchivedRows(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`
 		SELECT b.body_text FROM message_bodies b
 		JOIN messages m ON m.id = b.message_id
-		WHERE m.source_message_id = '7000000000000987654:103'`).Scan(&body))
+		WHERE m.source_message_id = '7000000000000555555:103'`).Scan(&body))
 	assert.False(body.Valid, "an empty archived body stays empty")
 
-	path, hash := attachmentRow(t, st, "7000000000000987654:103")
+	path, hash := attachmentRow(t, st, "7000000000000555555:103")
 	assert.Equal(storedPath, path, "removed media keeps its stored row and bytes")
 	assert.Equal(storedHash, hash)
 
 	var replyTo *int64
 	require.NoError(st.DB().QueryRow(`
 		SELECT reply_to_message_id FROM messages
-		WHERE source_message_id = '7000000000000987654:103'`).Scan(&replyTo))
+		WHERE source_message_id = '7000000000000555555:103'`).Scan(&replyTo))
 	assert.Nil(replyTo, "an archived message keeps its reply links as first written")
 }
 
@@ -292,41 +324,69 @@ func TestImportDirectChatDerivesToRecipients(t *testing.T) {
 			sourceMessageID).Scan(&pid))
 		return pid
 	}
-	assert.Equal(ownerPID, toRecipient("7000000000000777001:1"), "peer's message is to the owner")
-	assert.Equal(alicePID, toRecipient("7000000000000777001:2"), "owner's message is to the peer")
+	assert.Equal(ownerPID, toRecipient("7000000000000555555:1"), "peer's message is to the owner")
+	assert.Equal(alicePID, toRecipient("7000000000000555555:2"), "owner's message is to the peer")
 }
 
-// TestImportGroupAndUndeterminedChatsHaveNoToRecipients pins the other
-// half: group and channel messages stay sender-only, and a personal chat
-// whose messages never reveal the peer carries no "to" recipients.
-func TestImportGroupAndUndeterminedChatsHaveNoToRecipients(t *testing.T) {
+// TestImportGroupChatsHaveNoToRecipients pins the other half: group and
+// channel messages stay sender-only, with no synthetic "to" recipients.
+func TestImportGroupChatsHaveNoToRecipients(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ownerOnly := map[string]any{
+	alice := map[string]any{
 		"id": 1, "type": "message", "date_unixtime": "1610909800",
-		"from": "Test Owner", "from_id": "user7000000000000123456", "text": "just me",
+		"from": "Alice Example", "from_id": "user7000000000000555555", "text": "from alice",
 	}
-	solo := writeChatExport(t, t.TempDir(), "personal_chat", "Notes",
-		[]map[string]any{ownerOnly})
-	importRoot(t, st, solo)
-
-	group := maps.Clone(ownerOnly)
-	group["id"] = 2
-	group["from"] = "Alice Example"
-	group["from_id"] = "user7000000000000555555"
-	groupRoot := writeChatExport(t, t.TempDir(), "private_group", "A Group",
-		[]map[string]any{ownerOnly, group})
-	importRoot(t, st, groupRoot)
+	owner := maps.Clone(alice)
+	owner["id"] = 2
+	owner["from"] = "Test Owner"
+	owner["from_id"] = "user7000000000000123456"
+	root := writeChatExport(t, t.TempDir(), "private_group", "A Group",
+		[]map[string]any{alice, owner})
+	importRoot(t, st, root)
 
 	var toCount int
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
-		WHERE m.source_message_id IN ('7000000000000777001:1', '7000000000000777001:2')
+		WHERE m.source_message_id IN ('7000000000000555555:1', '7000000000000555555:2')
 		  AND mr.recipient_type = 'to'`)).Scan(&toCount))
-	assert.Zero(toCount, "no synthetic to recipients without an observed peer")
+	assert.Zero(toCount, "group messages carry no to recipients")
+}
+
+// TestImportDirectChatOutgoingOnlyDerivesPeerRecipient pins the peer
+// derivation's stable source: in a personal or bot chat the export's chat
+// id is the peer's own user id, so an export whose messages are all the
+// owner's still records the peer as the "to" recipient.
+func TestImportDirectChatOutgoingOnlyDerivesPeerRecipient(t *testing.T) {
+	for _, chatType := range []string{"personal_chat", "bot_chat"} {
+		t.Run(chatType, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			assert := assert.New(t)
+			require := require.New(t)
+
+			root := writeChatExport(t, t.TempDir(), chatType, "Peer Name", []map[string]any{
+				{
+					"id": 1, "type": "message", "date_unixtime": "1610909800",
+					"from": "Test Owner", "from_id": "user7000000000000123456",
+					"text": "outgoing only",
+				},
+			})
+			importRoot(t, st, root)
+
+			peerPID, _, err := st.ParticipantByIdentifier("telegram", "7000000000000555555")
+			require.NoError(err)
+			var toPID int64
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT mr.participant_id FROM message_recipients mr
+				JOIN messages m ON m.id = mr.message_id
+				WHERE m.source_message_id = '7000000000000555555:1'
+				  AND mr.recipient_type = 'to'`)).Scan(&toPID))
+			assert.Equal(peerPID, toPID, "the chat id derives the peer without any peer message")
+		})
+	}
 }
 
 // TestImportBotChatToRecipient pins the bot_chat derivation on the full
@@ -385,8 +445,8 @@ func TestImportReplyLinksAcrossExports(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`
 		SELECT p.source_message_id FROM messages c
 		JOIN messages p ON p.id = c.reply_to_message_id
-		WHERE c.source_message_id = '7000000000000777001:2'`).Scan(&parentSrc))
-	assert.Equal("7000000000000777001:1", parentSrc, "reply links to the earlier-export parent")
+		WHERE c.source_message_id = '7000000000000555555:2'`).Scan(&parentSrc))
+	assert.Equal("7000000000000555555:1", parentSrc, "reply links to the earlier-export parent")
 }
 
 // TestImportReplyLinksForwardReference pins the post-chat reply pass: a
@@ -414,7 +474,7 @@ func TestImportReplyLinksForwardReference(t *testing.T) {
 	var linked bool
 	require.NoError(st.DB().QueryRow(`
 		SELECT reply_to_message_id IS NOT NULL FROM messages
-		WHERE source_message_id = '7000000000000777001:1'`).Scan(&linked))
+		WHERE source_message_id = '7000000000000555555:1'`).Scan(&linked))
 	assert.True(linked, "a forward reference links once the parent is imported")
 }
 
@@ -443,7 +503,7 @@ func TestImportEditedStateSetOnceOnFirstImport(t *testing.T) {
 		var flags []bool
 		rows, err := st.DB().Query(`
 			SELECT is_edited FROM messages
-			WHERE source_message_id IN ('7000000000000777001:1', '7000000000000777001:2')
+		WHERE source_message_id IN ('7000000000000555555:1', '7000000000000555555:2')
 			ORDER BY source_message_id`)
 		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()
@@ -458,7 +518,7 @@ func TestImportEditedStateSetOnceOnFirstImport(t *testing.T) {
 	assert.Equal([]bool{false, true}, flagged())
 
 	// A newer export removes the edit marker; the archived flag stays.
-	setChatMessages(t, root, "7000000000000777001", []map[string]any{plain, edited})
+	setChatMessages(t, root, "7000000000000555555", []map[string]any{plain, edited})
 	doc := loadFullExport(t, root)
 	require.Len(doc.Chats.List, 1)
 	delete(doc.Chats.List[0].Messages[1], "edited")
@@ -487,9 +547,53 @@ func TestImportPreservesDocumentMetadata(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`
 		SELECT a.filename, a.mime_type FROM attachments a
 		JOIN messages m ON m.id = a.message_id
-		WHERE m.source_message_id = '7000000000000777001:1'`).Scan(&filename, &mimeType))
+		WHERE m.source_message_id = '7000000000000555555:1'`).Scan(&filename, &mimeType))
 	assert.Equal("Quarterly Report.pdf", filename)
 	assert.Equal("application/pdf", mimeType)
+}
+
+// TestImportUnavailableMediaWarningCreatesNoAttachment pins the
+// source-warning rule: Telegram Desktop replaces a media path with
+// parenthesized warning text when export size limits or media-type
+// exclusions skipped the bytes, and that text must not become an
+// attachment row or set the message's attachment flags.
+func TestImportUnavailableMediaWarningCreatesNoAttachment(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Media Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"photo": "(Photo unavailable, please try again later)", "text": "",
+		},
+		{
+			"id": 2, "type": "message", "date_unixtime": "1610909810",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"file": "report.pdf (File not included. Change data exporting settings to download.)",
+			"text": "",
+		},
+		{
+			"id": 3, "type": "message", "date_unixtime": "1610909820",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"thumbnail": "(File exceeds maximum size. Change data exporting settings to download.)",
+			"text":      "",
+		},
+	})
+	importRoot(t, st, root)
+
+	var rows int
+	require.NoError(st.DB().QueryRow(`
+		SELECT COUNT(*) FROM attachments a
+		JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id LIKE '7000000000000555555:%'`).Scan(&rows))
+	assert.Zero(rows, "warning text never becomes an attachment row")
+	var flagged int
+	require.NoError(st.DB().QueryRow(`
+		SELECT COUNT(*) FROM messages
+		WHERE source_message_id LIKE '7000000000000555555:%'
+		  AND (has_attachments OR attachment_count > 0)`).Scan(&flagged))
+	assert.Zero(flagged, "warning text leaves attachment flags unset")
 }
 
 // TestImportSnippetTakesFirstLine pins the shared preview behavior: the
@@ -506,7 +610,7 @@ func TestImportSnippetTakesFirstLine(t *testing.T) {
 
 	var snippet sql.NullString
 	require.NoError(t, st.DB().QueryRow(`
-		SELECT snippet FROM messages WHERE source_message_id = '7000000000000777001:1'`).Scan(&snippet))
+		SELECT snippet FROM messages WHERE source_message_id = '7000000000000555555:1'`).Scan(&snippet))
 	assert.True(t, snippet.Valid, "a text body produces a snippet")
 	assert.Equal(t, "first preview line", snippet.String)
 }
@@ -663,185 +767,185 @@ func TestImportResumeReEnsuresTornMedia(t *testing.T) {
 	// is gone, and only its chat is incomplete.
 	_, deleteErr := st.DB().Exec(st.Rebind(`
 		DELETE FROM attachments WHERE message_id = (
-			SELECT id FROM messages WHERE source_message_id = '7000000000000987654:103')`))
+			SELECT id FROM messages WHERE source_message_id = '7000000000000555555:103')`))
 	require.NoError(deleteErr)
 	failSyncAt(t, st, dir, fixtureGroupChatID, fixtureChannelChatID, fixtureBotChatID)
 
 	importRoot(t, st, dir)
-	path, hash := attachmentRow(t, st, "7000000000000987654:103")
+	path, hash := attachmentRow(t, st, "7000000000000555555:103")
 	assert.NotEmpty(path, "torn media row is restored from the export file")
 	assert.NotEmpty(hash)
 }
 
-// messageIDFor returns the archive id of one imported source message.
-func messageIDFor(t *testing.T, st *store.Store, sourceMessageID string) int64 {
+// failAttachmentInserts installs a database trigger that fails every
+// attachment insert, so a run commits its messages atomically and then
+// fails a deferred attachment write. The returned func removes it.
+func failAttachmentInserts(t *testing.T, st *store.Store) func() {
 	t.Helper()
-	var id int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
-		`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&id))
-	return id
-}
-
-// deleteSearchDocument punches the search document out for one message the
-// way the two dialects store it: a messages_fts row on SQLite, the
-// search_fts column on PostgreSQL.
-func deleteSearchDocument(t *testing.T, st *store.Store, id int64) {
-	t.Helper()
+	create := `CREATE TRIGGER fail_attachment_inserts BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'injected attachment failure'); END`
+	drop := `DROP TRIGGER IF EXISTS fail_attachment_inserts`
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`UPDATE messages SET search_fts = NULL WHERE id = $1`, id)
+		create = `CREATE FUNCTION fail_attachment_inserts() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected attachment failure'; END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER fail_attachment_inserts BEFORE INSERT ON attachments FOR EACH ROW EXECUTE FUNCTION fail_attachment_inserts()`
+		drop = `DROP TRIGGER IF EXISTS fail_attachment_inserts ON attachments; DROP FUNCTION IF EXISTS fail_attachment_inserts()`
+	}
+	_, err := st.DB().Exec(create)
+	require.NoError(t, err)
+	return func() {
+		_, err := st.DB().Exec(drop)
 		require.NoError(t, err)
-		return
 	}
-	_, err := st.DB().Exec(`DELETE FROM messages_fts WHERE rowid = ?`, id)
-	require.NoError(t, err)
 }
 
-func searchDocumentPresent(t *testing.T, st *store.Store, id int64) bool {
+// failReplyLinks installs a database trigger that fails every non-NULL
+// reply_to_message_id write, so a run commits its messages atomically and
+// then fails the post-chat reply pass. The returned func removes it.
+func failReplyLinks(t *testing.T, st *store.Store) func() {
 	t.Helper()
-	var present bool
-	var err error
+	create := `CREATE TRIGGER fail_reply_links BEFORE UPDATE OF reply_to_message_id ON messages WHEN NEW.reply_to_message_id IS NOT NULL BEGIN SELECT RAISE(ABORT, 'injected reply failure'); END`
+	drop := `DROP TRIGGER IF EXISTS fail_reply_links`
 	if st.IsPostgreSQL() {
-		err = st.DB().QueryRow(
-			`SELECT search_fts IS NOT NULL FROM messages WHERE id = $1`, id).Scan(&present)
-	} else {
-		err = st.DB().QueryRow(
-			`SELECT EXISTS (SELECT 1 FROM messages_fts WHERE rowid = ?)`, id).Scan(&present)
+		create = `CREATE FUNCTION fail_reply_links() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected reply failure'; END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER fail_reply_links BEFORE UPDATE OF reply_to_message_id ON messages FOR EACH ROW WHEN (NEW.reply_to_message_id IS NOT NULL) EXECUTE FUNCTION fail_reply_links()`
+		drop = `DROP TRIGGER IF EXISTS fail_reply_links ON messages; DROP FUNCTION IF EXISTS fail_reply_links()`
 	}
+	_, err := st.DB().Exec(create)
 	require.NoError(t, err)
-	return present
-}
-
-// runDeferredWriteRepair imports one chat, removes a single write a
-// completed import always leaves behind — simulating an interruption after
-// UpsertMessage committed — and re-imports. The skipped-as-existing message
-// must converge: the absent write is refilled from the export and nothing
-// else changes. resume selects the checkpoint path (a failed sync whose
-// checkpoint names no completed chat) over the ordinary fresh re-scan.
-func runDeferredWriteRepair(t *testing.T, resume bool) {
-	t.Helper()
-	for _, tc := range []struct {
-		name  string
-		tear  func(t *testing.T, st *store.Store, id int64)
-		check func(t *testing.T, st *store.Store, id int64)
-	}{
-		{
-			name: "body",
-			tear: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				_, err := st.DB().Exec(st.Rebind(`DELETE FROM message_bodies WHERE message_id = ?`), id)
-				require.NoError(t, err)
-			},
-			check: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				var body sql.NullString
-				require.NoError(t, st.DB().QueryRow(st.Rebind(
-					`SELECT body_text FROM message_bodies WHERE message_id = ?`), id).Scan(&body))
-				assert.True(t, body.Valid, "the torn body row is rewritten")
-				assert.Equal(t, "a repaired body", body.String)
-			},
-		},
-		{
-			name: "recipients",
-			tear: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				_, err := st.DB().Exec(st.Rebind(`DELETE FROM message_recipients WHERE message_id = ?`), id)
-				require.NoError(t, err)
-			},
-			check: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				var from, to int
-				require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients
-					WHERE message_id = ? AND recipient_type = 'from'`), id).Scan(&from))
-				require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients
-					WHERE message_id = ? AND recipient_type = 'to'`), id).Scan(&to))
-				assert.Equal(t, 1, from, "the from recipient is rewritten")
-				assert.Equal(t, 1, to, "the direct chat's to recipient is rewritten")
-			},
-		},
-		{
-			name: "edited state",
-			tear: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET is_edited = FALSE WHERE id = ?`), id)
-				require.NoError(t, err)
-			},
-			check: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				var edited bool
-				require.NoError(t, st.DB().QueryRow(st.Rebind(
-					`SELECT is_edited FROM messages WHERE id = ?`), id).Scan(&edited))
-				assert.True(t, edited, "the lost edited flag is restored")
-			},
-		},
-		{
-			name: "search document",
-			tear: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				if !st.IsPostgreSQL() && !st.FTS5Available() {
-					t.Skip("no FTS5 module in this build")
-				}
-				deleteSearchDocument(t, st, id)
-			},
-			check: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				assert.True(t, searchDocumentPresent(t, st, id), "the search document is rebuilt")
-			},
-		},
-		{
-			name: "reply link",
-			tear: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET reply_to_message_id = NULL WHERE id = ?`), id)
-				require.NoError(t, err)
-			},
-			check: func(t *testing.T, st *store.Store, id int64) {
-				t.Helper()
-				var parentSrc string
-				require.NoError(t, st.DB().QueryRow(st.Rebind(`
-					SELECT p.source_message_id FROM messages c
-					JOIN messages p ON p.id = c.reply_to_message_id
-					WHERE c.id = ?`), id).Scan(&parentSrc))
-				assert.Equal(t, "7000000000000777001:1", parentSrc, "the reply link is restored")
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			root := writeChatExport(t, t.TempDir(), "personal_chat", "Repair Chat", []map[string]any{
-				{
-					"id": 1, "type": "message", "date_unixtime": "1610909800",
-					"from": "Alice Example", "from_id": "user7000000000000555555",
-					"text": "the parent",
-				},
-				{
-					"id": 2, "type": "message", "date_unixtime": "1610909900",
-					"from": "Alice Example", "from_id": "user7000000000000555555",
-					"text": "a repaired body", "reply_to_message_id": 1,
-					"edited": "2021-01-17T19:13:19:00", "edited_unixtime": "1610910799",
-				},
-			})
-			importRoot(t, st, root)
-			id := messageIDFor(t, st, "7000000000000777001:2")
-			tc.tear(t, st, id)
-			if resume {
-				failSyncAt(t, st, root)
-			}
-			importRoot(t, st, root)
-			tc.check(t, st, id)
-		})
+	return func() {
+		_, err := st.DB().Exec(drop)
+		require.NoError(t, err)
 	}
 }
 
-// TestImportRepairsDeferredWritesOnRetry pins convergence on an ordinary
-// re-scan: messages skipped as existing get their absent writes refilled.
-func TestImportRepairsDeferredWritesOnRetry(t *testing.T) {
-	runDeferredWriteRepair(t, false)
+// TestImportLimitThenRerunRestoresReplyLinks re-pins the round-4 reply
+// convergence regression at the boundary the atomic design has: a --limit
+// cut commits a reply whose parent is not yet archived, leaves the chat
+// incomplete, and the re-run's post-chat reply pass fills the skipped
+// message's NULL link.
+func TestImportLimitThenRerunRestoresReplyLinks(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	// The reply comes first, so the limited run archives the child alone.
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Reply Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"text": "a reply", "reply_to_message_id": 2,
+		},
+		{
+			"id": 2, "type": "message", "date_unixtime": "1610909810",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"text": "the parent",
+		},
+	})
+	limited, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(), Limit: 1,
+	})
+	require.NoError(err)
+	require.EqualValues(1, limited.MessagesAdded)
+
+	var linked bool
+	require.NoError(st.DB().QueryRow(`
+		SELECT reply_to_message_id IS NOT NULL FROM messages
+		WHERE source_message_id = '7000000000000555555:1'`).Scan(&linked))
+	assert.False(linked, "the limited run leaves the reply unlinked")
+
+	importRoot(t, st, root)
+	require.NoError(st.DB().QueryRow(`
+		SELECT reply_to_message_id IS NOT NULL FROM messages
+		WHERE source_message_id = '7000000000000555555:1'`).Scan(&linked))
+	assert.True(linked, "the re-run links the skipped reply to its parent")
 }
 
-// TestImportRepairsDeferredWritesOnResume pins the same convergence on a
-// checkpoint resume that reprocesses the interrupted chat.
-func TestImportRepairsDeferredWritesOnResume(t *testing.T) {
-	runDeferredWriteRepair(t, true)
+// TestImportRetriesChatAfterDeferredAttachmentFailure re-pins the torn-write
+// repair regressions at the boundary the atomic design has: a deferred
+// attachment write fails after the messages committed, the chat is never
+// marked complete, and the resumed run reprocesses it whole — committed
+// messages skip, their media is re-ensured, and the chat finishes.
+func TestImportRetriesChatAfterDeferredAttachmentFailure(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Media Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"photo": "photos/photo_1.jpg", "text": "",
+		},
+	})
+	require.NoError(os.MkdirAll(filepath.Join(root, "photos"), 0o755))
+	require.NoError(os.WriteFile(
+		filepath.Join(root, "photos", "photo_1.jpg"), []byte("photo-bytes"), 0o644))
+
+	remove := failAttachmentInserts(t, st)
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(err, "the deferred attachment failure fails the run")
+	assert.Contains(err.Error(), "store attachments")
+
+	var messages int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&messages))
+	assert.Equal(1, messages, "the message itself committed atomically")
+
+	remove()
+	failSyncAt(t, st, root) // the failed run left the chat incomplete
+	summary := importRoot(t, st, root)
+	assert.True(summary.WasResumed, "the failed run's checkpoint resumes")
+	assert.EqualValues(1, summary.MessagesSkipped, "the committed message is skipped")
+	path, hash := attachmentRow(t, st, "7000000000000555555:1")
+	assert.NotEmpty(path, "the retried chat stores the deferred attachment")
+	assert.NotEmpty(hash)
+}
+
+// TestImportRetriesChatAfterDeferredReplyFailure pins the same boundary for
+// the reply pass: a deferred reply-link write fails after the messages
+// committed, the chat stays incomplete, and the next run's reply pass fills
+// the still-NULL links.
+func TestImportRetriesChatAfterDeferredReplyFailure(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	root := writeChatExport(t, t.TempDir(), "personal_chat", "Reply Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"text": "a reply", "reply_to_message_id": 2,
+		},
+		{
+			"id": 2, "type": "message", "date_unixtime": "1610909810",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"text": "the parent",
+		},
+	})
+
+	remove := failReplyLinks(t, st)
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(err, "the deferred reply failure fails the run")
+	assert.Contains(err.Error(), "link reply")
+
+	var messages int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&messages))
+	assert.Equal(2, messages, "both messages committed atomically")
+
+	remove()
+	failSyncAt(t, st, root) // the failed run left the chat incomplete
+	importRoot(t, st, root)
+
+	var parentSrc string
+	require.NoError(st.DB().QueryRow(`
+		SELECT p.source_message_id FROM messages c
+		JOIN messages p ON p.id = c.reply_to_message_id
+		WHERE c.source_message_id = '7000000000000555555:1'`).Scan(&parentSrc))
+	assert.Equal("7000000000000555555:2", parentSrc, "the retried pass links the reply")
 }
 
 // TestImportErrorRefreshesCompletedChatStats pins derived state on the
@@ -872,7 +976,7 @@ func TestImportErrorRefreshesCompletedChatStats(t *testing.T) {
 	require.NoError(t, st.DB().QueryRow(`
 		SELECT message_count FROM conversations c
 		JOIN sources s ON s.id = c.source_id
-		WHERE s.source_type = 'telegram' AND c.source_conversation_id = '7000000000000777001'`).Scan(&count))
+		WHERE s.source_type = 'telegram' AND c.source_conversation_id = '7000000000000555555'`).Scan(&count))
 	assert.Equal(t, 1, count, "the committed chat's stats refresh on the error path")
 }
 
@@ -892,7 +996,7 @@ func TestImportCancellationRefreshesCompletedChatStats(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 3, limited.MessagesAdded)
 	_, err = st.DB().Exec(`
-		UPDATE conversations SET message_count = 0 WHERE source_conversation_id = '7000000000000987654'`)
+		UPDATE conversations SET message_count = 0 WHERE source_conversation_id = '7000000000000555555'`)
 	require.NoError(t, err)
 	failSyncAt(t, st, dir)
 
@@ -905,7 +1009,7 @@ func TestImportCancellationRefreshesCompletedChatStats(t *testing.T) {
 	require.NoError(t, st.DB().QueryRow(`
 		SELECT message_count FROM conversations c
 		JOIN sources s ON s.id = c.source_id
-		WHERE s.source_type = 'telegram' AND c.source_conversation_id = '7000000000000987654'`).Scan(&count))
+		WHERE s.source_type = 'telegram' AND c.source_conversation_id = '7000000000000555555'`).Scan(&count))
 	assert.Equal(t, 3, count, "the cancellation path still refreshes committed chats' stats")
 }
 
@@ -924,7 +1028,7 @@ func TestImportResumeChangedExportAtSameRoot(t *testing.T) {
 
 	// The export at the same path is replaced by a newer version that
 	// carries fresh content in a completed chat.
-	appendMessage(t, dir, "7000000000000987654", 105, "fresh content in a completed chat")
+	appendMessage(t, dir, "7000000000000555555", 105, "fresh content in a completed chat")
 
 	summary := importRoot(t, st, dir)
 	assert.False(summary.WasResumed, "a changed export is not a resume of the old bytes")
@@ -1003,11 +1107,11 @@ func TestImportMediaRoles(t *testing.T) {
 		require.NoError(rows.Err())
 		return out
 	}
-	stickerRoles := roleFor("7000000000000777001:1")
+	stickerRoles := roleFor("7000000000000555555:1")
 	assert.Len(stickerRoles, 1, "the sticker message has one attachment")
 	assert.NotEmpty(stickerRoles["sticker"], "sticker carries the sticker role with stored bytes")
 
-	photoRoles := roleFor("7000000000000777001:2")
+	photoRoles := roleFor("7000000000000555555:2")
 	assert.Len(photoRoles, 2, "photo and thumbnail rows")
 	assert.NotEmpty(photoRoles["thumbnail"], "thumbnail bytes stored")
 	assert.NotEmpty(photoRoles["standalone"], "photo stays standalone")
@@ -1033,7 +1137,7 @@ func TestImportSymlinkedMediaStaysContained(t *testing.T) {
 	require.NoError(os.Symlink(outside, filepath.Join(root, "photos", "escape.jpg")))
 	importRoot(t, st, root)
 
-	path, hash := attachmentRow(t, st, "7000000000000777001:1")
+	path, hash := attachmentRow(t, st, "7000000000000555555:1")
 	assert.Empty(path, "an escaping symlink stores nothing")
 	assert.Empty(hash)
 
@@ -1050,7 +1154,7 @@ func TestImportSymlinkedMediaStaysContained(t *testing.T) {
 	})
 	saveFullExport(t, root, doc)
 	importRoot(t, st, root)
-	path, hash = attachmentRow(t, st, "7000000000000777001:2")
+	path, hash = attachmentRow(t, st, "7000000000000555555:2")
 	assert.NotEmpty(path, "an inside symlink is followed")
 	assert.NotEmpty(hash)
 }
@@ -1145,7 +1249,7 @@ func writeChatExport(t *testing.T, dir, chatType, chatName string, messages []ma
 		PersonalInformation: jsontext.Value(`{"user_id":7000000000000123456,"first_name":"Test","last_name":"Owner"}`),
 	}
 	doc.Chats.List = []fullExportChat{{
-		ID: 7000000000000777001, Type: chatType, Name: chatName, Messages: messages,
+		ID: 7000000000000555555, Type: chatType, Name: chatName, Messages: messages,
 	}}
 	b, err := json.Marshal(doc)
 	require.NoError(t, err)
