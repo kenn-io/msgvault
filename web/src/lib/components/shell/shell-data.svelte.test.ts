@@ -125,11 +125,12 @@ it.each(['rename', 'delete'])('keeps a completed %s when an earlier list read fi
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   let reads = 0;
+  let deleted = false;
   const data = new ShellData(createAPIClient(async (input, init) => {
     const request = new Request(input, init);
     if (request.method === 'PATCH') return Response.json({ ...saved, name: 'Q3 budget', revision: 2 });
-    if (request.method === 'DELETE') return new Response(null, { status: 204 });
-    if (new URL(request.url).pathname === '/api/v1/saved-views') return ++reads === 1 ? pending : Response.json({ saved_views: [{ ...saved, name: 'Q3 budget', revision: 2 }] });
+    if (request.method === 'DELETE') { deleted = true; return new Response(null, { status: 204 }); }
+    if (new URL(request.url).pathname === '/api/v1/saved-views') return ++reads === 1 ? pending : Response.json({ saved_views: deleted ? [] : [{ ...saved, name: 'Q3 budget', revision: 2 }] });
     return Response.json({}, { status: 404 });
   }));
   data.views = [saved];
@@ -232,4 +233,40 @@ it('uses server name order after a failed delete', async () => {
   await data.deleteView(saved);
   await data.expireDelete();
   expect(data.views.map(view => view.name)).toEqual(['école', 'Équipe']);
+});
+
+it('shows a view saved while an earlier deletion commits', async () => {
+  const budget = view(1, 'Budget');
+  const invoices = view(2, 'Invoices');
+  let views = [budget];
+  let hold = false;
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const data = new ShellData(createAPIClient(async input => {
+    const request = input as Request;
+    if (request.method === 'DELETE') {
+      views = views.filter(saved => saved.id !== budget.id);
+      return new Response(null, { status: 204 });
+    }
+    const snapshot = Response.json({ saved_views: views });
+    if (hold) { hold = false; entered(); await gate; }
+    return snapshot;
+  }));
+  try {
+    await data.refresh();
+    await data.deleteView(budget);
+    views = [budget, invoices];
+    hold = true;
+    const reading = data.refresh();
+    await started;
+    await data.expireDelete();
+    release();
+    await reading;
+    expect(data.views.map(saved => saved.name)).toEqual(['Invoices']);
+  } finally {
+    release();
+    data.stop();
+  }
 });

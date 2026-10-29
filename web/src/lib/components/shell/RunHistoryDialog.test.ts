@@ -113,3 +113,29 @@ it('retries the selected run detail through Refresh', async () => {
   await screen.findByRole('region', { name: 'Operation run detail' });
   expect(screen.queryByText('Unable to load operation detail.')).toBeNull();
 });
+
+it('restores older archived runs after narrowing dates through All or Clear', async () => {
+  const oldRun = { ...fixture.runs.find(run => run.kind === 'source_sync')!, started_at: '2020-01-01T12:00:00Z', finished_at: '2020-01-01T12:01:00Z' };
+  const client = createAPIClient(async input => {
+    const url = new URL((input as Request).url);
+    if (url.pathname.endsWith('/status')) return Response.json({ lanes: [] });
+    const from = url.searchParams.get('started_from');
+    const before = url.searchParams.get('started_before');
+    const matches = (!from || oldRun.started_at >= from) && (!before || oldRun.started_at < before);
+    return Response.json({ runs: matches ? [oldRun] : [], membership_revision: 1, unavailable_kinds: [] });
+  });
+  const controller = new OperationsController(client); controllers.push(controller);
+  render(RunHistoryDialog, { client, controller, state: defaultOperationsState(), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+  await screen.findByRole('button', { name: 'Open Source sync run' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Custom range' }));
+  await fireEvent.click(screen.getByRole('radio', { name: 'Relative' }));
+  await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+  await screen.findByText('No runs match.');
+  await fireEvent.click(screen.getByRole('button', { name: 'All' }));
+  await screen.findByRole('button', { name: 'Open Source sync run' });
+  await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+  await screen.findByText('No runs match.');
+  await fireEvent.keyDown(document, { key: 'Escape' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Clear operation dates' }));
+  await screen.findByRole('button', { name: 'Open Source sync run' });
+});
