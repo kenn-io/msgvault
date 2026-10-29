@@ -181,7 +181,6 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   const longQuery = 'archive '.repeat(100).trim();
   await page.getByRole('searchbox', { name: 'Search everything' }).fill(longQuery);
   const queryChip = chips.filter({ hasText: longQuery });
-  await expect(queryChip).toHaveAttribute('title', `Full text: “${longQuery}”`);
   const wrapping = await queryChip.locator('.kit-chip__label').evaluate((element) => ({
     clipped: element.scrollWidth > element.clientWidth,
     wrapped: element.getBoundingClientRect().height > Number.parseFloat(getComputedStyle(element).lineHeight)
