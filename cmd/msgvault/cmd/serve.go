@@ -3178,6 +3178,18 @@ func (a *storeAPIAdapter) SetPersonTrackingContext(
 	return a.store.SetPersonTrackingContext(ctx, id, tracked)
 }
 
+func (a *storeAPIAdapter) PreviewPersonTiersContext(
+	ctx context.Context, options store.PersonTierOptions,
+) (*store.PersonTierPreview, error) {
+	return a.store.PreviewPersonTiersContext(ctx, options)
+}
+
+func (a *storeAPIAdapter) ExplainPersonTierContext(
+	ctx context.Context, personID int64, options store.PersonTierOptions,
+) (*store.PersonTierExplanation, error) {
+	return a.store.ExplainPersonTierContext(ctx, personID, options)
+}
+
 func (a *storeAPIAdapter) GetPersonBriefContext(
 	ctx context.Context, personID int64, version int,
 ) (*store.PersonBrief, error) {

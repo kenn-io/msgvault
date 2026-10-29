@@ -128,6 +128,7 @@ import type {
   EmploymentsResponse,
   EndEmploymentBody,
   EndEmploymentPathParameters,
+  ExplainPersonTierPathParameters,
   FastSearchParams,
   FileMetadataResponse,
   FilterMessagesParams,
@@ -375,6 +376,8 @@ import type {
   PersonSearchResponse,
   PersonSplitResult,
   PersonSummary,
+  PersonTierExplanation,
+  PersonTierPreview,
   PersonTracking,
   PreviewCardDAVPublicationPathParameters,
   ProviderCredentialResponse,
@@ -2877,6 +2880,17 @@ export const searchPeople = (
   );
 };
 /**
+ * @summary List saved people in tier 1 or 2
+ */
+export const previewPersonTiers = (
+  options?: SecondParameter<typeof orvalFetch<PersonTierPreview>>,
+) => {
+  return orvalFetch<PersonTierPreview>(
+    { url: `/api/v1/people/tiers`, method: "GET" },
+    options,
+  );
+};
+/**
  * Deletion is permanent: the person's participant bindings are removed and its vCard UID is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID.
  * @summary Delete a durable person profile
  */
@@ -3515,6 +3529,21 @@ export const splitPersonMerge = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: splitPersonRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Show every count behind one person's tier
+ */
+export const explainPersonTier = (
+  { id }: ExplainPersonTierPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonTierExplanation>>,
+) => {
+  return orvalFetch<PersonTierExplanation>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/tier`,
+      method: "GET",
     },
     options,
   );
