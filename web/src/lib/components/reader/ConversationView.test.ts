@@ -66,13 +66,15 @@ describe('ConversationView', () => {
     expect(url.searchParams.get('anchor')).toBe('2');
   });
 
-  it('labels an outgoing chat message with no sender identity as You', async () => {
+  it('keeps owner-authored chat messages plain as You', async () => {
+    const onOpenPerson = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
       id: 7,
       anchor_id: 2,
       messages: [message(2, 'whatsapp')].map((entry) => ({
         ...entry,
         from: '',
+        from_participant_id: 11,
         is_from_me: true
       })),
       has_before: false,
@@ -81,11 +83,12 @@ describe('ConversationView', () => {
     }));
 
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onOpenPerson }
     });
 
     const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
     expect(anchorCard.textContent).toContain('You');
+    expect(screen.queryByRole('button', { name: 'You' })).toBeNull();
     expect(anchorCard.textContent).not.toContain('Unknown sender');
   });
 

@@ -52,7 +52,7 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(st.UpsertMessageBody(messageID,
 		sql.NullString{String: "Portable body", Valid: true},
 		sql.NullString{String: "<p>Portable body</p>", Valid: true}))
-	require.NoError(st.ReplaceMessageRecipients(messageID, "from", []int64{toID}, []string{"Alice"}))
+	require.NoError(st.ReplaceMessageRecipients(messageID, "from", []int64{senderID}, []string{"Alice"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "to", []int64{toID, duplicateID, nameOnlyID}, []string{"Bob", "Bob", "Bob"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "cc", []int64{ccID}, []string{"Carol"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "bcc", []int64{bccID}, []string{"Dave"}))

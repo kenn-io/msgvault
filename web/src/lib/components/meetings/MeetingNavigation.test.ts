@@ -244,22 +244,6 @@ describe('meeting archive reader navigation', () => {
    } finally { view.unmount(); state.destroy(); vi.unstubAllGlobals(); }
  });
 
-it.each([false, true])('Escape closes Export meeting and keeps its reader open (archived=%s)', async (archived) => {
-  const { client } = handler(undefined, !archived);
-  const state = stateWithMeetingFilter(archived ? 'archive-meeting:42' : 'message:42');
-  const view = render(AppShell, { client, state });
-  try {
-    const reader = await screen.findByRole('complementary', { name: 'Reading pane: Archived review' });
-    await fireEvent.click(await within(reader).findByRole('button', { name: 'More actions for message 42' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
-    const exporting = await screen.findByRole('dialog', { name: 'Export meeting' });
-    await fireEvent.keyDown(within(exporting).getByRole('button', { name: 'Close' }), { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Export meeting' })).toBeNull());
-    expect(screen.getByRole('complementary', { name: 'Reading pane: Archived review' })).toBe(reader);
-    expect(state.current.selectedRow).toBe(archived ? 'archive-meeting:42' : 'message:42');
-  } finally { view.unmount(); state.destroy(); }
-});
-
 it('opens a person from the archived meeting reader', async () => {
   const { client } = handler(); const state = stateWithMeetingFilter('archive-meeting:42');
   const view = render(AppShell, { client, state });

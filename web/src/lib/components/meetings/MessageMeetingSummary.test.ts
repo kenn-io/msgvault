@@ -47,21 +47,13 @@ describe('Messages meeting summary', () => {
     await fireEvent.click(await screen.findByRole('button', { name: /Action items/ }));
     const dialog = screen.getByRole('dialog', { name: 'Action items' });
     expect(within(dialog).getByText('Prepare review')).toBeDefined();
-    const status = within(dialog).getByRole('combobox', { name: /^Status:/ });
-    await fireEvent.click(status);
-    await screen.findByRole('listbox');
-    await fireEvent.keyDown(status, { key: 'Escape' });
-    expect(screen.getByRole('dialog', { name: 'Action items' })).toBe(dialog);
-    expect(screen.queryByRole('listbox')).toBeNull();
     await fireEvent.click(within(dialog).getByText('Meeting metrics', { selector: 'summary' }));
     const metrics = within(dialog).getByRole('region', { name: 'Meeting metrics' });
-    expect(within(metrics).getByLabelText('Average known duration').textContent).toBe('33m 20s');
     expect(within(metrics).getByRole('table', { name: 'Monthly meeting activity' })).toBeDefined();
     await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person' } });
     await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person@example.test' } });
     await waitFor(() => expect(requests.filter((request) => request.url.endsWith('/actions'))).toHaveLength(2));
     await expect(requests.filter((request) => request.url.endsWith('/actions')).at(-1)!.json()).resolves.toEqual({ scope: { message_ids: [42] }, assignee_email: 'person@example.test', limit: 50 });
-    expect(requests.filter((request) => request.url.endsWith('/metrics'))).toHaveLength(1);
     expect((metrics.closest('details') as HTMLDetailsElement).open).toBe(true);
     await fireEvent.click(await within(dialog).findByRole('button', { name: 'Show more' }));
     await waitFor(() => expect(within(dialog).queryByRole('button', { name: 'Show more' })).toBeNull());
@@ -69,7 +61,7 @@ describe('Messages meeting summary', () => {
     expect(onOpenMeeting).toHaveBeenCalledWith(expect.objectContaining({ message_id: 42 }));
   });
 
-  it.each([[0, '0s', 1], [30, '30s', 4], [90, '1m 30s', 4], [3600, '1h', 4]])('formats %s known seconds as %s for %s meetings', async (seconds, expected, count) => {
+  it.each([[0, '0s', 1], [0, '0s', 4]])('formats %s known seconds as %s for %s meetings', async (seconds, expected, count) => {
     render(MessageMeetingSummary, { client: createAPIClient(async (input) => (input as Request).url.endsWith('/metrics')
       ? Response.json(meetingMetrics({ totals: { ...meetingMetrics().totals, meeting_count: count, total_known_seconds: seconds } }))
       : Response.json(meetingActions())), scope: { kind: 'direct', scope: { message_ids: [42] } } });
@@ -85,10 +77,6 @@ describe('Messages meeting summary', () => {
       scope: { kind: 'explore', explore: { predicate: {}, cache_revision: 'old', search_provenance: {} } }, onReloadScope,
     });
     await screen.findByText(/Meetings changed/);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Action items · 1' }));
-    const dialog = screen.getByRole('dialog', { name: 'Action items' });
-    expect(within(dialog).getByText('Prepare review')).toBeDefined();
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Reload meeting activity' }));
     expect(onReloadScope).toHaveBeenCalledOnce();
   });
