@@ -63,6 +63,7 @@
     onOpenDirectory?: (participantID: number) => void;
     onOpenDirectoryPerson?: (personID: number) => void;
     onAnnounce?: (message: string) => void;
+    onOpenSettings?: () => void;
     onOpenPerson?: (participantID: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     /** Opening a file (or its containing conversation) from the hub's own
@@ -97,6 +98,7 @@
     onOpenDirectoryPerson = undefined,
     onAnnounce = undefined,
     onOpenMeeting = undefined,
+    onOpenSettings = undefined,
     onOpenPerson = undefined,
     onOpenFileItem = undefined,
     onOpenFileConversation = undefined
@@ -640,6 +642,7 @@
               predicate={contextPredicate(predicate)}
               {onOpenMeeting}
               {onOpenPerson}
+              {onOpenSettings}
               onClose={() => { void closeReadingPane(); }}
               {conversationAnchorId}
               conversationStart={conversationBounds?.start}

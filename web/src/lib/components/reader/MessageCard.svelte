@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ChevronUp from '@lucide/svelte/icons/chevron-up';
+  import { isEmailMessageType } from '../../explore/models';
   import MessageMenu from './MessageMenu.svelte';
   import PersonLink from './PersonLink.svelte';
   import MessageTasks from '../tasks/MessageTasks.svelte';
@@ -80,7 +82,7 @@
         {#if message.recipients.length > 0}
           <span class="recipients">to {#if message.recipientParticipants}{#each message.recipientParticipants as recipient, index}{#if index > 0}, {/if}<PersonLink name={recipient.display} participantID={recipient.participantID} {onOpenPerson} />{/each}{:else}{message.recipients.join(', ')}{/if}</span>
         {/if}
-        <button type="button" class="collapse-target" aria-label={`Collapse message ${message.id} from ${message.sender || 'unknown sender'}`} aria-expanded="true" onclick={() => onToggle?.(message.id)}>{message.subject || 'Collapse'}</button>
+        <button type="button" class="collapse-target" aria-label={`Collapse message ${message.id} from ${message.sender || 'unknown sender'}`} aria-expanded="true" onclick={() => onToggle?.(message.id)}>{#if message.subject}{message.subject}{:else}<ChevronUp size={16} aria-hidden="true" />{/if}</button>
       </div>
       <MessageMenu {client} {message} {hasRenderableHTML} {viewMode} {onViewModeChange} {onOpenSettings} onTasksChange={() => tasksRefresh++} onError={(error) => menuError = error} />
     </div>
@@ -115,9 +117,9 @@
       </section>
     </div>
 
-    {#if client && !bodyPending && !bodyError}
+    {#if client}
       {#if message.messageType === 'meeting_transcript'}<MeetingActions compact {client} request={{ scope: { message_ids: [message.id] }, limit: 200 }} {onOpenMeeting} />{/if}
-      <MessageTasks {client} messageId={message.id} title={message.subject} email={!message.messageType || message.messageType === 'email'} refresh={tasksRefresh} onsettings={onOpenSettings} />
+      <MessageTasks {client} messageId={message.id} title={message.subject} email={isEmailMessageType(message.messageType ?? '')} refresh={tasksRefresh} onsettings={onOpenSettings} />
     {/if}
     {#if message.attachments.length > 0}
       <ul class="attachments" aria-label="Attachments">
