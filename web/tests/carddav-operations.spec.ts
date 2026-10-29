@@ -42,10 +42,10 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   await page.keyboard.press('Enter');
   await expect(page.getByText('Connection successful. Found 2 address books.')).toBeVisible();
 
-  const save = page.getByRole('button', { name: 'Save changes' });
+  const save = page.getByRole('button', { name: 'Save CardDAV account' });
   await save.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByText('Contact account default saved. Found 2 address books.')).toBeVisible();
+  await expect(page.getByText('CardDAV account saved. Found 2 address books.')).toBeVisible();
 
   expect(fixture.requests.filter(({ path }) => path === '/api/v1/carddav/account/test')).toEqual([{
     method: 'POST',

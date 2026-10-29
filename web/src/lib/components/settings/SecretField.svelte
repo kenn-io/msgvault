@@ -13,6 +13,11 @@
     hint = '',
     source = undefined,
     disabled = false,
+    disabledReason = '',
+    saving = false,
+    error = '',
+    applyNote = '',
+    clearLabel,
     onreplace,
     onclear,
   }: {
@@ -25,9 +30,17 @@
     /** Where the key comes from; an environment variable cannot be cleared here. */
     source?: 'stored' | 'environment' | 'none' | string;
     disabled?: boolean;
+    /** Why the field is disabled; shown under the row. */
+    disabledReason?: string;
+    saving?: boolean;
+    error?: string;
+    /** When a new key takes effect; shown in the dialog. */
+    applyNote?: string;
+    /** Accessible name of the clear button; rendered only with `onclear`. */
+    clearLabel?: string;
     /**
      * Accept the key from the dialog. Return true to close the dialog, false
-     * to keep it open.
+     * to keep it open (an `error` will show inside it).
      */
     onreplace: (value: string) => boolean | Promise<boolean>;
     /** Remove the stored secret; renders a trash icon button. */
@@ -35,6 +48,7 @@
   } = $props();
 
   const sentence = $derived(/^[A-Z][a-z]/.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label);
+  const blocked = $derived(disabled || saving || disabledReason !== '');
   const verb = $derived(configured ? 'Replace' : 'Add');
   // A set key with no hint still shows as set, just without characters.
   const shown = $derived(configured ? hint || '••••••••' : 'None');
@@ -43,16 +57,17 @@
   let draft = $state('');
 
   function openDialog() {
-    if (disabled) return;
+    if (blocked) return;
     draft = '';
     open = true;
   }
   function closeDialog() {
+    if (saving) return;
     open = false;
     draft = '';
   }
   async function submit() {
-    if (draft === '' || disabled) return;
+    if (draft === '' || blocked) return;
     if (await onreplace(draft)) closeDialog();
   }
 </script>
@@ -60,11 +75,11 @@
 <div class="secret-field">
   <div class="secret-field__row">
     <output class="secret-field__value" class:secret-field__value--none={!configured} aria-label={label}>{shown}</output>
-    <IconButton ariaLabel={`${verb} ${sentence}`} size="sm" disabled={disabled} onclick={openDialog}>
+    <IconButton ariaLabel={`${verb} ${sentence}`} size="sm" disabled={blocked} onclick={openDialog}>
       <Pencil size={14} />
     </IconButton>
     {#if onclear && configured}
-      <IconButton ariaLabel={`Clear ${sentence}`} size="sm" disabled={disabled} onclick={onclear}>
+      <IconButton ariaLabel={clearLabel ?? `Clear ${sentence}`} size="sm" disabled={blocked} onclick={onclear}>
         <Trash2 size={14} />
       </IconButton>
     {/if}
@@ -72,12 +87,15 @@
   {#if configured && source === 'environment'}
     <small class="secret-field__note">From an environment variable on the daemon host.</small>
   {/if}
+  {#if disabledReason}<small class="secret-field__blocked">{disabledReason}</small>{/if}
+  {#if error && !open}<small class="secret-field__error" role="alert">{error}</small>{/if}
 </div>
 
 {#if open}
-  <Modal title={`${verb} ${sentence}`} onclose={closeDialog}>
+  <Modal title={`${verb} ${sentence}`} onclose={closeDialog} closeOnOverlayClick={!saving}>
     <form
       class="secret-field__form"
+      aria-busy={saving}
       onsubmit={(event) => {
         event.preventDefault();
         void submit();
@@ -90,18 +108,21 @@
           autocomplete="new-password"
           ariaLabel={`New ${sentence}`}
           bind:value={draft}
+          disabled={saving}
           block
         />
       </label>
+      {#if applyNote}<p class="secret-field__apply">{applyNote}</p>{/if}
+      {#if error}<p class="secret-field__error" role="alert">{error}</p>{/if}
     </form>
     {#snippet footer()}
-      <Button surface="soft" label="Cancel" onclick={closeDialog} />
+      <Button surface="soft" label="Cancel" disabled={saving} onclick={closeDialog} />
       <Button
         tone="info"
         surface="solid"
-        label="Use key"
-        ariaLabel={`Use ${sentence}`}
-        disabled={draft === ''}
+        label={saving ? 'Saving…' : 'Save'}
+        ariaLabel={saving ? 'Saving…' : `Save ${sentence}`}
+        disabled={draft === '' || saving}
         onclick={() => void submit()}
       />
     {/snippet}
@@ -149,8 +170,15 @@
     font-family: inherit;
     letter-spacing: normal;
   }
-  .secret-field__note {
+  .secret-field__note,
+  .secret-field__apply {
     color: var(--text-muted);
+  }
+  .secret-field__blocked {
+    color: var(--status-warning-ink);
+  }
+  .secret-field__error {
+    color: var(--status-error-ink);
   }
   .secret-field__form {
     display: grid;
@@ -161,5 +189,9 @@
     display: grid;
     gap: var(--space-1);
     color: var(--text-secondary);
+  }
+  .secret-field__apply {
+    margin: 0;
+    font-size: var(--font-size-xs);
   }
 </style>

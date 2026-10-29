@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
 
   import { Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { listCardDAVConnections } from '../../api/generated/api/api';
   import type { CardDAVConnectionResponse } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
-  import type { CardDAVAccountValues, AccountDraft } from '../../carddav/account-settings';
+  import type { CardDAVAccountValues } from '../../carddav/account-settings';
   import type { CardDAVSettingsRequest } from '../../carddav/navigation';
   import { CardDAVConflictsController } from '../../carddav/conflicts-controller.svelte';
   import type { SettingState } from '../../settings/catalog';
@@ -15,17 +15,13 @@
   let {
     client,
     settings,
-    drafts = $bindable({}),
-    saved = {},
-    resetRevision = 0,
+    onSettingsRefresh = () => undefined,
     cardDAVRequest = undefined,
     onCardDAVRequestConsumed = () => undefined
   }: {
-    resetRevision?: number;
-    drafts?: Record<string, AccountDraft>;
-    saved?: Record<string, CardDAVAccountValues>;
     client: APIClient;
     settings: SettingState[];
+    onSettingsRefresh?: () => void | Promise<void>;
     cardDAVRequest?: CardDAVSettingsRequest;
     onCardDAVRequestConsumed?: (key: number) => void;
   } = $props();
@@ -40,7 +36,7 @@
   let connectionGeneration = 0;
   let disposed = false;
   const connectionOptions = $derived.by(() => {
-    const names = new Set(['default', ...connections.map(item => item.connection), ...Object.keys(drafts), ...Object.keys(saved)]);
+    const names = new Set(['default', ...connections.map(item => item.connection)]);
     if (newConnection) names.add(newConnection);
     return [...names].map(value => ({
       value,
@@ -62,8 +58,6 @@
         schedule: selectedConnection.status.schedule
       };
     }
-    const draft = Object.hasOwn(drafts, selected) ? drafts[selected] : undefined;
-    if (draft) return draft.baseline;
     // The settings catalog supplies the default form until connection summaries load.
     const catalog = selected === 'default' ? settings : [];
     function stringValue(key: string): string {
@@ -100,16 +94,6 @@
       }
     }
   }
-  $effect(() => {
-    void resetRevision;
-    void reloadConnections();
-  });
-  // A reset drops unsaved new connection work once the saved connections are known.
-  async function reloadConnections(): Promise<void> {
-    newConnection = undefined;
-    await loadConnections();
-    if (!connectionOptions.some(option => option.value === selected)) selected = 'default';
-  }
   function addConnection(): void {
     if (!/^[a-z][a-z0-9_-]{0,63}$/.test(newName) || newName === 'default') {
       connectionError = 'Choose a connection name with 1–64 lowercase letters, digits, underscores or hyphens, starting with a letter. The name default is reserved.';
@@ -127,8 +111,10 @@
 
   let availability = $state<Record<string, boolean>>({});
   const available = $derived(Object.values(availability).some(Boolean));
+  onMount(() => {
+    void loadConnections();
+  });
   $effect(() => {
-    void resetRevision;
     if (available) {
       untrack(() => { void conflictsController.load(); });
     } else {
@@ -141,6 +127,12 @@
     connectionAbort?.abort();
     conflictsController.destroy();
   });
+
+  async function accountSaved(): Promise<void> {
+    const wasAvailable = available;
+    await Promise.all([loadConnections(), onSettingsRefresh()]);
+    if (wasAvailable && available) await conflictsController.load();
+  }
 
   $effect(() => {
     const request = cardDAVRequest;
@@ -181,13 +173,11 @@
   {/if}
   {#key selected}
     <CardDAVConnectionSettings
-      {resetRevision}
       {client}
-      values={connectionError && Object.hasOwn(saved, selected) ? saved[selected] : selectedValues}
-      draft={Object.hasOwn(drafts, selected) ? drafts[selected] : undefined}
-      onDraft={(draft) => { if (draft) drafts = { ...untrack(() => drafts), [selected]: draft }; else delete drafts[selected]; }}
+      values={selectedValues}
       connection={selected}
       orphaned={selectedConnection?.orphaned === true}
+      onSaved={accountSaved}
       onAvailabilityChange={(name, value) => { availability[name] = value; }}
     />
   {/key}

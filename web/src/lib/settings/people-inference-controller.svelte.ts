@@ -18,7 +18,6 @@ import type {
 } from '../api/generated/models';
 
 export class PeopleInferenceController {
-  keyDrafts = $state<Record<string, string>>({});
   status = $state<PeopleInferenceSettingsResponse>();
   selectedName = $state('');
   loading = $state(true);
@@ -32,15 +31,6 @@ export class PeopleInferenceController {
   private selectionEpoch = 0;
 
   constructor(private readonly client: APIClient, private readonly onChanged: () => void | Promise<void> = () => undefined) {}
-
-  async saveKeys(): Promise<boolean> {
-    if (Object.keys(this.keyDrafts).length > 0) this.clearCheck();
-    for (const [name, key] of Object.entries(this.keyDrafts)) {
-      if (!(await this.run(() => this.writeKey(name, key), true))) return false;
-      delete this.keyDrafts[name];
-    }
-    return true;
-  }
 
   updateConfigRevision(etag: string): void { this.configETag = etag; }
 
@@ -87,6 +77,12 @@ export class PeopleInferenceController {
       if (key) await this.onChanged();
       if (key) await this.writeKey(name, key);
     }, true);
+  }
+
+  async saveKey(key: string): Promise<void> {
+    if (!this.selectedName || !key) return;
+    this.clearCheck();
+    await this.run(() => this.writeKey(this.selectedName, key), true);
   }
 
   private async writeKey(name: string, key: string): Promise<void> {
@@ -194,25 +190,20 @@ export class PeopleInferenceController {
     const status = this.read(result);
     if (this.destroyed) return;
     this.status = status;
-    for (const name of Object.keys(this.keyDrafts)) {
-      if (!status.profiles.some(profile => profile.name === name)) delete this.keyDrafts[name];
-    }
     this.configETag = result.response.headers.get('ETag') ?? '';
     if (!this.configETag) throw new Error('People sweep settings response omitted its config ETag. Reload before editing.');
   }
 
-  private async run(action: () => Promise<void>, changesConfig = false): Promise<boolean> {
-    if (this.busy) return false;
+  private async run(action: () => Promise<void>, changesConfig = false): Promise<void> {
+    if (this.busy) return;
     this.busy = true;
     this.error = '';
     try {
       await action();
       if (changesConfig) await this.onChanged();
-      return true;
     }
     catch (cause) {
       if (!this.destroyed) this.error = cause instanceof Error ? cause.message : 'Unable to update people sweep settings.';
-      return false;
     } finally {
       if (!this.destroyed) this.busy = false;
     }

@@ -587,9 +587,7 @@ stored as a `CRON_TZ=` prefix on the schedule. The CardDAV account form uses
 the same field, and the Sources and CardDAV status views describe stored
 schedules the same way.
 
-One Save changes bar covers ordinary settings, provider edits and credentials, contact account settings, and replacement inference keys. Edits survive category and contact connection changes. Discard removes pending edits, including passwords and keys. Creating a provider or inference profile, testing a connection, authorizing an account, granting or revoking consent, choosing book roles, resolving conflicts, and syncing remain explicit actions.
-
-Save applies existing requests in order, carrying their revisions forward. Provider endpoints save before their keys. If a later request fails, earlier writes remain saved and the bar retains the remaining edits. After a save that needs a restart, Settings shows “Saved. Restart msgvault to apply these changes.”
+The Save changes bar covers ordinary settings, and its edits survive category changes. Some controls save through their own buttons instead: provider credentials, person-enrichment providers, contact accounts, and People sweep. Above them, the page says "These save immediately when you use their buttons — not with Save changes." The Contacts category hides the bar. After a save that needs a restart, Settings shows “Saved. Restart msgvault to apply these changes.”
 
 Saving makes targeted edits to `config.toml` while preserving comments. A stale
 edit is rejected after another browser or a hand edit changes the
@@ -621,10 +619,15 @@ a stored key. The box shows `None` when no key is set, or a masked
 hint of the set key, its first three and last three characters, such as
 `sk-…x9Q`, so you can tell which key is in place. A key under twelve
 characters shows as dots instead. The pencil opens a dialog to paste the
-new key. The replacement waits for Save changes. Enrichment keys apply right away after saving; text and visual embedding keys take effect after the daemon restarts. A key that comes from an environment variable
+new key, and the dialog says when it takes effect: a person-enrichment key
+applies right away, the text and visual embedding keys are stored at once
+but used after the daemon restarts, and the task integration key is saved
+with Save changes. A key that comes from an environment variable
 says so under the line and cannot be cleared from the browser.
 
-Credentials have a separate revision from `config.toml`. When an endpoint or model and its credential both change, the footer saves the endpoint/model first, then the credential. This binds the key to the destination it was entered for.
+Credentials have a separate revision from `config.toml`. When changing both
+an endpoint or model and its credential, save the endpoint/model first, then
+the credential. This binds the key to the destination it was entered for.
 
 ### CardDAV contacts
 
