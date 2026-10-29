@@ -28,7 +28,7 @@
     <div class="task-dialog">
       {#if options.length > 1}<SelectDropdown title="Provider" disabled={busy} options={options} value={provider} onchange={(value) => provider = value} />{/if}
       {#if provider === 'tasks' && email}
-        <TaskLinks {client} {messageId} {title} sourceType="" sourceIdentifier="" {onsettings} mode="add" bind:busy oncomplete={onclose} />
+        <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncomplete={onclose} />
       {:else if kata?.ready}
         <Button label="Add quote to Kata…" onclick={() => quoteOpen = true} />
       {:else}

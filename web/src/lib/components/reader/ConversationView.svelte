@@ -264,7 +264,7 @@
       conversationId: message.conversation_id ?? conversationId,
       subject: message.subject,
       sender: message.is_from_me ? 'You' : message.from,
-      senderParticipantID: message.from_participant_id,
+      senderParticipantID: message.is_from_me ? undefined : message.from_participant_id,
       recipientParticipants: message.to_participants?.map((recipient) => ({ display: recipient.display, participantID: recipient.participant_id })),
       recipients: message.to ?? [],
       sentAt: message.sent_at,

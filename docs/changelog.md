@@ -9,6 +9,8 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
+- Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again, and API schema 3.28.0 includes conversation participant IDs.
+
 - The web UI opens Messages first, alongside People, Files, and Sources. Saved views move into the sidebar with Undo, run history opens from the status dot's Past runs menu, and Display combines appearance controls. Old workspace links redirect to the new locations.
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
