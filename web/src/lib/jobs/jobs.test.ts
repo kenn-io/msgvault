@@ -26,11 +26,6 @@ describe('jobs', () => {
       { kind: 'setting', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
     ]);
   });
-  it('counts source sync once per source and includes scheduler errors', () => {
-    const source = sourceStatus({ scheduler_last_error: 'Schedule failed\nmore detail' });
-    expect(collectJobs([source], [lane('source_sync')])).toEqual([{ id: 'source:1', name: 'Example archive', state: 'failed', detail: 'Schedule failed', at: undefined, target: { kind: 'source' } }]);
-  });
-
   it('sorts failures first and prioritizes running work over queued work in health', () => {
     const running = collectJobs([], [lane('visual_embedding', { active: activeRun })]);
     const queued = collectJobs([], [lane('person_enrichment', { active: { ...jobRun('person_enrichment'), state: 'queued', finished_at: undefined, error: undefined } })]);
@@ -57,7 +52,7 @@ it.each([
   { name: 'queued source with completed sync', source: { scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: syncRunStatus() }, lanes: [], expected: [['queued', 'Queued']] },
   { name: 'pending source', source: { scheduler_pending: true, sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['queued', 'Queued']] },
   { name: 'failed source with a queued retry', source: { scheduler_queued: true, latest_sync: syncRunStatus({ status: 'failed', error_message: 'Mailbox unavailable' }) }, lanes: [], expected: [['failed', 'Mailbox unavailable']] },
-  { name: 'pending source with scheduler failure', source: { scheduler_pending: true, scheduler_last_error: 'Token expired' }, lanes: [], expected: [['failed', 'Token expired']] },
+  { name: 'pending source with scheduler failure skips its source sync lane and trims the error', source: { scheduler_pending: true, scheduler_last_error: 'Schedule failed\nmore detail' }, lanes: [lane('source_sync')], expected: [['failed', 'Schedule failed']] },
   { name: 'active sync with queued follow-up and old failure', source: { scheduler_queued: true, active_sync: syncRunStatus({ status: 'running', completed_at: null }), latest_sync: syncRunStatus({ status: 'failed', error_message: 'Old failure' }) }, lanes: [], expected: [['running', 'Syncing']] },
   { name: 'scheduler active with a pending follow-up', source: { scheduler_pending: true, scheduler_started_at: '2026-08-30T11:00:00Z', sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['running', 'Syncing']] },
   { name: 'latest running import without an active snapshot', source: { source_type: 'mbox', latest_sync: syncRunStatus({ status: 'running', completed_at: null }), sync_unavailable_reason: 'source_not_schedulable' }, lanes: [], expected: [['running', 'Syncing']] },

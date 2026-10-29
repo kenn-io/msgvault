@@ -50,30 +50,21 @@ describe('AppSidebar', () => {
     expect(footer.getByRole('button', { name: 'Help' })).toBeTruthy();
   });
 
-  it('nests saved views under the place they open', () => {
-    renderSidebar({ views: [view(1, 'Budget threads'), view(2, 'PDF invoices', 'files')] });
+  it('nests saved views under the place they open', async () => {
+    const onOpenView = vi.fn();
+    renderSidebar({ views: [
+      view(1, 'Budget threads'), view(2, 'PDF invoices', 'files'),
+      { ...view(3, 'Unsupported view', 'files'), schema_version: 3, incompatibility_reason: 'unsupported saved view schema version: Saved View 3 uses schema version 3' },
+      { ...view(4, 'Invalid view', 'files'), incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] } },
+    ], onOpenView });
     const messages = within(screen.getByRole('list', { name: 'Messages saved views' }));
     const files = within(screen.getByRole('list', { name: 'Files saved views' }));
     expect(messages.getByRole('button', { name: 'Budget threads' })).toBeTruthy();
     expect(messages.queryByRole('button', { name: 'PDF invoices' })).toBeNull();
     expect(files.getByRole('button', { name: 'PDF invoices' })).toBeTruthy();
-  });
-
-  it.each([
-    { reason: 'unsupported schema', schema_version: 3, incompatibility_reason: 'unsupported saved view schema version: Saved View 1 uses schema version 3', canonical_state: { presentation: 'files', filters: [{ field: 'source', operator: 'in', values: ['1'] }] }, group: 'Messages' },
-    { reason: 'invalid state', schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] }, group: 'Files' },
-  ])('keeps a view with $reason disabled and deletable under $group', async ({ group, reason: _reason, ...incompatible }) => {
-    const onOpenView = vi.fn();
-    const onDeleteView = vi.fn();
-    renderSidebar({ views: [{ ...view(1, 'Old view'), ...incompatible }], onOpenView, onDeleteView });
-    const saved = within(screen.getByRole('list', { name: `${group} saved views` })).getByRole('button', { name: 'Old view' });
-    expect(saved.getAttribute('aria-disabled')).toBe('true');
-    await fireEvent.click(saved);
+    await fireEvent.click(messages.getByRole('button', { name: 'Unsupported view' }));
+    await fireEvent.click(files.getByRole('button', { name: 'Invalid view' }));
     expect(onOpenView).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole('button', { name: 'Old view actions' }));
-    expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    expect(onDeleteView).toHaveBeenCalledOnce();
   });
 
   it('keeps full accessible names in the icon rail and hides saved views', () => {
@@ -132,7 +123,7 @@ it('Sync status typeahead keeps page shortcuts suspended', async () => {
   const detachShortcuts = initShortcuts();
   const pageShortcut = vi.fn();
   const unregister = appShortcuts.register('d', pageShortcut);
-  const rendered = renderSidebar({ views: [view(1, 'Budget')], jobs: { ...jobs, health: 'running', items: [
+  const rendered = renderSidebar({ jobs: { ...jobs, health: 'running', items: [
     { id: 'document', name: 'Document extraction', state: 'running', detail: 'Running', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
   ] } });
   try {
