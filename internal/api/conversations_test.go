@@ -316,3 +316,47 @@ func TestConversationWindowRejectsAnchorOutsideTimeRange(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 	assert.Equal(t, "conversation_anchor_outside_range", response.Error)
 }
+
+func TestConversationWindowCarriesExactParticipantIdentities(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("whatsapp", "archive@example.com")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "identity-group", "group_chat", "Group")
+	require.NoError(t, err)
+	var participants []int64
+	for _, email := range []any{"alex@example.com", "Alex@example.com", nil} {
+		var id int64
+		require.NoError(t, st.DB().QueryRow(`INSERT INTO participants (email_address, display_name) VALUES ($1, 'Alex Example') RETURNING id`, email).Scan(&id))
+		participants = append(participants, id)
+	}
+	var ids []int64
+	for i, sender := range participants {
+		id, err := st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: source.ID, SourceMessageID: fmt.Sprintf("identity-%d", i), MessageType: "whatsapp", SenderID: sql.NullInt64{Int64: sender, Valid: true}, IsFromMe: i == 0, SentAt: sql.NullTime{Time: time.Date(2026, 7, 18, 12, i, 0, 0, time.UTC), Valid: true}})
+		require.NoError(t, err)
+		// The archived sender takes precedence over the first envelope sender.
+		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{participants[(i+1)%3]}, []string{"Alex Example"}))
+		require.NoError(t, st.ReplaceMessageRecipients(id, "to", participants, []string{"Alex Example", "Alex Example", "Alex Example"}))
+		ids = append(ids, id)
+	}
+	srv := NewServer(&config.Config{}, st, nil, testLogger())
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversation, ids[0]), nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var result ConversationResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(t, result.Messages, 3)
+	for i, message := range result.Messages {
+		assert.Equal(t, participants[i], message.FromParticipantID)
+		require.Len(t, message.ToParticipants, 3)
+		assert.ElementsMatch(t, []ConversationParticipant{
+			{ParticipantID: participants[0], Display: "Alex Example <alex@example.com>"},
+			{ParticipantID: participants[1], Display: "Alex Example <Alex@example.com>"},
+			{ParticipantID: participants[2], Display: "Alex Example"},
+		}, message.ToParticipants)
+		for _, recipient := range message.ToParticipants {
+			assert.Contains(t, message.To, recipient.Display)
+		}
+	}
+	assert.True(t, result.Messages[0].IsFromMe)
+	assert.Equal(t, "Alex Example", result.Messages[2].From)
+}

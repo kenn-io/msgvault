@@ -382,7 +382,8 @@ import (
 // 3.28.0 adds the typed calendar projection to calendar event message details.
 // 3.29.0 adds literal address filtering to the durable people Directory.
 // 3.30.0 adds the stored hidden_text_present flag to message details and search rows.
-const APISchemaVersion = "3.30.0"
+// 3.31.0 adds exact sender and To participant identities to conversation windows.
+const APISchemaVersion = "3.31.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
