@@ -137,24 +137,12 @@ it('retries unreadable history and detail through Refresh', async () => {
   expect(screen.queryByText('Unable to load operation detail.')).toBeNull();
 });
 
-it('reopens history with one read of the requested filter and refreshes unchanged filters', async () => {
-  const kinds: Array<string | null> = [];
-  const client = createAPIClient(async input => {
-    const url = new URL((input as Request).url);
-    if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
-    kinds.push(url.searchParams.get('kind'));
-    return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
-  });
+it('refreshes unchanged filters when the dialog opens', async () => {
+  const client = createAPIClient(async () => Response.json({ lanes: lanes(), runs: [], membership_revision: 1, unavailable_kinds: [] }));
   const controller = new OperationsController(client); controllers.push(controller);
-  await controller.applyURLState(defaultOperationsState('carddav_sync'));
-  kinds.length = 0;
-  const props = { client, controller, state: defaultOperationsState('source_sync'), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() };
-  const first = render(RunHistoryDialog, props);
+  const applyURLState = vi.spyOn(controller, 'applyURLState');
+  const state = defaultOperationsState('source_sync');
+  render(RunHistoryDialog, { client, controller, state, onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
   await screen.findByText('No runs match.');
-  expect(kinds).toEqual(['source_sync']);
-  first.unmount();
-  kinds.length = 0;
-  render(RunHistoryDialog, props);
-  await screen.findByText('No runs match.');
-  expect(kinds).toEqual(['source_sync']);
+  expect(applyURLState).toHaveBeenCalledWith(state, true);
 });

@@ -684,3 +684,26 @@ it('reports an aggregate CardDAV failed response as a failed action and refreshe
   expect(controller.snapshot.actionError).not.toBeNull();
   controller.destroy();
 });
+
+it('reopens history with one read of the requested filter and refreshes unchanged filters', async () => {
+  const kinds: Array<string | null> = [];
+  const client = createAPIClient(async input => {
+    const url = new URL(requestOf(input).url);
+    if (url.pathname.endsWith('/operations/status')) return Response.json(statusResponse());
+    kinds.push(url.searchParams.get('kind'));
+    return Response.json(runsResponse([]));
+  });
+  const controller = new OperationsController(client);
+  try {
+    await controller.applyURLState(operationState({ operationKind: 'carddav_sync' }));
+    kinds.length = 0;
+    const state = operationState({ operationKind: 'source_sync' });
+    await controller.applyURLState(state, true);
+    expect(kinds).toEqual(['source_sync']);
+    kinds.length = 0;
+    await controller.applyURLState(state, true);
+    expect(kinds).toEqual(['source_sync']);
+  } finally {
+    controller.destroy();
+  }
+});
