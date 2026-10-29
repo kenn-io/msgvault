@@ -5,6 +5,8 @@
   import type { APIClient } from '../../api/client';
   let {
     client,
+    embedded = false,
+    pending = $bindable(false),
     messageId,
     project,
     defaultTitle,
@@ -20,6 +22,8 @@
     onclose = () => undefined,
   }: {
     client: APIClient;
+    embedded?: boolean;
+    pending?: boolean;
     messageId: number;
     project: string;
     defaultTitle: string;
@@ -38,9 +42,8 @@
   let description = $state('');
   let priority = $state('');
   let labels = $state('');
-  let pending = $state(false);
   let error = $state('');
-  let browserRequestID = globalThis.crypto.randomUUID();
+  let browserRequestID = globalThis.crypto.getRandomValues(new Uint32Array(4)).join('-');
   let addedAt = $state(new Date().toISOString());
   let lastAttemptFingerprint = $state<string>();
   const priorityOptions = [
@@ -85,7 +88,7 @@
     }
   }
   function rotateRetryIdentity(): void {
-    browserRequestID = globalThis.crypto.randomUUID();
+    browserRequestID = globalThis.crypto.getRandomValues(new Uint32Array(4)).join('-');
     const now = new Date().toISOString();
     addedAt = now > addedAt ? now : new Date(Date.parse(addedAt) + 1).toISOString();
   }
@@ -124,7 +127,7 @@
   }
 </script>
 
-<Modal title="Create task" onclose={requestClose}>
+{#snippet content()}
   <form
     aria-busy={pending}
     onsubmit={(event) => {
@@ -206,7 +209,13 @@
       <Button type="submit" tone="info" surface="solid" label="Create task" disabled={pending || !title.trim()} />
     </div>
   </form>
-</Modal>
+{/snippet}
+
+{#if embedded}
+  {@render content()}
+{:else}
+  <Modal title="Create task" onclose={requestClose}>{@render content()}</Modal>
+{/if}
 
 <style>
   form {

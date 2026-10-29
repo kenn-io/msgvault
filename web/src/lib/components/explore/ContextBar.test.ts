@@ -132,3 +132,49 @@ describe('ContextBar grouping picker', () => {
     expect(screen.queryByRole('option', { name: /analytical API/ })).toBeNull();
   });
 });
+
+it('keeps Messages grouping chains and moves kind and local date boundaries into Filter', async () => {
+  const onFiltersChange = vi.fn();
+  const onAddGroup = vi.fn();
+  render(ContextBar, {
+    messages: true, client: createAPIClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/groups')) return Response.json({ rows: [{ key: 'email', count: 2 }], cache_revision: 'cache' });
+      return Response.json({ accounts: [], identities: [] });
+    }), query: '', searchMode: 'full_text', filters: [], groupingChain: ['source'], countLabel: '2 items', sort,
+    onAddGroup, onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange,
+  });
+  expect(screen.queryByRole('combobox', { name: /Show as/ })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: /Sort:/ })).toBeNull();
+  expect(screen.getByRole('combobox', { name: 'Add grouping' })).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  expect(await screen.findByLabelText('Email')).toBeDefined();
+  await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-18' } });
+  const start = new Date(2026, 6, 18).toISOString();
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: [start] }]);
+  await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-07-18' } });
+  const end = new Date(2026, 6, 19).toISOString();
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [end] }]);
+  await fireEvent.click(screen.getByLabelText('Email'));
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['email'] }]);
+});
+
+it('keeps Kind lookup failures visible and retries when Filter reopens', async () => {
+  let failed = true;
+  render(ContextBar, {
+    messages: true, client: createAPIClient(async (input) => {
+      if (new URL((input as Request).url).pathname.endsWith('/groups')) {
+        return failed ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ rows: [{ key: 'email', count: 1 }] });
+      }
+      return Response.json({ accounts: [], identities: [] });
+    }), query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '', sort,
+    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  expect(await screen.findByText('Could not load kinds')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  failed = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  expect(await screen.findByLabelText('Email')).toBeDefined();
+  expect(screen.queryByText('Could not load kinds')).toBeNull();
+});

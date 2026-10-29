@@ -6,7 +6,7 @@
     searchIntegrationTasks as generatedSearchIntegrationTasks,
     unlinkMessageTask as generatedUnlinkMessageTask,
   } from '../../api/generated/api/api';
-  import { Button, TextInput } from '@kenn-io/kit-ui';
+  import { Button, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type {
     TaskLinkLookupResponse as GeneratedTaskLinkLookupResponse,
@@ -19,6 +19,9 @@
   type Task = GeneratedTaskSummary;
   let {
     client,
+    mode = 'both',
+    busy = $bindable(false),
+    oncomplete = undefined,
     messageId,
     title,
     sourceType,
@@ -26,12 +29,16 @@
     onsettings = () => undefined,
   }: {
     client: APIClient;
+    mode?: 'both' | 'list' | 'add';
+    busy?: boolean;
+    oncomplete?: () => void;
     messageId: number;
     title: string;
     sourceType: string;
     sourceIdentifier: string;
     onsettings?: () => void;
   } = $props();
+  let action = $state('create');
   let loading = $state(true);
   let integrationState = $state('loading');
   let integrationMessage = $state('');
@@ -159,9 +166,10 @@
     const retry =
       existingLinkRetry?.taskID === taskID
         ? existingLinkRetry
-        : { taskID, requestID: globalThis.crypto.randomUUID(), addedAt: new Date().toISOString() };
+        : { taskID, requestID: globalThis.crypto.getRandomValues(new Uint32Array(4)).join('-'), addedAt: new Date().toISOString() };
     existingLinkRetry = retry;
     mutating = true;
+    busy = true;
     error = '';
     try {
       const { data, error: responseError } = await generatedCreateOrLinkMessageTask(
@@ -179,11 +187,15 @@
       searchQuery = '';
       searchResults = [];
       await loadFor(selectedMessageID);
+      oncomplete?.();
     } catch (cause) {
       if (currentGeneration !== generation || activeController?.signal.aborted) return;
       error = cause instanceof Error ? cause.message : 'Unable to link task.';
     } finally {
-      if (currentGeneration === generation) mutating = false;
+      if (currentGeneration === generation) {
+        mutating = false;
+        busy = false;
+      }
     }
   }
   async function unlink(taskID: string): Promise<void> {
@@ -249,9 +261,9 @@
 </script>
 
 <section class="task-links" aria-label="Linked tasks">
-  <header>
+  {#if mode !== 'add'}<header>
     <h2>Tasks</h2>
-    {#if mutationReady}<Button
+    {#if mutationReady && mode === 'both'}<Button
         size="sm"
         surface="soft"
         label="Create task"
@@ -259,17 +271,18 @@
           creating = true;
         }}
       />{/if}
-  </header>
+  </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded}<div class="degraded" role="alert">
-        <p>{stateMessage} Mutations are disabled.</p>
-        <Button size="sm" surface="soft" label="Open Settings" onclick={onsettings} />
+    {#if degraded}<div class="degraded" role={mode !== 'both' && integrationState === 'disabled' ? 'status' : 'alert'}>
+        <p>{stateMessage}{mode === 'both' ? ' Mutations are disabled.' : ''}</p>
+        <Button size="sm" surface="soft" label={mode !== 'both' && integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onclick={onsettings} />
       </div>{/if}
     {#if partialIndex}<p role="alert">{stateMessage}</p>{/if}
     {#if sessionOnlyIndex}<p role="status">
         Linked-task index updates are available for this session but are not persisted to disk on this platform.
       </p>{/if}
+    {#if mode !== 'add'}
     {#if tasks.length > 0}
       <ul>
         {#each tasks as task (task.id)}<li>
@@ -283,7 +296,12 @@
           </li>{/each}
       </ul>
     {:else if complete}<p>No linked tasks.</p>{/if}
-    {#if mutationReady}
+    {/if}
+    {#if mutationReady && mode !== 'list'}
+      {#if mode === 'add'}
+        <SegmentedControl disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
+      {/if}
+      {#if mode !== 'add' || action !== 'create'}
       <form
         onsubmit={(event) => {
           event.preventDefault();
@@ -309,12 +327,15 @@
         </ul>
       {/if}
     {/if}
+      {/if}
     {#if error}<p role="alert">{error}</p>{/if}
   {/if}
 </section>
 
-{#if creating && outboundMetadata}
+{#if (creating || (mode === 'add' && action === 'create' && mutationReady)) && outboundMetadata}
   <CreateTaskDialog
+    embedded={mode === 'add'}
+    bind:pending={busy}
     {client}
     {messageId}
     {project}
@@ -329,10 +350,12 @@
     sentAt={outboundMetadata.sent_at}
     onclose={() => {
       creating = false;
+      oncomplete?.();
     }}
     oncreated={() => {
       creating = false;
       void loadFor(messageId);
+      oncomplete?.();
     }}
   />
 {/if}

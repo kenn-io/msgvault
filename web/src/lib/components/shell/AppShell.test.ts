@@ -636,12 +636,12 @@ describe('AppShell', () => {
       ]);
     });
 
-    it('moves between Everything and Files with Show as, keeping the query and filters', async () => {
+    it('moves between Messages and Files from the sidebar, keeping the query and filters', async () => {
       const state = shellState('everything');
       state.commitNavigation({ query: 'pasta', filters: [{ dimension: 'source', values: ['1'] }] });
       render(AppShell, { client: exploreClient(), state, enabled: false });
 
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Show as:/ }), 'Files');
+      await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
       expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
       expect(state.current).toMatchObject({
         workspace: 'files', presentation: 'files', query: 'pasta',
@@ -650,7 +650,7 @@ describe('AppShell', () => {
       });
       expect(screen.queryByRole('grid', { name: 'Files in current context' })).toBeNull();
 
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Show as:/ }), 'Table');
+      await fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
       expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
       expect(state.current).toMatchObject({
         workspace: 'everything', presentation: 'table', query: 'pasta',
@@ -2471,7 +2471,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('opens the Sort menu with s, announces the fixed order with r, and shows the count once', async () => {
+  it('keeps Messages newest first and shows the count once', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
       rows: [entry(1), entry(2)], total_count: 2
@@ -2481,12 +2481,7 @@ describe('AppShell', () => {
     await screen.findByText('Synthetic subject 1');
 
     await fireEvent.keyDown(window, { key: 's' });
-    const sort = screen.getByRole('combobox', { name: /^Sort: Newest first/ });
-    expect(document.activeElement).toBe(sort);
-    const listbox = screen.getByRole('listbox');
-    const note = within(listbox).getByRole('option', { name: 'Other orders aren’t available yet' });
-    expect((note as HTMLButtonElement).disabled).toBe(true);
-
+    expect(screen.queryByRole('combobox', { name: /^Sort:/ })).toBeNull();
     await fireEvent.keyDown(window, { key: 'r' });
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
       .toBe('Messages is always shown newest first.');
@@ -2611,7 +2606,7 @@ describe('AppShell', () => {
     await waitFor(() => expect(appShortcuts.activeScope()).toBe('root'));
 
     await fireEvent.keyDown(window, { key: 'f' });
-    expect(screen.getByRole('button', { name: 'Filters' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Filter' }).getAttribute('aria-expanded')).toBe('true');
     await fireEvent.keyDown(window, { key: 'r' });
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
       .toBe('Sorting isn’t available while grouped.');
@@ -2779,9 +2774,9 @@ describe('AppShell', () => {
 
     it.each([
       {
-        layer: 'Sort',
-        open: () => clickFocused(screen.getByRole('combobox', { name: /^Sort:/ })),
-        isOpen: () => screen.queryByRole('listbox') !== null
+        layer: 'Filter',
+        open: () => clickFocused(screen.getByRole('button', { name: 'Filter' })),
+        isOpen: () => screen.queryByRole('dialog', { name: 'Filter' }) !== null
       },
       {
         layer: 'More selection actions',

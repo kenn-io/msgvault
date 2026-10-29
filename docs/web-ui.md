@@ -101,7 +101,7 @@ contains email only; it does not illustrate chat, calendar, or attachment conten
 Messages opens as a compact table of logical entries, newest first: one row
 per email, calendar event, meeting note, other durable item, or chat
 conversation. Raw chat fragments appear only after drilling into a
-conversation. Search, Filters, Show as, and Group by form a shareable view.
+conversation. Search, Filter, and Group by form a shareable view.
 Ordinary tabs use short URLs such as `?workspace=everything&mode=full_text`.
 Filters, layout changes, and the selected item appear in the link only when
 they differ from the defaults. Keyboard focus, scroll position, and choices
@@ -110,11 +110,8 @@ and Forward restore them.
 
 One toolbar sits above the results:
 
-- **Filters** opens the filter panel.
-- **Show as** switches between Table, Timeline, and Files. Choosing Files opens
-  the Files workspace.
+- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected local calendar days.
 - **Group by** adds a grouping level. Add more levels to group within groups.
-- **Sort** offers Newest first, the only order Messages has today.
 - The count at the end reports items, or groups when the view is grouped.
 
 Each active search, filter, and grouping appears as a removable chip below the
@@ -199,9 +196,11 @@ background, and border colors. Images keep their original colors. Choose
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
 
+Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a sender or recipient to open their person view; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Unavailable task connections offer **Open Settings**.
+
 ## Meeting context and follow-ups
 
-Filter Messages to meetings to see **Meeting activity and follow-ups**.
+Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
 Select meeting rows to export their context as JSON or Markdown, with transcripts
 included only when requested. Participant/domain reading panes, Directory, and
 Relationships show meeting metrics and recorded actions for their current scope.
