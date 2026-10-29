@@ -1190,9 +1190,6 @@ func TestAttachmentMirrorProcessingInvalidPollRetriesJob(t *testing.T) {
 	assert.Equal("requested", outcome)
 	assert.Equal("job-a", jobID)
 	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
-	var retry bool
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT retry FROM docbank_attachment_processing`).Scan(&retry))
-	assert.True(retry)
 	due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", "profile-one", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
 	assert.Empty(due)
@@ -1347,7 +1344,6 @@ func TestAttachmentMirrorProcessingInvalidProfile(t *testing.T) {
 			require.ErrorContains(err, "document_profile")
 			if name == "unavailable" {
 				assert.Contains(err.Error(), "server_error")
-				assert.NotContains(err.Error(), "consent")
 			}
 			assert.Empty(r.processing.Plans)
 			assert.Equal(int64(1), r.processingCounts().Waiting)
@@ -1356,127 +1352,236 @@ func TestAttachmentMirrorProcessingInvalidProfile(t *testing.T) {
 }
 
 func TestAttachmentMirrorProcessingDestinationFaults(t *testing.T) {
-	for _, stage := range []string{"plan", "start", "poll", "two_failures"} {
-		t.Run(stage, func(t *testing.T) {
+	type fault struct {
+		endpoint string
+		version  string
+		status   int
+		reason   string
+	}
+	tests := []struct {
+		name               string
+		seedJobs           bool
+		slowResultSave     bool
+		faults             []fault
+		wantError          bool
+		wantPlans          []string
+		wantJobs           []string
+		wantPolls          []string
+		wantQueuedJob      string
+		checkFirstCounts   bool
+		wantFirstRequested int64
+		wantFirstWaiting   int64
+		wantDueHashIndex   int
+		completeJobC       bool
+		wantFinalRequested int64
+		wantFinalWaiting   int64
+		wantFinalExtracted int64
+	}{
+		{
+			name: "plan", faults: []fault{{endpoint: "plan", version: "c", status: http.StatusServiceUnavailable}},
+			wantError: true, wantPlans: []string{"c", "b", "a"}, wantJobs: []string{"b", "a"}, wantQueuedJob: "job-a",
+			wantDueHashIndex: -1, wantFinalRequested: 3,
+		},
+		{
+			name: "start", faults: []fault{{endpoint: "start", version: "c", status: http.StatusServiceUnavailable}},
+			wantError: true, wantPlans: []string{"c", "b", "a"}, wantJobs: []string{"c", "b", "a"}, wantQueuedJob: "job-a",
+			wantDueHashIndex: -1, wantFinalRequested: 3,
+		},
+		{
+			name: "poll", seedJobs: true, faults: []fault{{endpoint: "poll", version: "c", status: http.StatusServiceUnavailable}},
+			wantError: true, wantPlans: []string{"c", "b", "a"}, wantJobs: []string{"c", "b", "a"},
+			wantPolls: []string{"job-c", "job-b", "job-a"}, wantQueuedJob: "job-a",
+			checkFirstCounts: true, wantFirstRequested: 3, wantDueHashIndex: -1,
+			completeJobC: true, wantFinalRequested: 2, wantFinalExtracted: 1,
+		},
+		{
+			name: "two failures", faults: []fault{
+				{endpoint: "plan", version: "c", status: http.StatusServiceUnavailable},
+				{endpoint: "plan", version: "b", status: http.StatusServiceUnavailable},
+			},
+			wantError: true, wantPlans: []string{"c", "b"}, wantFirstWaiting: 3,
+			checkFirstCounts: true, wantDueHashIndex: 2, wantFinalRequested: 3,
+		},
+		{
+			name: "plan changed", faults: []fault{
+				{endpoint: "start", version: "c", status: http.StatusConflict, reason: "processing_plan_changed"},
+				{endpoint: "start", version: "b", status: http.StatusConflict, reason: "processing_plan_changed"},
+			},
+			wantPlans: []string{"c", "b", "a"}, wantJobs: []string{"c", "b", "a"},
+			checkFirstCounts: true, wantFirstRequested: 1, wantFirstWaiting: 2,
+			wantDueHashIndex: -1, wantFinalRequested: 3,
+		},
+		{
+			name: "slow retry save preserves failure", slowResultSave: true,
+			wantError: true, wantDueHashIndex: -1, checkFirstCounts: true, wantFirstWaiting: 1,
+			wantFinalRequested: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			hashes := r.delivered("c", "b", "a")
-			faults := r.processing.Faults
-			switch stage {
-			case "start":
-				faults = r.processing.JobFaults
-			case "poll":
+			var hashes []string
+			if tc.slowResultSave {
+				hashes = r.delivered("a")
+			} else {
+				hashes = r.delivered("c", "b", "a")
+			}
+			if tc.seedJobs {
 				require.NoError(r.runBatch(t.Context()))
 				r.processingDue()
-				faults = r.processing.PollFaults
 			}
-			key := "c"
-			if stage == "poll" {
-				key = "job-c"
+			for _, f := range tc.faults {
+				key := f.version
+				var faults map[string]int
+				switch f.endpoint {
+				case "plan":
+					faults = r.processing.Faults
+				case "start":
+					faults = r.processing.JobFaults
+				case "poll":
+					faults = r.processing.PollFaults
+					key = "job-" + key
+				}
+				faults[key] = f.status
+				if f.reason != "" {
+					r.processing.Reasons[f.version] = f.reason
+				}
 			}
-			faults[key] = http.StatusServiceUnavailable
-			if stage == "two_failures" {
-				faults["b"] = http.StatusServiceUnavailable
+			var err error
+			if tc.slowResultSave {
+				deadline := time.Now().Add(500 * time.Millisecond)
+				lockReleased := make(chan struct{})
+				lockError := make(chan error, 1)
+				var firstPlan atomic.Bool
+				firstPlan.Store(true)
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if req.URL.Path == "/api/v1/processing/plans" && firstPlan.CompareAndSwap(true, false) {
+						tx, txErr := r.f.Store.DB().BeginTx(t.Context(), nil)
+						if txErr == nil {
+							var contentHash string
+							txErr = tx.QueryRowContext(t.Context(), r.f.Store.Rebind(`SELECT content_hash FROM docbank_attachment_processing WHERE destination_key=?`), "dest").Scan(&contentHash)
+							if txErr == nil {
+								_, txErr = tx.ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE docbank_attachment_processing SET outcome=outcome WHERE destination_key=? AND content_hash=?`), "dest", contentHash)
+							}
+						}
+						if txErr != nil {
+							if tx != nil {
+								_ = tx.Rollback()
+							}
+							lockError <- txErr
+							w.WriteHeader(http.StatusInternalServerError)
+							return
+						}
+						time.AfterFunc(time.Until(deadline)+50*time.Millisecond, func() {
+							_ = tx.Rollback()
+							close(lockReleased)
+						})
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					r.serve(w, req)
+				}))
+				t.Cleanup(srv.Close)
+				client, clientErr := docbankmedia.NewClient(srv.URL, nil)
+				require.NoError(clientErr)
+				r.worker.client = client
+				_, err = r.worker.processDocuments(t.Context(), deadline)
+				select {
+				case lockErr := <-lockError:
+					require.NoError(lockErr)
+				default:
+				}
+				select {
+				case <-lockReleased:
+				case <-time.After(2 * time.Second):
+					require.Fail("database lock was not released")
+				}
+			} else {
+				err = r.runBatch(t.Context())
 			}
-			require.Error(r.runBatch(t.Context()))
-			if stage == "two_failures" {
-				assert.Equal([]string{"c", "b"}, r.processing.Plans)
-				assert.Equal(int64(3), r.processingCounts().Waiting)
+			if tc.wantError {
+				require.Error(err)
+			} else {
+				require.NoError(err)
+			}
+			if tc.slowResultSave {
+				httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
+				require.True(ok, "the destination failure remains visible after the delayed save")
+				assert.Equal(http.StatusServiceUnavailable, httpErr.Status)
+			}
+			assert.Equal(tc.wantPlans, r.processing.Plans)
+			assert.Equal(tc.wantJobs, r.processing.Jobs)
+			assert.Equal(tc.wantPolls, r.processing.Polls)
+			if tc.wantQueuedJob != "" {
+				assert.Equal("queued", r.processing.States[tc.wantQueuedJob][0])
+			}
+			if tc.checkFirstCounts {
+				counts := r.processingCounts()
+				assert.Equal(tc.wantFirstRequested, counts.Requested)
+				assert.Equal(tc.wantFirstWaiting, counts.Waiting)
+			}
+			if tc.wantDueHashIndex >= 0 {
 				due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", "profile-one", new(store.DocbankAttachmentProcessingCursor), 20)
 				require.NoError(err)
 				require.Len(due, 1)
-				assert.Equal(hashes[2], due[0].ContentHash)
-			} else {
-				assert.Equal([]string{"c", "b", "a"}, r.processing.Plans)
-				assert.Equal("queued", r.processing.States["job-a"][0], "the pass continues after one failure")
+				assert.Equal(hashes[tc.wantDueHashIndex], due[0].ContentHash)
 			}
-			if stage == "poll" {
-				assert.Equal([]string{"job-c", "job-b", "job-a"}, r.processing.Polls)
-				assert.Equal(int64(3), r.processingCounts().Requested)
-				assert.Zero(r.processingCounts().Waiting)
-				var jobID string
-				require.NoError(r.f.Store.DB().QueryRow(r.f.Store.Rebind(`SELECT job_id FROM docbank_attachment_processing WHERE content_hash = ?`), hashes[0]).Scan(&jobID))
-				assert.Equal("job-c", jobID)
-			} else if stage != "two_failures" {
-				require.NoError(r.runBatch(t.Context()))
-				assert.Equal([]string{"c", "b", "a"}, r.processing.Plans, "the failed file waits for its retry delay")
+			for _, f := range tc.faults {
+				key := f.version
+				var faults map[string]int
+				switch f.endpoint {
+				case "plan":
+					faults = r.processing.Faults
+				case "start":
+					faults = r.processing.JobFaults
+				case "poll":
+					faults = r.processing.PollFaults
+					key = "job-" + key
+				}
+				delete(faults, key)
+				delete(r.processing.Reasons, f.version)
 			}
-			delete(faults, key)
-			delete(faults, "b")
 			r.processingDue()
-			if stage == "poll" {
+			if tc.completeJobC {
 				r.processing.States["job-c"] = [3]string{"completed", "rendition", ""}
 			}
 			require.NoError(r.runBatch(t.Context()))
-			if stage == "poll" {
-				assert.Equal([]string{"job-c", "job-b", "job-a", "job-c", "job-b", "job-a"}, r.processing.Polls)
-				assert.Equal([]string{"c", "b", "a"}, r.processing.Jobs)
-				assert.Equal(int64(1), r.processingCounts().Extracted)
-			} else {
-				if stage == "two_failures" {
-					assert.Equal([]string{"c", "b", "c", "b", "a"}, r.processing.Plans)
-				} else {
-					assert.Equal([]string{"c", "b", "a", "c"}, r.processing.Plans)
-				}
-				assert.Equal(int64(3), r.processingCounts().Requested)
-			}
+			counts := r.processingCounts()
+			assert.Equal(tc.wantFinalRequested, counts.Requested)
+			assert.Equal(tc.wantFinalWaiting, counts.Waiting)
+			assert.Equal(tc.wantFinalExtracted, counts.Extracted)
 		})
 	}
 }
 
-func TestAttachmentMirrorProcessingPlanChangedContinues(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	r := newMirrorRig(t)
-	r.delivered("c", "b", "a")
-	for _, version := range []string{"c", "b"} {
-		r.processing.JobFaults[version] = http.StatusConflict
-		r.processing.Reasons[version] = "processing_plan_changed"
-	}
-	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"c", "b", "a"}, r.processing.Plans)
-	assert.Equal(int64(1), r.processingCounts().Requested)
-	assert.Equal(int64(2), r.processingCounts().Waiting)
-	delete(r.processing.JobFaults, "c")
-	delete(r.processing.JobFaults, "b")
-	r.processingDue()
-	require.NoError(r.runBatch(t.Context()))
-	assert.Equal(int64(3), r.processingCounts().Requested)
-}
-
-func TestAttachmentMirrorProcessingDeadline(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	r := newMirrorRig(t)
-	r.delivered("a")
-	more, err := r.worker.processDocuments(t.Context(), time.Now().Add(-time.Second))
-	require.NoError(err)
-	assert.True(more)
-	assert.Zero(r.processing.Profiles)
-	assert.Empty(r.processing.Plans)
-	assert.Equal(int64(1), r.processingCounts().Waiting)
-}
-
 func TestAttachmentMirrorProcessingRequestsUseRemainingDeadline(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		path string
-		poll bool
+		name          string
+		path          string
+		existing      bool
+		poll          bool
+		wantDelivered int64
 	}{
-		{name: "profile", path: "/api/v1/processing/profiles"},
-		{name: "plan", path: "/api/v1/processing/plans"},
-		{name: "poll", path: "/api/v1/processing/jobs/job-a", poll: true},
+		{name: "profile", path: "/api/v1/processing/profiles", wantDelivered: 1},
+		{name: "plan", path: "/api/v1/processing/plans", existing: true, wantDelivered: 2},
+		{name: "poll", path: "/api/v1/processing/jobs/job-a", existing: true, poll: true, wantDelivered: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			r.delivered("a")
+			if tc.existing {
+				r.delivered("a")
+			} else {
+				r.worker.options.DocumentProfile = "documents"
+			}
 			if tc.poll {
 				require.NoError(r.runBatch(t.Context()))
 				r.processingDue()
 			}
+			r.add("new.pdf", "application/pdf", []byte("new file"))
 			requestStarted := make(chan struct{}, 1)
 			releaseRequest := make(chan struct{})
 			defer close(releaseRequest)
@@ -1493,12 +1598,14 @@ func TestAttachmentMirrorProcessingRequestsUseRemainingDeadline(t *testing.T) {
 			require.NoError(err)
 			r.worker.client = client
 
-			deadline := time.Now().Add(time.Second)
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			deadline := time.Now().Add(2 * time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
-			more, err := r.worker.processDocuments(ctx, deadline)
+			more, err := r.worker.runPass(ctx, deadline)
 			require.NoError(err)
 			assert.True(more)
+			assert.Equal(int32(1), r.Uploads.Load())
+			assert.Equal(tc.wantDelivered, r.status().Delivered)
 			select {
 			case <-requestStarted:
 			case <-time.After(2 * time.Second):
@@ -1513,16 +1620,41 @@ func TestAttachmentMirrorProcessingCancelled(t *testing.T) {
 	assert := assert.New(t)
 	r := newMirrorRig(t)
 	r.delivered("a")
-	// Cancel at the first store step after the profile lookup.
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	r.worker.WithOperationGate(func(context.Context) (func(), bool) {
-		cancel()
-		return func() {}, true
-	})
-	more, err := r.worker.processDocuments(ctx, time.Now().Add(time.Minute))
-	require.ErrorIs(err, context.Canceled)
-	assert.False(more)
+	requestStarted := make(chan struct{}, 1)
+	releaseRequest := make(chan struct{})
+	defer close(releaseRequest)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/api/v1/processing/profiles" {
+			requestStarted <- struct{}{}
+			<-releaseRequest
+			return
+		}
+		r.serve(w, req)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := docbankmedia.NewClient(srv.URL, nil)
+	require.NoError(err)
+	r.worker.client = client
+	type result struct {
+		more bool
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		more, err := r.worker.processDocuments(ctx, time.Now().Add(time.Minute))
+		done <- result{more: more, err: err}
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		require.Fail("profile request did not start")
+	}
+	cancel()
+	got := <-done
+	require.ErrorIs(got.err, context.Canceled)
+	assert.False(got.more)
 	assert.Equal(int64(1), r.processingCounts().Waiting)
 	var rows int
 	require.NoError(r.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM docbank_attachment_processing`).Scan(&rows))

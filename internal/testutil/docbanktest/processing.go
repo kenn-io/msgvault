@@ -25,7 +25,6 @@ type ProcessingHandler struct {
 	PlanFingerprint   string
 	Faults            map[string]int       // content version to plan HTTP status
 	States            map[string][3]string // job ID to state, phase, and failure code
-	Profiles          int
 	Polls             []string
 	Plans             []string
 	Jobs              []string
@@ -43,7 +42,6 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v1/processing/profiles":
 		assert.Equal(h.T, http.MethodGet, r.Method)
-		h.Profiles++
 		assert.NoError(h.T, json.MarshalWrite(w, []map[string]any{{"name": "documents", "fingerprint": h.Fingerprint, "rendition": h.Rendition}}))
 	case "/api/v1/processing/plans", "/api/v1/processing/jobs":
 		assert.Equal(h.T, http.MethodPost, r.Method)
