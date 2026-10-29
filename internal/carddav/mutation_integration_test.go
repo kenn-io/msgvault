@@ -290,6 +290,9 @@ func TestTimedOutUpdatePersistsIntentAndSyncRecoveryDoesNotReplay(t *testing.T) 
 	require.NoError(err)
 	assert.Equal(store.CardDAVMutationUpdate, publication.PendingOperation)
 
+	// Only the ambiguous write needs the fixture's short deadline. Recovery
+	// must not depend on normal HTTP reads finishing within 250 milliseconds.
+	service.dav().client.requestTimeout = defaultRequestTimeout
 	fixture.reportCurrent = true
 	_, err = service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
