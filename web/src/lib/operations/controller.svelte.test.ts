@@ -291,7 +291,7 @@ describe('OperationsController', () => {
     controller.destroy();
   });
 
-  it('keeps selected detail identity when its same-timestamp row leaves the refreshed page', async () => {
+  it('retains selected detail during reload and after its same-timestamp row leaves the refreshed page', async () => {
     const peerBefore = `${RUN_ONE}-peer`;
     const peerAfter = `${RUN_TWO}-peer`;
     let historyReads = 0;

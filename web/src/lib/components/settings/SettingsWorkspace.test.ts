@@ -297,7 +297,7 @@ describe('SettingsWorkspace', () => {
     expect(within(archiveTuning).getByLabelText('Builder threads')).toBeDefined();
   });
 
-  it('reverts and discards edits, then keeps a conflicted draft for a revision-checked save', async () => {
+  it('reverts and discards edits, retains a conflicted draft, and notifies shell status after each save', async () => {
     let conflicts = 1;
     const doc = settingsDoc();
     const { client, seen } = fixture(doc, request => {
@@ -657,9 +657,9 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
 });
 
-it('opens document status from Overview Details without a past run', async () => {
+it('routes Overview document extraction Details to live document status', async () => {
   const { client } = fixture(settingsDoc(), request => {
-    if (new URL(request.url).pathname.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents', related_status: 'getDocumentIndexStatus' })] });
+    if (new URL(request.url).pathname.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents' })] });
   });
   const onOpenStatus = vi.fn();
   render(SettingsWorkspace, { client, onOpenStatus });
