@@ -112,7 +112,8 @@ One toolbar sits above the results:
 
 - **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected UTC calendar days. From must be on or before To.
 - **Group by** adds a grouping level. Add more levels to group within groups.
-- A restored Timeline shows **Show as** so you can return to Table.
+- **Show as** switches between Table, Timeline, and Files.
+- **Sort** shows the fixed newest-first Messages order.
 - The count at the end reports items, or groups when the view is grouped.
 
 Each active search, filter, and grouping appears as a removable chip below the

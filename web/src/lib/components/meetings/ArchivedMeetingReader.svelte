@@ -6,7 +6,7 @@
   import type { ExplorePredicate } from '../../explore/models';
   import ReadingPane from '../reader/ReadingPane.svelte';
 
-  let { client, message, loading, error, predicate, anchorID, onClose, onReload, onOpenMeeting, onAnchorChange, onOpenPerson }: {
+  let { client, message, loading, error, predicate, anchorID, onClose, onReload, onOpenMeeting, onAnchorChange, onOpenPerson, onOpenSettings }: {
     client: APIClient;
     message?: MessageDetail;
     loading: boolean;
@@ -16,6 +16,7 @@
     onClose: () => void;
     onReload: () => void;
     onOpenPerson?: (participantID: number) => void;
+    onOpenSettings?: () => void;
     onOpenMeeting: (meeting: MeetingRef) => void;
     onAnchorChange: (id: number) => void;
   } = $props();
@@ -28,7 +29,7 @@
     {#if message}
       <ReadingPane {client} selection={{ kind: 'archive', message }} {predicate}
         conversationAnchorId={anchorID} onConversationAnchorChange={onAnchorChange}
-        {onOpenMeeting} {onOpenPerson} onClose={onClose} />
+        {onOpenMeeting} {onOpenPerson} {onOpenSettings} onClose={onClose} />
     {:else if loading}
       <p role="status">Loading archived meeting…</p>
     {:else if error}
