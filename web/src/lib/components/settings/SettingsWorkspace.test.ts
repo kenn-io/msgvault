@@ -140,6 +140,36 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each([
+  ['log.sql_slow_ms', 'server', 'Slow SQL threshold', 'ms'],
+  ['inline.max_media_mb', 'attachments', 'Inline maximum size', 'MiB'],
+  ['beeper.max_media_mb', 'attachments', 'Beeper maximum size', 'MiB'],
+  ['slack.max_media_mb', 'attachments', 'Slack maximum size', 'MiB'],
+  ['discord.max_media_mb', 'attachments', 'Discord maximum size', 'MiB'],
+  ['teams.max_media_mb', 'attachments', 'Teams maximum size', 'MiB'],
+])('includes the unit in the number field label for %s', async (key, group, label, unit) => {
+  const { client } = fixture(settingsDoc({ settings: [setting(key, group, 'integer', 100, { label })] }));
+  render(SettingsWorkspace, { client, category: group === 'server' ? 'server' : 'sources' });
+  expect(await screen.findByLabelText(`${label} (${unit})`)).toHaveProperty('value', '100');
+});
+
+it('shows the restart cue before saving only while a restart-required draft is pending', async () => {
+  const doc = settingsDoc();
+  doc.settings.push(setting('log.enabled', 'server', 'boolean', false, { restart_required: true }));
+  const { client, seen } = fixture(doc);
+  render(SettingsWorkspace, { client, category: 'server' });
+  await fireEvent.click(await screen.findByRole('switch', { name: 'Trace every SQL statement' }));
+  const footer = screen.getByText('1 unsaved change').parentElement!;
+  expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
+  await fireEvent.click(screen.getByRole('switch', { name: 'Keep logs' }));
+  expect(within(footer).getByText('Restart msgvault to apply these changes.')).toBeDefined();
+  expect(within(footer).getByText('2 unsaved changes')).toBeDefined();
+  expect(seen.some(request => request.method === 'PATCH')).toBe(false);
+  await fireEvent.click(screen.getByRole('switch', { name: 'Keep logs' }));
+  expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
+  expect(within(footer).getByText('1 unsaved change')).toBeDefined();
+});
+
 it('warns before leaving with drafts, keeps them on Stay, and discards before continuing', async () => {
   const { client } = fixture();
   let hold: ((leave: () => void) => boolean) | undefined;
@@ -376,8 +406,8 @@ it('keeps attachment off values and cron schedules editable under Sources', asyn
   doc.settings.push(setting('slack.schedule', 'sources', 'string', '0 3 * * *', { label: 'Slack schedule', validation: { format: 'cron' } }));
   const { client, seen } = fixture(doc);
   render(SettingsWorkspace, { client, category: 'sources' });
-  await fireEvent.click(await screen.findByRole('switch', { name: 'Set Maximum attachment size' }));
-  expect((screen.getByLabelText('Maximum attachment size') as HTMLInputElement).value).toBe('50');
+  await fireEvent.click(await screen.findByRole('switch', { name: 'Set Discord maximum size (MiB)' }));
+  expect((screen.getByLabelText('Discord maximum size (MiB)') as HTMLInputElement).value).toBe('50');
   await chooseSelectOption(screen.getByRole('combobox', { name: 'Presets: Every day at 03:00' }), 'Every 15 minutes');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.find(request => request.method === 'PATCH')?.body).toEqual({ updates: [

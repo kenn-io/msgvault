@@ -113,6 +113,7 @@
   const label = $derived(categories.find((candidate) => candidate.id === activeCategory)?.label ?? '');
   const layout = $derived(layoutCategory(activeCategory as CategoryID, settings, groups));
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
+  const draftNeedsRestart = $derived(settings.some(setting => setting.restart_required && isDirty(setting.key)));
   let pendingLeave = $state<(() => void) | undefined>();
   const registerLeave = getContext<((hold?: (leave: () => void) => boolean) => void) | undefined>('msgvault:hold-settings-leave');
   registerLeave?.((leave) => dirtyCount > 0 && !saving && (pendingLeave = leave, true));
@@ -437,6 +438,7 @@
   {:else}
     <span class="unsaved" role="status">
       {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : ''}`}
+      {#if draftNeedsRestart}<span>Restart msgvault to apply these changes.</span>{/if}
     </span>
     <Button label="Discard" disabled={saving} onclick={discard} />
     <Button
