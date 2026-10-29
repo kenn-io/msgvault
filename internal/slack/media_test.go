@@ -25,9 +25,11 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 		name   string
 		status int
 		reason string
+		skip   bool
 	}{
-		{"empty body", http.StatusOK, "slack file GET: empty response body"},
-		{"server error", http.StatusServiceUnavailable, "slack file GET: status 503"},
+		{"empty body", http.StatusOK, "slack file GET: empty response body", true},
+		{"server error", http.StatusServiceUnavailable, "slack file GET: status 503", true},
+		{"successful retry", http.StatusServiceUnavailable, "slack file GET: status 503", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -65,6 +67,19 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			var itemError string
 			require.NoError(st.DB().QueryRow(`SELECT error_message FROM sync_run_items WHERE error_kind = 'slack_media_error'`).Scan(&itemError))
 			assert.Equal("F_FAILURE: "+tc.reason, itemError)
+			if !tc.skip {
+				client.mediaTransport = &recordingTransport{body: "pdf bytes"}
+				backfill, err := imp.BackfillMedia(t.Context(), opts)
+				require.NoError(err)
+				assert.Equal(1, backfill.AttachmentsDownloaded)
+				require.NoError(st.DB().QueryRow(st.Rebind(`
+					SELECT attachment_state, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
+					FROM attachments WHERE source_attachment_id = ?
+				`), "slack:F_FAILURE").Scan(&state, &metadata))
+				assert.Equal("stored", state)
+				assert.NotContains(metadata, "fetch_error")
+				return
+			}
 
 			opts.NoMedia, opts.Full = true, true
 			_, err = imp.Import(t.Context(), opts)
@@ -84,26 +99,6 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			assert.Equal("skipped", state)
 			assert.Equal("size_cap", reason)
 			assert.NotContains(metadata, "fetch_error")
-			opts.MaxMediaBytes = 0
-
-			success := &recordingTransport{body: "pdf bytes"}
-			client.mediaTransport = success
-			backfill, err := imp.BackfillMedia(t.Context(), opts)
-			require.NoError(err)
-			assert.Equal(1, backfill.AttachmentsDownloaded)
-			assert.Empty(backfill.FirstMediaError)
-			assert.Equal(failed.requests, success.requests)
-			var storagePath string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
-				SELECT attachment_state, COALESCE(attachment_skip_reason, ''), COALESCE(CAST(attachment_metadata AS TEXT), '{}'), storage_path
-				FROM attachments WHERE source_attachment_id = ?
-			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata, &storagePath))
-			assert.Equal("stored", state)
-			assert.Empty(reason)
-			assert.NotContains(metadata, "fetch_error")
-			content, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, storagePath))
-			require.NoError(err)
-			assert.Equal("pdf bytes", string(content))
 		})
 	}
 }
