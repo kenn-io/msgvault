@@ -13,6 +13,37 @@ import (
 	"go.kenn.io/msgvault/internal/teams"
 )
 
+func TestSlackSummariesReportMediaErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		print func(*bytes.Buffer, *slack.ImportSummary)
+	}{
+		{"sync", func(out *bytes.Buffer, sum *slack.ImportSummary) {
+			cmd := &cobra.Command{}
+			cmd.SetOut(out)
+			printSlackSummary(cmd, "workspace", sum)
+		}},
+		{"backfill", func(out *bytes.Buffer, sum *slack.ImportSummary) {
+			writeSlackMediaBackfillSummary(out, "workspace", sum)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			var out bytes.Buffer
+			tc.print(&out, &slack.ImportSummary{
+				Errors: 2, FirstMediaError: "F123: \x1b[31mslack file GET: status 503\x1b[0m\n",
+			})
+			assert.Contains(out.String(), ", 2 errors, first media error: F123: slack file GET: status 503 \n")
+			assert.NotContains(out.String(), "\x1b")
+			assert.Equal(1, strings.Count(out.String(), "\n"))
+			out.Reset()
+			tc.print(&out, &slack.ImportSummary{})
+			assert.NotContains(out.String(), "errors")
+			assert.NotContains(out.String(), "first media error")
+		})
+	}
+}
+
 func TestProviderSyncSummariesReportPolicySkips(t *testing.T) {
 	tests := []struct {
 		name  string

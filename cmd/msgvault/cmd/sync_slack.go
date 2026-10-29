@@ -173,6 +173,9 @@ func printSlackSummary(cmd *cobra.Command, teamID string, sum *slack.ImportSumma
 	if sum.Errors > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d errors", sum.Errors)
 	}
+	if sum.FirstMediaError != "" {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", first media error: %s", textutil.SanitizeTerminal(sum.FirstMediaError))
+	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 }
 

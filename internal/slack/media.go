@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // defaultMaxMediaBytes caps individual file downloads (config max_media_mb
@@ -117,6 +119,9 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 	if int64(len(data)) > maxBytes {
 		return nil, ErrAssetTooLarge
 	}
+	if len(data) == 0 {
+		return nil, errors.New("slack file GET: empty response body")
+	}
 	return data, nil
 }
 
@@ -191,12 +196,23 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		pendingRow := linkRow
 		pendingRow.MediaType = ""
 		pendingRow.State = attachmentpolicy.StatePending
-		if previous, ok := existing[sourceAttID]; ok && previous.Size > pendingRow.Size {
-			pendingRow.Size = previous.Size
+		if previous, ok := existing[sourceAttID]; ok {
+			pendingRow.Metadata = previous.Metadata
+			if previous.Size > pendingRow.Size {
+				pendingRow.Size = previous.Size
+			}
 		}
 
 		// pend leaves a retryable marker; link records metadata permanently.
 		pend := func(status, kind string, err error) {
+			if status == store.SyncRunItemStatusError && err != nil {
+				metadata, _ := json.Marshal(map[string]string{"fetch_error": err.Error()})
+				pendingRow.Metadata = string(metadata)
+				err = fmt.Errorf("%s: %w", f.ID, err)
+				if sum.FirstMediaError == "" {
+					sum.FirstMediaError = textutil.TruncateRunes(err.Error(), 200)
+				}
+			}
 			imp.recordItem(ctx, syncID, sourceMessageID("", m.TS), "attachment", status, kind, err)
 			if status == store.SyncRunItemStatusSkipped {
 				pendingRow.State = attachmentpolicy.StateSkipped

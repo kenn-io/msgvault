@@ -346,6 +346,7 @@ type ImportSummary struct {
 	AttachmentsSkipped     int
 	FetchErrors            int
 	Errors                 int
+	FirstMediaError        string
 	// UnavailableChannels lists selected ChannelIDs the credential user's
 	// conversation listing did not return. The run skips them without
 	// failing; their archived history is unchanged.

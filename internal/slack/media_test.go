@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +16,84 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestSlackMediaFailureDetails(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		status int
+		reason string
+	}{
+		{"empty body", http.StatusOK, "slack file GET: empty response body"},
+		{"server error", http.StatusServiceUnavailable, "slack file GET: status 503"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := testWorkspace(t)
+			f.conv("C01").Msgs[6].Files = []map[string]any{{
+				"id": "F_FAILURE", "name": "report.pdf", "mimetype": "application/pdf", "size": 5,
+				"url_private": "https://files.slack.com/files-pri/T01-F_FAILURE/report.pdf",
+				"permalink":   "https://testers.slack.com/files/F_FAILURE",
+			}}
+			srv := f.serve()
+			defer srv.Close()
+			client := NewClient(srv.URL, "xoxp-test")
+			client.disableRateLimits()
+			failed := &recordingTransport{status: tc.status}
+			client.mediaTransport = failed
+			st := testutil.NewTestStore(t)
+			imp := NewImporter(st, client, "T01")
+			opts := ImportOptions{TeamID: "T01", UserID: "UME", AttachmentsDir: t.TempDir()}
+			sum, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			assert.Equal(1, sum.Errors)
+			assert.Equal("F_FAILURE: "+tc.reason, sum.FirstMediaError)
+			assert.Equal([]string{"https://files.slack.com/files-pri/T01-F_FAILURE/report.pdf"}, failed.requests)
+			var state, reason, metadata string
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT attachment_state, attachment_skip_reason, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
+				FROM attachments WHERE source_attachment_id = ?
+			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata))
+			assert.Equal("failed", state)
+			assert.Equal("fetch_failure", reason)
+			var detail map[string]any
+			require.NoError(json.Unmarshal([]byte(metadata), &detail))
+			assert.Equal(tc.reason, detail["fetch_error"])
+			var itemError string
+			require.NoError(st.DB().QueryRow(`SELECT error_message FROM sync_run_items WHERE error_kind = 'slack_media_error'`).Scan(&itemError))
+			assert.Equal("F_FAILURE: "+tc.reason, itemError)
+
+			opts.NoMedia, opts.Full = true, true
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT CAST(attachment_metadata AS TEXT) FROM attachments WHERE source_attachment_id = ?
+			`), "slack:F_FAILURE").Scan(&metadata))
+			assert.Contains(metadata, tc.reason, "deferring media keeps the last fetch reason")
+			opts.NoMedia, opts.Full = false, false
+
+			success := &recordingTransport{body: "pdf bytes"}
+			client.mediaTransport = success
+			backfill, err := imp.BackfillMedia(t.Context(), opts)
+			require.NoError(err)
+			assert.Equal(1, backfill.AttachmentsDownloaded)
+			assert.Empty(backfill.FirstMediaError)
+			assert.Equal(failed.requests, success.requests)
+			var storagePath string
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT attachment_state, COALESCE(attachment_skip_reason, ''), COALESCE(CAST(attachment_metadata AS TEXT), '{}'), storage_path
+				FROM attachments WHERE source_attachment_id = ?
+			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata, &storagePath))
+			assert.Equal("stored", state)
+			assert.Empty(reason)
+			assert.NotContains(metadata, "fetch_error")
+			content, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, storagePath))
+			require.NoError(err)
+			assert.Equal("pdf bytes", string(content))
+		})
+	}
+}
 
 func TestFetchableURLHostRestriction(t *testing.T) {
 	t.Parallel()
