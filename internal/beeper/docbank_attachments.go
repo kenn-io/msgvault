@@ -600,20 +600,11 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			if !answer.retry {
 				d.Outcome = answer.outcome
 			}
-			previousJobID := d.JobID
 			d.Fingerprint = profile.Fingerprint
+			d.JobID = jobID
 			var next time.Time
-			if d.Retry && previousJobID != "" && jobID == previousJobID && store.IsDocbankAttachmentProcessingRecoverableOutcome(d.Outcome) {
-				d.Outcome = ""
-				d.JobID = ""
-				d.Retry = false
-				next = time.Now().UTC()
-			} else {
-				d.JobID = jobID
-				d.Retry = d.Retry && previousJobID != "" && jobID == previousJobID && (answer.retry || d.Outcome == "requested")
-				if answer.delay != 0 {
-					next = time.Now().UTC().Add(answer.delay)
-				}
+			if answer.delay != 0 {
+				next = time.Now().UTC().Add(answer.delay)
 			}
 			if saveErr := w.gated(ctx, func() error {
 				return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)
@@ -716,7 +707,7 @@ func processingJobAnswer(job docbankmedia.JobStatus) documentProcessingAnswer {
 
 // processingCode returns code when it is a short snake_case outcome, otherwise fallback.
 func processingCode(code, fallback string) string {
-	if code != "" && len(code) <= 128 && strings.Trim(code, "abcdefghijklmnopqrstuvwxyz_") == "" {
+	if docbankmedia.ValidErrorCode(code) {
 		return code
 	}
 	return fallback

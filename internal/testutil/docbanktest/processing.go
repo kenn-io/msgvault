@@ -1,6 +1,8 @@
 package docbanktest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"net/http"
 	"strings"
@@ -30,9 +32,18 @@ type ProcessingHandler struct {
 	Jobs              []string
 }
 
+func ProcessingFingerprint(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(sum[:])
+}
+
+func ProcessingJobID(version string) string {
+	return ProcessingFingerprint("job:" + version)
+}
+
 func NewProcessingHandler(t *testing.T) *ProcessingHandler {
 	t.Helper()
-	return &ProcessingHandler{NodeIDs: map[string]int64{}, JobFaults: map[string]int{}, PollFaults: map[string]int{}, Reasons: map[string]string{}, T: t, Fingerprint: "profile-one", Rendition: true, PlanFingerprint: "plan-one", Faults: map[string]int{}, States: map[string][3]string{}}
+	return &ProcessingHandler{NodeIDs: map[string]int64{}, JobFaults: map[string]int{}, PollFaults: map[string]int{}, Reasons: map[string]string{}, T: t, Fingerprint: ProcessingFingerprint("profile-one"), Rendition: true, PlanFingerprint: ProcessingFingerprint("plan-one"), Faults: map[string]int{}, States: map[string][3]string{}}
 }
 
 func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -81,16 +92,16 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": h.Reasons[version]}))
 				return
 			}
-			state, ok := h.States["job-"+version]
+			state, ok := h.States[ProcessingJobID(version)]
 			if ok && state[0] == "failed" && state[2] != "consent" && state[2] != "stale_authority" && state[2] != "pdf_password_required" {
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": "rendition_failed"}))
 				return
 			}
 			if !ok || state[0] == "failed" {
-				h.States["job-"+version] = [3]string{"queued", "rendition", ""}
+				h.States[ProcessingJobID(version)] = [3]string{"queued", "rendition", ""}
 			}
-			assert.NoError(h.T, json.MarshalWrite(w, map[string]any{"type": "job", "job": map[string]string{"id": "job-" + version}}))
+			assert.NoError(h.T, json.MarshalWrite(w, map[string]any{"type": "job", "job": map[string]string{"id": ProcessingJobID(version)}}))
 		}
 	default:
 		if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/processing/jobs/"); ok {
