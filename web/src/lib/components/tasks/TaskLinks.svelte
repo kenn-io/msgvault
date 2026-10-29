@@ -23,6 +23,7 @@
     mode = 'list',
     busy = $bindable(false),
     oncomplete = undefined,
+    oncancel = undefined,
     messageId,
     title,
     onsettings = () => undefined,
@@ -31,6 +32,7 @@
     mode?: 'list' | 'add';
     busy?: boolean;
     oncomplete?: () => void;
+    oncancel?: () => void;
     messageId: number;
     title: string;
     onsettings?: () => void;
@@ -181,7 +183,6 @@
       existingLinkRetry = undefined;
       searchQuery = '';
       searchResults = [];
-      await loadFor(selectedMessageID);
       oncomplete?.();
     } catch (cause) {
       if (currentGeneration !== generation || activeController?.signal.aborted) return;
@@ -333,11 +334,8 @@
     subject={outboundMetadata.subject}
     from={outboundMetadata.from}
     sentAt={outboundMetadata.sent_at}
-    onclose={() => oncomplete?.()}
-    oncreated={() => {
-      void loadFor(messageId);
-      oncomplete?.();
-    }}
+    onclose={oncancel}
+    oncreated={() => oncomplete?.()}
   />
 {/if}
 
