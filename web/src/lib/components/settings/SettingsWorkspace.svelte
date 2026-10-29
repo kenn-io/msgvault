@@ -114,15 +114,19 @@
   const layout = $derived(layoutCategory(activeCategory as CategoryID, settings, groups));
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
   const draftNeedsRestart = $derived(settings.some(setting => setting.restart_required && isDirty(setting.key)));
-  let pendingLeave = $state<(() => void) | undefined>();
-  const registerLeave = getContext<((hold?: (leave: () => void) => boolean) => void) | undefined>('msgvault:hold-settings-leave');
-  registerLeave?.((leave) => dirtyCount > 0 && !saving && (pendingLeave = leave, true));
+  let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
+  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean) => void) | undefined>('msgvault:hold-settings-leave');
+  registerLeave?.((leave, stay) => dirtyCount > 0 && !saving && (pendingLeave = { leave, stay }, true));
   onDestroy(() => registerLeave?.(undefined));
   function focusStay(node: HTMLElement) {
     node.querySelector('button')?.focus();
   }
+  function stay() {
+    pendingLeave?.stay?.();
+    pendingLeave = undefined;
+  }
   function discardAndLeave() {
-    const leave = pendingLeave;
+    const leave = pendingLeave?.leave;
     pendingLeave = undefined;
     discardChanges();
     leave?.();
@@ -142,9 +146,15 @@
     followedCategory = category;
     activeCategory = category;
   });
+  // Any navigation while a leave is pending cancels it. A rail click stays
+  // first, so an unindexed held entry gets Settings back before the push.
+  $effect(() => {
+    void [category, navigationTarget];
+    untrack(() => { pendingLeave = undefined; });
+  });
   function selectCategory(categoryID: string): void {
-    activeCategory = categoryID;
-    onCategoryChange(categoryID);
+    stay();
+    onCategoryChange(activeCategory = categoryID);
   }
 
   // Overview owns feature status and index actions. Status reloads when a build starts or ends.
@@ -432,7 +442,7 @@
   {#if pendingLeave}
     <span class="unsaved" role="status">Leave Settings and discard {dirtyCount} unsaved {dirtyCount === 1 ? 'change' : 'changes'}?</span>
     <span use:focusStay>
-      <Button label="Stay" tone="neutral" surface="outline" onclick={() => (pendingLeave = undefined)} />
+      <Button label="Stay" tone="neutral" surface="outline" onclick={stay} />
     </span>
     <Button label="Discard and leave" tone="info" surface="solid" onclick={discardAndLeave} />
   {:else}

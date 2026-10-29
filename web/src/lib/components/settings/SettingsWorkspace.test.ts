@@ -62,7 +62,7 @@ function settingsDoc(overrides: Setting = {}) {
       setting('vector.embeddings.endpoint', 'search', 'string', '', { label: 'Text embedding endpoint' }),
       setting('vector.embeddings.model', 'search', 'string', '', { label: 'Text embedding model' }),
       setting('vector.embeddings.api_key', 'search', 'secret', undefined, {
-        label: 'Text embedding API key', credential_id: 'vector.embeddings',
+        label: 'Text embedding API key', credential_id: 'vector.embeddings', restart_required: true,
         secret: { configured: false, source: 'none' } }),
       setting('vector.search.rrf_k', 'search', 'integer', 60, { label: 'RRF constant' }),
       setting('integrations.kata.enabled', 'integrations', 'boolean', false, { label: 'Kata person agendas' }),
@@ -109,8 +109,9 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
       return Response.json(doc, { headers: { ETag: `"s${etag}"` } });
     }
     if (path.startsWith('/api/v1/settings/provider-credentials/')) {
+      const credentialID = decodeURIComponent(path.split('/').at(-1)!);
       return Response.json(
-        { credential_id: decodeURIComponent(path.split('/').at(-1)!), state: { configured: true, source: 'stored', hint: '•••' }, pending_restart: false },
+        { credential_id: credentialID, state: { configured: true, source: 'stored', hint: '•••' }, pending_restart: credentialID.startsWith('vector.') },
         { headers: { ETag: '"credential-b"' } }
       );
     }
@@ -204,6 +205,32 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
   expect(hold?.(firstLeave)).toBe(false);
   unmount();
   expect(hold).toBeUndefined();
+});
+
+it('cancels a pending leave when the category changes, keeping drafts', async () => {
+  const { client } = fixture();
+  let hold: ((leave: () => void, stay?: () => void) => boolean) | undefined;
+  const { rerender } = render(SettingsWorkspace, {
+    props: { client, category: 'server' },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  const field = await screen.findByLabelText('Stop when idle after');
+  await fireEvent.input(field, { target: { value: '15m' } });
+  const leave = vi.fn();
+  const stay = vi.fn();
+  expect(hold?.(leave, stay)).toBe(true);
+  await screen.findByRole('button', { name: 'Discard and leave' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  expect(screen.queryByRole('button', { name: 'Discard and leave' })).toBeNull();
+  expect(stay).toHaveBeenCalledOnce();
+  expect(leave).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  expect(screen.getByLabelText('Stop when idle after')).toHaveProperty('value', '15m');
+  expect(hold?.(leave)).toBe(true);
+  await screen.findByRole('button', { name: 'Discard and leave' });
+  await rerender({ category: 'contacts' });
+  expect(screen.queryByRole('button', { name: 'Discard and leave' })).toBeNull();
+  expect(leave).not.toHaveBeenCalled();
 });
 
 it('does not hold leaving while a settings save is pending', async () => {
@@ -480,7 +507,7 @@ it('saves keys and providers at once, apart from Save changes', async () => {
   expect(screen.getByText('Save endpoint settings first before changing this credential.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
-  expect(screen.getByRole('dialog').textContent).toContain('Applies right away.');
+  expect(screen.getByRole('dialog').textContent).toContain('Saved right away. The daemon uses it after a restart.');
   await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
