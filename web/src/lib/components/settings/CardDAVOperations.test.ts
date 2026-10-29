@@ -144,49 +144,48 @@ describe('CardDAVOperations', () => {
     expect((screen.getByRole('button', { name: 'Apply roles for Retained book' }) as HTMLButtonElement).disabled).toBe(true);
     controller.destroy();
   });
-});
 
-
-it('labels history from the API connection rather than the account ID', async () => {
-  const client = createAPIClient(async (input) => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/status')) return Response.json({
-      configured: false, available: false, credential_configured: false,
-      enabled: false, scheduled: false, schedule: ''
+  it('labels history from the API connection rather than the account ID', async () => {
+    const client = createAPIClient(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/status')) return Response.json({
+        configured: false, available: false, credential_configured: false,
+        enabled: false, scheduled: false, schedule: ''
+      });
+      if (path.endsWith('/runs')) return Response.json({ runs: [
+        { id: 3, account_id: 1, connection: 'work' },
+        { id: 2, account_id: 7, connection: 'default' },
+        { id: 1, account_id: 1 }
+      ].map(run => ({
+        ...run, trigger: 'manual', full: false, state: 'succeeded',
+        started_at: '2026-08-28T09:00:00Z', books: 1, created: 0, updated: 0, removed: 0
+      })) });
+      throw new Error(`Unexpected ${request.method} ${path}`);
     });
-    if (path.endsWith('/runs')) return Response.json({ runs: [
-      { id: 3, account_id: 1, connection: 'work' },
-      { id: 2, account_id: 7, connection: 'default' },
-      { id: 1, account_id: 1 }
-    ].map(run => ({
-      ...run, trigger: 'manual', full: false, state: 'succeeded',
-      started_at: '2026-08-28T09:00:00Z', books: 1, created: 0, updated: 0, removed: 0
-    })) });
-    throw new Error(`Unexpected ${request.method} ${path}`);
+    const controller = new CardDAVController(client);
+    await controller.load();
+    render(CardDAVOperations, { controller });
+
+    expect(screen.getAllByRole('row').slice(1).map(row => row.querySelector('td')?.textContent)).toEqual([
+      'work', 'default', 'Unknown connection'
+    ]);
+    controller.destroy();
   });
-  const controller = new CardDAVController(client);
-  await controller.load();
-  render(CardDAVOperations, { controller });
 
-  expect(screen.getAllByRole('row').slice(1).map(row => row.querySelector('td')?.textContent)).toEqual([
-    'work', 'default', 'Unknown connection'
-  ]);
-  controller.destroy();
-});
-
-it('shows Sync now without Full sync and calls sync with the selected connection', async () => {
-  const controller = new CardDAVController(createAPIClient(async input => {
-    const path = new URL((input as Request).url).pathname;
-    if (path.endsWith('/status')) return Response.json({ configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' });
-    if (path.endsWith('/books')) return Response.json({ books: [] });
-    return Response.json({ runs: [] });
-  }));
-  await controller.load();
-  const sync = vi.spyOn(controller, 'sync').mockResolvedValue(undefined);
-  render(CardDAVOperations, { controller, syncConnection: 'work' });
-  expect(screen.queryByRole('button', { name: 'Full sync' })).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-  expect(sync).toHaveBeenCalledExactlyOnceWith('work');
-  controller.destroy();
+  it('shows Sync now without Full sync and calls sync with the selected connection', async () => {
+    const controller = new CardDAVController(createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/status')) return Response.json({ configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' });
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      return Response.json({ runs: [] });
+    }));
+    await controller.load();
+    const sync = vi.spyOn(controller, 'sync').mockResolvedValue(undefined);
+    render(CardDAVOperations, { controller, syncConnection: 'work' });
+    expect(screen.queryByRole('button', { name: 'Full sync' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
+    expect(sync).toHaveBeenCalledExactlyOnceWith('work');
+    controller.destroy();
+  });
 });

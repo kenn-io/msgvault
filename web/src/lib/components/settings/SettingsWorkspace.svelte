@@ -384,8 +384,8 @@
     error = '';
     accountSaveStatus = '';
     try {
-      for (const draft of Object.values(accountDrafts)) {
-        if (draft.error) throw new Error(draft.error);
+      for (const [name, draft] of Object.entries(accountDrafts)) {
+        if (draft.error) throw new Error(`${name}: ${draft.error}`);
       }
       await saveProviders(true);
       if (updates.length > 0) {
