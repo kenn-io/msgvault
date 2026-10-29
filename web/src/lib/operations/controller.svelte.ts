@@ -172,7 +172,7 @@ export class OperationsController {
     this.statusRefreshing = true;
     try {
       const result = await generatedGetOperationStatus({ ...this.client, signal: request.signal });
-      if (!this.ownsStatus(request, generation, context)) return false;
+      if (!this.ownsStatus(request, generation, context)) return this.statusRead ?? false;
       if (!result.data) {
         this.statusError = 'Unable to load operation status.';
         return false;
@@ -183,7 +183,8 @@ export class OperationsController {
       this.statusUpdatedAt = Date.now();
       return true;
     } catch {
-      if (this.ownsStatus(request, generation, context)) this.statusError = 'Unable to load operation status.';
+      if (!this.ownsStatus(request, generation, context)) return this.statusRead ?? false;
+      this.statusError = 'Unable to load operation status.';
       return false;
     } finally {
       if (this.ownsStatus(request, generation, context)) {
