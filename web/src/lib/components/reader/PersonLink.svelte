@@ -1,9 +1,9 @@
 <script lang="ts">
-  let { name, address, onOpenPerson }: { name: string; address?: string; onOpenPerson?: (address: string) => void } = $props();
+  let { name, participantID, onOpenPerson }: { name: string; participantID?: number; onOpenPerson?: (participantID: number) => void } = $props();
 </script>
 
-{#if onOpenPerson}
-  <button type="button" onclick={() => onOpenPerson?.(address || name)}>{name}</button>
+{#if onOpenPerson && participantID && participantID > 0}
+  <button type="button" onclick={() => onOpenPerson?.(participantID!)}>{name}</button>
 {:else}
   <span>{name}</span>
 {/if}

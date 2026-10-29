@@ -1,6 +1,6 @@
 <script lang="ts">
   import { autoReposition, Button, Checkbox, dismissable, floatingPopoverStyle } from '@kenn-io/kit-ui';
-  import { onDestroy, tick, untrack, type Snippet } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import { createExploreAPI } from '../../explore/api';
@@ -18,17 +18,11 @@
   let {
     client,
     filters,
-    locked = [],
     onChange,
-    extra = undefined,
   }: {
     client: APIClient;
     filters: ExploreFilter[];
-    /** Filters the page applies itself, such as the person a list belongs to. The menu leaves them alone. */
-    locked?: ExploreFilter[];
     onChange: (filters: ExploreFilter[]) => void;
-    /** More fields under Identity, such as Files' Filename and Type. */
-    extra?: Snippet;
   } = $props();
 
   const api = createExploreAPI(untrack(() => client));
@@ -41,13 +35,8 @@
   let kindsLoaded = false;
   let controller: AbortController | undefined;
 
-  const lockedKeys = $derived(new Set(locked.map(filterKey)));
-  const editable = $derived(filters.filter((filter) => !lockedKeys.has(filterKey(filter))));
-  const kindValues = $derived(editable.find((filter) => filter.dimension === 'message_type')?.values ?? []);
-
-  function filterKey(filter: ExploreFilter): string {
-    return `${filter.dimension}\u0000${filter.values.join('\u0000')}`;
-  }
+  const kindValues = $derived(filters.find((filter) => filter.dimension === 'message_type')?.values ?? []);
+  let dateError = $state('');
 
   async function loadKinds(): Promise<void> {
     if (kindsLoaded) return;
@@ -55,7 +44,7 @@
     kindsStatus = 'Loading kinds…';
     controller = new AbortController();
     try {
-      const loaded = await api.groups({ filters: locked, limit: 50 }, 'message_type', controller.signal);
+      const loaded = await api.groups({ limit: 50 }, 'message_type', controller.signal);
       if (loaded.status !== 'ready') {
         kindsStatus = loaded.status === 'unavailable' ? 'Kinds unavailable' : 'Could not load kinds';
         kindsLoaded = false;
@@ -115,9 +104,8 @@
   }
 
   function toggleKind(option: KindOption, checked: boolean): void {
-    const others = kinds.filter((kind) => kind !== option && kindChecked(kind)).flatMap((kind) => kind.values);
-    const values = checked ? [...others, ...option.values] : others;
-    const rest = filters.filter((filter) => lockedKeys.has(filterKey(filter)) || filter.dimension !== 'message_type');
+    const values = checked ? [...new Set([...kindValues, ...option.values])] : kindValues.filter((value) => !option.values.includes(value));
+    const rest = filters.filter((filter) => filter.dimension !== 'message_type');
     onChange(values.length > 0 ? [...rest, { dimension: 'message_type', values }] : rest);
   }
 
@@ -129,7 +117,16 @@
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   }
 
-  function changeDate(dimension: 'after' | 'before', value: string): void {
+  function changeDate(dimension: 'after' | 'before', input: HTMLInputElement): void {
+    const value = input.value;
+    dateError = '';
+    const from = dimension === 'after' ? value : dateValue('after');
+    const to = dimension === 'before' ? value : dateValue('before');
+    if (from && to && from > to) {
+      dateError = 'From must be on or before To.';
+      input.value = dateValue(dimension);
+      return;
+    }
     const rest = filters.filter((filter) => filter.dimension !== dimension);
     if (!value) return onChange(rest);
     const bounds = localDayBoundsUTC(`${value}T12:00:00`);
@@ -137,14 +134,15 @@
   }
 
   function clear(): void {
-    onChange(filters.filter((filter) => lockedKeys.has(filterKey(filter))));
+    dateError = '';
+    onChange([]);
   }
 </script>
 
 <span class="filter-trigger" bind:this={triggerElement}>
   <Button
-    surface={open || editable.length > 0 ? 'soft' : 'outline'}
-    label={editable.length > 0 ? `Filter · ${editable.length}` : 'Filter'}
+    surface={open || filters.length > 0 ? 'soft' : 'outline'}
+    label={filters.length > 0 ? `Filter · ${filters.length}` : 'Filter'}
     ariaLabel="Filter"
     ariaExpanded={open}
     onclick={() => void toggle()}
@@ -172,12 +170,12 @@
     <IdentityFilter {client} {filters} {onChange} />
     <div class="dates">
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
-      <label>From<input type="date" aria-label="From" value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget.value)} /></label>
+      <label>From<input type="date" aria-label="From" value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget)} /></label>
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
-      <label>To<input type="date" aria-label="To" value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget.value)} /></label>
+      <label>To<input type="date" aria-label="To" value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget)} /></label>
     </div>
-    {@render extra?.()}
-    {#if editable.length > 0}
+    {#if dateError}<p role="alert">{dateError}</p>{/if}
+    {#if filters.length > 0}
       <div class="panel-footer">
         <Button surface="soft" label="Clear filters" onclick={clear} />
       </div>

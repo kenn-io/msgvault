@@ -115,3 +115,20 @@ describe('ReadingPane group file drill-down', () => {
     ]);
   });
 });
+
+it('aborts a pending grouped-file request on unmount', async () => {
+  let signal: AbortSignal | undefined;
+  const client = createAPIClient(async (input) => {
+    const request = input as Request;
+    if (new URL(request.url).pathname.endsWith('/files')) {
+      signal = request.signal;
+      return new Promise<Response>(() => {});
+    }
+    return Response.json({});
+  });
+  const component = render(ReadingPane, { client, selection: { kind: 'group', dimension: 'participant', key: '7', label: 'Alex Example' }, predicate: {} });
+  await waitFor(() => expect(signal).toBeDefined());
+  expect(signal!.aborted).toBe(false);
+  component.unmount();
+  expect(signal!.aborted).toBe(true);
+});
