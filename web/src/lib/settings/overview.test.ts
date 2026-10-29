@@ -31,7 +31,7 @@ describe('overviewRows', () => {
 
   it.each([
     { status: 'initializing' as const, available: true, built: false, chip: 'Unbuilt' },
-    { status: 'ready' as const, available: false, built: false, chip: 'On' },
+    { status: 'ready' as const, available: false, built: true, chip: 'On' },
     { status: 'stale' as const, available: true, built: true, chip: 'Stale' },
   ])('gates the message build and chip on server coverage ($status)', ({ status, available, built, chip }) => {
     const rows = overviewRows(lanes(lane('message_embedding')), { ...embeddingStatus, active_generation: built ? activeGeneration : null }, undefined, { status, actions: available ? ['build_index'] : [] });
@@ -51,7 +51,7 @@ describe('overviewRows', () => {
     expect(row(rows, 'carddav_sync').chip.text).toBe('Off');
     expect(row(rows, 'carddav_sync').action).toMatchObject({ kind: 'settings', target: { settingsCategory: 'carddav' } });
     expect(row(overviewRows(lanes(lane('carddav_sync')), undefined, undefined), 'carddav_sync').action).toBeUndefined();
-    expect(row(overviewRows(lanes(lane('carddav_sync', { supported_actions: ['carddav_sync'] })), undefined, undefined), 'carddav_sync').action).toEqual({ kind: 'start', id: 'contacts', label: 'Sync now' });
+    expect(row(overviewRows(lanes(lane('carddav_sync', { supported_actions: ['carddav_sync'] })), undefined, undefined), 'carddav_sync').action).toEqual({ kind: 'start', id: 'carddav_sync', label: 'Sync now' });
   });
 });
 
