@@ -12,7 +12,7 @@ import type { OperationRunsResponse } from '../../api/generated/models';
 const fixture: OperationRunsResponse = { ...publicOperations as OperationRunsResponse, runs: (publicOperations as OperationRunsResponse).runs.map(candidate => ({ ...candidate, started_at: '2026-10-12T12:00:00Z', ...(candidate.finished_at ? { finished_at: '2026-10-12T12:01:00Z' } : {}) })) };
 const run = fixture.runs.find(run => run.kind === 'document_extraction')!;
 const controllers: OperationsController[] = [];
-afterEach(() => { for (const controller of controllers.splice(0)) controller.destroy(); });
+afterEach(() => { for (const controller of controllers.splice(0)) controller.destroy(); vi.useRealTimers(); });
 function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLState> = {}) {
   const queries: URLSearchParams[] = [];
   let conflict = false;
@@ -36,7 +36,7 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
   const controller = new OperationsController(client); controllers.push(controller);
   const onNavigate = vi.fn();
   render(RunHistoryDialog, { client, controller, state: { ...defaultOperationsState(kind), ...filters }, onNavigate, onclose: vi.fn(), onConfigure: vi.fn() });
-  return { queries, onNavigate, drift: () => { conflict = true; } };
+  return { queries, onNavigate, controller, drift: () => { conflict = true; } };
 }
 
 describe('Past runs', () => {
@@ -46,7 +46,7 @@ describe('Past runs', () => {
       const path = new URL((input as Request).url).pathname;
       if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('document_extraction', { configured, related_status: 'getDocumentIndexStatus' })) });
       if (path === '/api/v1/operations/runs') return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
-      if (path === '/api/v1/documents/status/current') return Response.json({ ...documentStatus, status: { ...documentStatus.status, profile_enabled: false } });
+      if (path === '/api/v1/documents/status/current') return Response.json(documentStatus);
       throw new Error(`Unexpected request: ${path}`);
     });
     const controller = new OperationsController(client); controllers.push(controller);
@@ -60,21 +60,19 @@ describe('Past runs', () => {
     expect(screen.queryByText('Document index needs configuration')).toBeNull();
   });
   it('applies date bounds and exclusive kind or lane controls', async () => {
-    const { queries } = setup('source_sync', { operationStartedFrom: '2026-10-10T00:00:00Z', operationStartedBefore: '2026-10-13T00:00:00Z' });
+    vi.setSystemTime(new Date('2026-10-29T12:00:00Z'));
+    const { controller } = setup('source_sync', { operationStartedFrom: '2026-10-10T00:00:00Z', operationStartedBefore: '2026-10-13T00:00:00Z' });
     await screen.findByRole('button', { name: 'Open Source sync run' });
-    expect(queries[0]?.get('kind')).toBe('source_sync');
+    const applyURLState = vi.spyOn(controller, 'applyURLState');
     await fireEvent.click(screen.getByRole('button', { name: /2026-10-10/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Oct 11, 2026' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Oct 13, 2026' }));
-    await waitFor(() => expect(queries.at(-1)?.get('started_from')).toBe('2026-10-11T00:00:00Z'));
-    expect(queries.at(-1)?.get('started_before')).toBe('2026-10-14T00:00:00Z');
+    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '2026-10-11T00:00:00Z', operationStartedBefore: '2026-10-14T00:00:00Z' }), false);
     await fireEvent.keyDown(document, { key: 'Escape' });
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All documents');
-    await waitFor(() => expect(queries.at(-1)?.get('lane')).toBe('documents'));
-    expect(queries.at(-1)?.has('kind')).toBe(false);
+    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationLane: 'documents', operationKind: '' }), false);
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'CardDAV sync');
-    await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('carddav_sync'));
-    expect(queries.at(-1)?.has('lane')).toBe(false);
+    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationKind: 'carddav_sync', operationLane: '' }), false);
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'Source sync');
     await fireEvent.click(screen.getByRole('button', { name: /2026-10-11/ }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Relative' }));
@@ -82,17 +80,15 @@ describe('Past runs', () => {
     await screen.findByText('No runs match.');
     await fireEvent.click(screen.getByRole('button', { name: 'All' }));
     await screen.findByRole('button', { name: 'Open Source sync run' });
-    expect(queries.at(-1)?.has('started_from')).toBe(false);
-    expect(queries.at(-1)?.has('started_before')).toBe(false);
+    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '', operationStartedBefore: '' }), false);
     await fireEvent.click(screen.getByRole('button', { name: '7d' }));
     await screen.findByText('No runs match.');
     await fireEvent.keyDown(document, { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Clear operation dates' }));
     await screen.findByRole('button', { name: 'Open Source sync run' });
-    expect(queries.at(-1)?.has('started_from')).toBe(false);
-    expect(queries.at(-1)?.has('started_before')).toBe(false);
+    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '', operationStartedBefore: '' }), false);
     await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'Paused');
-    await waitFor(() => expect(queries.at(-1)?.get('state')).toBe('paused'));
+    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationState: 'paused' }), false);
   });
   it('offers Restart when page membership changes', async () => {
     const { drift, queries } = setup();
