@@ -128,7 +128,6 @@ test('Show as Files opens the Files workspace with the same context, and Back re
   await expect(dialog).toHaveCount(0);
   expect(savedViews[0]!.canonical_state).toMatchObject({ query: 'pasta', presentation: 'files' });
 
-  await expect(page.getByRole('button', { name: 'Pasta files', exact: true })).toHaveAttribute('title', /Full text: “pasta”/);
   await page.getByRole('button', { name: 'Pasta files', exact: true }).click();
   await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
   await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);

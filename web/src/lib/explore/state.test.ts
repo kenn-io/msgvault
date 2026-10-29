@@ -201,10 +201,10 @@ describe('Explore URL state', () => {
     expect(state.current.operationState).toBe('paused');
     state.destroy();
   });
-  it.each([['operations', 'settings', 'overview']])('routes legacy %s links', (workspace, expected, category) => {
-    const state = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace, ...(workspace === 'operations' ? { settingsCategory: 'server' } : {}) }))}`);
-    expect(state.workspace).toBe(expected);
-    if (category) expect(state.settingsCategory).toBe(category);
+  it('routes legacy Operations links to Settings overview', () => {
+    const state = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations', settingsCategory: 'server' }))}`);
+    expect(state.workspace).toBe('settings');
+    expect(state.settingsCategory).toBe('overview');
   });
 
   it('drops an impossible Directory date when reading the URL', () => {

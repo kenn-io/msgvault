@@ -35,7 +35,7 @@ for (const theme of ['light', 'dark'] as const) {
     fixture.failNextHistory();
     await page.reload();
     await openHistory();
-    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Past runs' }).getByRole('alert').filter({ hasText: 'Unable to load operation history.' })).toBeVisible();
     await assertNoViolations(page, `History failure ${theme}`);
     await page.keyboard.press('Escape');
     fixture.setOperationConfigured('document_extraction', false);
