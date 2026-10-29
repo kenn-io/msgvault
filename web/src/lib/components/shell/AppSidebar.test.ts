@@ -63,11 +63,9 @@ describe('AppSidebar', () => {
   });
 
   it('shows what a saved view holds in its tooltip', () => {
-    const saved = {
-      ...view(1, 'Budget threads'),
-      description: 'Every thread about the Q3 budget',
-      canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [], columns: [], query: 'budget' },
-    };
+    const saved = view(1, 'Budget threads');
+    saved.description = 'Every thread about the Q3 budget';
+    saved.canonical_state = { ...(saved.canonical_state as object), query: 'budget' };
     renderSidebar({ views: [saved, view(2, 'Plain')] });
     expect(screen.getByRole('button', { name: 'Budget threads' }).getAttribute('title')).toBe(
       'Full text: “budget” · Table\nEvery thread about the Q3 budget',
