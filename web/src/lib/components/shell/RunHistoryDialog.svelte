@@ -98,7 +98,7 @@
   <div class="history" bind:this={root}>
     {#if local.operationStatus}
       {#if current.statusReadable || current.statusError}
-        {#key local.operationStatus}
+        {#key `${local.operationStatus}:${configured}`}
           <OperationRelatedStatus {client} authority={local.operationStatus} {configured}
             onClose={() => void closeRelatedStatus()} {onConfigure} />
         {/key}
