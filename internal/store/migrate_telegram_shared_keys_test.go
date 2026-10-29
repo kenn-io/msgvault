@@ -214,6 +214,158 @@ func TestTelegramSharedKeyMigrationCollapsesDuplicateEdges(t *testing.T) {
 	assert.NotEqual(preFingerprint, fingerprint, "the pre-rewrite fingerprint no longer matches")
 }
 
+// TestTelegramSharedKeyMigrationReconcilesOrphanedConflicts pins the cleanup
+// the rewrite owes its orphans: converging the rewritten keys leaves both the
+// generated username conflicts those observations supported — and decisions a
+// conflicting observation promoted — without a supporting pair, and a resync
+// cannot clear them later because an unchanged observation records early. The
+// migration reconciles them itself, before the fingerprint refresh, so the
+// restored user decision is renewed against the rewritten evidence while a
+// proof that was stale before the migration stays stale. Runs on SQLite and
+// PostgreSQL.
+func TestTelegramSharedKeyMigrationReconcilesOrphanedConflicts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	// One Beeper account bridged the same Telegram username to three
+	// participants: two account-scoped keys (one per Telegram user) and the
+	// shared key a later bridge version wrote beside a leftover scope.
+	source, err := st.GetOrCreateSource("beeper", "acct-7")
+	require.NoError(err)
+	seedUsername := func(identifier, providerKey string) int64 {
+		pid, err := st.EnsureParticipantByIdentifier("beeper", identifier, "Bridge "+identifier)
+		require.NoError(err)
+		_, err = st.DB().Exec(st.Rebind(`
+			INSERT INTO participant_contact_observations (
+				participant_id, source_id, address_kind, scope_kind, scope_value,
+				provider_user_id, original_value, normalized_value,
+				normalization, source
+			) VALUES (?, ?, 'username', 'account', 'acct-7', ?,
+				'shared-handle', 'shared-handle', 'none', 'archive_observation')
+		`), pid, source.ID, providerKey)
+		require.NoError(err)
+		return pid
+	}
+	firstKey := beeperidentity.ProviderKey("telegram", "account", "acct-7", "482111")
+	secondKey := beeperidentity.ProviderKey("telegram", "account", "acct-7", "999777")
+	shared := beeperidentity.ProviderKey("telegram", "service", "", "482111")
+	first := seedUsername("beeper:6:acct-7:9:conflict-first", firstKey)
+	middle := seedUsername("beeper:6:acct-7:9:conflict-middle", shared)
+	second := seedUsername("beeper:6:acct-7:9:conflict-second", secondKey)
+
+	// conflictCandidate seeds one username conflict the observations
+	// generated on a fresh edge.
+	conflictCandidate := func(left, right int64, origin, preConflictState, decidedBy any) int64 {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO identity_match_candidates (
+				left_kind, left_id, right_kind, right_id, basis,
+				scope_kind, scope_value, normalized_value, state,
+				observation_conflict_origin, pre_conflict_state,
+				decided_by, decided_at, source
+			) VALUES ('participant', ?, 'participant', ?, 'service_scope_username',
+				'account', 'acct-7', 'shared-handle', 'conflict', ?, ?, ?,
+				CURRENT_TIMESTAMP, 'archive_observation')
+		`), left, right, origin, preConflictState, decidedBy)
+		require.NoError(err)
+		var id int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT id FROM identity_match_candidates
+			WHERE left_id = ? AND right_id = ?
+			  AND observation_conflict_origin IS NOT NULL`), left, right).Scan(&id))
+		return id
+	}
+	// The first-middle conflict was generated when the middle binding
+	// arrived claiming the same username; the middle-second row is the
+	// user's rejection, promoted to a conflict when the second Telegram
+	// user claimed that username again.
+	generatedID := conflictCandidate(first, middle, "generated", nil, nil)
+	promotedID := conflictCandidate(middle, second, "promoted", "rejected", "user")
+	promotedFingerprint, err := store.IdentityMatchDecisionFingerprintForTest(
+		context.Background(), st, promotedID)
+	require.NoError(err, "fingerprint the promoted decision's pre-migration evidence")
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint)
+		VALUES (?, ?)`), promotedID, promotedFingerprint)
+	require.NoError(err)
+
+	// A user-rejected row whose stored proof was already stale before the
+	// migration keeps requiring the fresh review that made it stale.
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO identity_match_candidates (
+			left_kind, left_id, right_kind, right_id, basis,
+			scope_kind, scope_value, normalized_value, state,
+			decided_by, decided_at, source
+		) VALUES ('participant', ?, 'participant', ?, 'service_scope_username',
+			'account', 'acct-7', 'shared-handle', 'rejected',
+			'user', CURRENT_TIMESTAMP, 'archive_observation')
+	`), first, second)
+	require.NoError(err)
+	var rejectedID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id FROM identity_match_candidates
+		WHERE left_id = ? AND right_id = ? AND state = 'rejected'`),
+		first, second).Scan(&rejectedID))
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint)
+		VALUES (?, 'stale-before-migration')`), rejectedID)
+	require.NoError(err)
+
+	_, err = st.DB().Exec(st.Rebind(
+		`DELETE FROM applied_migrations WHERE name = ?`), telegramSharedKeysMigration)
+	require.NoError(err)
+	require.NoError(st.InitSchema(), "upgrade telegram provider keys")
+
+	// The rewritten username observations converge on scope-less keys.
+	var staleUsernameObservations int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM participant_contact_observations
+		WHERE address_kind = 'username'
+		  AND (scope_kind IS NOT NULL OR scope_value IS NOT NULL
+		       OR provider_user_id IN (?, ?))
+	`), firstKey, secondKey).Scan(&staleUsernameObservations))
+	assert.Zero(staleUsernameObservations,
+		"the rewritten username observations converge on scope-less shared keys")
+
+	// The generated conflict is gone: the pair that supported it no longer
+	// exists, and a resync of unchanged observations cannot retire it.
+	var generatedConflicts int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM identity_match_candidates
+		WHERE id = ? AND state = 'conflict'`), generatedID).Scan(&generatedConflicts))
+	assert.Zero(generatedConflicts,
+		"the migration deletes the generated conflict its rewrite orphaned")
+
+	// The promoted conflict returned to the user's rejection.
+	var state, decidedBy, origin string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT state, COALESCE(decided_by, ''), COALESCE(observation_conflict_origin, '')
+		FROM identity_match_candidates WHERE id = ?`), promotedID).
+		Scan(&state, &decidedBy, &origin))
+	assert.Equal("rejected", state, "the promoted conflict demotes to the user's decision")
+	assert.Equal("user", decidedBy, "the explicit decision author survives the demotion")
+	assert.Empty(origin, "demotion clears the conflict origin")
+
+	// The restored decision's proof was renewed against the rewritten
+	// evidence; the proof that was stale before the migration stays stale.
+	var renewed, stale string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT evidence_fingerprint FROM identity_match_review_decisions
+		WHERE candidate_id = ?`), promotedID).Scan(&renewed))
+	postFingerprint, err := store.IdentityMatchDecisionFingerprintForTest(
+		context.Background(), st, promotedID)
+	require.NoError(err)
+	assert.Equal(postFingerprint, renewed,
+		"the demoted decision's fingerprint matches the rewritten evidence")
+	assert.NotEqual(promotedFingerprint, renewed,
+		"the pre-rewrite fingerprint no longer matches")
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT evidence_fingerprint FROM identity_match_review_decisions
+		WHERE candidate_id = ?`), rejectedID).Scan(&stale))
+	assert.Equal("stale-before-migration", stale,
+		"a proof already stale before the migration is not renewed")
+}
+
 // insertObservationBatch inserts count observation rows in bounded
 // multi-row statements, so a scale fixture never itself trips a backend's
 // bind-variable limit. One observation argument set per row keeps each

@@ -25,11 +25,13 @@ const telegramKeyPrefix = "provider:8:telegram:%"
 // rewriteTelegramProviderKeys rewrites the account-scoped Telegram provider
 // keys (numeric native IDs only) to the shared service-scoped form in
 // participant_contact_observations, identity_match_candidates, and
-// identity_match_evidence, then refreshes the stored evidence fingerprints
-// of every surviving candidate whose fingerprint inputs changed so prior
-// accepted and rejected decisions stay valid instead of going stale. Only
-// proofs that matched the pre-migration evidence are renewed: one that was
-// already stale keeps requiring the fresh review that made it stale.
+// identity_match_evidence, reconciles the observation conflicts the
+// converged keys leave unsupported, then refreshes the stored evidence
+// fingerprints of every surviving candidate whose fingerprint inputs changed
+// so prior accepted and rejected decisions stay valid instead of going
+// stale. Only proofs that matched the pre-migration evidence are renewed:
+// one that was already stale keeps requiring the fresh review that made it
+// stale.
 func (s *Store) rewriteTelegramProviderKeys(ctx context.Context, tx *loggedTx) error {
 	// Plan every rewrite and fingerprint every touched candidate before
 	// the first mutation: validity is judged against the pre-migration
@@ -79,8 +81,18 @@ func (s *Store) rewriteTelegramProviderKeys(ctx context.Context, tx *loggedTx) e
 	if err := applyTelegramEvidenceDetailRewrites(ctx, tx, evidence); err != nil {
 		return err
 	}
-	// A collapse may have retired some of the collected IDs; only rows
-	// that still exist carry a fingerprint.
+	// The converged keys orphan the conflicts their observations supported:
+	// no current observation pair still backs a generated conflict, and a
+	// decision a conflicting observation promoted loses that observation.
+	// A resync cannot clear them later, because an unchanged observation
+	// records early. Reconcile before the fingerprint refresh, so a demoted
+	// decision is renewed against the rewritten evidence and a deleted
+	// conflict leaves no proof to renew.
+	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
+		return err
+	}
+	// A collapse or the conflict reconciliation may have retired some of
+	// the collected IDs; only rows that still exist carry a fingerprint.
 	existing, err := telegramExistingCandidates(ctx, tx, touched)
 	if err != nil {
 		return err

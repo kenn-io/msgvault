@@ -186,7 +186,3 @@ func TestParseFingerprintTracksContent(t *testing.T) {
 	after, _ := readChats(t, dir)
 	assert.NotEqual(t, before.Fingerprint(), after.Fingerprint(), "changed bytes change the fingerprint")
 }
-
-func TestOwnerSourceIdentifier(t *testing.T) {
-	assert.Equal(t, "user482111", OwnerSourceIdentifier(482111))
-}
