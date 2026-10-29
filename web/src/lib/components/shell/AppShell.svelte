@@ -778,7 +778,7 @@
   // left out; grouped Files uses the same GroupTable as grouped Everything.
   function currentGrid(): HTMLElement | null {
     return document.querySelector<HTMLElement>([
-      '[role="grid"][aria-label="Everything results"]',
+      '[role="grid"][aria-label="Messages results"]',
       '[role="grid"][aria-label^="Messages grouped by"]',
       '[role="grid"][aria-label^="Files grouped by"]',
     ].join(', '));
@@ -1046,7 +1046,8 @@
   const shellCommands = $derived([
     ...(['everything', 'relationships', 'files', 'sources', 'directory', 'deletions', 'settings'] as ExploreWorkspace[]).map((workspace) => ({ id: `go:${workspace}`, label: workspaceLabel(workspace), section: 'Go to', run: () => openWorkspaceTab(workspace) })),
     ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: `Open view: ${view.name}`, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
-    { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } }
+    { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
+    ...(['theme', 'density'] as const).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
   ]);
   const paletteCommands = $derived(
     [...commandRegistry.map(

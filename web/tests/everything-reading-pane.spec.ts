@@ -1,6 +1,12 @@
 import { recordingMessage, recordingTranscript, recordingSearchHit, recordingSearchReport } from '../src/lib/archive/recording-fixtures.test-support';
 import { expect, test } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
+});
+
 function entry(index: number) {
   return {
     key: `message:${index}`,
@@ -58,7 +64,7 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
     results: Array.from({ length: 20 }, (_, index) => recordingSearchHit({ containing_title: `Recording ${index + 1}` }))
   }) }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
   const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
@@ -142,7 +148,7 @@ test('the bottom reading pane opens on a single click, resizes, and persists its
   }));
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
 
   // A single click opens the reading pane as a bottom split, never a drawer.
@@ -205,7 +211,7 @@ test('a direct multi-target reading-pane URL restores through refresh, Back, and
   });
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeVisible();
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-1/);
   expect(requests).toHaveLength(3);
@@ -304,7 +310,7 @@ test('right preview resizes, restores its width, and falls back below on narrow 
     cache_revision: 'cache-layout', search_provenance: {}
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.getByText('Synthetic subject 1').click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });

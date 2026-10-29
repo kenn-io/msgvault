@@ -165,7 +165,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await page.keyboard.press('Enter');
   await expect(page.locator('[aria-live="polite"]').filter({ hasText: `${fixture.logicalRows.length} items` }).first()).toBeVisible();
 
-  await tabTo(page, 'Everything results');
+  await tabTo(page, 'Messages results');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   await page.keyboard.type('group by source');
   await page.keyboard.press('Enter');
@@ -176,7 +176,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
   await page.keyboard.press('Escape');
 
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid).toBeFocused();
   const renderedActiveRow = grid.locator(`[data-row-key="${firstServedRow.key}"]`);
   await expect(grid).toHaveAttribute('aria-busy', 'false');
@@ -205,7 +205,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect(files).toBeFocused();
   await tabTo(page, 'Messages', 120, 'Shift+Tab');
   await page.keyboard.press('Enter');
-  await tabTo(page, 'Everything results');
+  await tabTo(page, 'Messages results');
   await expect(grid).toBeFocused();
   await page.keyboard.press('Space');
   await expect(grid.locator('[aria-selected="true"]')).toHaveCount(1);

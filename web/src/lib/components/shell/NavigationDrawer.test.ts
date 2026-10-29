@@ -7,7 +7,7 @@ import NavigationDrawer from './NavigationDrawer.svelte';
 
 const items = createRawSnippet(() => ({
   render: () =>
-    '<nav aria-label="Primary"><button>Files</button><button aria-current="page">Everything</button></nav>'
+    '<nav aria-label="Primary"><button>Files</button><button aria-current="page">Messages</button></nav>'
 }));
 
 let detachShortcuts: () => void;
@@ -28,7 +28,7 @@ describe('NavigationDrawer', () => {
     render(NavigationDrawer, { onclose, children: items });
 
     await vi.waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Everything' }))
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Messages' }))
     );
     await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
 

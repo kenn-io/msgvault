@@ -56,7 +56,7 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
   });
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.focus();
   await page.keyboard.press('Enter');
 

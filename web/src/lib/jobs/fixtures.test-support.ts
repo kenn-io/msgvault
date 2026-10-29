@@ -1,0 +1,22 @@
+import type { OperationLaneStatus, OperationRunSummary, SourceStatus, SyncRunStatus } from '../api/generated/models';
+import canonical from '../../../tests/e2e/fixtures/operations-public.json';
+
+const failedRuns = canonical.job_runs as OperationRunSummary[];
+const relatedStatus = { source_sync: 'listSourceStatus', carddav_sync: 'getCardDAVStatus', document_extraction: 'getDocumentIndexStatus', document_embedding: 'getDocumentVectorStatus', visual_embedding: 'getVisualAttachmentStatus' } as const;
+
+export function jobRun(kind: OperationRunSummary['kind']): OperationRunSummary {
+  return structuredClone(failedRuns.find(run => run.kind === kind)!);
+}
+
+export function jobLane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
+  const latest = jobRun(kind);
+  return { lane: latest.lane, kind, related_status: relatedStatus[kind as keyof typeof relatedStatus], configured: true, history_availability: 'available', supported_actions: kind === 'carddav_sync' ? ['carddav_sync'] : [], latest, ...extra };
+}
+
+export function sourceStatus(extra: Partial<SourceStatus> = {}): SourceStatus {
+  return { id: 1, identifier: 'archive@example.com', display_name: 'Example archive', source_type: 'gmail', updated_at: '2026-08-30T11:00:00Z', last_sync_at: null, active_sync: null, latest_sync: null, last_successful_sync: null, can_sync: !extra.active_sync && !extra.sync_unavailable_reason, scheduled: false, next_sync_at: null, ...extra };
+}
+
+export function syncRunStatus(extra: Partial<SyncRunStatus> = {}): SyncRunStatus {
+  return { id: 1, source_id: 1, status: 'completed', started_at: '2026-08-30T11:00:00Z', completed_at: '2026-08-30T11:00:04Z', error_message: null, errors_count: 0, messages_added: 0, messages_processed: 0, messages_updated: 0, ...extra };
+}

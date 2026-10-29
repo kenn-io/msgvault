@@ -47,7 +47,7 @@ test('query failures explain recovery in Everything and Files', async ({ page })
 });
 
 test('one registry drives selection, searchable help, palette, and editable suspension', async ({ page }) => {
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   const renderedRow = page.locator('[data-row-key="message:1"]');
   await grid.focus();
   await expect(grid).toBeFocused();
@@ -108,7 +108,7 @@ test('one registry drives selection, searchable help, palette, and editable susp
 });
 
 test('keyboard palette grouping focuses the replacement grid', async ({ page }) => {
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.focus();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   const palette = page.getByRole('dialog', { name: 'Messages commands' });
@@ -140,7 +140,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(searchButton).toHaveClass(/kit-button--neutral/);
     await expectRenderedContrast(searchButton, 4.5);
 
-    const grid = page.getByRole('grid', { name: 'Everything results' });
+    const grid = page.getByRole('grid', { name: 'Messages results' });
     await grid.focus();
     await page.keyboard.press('Shift+A');
     const selectedRow = page.locator('[data-row-key="message:1"]');
@@ -272,7 +272,7 @@ test('clicking a people label preserves Everything keyboard navigation and one g
     total_count: 2, cache_revision: 'cache-theme', search_provenance: {}
   } }));
   await page.reload();
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.locator('.people-label').first().click();
   await expect(grid).toBeFocused();
   await page.keyboard.press('j');
@@ -289,7 +289,7 @@ test('clicking a people label preserves Everything keyboard navigation and one g
 });
 
 test('clicking an Everything row checkbox keeps keyboard selection in the grid', async ({ page }) => {
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   const renderedRow = page.locator('[data-row-key="message:1"]');
   await renderedRow.hover();
   await renderedRow.getByRole('checkbox', { name: /^Select / }).click();
