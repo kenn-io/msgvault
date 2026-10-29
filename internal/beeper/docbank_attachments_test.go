@@ -1046,7 +1046,7 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Requested)
 }
 
-func TestAttachmentMirrorBackfillRestartsRecoverableJobFailure(t *testing.T) {
+func TestAttachmentMirrorBackfillPreservesRecoverableJobFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -1062,12 +1062,11 @@ func TestAttachmentMirrorBackfillRestartsRecoverableJobFailure(t *testing.T) {
 	assert.Equal(map[string]int64{"consent": 1}, r.processingCounts().Outcomes)
 
 	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
-	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a", "a"}, r.processing.Plans)
-	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
-	assert.Equal(int64(1), r.processingCounts().Requested)
-	assert.Empty(r.processingCounts().Outcomes)
+	assert.Equal([]string{"a"}, r.processing.Plans)
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal([]string{jobID}, r.processing.Polls)
+	assert.Equal(map[string]int64{"consent": 1}, r.processingCounts().Outcomes)
 }
 
 func TestAttachmentMirrorBackfillKeepsTerminalJobFailure(t *testing.T) {
@@ -1080,6 +1079,12 @@ func TestAttachmentMirrorBackfillKeepsTerminalJobFailure(t *testing.T) {
 	jobID := docbanktest.ProcessingJobID("a")
 	r.processing.States[jobID] = [3]string{"failed", "rendition", "unsupported_format"}
 	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+	require.NoError(r.runBatch(t.Context()))
+	assert.Empty(r.processing.Polls)
+	assert.Equal([]string{"a"}, r.processing.Plans)
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
 
 	assert.Equal([]string{jobID}, r.processing.Polls)
@@ -1142,7 +1147,7 @@ func TestAttachmentMirrorProcessingInvalidPollRetriesJob(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Extracted)
 }
 
-func TestAttachmentMirrorProcessingRefusals(t *testing.T) {
+func TestAttachmentMirrorProcessingRefusalsWaitForProfileChange(t *testing.T) {
 	for _, stage := range []string{"plan", "start"} {
 		t.Run(stage, func(t *testing.T) {
 			require := require.New(t)
@@ -1162,8 +1167,16 @@ func TestAttachmentMirrorProcessingRefusals(t *testing.T) {
 			assert.Equal(map[string]int64{outcome: 1}, r.processingCounts().Outcomes)
 			plans, jobs := len(r.processing.Plans), len(r.processing.Jobs)
 			require.NoError(r.runBatch(t.Context()))
-			assert.Len(r.processing.Plans, plans, "a refusal waits for backfill")
-			assert.Len(r.processing.Jobs, jobs, "a refusal waits for backfill")
+			assert.Len(r.processing.Plans, plans, "a refusal waits for a profile change")
+			assert.Len(r.processing.Jobs, jobs, "a refusal waits for a profile change")
+			delete(r.processing.Faults, "a")
+			delete(r.processing.JobFaults, "a")
+			delete(r.processing.Reasons, "a")
+			r.processing.Fingerprint = "profile-two"
+			require.NoError(r.runBatch(t.Context()))
+			assert.Len(r.processing.Plans, plans+1)
+			assert.Len(r.processing.Jobs, jobs+1)
+			assert.Equal(int64(1), r.processingCounts().Requested)
 		})
 	}
 }
