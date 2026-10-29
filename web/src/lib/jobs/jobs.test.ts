@@ -42,11 +42,13 @@ it('keeps standing scheduler errors and clears them only when the producer recov
   source.scheduler_last_error = '';
   expect(collectJobs([source], [])).toEqual([]);
 });
-it('shows item diagnostics for a completed sync with errors', () => {
-  const source = { id: 1, identifier: 'archive@example.com', latest_sync: { status: 'completed', errors_count: 2, item_errors: [{ error_message: 'Invalid MIME header' }, { error_message: 'Missing attachment' }] } } as SourceStatus;
-  expect(collectJobs([source], [])[0]?.detail).toBe('Invalid MIME header · Missing attachment');
-  source.latest_sync!.item_errors = [];
-  expect(collectJobs([source], [])[0]?.detail).toBe('Finished with errors');
-  source.latest_sync!.errors_count = 0;
-  expect(collectJobs([source], [])).toEqual([]);
+it.each([
+  { name: 'old failed import with item errors', source: { latest_sync: { status: 'failed', started_at: '2020-01-01T00:00:00Z', errors_count: 2, item_errors: [{ error_message: 'Invalid MIME header' }, { error_message: 'Missing attachment' }] } }, lanes: [], expected: [['failed', 'Invalid MIME header · Missing attachment']] },
+  { name: 'completed sync and partial lane warnings', source: { latest_sync: { status: 'completed', errors_count: 2 } }, lanes: [lane('document_extraction', { latest: { ...latest, state: 'partial', counters: [] } })], expected: [] },
+  { name: 'completed sync with scheduler failure', source: { latest_sync: { status: 'completed' }, scheduler_last_error: 'Token expired' }, lanes: [], expected: [['failed', 'Token expired']] },
+  { name: 'disabled lane with a stale failure', lanes: [lane('document_extraction', { configured: false })], expected: [] },
+  { name: 'disabled lane still running', lanes: [lane('document_extraction', { configured: false, active: { ...latest, state: 'running', counters: [] } })], expected: [['running', 'Running']] },
+  { name: 'scheduler running before a sync row exists', source: { sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['running', 'Syncing']] },
+])('$name', ({ source, lanes, expected }) => {
+  expect(collectJobs(source ? [{ id: 1, identifier: 'archive@example.com', ...source } as SourceStatus] : [], lanes).map(({ state, detail }) => [state, detail])).toEqual(expected);
 });
