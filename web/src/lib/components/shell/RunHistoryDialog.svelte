@@ -11,11 +11,10 @@
   import OperationRunTable from '../operations/OperationRunTable.svelte';
   import Dialog from '../common/Dialog.svelte';
 
-  let { client, controller, state: local = $bindable(), archiveContextKey = '', onclose, onNavigate, onConfigure, onAnnounce = () => undefined }: {
+  let { client, controller, state: local = $bindable(), onclose, onNavigate, onConfigure, onAnnounce = () => undefined }: {
     client: APIClient;
     controller: OperationsController;
     state: OperationsURLState;
-    archiveContextKey?: string;
     onclose: () => void;
     onNavigate: (target: RelatedStatus) => void;
     onConfigure: () => void;
@@ -35,8 +34,7 @@
   });
   $effect(() => {
     const wanted = { ...local };
-    const context = archiveContextKey;
-    untrack(() => { void controller.applyURLState(wanted, context); });
+    untrack(() => { void controller.applyURLState(wanted); });
   });
   function patchFilter(patch: Partial<OperationsURLState>): void {
     local = { ...local, ...patch, operationRunID: null, operationStatus: '' };
