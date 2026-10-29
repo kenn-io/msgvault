@@ -1720,9 +1720,11 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   state.commitWorkspace('everything');
   state.replaceSearchDraft('budget', 'full_text');
   const opening = window.location.href;
-  state.openOperationHistory({ operationKind: 'source_sync' });
-  state.openOperationHistory({ operationKind: 'carddav_sync', operationRunID: null });
   const runID = `op2.${'a'.repeat(32)}.exampleRun`;
+  state.openOperationHistory({ operationKind: 'source_sync', operationRunID: runID });
+  expect(state.current).toMatchObject({ operationHistory: true, operationKind: 'source_sync', operationRunID: runID });
+  state.openOperationHistory({ operationKind: 'carddav_sync' });
+  expect(state.current.operationRunID).toBeNull();
   state.openOperationHistory({ operationRunID: runID });
   expect(state.current.operationRunID).toBe(runID);
   const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
@@ -1756,16 +1758,4 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   expect(state.current.workspace).toBe('files');
   expect(state.current.operationHistory).toBe(false);
   state.destroy();
-});
-
-it('opens a selected run with its kind and clears selection on a later filter change', () => {
-  window.history.replaceState(null, '', '/?workspace=everything');
-  const state = new ExploreState(window);
-  const runID = `op2.${'a'.repeat(32)}.exampleRun`;
-  try {
-    state.openOperationHistory({ operationKind: 'person_sweep', operationRunID: runID });
-    expect(state.current).toMatchObject({ operationHistory: true, operationKind: 'person_sweep', operationRunID: runID });
-    state.openOperationHistory({ operationKind: 'carddav_sync' });
-    expect(state.current.operationRunID).toBeNull();
-  } finally { state.destroy(); }
 });

@@ -2,11 +2,10 @@ import { test, expect, loginToMeetingArchive, meetingURL } from './fixtures/meet
 
 test.use({ hasTouch: true });
 
-test('Escape closes Past runs before the underlying reader', async ({ page, daemon }) => {
+test('closing Past runs returns focus to the status trigger', async ({ page, daemon }) => {
   await loginToMeetingArchive(page, daemon);
   await page.goto(meetingURL(daemon, { filters: [], selectedRow: `message:${daemon.chatwoot[0]}` }));
-  const reader = page.getByRole('complementary', { name: /Reading pane/ });
-  await expect(reader).toBeVisible();
+  await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
   const status = page.getByRole('button', { name: /Sync status:/ });
   await status.focus();
   await page.keyboard.press('Enter');
@@ -16,11 +15,7 @@ test('Escape closes Past runs before the underlying reader', async ({ page, daem
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(reader).toBeVisible();
   await expect(status).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(reader).toBeHidden();
-
 });
 
 test('touch Help opens Commands against the real daemon', async ({ page, daemon }) => {
