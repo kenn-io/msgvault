@@ -29,6 +29,7 @@ import (
 
 type wiringTaskOperations struct {
 	api.TaskLinkOperations
+
 	identities []tasklinks.MessageIdentity
 	created    taskclient.TaskCreate
 }
@@ -55,33 +56,37 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 	path := fmt.Sprintf("/api/v1/messages/%d/tasks", id)
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		t.Run(method, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			r := httptest.NewRequest(method, path, strings.NewReader(`{"title":"Follow up","added_at":"2026-07-19T01:02:03Z"}`))
 			r.Header.Set("Content-Type", "application/json")
-			r.Header.Set("X-Request-Id", "task-wiring-request")
+			r.Header.Set("X-Request-ID", "task-wiring-request")
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
 			if method == http.MethodGet {
-				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				require.Equal(http.StatusOK, w.Code, w.Body.String())
 			} else {
-				require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
-				assert.Contains(t, w.Body.String(), `"title":"Follow up"`)
+				require.Equal(http.StatusCreated, w.Code, w.Body.String())
+				assert.Contains(w.Body.String(), `"title":"Follow up"`)
 			}
 		})
 	}
-	require.Len(t, ops.identities, 2)
+	assert := assert.New(t)
+	require := require.New(t)
+	require.Len(ops.identities, 2)
 	uid, err := f.Store.ArchiveUID()
-	require.NoError(t, err)
+	require.NoError(err)
 	revision, err := f.Store.ArchiveRevision()
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, identity := range ops.identities {
-		assert.Equal(t, uid, identity.ArchiveUID)
-		assert.Equal(t, revision, identity.ArchiveRevision)
-		assert.Equal(t, id, identity.MessageID)
-		assert.Equal(t, "gmail", identity.SourceType)
-		assert.Equal(t, "test@example.com", identity.SourceIdentifier)
-		assert.Equal(t, "task-wiring-email", identity.SourceMessageID)
+		assert.Equal(uid, identity.ArchiveUID)
+		assert.Equal(revision, identity.ArchiveRevision)
+		assert.Equal(id, identity.MessageID)
+		assert.Equal("gmail", identity.SourceType)
+		assert.Equal("test@example.com", identity.SourceIdentifier)
+		assert.Equal("task-wiring-email", identity.SourceMessageID)
 	}
-	assert.Equal(t, "Follow up", ops.created.Title)
+	assert.Equal("Follow up", ops.created.Title)
 }
 
 func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
