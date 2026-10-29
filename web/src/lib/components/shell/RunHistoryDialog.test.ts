@@ -138,7 +138,12 @@ it('retries unreadable history and detail through Refresh', async () => {
 });
 
 it('refreshes unchanged filters when the dialog opens', async () => {
-  const client = createAPIClient(async () => Response.json({ lanes: lanes(), runs: [], membership_revision: 1, unavailable_kinds: [] }));
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+    if (path === '/api/v1/operations/runs') return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
   const controller = new OperationsController(client); controllers.push(controller);
   const applyURLState = vi.spyOn(controller, 'applyURLState');
   const state = defaultOperationsState('source_sync');
