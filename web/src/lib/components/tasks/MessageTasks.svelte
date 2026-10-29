@@ -34,7 +34,7 @@
 </script>
 
 {#if email}
-  {#key refresh}<TaskLinks {client} {messageId} {title} sourceType="" sourceIdentifier="" {onsettings} mode="list" />{/key}
+  {#key refresh}<TaskLinks {client} {messageId} {title} {onsettings} mode="list" />{/key}
 {/if}
 {#if kata?.ready}
   <section class="kata-links" aria-label="Linked Kata issues">

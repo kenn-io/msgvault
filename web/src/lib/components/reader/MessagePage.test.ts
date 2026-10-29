@@ -40,9 +40,12 @@ it.each([false, true])('carries exact participant IDs and task setup through omi
   render(MessagePage, { client, messageID: 2, onOpenPerson, onOpenSettings });
   await screen.findByText('Loaded body');
   const people = screen.getAllByRole('button', { name: 'Same name' });
-  await fireEvent.click(isFromMe ? screen.getByRole('button', { name: 'You' }) : people[0]!);
+  if (isFromMe) {
+    expect(screen.getByText('You')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'You' })).toBeNull();
+  } else await fireEvent.click(people[0]!);
   await fireEvent.click(people[isFromMe ? 0 : 1]!);
-  expect(onOpenPerson.mock.calls).toEqual([[11], [22]]);
+  expect(onOpenPerson.mock.calls).toEqual(isFromMe ? [[22]] : [[11], [22]]);
   await fireEvent.click(await screen.findByRole('button', { name: 'Set up' }));
   expect(onOpenSettings).toHaveBeenCalledOnce();
 });
