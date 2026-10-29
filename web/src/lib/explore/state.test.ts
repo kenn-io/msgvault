@@ -323,7 +323,7 @@ describe('Explore URL state', () => {
   it('round-trips normalized Operations filters and an opaque selected run without a cursor', () => {
     const operationRunID = `op2.${'a'.repeat(32)}.syntheticCiphertext_1`;
     const restored = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
+      ...defaultExploreURLState, operationHistory: true,
       workspace: 'everything',
       operationLane: 'documents',
       operationKind: 'document_extraction',
@@ -344,6 +344,7 @@ describe('Explore URL state', () => {
       operationStartedBefore: '2026-09-01T00:00:00.1Z',
       operationRunID
     });
+    expect(restored.operationHistory).toBe(true);
     expect(restored.operationStatus).toBe('getDocumentIndexStatus');
     expect(restored).not.toHaveProperty('operationCursor');
   });
@@ -353,12 +354,12 @@ describe('Explore URL state', () => {
       'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
     ] as const) {
       const restored = parseExploreURLState(serializeExploreURLState({
-        ...defaultExploreURLState, workspace: 'everything', operationStatus
+        ...defaultExploreURLState, operationHistory: true, workspace: 'everything', operationStatus
       }));
       expect(restored.operationStatus).toBe(operationStatus);
     }
     const invalid = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState, workspace: 'everything', operationStatus: 'getCardDAVStatus'
+      ...defaultExploreURLState, operationHistory: true, workspace: 'everything', operationStatus: 'getCardDAVStatus'
     } as unknown as ExploreURLState));
     expect(invalid.operationStatus).toBe('');
   });
@@ -465,7 +466,7 @@ describe('Explore URL state', () => {
 
   it('clears malformed, unknown, and lane-incompatible Operations URL values', () => {
     const invalid = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
+      ...defaultExploreURLState, operationHistory: true,
       workspace: 'everything',
       operationLane: 'contacts',
       operationKind: 'document_embedding',
@@ -486,7 +487,7 @@ describe('Explore URL state', () => {
     });
 
     const unknownLane = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
+      ...defaultExploreURLState, operationHistory: true,
       workspace: 'everything',
       operationLane: 'future_lane',
       operationKind: 'carddav_sync'
@@ -497,7 +498,7 @@ describe('Explore URL state', () => {
 
   it('preserves ordered canonical nanosecond Operations bounds without millisecond truncation', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
+      ...defaultExploreURLState, operationHistory: true,
       workspace: 'everything',
       operationStartedFrom: '2026-08-01T00:00:00.000000001Z',
       operationStartedBefore: '2026-08-01T00:00:00.000000002Z'

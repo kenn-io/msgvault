@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test, type BrowserContext } from '@playwright/test';
 import { expectKitTheme, selectKitOption, setKitTheme } from './kit-ui';
 
@@ -41,7 +42,7 @@ test('Strict session cookie returns on same-origin bootstrap after a cross-site 
       body: `<a href="${landingURL}">Open archive</a>`
     });
   });
-  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await stubOperationStatus(page);
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', async (route) => {
     resolveBootstrapHeaders(await route.request().allHeaders());
@@ -81,7 +82,7 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   const patchCaptured = new Promise<{ headers: Record<string, string>; body: unknown }>((resolve) => {
     resolvePatch = resolve;
   });
-  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await stubOperationStatus(page);
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', async (route) => {
     await route.fulfill({
@@ -155,7 +156,7 @@ async function installSettingsDaemon(context: BrowserContext): Promise<void> {
     ],
     pending_restart: false
   });
-  await context.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await stubOperationStatus(context);
   await context.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await context.route('**/api/session', (route) => route.fulfill({ json: {
     auth_mode: 'session', csrf_token: 'csrf-token', https: true, plain_http_warning: false

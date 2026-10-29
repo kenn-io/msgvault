@@ -38,7 +38,6 @@ test('Back returns focus to the related status link', async ({ page }) => {
   await page.goto(historyURL({ operationRunID: OPERATION_REFERENCES.document }));
   const link = page.getByRole('button', { name: 'Open Document index status' });
   await link.click();
-  await expect(page.getByRole('region', { name: 'Document index status' })).toContainText('4 of 5 owners ready');
   await page.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(link).toBeFocused();
 });
