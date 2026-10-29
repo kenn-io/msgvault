@@ -199,7 +199,7 @@ export const defaultExploreURLState: ExploreURLState = {
 
 interface ExploreWindow {
   location: Pick<Location, 'href' | 'pathname' | 'search' | 'hash'>;
-  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'back'>;
+  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'go'>;
   addEventListener(type: 'popstate', listener: () => void): void;
   removeEventListener(type: 'popstate', listener: () => void): void;
 }
@@ -606,9 +606,9 @@ export function serializeExploreURLState(state: ExploreURLState, baseSearch = ''
   return `?${parameters.toString()}`;
 }
 
-function historyEntry(search: string, state: ExploreURLState): { exploreSearch: string; exploreState: unknown } {
+function historyEntry(search: string, state: ExploreURLState, index: number): { exploreSearch: string; exploreState: unknown; exploreIndex: number } {
   // History entries must be structured-cloneable, so strip reactive proxies.
-  return { exploreSearch: search, exploreState: JSON.parse(JSON.stringify(state)) };
+  return { exploreSearch: search, exploreState: JSON.parse(JSON.stringify(state)), exploreIndex: index };
 }
 
 export function parseExploreURLState(search: string): ExploreURLState {
@@ -635,16 +635,25 @@ export class ExploreState {
   private readonly preferenceStorage: SearchModeStorage | null;
   private configuredDefaultSearchMode: ExploreSearchMode | undefined;
   private committed: ExploreURLState;
+  private historyIndex: number;
+  private restoringHeldLeave = false;
   private pendingRestorationEpoch = $state<number | undefined>(1);
   private pendingSearchPriorFocus?: Pick<ExploreURLState, 'activeRow' | 'scrollAnchor'>;
   private readonly handlePopState = (): void => {
-    const next = this.readURLState();
-    if (this.current.workspace === 'settings' && next.workspace !== 'settings' &&
-      this.holdLeave?.(() => this.browser.history.back())) {
-      const search = serializeExploreURLState(this.committed);
-      this.browser.history.pushState(historyEntry(search, this.committed), '', `${this.browser.location.pathname}${search}${this.browser.location.hash}`);
+    if (this.restoringHeldLeave) {
+      this.restoringHeldLeave = false;
       return;
     }
+    const next = this.readURLState();
+    const nextIndex = this.browser.history.state?.exploreIndex ?? 0;
+    const delta = nextIndex - this.historyIndex;
+    if (this.current.workspace === 'settings' && next.workspace !== 'settings' &&
+      this.holdLeave?.(() => this.browser.history.go(delta))) {
+      this.restoringHeldLeave = true;
+      this.browser.history.go(-delta);
+      return;
+    }
+    this.historyIndex = nextIndex;
     this.current = next;
     this.committed = normalize(this.current);
     this.pendingSearchPriorFocus = undefined;
@@ -660,6 +669,8 @@ export class ExploreState {
   ) {
     this.browser = browser;
     this.preferenceStorage = preferenceStorage;
+    this.historyIndex = browser.history.state?.exploreIndex ?? 0;
+    browser.history.replaceState({ ...browser.history.state, exploreIndex: this.historyIndex }, '', browser.location.href);
     this.current = this.readURLState();
     this.committed = normalize(this.current);
     this.rewriteLegacyFilesURL();
@@ -681,7 +692,7 @@ export class ExploreState {
     history.replaceState(
       {
         ...(isRecord(history.state) ? history.state : {}),
-        ...historyEntry(search, this.current)
+        ...historyEntry(search, this.current, this.historyIndex)
       },
       '',
       `${location.pathname}${search}${location.hash}`
@@ -887,7 +898,7 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry), ...this.archiveHistoryState(priorEntry.selectedRow) }, '', committedURL);
+      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow) }, '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -905,7 +916,8 @@ export class ExploreState {
     }
     const search = serializeExploreURLState(this.current, baseSearch);
     const url = `${this.browser.location.pathname}${search}${this.browser.location.hash}`;
-    const history = historyEntry(search, this.current);
+    if (mode === 'push') this.historyIndex += 1;
+    const history = historyEntry(search, this.current, this.historyIndex);
     if (mode === 'push') {
       this.browser.history.pushState(history, '', url);
       this.committed = normalize(this.current);

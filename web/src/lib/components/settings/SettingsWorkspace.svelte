@@ -115,7 +115,7 @@
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
   let pendingLeave = $state<(() => void) | undefined>();
   const registerLeave = getContext<((hold?: (leave: () => void) => boolean) => void) | undefined>('msgvault:hold-settings-leave');
-  registerLeave?.((leave) => dirtyCount > 0 && (pendingLeave = leave, true));
+  registerLeave?.((leave) => dirtyCount > 0 && !saving && (pendingLeave = leave, true));
   onDestroy(() => registerLeave?.(undefined));
   function focusStay(node: HTMLElement) {
     node.querySelector('button')?.focus();
