@@ -565,7 +565,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			}
 			if d.JobID == "" && (d.Outcome == "" || d.Outcome == "requested") {
 				d.Fingerprint = profile.Fingerprint
-				d.Outcome = "requested"
+				d.Outcome = ""
 				next := time.Now().UTC().Add(store.BeeperMediaPollDelay)
 				if saveErr := w.gated(ctx, func() error {
 					return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)

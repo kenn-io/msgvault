@@ -1270,9 +1270,10 @@ func TestAttachmentMirrorProcessingBlockedKeepsUploading(t *testing.T) {
 			assert.Len(r.processing.Jobs, 1)
 			assert.Equal(int64(26), r.status().Delivered)
 			assert.Equal(int64(26), r.processingCounts().Waiting)
-			var rows int
-			require.NoError(r.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM docbank_attachment_processing`).Scan(&rows))
-			assert.Zero(rows)
+			var outcome, jobID string
+			require.NoError(r.f.Store.DB().QueryRow(`SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&outcome, &jobID))
+			assert.Empty(outcome)
+			assert.Empty(jobID)
 		})
 	}
 }
