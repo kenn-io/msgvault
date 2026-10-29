@@ -1,3 +1,4 @@
+import { documentStatus } from '../src/test/operations';
 import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 
@@ -120,11 +121,7 @@ test('Settings Overview Details closes back to Overview with a status title', as
     kind: 'document_extraction', lane: 'documents', configured: true,
     related_status: 'getDocumentIndexStatus', supported_actions: [], history_availability: 'available'
   }] } }));
-  await page.route('**/api/v1/documents/status/current', route => route.fulfill({ json: { status: {
-    profile_exists: true, profile_enabled: true, exact_consent: true,
-    ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
-    terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
-  } } }));
+  await page.route('**/api/v1/documents/status/current', route => route.fulfill({ json: documentStatus }));
   await page.goto('/?workspace=settings');
   const details = page.getByRole('button', { name: 'Details, Document extraction' });
   await details.click();
