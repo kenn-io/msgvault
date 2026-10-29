@@ -14,7 +14,7 @@ connections. Publishing, unpublishing, and choosing the local side of a conflict
 
 ## Connect an address book
 
-In the Web UI, open **Settings → CardDAV account** to test and save a connection.
+In the Web UI, open **Settings → Contacts**, test the connection, then choose **Save changes**.
 Select an existing connection or choose **Add connection** for another account.
 The CLI can discover the same accounts:
 
@@ -71,7 +71,7 @@ file readable only by the daemon's operator.
 
 ## Google Contacts
 
-Select **Google Contacts** under **Settings → CardDAV account → Provider**.
+Select **Google Contacts** under **Settings → Contacts → Provider**.
 Enter your Google account email and, if needed, the name of an OAuth app from
 `[oauth.apps]`. Google supplies the discovery URL; no password is needed.
 The contacts account and OAuth app are independent of your mail accounts.
@@ -169,7 +169,7 @@ deleted without a conflict; the contact stays in Outlook's Deleted Items.
 To sign in without saving a connection, run
 `msgvault carddav authorize-microsoft you@example.com`. Then save the
 connection with the **Microsoft 365 or Outlook.com** provider in
-**Settings → CardDAV account**. An existing connection keeps its schedule.
+**Settings → Contacts** and choose **Save changes**. An existing connection keeps its schedule.
 
 Graph stores fewer fields than vCard. msgvault maps names, nickname, email
 addresses, phone numbers, organization, job title, postal addresses, a
