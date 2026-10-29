@@ -50,6 +50,7 @@ type namedPromotionTestBackend struct {
 
 type perIDPeopleBackend struct {
 	*recordingPeopleBackend
+
 	contacts map[int64]*query.PersonSummary
 }
 
