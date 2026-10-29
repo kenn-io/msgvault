@@ -14,7 +14,6 @@ describe('maskSecret', () => {
   });
 });
 
-
 it('projects replacement, removal, and saved secret hints through the same display rules', () => {
   const saved = { configured: true, hint: 'old…key' };
   expect(pendingSecret(saved, { action: 'set', value: 'test-api-key' })).toEqual({ configured: true, hint: 'tes…key' });
