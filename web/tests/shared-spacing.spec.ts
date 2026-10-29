@@ -68,24 +68,27 @@ test('selection bar uses the shared inset and gap', async ({ page }) => {
 });
 
 for (const width of [1280, 420]) {
-  test(`long saved queries keep row actions visible at ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 720 });
-    const query = 'project planning meeting notes and follow up tasks '.repeat(7).trim();
-    await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
-      id: 1, name: 'Long archive search', schema_version: 2, revision: 1,
-      canonical_state: { query, search_mode: 'full_text' },
-      created_at: row.occurred_at, updated_at: row.occurred_at
-    }] } }));
-    await selectWorkspace(page, 'Saved views');
-    const view = page.locator('.view-list article').filter({ hasText: 'Long archive search' });
-    await expect(view).toBeVisible();
-    for (const name of ['Open', 'Edit', 'Delete']) {
-      const action = view.getByRole('button', { name: `${name} Long archive search`, exact: true });
-      await expect(action).toBeInViewport({ ratio: 1 });
-      await action.click({ trial: true });
-    }
-    const label = view.locator('.summary .kit-chip__label').filter({ hasText: query });
-    expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
+  test.describe(`saved queries at ${width}px`, () => {
+    test.use({ viewport: { width, height: 720 } });
+
+    test(`long saved queries keep row actions visible at ${width}px`, async ({ page }) => {
+      const query = 'project planning meeting notes and follow up tasks '.repeat(7).trim();
+      await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
+        id: 1, name: 'Long archive search', schema_version: 2, revision: 1,
+        canonical_state: { query, search_mode: 'full_text' },
+        created_at: row.occurred_at, updated_at: row.occurred_at
+      }] } }));
+      await selectWorkspace(page, 'Saved views');
+      const view = page.locator('.view-list article').filter({ hasText: 'Long archive search' });
+      await expect(view).toBeVisible();
+      for (const name of ['Open', 'Edit', 'Delete']) {
+        const action = view.getByRole('button', { name: `${name} Long archive search`, exact: true });
+        await expect(action).toBeInViewport({ ratio: 1 });
+        await action.click({ trial: true });
+      }
+      const label = view.locator('.summary .kit-chip__label').filter({ hasText: query });
+      expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
+    });
   });
 }
 
