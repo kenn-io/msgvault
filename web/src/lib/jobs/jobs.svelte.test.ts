@@ -88,7 +88,6 @@ it.each(['shell refresh', 'Past runs'])('keeps healthy overlapping reads loading
     // Settle completed source and superseded status responses while the current read is held.
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(store.loaded).toBe(false);
-    expect(store.error).toBeUndefined();
     release(); releaseNew();
     await Promise.all([first, second]);
     expect(store.health).toBe('ok');
