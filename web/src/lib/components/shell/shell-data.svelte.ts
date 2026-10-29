@@ -78,7 +78,7 @@ export class ShellData {
   /** Renames one saved view, returning an error message on failure. */
   async renameView(view: SavedView, name: string): Promise<string | undefined> {
     const trimmed = name.trim();
-    if (!trimmed || trimmed === view.name) return undefined;
+    if (!trimmed || trimmed === view.name) return trimmed ? undefined : 'Enter a name.';
     return this.#patch(view, { name: trimmed }, `Couldn't rename ${view.name}.`);
   }
 

@@ -920,7 +920,7 @@ export class ExploreState {
       patch.workspace !== 'files' && !('presentation' in patch)) {
       effectivePatch = { ...patch, presentation: defaultExploreURLState.presentation };
     }
-    if (OPERATION_FILTER_FIELDS.some((key) =>
+    if (!('operationRunID' in patch) && OPERATION_FILTER_FIELDS.some((key) =>
       key in patch && normalize({ ...this.current, ...patch })[key] !== this.current[key])) {
       effectivePatch = { ...effectivePatch, operationRunID: null };
     }

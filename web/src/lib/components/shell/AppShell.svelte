@@ -301,9 +301,9 @@
     setRunHistory(defaultOperationsState(kind));
   }
   function openJob(target: JobTarget): void {
-    if (target.kind === 'source') openOperationAuthority('listSourceStatus');
-    else if (target.kind === 'status') openOperationAuthority(target.authority);
+    if (target.kind === 'source' || target.kind === 'status') openOperationAuthority(target.kind === 'source' ? 'listSourceStatus' : target.authority);
     else if (target.kind === 'setting') setUpOperation(target.target);
+    else setRunHistory({ ...defaultOperationsState(target.operationKind), operationRunID: target.operationRunID });
   }
   async function flashViewError(result: Promise<string | undefined>): Promise<void> {
     const error = await result;
