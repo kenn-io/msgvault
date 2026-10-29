@@ -833,14 +833,22 @@ func TestTelegramSharedKeyMigrationMaterializesSharedCollisions(t *testing.T) {
 				NULL, NULL, ?, ?, ?, 'archive_observation')
 		`), left, right, normalized, state, origin)
 		require.NoError(err)
+		// The origin predicate is built in Go because a bare "? IS NULL"
+		// bind leaves PostgreSQL unable to type the parameter (SQLSTATE
+		// 42P18), the same untypable-parameter class the store avoids.
+		originPredicate := "observation_conflict_origin IS NULL"
+		lookupArgs := []any{left, right, normalized}
+		if origin != nil {
+			originPredicate = "observation_conflict_origin = ?"
+			lookupArgs = append(lookupArgs, origin)
+		}
 		var id int64
 		require.NoError(st.DB().QueryRow(st.Rebind(`
 			SELECT id FROM identity_match_candidates
 			WHERE left_id = ? AND right_id = ? AND normalized_value = ?
 			  AND scope_kind IS NULL
-			  AND (observation_conflict_origin = ? OR
-				(observation_conflict_origin IS NULL AND ? IS NULL))`),
-			left, right, normalized, origin, origin).Scan(&id))
+			  AND `+originPredicate),
+			lookupArgs...).Scan(&id))
 		return id
 	}
 	edgeRow := func(left, right int64, normalized string) (
@@ -933,4 +941,109 @@ func TestTelegramSharedKeyMigrationMaterializesSharedCollisions(t *testing.T) {
 			WHERE surviving_candidate_id = ?
 		)`), blockerSuggestionID).Scan(&redirected))
 	assert.True(redirected, "the rekeyed conflict retired through the collapse")
+}
+
+// TestTelegramSharedKeyMigrationRekeysDecidedConflicts pins the decided-row
+// half of the rekey: a username collision the user already rejected while
+// it was account-scoped must not come back as a fresh conflict when the
+// scope clears. The rejection rides onto the shared edge — same row,
+// decision author kept, stored proof renewed against the rewritten
+// evidence — and no second, reviewable conflict materializes beside it.
+// Runs on SQLite and PostgreSQL.
+func TestTelegramSharedKeyMigrationRekeysDecidedConflicts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("beeper", "dec-acct")
+	require.NoError(err)
+	bridge := func(identifier string) int64 {
+		pid, err := st.EnsureParticipantByIdentifier("beeper", identifier, "Bridge "+identifier)
+		require.NoError(err)
+		return pid
+	}
+	seedUsername := func(pid int64, normalized, providerKey string, scopeKind, scopeValue any) {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO participant_contact_observations (
+				participant_id, source_id, address_kind, scope_kind, scope_value,
+				provider_user_id, original_value, normalized_value,
+				normalization, source
+			) VALUES (?, ?, 'username', ?, ?, ?, ?, ?, 'none', 'archive_observation')
+		`), pid, source.ID, scopeKind, scopeValue, providerKey, normalized, normalized)
+		require.NoError(err)
+	}
+
+	// Two distinct Telegram users claimed one username in one account
+	// scope, and the user rejected the generated conflict: a terminal
+	// decision that must survive the scope clear.
+	first := bridge("beeper:6:dec-acct:9:rejected-first")
+	seedUsername(first, "rejected-handle",
+		beeperidentity.ProviderKey("telegram", "account", "dec-a", "482111"), "account", "dec-a")
+	second := bridge("beeper:6:dec-acct:9:rejected-second")
+	seedUsername(second, "rejected-handle",
+		beeperidentity.ProviderKey("telegram", "account", "dec-a", "999777"), "account", "dec-a")
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO identity_match_candidates (
+			left_kind, left_id, right_kind, right_id, basis,
+			scope_kind, scope_value, normalized_value, state,
+			observation_conflict_origin,
+			decided_by, decided_at, source
+		) VALUES ('participant', ?, 'participant', ?, 'service_scope_username',
+			'account', 'dec-a', 'rejected-handle', 'rejected',
+			'generated', 'user', CURRENT_TIMESTAMP, 'archive_observation')
+	`), first, second)
+	require.NoError(err)
+	var rejectedID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id FROM identity_match_candidates
+		WHERE left_id = ? AND right_id = ? AND state = 'rejected'
+		  AND observation_conflict_origin = 'generated'`),
+		first, second).Scan(&rejectedID))
+	rejectedFingerprint, err := store.IdentityMatchDecisionFingerprintForTest(
+		context.Background(), st, rejectedID)
+	require.NoError(err, "fingerprint the rejection's pre-migration evidence")
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint)
+		VALUES (?, ?)`), rejectedID, rejectedFingerprint)
+	require.NoError(err)
+
+	_, err = st.DB().Exec(st.Rebind(
+		`DELETE FROM applied_migrations WHERE name = ?`), telegramSharedKeysMigration)
+	require.NoError(err)
+	require.NoError(st.InitSchema(), "upgrade telegram provider keys")
+
+	// The rejected decision survives on the shared edge: the same row,
+	// still rejected, still the user's call, with the scope cleared.
+	var rows int
+	var state, decidedBy, scopeKind, scopeValue string
+	var survivorID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*), COALESCE(MAX(state), ''), COALESCE(MAX(decided_by), ''),
+		       COALESCE(MAX(scope_kind), ''), COALESCE(MAX(scope_value), ''),
+		       COALESCE(MAX(id), 0)
+		FROM identity_match_candidates
+		WHERE left_id = ? AND right_id = ? AND basis = 'service_scope_username'
+		  AND normalized_value = 'rejected-handle'`),
+		first, second).Scan(&rows, &state, &decidedBy, &scopeKind, &scopeValue, &survivorID))
+	assert.Equal(1, rows,
+		"the decided collision keeps one edge instead of re-materializing a fresh conflict")
+	assert.Equal("rejected", state, "the rejection survives the migration")
+	assert.Equal("user", decidedBy, "the decision author survives the migration")
+	assert.Empty(scopeKind, "the rejected decision rides onto the scope-less edge")
+	assert.Empty(scopeValue, "the rejected decision rides onto the scope-less edge")
+	assert.Equal(rejectedID, survivorID, "the rekeyed row itself survives, not a new conflict")
+
+	// The decision's proof is renewed against the rewritten evidence, so
+	// the rejection stays a valid review rather than going stale.
+	var renewed string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT evidence_fingerprint FROM identity_match_review_decisions
+		WHERE candidate_id = ?`), rejectedID).Scan(&renewed))
+	postFingerprint, err := store.IdentityMatchDecisionFingerprintForTest(
+		context.Background(), st, rejectedID)
+	require.NoError(err)
+	assert.Equal(postFingerprint, renewed,
+		"the surviving rejection's proof matches the rewritten evidence")
+	assert.NotEqual(rejectedFingerprint, renewed,
+		"the pre-rewrite fingerprint no longer matches")
 }

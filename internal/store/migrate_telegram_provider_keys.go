@@ -88,24 +88,26 @@ func (s *Store) rewriteTelegramProviderKeys(ctx context.Context, tx *loggedTx) e
 	if err := applyTelegramEvidenceDetailRewrites(ctx, tx, evidence); err != nil {
 		return err
 	}
-	// The rewrite also moves the observations under every username conflict
-	// they support. Two distinct Telegram users claiming one username
-	// collide just as validly in the shared namespace, so those conflicts —
-	// and the decisions a conflicting observation promoted — are rekeyed
-	// onto the scope-less edge instead of discarded. Rows that converge on
-	// one shared edge — a second account scope holding the same collision,
-	// or any row the shared namespace already carries — reconcile through
-	// the canonical candidate collapse, and collisions the scope clears
-	// expose for the first time are rebuilt through the same
-	// observation-recording path that would have recorded them, so the
-	// migration's post-state equals what the canonical matcher would have
-	// built. What survives the rekey covers only conflicts whose support
-	// truly vanished: the sides converged on one identity, or no current
-	// observation pair still backs the conflict, and a resync cannot clear
-	// those later, because an unchanged observation records early.
-	// Reconcile before the fingerprint refresh, so a demoted decision is
-	// renewed against the rewritten evidence and a deleted conflict leaves
-	// no proof to renew.
+	// The rewrite also moves the observations under every username
+	// collision they support. Two distinct Telegram users claiming one
+	// username collide just as validly in the shared namespace, so those
+	// candidates — the conflicts, the decisions a conflicting observation
+	// promoted, and the decided rows that would otherwise strand a
+	// rejection on an obsolete edge while the collision re-materialized
+	// beside it — are rekeyed onto the scope-less edge instead of
+	// discarded. Rows that converge on one shared edge — a second account
+	// scope holding the same collision, or any row the shared namespace
+	// already carries — reconcile through the canonical candidate
+	// collapse, and collisions the scope clears expose for the first time
+	// are rebuilt through the same observation-recording path that would
+	// have recorded them, so the migration's post-state equals what the
+	// canonical matcher would have built. What survives the rekey covers
+	// only candidates whose support truly vanished: the sides converged on
+	// one identity, or no current observation pair still backs the
+	// candidate, and a resync cannot clear those later, because an
+	// unchanged observation records early. Reconcile before the
+	// fingerprint refresh, so a demoted decision is renewed against the
+	// rewritten evidence and a deleted conflict leaves no proof to renew.
 	conflictSurvivors, err := s.rekeyTelegramObservationConflicts(ctx, tx, conflictRekeys)
 	if err != nil {
 		return err
@@ -550,17 +552,22 @@ func applyTelegramEvidenceDetailRewrites(
 	return nil
 }
 
-// planTelegramObservationConflictRekeys lists the observation conflicts whose
-// supporting pairs the rewrite breaks: participant conflicts still backed by
-// a current observation pair under the conflict's own scope, with a
-// Telegram-keyed observation joining the pair. Clearing that observation's
-// scope retires the pair against the stored scope, but the collision may
-// persist in the shared namespace between two distinct Telegram users, and
-// a resync of the unchanged observations records early — so those conflicts
-// must be rebuilt here rather than dropped. Planning is read-only, before
-// the first mutation, so support is judged against pre-rewrite observations
-// and a conflict already unsupported before the migration keeps the
-// retirement the general reconciliation owes it.
+// planTelegramObservationConflictRekeys lists the observation candidates —
+// conflicts and decided rows alike — whose supporting pairs the rewrite
+// breaks: participant rows still backed by a current observation pair under
+// the candidate's own scope, with a Telegram-keyed observation joining the
+// pair. Clearing that observation's scope retires the pair against the
+// stored scope, but the collision may persist in the shared namespace
+// between two distinct Telegram users, and a resync of the unchanged
+// observations records early — so those candidates must be rebuilt here
+// rather than dropped. A decided row — a rejection most commonly — would
+// otherwise strand its decision on the obsolete scoped edge while the
+// collision re-materialized as a fresh conflict beside it, so every
+// decision state rekeys and carries its decision onto the shared edge.
+// Planning is read-only, before the first mutation, so support is judged
+// against pre-rewrite observations and a candidate already unsupported
+// before the migration keeps the retirement the general reconciliation
+// owes it.
 func planTelegramObservationConflictRekeys(
 	ctx context.Context, tx *loggedTx,
 ) ([]int64, error) {
@@ -569,7 +576,7 @@ func planTelegramObservationConflictRekeys(
 		FROM identity_match_candidates c
 		WHERE c.left_kind = 'participant'
 		  AND c.right_kind = 'participant'
-		  AND c.state = 'conflict'
+		  AND c.state IN ('conflict', 'accepted', 'rejected')
 		  AND c.observation_conflict_origin IN ('generated', 'promoted')
 		  AND c.normalized_value IS NOT NULL
 		  AND c.basis IN ('email', 'phone', 'service_scope_username')
@@ -610,22 +617,25 @@ func planTelegramObservationConflictRekeys(
 	return conflicts, nil
 }
 
-// rekeyTelegramObservationConflicts moves the planned conflicts onto the
-// shared namespace their supporting observations were rewritten into: scope
-// columns cleared to match, every decision column — state, conflict origin,
-// pre-conflict state, decision author — kept as it was. A conflict moves
-// only while a supporting pair with distinct provider users still exists
-// between the same participants under the shared scope, so a collision whose
-// sides converged on one Telegram identity is left for the general
-// reconciliation to retire. A conflict that lands on an occupied edge — a
-// second account scope holding the same collision, or any row the shared
-// namespace already carries, whatever its state — reconciles through the
-// canonical candidate collapse rather than a statement-level existence
-// check, which cannot see the duplicate it forks when two scoped conflicts
-// rekey in one statement. The row already holding the scope-less edge is
-// the collapse's preferred survivor, so the edge keeps its identity while
-// the group's decisions, evidence, and source support merge under one
-// policy. It returns the set of surviving candidate IDs.
+// rekeyTelegramObservationConflicts moves the planned candidates —
+// conflicts and decided rows alike — onto the shared namespace their
+// supporting observations were rewritten into: scope columns cleared to
+// match, every decision column — state, conflict origin, pre-conflict
+// state, decision author — kept as it was, so a rejection rides onto the
+// shared edge instead of stranding while the collision re-materialized as
+// a fresh conflict. A candidate moves only while a supporting pair with
+// distinct provider users still exists between the same participants under
+// the shared scope, so a collision whose sides converged on one Telegram
+// identity is left for the general reconciliation to retire. A candidate
+// that lands on an occupied edge — a second account scope holding the same
+// collision, or any row the shared namespace already carries, whatever its
+// state — reconciles through the canonical candidate collapse rather than
+// a statement-level existence check, which cannot see the duplicate it
+// forks when two scoped candidates rekey in one statement. The row already
+// holding the scope-less edge is the collapse's preferred survivor, so the
+// edge keeps its identity while the group's decisions, evidence, and
+// source support merge under one policy. It returns the set of surviving
+// candidate IDs.
 func (s *Store) rekeyTelegramObservationConflicts(
 	ctx context.Context, tx *loggedTx, conflictIDs []int64,
 ) (map[int64]struct{}, error) {
@@ -792,6 +802,21 @@ func (s *Store) telegramSharedEdgeOccupantTx(
 	return occupantID, nil
 }
 
+// telegramSharedObservationCollision is one collision the scope clears
+// expose, collected read-only before any candidate is written. The
+// recording-path upserts must not run while the collision query's result
+// set is still open — PostgreSQL cannot interleave writes with live rows
+// on the same transaction — so the materialize pass first drains every
+// collision, then replays the collected records.
+type telegramSharedObservationCollision struct {
+	leftKind, rightKind IdentityMatchEndpointKind
+	leftID, rightID     int64
+	basis               IdentityMatchBasis
+	serviceID           sql.NullInt64
+	normalized          string
+	sourceID            sql.NullInt64
+}
+
 // materializeTelegramSharedObservationConflicts rebuilds, through the
 // canonical observation-recording path, the conflicts the scope clears
 // expose: two distinct Telegram users whose account scopes kept them apart
@@ -804,10 +829,13 @@ func (s *Store) telegramSharedEdgeOccupantTx(
 // flag the recording path uses: a pending suggestion is promoted with the
 // canonical promotion columns, an already decided or conflicting row is
 // left exactly as the recording path would leave it, and a genuine new
-// collision becomes a generated conflict. It returns the candidate IDs the
-// pass touched. Provider-identity rows are skipped: a shared stable ID is
-// the same person, and those candidates went through the key-rewrite
-// collapse.
+// collision becomes a generated conflict. Collisions are collected and
+// their query results drained and closed before the first upsert runs —
+// nested writes against a live cursor break PostgreSQL's connection —
+// and the upserts replay in the query's deterministic order. It returns
+// the candidate IDs the pass touched. Provider-identity rows are skipped:
+// a shared stable ID is the same person, and those candidates went through
+// the key-rewrite collapse.
 func (s *Store) materializeTelegramSharedObservationConflicts(
 	ctx context.Context, tx *loggedTx, plan *telegramObservationPlan,
 ) (map[int64]struct{}, error) {
@@ -826,6 +854,7 @@ func (s *Store) materializeTelegramSharedObservationConflicts(
 		normalized  string
 	}
 	seen := make(map[collisionKey]struct{})
+	collisions := make([]telegramSharedObservationCollision, 0)
 	if err := queryInChunksContext(ctx, tx, observationIDs, nil, `
 		SELECT rewritten.participant_id, rewritten.address_kind,
 			rewritten.service_id, rewritten.normalized_value, rewritten.source_id,
@@ -879,37 +908,46 @@ func (s *Store) materializeTelegramSharedObservationConflicts(
 				return nil
 			}
 			seen[key] = struct{}{}
-			var service any
-			if serviceID.Valid {
-				service = serviceID.Int64
-			}
-			var source *int64
-			if sourceID.Valid {
-				id := sourceID.Int64
-				source = &id
-			}
-			value := normalized
-			candidate, _, err := s.upsertIdentityMatchCandidateTx(
-				ctx, tx,
-				IdentityMatchCandidateInput{
-					LeftKind: leftKind, LeftID: leftID,
-					RightKind: rightKind, RightID: rightID,
-					Basis:           basis,
-					NormalizedValue: &value,
-					State:           IdentityMatchStateConflict,
-					Source:          ProvenanceArchiveObservation,
-					SourceID:        source,
-				},
-				leftKind, leftID, rightKind, rightID, service, true,
-			)
-			if err != nil {
-				return fmt.Errorf(
-					"telegram keys: materialize shared observation conflict: %w", err)
-			}
-			touched[candidate.ID] = struct{}{}
+			collisions = append(collisions, telegramSharedObservationCollision{
+				leftKind: leftKind, leftID: leftID,
+				rightKind: rightKind, rightID: rightID,
+				basis: basis, serviceID: serviceID,
+				normalized: normalized, sourceID: sourceID,
+			})
 			return nil
 		}); err != nil {
 		return nil, fmt.Errorf("telegram keys: list shared observation collisions: %w", err)
+	}
+	for _, collision := range collisions {
+		var service any
+		if collision.serviceID.Valid {
+			service = collision.serviceID.Int64
+		}
+		var source *int64
+		if collision.sourceID.Valid {
+			id := collision.sourceID.Int64
+			source = &id
+		}
+		value := collision.normalized
+		candidate, _, err := s.upsertIdentityMatchCandidateTx(
+			ctx, tx,
+			IdentityMatchCandidateInput{
+				LeftKind: collision.leftKind, LeftID: collision.leftID,
+				RightKind: collision.rightKind, RightID: collision.rightID,
+				Basis:           collision.basis,
+				NormalizedValue: &value,
+				State:           IdentityMatchStateConflict,
+				Source:          ProvenanceArchiveObservation,
+				SourceID:        source,
+			},
+			collision.leftKind, collision.leftID,
+			collision.rightKind, collision.rightID, service, true,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"telegram keys: materialize shared observation conflict: %w", err)
+		}
+		touched[candidate.ID] = struct{}{}
 	}
 	return touched, nil
 }
