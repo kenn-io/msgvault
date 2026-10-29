@@ -23,7 +23,6 @@
   {#each store.items as item (item.id)}
     {@const chip = operationStateChip(item.state)}
     <MenuItem
-      disabled={item.target.kind === 'none'}
       textValue={item.name}
       onselect={() => onOpen(item.target)}
     >

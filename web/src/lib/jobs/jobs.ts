@@ -1,13 +1,13 @@
 import type { OperationLaneStatus, SourceStatus } from '../api/generated/models';
-import { OPERATION_KIND_LABELS, OPERATION_SETUP, type OperationSettingsTarget, type RelatedStatus } from '../operations/labels';
+import { operationStateChip, OPERATION_KIND_LABELS, OPERATION_SETUP, type OperationSettingsTarget, type RelatedStatus } from '../operations/labels';
+import { syncStatusChip } from '../sources/labels';
 
 export type JobState = 'running' | 'failed';
 export type JobsHealth = 'ok' | 'running' | 'failed' | 'unavailable';
 export type JobTarget =
   | { kind: 'source' }
   | { kind: 'setting'; target: OperationSettingsTarget }
-  | { kind: 'status'; authority: RelatedStatus }
-  | { kind: 'none' };
+  | { kind: 'status'; authority: RelatedStatus };
 export interface JobItem {
   id: string;
   name: string;
@@ -28,10 +28,10 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
     } else {
       const run = source.latest_sync;
       const failedAt = run?.completed_at ?? run?.started_at;
-      const runFailed = run?.status === 'failed';
+      const runFailed = syncStatusChip(source).tone === 'danger';
       if (runFailed || source.scheduler_last_error) {
         const diagnostics = runFailed
-          ? [run.error_message, ...(run.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).filter(Boolean).join(' · ')
+          ? [run?.error_message, ...(run?.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).filter(Boolean).join(' · ')
           : '';
         items.push({ ...base, state: 'failed', detail: diagnostics || firstLine(source.scheduler_last_error, 'Sync failed'), at: runFailed ? failedAt ?? undefined : undefined });
       }
@@ -40,12 +40,13 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
   for (const lane of lanes) {
     if (lane.kind === 'source_sync') continue;
     const setup = OPERATION_SETUP[lane.kind];
-    const target: JobTarget = lane.related_status ? { kind: 'status', authority: lane.related_status }
-      : setup?.kind === 'settings' ? { kind: 'setting', target: setup.target } : { kind: 'none' };
+    // Registered kinds without a settings setup always supply a related status.
+    const target: JobTarget = !lane.related_status && setup?.kind === 'settings'
+      ? { kind: 'setting', target: setup.target } : { kind: 'status', authority: lane.related_status! };
     const base = { id: lane.kind, name: OPERATION_KIND_LABELS[lane.kind], target };
     if (lane.active) {
       items.push({ ...base, state: 'running', detail: 'Running', at: lane.active.started_at });
-    } else if (lane.configured && lane.latest?.state === 'failed') {
+    } else if (lane.configured && lane.latest && operationStateChip(lane.latest.state).tone === 'danger') {
       items.push({ ...base, state: 'failed', detail: firstLine(lane.latest.error?.message, 'Failed'), at: lane.latest.finished_at ?? lane.latest.started_at });
     }
   }
