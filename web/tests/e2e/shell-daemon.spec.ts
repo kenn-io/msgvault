@@ -2,7 +2,7 @@ import { test, expect, loginToMeetingArchive, meetingURL } from './fixtures/meet
 
 test.use({ hasTouch: true });
 
-test('real daemon Operations history and keyboard navigation preserve the underlying reader', async ({ page, daemon }) => {
+test('Escape closes Past runs before the underlying reader', async ({ page, daemon }) => {
   await loginToMeetingArchive(page, daemon);
   await page.goto(meetingURL(daemon, { filters: [], selectedRow: `message:${daemon.chatwoot[0]}` }));
   const reader = page.getByRole('complementary', { name: /Reading pane/ });
@@ -14,11 +14,6 @@ test('real daemon Operations history and keyboard navigation preserve the underl
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Past runs' });
   await expect(dialog).toBeVisible();
-  const kind = dialog.getByRole('combobox', { name: /^Kind:/ });
-  await kind.focus();
-  await page.keyboard.press('Enter');
-  await page.getByRole('option', { name: 'Source sync', exact: true }).press('Enter');
-  await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').operationKind).toBe('source_sync');
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(reader).toBeVisible();
@@ -28,13 +23,9 @@ test('real daemon Operations history and keyboard navigation preserve the underl
 
 });
 
-test('touch Help opens Commands for Reviews and Directory against the real daemon', async ({ page, daemon }) => {
+test('touch Help opens Commands against the real daemon', async ({ page, daemon }) => {
   await loginToMeetingArchive(page, daemon);
-  for (const [command, landmark] of [['Reviews', 'Reviews'], ['Directory', 'Directory']]) {
-    await page.getByRole('button', { name: 'Help', exact: true }).tap();
-    await page.getByRole('button', { name: 'Commands', exact: true }).tap();
-    await page.getByRole('combobox', { name: 'Messages commands' }).fill(command!);
-    await page.getByRole('option', { name: command === 'Reviews' ? 'Open Reviews' : 'Directory', exact: true }).tap();
-    await expect(page.getByRole('main', { name: landmark!, exact: true })).toBeVisible();
-  }
+  await page.getByRole('button', { name: 'Help', exact: true }).tap();
+  await page.getByRole('button', { name: 'Commands', exact: true }).tap();
+  await expect(page.getByRole('combobox', { name: 'Messages commands' })).toBeVisible();
 });

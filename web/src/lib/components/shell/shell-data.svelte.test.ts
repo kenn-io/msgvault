@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient as apiClient } from '../../api/client';
 import type { SavedView } from '../../api/generated/models';
 import { view } from './fixtures.test-support';
-import { ShellData, viewIsFiles, viewState } from './shell-data.svelte';
+import { ShellData, viewIsFiles } from './shell-data.svelte';
 
 // Shell status polling is independent of each saved-view mutation fixture.
 const createAPIClient = (fetchFn: typeof fetch) => apiClient(async (input, init) => {
@@ -45,11 +45,9 @@ function setup(answers: Answers = {}) {
 
 describe('ShellData', () => {
 
-  it('classifies saved views by presentation and restores their state', () => {
+  it('classifies saved views by presentation', () => {
     expect(viewIsFiles(view(1, 'a'))).toBe(false);
     expect(viewIsFiles(view(2, 'b', 'files'))).toBe(true);
-    expect(viewState(view(2, 'b', 'files')).workspace).toBe('files');
-    expect(viewState(view(1, 'a')).workspace).toBe('everything');
   });
 
   describe('saved views', () => {
@@ -221,14 +219,17 @@ it.each(['undo', 'expire'])('keeps accepted deletions hidden while a prior DELET
 
 it('uses server name order after a failed delete', async () => {
   const saved = view(1, 'Équipe');
-  const ordered = [saved, view(2, 'école')];
+  let ordered = [saved, view(2, 'école')];
   const data = new ShellData(createAPIClient(async (input, init) => {
     const request = new Request(input, init);
-    if (request.method === 'DELETE') return Response.json({}, { status: 500 });
+    if (request.method === 'DELETE') {
+      ordered = [ordered[1]!, saved];
+      return Response.json({}, { status: 500 });
+    }
     return Response.json({ saved_views: ordered });
   }));
   await data.refresh();
   await data.deleteView(saved);
   await data.expireDelete();
-  expect(data.views.map(view => view.name)).toEqual(['Équipe', 'école']);
+  expect(data.views.map(view => view.name)).toEqual(['école', 'Équipe']);
 });
