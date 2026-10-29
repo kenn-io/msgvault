@@ -350,3 +350,21 @@ func TestColdPolicyCleanupRemovesContextualSiblingVectors(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, stats.EmbeddingCount, "the full sibling's vector embeds the moved message's context")
 }
+
+// A worker can start after a transition but before cleanup, capturing the new
+// revision together with the old watermark. Cleanup's reset must still win.
+func TestColdPolicyWorkerStartedBeforeCleanupCannotUndoReset(t *testing.T) {
+	b, st, sourceID, _, gen := newPolicyBackend(t)
+	ctx := t.Context()
+	wm := embed.NewWatermark(b.db, st.Rebind)
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	between, err := st.CaptureConversationPolicyWork(ctx)
+	require.NoError(t, err)
+	require.NoError(t, wm.SetWatermark(between, gen, 99))
+	_, err = b.PruneIneligibleEmbeddings(ctx)
+	require.NoError(t, err)
+	require.ErrorIs(t, wm.SetWatermark(between, gen, 100), store.ErrConversationPolicyStale)
+	watermark, err := wm.GetWatermark(ctx, gen)
+	require.NoError(t, err)
+	assert.Zero(t, watermark, "discovery restarts from the reset watermark")
+}

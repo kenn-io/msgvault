@@ -86,7 +86,11 @@ func (s *Store) ReconcileConversationPolicyMediaProgress(ctx context.Context) er
 						return err
 					}
 				}
-				return nil
+				if len(selected) == 0 {
+					return nil
+				}
+				// Work captured before this reset must not write progress over it.
+				return s.bumpConversationPolicyRevision(ctx, tx)
 			})
 			if err != nil {
 				return err
