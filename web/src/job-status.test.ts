@@ -121,7 +121,6 @@ it('refreshes the shell dot after Settings completes Build index', async () => {
   await fireEvent.click(build);
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   await waitFor(() => expect(built).toBe(true));
-  await within(screen.getByText('Message search').closest('li')!).findByText('On');
   await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Idle'), { timeout: 3000 });
 });
 

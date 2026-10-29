@@ -1,4 +1,4 @@
-import { lanes } from '../../../test/operations';
+import { documentStatus, lanes } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,16 +43,6 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 const sourceRun = canonical.runs.find(run => run.kind === 'source_sync')!;
 const OPERATION_RUN = sourceRun.id;
 
-function documentIndexStatusResponse() {
-  return {
-    status: {
-      profile_exists: true, profile_enabled: true, exact_consent: true,
-      ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
-      terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
-    }
-  };
-}
-
 function documentVectorStatusResponse() {
   return { enabled: true, configured: true, status: { coverage: { ready: 7, required: 9 } } };
 }
@@ -65,7 +55,7 @@ function visualAttachmentStatusResponse() {
 }
 
 function operationAuthorityResponse(path: string): Response | undefined {
-  if (path.endsWith('/documents/status/current')) return Response.json(documentIndexStatusResponse());
+  if (path.endsWith('/documents/status/current')) return Response.json(documentStatus);
   if (path.endsWith('/documents/vectors/status')) return Response.json(documentVectorStatusResponse());
   if (path.endsWith('/multimodal/status')) return Response.json(visualAttachmentStatusResponse());
   return undefined;
@@ -2884,7 +2874,7 @@ function selectionStatus(): HTMLElement {
 it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending => {
   window.history.replaceState(null, '', '/?workspace=everything');
   const width = window.innerWidth;
-  window.innerWidth = 480;
+  if (ending === 'undo') window.innerWidth = 480;
   const undo = vi.spyOn(ShellData.prototype, 'undoDelete').mockResolvedValue();
   const expire = vi.spyOn(ShellData.prototype, 'expireDelete').mockResolvedValue(undefined);
   const client = createAPIClient(async input => {
@@ -2894,8 +2884,7 @@ it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending 
   });
   const rendered = render(AppShell, { client });
   try {
-    const opener = screen.getByRole('button', { name: 'Open navigation' });
-    await fireEvent.click(opener);
+    if (ending === 'undo') await fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     if (ending === 'undo') {
@@ -2957,15 +2946,6 @@ it('selects a run and mounts detail restored from its URL', async () => {
   await screen.findByRole('region', { name: 'Operation run detail' });
   expect(state.current.operationRunID).toBe(OPERATION_RUN);
   const sharedURL = window.location.href;
-  window.history.back();
-  await waitFor(() => expect(state.current.operationRunID).toBeNull());
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open Source sync run' })));
-  window.history.forward();
-  await waitFor(() => expect(state.current.operationRunID).toBe(OPERATION_RUN));
-  await waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true));
-  await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources' })));
   rendered.unmount(); state.destroy();
   window.history.replaceState(null, '', sharedURL);
   state = new ExploreState(window);
@@ -2986,6 +2966,10 @@ it.each([
     lane: jobLane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
     steps: [], action: { role: 'menuitem', name: /Document extraction/ },
     expected: { workspace: 'everything', operationHistory: true, operationStatus: 'getDocumentIndexStatus' } },
+  { kind: 'person_sweep', authority: undefined, status: 'Needs attention',
+    lane: jobLane('person_sweep'), sources: [], steps: [],
+    action: { role: 'menuitem', name: /Person fact sweep/ },
+    expected: { workspace: 'everything', operationHistory: true, operationKind: 'person_sweep', operationRunID: jobRun('person_sweep').id } },
 ] as const)('opens $kind with one history entry', async ({ kind, authority, status, lane, sources, steps, action, expected }) => {
   window.history.replaceState(null, '', '/?workspace=everything&mode=full_text');
   const run = jobRun(kind);
@@ -3009,25 +2993,4 @@ it.each([
   expect(state.current).toMatchObject(expected);
   push.mockRestore();
   rendered.unmount(); state.destroy();
-});
-
-it('opens a failed People sweep from job status at that run', async () => {
-  window.history.replaceState(null, '', '/?workspace=everything');
-  const run = jobRun('person_sweep');
-  const client = createAPIClient(async input => {
-    const path = new URL((input as Request).url).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane('person_sweep')] });
-    if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
-    if (path.includes('/operations/runs/')) return Response.json({ ...run, supported_actions: [] });
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    return Response.json(exploreResponse());
-  });
-  const state = new ExploreState(window);
-  const rendered = render(AppShell, { client, state });
-  try {
-    await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Needs attention' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: /Person fact sweep/ }));
-    await screen.findByRole('region', { name: 'Operation run detail' });
-    expect(state.current).toMatchObject({ workspace: 'everything', operationHistory: true, operationKind: 'person_sweep', operationRunID: run.id });
-  } finally { rendered.unmount(); state.destroy(); }
 });

@@ -94,7 +94,7 @@ export class OperationsController {
     });
   }
 
-  async applyURLState(state: OperationsURLState): Promise<void> {
+  async applyURLState(state: OperationsURLState, refreshUnchanged = false): Promise<void> {
     if (this.disposed) return;
     const filters = copyURLState(state);
     const signature = filterFingerprint(filters);
@@ -123,9 +123,10 @@ export class OperationsController {
 
     if (selectionChanged) {
       this.selectedRunID = filters.operationRunID;
-      if (filters.operationRunID) await this.loadDetail(filters.operationRunID);
-      else this.clearDetail();
+      if (!filters.operationRunID) this.clearDetail();
+      else if (!refreshUnchanged) await this.loadDetail(filters.operationRunID);
     }
+    if (refreshUnchanged) await this.refresh();
   }
 
   async refresh(): Promise<boolean> {

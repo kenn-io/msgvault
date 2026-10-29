@@ -383,6 +383,7 @@
     } finally {
       statusRevision += 1;
       saving = false;
+      onStatusChange();
     }
   }
   function apiErrorMessage(responseError: unknown, fallback: string): string {

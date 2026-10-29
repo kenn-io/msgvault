@@ -1,4 +1,4 @@
-import { lane, lanes } from '../../../test/operations';
+import { documentStatus, lane, lanes } from '../../../test/operations';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -46,11 +46,7 @@ describe('Past runs', () => {
       const path = new URL((input as Request).url).pathname;
       if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('document_extraction', { configured, related_status: 'getDocumentIndexStatus' })) });
       if (path === '/api/v1/operations/runs') return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
-      if (path === '/api/v1/documents/status/current') return Response.json({ status: {
-        profile_exists: true, profile_enabled: false, exact_consent: true,
-        ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
-        terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
-      } });
+      if (path === '/api/v1/documents/status/current') return Response.json({ ...documentStatus, status: { ...documentStatus.status, profile_enabled: false } });
       throw new Error(`Unexpected request: ${path}`);
     });
     const controller = new OperationsController(client); controllers.push(controller);
@@ -147,4 +143,26 @@ it('refreshes on reopening and retries an unreadable history through Refresh', a
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await screen.findByRole('region', { name: 'Operation run detail' });
   expect(screen.queryByText('Unable to load operation detail.')).toBeNull();
+});
+
+it('reopens history with one read of the requested filter and refreshes unchanged filters', async () => {
+  const kinds: Array<string | null> = [];
+  const client = createAPIClient(async input => {
+    const url = new URL((input as Request).url);
+    if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
+    kinds.push(url.searchParams.get('kind'));
+    return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
+  });
+  const controller = new OperationsController(client); controllers.push(controller);
+  await controller.applyURLState(defaultOperationsState('carddav_sync'));
+  kinds.length = 0;
+  const props = { client, controller, state: defaultOperationsState('source_sync'), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() };
+  const first = render(RunHistoryDialog, props);
+  await screen.findByText('No runs match.');
+  expect(kinds).toEqual(['source_sync']);
+  first.unmount();
+  kinds.length = 0;
+  render(RunHistoryDialog, props);
+  await screen.findByText('No runs match.');
+  expect(kinds).toEqual(['source_sync']);
 });
