@@ -72,7 +72,7 @@ test('Escape in the narrow menu leaves an open reading pane open', async ({ page
   await expect(page.getByRole('complementary', { name: /^Reading pane/ })).toBeVisible();
 });
 
-test('Escape closes the Columns menu before the reading pane', async ({ page }) => {
+test('Escape closes Display before the reading pane', async ({ page }) => {
   await page.goto('/?workspace=everything');
   await page.getByRole('grid', { name: 'Messages results' }).getByRole('row').nth(1).click();
   const readingPane = page.getByRole('complementary', { name: /^Reading pane/ });

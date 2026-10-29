@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    appShortcuts,
     Menu,
     MenuContent,
     MenuItem,
@@ -46,6 +47,10 @@
     readerPosition = undefined,
     onReaderPositionChange = undefined,
   }: Props = $props();
+
+  $effect(() => {
+    if (open) return appShortcuts.pushScope('display-menu');
+  });
 
   function toggleColumn(column: ExploreColumn): void {
     if (!columns || !onColumnsChange) return;

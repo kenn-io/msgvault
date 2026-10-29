@@ -366,7 +366,7 @@ export class OperationsController {
     this.detailAbort = request;
     const context = this.contextGeneration;
     const generation = ++this.detailGeneration;
-    this.detail = undefined;
+    if (this.detail?.id !== id) this.detail = undefined;
     this.detailError = null;
     this.detailLoading = true;
     try {

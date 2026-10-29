@@ -1708,6 +1708,7 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   window.history.replaceState(null, '', '/?workspace=files');
   const state = new ExploreState(window);
   state.commitWorkspace('everything');
+  state.replaceSearchDraft('budget', 'full_text');
   const opening = window.location.href;
   state.openOperationHistory({ operationKind: 'source_sync' });
   state.openOperationHistory({ operationKind: 'carddav_sync', operationRunID: null });

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-29"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -410,7 +410,7 @@ the same key and backend share that spacing.
   With several sources, `sync-omi` moves on to the next source when a pass pauses.
 - **Paused passes.** A pass that runs out of time, yields to other archive
   work, or waits on a provider cooldown shows as **Paused** in Sources and
-  Operations. It keeps its checkpoint and records no error. A scheduled pass
+  Past runs. It keeps its checkpoint and records no error. A scheduled pass
   that saved progress continues right away; a cooldown waits for the next
   scheduled trigger.
 - **Cooldowns.** When Omi returns HTTP 429, msgvault waits for its

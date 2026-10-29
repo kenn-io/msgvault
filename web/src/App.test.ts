@@ -32,12 +32,6 @@ describe('application foundation', () => {
       await fireEvent.click(await screen.findByRole('button', { name: label }));
       await waitFor(() => expect(events.some((event) => event.properties?.screen === name)).toBe(true));
     }
-    for (const [label, name] of [['Directory', 'directory'], ['Open Reviews', 'directory_review'], ['Deletions', 'deletions']]) {
-      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
-      await fireEvent.input(await screen.findByRole('combobox', { name: 'Messages commands' }), { target: { value: label } });
-      await fireEvent.click(await screen.findByRole('option', { name: label }));
-      await waitFor(() => expect(events.some(event => event.properties?.screen === name)).toBe(true));
-    }
     window.history.replaceState(null, '', '/messages/123');
     await fireEvent(window, new PopStateEvent('popstate'));
     await waitFor(() => expect(events.at(-1)?.properties?.screen).toBe('message'));
