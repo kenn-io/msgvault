@@ -38,7 +38,7 @@ function setting(key: string, group: string, kind: string, value: unknown, extra
 
 function settingsDoc(overrides: Setting = {}) {
   return {
-    groups: [{ id: 'sources', label: 'Sources' }, { id: 'attachments', label: 'Attachments' }, { id: 'search', label: 'Search', sections: [
+    groups: [{ id: 'browser', label: 'Browser' }, { id: 'server', label: 'Server' }, { id: 'archive', label: 'Archive' }, { id: 'integrations', label: 'Integrations' }, { id: 'enrichment', label: 'People lookups' }, { id: 'sources', label: 'Sources' }, { id: 'attachments', label: 'Attachments' }, { id: 'search', label: 'Search', sections: [
       { id: 'people', label: 'Person embeddings', description: 'Sends consented person fields to the text embedding provider.' },
       { id: 'visual', label: 'Visual attachment search', description: 'Sends images to a hosted provider. Semantic search must also be on.' }
     ] }],
@@ -335,7 +335,7 @@ it('Overview shows a contacts sync action error', async () => {
   });
   render(SettingsWorkspace, { client });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
-  expect(await screen.findByRole('alert')).toBeDefined();
+  expect((await screen.findByRole('alert')).textContent).toContain('CardDAV sync partial. Connections needing attention: work.');
 });
 
 it('saves other categories after leaving a contact connection test', async () => {
@@ -654,19 +654,23 @@ it.each([['embedding', true], ['enrichment', true], ['embedding', false]] as con
   expect(seen.some(request => request.method === 'DELETE')).toBe(!changeEndpoint);
 });
 
-it('persists an unchanged Google account discovery after Test through the shared footer', async () => {
-  const account = { provider: 'google', oauth_app: 'contacts-app', configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://www.googleapis.com/.well-known/carddav', username: 'person@example.com' } };
+it.each(['google', ''] as const)('keeps the unchanged %s account Test save behavior', async provider => {
+  const account = { provider, oauth_app: provider === 'google' ? 'contacts-app' : '', configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://www.googleapis.com/.well-known/carddav', username: 'person@example.com' } };
   const { client, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', provider: 'google', oauth_app: 'contacts-app', status: account }] });
+    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', provider, oauth_app: account.oauth_app, status: account }] });
     if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/account/test') || path.endsWith('/carddav/account')) return Response.json({ ...account.account, provider: 'google', oauth_app: 'contacts-app', enabled: true, schedule: account.schedule, books: 2 });
+    if (path.endsWith('/carddav/account/test') || path.endsWith('/carddav/account')) return Response.json({ ...account.account, provider, oauth_app: account.oauth_app, enabled: true, schedule: account.schedule, books: 2 });
   });
   render(SettingsWorkspace, { client, category: 'carddav' });
   await screen.findByDisplayValue('person@example.com');
   expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
   await screen.findByText('Connection successful. Found 2 address books.');
+  if (provider !== 'google') {
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    return;
+  }
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
   await screen.findByDisplayValue('person@example.com');
@@ -674,7 +678,7 @@ it('persists an unchanged Google account discovery after Test through the shared
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await screen.findByText('Contact account default saved. Found 2 address books.');
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-  expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toEqual({ connection: 'default', provider: 'google', oauth_app: 'contacts-app', base_url: account.account.base_url, username: account.account.username, enabled: true, schedule: account.schedule });
+  expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toEqual({ connection: 'default', provider, oauth_app: account.oauth_app, base_url: account.account.base_url, username: account.account.username, enabled: true, schedule: account.schedule });
 
 });
 
@@ -812,31 +816,4 @@ it('keeps the acknowledged named account schedule when refreshing connection sum
   await screen.findByText('Contact account work saved. Found 1 address book.');
   await screen.findByText('Unable to load CardDAV connections.');
   expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
-});
-
-it('shows stale message coverage as a warning while offering the server rebuild action', async () => {
-  const { client } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
-    if (request.url.endsWith('/embeddings/status')) return Response.json({ ...embeddingStatus, active_generation: activeGeneration, current: 10, pending: 0 });
-    if (request.url.endsWith('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 10, percentage: 100, cache_revision: 'cache-1', status: 'stale', actions: ['build_index'] });
-  });
-  render(SettingsWorkspace, { client });
-  await screen.findByRole('button', { name: 'Build index, Message search' });
-  const message = within(document.querySelector('[data-feature="message_embedding"]') as HTMLElement);
-  await waitFor(() => expect(message.getByText('Stale')).toBeDefined());
-});
-
-it('leaves a saved password account clean after a successful unchanged connection Test', async () => {
-  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: true, schedule: '0 2 * * *', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
-  const { client } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', status: account }] });
-    if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/account/test')) return Response.json({ ...account.account, enabled: true, schedule: account.schedule, books: 1 });
-  });
-  render(SettingsWorkspace, { client, category: 'carddav' });
-  await screen.findByDisplayValue('work@example.com');
-  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
-  await screen.findByText('Connection successful. Found 1 address book.');
-  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
 });

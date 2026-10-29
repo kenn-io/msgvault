@@ -29,10 +29,14 @@ describe('overviewRows', () => {
     expect(row(rows, 'document_extraction').action).toMatchObject({ kind: 'host' });
   });
 
-  it.each([true, false])('gates the message build on server coverage actions (%s)', available => {
-    const rows = overviewRows(lanes(lane('message_embedding')), embeddingStatus, undefined, { status: available ? 'unavailable' : 'ready', actions: available ? ['build_index'] : [] });
+  it.each([
+    { status: 'initializing' as const, available: true, built: false, chip: 'Unbuilt' },
+    { status: 'ready' as const, available: false, built: false, chip: 'On' },
+    { status: 'stale' as const, available: true, built: true, chip: 'Stale' },
+  ])('gates the message build and chip on server coverage ($status)', ({ status, available, built, chip }) => {
+    const rows = overviewRows(lanes(lane('message_embedding')), { ...embeddingStatus, active_generation: built ? activeGeneration : null }, undefined, { status, actions: available ? ['build_index'] : [] });
     expect(row(rows, 'message_embedding').action).toEqual(available ? { kind: 'start', id: 'messages', label: 'Build index' } : undefined);
-    expect(row(rows, 'message_embedding').chip.text).toBe(available ? 'Unbuilt' : 'On');
+    expect(row(rows, 'message_embedding').chip.text).toBe(chip);
   });
 
   it('offers the visual build the server advertises, with its consent line', () => {
