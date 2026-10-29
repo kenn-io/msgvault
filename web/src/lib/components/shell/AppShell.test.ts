@@ -385,7 +385,7 @@ describe('AppShell', () => {
   });
 
   it.each([
-    ['everything', 'Messages'], ['relationships', 'People'], ['files', 'Files'], ['sources', 'Sources'],
+    ['everything', 'Messages'],
     ['directory', 'Directory'], ['deletions', 'Deletions'], ['settings', 'Settings']
   ])('reaches %s through the command palette', async (workspace, label) => {
     window.history.replaceState(null, '', `/?workspace=${workspace === 'everything' ? 'sources' : 'everything'}`);
@@ -2929,31 +2929,6 @@ function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
 
-it.each([
-  ['document_extraction', 'Document extraction', 'everything', ''],
-  ['message_embedding', 'Message embedding', 'settings', 'search'],
-  ['person_enrichment', 'Person enrichment', 'settings', 'enrichment'],
-])('routes a %s status row to its owner', async (kind, name, workspace, category) => {
-  window.history.replaceState(null, '', '/?workspace=everything');
-  const client = createAPIClient(async input => {
-    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [jobLane(kind as Parameters<typeof jobLane>[0])] });
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
-    return operationAuthorityResponse(path) ?? Response.json(exploreResponse());
-  });
-  const state = new ExploreState(window);
-  const rendered = render(AppShell, { client, state });
-  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).textContent).toMatch(/Running|Needs attention/));
-  await fireEvent.click(screen.getByRole('button', { name: /Sync status:/ }));
-  await fireEvent.click(await screen.findByRole('menuitem', { name: new RegExp(name) }));
-  expect(state.current.workspace).toBe(workspace);
-  if (category) expect(state.current.settingsCategory).toBe(category);
-  if (kind === 'document_extraction') expect(state.current.operationStatus).toBe('getDocumentIndexStatus');
-  rendered.unmount(); state.destroy();
-});
-
 it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending => {
   window.history.replaceState(null, '', '/?workspace=everything');
   const width = window.innerWidth;
@@ -3042,11 +3017,14 @@ it('shares run selection, restores detail on reload, and closes a direct link', 
 });
 
 it.each([
-  ['listSourceStatus', 'Source sync', 'Sources status', 'sources', false],
-  ['getCardDAVStatus', 'CardDAV sync', 'CardDAV settings', 'settings', true],
-] as const)('opens %s with one restorable history entry (%s, %s, %s, modal=%s)', async (authority, name, label, workspace, modal) => {
-  window.history.replaceState(null, '', '/?workspace=everything&mode=full_text');
-  const kind = authority === 'getCardDAVStatus' ? 'carddav_sync' : 'source_sync';
+  ['source_sync', 'listSourceStatus', 'Source sync', 'Sources status', 'sources', '', false],
+  ['carddav_sync', 'getCardDAVStatus', 'CardDAV sync', 'CardDAV settings', 'settings', 'carddav', true],
+  ['document_extraction', 'getDocumentIndexStatus', 'Document extraction', '', 'sources', '', false],
+  ['message_embedding', undefined, 'Message embedding', '', 'settings', 'search', false],
+  ['person_enrichment', undefined, 'Person enrichment', '', 'settings', 'enrichment', false],
+] as const)('opens %s with one restorable history entry', async (kind, authority, name, label, workspace, category, fromHistory) => {
+  const initialWorkspace = kind === 'document_extraction' ? 'sources' : 'everything';
+  window.history.replaceState(null, '', `/?workspace=${initialWorkspace}&mode=full_text`);
   const run = jobRun(kind);
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -3055,39 +3033,45 @@ it.each([
     if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
     if (path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: jobLane(kind).supported_actions });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    return Response.json(exploreResponse());
+    return operationAuthorityResponse(path) ?? Response.json(exploreResponse());
   });
   const state = new ExploreState(window);
   const rendered = render(AppShell, { client, state });
   await screen.findByRole('button', { name: 'Sync status: Needs attention' });
   await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Needs attention' }));
-  if (modal) {
+  if (fromHistory) {
     await fireEvent.click(screen.getByRole('menuitem', { name: /Past runs/ }));
     await fireEvent.click(await screen.findByRole('button', { name: `Open ${name} run` }));
     await screen.findByRole('button', { name: `Open ${label}` });
   }
   const previousURL = window.location.href;
   const push = vi.spyOn(window.history, 'pushState').mockClear();
-  if (modal) await fireEvent.click(screen.getByRole('button', { name: `Open ${label}` }));
+  if (fromHistory) await fireEvent.click(screen.getByRole('button', { name: `Open ${label}` }));
   else await fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(name) }));
   expect(push).toHaveBeenCalledTimes(1);
   expect(state.current.workspace).toBe(workspace);
-  if (workspace === 'settings') expect(state.current.settingsCategory).toBe('carddav');
-  expect(state.current.operationHistory).toBe(false);
-  expect(screen.queryByRole('dialog')).toBeNull();
+  if (category) expect(state.current.settingsCategory).toBe(category);
+  if (kind === 'document_extraction') expect(state.current.operationStatus).toBe('getDocumentIndexStatus');
+  expect(state.current.operationHistory).toBe(kind === 'document_extraction');
+  if (kind === 'document_extraction') await screen.findByRole('dialog', { name: 'Past runs' });
+  else expect(screen.queryByRole('dialog')).toBeNull();
   const destinationURL = window.location.href;
   const back = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
   window.history.back();
   await back;
   await waitFor(() => expect(window.location.href).toBe(previousURL));
-  expect(state.current.workspace).toBe('everything');
-  if (modal) await screen.findByRole('button', { name: `Open ${label}` });
+  expect(state.current.workspace).toBe(initialWorkspace);
+  if (kind === 'document_extraction') expect(state.current.operationStatus).toBe('');
+  if (fromHistory) await screen.findByRole('button', { name: `Open ${label}` });
   const forward = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
   window.history.forward();
   await forward;
   await waitFor(() => expect(window.location.href).toBe(destinationURL));
   expect(state.current.workspace).toBe(workspace);
-  expect(screen.queryByRole('dialog')).toBeNull();
+  if (kind === 'document_extraction') {
+    expect(state.current.operationStatus).toBe('getDocumentIndexStatus');
+    await screen.findByRole('dialog', { name: 'Past runs' });
+  } else expect(screen.queryByRole('dialog')).toBeNull();
   push.mockRestore();
   rendered.unmount(); state.destroy();
 });

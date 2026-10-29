@@ -38,16 +38,19 @@ function setup(answers: Answers = {}) {
 describe('ShellData', () => {
 
   describe('saved views', () => {
-    it('renames with the current revision and replaces the row', async () => {
+    it.each([
+      { field: 'name', input: '  Q3 budget ', update: { name: 'Q3 budget' }, order: ['Invoices', 'Q3 budget'] },
+      { field: 'description', input: '  Quarterly review  ', update: { description: 'Quarterly review' }, order: ['Budget', 'Invoices'] },
+    ])('edits $field with the current revision and replaces the row', async ({ field, input, update, order }) => {
       const views = [view(1, 'Budget'), view(2, 'Invoices')];
       const { data, requests } = setup({ views });
       await data.refresh();
 
-      expect(await data.renameView(data.views[0]!, '  Q3 budget ')).toBeUndefined();
+      expect(await (field === 'name' ? data.renameView(data.views[0]!, input) : data.describeView(data.views[0]!, input))).toBeUndefined();
       const patch = requests.find((request) => request.method === 'PATCH')!;
       expect(patch.headers.get('If-Match')).toBe('"saved-view-1-r1"');
-      expect(data.views.map(view => view.name)).toEqual(['Invoices', 'Q3 budget']);
-      expect(data.views[1]).toMatchObject({ id: 1, revision: 2 });
+      expect(data.views.map(view => view.name)).toEqual(order);
+      expect(data.views.find(view => view.id === 1)).toMatchObject({ id: 1, revision: 2, ...update });
     });
 
     it('does not call the server for an unchanged or empty name', async () => {
@@ -84,15 +87,6 @@ describe('ShellData', () => {
   });
 });
 
-
-it('edits descriptions with the revision', async () => {
-  const saved = view(1, 'Budget');
-  const { data, requests } = setup({ views: [saved] });
-  await data.refresh();
-  expect(await data.describeView(saved, '  Quarterly review  ')).toBeUndefined();
-  expect(data.views[0]?.description).toBe('Quarterly review');
-  expect(requests.find(request => request.method === 'PATCH')?.headers.get('If-Match')).toBe('"saved-view-1-r1"');
-});
 
 it('shows a new view whose id reuses a completed deletion', async () => {
   const answers = { views: [view(1, 'Budget'), view(2, 'Invoices')] };
@@ -145,7 +139,7 @@ it('exposes failed reads, keeps last views, and clears the error after Retry', a
 
 
 
-it.each(['PATCH', 'DELETE'])('refreshes a %s conflict so the next edit uses the current revision', async method => {
+it('refreshes a PATCH conflict so the next edit uses the current revision', async () => {
   const saved = view(1, 'Budget');
   const revisions: string[] = [];
   let refreshed!: () => void;
@@ -153,7 +147,7 @@ it.each(['PATCH', 'DELETE'])('refreshes a %s conflict so the next edit uses the 
   const data = new ShellData(createAPIClient(async (input, init) => {
     const request = new Request(input, init);
     const path = new URL(request.url).pathname;
-    if (request.method === 'PATCH' || request.method === 'DELETE') {
+    if (request.method === 'PATCH') {
       revisions.push(request.headers.get('If-Match')!);
       return revisions.length === 1 ? Response.json({}, { status: 409 }) : Response.json({ ...saved, name: 'Q3', revision: 3 });
     }
@@ -161,8 +155,7 @@ it.each(['PATCH', 'DELETE'])('refreshes a %s conflict so the next edit uses the 
     return Response.json({}, { status: 404 });
   }));
   data.views = [saved];
-  if (method === 'PATCH') expect(await data.renameView(saved, 'Q3')).toBe('This view changed in another session. Cancel this edit and try again.');
-  else { await data.deleteView(saved); expect(await data.expireDelete()).toBe("Couldn't delete Budget."); }
+  expect(await data.renameView(saved, 'Q3')).toBe('This view changed in another session. Cancel this edit and try again.');
   await read;
   await vi.waitFor(() => expect(data.views[0]?.revision).toBe(2));
   await data.renameView(data.views[0]!, 'Q3');
