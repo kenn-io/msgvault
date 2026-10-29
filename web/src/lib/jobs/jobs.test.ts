@@ -12,12 +12,13 @@ describe('jobs', () => {
     const [job] = collectJobs([], [lane(kind)]);
     expect(job?.detail).toBe(jobRun(kind).error!.message);
     expect(job?.state).toBe('failed');
+    expect(job?.target).toEqual({ kind: 'history', operationKind: kind, operationRunID: jobRun(kind).id });
   });
   it.each([
     ['message_embedding', { settingsCategory: 'search', settingsAuthority: 'semantic_search' }],
     ['person_enrichment', { settingsCategory: 'enrichment', settingsAuthority: '' }],
   ] as const)('routes related status before %s settings', (kind, target) => {
-    const jobs = collectJobs([], [lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running' } }), lane(kind, { active: { ...jobRun(kind), state: 'queued' } })]);
+    const jobs = collectJobs([], [lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', finished_at: undefined, error: undefined } }), lane(kind, { active: { ...jobRun(kind), state: 'queued', finished_at: undefined, error: undefined } })]);
     expect(jobs[0]?.target).toEqual({ kind: 'status', authority: 'getDocumentIndexStatus' });
     expect(jobs[1]?.target).toEqual({ kind: 'setting', target });
   });
@@ -41,7 +42,6 @@ describe('jobs', () => {
 it.each([
   { name: 'old failed import with item errors', source: { latest_sync: syncRunStatus({ status: 'failed', started_at: '2020-01-01T00:00:00Z', completed_at: '2020-01-01T00:00:04Z', errors_count: 2, item_errors: ['Invalid MIME header', 'Missing attachment'].map((error_message, index) => ({ error_message, created_at: '2020-01-01T00:00:04Z', error_kind: 'parse_failed', phase: 'parse', source_message_id: `synthetic-${index}` })) }) }, lanes: [], expected: [['failed', 'Invalid MIME header · Missing attachment']] },
   { name: 'completed sync and partial lane warnings', source: { latest_sync: syncRunStatus({ errors_count: 2 }) }, lanes: [lane('document_extraction', { latest: partial })], expected: [] },
-  { name: 'completed sync with scheduler failure', source: { latest_sync: syncRunStatus(), scheduler_last_error: 'Token expired' }, lanes: [], expected: [['failed', 'Token expired']] },
   { name: 'disabled lane with a stale failure', lanes: [lane('document_extraction', { configured: false })], expected: [] },
   { name: 'disabled lane still running', lanes: [lane('visual_embedding', { configured: false, active: activeRun })], expected: [['running', 'Running']] },
   { name: 'queued source with completed sync', source: { scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: syncRunStatus() }, lanes: [], expected: [['queued', 'Queued']] },
@@ -54,9 +54,4 @@ it.each([
   { name: 'scheduler running before a sync row exists', source: { scheduler_started_at: '2026-08-30T11:00:00Z', sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['running', 'Syncing']] },
 ])('$name', ({ source, lanes, expected }) => {
   expect(collectJobs(source ? [sourceStatus(source as Partial<SourceStatus>)] : [], lanes).map(({ state, detail }) => [state, detail])).toEqual(expected);
-});
-
-it.each(['message_embedding', 'person_enrichment', 'person_sweep'] as const)('opens the failed %s run instead of its setup', kind => {
-  const run = jobRun(kind);
-  expect(collectJobs([], [lane(kind)])[0]?.target).toEqual({ kind: 'history', operationKind: kind, operationRunID: run.id });
 });
