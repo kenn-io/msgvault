@@ -6,6 +6,7 @@
   import type { MeetingsController } from '../../meetings/controller.svelte';
   import Dialog from '../common/Dialog.svelte';
   import MeetingActions from './MeetingActions.svelte';
+  import MeetingMetrics from './MeetingMetrics.svelte';
 
   let { client, controller, onclose, onOpenMeeting, onReload }: {
     client: APIClient; controller: MeetingsController; onclose: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onReload: () => void;
@@ -22,6 +23,9 @@
       <SelectDropdown title="Status" options={statuses} value={status} onchange={(value) => { status = value; apply(); }} />
       <TextInput ariaLabel="Assignee" placeholder="Assignee email" value={assignee} oninput={(value) => { assignee = value; apply(); }} block />
     </div>
+    {#if controller.metrics}
+      <details><summary>Meeting metrics</summary><MeetingMetrics metrics={controller.metrics} /></details>
+    {/if}
     {#if controller.actionsError}
       <p role="alert">{controller.actionsError.message}</p>
       {#if controller.actionsError.recovery === 'reload' || controller.actionsError.recovery === 'retry'}<Button label="Reload meeting activity" onclick={onReload} />{/if}
@@ -35,5 +39,7 @@
 <style>
   .actions-dialog { display: grid; gap: var(--space-4); }
   .filters { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+  details { font-size: var(--font-size-sm); }
+  summary { cursor: pointer; margin-bottom: var(--space-3); }
   p { margin: 0; font-size: var(--font-size-sm); }
 </style>
