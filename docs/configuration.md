@@ -1446,6 +1446,7 @@ Set `document_profile` to a Docbank profile with a rendition stage that extracts
 The mirror requests processing for files uploaded before this setting was enabled or before an upgrade. Changing the profile in Docbank requests processing again. `msgvault docbank attachments status` reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors. `msgvault docbank attachments backfill` retries processing requests that have no saved Docbank job after you fix the cause, such as restoring a trashed file. It also retries the processing outcomes `consent`, `stale_authority`, and `pdf_password_required` after you restore consent or authority, or add a PDF password, in Docbank. It preserves other outcomes with saved job IDs because Docbank refuses to rebuild terminal jobs. Resolve `operator_required` in Docbank.
 
 The mirror includes files retained after source deletion or hidden by deduplication. It excludes files whose attachment rows were removed.
+Saved Docbank jobs are checked once a minute, so 10,000 in-progress jobs can generate about 10,000 status requests per minute.
 A hashless Slack or Discord attachment uses the content hash in its local storage path.
 The mirror uses the same URL and credential rules as the audio route below.
 Its consent covers file transport; Docbank controls document processing consent

@@ -56,7 +56,7 @@ func newDocbankCmd(open func(context.Context) (*daemonclient.Client, func(), err
 			}
 		}
 		if p := result.Processing; p != nil {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Document profile: %s\nText extracted: %d\nProcessing: %d\nNot yet requested: %d\n", textutil.SanitizeTerminal(p.Profile), p.Extracted, p.Requested, p.Waiting); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Document profile: %s\nText extracted: %d\nProcessing: %d\nWaiting: %d\n", textutil.SanitizeTerminal(p.Profile), p.Extracted, p.Requested, p.Waiting); err != nil {
 				return fmt.Errorf("write status: %w", err)
 			}
 			for _, reason := range slices.Sorted(maps.Keys(p.Outcomes)) {
