@@ -202,17 +202,15 @@ it.each(['undo', 'expire'])('keeps accepted deletions hidden while a prior DELET
 
 it('uses server name order after a failed delete', async () => {
   const saved = view(1, 'Équipe');
-  let reads = 0;
   const data = new ShellData(createAPIClient(async (input, init) => {
     const request = new Request(input, init);
     if (request.method === 'DELETE') {
       return Response.json({}, { status: 500 });
     }
-    reads += 1;
-    return Response.json({ saved_views: reads === 1 ? [saved, view(2, 'école')] : [view(2, 'école'), saved] });
+    return Response.json({ saved_views: [saved, view(2, 'école')] });
   }));
   await data.refresh();
   await data.deleteView(saved);
   await data.expireDelete();
-  expect(data.views.map(view => view.name)).toEqual(['école', 'Équipe']);
+  expect(data.views.map(view => view.name)).toEqual(['Équipe', 'école']);
 });

@@ -96,7 +96,7 @@ it('refreshes the shell dot after Settings completes Build index', async () => {
   const session = sessionFor(async (request, path) => {
     if (path === '/api/v1/operations/status') {
       const snapshot = Response.json({ lanes: [jobLane('message_embedding', {
-        latest: built ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined } : jobRun('message_embedding'),
+        latest: built ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined, counters: [{ name: 'attempted', unit: 'messages', value: 1 }, { name: 'succeeded', unit: 'messages', value: 1 }, { name: 'failed', unit: 'messages', value: 0 }] } : jobRun('message_embedding'),
       })] });
       return snapshot;
     }
