@@ -1,10 +1,6 @@
 name: Workflow validation
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/workflow-validation.yml"
   workflow_dispatch:
   workflow_call:
 
