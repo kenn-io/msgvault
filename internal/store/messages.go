@@ -3890,7 +3890,8 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 	})
 }
 
-// BackfillFTS fills missing or outdated search entries from existing message data.
+// BackfillFTS fills missing search entries from existing message data on SQLite.
+// PostgreSQL also refreshes entries with an old indexing version.
 // Processes in batches to avoid blocking for minutes on large archives.
 // The progress callback (if non-nil) is called after each batch with
 // (position in ID range, total ID range). Each batch is committed

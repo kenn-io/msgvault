@@ -216,9 +216,10 @@ type Dialect interface {
 	// Uses two ? placeholders for the ID range: WHERE m.id >= ? AND m.id < ?
 	FTSBackfillBatchSQL() string
 
-	// FTSBackfillMissingBatchSQL populates only missing or outdated search entries
-	// in the same ID range as FTSBackfillBatchSQL. It selects the presence check
-	// supported by the archive's search tables.
+	// FTSBackfillMissingBatchSQL populates missing search entries on SQLite.
+	// PostgreSQL also refreshes entries with an old indexing version.
+	// It uses the same ID range as FTSBackfillBatchSQL and selects the presence
+	// check supported by the archive's search tables.
 	FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.DB) (string, error)
 
 	// FTSAvailable reports whether full-text search is available for this database.
