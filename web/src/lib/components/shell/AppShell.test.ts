@@ -16,7 +16,14 @@ import { SIDEBAR_COLLAPSED_KEY } from './navigation';
 
 const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents);
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+  const response = await fetchFn(input, init);
+  const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+  const field = path === '/api/v1/operations/status' ? 'lanes' : path === '/api/v1/sources/status' ? 'sources' : undefined;
+  // Generic archive handlers don't supply these independent shell endpoints.
+  if (field && response.ok && !(field in await response.clone().json())) return Response.json({}, { status: 404 });
+  return response;
+}, telemetryEvents);
 
 function exploreResponse(overrides: Record<string, unknown> = {}) {
   return {
