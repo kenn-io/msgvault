@@ -5,16 +5,15 @@ import { tick } from 'svelte';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { formatDateTime } from '../../util/format';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
+import { sourceStatus } from '../../jobs/fixtures.test-support';
 
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, []);
 
 function source(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Archive',
-    last_sync_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z',
-    active_sync: null, latest_sync: null, last_successful_sync: null,
-    can_sync: true, scheduled: false, next_sync_at: null, ...overrides
-  };
+  return sourceStatus({
+    display_name: 'Archive', last_sync_at: '2026-07-19T10:00:00Z',
+    updated_at: '2026-07-19T10:00:00Z', can_sync: true, ...overrides
+  });
 }
 
 function run(status: string, processed: number, overrides: Record<string, unknown> = {}) {

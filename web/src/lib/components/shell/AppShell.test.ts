@@ -351,6 +351,8 @@ describe('AppShell', () => {
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Light' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Use Settings defaults' }));
     expect(screen.queryByRole('menuitem', { name: 'Use Settings defaults' })).toBeNull();
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    expect(document.documentElement.dataset.density).toBe('compact');
     rendered.unmount(); state.destroy();
   });
 
