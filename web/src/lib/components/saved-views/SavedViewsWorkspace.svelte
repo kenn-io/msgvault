@@ -391,11 +391,16 @@
   }
   .summary {
     display: flex;
+    min-width: 0;
     flex-wrap: wrap;
     gap: var(--space-1);
     margin: 0;
     padding: 0;
     list-style: none;
+  }
+  .summary li {
+    min-width: 0;
+    max-width: 100%;
   }
   .summary :global(.summary-chip) {
     border: 1px solid var(--border-default);

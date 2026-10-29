@@ -143,6 +143,12 @@
   padding-right: var(--space-1);
 }
 
+/* kit-ui-check-ignore: removable filters and saved summaries must show their full text, including on touch screens. */
+:root:root :is(.kit-chip:has(> .kit-chip__trailing), .summary-chip) .kit-chip__label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* Kit mixes the muted chip text 25% toward its own background, which drops
  * the label below AA contrast (3.18:1 in the light theme). The word is the
  * whole status, so use the palette's muted text token as-is. */

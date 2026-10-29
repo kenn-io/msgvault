@@ -72,6 +72,13 @@ test('narrow operations journey uses focused detail and returns focus to its row
   await sourceRow.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('region', { name: 'Operation detail focused content' })).toBeVisible();
+  const detail = page.getByRole('region', { name: 'Operation run detail' });
+  await expect(detail).toBeVisible();
+  const gap = await page.locator('.focused-detail .page-header').evaluate((header) => {
+    const divider = header.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(header, '::before').bottom);
+    return header.nextElementSibling!.getBoundingClientRect().top - divider;
+  });
+  expect(gap).toBe(8);
   await expect(page.getByRole('region', { name: 'Operation lanes' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to operation history' }).click();
   await expect(sourceRow).toBeFocused();

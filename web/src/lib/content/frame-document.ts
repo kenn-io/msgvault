@@ -15,6 +15,7 @@ export const MAX_ARCHIVED_FRAME_HEIGHT = 65_536;
 // blocked by the inherited policy; same-origin URLs satisfy both.
 export const ARCHIVED_FRAME_SCRIPT_PATH = '/archived-frame.js';
 export const ARCHIVED_FRAME_STYLE_PATH = '/archived-frame.css';
+export const ARCHIVED_FRAME_SCROLLBAR_PATH = '/scrollbar.css';
 
 export type FrameColorScheme = 'light' | 'dark';
 
@@ -68,7 +69,7 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
   const origin = exactHTTPOrigin(options.targetOrigin);
   const bridgeURL = `${origin}${ARCHIVED_FRAME_SCRIPT_PATH}`;
   const styleURL = `${origin}${ARCHIVED_FRAME_STYLE_PATH}`;
-  const scrollbarURL = `${origin}/scrollbar.css`;
+  const scrollbarURL = `${origin}${ARCHIVED_FRAME_SCROLLBAR_PATH}`;
   const csp = [
     "default-src 'none'",
     "connect-src 'none'",

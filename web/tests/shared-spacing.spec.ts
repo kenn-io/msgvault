@@ -67,6 +67,28 @@ test('selection bar uses the shared inset and gap', async ({ page }) => {
   expect(selectionInset).toEqual({ left: 12, top: '8px', gap: '8px' });
 });
 
+for (const width of [1280, 420]) {
+  test(`long saved queries keep row actions visible at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 720 });
+    const query = 'project planning meeting notes and follow up tasks '.repeat(7).trim();
+    await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
+      id: 1, name: 'Long archive search', schema_version: 2, revision: 1,
+      canonical_state: { query, search_mode: 'full_text' },
+      created_at: row.occurred_at, updated_at: row.occurred_at
+    }] } }));
+    await selectWorkspace(page, 'Saved views');
+    const view = page.locator('.view-list article').filter({ hasText: 'Long archive search' });
+    await expect(view).toBeVisible();
+    for (const name of ['Open', 'Edit', 'Delete']) {
+      const action = view.getByRole('button', { name: `${name} Long archive search`, exact: true });
+      await expect(action).toBeInViewport({ ratio: 1 });
+      await action.click({ trial: true });
+    }
+    const label = view.locator('.summary .kit-chip__label').filter({ hasText: query });
+    expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
+  });
+}
+
 test('save-view dialog shares header and field insets', async ({ page }) => {
   await selectWorkspace(page, 'Everything');
   await page.getByRole('button', { name: 'Save view…' }).click();
@@ -147,12 +169,11 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   await page.getByRole('searchbox', { name: 'Search everything' }).fill(longQuery);
   const queryChip = chips.filter({ hasText: longQuery });
   await expect(queryChip).toHaveAttribute('title', `Full text: “${longQuery}”`);
-  const truncation = await queryChip.locator('.kit-chip__label').evaluate((element) => ({
+  const wrapping = await queryChip.locator('.kit-chip__label').evaluate((element) => ({
     clipped: element.scrollWidth > element.clientWidth,
-    overflow: getComputedStyle(element).textOverflow,
-    whiteSpace: getComputedStyle(element).whiteSpace
+    wrapped: element.getBoundingClientRect().height > Number.parseFloat(getComputedStyle(element).lineHeight)
   }));
-  expect(truncation).toEqual({ clipped: true, overflow: 'ellipsis', whiteSpace: 'nowrap' });
+  expect(wrapping).toEqual({ clipped: false, wrapped: true });
   await expect(queryChip.getByRole('button', { name: 'Remove search', exact: true })).toBeVisible();
   await selectWorkspace(page, 'Directory');
   await page.getByRole('button', { name: 'Filters', exact: true }).click();
