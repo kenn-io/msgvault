@@ -171,9 +171,10 @@ Call Kit's `stacktest.Dump(t)` before failing a timeout while waiting on gorouti
 `synctest.Test` bubble, `sleeptest` rejects `time.Sleep` and `deadlinetest`
 rejects sub-second `context.WithTimeout`, `context.WithDeadline`, `time.After`,
 `time.NewTimer`, `time.AfterFunc` and testify `Eventually` budgets, plus zero
-or negative `Never` windows. A kept real wait carries `//nolint:kennlint //
-<what it waits for>` on the flagged line; for a deadline, that is only when its
-expiry is the asserted result or a `select` shows an event does not happen.
+or negative `Never` windows. A kept real wait carries
+`//nolint:kennlint // sleeptest: <what it waits for>` on the flagged line.
+Use `deadlinetest:` for a deadline, only when its expiry is the asserted result
+or a `select` shows an event does not happen.
 
 ### PostgreSQL tests
 

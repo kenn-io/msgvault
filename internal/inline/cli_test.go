@@ -367,7 +367,7 @@ func TestCLIClientBoundsPipesCancelsAndDoesNotEchoDiagnostics(t *testing.T) {
 	})
 	t.Run("timeout", func(t *testing.T) {
 		client := NewCLIClient(cliProcessFixture(t, "exec sleep 30\n"))
-		client.timeout = 30 * time.Millisecond
+		client.timeout = 30 * time.Millisecond //nolint:kennlint // deadlinetest: the sleeping subprocess must end with DeadlineExceeded
 		_, err := client.run(context.Background(), "fixture")
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})

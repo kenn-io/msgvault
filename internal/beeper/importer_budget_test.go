@@ -753,7 +753,7 @@ func TestImportTailScanProgressesAcrossBudgetedRuns(t *testing.T) {
 		return state.LastTailScan
 	}
 	before := lastTailScan()
-	time.Sleep(1100 * time.Millisecond) //nolint:kennlint // waits for SQLite's second-precision tail-scan timestamp to advance
+	time.Sleep(1100 * time.Millisecond) //nolint:kennlint // sleeptest: waits for SQLite's second-precision tail-scan timestamp to advance
 
 	// Stop after three completed chats, then finish the remaining probe on the
 	// next scheduled run.

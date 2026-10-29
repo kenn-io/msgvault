@@ -1425,7 +1425,7 @@ func TestCardDAVNetworkRoutesReceiveProtectiveDeadline(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{
 		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Logger:         testLogger(),
-		RequestTimeout: 5 * time.Millisecond,
+		RequestTimeout: time.Second,
 	})
 	routes := []struct {
 		method string
@@ -1751,7 +1751,7 @@ func TestCLIRepairMessageWholeArchiveAuditHasNoOrdinaryRequestDeadline(t *testin
 	}}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  store, Scheduler: newMockScheduler(), Logger: testLogger(), RequestTimeout: time.Millisecond,
+		Store:  store, Scheduler: newMockScheduler(), Logger: testLogger(), RequestTimeout: time.Second,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/repair-message", strings.NewReader(`{"audit":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1881,7 +1881,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		}},
 		Logger: testLogger(),
 	})
-	srv.readTimeout = ordinaryReadTimeout
+	srv.readTimeout = ordinaryReadTimeout //nolint:kennlint // deadlinetest: the unmarked socket request must expire while its body stays incomplete
 	handlerEntered := make(chan struct{}, 1)
 	srv.router = srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlerEntered <- struct{}{}
@@ -1944,7 +1944,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 			require.FailNow(t, "inner handler did not start")
 		}
 		if marked {
-			time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // outlasts the real socket read deadline
+			time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // sleeptest: outlasts the real socket read deadline
 			_, err = conn.Write([]byte("b"))
 			require.NoError(t, err, "write delayed body byte")
 		}

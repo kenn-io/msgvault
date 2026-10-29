@@ -182,7 +182,7 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	}
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
 	if mode == "restart" {
-		_, launchLock, err := waitForUsableBackgroundRuntimeOrLaunchLock(t.Context(), dataDir, cfg.Server.DaemonAutoRestart, 500*time.Millisecond)
+		_, launchLock, err := waitForUsableBackgroundRuntimeOrLaunchLock(t.Context(), dataDir, cfg.Server.DaemonAutoRestart, serveLifecycleTestTimeout)
 		require.NoError(err)
 		require.NotNil(launchLock, "a dead sibling must allow CLI auto-start")
 		require.NoError(launchLock.Unlock())

@@ -190,7 +190,7 @@ func seededMutationService(t *testing.T, fixture *mutationFixture) (*Service, *s
 	server := httptest.NewServer(fixture.handler(t))
 	t.Cleanup(server.Close)
 	service, st, book := newPullService(t, server, false)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	var personID int64
 	err := st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
 		VALUES (?, ?) RETURNING id`), "person", "Alice Example").Scan(&personID)
@@ -389,7 +389,7 @@ func TestCreateRecoveryAcceptsOneConditional412OnlyAfterCanonicalProof(t *testin
 	}))
 	t.Cleanup(server.Close)
 	service, st, personID, _ := seededMutationServiceForServer(t, server)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the first create response must expire before a conditional retry proves the canonical resource
 
 	require.Error(service.PublishPerson(t.Context(), personID))
 	require.NoError(service.PublishPerson(t.Context(), personID))

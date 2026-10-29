@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -54,26 +55,29 @@ func getStatsResponse(t *testing.T, srv *Server) StatsResponse {
 }
 
 func TestHandleStatsReturnsStaleSnapshotWhenSlow(t *testing.T) {
-	assert := assert.New(t)
-	st := &slowStatsStore{mockStore: &mockStore{}, release: make(chan struct{})}
-	t.Cleanup(func() { close(st.release) })
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  st,
-		Logger: testLogger(),
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		st := &slowStatsStore{mockStore: &mockStore{}, release: make(chan struct{})}
+		defer close(st.release)
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:  st,
+			Logger: testLogger(),
+		})
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		srv.statsSnapshotWait = 50 * time.Millisecond
+
+		first := getStatsResponse(t, srv)
+		assert.EqualValues(1, first.TotalMessages)
+		assert.False(first.Stale)
+
+		started := time.Now()
+		second := getStatsResponse(t, srv)
+		assert.Less(time.Since(started), 5*time.Second, "a slow stats query does not hold the request")
+		assert.True(second.Stale, "the previous snapshot is flagged stale")
+		assert.EqualValues(1, second.TotalMessages)
+		assert.False(second.AsOf.IsZero())
 	})
-	srv.statsSnapshotWait = 50 * time.Millisecond
-
-	first := getStatsResponse(t, srv)
-	assert.EqualValues(1, first.TotalMessages)
-	assert.False(first.Stale)
-
-	started := time.Now()
-	second := getStatsResponse(t, srv)
-	assert.Less(time.Since(started), 5*time.Second, "a slow stats query does not hold the request")
-	assert.True(second.Stale, "the previous snapshot is flagged stale")
-	assert.EqualValues(1, second.TotalMessages)
-	assert.False(second.AsOf.IsZero())
 }
 
 // slowVectorBackend blocks stats until the caller's deadline.
@@ -87,24 +91,27 @@ func (b *slowVectorBackend) Stats(ctx context.Context, _ vector.GenerationID) (v
 }
 
 func TestHandleStatsVectorTimeoutIsPartial(t *testing.T) {
-	backend := &slowVectorBackend{fakeVectorBackend: &fakeVectorBackend{
-		active: &vector.Generation{
-			ID: 5, Model: "nomic-embed", Dimension: 768,
-			Fingerprint: "nomic-embed:768", State: vector.GenerationActive,
-		},
-	}}
-	srv := NewServerWithOptions(ServerOptions{
-		Config:    &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:     &mockStore{stats: &StoreStats{MessageCount: 3}},
-		Backend:   backend,
-		Scheduler: newMockScheduler(),
-		Logger:    testLogger(),
-	})
-	srv.vectorStatsTimeout = 50 * time.Millisecond
+	synctest.Test(t, func(t *testing.T) {
+		backend := &slowVectorBackend{fakeVectorBackend: &fakeVectorBackend{
+			active: &vector.Generation{
+				ID: 5, Model: "nomic-embed", Dimension: 768,
+				Fingerprint: "nomic-embed:768", State: vector.GenerationActive,
+			},
+		}}
+		srv := NewServerWithOptions(ServerOptions{
+			Config:    &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:     &mockStore{stats: &StoreStats{MessageCount: 3}},
+			Backend:   backend,
+			Scheduler: newMockScheduler(),
+			Logger:    testLogger(),
+		})
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		srv.vectorStatsTimeout = 50 * time.Millisecond
 
-	resp := getStatsResponse(t, srv)
-	assert.EqualValues(t, 3, resp.TotalMessages, "archive counts are still returned")
-	assert.True(t, resp.VectorStatsUnavailable, "a slow vector sub-stat is flagged, not fatal")
+		resp := getStatsResponse(t, srv)
+		assert.EqualValues(t, 3, resp.TotalMessages, "archive counts are still returned")
+		assert.True(t, resp.VectorStatsUnavailable, "a slow vector sub-stat is flagged, not fatal")
+	})
 }
 
 // slowCountsStore delays grouped account counts after the first call.
@@ -153,7 +160,7 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 	assert := assert.New(t)
 	srv, slow, _ := newSlowAccountsServer(t)
 	t.Cleanup(func() { close(slow.release) })
-	srv.statsSnapshotWait = 50 * time.Millisecond
+	srv.statsSnapshotWait = 50 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked account-count refresh must expire and return stale counts
 
 	getAccounts := func() cliAccountsResponse {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
@@ -181,7 +188,7 @@ func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
 	assert := assert.New(t)
 	srv, slow, sourceID := newSlowAccountsServer(t)
 	slow.calls.Store(1)
-	srv.statsSnapshotWait = 20 * time.Millisecond
+	srv.statsSnapshotWait = 20 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked cold count must expire and return pending counts or a timeout error
 	get := func(optIn bool) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
 		if optIn {

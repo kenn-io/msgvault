@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -654,7 +655,7 @@ func testStopLiveDaemons(
 			shutdownTokens <- r.Header.Get(api.DaemonShutdownTokenHeader)
 			w.WriteHeader(http.StatusAccepted)
 			go func() {
-				time.Sleep(25 * time.Millisecond) //nolint:kennlint // holds the OS ownership lock past the reply
+				time.Sleep(25 * time.Millisecond) //nolint:kennlint // sleeptest: holds the OS ownership lock past the reply
 				releaseOwner.Do(func() { _ = owner.Close() })
 			}()
 		default:
@@ -861,7 +862,7 @@ func TestWaitForBackgroundServeReadyReturnsRuntimeListError(t *testing.T) {
 		context.Background(),
 		dataDir,
 		nil,
-		time.Millisecond,
+		serveLifecycleTestTimeout,
 	)
 
 	require.Error(t, err, "wait should surface runtime-store failures")
@@ -1703,7 +1704,7 @@ func TestRequestDaemonShutdownUsesRuntimeToken(t *testing.T) {
 
 func TestNewDaemonIdleTrackerOnlyRunsForBackgroundServeChild(t *testing.T) {
 	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Server.DaemonIdleTimeout = time.Millisecond
+	cfg.Server.DaemonIdleTimeout = time.Second
 
 	tracker := newDaemonIdleTracker(cfg, func() {
 		require.FailNow(t, "foreground serve must not arm idle shutdown")
@@ -1714,27 +1715,29 @@ func TestNewDaemonIdleTrackerOnlyRunsForBackgroundServeChild(t *testing.T) {
 
 func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
 	t.Setenv(serveBackgroundChildEnv, "1")
-	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Server.DaemonIdleTimeout = 20 * time.Millisecond
-	fired := make(chan struct{})
+	synctest.Test(t, func(t *testing.T) {
+		cfg := lifecycleTestConfig(t.TempDir())
+		cfg.Server.DaemonIdleTimeout = 20 * time.Millisecond
+		fired := make(chan struct{})
 
-	tracker := newDaemonIdleTracker(cfg, func() { close(fired) }, testDiscardLogger())
-	require.NotNil(t, tracker)
+		tracker := newDaemonIdleTracker(cfg, func() { close(fired) }, testDiscardLogger())
+		require.NotNil(t, tracker)
 
-	go tracker.Run(t.Context())
+		go tracker.Run(t.Context())
 
-	select {
-	case <-fired:
-	case <-time.After(time.Second):
-		require.FailNow(t, "idle tracker did not fire")
-	}
+		select {
+		case <-fired:
+		case <-time.After(time.Second):
+			require.FailNow(t, "idle tracker did not fire")
+		}
+	})
 }
 
 func TestNewDaemonIdleTrackerEnvOverrideDisables(t *testing.T) {
 	t.Setenv(serveBackgroundChildEnv, "1")
 	t.Setenv("MSGVAULT_DAEMON_IDLE_TIMEOUT", "0s")
 	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Server.DaemonIdleTimeout = 20 * time.Millisecond
+	cfg.Server.DaemonIdleTimeout = time.Second
 
 	tracker := newDaemonIdleTracker(cfg, func() {
 		require.FailNow(t, "idle tracker fired despite env disable")
