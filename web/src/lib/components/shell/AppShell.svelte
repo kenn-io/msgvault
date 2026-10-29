@@ -281,6 +281,7 @@
     commitWorkspace('settings');
     replaceCommittedNavigation({ settingsCategory: 'carddav' });
   }
+  let historyDialog = $state<{ restoreFocus: () => Promise<void> }>();
   const runHistory = $derived(exploreState.current.operationHistory
     ? { operationLane: exploreState.current.operationLane, operationKind: exploreState.current.operationKind, operationState: exploreState.current.operationState, operationStartedFrom: exploreState.current.operationStartedFrom, operationStartedBefore: exploreState.current.operationStartedBefore, operationRunID: exploreState.current.operationRunID, operationStatus: exploreState.current.operationStatus }
     : undefined);
@@ -755,6 +756,10 @@
   }
   async function restoreHistoryFocus(): Promise<void> {
     await tick();
+    if (runHistory) {
+      await historyDialog?.restoreFocus();
+      return;
+    }
     if (exploreState.current.workspace === 'everything') {
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
@@ -1617,7 +1622,7 @@
 {/if}
 
 {#if runHistory}
-  <RunHistoryDialog {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory}
+  <RunHistoryDialog bind:this={historyDialog} {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory}
     onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
     onConfigure={openVisualAttachmentSettings} />
 {/if}

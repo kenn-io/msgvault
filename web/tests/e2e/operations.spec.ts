@@ -1,10 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
-import { installOperations, OPERATION_REFERENCES } from './fixtures/operations';
+import { installOperations } from './fixtures/operations';
 
 const historyURL = (state: Record<string, unknown> = {}) => `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true, ...state }))}`;
 
-async function openHistory(page: Page) {
-  await page.goto('/');
+async function openHistory(page: Page, path = '/') {
+  await page.goto(path);
   await page.getByRole('button', { name: /Sync status:/ }).click();
   await page.getByRole('menuitem', { name: 'Past runs' }).click();
   await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
@@ -33,13 +33,24 @@ test('operations invokes only advertised CardDAV and visual actions and surfaces
   await expect(detail.getByRole('button', { name: 'Start CardDAV sync' })).toHaveCount(0);
 });
 
-test('Back returns focus to the related status link', async ({ page }) => {
+test('Past runs keeps focus through detail and history, then restores workspace focus', async ({ page }) => {
   await installOperations(page);
-  await page.goto(historyURL({ operationRunID: OPERATION_REFERENCES.document }));
+  await openHistory(page, '/?workspace=sources');
+  const row = page.getByRole('button', { name: 'Open Document extraction run' });
+  await row.focus();
+  await row.press('Enter');
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  await page.goBack();
+  await expect(row).toBeFocused();
+  await page.goForward();
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
   const link = page.getByRole('button', { name: 'Open Document index status' });
   await link.click();
   await page.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(link).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
 });
 
 test('unconfigured visual status opens Search & AI settings', async ({ page }) => {

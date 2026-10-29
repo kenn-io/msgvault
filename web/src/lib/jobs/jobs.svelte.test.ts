@@ -54,7 +54,7 @@ it.each([true, false])('reports unavailable history only for configured lanes, c
   operations.destroy();
 });
 
-it.each(['sources', 'operations'] as const)('discards a held %s observation after a write refresh', async endpoint => {
+it.each(['sources', 'operations'] as const)('discards a held %s observation after a newer refresh', async endpoint => {
   let changed = false;
   let hold = false;
   let release!: () => void;
@@ -82,7 +82,7 @@ it.each(['sources', 'operations'] as const)('discards a held %s observation afte
     const stale = store.refresh();
     await capturedStatus;
     changed = true;
-    await store.refresh(true);
+    await store.refresh(endpoint === 'operations');
     expect(store.health).toBe(endpoint === 'sources' ? 'running' : 'ok');
     release();
     await stale;

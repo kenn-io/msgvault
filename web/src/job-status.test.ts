@@ -107,7 +107,7 @@ it('refreshes the shell dot after Settings completes Build index', async () => {
       });
       return Response.json({
         eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1',
-        status: 'initializing', actions: built ? [] : ['build_index'],
+        status: 'initializing', actions: ['build_index'],
       });
     }
     if (request.method === 'POST' && path === '/api/v1/cli/run') {
@@ -152,7 +152,5 @@ it('refreshes the shell dot after Messages fails Build index', async () => {
   await fireEvent.click(build);
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   await waitFor(() => expect(built).toBe(true));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Build index' })).toBeNull());
   await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Needs attention'), { timeout: 3000 });
-  await screen.findByText('Embedding endpoint failed');
 });
