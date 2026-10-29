@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { installMixedArchive } from './e2e/fixtures/mixed-archive';
+import { selectWorkspace } from './kit-ui';
 
 test('Files view switch settles its colors immediately with reduced motion', async ({ page }) => {
   await installMixedArchive(page);
   await page.goto('/');
+  await selectWorkspace(page, 'People');
   await page.getByRole('grid', { name: 'Relationship results' }).getByText('Archive Person').click();
   const files = page.getByRole('radio', { name: 'Files 1' });
   await files.click();
