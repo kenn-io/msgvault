@@ -44,7 +44,7 @@ describe('overviewRows', () => {
   });
 
   it('keeps disabled contacts Off after an earlier successful sync', () => {
-    const rows = overviewRows([lane('carddav_sync', { configured: false, latest: { state: 'succeeded' } } as Partial<OperationLaneStatus>)], undefined, undefined);
+    const rows = overviewRows([lane('carddav_sync', { configured: false, latest: { id: 'sync-1', kind: 'carddav_sync', lane: 'contacts', state: 'succeeded', started_at: '2026-01-01T00:00:00Z', counters: [] } })], undefined, undefined);
 
     expect(row(rows, 'carddav_sync').chip.text).toBe('Off');
     expect(row(rows, 'carddav_sync').action).toMatchObject({ kind: 'settings', target: { settingsCategory: 'carddav' } });
@@ -60,15 +60,15 @@ it('offers only the advertised contacts sync action', () => {
 it('shows index progress only while a run is active', () => {
   const embedding = { active_generation: 1, current: 2, eligible: 10, pending: 8 } as unknown as EmbeddingStatus;
   const visual = { current: 3, eligible: 10 } as import('../api/generated/models').Status;
-  const active = { id: 'run-1', state: 'running', counters: [] } as unknown as OperationLaneStatus['active'];
   for (const kind of ['message_embedding', 'visual_embedding'] as const) {
+    const active: NonNullable<OperationLaneStatus['active']> = { id: 'run-1', kind, lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] };
     expect(row(overviewRows([lane(kind)], embedding, visual), kind).chip.text).toBe('On');
     expect(row(overviewRows([lane(kind, { active })], embedding, visual), kind).chip.text).toBe(`Building ${kind === 'message_embedding' ? 2 : 3} of 10`);
   }
 });
 
 it.each([['failed', 'Failed', 'danger'], ['partial', 'Partial', 'warning']] as const)('shows a %s latest run without offering Set up', (state, text, tone) => {
-  const rows = overviewRows([lane('person_enrichment', { latest: { state } } as Partial<OperationLaneStatus>)], undefined, undefined);
+  const rows = overviewRows([lane('person_enrichment', { latest: { id: 'lookup-1', kind: 'person_enrichment', lane: 'person_facts', state, started_at: '2026-01-01T00:00:00Z', counters: [] } })], undefined, undefined);
   expect(row(rows, 'person_enrichment').chip).toEqual({ text, tone });
   expect(row(rows, 'person_enrichment').action).toBeUndefined();
 });
