@@ -25,6 +25,8 @@ jobs:
           echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
 
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          save-cache: ${{ github.event_name != 'pull_request' }}
 
       - name: Install documentation dependencies
         working-directory: docs

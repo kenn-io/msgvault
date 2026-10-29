@@ -1,10 +1,7 @@
 name: Frontend shell commands
 
 on:
-  pull_request:
-    paths:
-      - 'web/**'
-      - '.github/workflows/frontend-shell.yml'
+  workflow_call:
   push:
     branches: [main]
     paths:
