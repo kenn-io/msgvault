@@ -25,8 +25,6 @@
     oncomplete = undefined,
     messageId,
     title,
-    sourceType,
-    sourceIdentifier,
     onsettings = () => undefined,
   }: {
     client: APIClient;
@@ -35,8 +33,6 @@
     oncomplete?: () => void;
     messageId: number;
     title: string;
-    sourceType: string;
-    sourceIdentifier: string;
     onsettings?: () => void;
   } = $props();
   let action = $state('create');
