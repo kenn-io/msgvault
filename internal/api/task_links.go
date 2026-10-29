@@ -257,7 +257,7 @@ func writeTaskLinkError(w http.ResponseWriter, err error) {
 
 type archiveUIDReader interface {
 	ArchiveUIDContext(ctx context.Context) (string, error)
-	ArchiveRevision() (string, error)
+	ArchiveRevisionContext(ctx context.Context) (string, error)
 }
 
 func (s *Server) resolveTaskMessageIdentity(ctx context.Context, message *APIMessage) (tasklinks.MessageIdentity, error) {
@@ -269,7 +269,7 @@ func (s *Server) resolveTaskMessageIdentity(ctx context.Context, message *APIMes
 	if err != nil {
 		return tasklinks.MessageIdentity{}, err
 	}
-	revision, err := archive.ArchiveRevision()
+	revision, err := archive.ArchiveRevisionContext(ctx)
 	if err != nil {
 		return tasklinks.MessageIdentity{}, err
 	}

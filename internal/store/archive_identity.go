@@ -40,7 +40,12 @@ func (s *Store) ArchiveUIDContext(ctx context.Context) (string, error) {
 // archive_metadata. It is intentionally independent from both the UID and any
 // external project revision so caches can compare all three values explicitly.
 func (s *Store) ArchiveRevision() (string, error) {
-	if _, err := s.ArchiveUID(); err != nil {
+	return s.ArchiveRevisionContext(context.Background())
+}
+
+// ArchiveRevisionContext reads the identity contract with the caller's context.
+func (s *Store) ArchiveRevisionContext(ctx context.Context) (string, error) {
+	if _, err := s.ArchiveUIDContext(ctx); err != nil {
 		return "", err
 	}
 	return archiveRevisionV1, nil

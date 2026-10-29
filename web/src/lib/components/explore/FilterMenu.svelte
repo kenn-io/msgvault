@@ -132,8 +132,7 @@
 
 <svelte:document onmousedown={(event) => {
   if (open && ![panelElement, triggerElement].some((element) => element?.contains(event.target as Node))) open = false;
-}} />
-<svelte:window onkeydown={(event) => {
+}} onkeydown={(event) => {
   // kit-ui-check-ignore: observes the nested Kit picker's open state.
   if (!open || panelElement?.querySelector('[role="combobox"][aria-expanded="true"]')) return;
   escapeCloses(() => { open = false; triggerElement?.querySelector('button')?.focus(); })(event);
