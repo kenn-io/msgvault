@@ -536,7 +536,7 @@ describe('OperationsController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (request.method === 'POST') {
-        return Response.json(action === 'carddav_sync' ? syncResult() : { ...visualStatus, converged: 1, convergence_ratio: 1, convergence_total: 1, current: 1, eligible: 1, journal_cursor: 1, journal_high_water: 1, duplicate_cost: { ...visualStatus.duplicate_cost, detail: 'Synthetic test policy.' } });
+        return Response.json(action === 'carddav_sync' ? syncResult() : visualStatus);
       }
       reads += 1;
       return Response.json(path.endsWith('/status')

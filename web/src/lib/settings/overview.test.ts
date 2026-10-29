@@ -12,7 +12,7 @@ function row(rows: ReturnType<typeof overviewRows>, id: string) {
 
 describe('overviewRows', () => {
   it('lists every background feature, off ones with a way to turn them on', () => {
-    const rows = overviewRows(lanes(lane('message_embedding', { configured: false })), undefined, undefined);
+    const rows = overviewRows(lanes(), undefined, undefined);
 
     expect(rows.map((candidate) => candidate.name)).toEqual([
       'Source sync',
