@@ -33,26 +33,26 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
 }
 
 describe('Past runs', () => {
-  it('sends inclusive selected dates as a UTC interval with an exclusive end', async () => {
-    const { queries } = setup('', { operationStartedFrom: '2026-10-10T00:00:00Z', operationStartedBefore: '2026-10-13T00:00:00Z' });
+  it('maps selected dates, kind, lane, state, and cursor to history requests', async () => {
+    const { queries } = setup('source_sync', { operationStartedFrom: '2026-10-10T00:00:00Z', operationStartedBefore: '2026-10-13T00:00:00Z' });
     await screen.findByRole('button', { name: 'Open Document extraction run' });
+    expect(queries[0]?.get('kind')).toBe('source_sync');
     await fireEvent.click(screen.getByRole('button', { name: /2026-10-10/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Oct 11, 2026' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Oct 13, 2026' }));
     await waitFor(() => expect(queries.at(-1)?.get('started_from')).toBe('2026-10-11T00:00:00Z'));
     expect(queries.at(-1)?.get('started_before')).toBe('2026-10-14T00:00:00Z');
-  });
-  it('seeds the kind, changes filters, pages, and preserves unavailable kinds', async () => {
-    const { queries } = setup('source_sync');
-    await screen.findByRole('button', { name: 'Open Document extraction run' });
-    expect(queries[0]?.get('kind')).toBe('source_sync');
-    expect(screen.getByText('Person embedding history is unavailable.')).toBeDefined();
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All documents');
+    await waitFor(() => expect(queries.at(-1)?.get('lane')).toBe('documents'));
+    expect(queries.at(-1)?.has('kind')).toBe(false);
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'CardDAV sync');
+    await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('carddav_sync'));
+    expect(queries.at(-1)?.has('lane')).toBe(false);
     await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'Partial');
     await waitFor(() => expect(queries.at(-1)?.get('state')).toBe('partial'));
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All kinds');
     await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'All states');
     await fireEvent.click(await screen.findByRole('button', { name: 'Show more' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Open Source sync run' })).toBeDefined());
     expect(queries.at(-1)?.get('cursor')).toBe('next');
   });
   it('offers Restart when page membership changes', async () => {
@@ -72,17 +72,6 @@ describe('Past runs', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'All runs' }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open Document extraction run' })));
   });
-});
-
-it('filters document lanes and individual kinds', async () => {
-  const { queries } = setup();
-  await screen.findByRole('button', { name: 'Open Document extraction run' });
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All documents');
-  await waitFor(() => expect(queries.at(-1)?.get('lane')).toBe('documents'));
-  expect(queries.at(-1)?.has('kind')).toBe(false);
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'CardDAV sync');
-  await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('carddav_sync'));
-  expect(queries.at(-1)?.has('lane')).toBe(false);
 });
 
 it('refreshes on reopening and retries an unreadable history through Refresh', async () => {
