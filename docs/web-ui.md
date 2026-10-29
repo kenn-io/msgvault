@@ -630,8 +630,9 @@ Credentials have a separate revision from `config.toml`. When an endpoint or mod
 
 CardDAV settings manage contact accounts and discovered address books. Choose
 which books participate in sync, lookup, and publishing; publishing also
-enables contact sync for that book. The workspace offers incremental and full
-sync, recent run history, and conflict review. A conflict shows local and
+enables contact sync for that book. Sync now lets the daemon choose whether
+to reconcile the full address book. The workspace also offers recent run
+history and conflict review. A conflict shows local and
 remote versions before you choose which to keep. See
 [People and CardDAV](/docs/usage/people-carddav/) for setup and publishing rules.
 
