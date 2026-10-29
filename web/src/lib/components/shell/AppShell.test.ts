@@ -2965,6 +2965,39 @@ it.each([
   rendered.unmount(); state.destroy();
 });
 
+it.each(['blur', 'Enter then move', 'Enter'])('preserves the user focus when a saved-view rename completes through %s', async ending => {
+  window.history.replaceState(null, '', '/?workspace=everything');
+  let saved = view(3, 'Project notes');
+  let finish!: (response: Response) => void;
+  const patch = new Promise<Response>(resolve => { finish = resolve; });
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'PATCH') return patch;
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [saved] });
+    return Response.json(exploreResponse());
+  });
+  const rendered = render(AppShell, { client });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
+  await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+  const editor = await screen.findByRole('textbox', { name: 'Rename Project notes' });
+  await fireEvent.input(editor, { target: { value: 'Quarterly notes' } });
+  if (ending !== 'blur') await fireEvent.keyDown(editor, { key: 'Enter' });
+  const files = screen.getByRole('button', { name: 'Files' });
+  if (ending !== 'Enter') {
+    files.focus();
+    await fireEvent.blur(editor);
+    await fireEvent.click(files);
+  }
+  saved = { ...saved, name: 'Quarterly notes', revision: 2 };
+  finish(Response.json(saved));
+  await waitFor(() => expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull());
+  const renamed = screen.getByRole('button', { name: 'Quarterly notes' });
+  await tick();
+  expect(document.activeElement).toBe(ending === 'Enter' ? renamed : files);
+  rendered.unmount();
+});
+
 it.each(['undo', 'pagehide'])('finishes a sidebar deletion through %s', async ending => {
   window.history.replaceState(null, '', '/?workspace=everything');
   const deletes: string[] = [];
