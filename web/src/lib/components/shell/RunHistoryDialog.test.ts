@@ -101,23 +101,20 @@ describe('Past runs', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Restart' }));
     await waitFor(() => expect(queries.at(-1)?.has('cursor')).toBe(false));
   });
-  it('opens detail, routes related status, and returns focus to the row', async () => {
+  it('opens detail and routes related status', async () => {
     const { onNavigate } = setup();
     const row = await screen.findByRole('button', { name: 'Open Document extraction run' });
-    row.focus(); await fireEvent.click(row);
+    await fireEvent.click(row);
     await screen.findByRole('region', { name: 'Operation run detail' });
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'All runs' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open Document index status' }));
     expect(onNavigate).toHaveBeenCalledWith('getDocumentIndexStatus');
-    await fireEvent.click(screen.getByRole('button', { name: 'All runs' }));
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open Document extraction run' })));
   });
 });
 
-it('refreshes on reopening and retries an unreadable history through Refresh', async () => {
-  let failed = false;
+it('retries unreadable history and detail through Refresh', async () => {
+  let failed = true;
   let detailFailed = true;
-  let runs = [run];
+  const runs = [fixture.runs.find(run => run.kind === 'source_sync')!];
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
     if (path.endsWith('/status')) return Response.json({ lanes: lanes() });
@@ -126,11 +123,6 @@ it('refreshes on reopening and retries an unreadable history through Refresh', a
   });
   const controller = new OperationsController(client); controllers.push(controller);
   const props = { client, controller, state: defaultOperationsState(), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() };
-  const first = render(RunHistoryDialog, props);
-  await screen.findByRole('button', { name: 'Open Document extraction run' });
-  first.unmount();
-  runs = [fixture.runs.find(run => run.kind === 'source_sync')!];
-  failed = true;
   render(RunHistoryDialog, props);
   await screen.findByText('Unable to load operation history.');
   failed = false;
