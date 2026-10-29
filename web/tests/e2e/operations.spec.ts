@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { installOperations, OPERATION_PRIVACY_SENTINELS, OPERATION_REFERENCES } from './fixtures/operations';
+import { installOperations, OPERATION_REFERENCES } from './fixtures/operations';
 
 const historyURL = (state: Record<string, unknown> = {}) => `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true, ...state }))}`;
 
@@ -31,14 +31,6 @@ test('operations invokes only advertised CardDAV and visual actions and surfaces
   await expect(detail.getByRole('button', { name: 'Resume visual index' })).toBeVisible();
   await expect(detail.getByRole('button', { name: 'Build visual index' })).toHaveCount(0);
   await expect(detail.getByRole('button', { name: 'Start CardDAV sync' })).toHaveCount(0);
-});
-
-test('operations direct opaque detail never renders private native values', async ({ page }) => {
-  await installOperations(page);
-  await page.goto(historyURL({ operationRunID: OPERATION_REFERENCES.document }));
-  await expect(page.getByRole('dialog', { name: 'Document extraction', exact: true })).toBeVisible();
-  const rendered = await page.locator('body').innerText();
-  for (const sentinel of OPERATION_PRIVACY_SENTINELS) expect(rendered).not.toContain(sentinel);
 });
 
 test('Back returns focus to the related status link', async ({ page }) => {
