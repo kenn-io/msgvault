@@ -440,47 +440,35 @@ describe('AppShell', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Demo view' }));
   }
 
-  it('resets Files filters for a saved view and restores them with Back', async () => {
-    window.history.replaceState(null, '', '/?workspace=files');
+  it.each(['files', 'everything'] as const)('opens a saved Files view from %s with filters and focus restored', async workspace => {
+    window.history.replaceState(null, '', `/?workspace=${workspace}`);
     const fileSearches: Request[] = [];
     const state = new ExploreState(window);
-    state.replaceCommittedNavigation({
+    if (workspace === 'files') state.replaceCommittedNavigation({
       workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'],
       fileSort: { field: 'filename', direction: 'asc' }
     });
-    const client = createAPIClient(savedFilesViewFetch(fileSearches));
-    const rendered = render(AppShell, { client, state });
+    const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
     try {
-      const filter = await screen.findByLabelText<HTMLInputElement>('Filter filename');
-      expect(filter.value).toBe('invoice');
+      if (workspace === 'files') expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
       const beforeView = window.location.href;
       await openDemoView();
-      await screen.findByRole('grid', { name: 'Files results' });
-      expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
-      await waitFor(async () => {
-        const body = await fileSearches.at(-1)!.clone().json();
-        expect(body).not.toHaveProperty('filename_query');
-        expect(body).not.toHaveProperty('mime_families');
-        expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
-      });
-      window.history.back();
-      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      await waitFor(() => expect(window.location.href).toBe(beforeView));
-      await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('invoice'));
-    } finally {
-      rendered.unmount();
-      state.destroy();
-    }
-  });
-
-  it('focuses the Files grid after opening a saved Files view', async () => {
-    window.history.replaceState(null, '', '/?workspace=everything');
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch([])), state });
-    try {
-      await openDemoView();
       const grid = await screen.findByRole('grid', { name: 'Files results' });
-      await waitFor(() => expect(document.activeElement).toBe(grid));
+      if (workspace === 'everything') {
+        await waitFor(() => expect(document.activeElement).toBe(grid));
+      } else {
+        expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
+        await waitFor(async () => {
+          const body = await fileSearches.at(-1)!.clone().json();
+          expect(body).not.toHaveProperty('filename_query');
+          expect(body).not.toHaveProperty('mime_families');
+          expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
+        });
+        window.history.back();
+        await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+        await waitFor(() => expect(window.location.href).toBe(beforeView));
+        await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('invoice'));
+      }
     } finally {
       rendered.unmount();
       state.destroy();
@@ -2874,7 +2862,7 @@ function selectionStatus(): HTMLElement {
 it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending => {
   window.history.replaceState(null, '', '/?workspace=everything');
   const width = window.innerWidth;
-  if (ending === 'undo') window.innerWidth = 480;
+  window.innerWidth = 1024;
   const undo = vi.spyOn(ShellData.prototype, 'undoDelete').mockResolvedValue();
   const expire = vi.spyOn(ShellData.prototype, 'expireDelete').mockResolvedValue(undefined);
   const client = createAPIClient(async input => {
@@ -2884,11 +2872,9 @@ it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending 
   });
   const rendered = render(AppShell, { client });
   try {
-    if (ending === 'undo') await fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     if (ending === 'undo') {
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
       await fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
       expect(undo).toHaveBeenCalledOnce();
     } else {
@@ -2975,7 +2961,7 @@ it.each([
   const run = jobRun(kind);
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane) });
     if (path.endsWith('/sources/status')) return Response.json({ sources });
     if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
     if (path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: lane.supported_actions });

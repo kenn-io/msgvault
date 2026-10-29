@@ -41,9 +41,9 @@ it('refreshes the shell dot after Settings Contacts CardDAV Sync now', async () 
     } } : {}),
   });
   const session = sessionFor((request, path) => {
-    if (path === '/api/v1/operations/status') return Response.json({ lanes: [jobLane('carddav_sync', {
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(jobLane('carddav_sync', {
       latest: synced ? jobRun('carddav_sync') : undefined,
-    })] });
+    })) });
     if (path === '/api/v1/carddav/connections') return Response.json({ connections: [{ connection: 'default', status: status() }] });
     if (path === '/api/v1/carddav/status') return Response.json(status());
     if (path === '/api/v1/carddav/books') return Response.json({ books: [] });
@@ -95,9 +95,9 @@ it('refreshes the shell dot after Settings completes Build index', async () => {
   let built = false;
   const session = sessionFor(async (request, path) => {
     if (path === '/api/v1/operations/status') {
-      const snapshot = Response.json({ lanes: [jobLane('message_embedding', {
+      const snapshot = Response.json({ lanes: lanes(jobLane('message_embedding', {
         latest: built ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined, counters: [{ name: 'attempted', unit: 'messages', value: 1 }, { name: 'succeeded', unit: 'messages', value: 1 }, { name: 'failed', unit: 'messages', value: 0 }] } : jobRun('message_embedding'),
-      })] });
+      })) });
       return snapshot;
     }
     if (path === '/api/v1/search/coverage') {
@@ -129,9 +129,9 @@ it('refreshes the shell dot after Messages fails Build index', async () => {
   let built = false;
   const session = sessionFor(async (request, path) => {
     if (path === '/api/v1/operations/status') {
-      const snapshot = Response.json({ lanes: [jobLane('message_embedding', {
+      const snapshot = Response.json({ lanes: lanes(jobLane('message_embedding', {
         latest: built ? jobRun('message_embedding') : undefined,
-      })] });
+      })) });
       return snapshot;
     }
     if (path === '/api/v1/search/coverage') {
