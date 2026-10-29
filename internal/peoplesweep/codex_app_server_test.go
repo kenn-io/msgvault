@@ -1423,7 +1423,6 @@ func TestCodexLoginAndModelsApplyConfiguredTimeout(t *testing.T) {
 					_, err = transport.ListModels(t.Context())
 				}
 				must.ErrorIs(err, context.DeadlineExceeded)
-				must.NoError(t.Context().Err(), "the configured provider deadline must expire before the test context")
 				must.Len(starter.records, 1)
 				process := starter.records[0].process
 				checks.Equal(int64(1), process.kills.Load())

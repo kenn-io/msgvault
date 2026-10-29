@@ -828,7 +828,7 @@ func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 
 func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 	t.Helper()
-	client := &http.Client{Timeout: serveLifecycleTestTimeout}
+	client := &http.Client{Timeout: 2 * time.Second}
 	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
 	deadline := time.Now().Add(serveLifecycleTestTimeout)
 	for time.Now().Before(deadline) {

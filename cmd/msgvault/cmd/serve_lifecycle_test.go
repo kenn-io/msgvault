@@ -1702,15 +1702,24 @@ func TestRequestDaemonShutdownUsesRuntimeToken(t *testing.T) {
 	assert.Equal("test-runtime-token", gotToken, "shutdown token")
 }
 
-func TestNewDaemonIdleTrackerOnlyRunsForBackgroundServeChild(t *testing.T) {
-	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Server.DaemonIdleTimeout = time.Second
+func TestNewDaemonIdleTrackerDisabled(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		background string
+		override   string
+	}{
+		{name: "foreground"},
+		{name: "environment override", background: "1", override: "0s"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(serveBackgroundChildEnv, tt.background)
+			t.Setenv(daemonIdleTimeoutEnv, tt.override)
+			cfg := lifecycleTestConfig(t.TempDir())
+			cfg.Server.DaemonIdleTimeout = time.Second
 
-	tracker := newDaemonIdleTracker(cfg, func() {
-		require.FailNow(t, "foreground serve must not arm idle shutdown")
-	}, testDiscardLogger())
-
-	assert.Nil(t, tracker)
+			assert.Nil(t, newDaemonIdleTracker(cfg, nil, testDiscardLogger()))
+		})
+	}
 }
 
 func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
@@ -1731,19 +1740,6 @@ func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
 			require.FailNow(t, "idle tracker did not fire")
 		}
 	})
-}
-
-func TestNewDaemonIdleTrackerEnvOverrideDisables(t *testing.T) {
-	t.Setenv(serveBackgroundChildEnv, "1")
-	t.Setenv("MSGVAULT_DAEMON_IDLE_TIMEOUT", "0s")
-	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Server.DaemonIdleTimeout = time.Second
-
-	tracker := newDaemonIdleTracker(cfg, func() {
-		require.FailNow(t, "idle tracker fired despite env disable")
-	}, testDiscardLogger())
-
-	assert.Nil(t, tracker)
 }
 
 func lifecycleTestCommand() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
