@@ -128,6 +128,12 @@ export class RelationshipsController {
   lastPredicateFingerprint = $state<string | null>(null);
   detail = $state<PersonSummary | DomainSummary | null>(null);
   detailMissing = $state(false);
+  private personActivityCount = $state<number | null>(null);
+  headerState = $derived<'missing' | 'no-mail' | 'normal'>(
+    this.detailMissing
+      ? parseClusterID(this.target ?? '') !== undefined ? 'missing' : 'no-mail'
+      : this.personActivityCount === 0 ? 'no-mail' : 'normal',
+  );
   timelineRows = $state<RelationshipTimelineRow[]>([]);
   timelineCursor = $state<string | null>(null);
   timelineLoading = $state(false);
@@ -383,6 +389,7 @@ export class RelationshipsController {
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
     this.detail = null;
     this.detailMissing = false;
+    this.personActivityCount = null;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineError = null;
@@ -404,7 +411,7 @@ export class RelationshipsController {
       if (clusterID !== undefined) {
         const unfilteredPerson = await this.openCluster(clusterID, predicate, generation, controller.signal);
         const personDetail = unfilteredPerson ?? (this.detail as PersonSummary | null);
-        if (!controller.signal.aborted && generation === this.detailGeneration && personDetail !== null) {
+        if (!controller.signal.aborted && generation === this.detailGeneration && personDetail !== null && personDetail.activity_count > 0) {
           this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
           this.relationshipCalendarFirstYear = clampNumber(
             personFirstYear(personDetail, this.timezone(), this.relationshipCalendarCurrentYear),
@@ -458,11 +465,11 @@ export class RelationshipsController {
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return null;
       const base = personResponse.data;
+      this.personActivityCount = base?.activity_count ?? null;
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
-      if (base) {
-        this.detail = summary ? mergePersonDetail(base, summary) : base;
-      } else if (summary) this.detail = summary;
+      if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
+      else if (summary) this.detail = summary;
       this.reportDetailFailures(personResponse, summaryResponse, generation, signal);
       return base ?? summary ?? null;
     } catch (cause: unknown) {
@@ -519,6 +526,7 @@ export class RelationshipsController {
     this.detailAbort = undefined;
     ++this.detailGeneration;
     this.target = null;
+    this.personActivityCount = null;
     this.lastPredicate = undefined;
     this.lastPredicateFingerprint = null;
     this.detail = null;

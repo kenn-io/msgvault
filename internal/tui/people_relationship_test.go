@@ -65,6 +65,22 @@ func relationshipCalendarMessage(t *testing.T, cmd tea.Cmd) peopleRelationshipLo
 	return peopleRelationshipLoadedMsg{}
 }
 
+func TestPeopleOverviewDraftOnlySkipsRelationshipCalendar(t *testing.T) {
+	contact := testPerson(7, "Draft recipient")
+	contact.ActivityCount = 0
+	backend := &fakePeopleRelationshipBackend{
+		fakePeopleBackend: &fakePeopleBackend{},
+		calendarErrs:      []error{query.ErrRelationshipPersonNotFound},
+	}
+	model := peopleContentModel(backend, &contact)
+	cmd := model.beginPeopleRelationshipLoad()
+	assert.Nil(t, cmd)
+	assert.Empty(t, backend.calendarRequests)
+	assert.False(t, model.peopleState.relationshipLoading)
+	assert.NoError(t, model.peopleState.relationshipErr)
+	assert.Nil(t, model.peopleState.relationshipCalendar)
+}
+
 func TestPeopleOverviewLoadsRelationshipForObservedContact(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

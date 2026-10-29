@@ -211,9 +211,8 @@ func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) 
 		"score years stay pegged to UTC while the calendar uses local days")
 }
 
-func TestRelationshipCalendarReturnsEmptyForDraftOnlyAndRejectsMissingAndOwnerPeople(t *testing.T) {
+func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
 	ownerCanonicalID := b.AddParticipant("owner-alias@example.test", "example.test", "Owner alias")
@@ -237,23 +236,7 @@ func TestRelationshipCalendarReturnsEmptyForDraftOnlyAndRejectsMissingAndOwnerPe
 	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
 	engine := b.BuildEngine()
 
-	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
-		CanonicalID: draftRecipient, Year: 2026, Timezone: "UTC",
-	})
-	require.NoError(err)
-	require.NotNil(calendar)
-	assert.Equal(draftRecipient, calendar.CanonicalID)
-	assert.Equal(2026, calendar.Year)
-	assert.Equal("UTC", calendar.Timezone)
-	assert.Equal("UTC", calendar.ScoringTimezone)
-	assert.NotEmpty(calendar.CacheRevision)
-	assert.Equal("2026-01-02", calendar.EffectiveDate)
-	assert.Equal(identityindex.RelationshipScoreVersion, calendar.ScoreVersion)
-	assert.Zero(calendar.Current)
-	assert.Empty(calendar.Annual)
-	assert.Empty(calendar.Days)
-
-	for _, canonicalID := range []int64{ownerCanonicalID, ownerID, 999_999} {
+	for _, canonicalID := range []int64{ownerCanonicalID, ownerID, 999_999, draftRecipient} {
 		_, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
 			CanonicalID: canonicalID, Year: 2026, Timezone: "UTC",
 		})

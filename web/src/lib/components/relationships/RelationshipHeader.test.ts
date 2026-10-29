@@ -122,18 +122,18 @@ async function linkToSearchResult(): Promise<void> {
 
 describe('RelationshipHeader', () => {
   it('shows no contact activity for a domain without activity', () => {
-    render(RelationshipHeader, { props: baseProps({ detail: null, loading: false, detailMissing: true, target: 'domain:example.com' }) });
+    render(RelationshipHeader, { props: baseProps({ detail: null, loading: false, headerState: 'no-mail' }) });
     expect(screen.getByRole('status').textContent?.trim()).toBe('No sent or received messages with this contact yet.');
   });
 
   it('shows a missing person and hides the Files control', () => {
-    render(RelationshipHeader, { props: baseProps({ detail: null, loading: false, detailMissing: true, target: 'cluster:12' }) });
+    render(RelationshipHeader, { props: baseProps({ detail: null, loading: false, headerState: 'missing' }) });
     expect(screen.getByRole('status').textContent?.trim()).toBe('Person not found.');
     expect(screen.queryByRole('radiogroup', { name: 'Relationship view' })).toBeNull();
   });
 
   it('keeps a draft-only person’s identity and link controls with no activity', () => {
-    render(RelationshipHeader, baseProps({ detail: { ...person(), activity_count: 0,
+    render(RelationshipHeader, baseProps({ headerState: 'no-mail', detail: { ...person(), activity_count: 0,
       first_at: undefined, last_at: undefined } }));
     expect(screen.getByRole('heading', { name: 'Alice Example' })).toBeDefined();
     expect(screen.getByLabelText('Identity Alice')).toBeDefined();
@@ -144,7 +144,7 @@ describe('RelationshipHeader', () => {
 
   it('hides the date range when no activity matches the context', () => {
     render(RelationshipHeader, baseProps({ detail: { ...person(), activity_count: 0 } }));
-    expect(screen.getByText('No sent or received messages with this contact yet.').closest('p')?.textContent?.trim()).toBe('No sent or received messages with this contact yet.');
+    expect(screen.getByText('0 items').closest('p')?.textContent?.trim()).toBe('0 items');
   });
 
   it('shows current attributes for a durable person and opens their editor in Directory', async () => {

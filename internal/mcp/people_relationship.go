@@ -87,6 +87,13 @@ func (h *handlers) getPersonRelationship(
 	if contact == nil {
 		return nil, newInternalError("get person relationship contact", errors.New("empty response"))
 	}
+	if contact.ActivityCount == 0 {
+		return jsonResult(getPersonRelationshipResponse{
+			ParticipantID: participantID, CanonicalID: contact.ID,
+			DisplayLabel: contact.DisplayLabel,
+			Annual:       []identityindex.AnnualTemperatureSummary{}, CacheRevision: contact.CacheRevision,
+		})
+	}
 	calendar, err := h.peopleBackend.RelationshipCalendar(ctx, peoplebrowser.CalendarRequest{
 		ParticipantID: participantID,
 		Year:          int(year),

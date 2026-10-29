@@ -100,9 +100,7 @@ describe('RelationshipsWorkspace relationship calendar', () => {
       '/api/v1/relationships/1/timeline': () => Response.json({
         canonical_id: 1, identity_revision: 3, cache_revision: 'cache-rel', rows: [], total_count: 0
       }),
-      '/api/v1/relationships/1/calendar': () => Response.json({
-        ...relationshipCalendar(1, new Date().getUTCFullYear()), days: [], current: { temperature: 0 }
-      })
+      '/api/v1/relationships/1/calendar': () => Response.json({ error: 'participant_not_found' }, { status: 404 })
     });
     const props = { ...baseProps(fetchFn), target: 'cluster:1' };
     render(RelationshipsWorkspace, { props });
@@ -117,9 +115,34 @@ describe('RelationshipsWorkspace relationship calendar', () => {
       await screen.findByText('No sent or received messages with this contact yet.');
       expect(screen.getByRole('heading', { name: 'Draft recipient' })).toBeDefined();
       await waitFor(() => expect(props.controller.relationshipCalendarLoading).toBe(false));
-      expect(screen.getByRole('region', { name: 'Relationship activity calendar' })).toBeDefined();
+      expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
+      expect(screen.queryByText('Relationship activity has not loaded.')).toBeNull();
+      expect(props.controller.relationshipCalendar).toBeNull();
+      expect(props.controller.relationshipCalendarError).toBeNull();
     }
-    expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(!missing);
+    expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
+  });
+
+  it('shows zero items when filters exclude all mail for an active person', async () => {
+    const { fetchFn } = fetchHandler({
+      '/api/v1/participants/1': () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/participants/1/summary': () => Response.json({ error: 'participant_not_found' }, { status: 404 }),
+      '/api/v1/relationships/1/timeline': () => Response.json({
+        canonical_id: 1, identity_revision: 3, cache_revision: 'cache-rel', rows: [], total_count: 0
+      }),
+      '/api/v1/relationships/1/calendar': () => Response.json(relationshipCalendar(1, new Date().getUTCFullYear()))
+    });
+    const props = {
+      ...baseProps(fetchFn), target: 'cluster:1',
+      predicate: { filters: [{ dimension: 'source' as const, values: ['2'] }], presentation: 'table' as const }
+    };
+    render(RelationshipsWorkspace, { props });
+
+    await props.controller.openTarget('cluster:1', props.predicate);
+
+    expect(await screen.findByText('0 items')).toBeDefined();
+    expect(screen.queryByText('No sent or received messages with this contact yet.')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Alice Example' })).toBeDefined();
   });
 
   it('shows the person heatmap above the timeline and navigates years through the controller', async () => {

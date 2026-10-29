@@ -151,6 +151,34 @@ func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 	assertions.Empty(matching.Rows)
 }
 
+func TestGetPersonDraftOnlyLinkedAlias(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.com", "gmail")
+	owner := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(source, owner)
+	primary := b.AddParticipant("draft@example.org", "example.org", "Draft recipient")
+	alias := b.AddParticipant("alias@example.org", "example.org", "Draft alias")
+	b.AddParticipantIdentifier(primary, "email", "draft@example.org", "draft@example.org", true)
+	b.AddParticipantIdentifier(alias, "email", "alias@example.org", "alias@example.org", true)
+	b.LinkCluster(primary, alias)
+	draft := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true, SentAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)})
+	b.AddFrom(draft, owner, "Owner")
+	b.AddTo(draft, primary, "Draft recipient")
+	b.AddTo(draft, alias, "Draft alias")
+	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
+	engine := b.BuildEngine()
+
+	detail, err := engine.GetPerson(t.Context(), alias, Context{}, []int64{primary, alias})
+	require.NoError(t, err)
+	require.NotNil(t, detail)
+	assert.Equal(t, alias, detail.ID)
+	assert.Zero(t, detail.ActivityCount)
+	assert.Zero(t, detail.FileCount)
+	assert.True(t, detail.FirstAt.IsZero())
+	assert.True(t, detail.LastAt.IsZero())
+	assert.Len(t, detail.Identifiers, 2)
+}
+
 func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

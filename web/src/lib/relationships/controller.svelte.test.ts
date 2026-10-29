@@ -2063,12 +2063,7 @@ describe('RelationshipsController draft-only targets', () => {
       if (path === detailPath) return target.startsWith('cluster:')
         ? Response.json(draftPerson)
         : Response.json({ error: 'No contact activity' }, { status: 404 });
-      if (path.endsWith('/calendar')) return Response.json({
-        canonical_id: 12, year: new Date().getUTCFullYear(), timezone: 'UTC',
-        days: [], current: { temperature: 0 }, annual: [], peak_temperature: 0, peak_year: 0,
-        scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19',
-        cache_revision: 'cache-rel', identity_revision: 1
-      });
+      if (path.endsWith('/calendar')) return Response.json({ error: 'participant_not_found' }, { status: 404 });
       if (path === `${detailPath}/summary`) return Response.json({ error: 'No matching activity' }, { status: 404 });
       if (path === timelinePath) return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
       throw new Error(`unexpected path ${path}`);
@@ -2080,12 +2075,11 @@ describe('RelationshipsController draft-only targets', () => {
     expect.soft(controller.timelineError).toBeNull();
     expect.soft(controller.detail?.activity_count ?? null).toBe(target.startsWith('cluster:') ? 0 : null);
     expect.soft(controller.detailMissing).toBe(target.startsWith('domain:'));
-    expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(target.startsWith('cluster:'));
+    expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
     if (target.startsWith('cluster:')) {
-      await vi.waitFor(() => expect(controller.relationshipCalendar).not.toBeNull());
-      expect(controller.relationshipCalendar?.days).toEqual([]);
+      expect(controller.relationshipCalendar).toBeNull();
       expect(controller.relationshipCalendarError).toBeNull();
-      expect(controller.relationshipCalendarFirstYear).toBe(new Date().getUTCFullYear());
+      expect(controller.relationshipCalendarFirstYear).toBeNull();
     }
   });
 
