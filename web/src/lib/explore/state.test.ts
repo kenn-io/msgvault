@@ -774,6 +774,14 @@ describe('Explore URL state', () => {
 
     expect(restored.selectedRow).toBeNull();
   });
+
+  it.each([
+    ['browser', 'advanced'], ['archive', 'advanced'], ['integrations', 'tasks'],
+    ['attachments', 'sources'], ['people', 'enrichment']
+  ])('restores the Settings link %s to %s', (settingsCategory, expected) => {
+    const restored = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory }))}`);
+    expect(restored.settingsCategory).toBe(expected);
+  });
 });
 
 describe('relationships workspace state', () => {
@@ -1665,12 +1673,6 @@ describe('session-owned exploration selection', () => {
       })
     ).toThrow('candidate snapshot');
   });
-});
 
-it.each([
-  ['browser', 'advanced'], ['archive', 'advanced'], ['integrations', 'tasks'],
-  ['attachments', 'sources'], ['people', 'enrichment']
-])('restores the Settings link %s to %s', (settingsCategory, expected) => {
-  const restored = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory }))}`);
-  expect(restored.settingsCategory).toBe(expected);
+
 });

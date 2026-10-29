@@ -218,7 +218,7 @@ export class CardDAVController {
     }
     if (this.current(context)) this.bookPendingID = undefined;
   }
-  async sync(full: boolean, connection: string | undefined = this.connection): Promise<void> {
+  async sync(connection: string | undefined = this.connection): Promise<void> {
     if (!this.canSync || this.syncPending) return;
     const context = this.generation;
     this.syncAbort?.abort();
@@ -234,7 +234,7 @@ export class CardDAVController {
     let reconcile = false;
     try {
       const { data, response } = await generatedSyncCardDAV(
-        { full, connection },
+        { full: false, connection },
         {
           ...this.client,
           signal: requestController.signal,
@@ -252,7 +252,7 @@ export class CardDAVController {
           this.syncError = `CardDAV sync ${data.status}. Connections needing attention: ${names.join(', ')}.`;
         }
         if (succeeded) {
-          this.syncStatus = full ? 'Full CardDAV sync completed.' : 'CardDAV sync completed.';
+          this.syncStatus = 'CardDAV sync completed.';
         }
       } else if (response.status === 409 || response.status >= 500) {
         reconcile = true;
