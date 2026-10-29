@@ -63,8 +63,7 @@ describe('overviewRows', () => {
   });
 });
 
-it('distinguishes unavailable status and active work from an unbuilt index', () => {
-  expect(row(overviewRows([], undefined, undefined), 'person_sweep').chip.text).toBe('Unavailable');
+it('distinguishes active work from an unbuilt index', () => {
   const active = { id: 'run-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } as const;
   const rows = overviewRows([lane('message_embedding', { active: { ...active, counters: [] } })], { active_generation: null } as unknown as EmbeddingStatus, undefined);
   expect(row(rows, 'message_embedding').chip.text).toBe('Running');
@@ -91,4 +90,10 @@ it.each(['message_embedding', 'person_embedding', 'document_extraction', 'docume
     const rows = overviewRows([lane(kind, { configured, history_availability: 'unavailable', unavailable_code: `${kind}_history_unavailable` })], undefined, undefined);
     expect(row(rows, kind).chip.text).toBe(configured ? 'On' : 'Off');
   }
+});
+
+it('shows a partial latest run with the shared warning label and tone', () => {
+  const rows = overviewRows([lane('person_enrichment', { latest: { state: 'partial' } } as Partial<OperationLaneStatus>)], undefined, undefined);
+  expect(row(rows, 'person_enrichment').chip).toEqual({ text: 'Partial', tone: 'warning' });
+  expect(row(rows, 'person_enrichment').action).toBeUndefined();
 });

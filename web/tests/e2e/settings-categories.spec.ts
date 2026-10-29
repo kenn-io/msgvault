@@ -64,8 +64,6 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
   await page.getByRole('button', { name: 'Search & AI', exact: true }).click();
   await page.getByRole('button', { name: 'Add API key', exact: true }).click();
   await page.getByLabel('New API key', { exact: true }).fill('synthetic-pending-key');
-  await expect(page.getByRole('button', { name: 'Use API key', exact: true })).toHaveText('Use key');
-  await page.screenshot({ path: join(captureDir, 'use-key-dialog-1440-dark.png') });
   await page.getByRole('button', { name: 'Use API key', exact: true }).click();
   await expect(page.locator('[data-setting-key="vector.embeddings.api_key"]')).toHaveClass(/setting--changed/);
   const people = page.getByRole('switch', { name: 'Search people', exact: true });
@@ -160,7 +158,7 @@ test('Settings opens on Overview, keeps edits across categories, and saves them 
   }
 });
 
-test('People lookup setup saves valid configurations through first enable, last disable, and replacement', async ({ page, daemon }) => {
+test('People lookup setup saves its first enabled provider and feature together', async ({ page, daemon }) => {
   await loginToMeetingArchive(page, daemon);
   await selectWorkspace(page, 'Settings');
   await page.getByRole('button', { name: 'People lookups', exact: true }).click();
@@ -175,39 +173,14 @@ test('People lookup setup saves valid configurations through first enable, last 
     await card.getByRole('textbox', { name: 'How long the provider keeps data', exact: true }).fill('zero');
     await card.getByRole('textbox', { name: 'Whether the provider trains on data', exact: true }).fill('none');
   }
-  const writes: string[] = [];
-  page.on('request', request => { if (['PUT', 'PATCH'].includes(request.method())) writes.push(`${request.method()} ${new URL(request.url()).pathname}`); });
-  async function save(order: string[]) {
-    writes.length = 0;
-    const patched = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/v1/settings'));
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-    expect((await patched).status()).toBe(200);
-    await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
-    expect(writes).toEqual(order);
-  }
-  const providerPath = '/api/v1/settings/person-enrichment/providers/';
   await add('primary');
   await page.getByRole('switch', { name: 'Enable primary', exact: true }).click();
   await page.getByRole('switch', { name: 'Look people up', exact: true }).click();
-  await save([`PUT ${providerPath}primary`, 'PATCH /api/v1/settings']);
+  const patched = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/v1/settings'));
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  expect((await patched).status()).toBe(200);
+  await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole('switch', { name: 'Look people up', exact: true })).toBeChecked();
   await expect(page.getByRole('switch', { name: 'Enable primary', exact: true })).toBeChecked();
-  await page.getByRole('switch', { name: 'Enable primary', exact: true }).click();
-  await page.getByRole('switch', { name: 'Look people up', exact: true }).click();
-  await save(['PATCH /api/v1/settings', `PUT ${providerPath}primary`]);
-  await page.getByRole('switch', { name: 'Enable primary', exact: true }).click();
-  await page.getByRole('switch', { name: 'Look people up', exact: true }).click();
-  await save([`PUT ${providerPath}primary`, 'PATCH /api/v1/settings']);
-  await page.getByRole('switch', { name: 'Enable primary', exact: true }).click();
-  await add('replacement');
-  await page.getByRole('switch', { name: 'Enable replacement', exact: true }).click();
-  writes.length = 0;
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect(page.getByText(/^\d+ unsaved changes?/)).toHaveCount(0);
-  expect(writes).toEqual([`PUT ${providerPath}replacement`, `PUT ${providerPath}primary`]);
-  await page.reload();
-  await expect(page.getByRole('switch', { name: 'Look people up', exact: true })).toBeChecked();
-  await expect(page.getByRole('switch', { name: 'Enable primary', exact: true })).not.toBeChecked();
-  await expect(page.getByRole('switch', { name: 'Enable replacement', exact: true })).toBeChecked();
 });

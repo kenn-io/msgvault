@@ -172,8 +172,8 @@
     <CardDAVConnectionSettings
       {client}
       values={selectedValues}
-      draft={drafts[selected]}
-      onDraft={(draft) => { if (draft) drafts[selected] = draft; else delete drafts[selected]; }}
+      draft={Object.hasOwn(drafts, selected) ? drafts[selected] : undefined}
+      onDraft={(draft) => { if (draft) drafts = { ...untrack(() => drafts), [selected]: draft }; else delete drafts[selected]; }}
       connection={selected}
       orphaned={selectedConnection?.orphaned === true}
       onAvailabilityChange={(name, value) => { availability[name] = value; }}

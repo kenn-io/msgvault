@@ -122,7 +122,7 @@
             <div><dt>Consent</dt><dd>{profile.consent_active ? 'Granted for this profile' : 'Not granted'}</dd></div>
           </dl>
           {#if profile.protocol !== 'codex_app_server' && profile.credential_source !== 'env'}
-            <label>Replacement API key<TextInput type="password" value={controller.keyDrafts[profile.name] ?? ''} oninput={(value) => { if (value) controller.keyDrafts[profile.name] = value; else delete controller.keyDrafts[profile.name]; }} autocomplete="new-password" block /></label>
+            <label>Replacement API key<TextInput type="password" value={(Object.hasOwn(controller.keyDrafts, profile.name) ? controller.keyDrafts[profile.name] : undefined) ?? ''} oninput={(value) => { if (value) controller.keyDrafts = { ...controller.keyDrafts, [profile.name]: value }; else delete controller.keyDrafts[profile.name]; }} autocomplete="new-password" block /></label>
           {/if}
           <div class="actions">
             <Button disabled={controller.busy || !profile.credential_configured || profile.protocol === 'codex_app_server'} onclick={() => void controller.check()} label="Check provider" />
