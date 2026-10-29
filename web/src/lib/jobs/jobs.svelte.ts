@@ -32,21 +32,24 @@ export class JobsStore {
   }
 
   setSources(sources: SourceStatus[]): void {
+    this.#controller?.abort();
     this.#sources = sources;
     this.#sourceError = false;
   }
 
-  async refresh(): Promise<void> {
+  async refresh(supersede = false): Promise<void> {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     const options = { ...this.#client, signal: controller.signal };
     const [sources] = await Promise.all([
       listSourceStatus(undefined, options).catch(() => undefined),
-      this.#operations.refreshStatus(),
+      this.#operations.refreshStatus(supersede),
     ]);
-    if (controller.signal.aborted) return;
-    if (sources?.data) this.#sources = sources.data.sources;
-    this.#sourceError = !sources?.data;
+    if (this.#controller !== controller) return;
+    if (!controller.signal.aborted) {
+      if (sources?.data) this.#sources = sources.data.sources;
+      this.#sourceError = !sources?.data;
+    }
     this.loaded = true;
   }
 

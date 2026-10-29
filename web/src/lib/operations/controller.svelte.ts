@@ -67,6 +67,7 @@ export class OperationsController {
   private pageAbort?: AbortController;
   private actionAbort?: AbortController;
   private statusAbort?: AbortController;
+  private statusRead?: Promise<boolean>;
 
   constructor(
     client: APIClient,
@@ -156,11 +157,14 @@ export class OperationsController {
     return results.every(Boolean);
   }
 
-  async refreshStatus(): Promise<boolean> {
-    if (this.disposed || this.initialLoading || this.backgroundLoading ||
-      this.statusRefreshing) {
-      return false;
-    }
+  refreshStatus(supersede = false): Promise<boolean> {
+    if (this.disposed) return Promise.resolve(false);
+    if (this.statusRead && !supersede) return this.statusRead;
+    this.cancelStatus();
+    return this.statusRead = this.readStatus();
+  }
+
+  private async readStatus(): Promise<boolean> {
     const request = new AbortController();
     this.statusAbort = request;
     const context = this.contextGeneration;
@@ -184,6 +188,7 @@ export class OperationsController {
     } finally {
       if (this.ownsStatus(request, generation, context)) {
         this.statusAbort = undefined;
+        this.statusRead = undefined;
         this.statusRefreshing = false;
       }
     }
@@ -310,7 +315,6 @@ export class OperationsController {
   private async loadPageOne(background: boolean): Promise<boolean> {
     this.readAbort?.abort();
     this.cancelPage();
-    this.cancelStatus();
     const request = new AbortController();
     this.readAbort = request;
     const context = this.contextGeneration;
@@ -324,7 +328,7 @@ export class OperationsController {
     else this.initialLoading = true;
 
     const [statusResult, runsResult] = await Promise.allSettled([
-      generatedGetOperationStatus({ ...this.client, signal: request.signal }),
+      this.refreshStatus(true),
       generatedListOperationRuns(operationQuery(this.filters), {
         ...this.client,
         signal: request.signal,
@@ -332,15 +336,7 @@ export class OperationsController {
     ]);
     if (!this.ownsRead(request, generation, context)) return false;
 
-    let statusSucceeded = false;
-    if (statusResult.status === 'fulfilled' && statusResult.value.data) {
-      this.statusKinds = statusResult.value.data.lanes;
-      this.statusReadable = true;
-      this.statusUpdatedAt = Date.now();
-      statusSucceeded = true;
-    } else {
-      this.statusError = 'Unable to load operation status.';
-    }
+    const statusSucceeded = statusResult.status === 'fulfilled' && statusResult.value;
 
     let historySucceeded = false;
     if (runsResult.status === 'fulfilled' && runsResult.value.response.status === 409) {
@@ -436,6 +432,7 @@ export class OperationsController {
   private cancelStatus(): void {
     this.statusAbort?.abort();
     this.statusAbort = undefined;
+    this.statusRead = undefined;
     this.statusGeneration += 1;
     this.statusRefreshing = false;
   }
