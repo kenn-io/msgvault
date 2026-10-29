@@ -616,6 +616,7 @@ jobs:
           }
 
   test-windows-pack-restore:
+    if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
