@@ -4,7 +4,12 @@ import type { EmbeddingStatus, OperationLaneStatus } from '../api/generated/mode
 import { overviewRows } from './overview';
 
 function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
-  return { kind, configured: true, lane: kind === 'visual_embedding' ? 'visual_attachments' : 'messages', history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
+  const lanes = {
+    carddav_sync: 'contacts', document_embedding: 'documents', document_extraction: 'documents',
+    message_embedding: 'messages', person_embedding: 'person_facts', person_enrichment: 'person_facts',
+    person_sweep: 'person_facts', source_sync: 'messages', visual_embedding: 'visual_attachments'
+  } as const;
+  return { kind, configured: true, lane: lanes[kind], history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
 }
 
 function row(rows: ReturnType<typeof overviewRows>, id: string) {

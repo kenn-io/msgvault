@@ -152,8 +152,6 @@ describe('CardDAVAccountSettings', () => {
     expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('test-password');
   });
 
-
-
   it('retains password after failure and invalidates tested success when identity changes', async () => {
     let requests = 0;
     const requestFacts: Array<{ passwordMatched: boolean; username: string }> = [];
