@@ -127,8 +127,7 @@ export class RelationshipsController {
    * cleared by clearTarget. */
   lastPredicateFingerprint = $state<string | null>(null);
   detail = $state<PersonSummary | DomainSummary | null>(null);
-  noActivity = $state(false);
-  personMissing = $state(false);
+  detailMissing = $state(false);
   timelineRows = $state<RelationshipTimelineRow[]>([]);
   timelineCursor = $state<string | null>(null);
   timelineLoading = $state(false);
@@ -383,8 +382,7 @@ export class RelationshipsController {
     this.lastPredicate = predicate;
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
     this.detail = null;
-    this.noActivity = false;
-    this.personMissing = false;
+    this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineError = null;
@@ -464,7 +462,6 @@ export class RelationshipsController {
         (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
       if (base) {
         this.detail = summary ? mergePersonDetail(base, summary) : base;
-        this.noActivity = base.activity_count === 0;
       } else if (summary) this.detail = summary;
       this.reportDetailFailures(personResponse, summaryResponse, generation, signal);
       return base ?? summary ?? null;
@@ -525,8 +522,7 @@ export class RelationshipsController {
     this.lastPredicate = undefined;
     this.lastPredicateFingerprint = null;
     this.detail = null;
-    this.noActivity = false;
-    this.personMissing = false;
+    this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineLoading = false;
@@ -882,13 +878,12 @@ export class RelationshipsController {
     for (const result of [detail, summary]) {
       if (!result || result.data || (result === summary && noMatchingActivity(detail, summary))) continue;
       if (result === detail && result.response.status === 404) {
+        this.detailMissing = true;
         if (parseClusterID(this.target) !== undefined) {
-          this.personMissing = true;
-          continue;
-        } else {
-          this.noActivity = true;
-          continue;
+          this.timelineError = null;
+          return;
         }
+        continue;
       }
       if (!this.handleDetailCacheBuilding(result.error, result.response.status, generation, signal))
         this.timelineError ||= errorMessage(result.error, result.response.status);

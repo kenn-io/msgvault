@@ -101,7 +101,9 @@ func (e *DuckDBEngine) RelationshipCalendar(
 	}
 	response, effectiveAt, err := e.relationshipTemperatureSummary(ctx, request.CanonicalID)
 	if errors.Is(err, ErrRelationshipPersonNotFound) {
-		return e.emptyRelationshipCalendar(ctx, request, timezone, state)
+		response, err = e.emptyRelationshipCalendar(ctx, request, state)
+	} else if err == nil {
+		response.Days, err = e.relationshipCalendarDays(ctx, request, location, effectiveAt)
 	}
 	if err != nil {
 		return nil, err
@@ -112,15 +114,11 @@ func (e *DuckDBEngine) RelationshipCalendar(
 	response.ScoringTimezone = relationshipScoringTimezone
 	response.CacheRevision = state.Revision()
 	response.IdentityRevision = state.IdentityRevision
-	response.Days, err = e.relationshipCalendarDays(ctx, request, location, effectiveAt)
-	if err != nil {
-		return nil, err
-	}
 	return response, nil
 }
 
 func (e *DuckDBEngine) emptyRelationshipCalendar(
-	ctx context.Context, request RelationshipCalendarRequest, timezone string, state CacheSyncState,
+	ctx context.Context, request RelationshipCalendarRequest, state CacheSyncState,
 ) (*RelationshipCalendarResponse, error) {
 	people := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
 	clusters := quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters))
@@ -148,16 +146,10 @@ func (e *DuckDBEngine) emptyRelationshipCalendar(
 		return nil, fmt.Errorf("read relationship effective date: %w", err)
 	}
 	return &RelationshipCalendarResponse{
-		CanonicalID:      request.CanonicalID,
-		Year:             request.Year,
-		Timezone:         timezone,
-		Annual:           []identityindex.AnnualTemperatureSummary{},
-		Days:             []RelationshipCalendarDay{},
-		ScoreVersion:     identityindex.RelationshipScoreVersion,
-		EffectiveDate:    effectiveAt.UTC().Format(time.DateOnly),
-		ScoringTimezone:  relationshipScoringTimezone,
-		CacheRevision:    state.Revision(),
-		IdentityRevision: state.IdentityRevision,
+		Annual:        []identityindex.AnnualTemperatureSummary{},
+		Days:          []RelationshipCalendarDay{},
+		ScoreVersion:  identityindex.RelationshipScoreVersion,
+		EffectiveDate: effectiveAt.UTC().Format(time.DateOnly),
 	}, nil
 }
 

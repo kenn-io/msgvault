@@ -179,7 +179,8 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 	// requested alias ID in the response contract. The lookup is not
 	// gated on a query slot: it is a point read over the compact rollup, so
 	// it can answer while the timeline occupies the slot.
-	if identityRequestIsUnfiltered(ExploreRequest{Context: analyticalContext}) {
+	unfiltered := identityRequestIsUnfiltered(ExploreRequest{Context: analyticalContext})
+	if unfiltered {
 		lookupID := id
 		if len(clusterMemberIDs) > 1 {
 			lookupID = slices.Min(clusterMemberIDs)
@@ -193,7 +194,7 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 			return row, nil
 		}
 	}
-	result, err := e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs, identityRequestIsUnfiltered(ExploreRequest{Context: analyticalContext}))
+	result, err := e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs, unfiltered)
 	if err != nil || len(result.Rows) == 0 {
 		return nil, err
 	}

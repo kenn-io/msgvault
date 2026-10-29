@@ -553,8 +553,8 @@
                   detail={controller.detail}
                   loading={controller.timelineLoading}
                   {filesOpen}
-                  missing={controller.noActivity}
-                  notFound={controller.personMissing}
+                  detailMissing={controller.detailMissing}
+                  target={target}
                   {onFilesToggle}
                   {client}
                   {onOpenDirectory}
@@ -566,7 +566,7 @@
                   onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
                   onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
                 />
-                {#if target !== null && domainOf(target) === undefined && !controller.personMissing}
+                {#if target !== null && domainOf(target) === undefined && !controller.detailMissing}
                   <RelationshipCalendar
                     calendar={controller.relationshipCalendar}
                     loading={controller.relationshipCalendarLoading}

@@ -26,7 +26,7 @@ func ensureIdentityCacheFixtureDatasets(
 	tb testing.TB,
 	db *sql.DB,
 	analyticsDir string,
-	options ...identityCacheFixtureOptions,
+	options identityCacheFixtureOptions,
 ) {
 	tb.Helper()
 	personDisplayNamesDir := filepath.Join(analyticsDir, "person_display_names")
@@ -41,9 +41,7 @@ func ensureIdentityCacheFixtureDatasets(
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: analyticsDir,
 		OutputRoot:     analyticsDir,
-	}
-	for _, option := range options {
-		buildOptions.UnsentMessages = option.unsentMessages
+		UnsentMessages: options.unsentMessages,
 	}
 	_, err = identityindex.Build(context.Background(), db, buildOptions)
 	require.NoError(tb, err, "derive identity fixture datasets")

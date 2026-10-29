@@ -361,7 +361,7 @@ func TestMediaSearchParticipantScope(t *testing.T) {
 
 	analytical := f.server(true)
 	clusters := fmt.Sprintf(`(%d::BIGINT, %d::BIGINT), (%d::BIGINT, %d::BIGINT)`, participant, participant, alias, participant)
-	engine, _ := newExploreDuckDBFixtureWithClusters(t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, clusters, 3)
+	engine, _ := newExploreDuckDBFixtureWithClusters(t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, clusters, 3, identityCacheFixtureOptions{})
 	analytical.SetAnalyticsEngine(engine, AnalyticsModeDuckDB)
 	assert.ElementsMatch([]int64{selected.messageID, aliased.messageID}, search(analytical, byParticipant), "committed Explore clusters win over live links")
 

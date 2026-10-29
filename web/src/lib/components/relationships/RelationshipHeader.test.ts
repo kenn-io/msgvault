@@ -122,19 +122,19 @@ async function linkToSearchResult(): Promise<void> {
 
 describe('RelationshipHeader', () => {
   it('shows no contact activity for a domain without activity', () => {
-    render(RelationshipHeader, baseProps({ detail: null, loading: false, missing: true }));
+    render(RelationshipHeader, { props: baseProps({ detail: null, loading: false, detailMissing: true, target: 'domain:example.com' }) });
     expect(screen.getByRole('status').textContent?.trim()).toBe('No sent or received messages with this contact yet.');
   });
 
   it('shows a missing person and hides the Files control', () => {
-    render(RelationshipHeader, baseProps({ detail: null, loading: false, notFound: true }));
+    render(RelationshipHeader, { props: baseProps({ detail: null, loading: false, detailMissing: true, target: 'cluster:12' }) });
     expect(screen.getByRole('status').textContent?.trim()).toBe('Person not found.');
     expect(screen.queryByRole('radiogroup', { name: 'Relationship view' })).toBeNull();
   });
 
   it('keeps a draft-only person’s identity and link controls with no activity', () => {
     render(RelationshipHeader, baseProps({ detail: { ...person(), activity_count: 0,
-      first_at: undefined, last_at: undefined }, missing: true }));
+      first_at: undefined, last_at: undefined } }));
     expect(screen.getByRole('heading', { name: 'Alice Example' })).toBeDefined();
     expect(screen.getByLabelText('Identity Alice')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Same person…' })).toBeDefined();
@@ -144,7 +144,7 @@ describe('RelationshipHeader', () => {
 
   it('hides the date range when no activity matches the context', () => {
     render(RelationshipHeader, baseProps({ detail: { ...person(), activity_count: 0 } }));
-    expect(screen.getByText(/0 items/).closest('p')?.textContent?.trim()).toBe('0 items');
+    expect(screen.getByText('No sent or received messages with this contact yet.').closest('p')?.textContent?.trim()).toBe('No sent or received messages with this contact yet.');
   });
 
   it('shows current attributes for a durable person and opens their editor in Directory', async () => {

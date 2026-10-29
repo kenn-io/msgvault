@@ -2079,8 +2079,7 @@ describe('RelationshipsController draft-only targets', () => {
 
     expect.soft(controller.timelineError).toBeNull();
     expect.soft(controller.detail?.activity_count ?? null).toBe(target.startsWith('cluster:') ? 0 : null);
-    expect.soft(controller.noActivity).toBe(true);
-    expect.soft(controller.personMissing).toBe(false);
+    expect.soft(controller.detailMissing).toBe(target.startsWith('domain:'));
     expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(target.startsWith('cluster:'));
     if (target.startsWith('cluster:')) {
       await vi.waitFor(() => expect(controller.relationshipCalendar).not.toBeNull());
@@ -2096,19 +2095,18 @@ describe('RelationshipsController draft-only targets', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       if (pathOf(request) === '/api/v1/participants/12') return Response.json({ error: 'participant_not_found', message: 'Participant cluster not found' }, { status: 404 });
-      return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      return Response.json({ error: 'participant_not_found' }, { status: 404 });
     });
     const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
 
     await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
 
     expect(controller.detail).toBeNull();
-    expect(controller.personMissing).toBe(true);
-    expect(controller.noActivity).toBe(false);
+    expect(controller.detailMissing).toBe(true);
     expect(controller.timelineError).toBeNull();
     expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
 
     controller.clearTarget();
-    expect(controller.personMissing).toBe(false);
+    expect(controller.detailMissing).toBe(false);
   });
 });
