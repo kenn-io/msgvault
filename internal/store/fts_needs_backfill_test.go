@@ -21,21 +21,21 @@ func TestStore_BackfillFTS_PreservesCompletedWork(t *testing.T) {
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")
 	}
-	ids := f.CreateMessages(3)
+	ids := f.CreateMessages(4)
 	for _, id := range ids {
 		require.NoError(f.Store.UpsertMessageBody(id,
 			sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
 	}
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	assertFTSContains(t, f.Store, "orchard", 3)
+	assertFTSContains(t, f.Store, "orchard", 4)
 
 	// Leave both an interior hole and an unindexed tail, as an interrupted
-	// sync or backfill can do while earlier messages remain searchable.
+	// sync or backfill can do. Keep ids[2] indexed above the interior hole.
 	if isPostgresTestDB() {
-		_, err = f.Store.DB().Exec("UPDATE messages SET search_fts = NULL WHERE id IN ($1, $2)", ids[1], ids[2])
+		_, err = f.Store.DB().Exec("UPDATE messages SET search_fts = NULL WHERE id IN ($1, $2)", ids[1], ids[3])
 	} else {
-		_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid IN (?, ?)", ids[1], ids[2])
+		_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid IN (?, ?)", ids[1], ids[3])
 	}
 	require.NoError(err)
 	require.True(f.Store.NeedsFTSBackfill())
@@ -45,13 +45,13 @@ func TestStore_BackfillFTS_PreservesCompletedWork(t *testing.T) {
 	t.Cleanup(restore)
 	_, err = f.Store.BackfillFTS(nil)
 	require.ErrorIs(err, interrupted)
-	assertFTSContains(t, f.Store, "orchard", 1)
+	assertFTSContains(t, f.Store, "orchard", 2)
 	restore()
 
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
 	assert.Equal(int64(2), n, "only missing entries need backfill")
-	assertFTSContains(t, f.Store, "orchard", 3)
+	assertFTSContains(t, f.Store, "orchard", 4)
 	assert.False(f.Store.NeedsFTSBackfill())
 }
 
