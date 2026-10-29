@@ -115,12 +115,12 @@ export const HIDDEN_OPTIONS: Readonly<Record<string, readonly string[]>> = {
 
 /** Every catalog field remains reachable in Settings. */
 export function categoryOf(setting: SettingState): CategoryID {
-  return setting.key.startsWith('carddav.') ? 'carddav' : normalizeCategory(setting.group);
+  return setting.key.startsWith('carddav.') ? 'carddav' : normalizeCategory(setting.group, 'advanced');
 }
 
-export function normalizeCategory(id: string): CategoryID {
+export function normalizeCategory(id: string, fallback: CategoryID = 'overview'): CategoryID {
   const aliases: Record<string, CategoryID> = { browser: 'advanced', archive: 'advanced', integrations: 'tasks', attachments: 'sources', people: 'enrichment' };
-  return RAIL.some(category => category.id === id) ? id as CategoryID : Object.hasOwn(aliases, id) ? aliases[id]! : 'overview';
+  return RAIL.some(category => category.id === id) ? id as CategoryID : Object.hasOwn(aliases, id) ? aliases[id]! : fallback;
 }
 
 function flat(block: Block): string[] {

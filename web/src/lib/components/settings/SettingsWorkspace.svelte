@@ -162,7 +162,6 @@
     if (activeCategory !== 'overview') return;
     void statusRevision;
     const controller = new AbortController();
-    coverage = undefined;
     void createExploreAPI(client).coverage([], controller.signal)
       .then(value => { if (!controller.signal.aborted) coverage = value; })
       .catch(() => undefined);
@@ -354,6 +353,21 @@
   // Endpoints save before credentials, which bind to their saved destination.
   async function saveSettings() {
     if (saving || inference.busy || dirtyCount === 0) return;
+    function credentialEndpoint(id: string): unknown {
+      const setting = find(`${id}.endpoint`);
+      return setting ? persistedValue(setting) : providers.find(provider => provider.credential_id === id)?.endpoint;
+    }
+    async function reloadAfterConflict(): Promise<string> {
+      const endpoints = new Map(Object.keys(credentialUpdates).map(id => [id, credentialEndpoint(id)]));
+      await loadSettings(true);
+      let droppedKey = false;
+      credentialUpdates = Object.fromEntries(Object.entries(credentialUpdates).filter(([id, update]) => {
+        if (update.action !== 'set' || endpoints.get(id) === credentialEndpoint(id)) return true;
+        droppedKey = true;
+        return false;
+      }));
+      return droppedKey ? ' Enter keys again for providers whose endpoint changed.' : '';
+    }
     const updates: SettingUpdate[] = [
       ...Object.entries(drafts)
         .filter(([key]) => !find(key)?.read_only)
@@ -365,7 +379,10 @@
         if (draft.enabled !== enabled) continue;
         const result = await putSettingsPersonEnrichmentProvider({ name }, providerUpdate(draft), { ...client, headers: { 'If-Match': etag } });
         if (!result.data) {
-          if (result.response.status === 412) await loadSettings(true);
+          if (result.response.status === 412) {
+            const keyMessage = await reloadAfterConflict();
+            throw new Error(`${name}: ${apiErrorMessage(result.error, "Can't save this provider.")}${keyMessage}`);
+          }
           throw new Error(`${name}: ${apiErrorMessage(result.error, "Can't save this provider.")}`);
         }
         providerSaved(result.data, result.response.headers.get('ETag') ?? etag);
@@ -384,8 +401,8 @@
           response,
         } = await generatedPatchSettings({ updates }, { ...client, headers: { 'If-Match': etag } });
         if (response.status === 412) {
-          await loadSettings(true);
-          error = 'The settings changed on disk. The latest are loaded. Review your changes and save again.';
+          const keyMessage = await reloadAfterConflict();
+          error = `The settings changed on disk. The latest are loaded. Review your changes and save again.${keyMessage}`;
           if (dirtyCount === 0) void focusCategoryHeading();
           return;
         }
@@ -416,8 +433,8 @@
           ? await generatedPutSettingsProviderCredential({ credentialId: credentialID }, { value: update.value }, options)
           : await generatedDeleteSettingsProviderCredential({ credentialId: credentialID }, options);
         if (response.status === 412) {
-          await loadSettings(true);
-          error = 'The key changed elsewhere. The latest is loaded. Review your changes and save again.';
+          const keyMessage = await reloadAfterConflict();
+          error = `The key changed elsewhere. The latest is loaded. Review your changes and save again.${keyMessage}`;
           return;
         }
         if (!data) {

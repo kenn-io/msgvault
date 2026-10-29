@@ -30,7 +30,10 @@ describe('overviewRows', () => {
   });
 
   it.each([
-    { status: 'initializing' as const, available: true, built: false, chip: 'Unbuilt' },
+    { status: 'initializing' as const, available: true, built: false, chip: 'Initializing' },
+    { status: 'initializing' as const, available: false, built: false, chip: 'Initializing' },
+    { status: 'unavailable' as const, available: false, built: false, chip: 'Unavailable' },
+    { status: 'unavailable' as const, available: true, built: false, chip: 'Unbuilt' },
     { status: 'ready' as const, available: false, built: true, chip: 'On' },
     { status: 'stale' as const, available: true, built: true, chip: 'Stale' },
   ])('gates the message build and chip on server coverage ($status)', ({ status, available, built, chip }) => {
@@ -69,4 +72,9 @@ it.each([['failed', 'Failed', 'danger'], ['partial', 'Partial', 'warning']] as c
   const rows = overviewRows(lanes(lane('person_enrichment', { latest: { id: 'lookup-1', kind: 'person_enrichment', lane: 'person_facts', state, started_at: '2026-01-01T00:00:00Z', counters: [] } })), undefined, undefined);
   expect(row(rows, 'person_enrichment').chip).toEqual({ text, tone });
   expect(row(rows, 'person_enrichment').action).toBeUndefined();
+});
+
+it('shows unavailable history for a configured lane without a latest run', () => {
+  const rows = overviewRows(lanes(lane('person_enrichment', { history_availability: 'unavailable' })), undefined, undefined);
+  expect(row(rows, 'person_enrichment').chip).toEqual({ tone: 'muted', text: 'History unavailable' });
 });
