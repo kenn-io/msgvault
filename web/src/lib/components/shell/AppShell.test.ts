@@ -2963,9 +2963,9 @@ it('selects a run and mounts detail restored from its URL', async () => {
   window.history.forward();
   await waitFor(() => expect(state.current.operationRunID).toBe(OPERATION_RUN));
   await waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true));
-  await fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources', exact: true })));
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources' })));
   rendered.unmount(); state.destroy();
   window.history.replaceState(null, '', sharedURL);
   state = new ExploreState(window);
