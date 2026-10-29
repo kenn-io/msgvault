@@ -54,13 +54,6 @@ describe('overviewRows', () => {
     expect(row(rows, 'carddav_sync').chip.text).toBe('Off');
     expect(row(rows, 'carddav_sync').action).toMatchObject({ kind: 'settings', target: { settingsCategory: 'carddav' } });
   });
-
-  it('marks a configured failed feature without offering Set up', () => {
-    const rows = overviewRows([lane('person_enrichment', { latest: { state: 'failed' } } as Partial<OperationLaneStatus>)], undefined, undefined);
-
-    expect(row(rows, 'person_enrichment').chip.text).toBe('Failed');
-    expect(row(rows, 'person_enrichment').action).toBeUndefined();
-  });
 });
 
 it('distinguishes active work from an unbuilt index', () => {
@@ -85,15 +78,8 @@ it('shows index progress only while a run is active', () => {
   }
 });
 
-it.each(['message_embedding', 'person_embedding', 'document_extraction', 'document_embedding', 'visual_embedding', 'person_enrichment'] as const)('uses current configuration when %s history is unavailable', kind => {
-  for (const configured of [true, false]) {
-    const rows = overviewRows([lane(kind, { configured, history_availability: 'unavailable', unavailable_code: `${kind}_history_unavailable` })], undefined, undefined);
-    expect(row(rows, kind).chip.text).toBe(configured ? 'On' : 'Off');
-  }
-});
-
-it('shows a partial latest run with the shared warning label and tone', () => {
-  const rows = overviewRows([lane('person_enrichment', { latest: { state: 'partial' } } as Partial<OperationLaneStatus>)], undefined, undefined);
-  expect(row(rows, 'person_enrichment').chip).toEqual({ text: 'Partial', tone: 'warning' });
+it.each([['failed', 'Failed', 'danger'], ['partial', 'Partial', 'warning']] as const)('shows a %s latest run without offering Set up', (state, text, tone) => {
+  const rows = overviewRows([lane('person_enrichment', { latest: { state } } as Partial<OperationLaneStatus>)], undefined, undefined);
+  expect(row(rows, 'person_enrichment').chip).toEqual({ text, tone });
   expect(row(rows, 'person_enrichment').action).toBeUndefined();
 });

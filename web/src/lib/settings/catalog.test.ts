@@ -35,8 +35,6 @@ describe('settings catalog', () => {
       'unsupported.private_value',
     );
   });
-
-
 });
 
 function setting(key: string, value: unknown, overrides: Partial<SettingState> = {}): SettingState {
