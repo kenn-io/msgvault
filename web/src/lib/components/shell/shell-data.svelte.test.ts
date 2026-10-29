@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient as apiClient } from '../../api/client';
 import type { SavedView } from '../../api/generated/models';
 import { view } from './fixtures.test-support';
-import { ShellData, viewIsFiles } from './shell-data.svelte';
+import { ShellData } from './shell-data.svelte';
 
 // Shell status polling is independent of each saved-view mutation fixture.
 const createAPIClient = (fetchFn: typeof fetch) => apiClient(async (input, init) => {
@@ -44,11 +44,6 @@ function setup(answers: Answers = {}) {
 }
 
 describe('ShellData', () => {
-
-  it('classifies saved views by presentation', () => {
-    expect(viewIsFiles(view(1, 'a'))).toBe(false);
-    expect(viewIsFiles(view(2, 'b', 'files'))).toBe(true);
-  });
 
   describe('saved views', () => {
     it('renames with the current revision and replaces the row', async () => {

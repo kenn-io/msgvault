@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-25"
+last_edited: "2026-10-29"
 title: Recommended Configuration
 description: Set up optional search and people features from your available provider keys, then check what still needs attention.
 ---
@@ -329,7 +329,7 @@ attributes. The plan describes this policy in both human and JSON output.
 `setup status` reads local configuration, the process environment, stored
 credentials, and archive consent records. It does not contact a provider. An
 `on` state means those setup checks passed; use the index's status command or
-[Web Operations](/docs/web-ui/#operations) to inspect build progress and
+[Settings Overview](/docs/web-ui/#settings-and-restart-behavior) to inspect build progress and
 coverage.
 
 ```text

@@ -54,7 +54,7 @@ describe('AppSidebar', () => {
   });
 
   it('nests saved views under the place they open', () => {
-    renderSidebar({ views: [view(1, 'Budget threads'), view(2, 'PDF invoices', 'files')] });
+    renderSidebar({ views: [view(1, 'Budget threads'), { ...view(2, 'PDF invoices', 'files'), schema_version: 1 }] });
     const messages = within(screen.getByRole('list', { name: 'Messages saved views' }));
     const files = within(screen.getByRole('list', { name: 'Files saved views' }));
     expect(messages.getByRole('button', { name: 'Budget threads' })).toBeTruthy();
