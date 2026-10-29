@@ -434,12 +434,14 @@ describe('OperationsController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
+      if (request.method === 'POST' && path.endsWith('/carddav/sync')) return Response.json({ status: 'partial', connections: [{ connection: 'work', status: 'partial' }, { connection: 'personal', status: 'succeeded' }] });
       if (request.method === 'POST') {
         return Response.json({ error: 'operation_conflict', message: 'synthetic conflict' }, { status: 409 });
       }
       if (path.endsWith('/status')) {
         return Response.json(statusResponse({
-          visual_embedding: { supported_actions: ['visual_build'] }
+          visual_embedding: { supported_actions: ['visual_build'] },
+          carddav_sync: { supported_actions: ['carddav_sync'] }
         }));
       }
       if (path === '/api/v1/operations/runs') return Response.json(runsResponse([]));
@@ -448,9 +450,10 @@ describe('OperationsController', () => {
     const controller = new OperationsController(createAPIClient(fetchFn));
     await controller.applyURLState(operationState({ operationRunID: RUN_ONE }), 'archive-a');
     await controller.runAction('visual_build');
+    expect(controller.snapshot.actionConflict).toBe('The operation could not start because current server state changed.');
     await controller.runAction('carddav_sync');
+    expect(controller.snapshot.actionError).toBe('CardDAV sync partial. Connections needing attention: work.');
     expect(controller.snapshot.detailError).not.toBeNull();
-    expect(controller.snapshot.actionConflict).not.toBeNull();
     expect(controller.snapshot.actionError).not.toBeNull();
 
     await controller.applyURLState(operationState({ operationLane: 'documents' }), 'archive-a');

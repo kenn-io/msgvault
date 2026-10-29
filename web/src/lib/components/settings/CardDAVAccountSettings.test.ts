@@ -224,8 +224,6 @@ describe('CardDAVAccountSettings', () => {
 
     rendered.unmount();
     expect(signal?.aborted).toBe(true);
-    deferred.resolve(Response.json({ base_url: 'https://old.example.test/', username: 'alice', enabled: false, books: 1 }));
-    await Promise.resolve();
   });
 });
 
