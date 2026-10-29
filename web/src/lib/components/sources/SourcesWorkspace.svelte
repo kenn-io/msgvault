@@ -1,15 +1,15 @@
 <script lang="ts">
   import { reportError } from '../../telemetry/actions';
   import {
+    listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
   } from '../../api/generated/api/api';
   import { Button, Chip, IconButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
-  import { SOURCE_STATUS_TIMEOUT_MS, type JobsStore } from '../../jobs/jobs.svelte';
   import { scheduleSummary } from '../../settings/cron';
   import { sourceTypeLabel, syncRunning, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
@@ -26,22 +26,22 @@
   const STALE_LAST_RESULT_MS = 24 * 60 * 60 * 1000;
   let {
     client,
-    jobs,
-    requestTimeoutMs = SOURCE_STATUS_TIMEOUT_MS,
+    requestTimeoutMs = 20_000,
     maxAwaitingPolls = 6,
     maxLockHoldPolls = 8,
     now = () => new Date(),
     onOpenOperations = () => undefined,
+    onStatusChange = () => undefined,
   }: {
     client: APIClient;
-    jobs: JobsStore;
     requestTimeoutMs?: number;
     maxAwaitingPolls?: number;
     maxLockHoldPolls?: number;
     now?: () => Date;
     onOpenOperations?: () => void;
+    onStatusChange?: () => void;
   } = $props();
-  const sources = $derived(jobs.sources);
+  let sources = $state<Source[]>([]);
   const expanded = new SvelteSet<number>();
   let loading = $state(true);
   let lockStatusStale = $state(false);
@@ -61,9 +61,6 @@
   let hasLoadedStatus = false;
   let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
   let disposed = false;
-  $effect(() => { void jobs.sources; untrack(() => {
-    if (hasLoadedStatus && controller === undefined && timer === undefined) schedulePoll(MIN_POLL_MS);
-  }); });
   onMount(() => {
     const visibilityChanged = (): void => {
       if (document.hidden) {
@@ -123,7 +120,7 @@
       void load();
     }, delay);
   }
-  async function load(supersede = false): Promise<void> {
+  async function load(): Promise<void> {
     if (disposed) return;
     if (document.hidden) {
       loading = false;
@@ -136,10 +133,10 @@
     controller = requestController;
     const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
-      const { data, error: responseError } = await jobs.readSources(signal, supersede);
+      const { data, error: responseError } = await generatedListSourceStatus(undefined, { ...client, signal });
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
-      const next = jobs.sources;
+      const next = data.sources ?? [];
       let nextDelay: number | undefined;
       let lockHoldPoll = false;
       let advanced = false;
@@ -191,6 +188,7 @@
         lockHoldPolls = 0;
         lockStatusStale = false;
       }
+      sources = next;
       statusError = '';
       hasLoadedStatus = true;
       if (nextDelay !== undefined) {
@@ -198,7 +196,7 @@
       }
     } catch (cause) {
       if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
-      if (cause instanceof Error && cause.name === 'TimeoutError') {
+      if (signal.aborted && signal.reason?.name === 'TimeoutError') {
         statusError = 'Loading source status timed out. The server may be busy; retry in a moment.';
       } else {
         statusError = cause instanceof Error ? cause.message : 'Unable to load source status.';
@@ -256,7 +254,7 @@
       awaitingBaselineRunID = source.latest_sync?.id;
       awaitingAttempts = 0;
       awaitingState = 'awaiting';
-      await load(true);
+      await load();
     } catch (cause) {
       if (disposed) return;
       triggerError = signal.aborted
@@ -265,6 +263,7 @@
       schedulePoll(MIN_POLL_MS);
     } finally {
       triggering = undefined;
+      onStatusChange();
     }
   }
   function label(source: Source): string {
@@ -299,7 +298,7 @@
     lockStatusStale = false;
     statusError = '';
     pollDelay = MIN_POLL_MS;
-    void load(true);
+    void load();
   }
 </script>
 
