@@ -211,7 +211,7 @@ func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) 
 		"score years stay pegged to UTC while the calendar uses local days")
 }
 
-func TestRelationshipCalendarReturnsEmptyForDraftOnlyAndRejectsMissingPeople(t *testing.T) {
+func TestRelationshipCalendarReturnsEmptyForDraftOnlyAndRejectsMissingAndOwnerPeople(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -249,10 +249,12 @@ func TestRelationshipCalendarReturnsEmptyForDraftOnlyAndRejectsMissingPeople(t *
 	assert.Empty(calendar.Annual)
 	assert.Empty(calendar.Days)
 
-	_, err = engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
-		CanonicalID: 999_999, Year: 2026, Timezone: "UTC",
-	})
-	assert.ErrorIs(err, ErrRelationshipPersonNotFound)
+	for _, canonicalID := range []int64{ownerCanonicalID, ownerID, 999_999} {
+		_, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
+			CanonicalID: canonicalID, Year: 2026, Timezone: "UTC",
+		})
+		assert.ErrorIs(err, ErrRelationshipPersonNotFound, canonicalID)
+	}
 }
 
 func TestRelationshipCalendarHandlesExtremeOffsetsDSTFractionalOffsetsAndLeapDays(t *testing.T) {

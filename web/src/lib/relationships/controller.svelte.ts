@@ -956,7 +956,7 @@ function currentYearInTimezone(timezone: string): number {
   }
 }
 function personFirstYear(person: PersonSummary | null, timezone: string, fallback: number): number {
-  if (!person?.first_at || person.activity_count === 0) return fallback;
+  if (!person?.first_at) return fallback;
   try {
     return Number(
       new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric' }).format(new Date(person.first_at)),

@@ -39,7 +39,7 @@
     key: string;
     target: string;
     label: string;
-    lastAt: string | undefined;
+    lastAt: string;
     summary: string;
   }
 
@@ -139,7 +139,7 @@
       key: `cluster:${row.id}`,
       target: `cluster:${row.id}`,
       label: row.display_label,
-      lastAt: row.last_at,
+      lastAt: row.last_at!,
       summary: `${row.activity_count.toLocaleString()} items`
     };
   }
@@ -351,7 +351,7 @@
               <div class="row-body">
                 <div class="row-main">
                   <Tooltip text={view.label}><span class="label" title={view.label}>{view.label}</span></Tooltip>
-                  <span class="last-at" data-mono>{view.lastAt ? compactDate(view.lastAt) : ''}</span>
+                  <span class="last-at" data-mono>{compactDate(view.lastAt)}</span>
                 </div>
                 <span class="row-summary" data-mono>{view.summary}</span>
               </div>

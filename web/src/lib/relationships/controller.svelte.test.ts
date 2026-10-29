@@ -2052,13 +2052,16 @@ describe('RelationshipsController draft-only targets', () => {
     { target: 'cluster:12', detailPath: '/api/v1/participants/12', timelinePath: '/api/v1/relationships/12/timeline', filtered: true },
     { target: 'domain:example.com', detailPath: '/api/v1/domains/example.com', timelinePath: '/api/v1/domains/example.com/timeline', filtered: true }
   ])('opens $target without a detail error, filtered=$filtered', async ({ target, detailPath, timelinePath, filtered }) => {
+    const draftPerson = { ...person(12), activity_count: 0 };
+    delete draftPerson.first_at;
+    delete draftPerson.last_at;
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
       if (path === detailPath) return target.startsWith('cluster:')
-        ? Response.json({ ...person(12), activity_count: 0, first_at: '0001-01-01T00:00:00Z', last_at: '0001-01-01T00:00:00Z' })
+        ? Response.json(draftPerson)
         : Response.json({ error: 'No contact activity' }, { status: 404 });
       if (path.endsWith('/calendar')) return Response.json({
         canonical_id: 12, year: new Date().getUTCFullYear(), timezone: 'UTC',

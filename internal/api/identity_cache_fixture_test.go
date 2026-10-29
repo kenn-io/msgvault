@@ -22,6 +22,7 @@ func ensureIdentityCacheFixtureDatasets(
 	tb testing.TB,
 	db *sql.DB,
 	analyticsDir string,
+	unsentMessages string,
 ) {
 	tb.Helper()
 	personDisplayNamesDir := filepath.Join(analyticsDir, "person_display_names")
@@ -36,6 +37,7 @@ func ensureIdentityCacheFixtureDatasets(
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: analyticsDir,
 		OutputRoot:     analyticsDir,
+		UnsentMessages: unsentMessages,
 	})
 	require.NoError(tb, err, "derive identity fixture datasets")
 }

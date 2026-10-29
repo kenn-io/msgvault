@@ -3,19 +3,16 @@ package api
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -615,25 +612,10 @@ func TestParticipantDetailDistinguishesDraftOnlyAndMissingPeople(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	t.Parallel()
-	_, analyticsDir := newExploreDuckDBFixtureWithDir(t)
-	db, err := sql.Open("duckdb", "")
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(db.Close()) })
-	_, err = identityindex.Build(t.Context(), db, identityindex.BuildOptions{
-		Mode: identityindex.ModeFull, StagedBaseRoot: analyticsDir, OutputRoot: analyticsDir,
-		UnsentMessages: "(SELECT 3::BIGINT AS message_id)",
-	})
-	require.NoError(err)
-	state, err := query.ReadCacheSyncState(analyticsDir)
-	require.NoError(err)
-	state.DatasetFingerprint, err = query.CacheDatasetFingerprint(analyticsDir)
-	require.NoError(err)
-	stateJSON, err := json.Marshal(state)
-	require.NoError(err)
-	require.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), stateJSON, 0o600))
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(engine.Close()) })
+	engine, _ := newExploreDuckDBFixtureWithClusters(
+		t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, "", 3,
+		"(SELECT 3::BIGINT AS message_id)",
+	)
 	server := newTestServerWithEngine(t, engine)
 
 	response := httptest.NewRecorder()

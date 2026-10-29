@@ -92,11 +92,11 @@ function fetchHandler(overrides: Record<string, (request: Request) => Promise<Re
 
 describe('RelationshipsWorkspace relationship calendar', () => {
   it.each([false, true])('distinguishes missing people from draft-only contacts, missing=%s', async (missing) => {
+    const { first_at, last_at, ...draftPerson } = { ...person(1, 'Draft recipient'), activity_count: 0 };
     const { fetchFn, requests } = fetchHandler({
       '/api/v1/participants/1': () => missing
         ? Response.json({ error: 'participant_not_found' }, { status: 404 })
-        : Response.json({ ...person(1, 'Draft recipient'), activity_count: 0,
-          first_at: '0001-01-01T00:00:00Z', last_at: '0001-01-01T00:00:00Z' }),
+        : Response.json(draftPerson),
       '/api/v1/relationships/1/timeline': () => Response.json({
         canonical_id: 1, identity_revision: 3, cache_revision: 'cache-rel', rows: [], total_count: 0
       }),
