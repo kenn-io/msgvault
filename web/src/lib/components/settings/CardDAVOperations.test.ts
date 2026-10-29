@@ -174,3 +174,19 @@ it('labels history from the API connection rather than the account ID', async ()
   ]);
   controller.destroy();
 });
+
+it('offers one sync action and lets the daemon choose reconciliation', async () => {
+  const controller = new CardDAVController(createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path.endsWith('/status')) return Response.json({ configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' });
+    if (path.endsWith('/books')) return Response.json({ books: [] });
+    return Response.json({ runs: [] });
+  }));
+  await controller.load();
+  const sync = vi.spyOn(controller, 'sync').mockResolvedValue(undefined);
+  render(CardDAVOperations, { controller });
+  expect(screen.queryByRole('button', { name: 'Full sync' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
+  expect(sync).toHaveBeenCalledExactlyOnceWith(false, undefined);
+  controller.destroy();
+});

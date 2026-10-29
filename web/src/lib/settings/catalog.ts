@@ -111,25 +111,25 @@ export function isChange(setting: SettingState | undefined, value: unknown): boo
 }
 
 export function providerUpdate(value: ProviderSetting): ProviderUpdate {
-    return {
-      kind: value.kind,
-      enabled: value.enabled,
-      endpoint: value.endpoint,
-      poll_endpoint: value.poll_endpoint,
-      mode: value.mode,
-      tier: value.tier,
-      num_results: value.num_results,
-      allowed_identifiers: value.allowed_identifiers ?? [],
-      target_keys: value.target_keys ?? [],
-      allow_sensitive_targets: value.allow_sensitive_targets,
-      retention_posture: value.retention_posture,
-      training_posture: value.training_posture,
-      refresh_interval: value.refresh_interval,
-      request_timeout: value.request_timeout,
-      poll_interval: value.poll_interval,
-      max_job_age: value.max_job_age,
-      max_retries: value.max_retries,
-      max_requests_per_run: value.max_requests_per_run,
-      max_requests_per_day: value.max_requests_per_day,
-    };
-  }
+  return {
+    kind: value.kind,
+    enabled: value.enabled,
+    endpoint: value.endpoint,
+    poll_endpoint: value.poll_endpoint,
+    mode: value.mode,
+    tier: value.tier,
+    num_results: value.num_results,
+    allowed_identifiers: value.allowed_identifiers ?? [],
+    target_keys: value.target_keys ?? [],
+    allow_sensitive_targets: value.allow_sensitive_targets,
+    retention_posture: value.retention_posture,
+    training_posture: value.training_posture,
+    refresh_interval: value.refresh_interval,
+    request_timeout: value.request_timeout,
+    poll_interval: value.poll_interval,
+    max_job_age: value.max_job_age,
+    max_retries: value.max_retries,
+    max_requests_per_run: value.max_requests_per_run,
+    max_requests_per_day: value.max_requests_per_day,
+  };
+}

@@ -18,7 +18,6 @@
   configured={shown.configured}
   hint={shown.hint}
   source={credentialState?.source}
-  disabled={credentialState?.source === 'environment'}
   onreplace={(value) => { onchange({ action: 'set', value }); return true; }}
   onclear={shown.configured && (pending?.action === 'set' || credentialState?.source === 'stored')
     ? () => onchange(credentialState?.source === 'stored' ? { action: 'clear' } : undefined)
