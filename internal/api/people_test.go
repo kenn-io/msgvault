@@ -614,7 +614,7 @@ func TestParticipantDetailDistinguishesDraftOnlyAndMissingPeople(t *testing.T) {
 	t.Parallel()
 	engine, _ := newExploreDuckDBFixtureWithClusters(
 		t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, "", 3,
-		"(SELECT 3::BIGINT AS message_id)",
+		identityCacheFixtureOptions{unsentMessages: "(SELECT 3::BIGINT AS message_id)"},
 	)
 	server := newTestServerWithEngine(t, engine)
 

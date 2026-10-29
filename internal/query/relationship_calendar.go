@@ -100,33 +100,8 @@ func (e *DuckDBEngine) RelationshipCalendar(
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
 	response, effectiveAt, err := e.relationshipTemperatureSummary(ctx, request.CanonicalID)
-	noActivity := false
 	if errors.Is(err, ErrRelationshipPersonNotFound) {
-		var exists bool
-		if err := e.db.QueryRowContext(ctx, `
-			SELECT EXISTS (SELECT 1 FROM participants p WHERE p.id = ?
-				AND `+e.sqlNonOwnerParticipant("p.id")+`)
-		`, request.CanonicalID).Scan(&exists); err != nil {
-			return nil, fmt.Errorf("read relationship participant existence: %w", err)
-		}
-		if !exists {
-			return nil, ErrRelationshipPersonNotFound
-		}
-		people := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
-		if err := e.db.QueryRowContext(ctx, `
-			SELECT COALESCE(MAX(temperature_effective_at), ?)
-			FROM read_parquet('`+people+`')
-		`, state.LastSyncAt).Scan(&effectiveAt); err != nil {
-			return nil, fmt.Errorf("read relationship effective date: %w", err)
-		}
-		response = &RelationshipCalendarResponse{
-			Annual:        []identityindex.AnnualTemperatureSummary{},
-			Days:          []RelationshipCalendarDay{},
-			ScoreVersion:  identityindex.RelationshipScoreVersion,
-			EffectiveDate: effectiveAt.UTC().Format(time.DateOnly),
-		}
-		noActivity = true
-		err = nil
+		return e.emptyRelationshipCalendar(ctx, request, timezone, state)
 	}
 	if err != nil {
 		return nil, err
@@ -137,14 +112,53 @@ func (e *DuckDBEngine) RelationshipCalendar(
 	response.ScoringTimezone = relationshipScoringTimezone
 	response.CacheRevision = state.Revision()
 	response.IdentityRevision = state.IdentityRevision
-	if noActivity {
-		return response, nil
-	}
 	response.Days, err = e.relationshipCalendarDays(ctx, request, location, effectiveAt)
 	if err != nil {
 		return nil, err
 	}
 	return response, nil
+}
+
+func (e *DuckDBEngine) emptyRelationshipCalendar(
+	ctx context.Context, request RelationshipCalendarRequest, timezone string, state CacheSyncState,
+) (*RelationshipCalendarResponse, error) {
+	people := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
+	clusters := quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters))
+	var exists bool
+	if err := e.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM participants p
+			LEFT JOIN read_parquet('`+clusters+`') c ON c.participant_id = p.id
+			WHERE p.id = ? AND NOT EXISTS (
+				SELECT 1 FROM read_parquet('`+people+`') pe
+				WHERE pe.canonical_id = COALESCE(c.canonical_id, p.id)
+			)
+		)
+	`, request.CanonicalID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("read relationship participant existence: %w", err)
+	}
+	if !exists {
+		return nil, ErrRelationshipPersonNotFound
+	}
+	var effectiveAt time.Time
+	if err := e.db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(temperature_effective_at), ?)
+		FROM read_parquet('`+people+`')
+	`, state.LastSyncAt).Scan(&effectiveAt); err != nil {
+		return nil, fmt.Errorf("read relationship effective date: %w", err)
+	}
+	return &RelationshipCalendarResponse{
+		CanonicalID:      request.CanonicalID,
+		Year:             request.Year,
+		Timezone:         timezone,
+		Annual:           []identityindex.AnnualTemperatureSummary{},
+		Days:             []RelationshipCalendarDay{},
+		ScoreVersion:     identityindex.RelationshipScoreVersion,
+		EffectiveDate:    effectiveAt.UTC().Format(time.DateOnly),
+		ScoringTimezone:  relationshipScoringTimezone,
+		CacheRevision:    state.Revision(),
+		IdentityRevision: state.IdentityRevision,
+	}, nil
 }
 
 func validateRelationshipCalendarRequest(

@@ -1016,14 +1016,14 @@ func newExploreDuckDBFixtureWithMessagesAndRecipients(
 	tb testing.TB, messageValues, recipientValues string, lastMessageID int64,
 ) (*query.DuckDBEngine, string) {
 	tb.Helper()
-	return newExploreDuckDBFixtureWithClusters(tb, messageValues, recipientValues, "", lastMessageID, "")
+	return newExploreDuckDBFixtureWithClusters(tb, messageValues, recipientValues, "", lastMessageID)
 }
 
 // newExploreDuckDBFixtureWithClusters also commits participant_clusters rows
 // (participant_id, canonical_id); empty clusterValues commits no clusters.
 func newExploreDuckDBFixtureWithClusters(
 	tb testing.TB, messageValues, recipientValues, clusterValues string, lastMessageID int64,
-	unsentMessages string,
+	options ...identityCacheFixtureOptions,
 ) (*query.DuckDBEngine, string) {
 	tb.Helper()
 	clusters, noClusters := clusterValues, clusterValues == ""
@@ -1071,7 +1071,7 @@ func newExploreDuckDBFixtureWithClusters(
 		_, err := db.Exec(fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
 		require.NoError(tb, err, "write %s", table.dir)
 	}
-	ensureIdentityCacheFixtureDatasets(tb, db, analyticsDir, unsentMessages)
+	ensureIdentityCacheFixtureDatasets(tb, db, analyticsDir, options...)
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	require.NoError(tb, err)
 	state, err := json.Marshal(query.CacheSyncState{
