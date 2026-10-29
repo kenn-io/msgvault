@@ -53,7 +53,7 @@
   let activeAction = $state<Action | undefined>();
   let error = $state('');
   let status = $state('');
-  let testedTuple = $state('');
+  let testedTuple = $state(untrack(() => draft?.testedTuple ?? ''));
   let requestController: AbortController | undefined;
   let actionGeneration = 0;
   let disposed = false;
@@ -161,7 +161,7 @@
     const currentValues: CardDAVAccountValues = { provider, oauthApp, baseURL, username, passwordConfigured: persistedPasswordConfigured, enabled, schedule };
     const changed = provider !== persistedProvider || oauthApp !== persistedOAuthApp || baseURL !== persistedBaseURL || username !== persistedUsername || enabled !== persistedEnabled || schedule !== persistedSchedule || password !== '';
     const needsPassword = passwordRequiredForSave() && password === '';
-    onDraft(changed ? { values: currentValues, password, error: needsPassword ? 'Password is required for a new or changed CardDAV account.' : (!oauth && !baseURL) || !username ? 'Enter the contact account URL and username.' : undefined } : undefined);
+    onDraft(changed || testedTuple === identityTuple() ? { values: currentValues, password, testedTuple, error: needsPassword ? 'Password is required for a new or changed CardDAV account.' : (!oauth && !baseURL) || !username ? 'Enter the contact account URL and username.' : undefined } : undefined);
   });
   function apiErrorMessage(responseError: unknown, fallback: string): string {
     if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {

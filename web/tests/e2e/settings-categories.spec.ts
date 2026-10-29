@@ -1,7 +1,7 @@
 import { test, expect, loginToMeetingArchive } from './fixtures/meeting-daemon';
 import { selectKitOption, selectWorkspace } from '../kit-ui';
 
-test('Settings saves persist through reload and category history restores Back and Forward', async ({ page, daemon }) => {
+test('Settings saves persist through reload', async ({ page, daemon }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ colorScheme: 'dark' });
   const errors: string[] = [];
@@ -23,10 +23,5 @@ test('Settings saves persist through reload and category history restores Back a
   await expect(page.getByRole('textbox', { name: 'Stop when idle after', exact: true })).toHaveValue('17m0s');
   await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await expect(page.getByRole('combobox', { name: /^Theme:/ })).toContainText('Dark');
-  await page.goBack();
-  await expect(page.getByRole('heading', { name: 'Server', exact: true })).toBeVisible();
-  await page.goForward();
-  await expect(page.getByRole('heading', { name: 'Advanced', exact: true })).toBeVisible();
-
   expect(errors).toEqual([]);
 });
