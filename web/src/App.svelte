@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { completeParticipants } from './lib/api/generated/api/api';
-  import { personLabel } from './lib/components/reader/people';
   import { defaultExploreURLState, serializeExploreURLState } from './lib/explore/state.svelte';
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
@@ -147,12 +145,7 @@
   <Login {session} />
 {:else if shellMounted}
   {#if messageID !== undefined}
-    <MessagePage client={session.client} {messageID} onOpenPerson={async (value) => {
-      const address = personLabel(value).address;
-      const { data } = await completeParticipants({ query: address, limit: 20 }, session.client);
-      const match = data?.rows.find((row) => row.value.toLowerCase() === address.toLowerCase());
-      if (match) window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, workspace: 'relationships', relationshipTarget: `cluster:${match.participant_id}` })}`);
-    }} />
+    <MessagePage client={session.client} {messageID} onOpenPerson={(participantID) => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, workspace: 'relationships', relationshipTarget: `cluster:${participantID}` })}`)} onOpenSettings={() => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, workspace: 'settings', settingsCategory: 'tasks' })}`)} />
   {:else}
   <AppShell client={session.client} {appearanceDefaults} {searchModeDefault}>
     {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources, onOpenStatus, onStatusChange, operationsController)}

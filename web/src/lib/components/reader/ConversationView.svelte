@@ -6,14 +6,14 @@
     getConversation as generatedGetConversation,
     getMessage as generatedGetMessage,
   } from '../../api/generated/api/api';
-  import type { MessageDetail as GeneratedMessageDetail } from '../../api/generated/models';
+  import type { ConversationMessage as GeneratedConversationMessage } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
   import type { MessageViewMode } from '../../archive/types';
   import MessageCard from './MessageCard.svelte';
   import { reportError, reportAction, reportWhenVisible } from '../../telemetry/actions';
 
-  type APIMessageDetail = GeneratedMessageDetail;
+  type APIMessageDetail = GeneratedConversationMessage;
 
   let {
     client,
@@ -27,7 +27,7 @@
     onOpenMeeting = undefined,
   }: {
     client: APIClient;
-    onOpenPerson?: (address: string) => void;
+    onOpenPerson?: (participantID: number) => void;
     onOpenSettings?: () => void;
     onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void;
     conversationId: number;
@@ -264,7 +264,8 @@
       conversationId: message.conversation_id ?? conversationId,
       subject: message.subject,
       sender: message.is_from_me ? 'You' : message.from,
-      senderAddress: message.from,
+      senderParticipantID: message.from_participant_id,
+      recipientParticipants: message.to_participants?.map((recipient) => ({ display: recipient.display, participantID: recipient.participant_id })),
       recipients: message.to ?? [],
       sentAt: message.sent_at,
       snippet: message.snippet,

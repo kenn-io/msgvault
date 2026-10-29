@@ -106,6 +106,8 @@
       ariaExpanded={filtersOpen}
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
+    {/if}
+    {#if !messages || presentation !== 'table'}
     <SelectDropdown
       value={presentation}
       options={presentationOptions}

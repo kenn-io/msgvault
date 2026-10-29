@@ -65,6 +65,8 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	message := window.Messages[0]
 	assert.True(message.IsFromMe)
 	assert.Equal("Alice <alice@example.com>", message.From)
+	assert.Equal(senderID, message.FromParticipantID)
+	assert.Equal([]store.ParticipantDisplay{{ParticipantID: toID, Display: "Bob <bob@example.com>"}}, message.ToParticipants)
 	assert.Equal([]string{"Bob <bob@example.com>"}, message.To)
 	assert.Equal([]string{"Carol <carol@example.com>"}, message.Cc)
 	assert.Equal([]string{"Dave <dave@example.com>"}, message.Bcc)

@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { completeParticipants } from '../../api/generated/api/api';
-  import { personLabel } from '../reader/people';
   import { getCLIMessageRaw as generatedGetCLIMessageRaw } from '../../api/generated/api/api';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
@@ -1148,18 +1146,6 @@
     }
     void relationshipsController.openTarget(target, predicate);
   });
-  async function openPerson(value: string): Promise<void> {
-    const address = personLabel(value).address;
-    try {
-      const { data } = await completeParticipants({ query: address, limit: 20 }, client);
-      const match = data?.rows.find((row) => row.value.toLowerCase() === address.toLowerCase());
-      if (!match) throw new Error('This person is unavailable.');
-      openRelationship(match.participant_id);
-    } catch (cause) {
-      showFlash(cause instanceof Error ? cause.message : 'This person is unavailable.', { tone: 'danger' });
-    }
-  }
-
   function openRelationship(participantID: number): void {
     commitNavigation({
       workspace: 'relationships',
@@ -1575,7 +1561,7 @@
           {drillGroup}
           closeReadingPane={() => void closeReadingPane()}
           {openRelationship}
-          {openPerson}
+          openPerson={openRelationship}
           {changeConversationAnchor}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           onSaveView={() => (saveViewOpen = true)}

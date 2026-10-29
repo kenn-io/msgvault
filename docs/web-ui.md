@@ -110,8 +110,9 @@ and Forward restore them.
 
 One toolbar sits above the results:
 
-- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected local calendar days.
+- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected local calendar days. From must be on or before To.
 - **Group by** adds a grouping level. Add more levels to group within groups.
+- A restored Timeline shows **Show as** so you can return to Table.
 - The count at the end reports items, or groups when the view is grouped.
 
 Each active search, filter, and grouping appears as a removable chip below the
@@ -196,7 +197,7 @@ background, and border colors. Images keep their original colors. Choose
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
 
-Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a sender or recipient to open their person view; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Unavailable task connections offer **Open Settings**.
+Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a linked sender or recipient to open that exact person; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Unavailable task connections offer **Open Settings**.
 
 ## Meeting context and follow-ups
 
