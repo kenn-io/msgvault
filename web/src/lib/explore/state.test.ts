@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { waitFor } from '@testing-library/svelte';
 
 import type {
   ExplorePredicate,
@@ -40,22 +41,46 @@ describe('Explore URL state', () => {
     const state = new ExploreState(window);
     try {
       state.commitWorkspace('settings');
-      if (direction === 'forward') {
-        state.commitWorkspace('sources');
-        window.history.back();
-        await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      }
+      state.commitWorkspace('files');
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      const historyLength = window.history.length;
       let leave!: () => void;
       state.holdLeave = (next) => { leave = next; return true; };
       window.history[direction]();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       expect(state.current.workspace).toBe('settings');
-      expect(window.location.search).toBe('?workspace=settings&mode=full_text');
+      await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
       state.holdLeave = undefined;
       leave();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      expect(state.current.workspace).toBe('sources');
-      expect(window.location.search).toBe('?workspace=sources&mode=full_text');
+      expect(state.current.workspace).toBe(direction === 'back' ? 'sources' : 'files');
+      expect(window.location.search).toBe(direction === 'back' ? '?workspace=sources&mode=full_text' : '?workspace=files&mode=full_text');
+      expect(window.history.length).toBe(historyLength);
+    } finally {
+      state.destroy();
+    }
+  });
+
+  it.each(['back', 'forward'] as const)('preserves history after browser %s from dirty Settings and Stay', async (direction) => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    try {
+      state.commitWorkspace('settings');
+      state.commitWorkspace('files');
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      const historyLength = window.history.length;
+      state.holdLeave = () => true;
+      window.history[direction]();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
+      expect(state.current.workspace).toBe('settings');
+      expect(window.history.length).toBe(historyLength);
+
+      state.holdLeave = undefined;
+      window.history[direction === 'back' ? 'forward' : 'back']();
+      await waitFor(() => expect(state.current.workspace).toBe(direction === 'back' ? 'files' : 'sources'));
     } finally {
       state.destroy();
     }

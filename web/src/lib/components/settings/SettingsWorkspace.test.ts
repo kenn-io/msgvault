@@ -176,6 +176,30 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
   expect(hold).toBeUndefined();
 });
 
+it('does not hold leaving while a settings save is pending', async () => {
+  let finish!: () => void;
+  const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
+  const { client, seen } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/settings') && request.method === 'PATCH') return pending;
+  });
+  let hold: ((leave: () => void) => boolean) | undefined;
+  render(SettingsWorkspace, {
+    props: { client, category: 'server' },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  const field = await screen.findByLabelText('Stop when idle after');
+  await fireEvent.input(field, { target: { value: '15m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  try {
+    await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
+    expect(hold?.(vi.fn())).toBe(false);
+    expect(screen.queryByText('Leave Settings and discard 1 unsaved change?')).toBeNull();
+  } finally {
+    finish();
+  }
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+});
+
 it('blocks reload only while Settings has unsaved drafts', async () => {
   const { client } = fixture();
   render(SettingsWorkspace, { client, category: 'server' });
