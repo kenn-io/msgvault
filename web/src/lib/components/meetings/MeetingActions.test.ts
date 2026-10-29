@@ -254,3 +254,9 @@ it('cancels a pending continuation and ignores its response after changing reade
   expect(screen.queryByText('First action')).toBeNull();
   expect(screen.queryByText('Stale continuation')).toBeNull();
 });
+
+it('keeps a differing archived status visible in compact action rows', async () => {
+  render(MeetingActions, { compact: true, client: createAPIClient(async () => Response.json(page())), evidence: page({ rows: [{ meeting, action: { ordinal: 0, locator: 'a', origin: 'source', title: 'Review notes', status: 'unknown', source_status: 'in_progress' } }] }) });
+  expect(await screen.findByText('Source status: in_progress')).toBeDefined();
+  expect(screen.getByText('unknown')).toBeDefined();
+});

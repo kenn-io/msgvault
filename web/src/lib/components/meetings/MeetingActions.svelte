@@ -89,9 +89,10 @@
             <Chip size="xs" uppercase={false} tone={row.action.status === 'completed' || row.action.status === 'cancelled' ? 'muted' : 'info'}>{row.action.status === 'completed' ? 'Done' : row.action.status === 'pending' ? 'Open' : row.action.status}</Chip>
             <div>
               <strong>{row.action.title}</strong>
+              {#if row.action.source_status != null && row.action.source_status !== row.action.status}<p class="compact-meta">Source status: {row.action.source_status}</p>{/if}
               {#if row.action.description}<p>{row.action.description}</p>{/if}
               <p class="compact-meta">{assignee(row)}{row.action.due_date ? ` · Due ${row.action.due_date}` : ''}</p>
-              {#if !request}<a href={row.meeting.archive_path} onclick={(event) => openMeeting(event, row.meeting)}>{row.meeting.title || 'Open archived meeting'}</a>{/if}
+              <a href={row.meeting.archive_path} onclick={(event) => openMeeting(event, row.meeting)}>{row.meeting.title || 'Open archived meeting'}</a>
             </div>
           </li>
         {/each}

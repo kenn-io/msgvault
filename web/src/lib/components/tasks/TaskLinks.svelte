@@ -19,7 +19,7 @@
   type Task = GeneratedTaskSummary;
   let {
     client,
-    mode = 'both',
+    mode = 'list',
     busy = $bindable(false),
     oncomplete = undefined,
     messageId,
@@ -29,7 +29,7 @@
     onsettings = () => undefined,
   }: {
     client: APIClient;
-    mode?: 'both' | 'list' | 'add';
+    mode?: 'list' | 'add';
     busy?: boolean;
     oncomplete?: () => void;
     messageId: number;
@@ -53,7 +53,6 @@
   let searching = $state(false);
   let mutating = $state(false);
   let error = $state('');
-  let creating = $state(false);
   let outboundMetadata = $state<OutboundMetadata | null>(null);
   let generation = 0;
   let activeController: AbortController | null = null;
@@ -86,7 +85,6 @@
     searching = false;
     mutating = false;
     error = '';
-    creating = false;
     outboundMetadata = null;
     existingLinkRetry = undefined;
   }
@@ -263,20 +261,12 @@
 <section class="task-links" aria-label="Linked tasks">
   {#if mode !== 'add'}<header>
     <h2>Tasks</h2>
-    {#if mutationReady && mode === 'both'}<Button
-        size="sm"
-        surface="soft"
-        label="Create task"
-        onclick={() => {
-          creating = true;
-        }}
-      />{/if}
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded}<div class="degraded" role={mode !== 'both' && integrationState === 'disabled' ? 'status' : 'alert'}>
-        <p>{stateMessage}{mode === 'both' ? ' Mutations are disabled.' : ''}</p>
-        <Button size="sm" surface="soft" label={mode !== 'both' && integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onclick={onsettings} />
+    {#if degraded}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
+        <p>{stateMessage}</p>
+        <Button size="sm" surface="soft" label={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onclick={onsettings} />
       </div>{/if}
     {#if partialIndex}<p role="alert">{stateMessage}</p>{/if}
     {#if sessionOnlyIndex}<p role="status">
@@ -297,11 +287,9 @@
       </ul>
     {:else if complete}<p>No linked tasks.</p>{/if}
     {/if}
-    {#if mutationReady && mode !== 'list'}
-      {#if mode === 'add'}
-        <SegmentedControl disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
-      {/if}
-      {#if mode !== 'add' || action !== 'create'}
+    {#if mutationReady && mode === 'add'}
+      <SegmentedControl disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
+      {#if action !== 'create'}
       <form
         onsubmit={(event) => {
           event.preventDefault();
@@ -326,15 +314,15 @@
             </li>{/each}
         </ul>
       {/if}
-    {/if}
       {/if}
+    {/if}
     {#if error}<p role="alert">{error}</p>{/if}
   {/if}
 </section>
 
-{#if (creating || (mode === 'add' && action === 'create' && mutationReady)) && outboundMetadata}
+{#if mode === 'add' && action === 'create' && mutationReady && outboundMetadata}
   <CreateTaskDialog
-    embedded={mode === 'add'}
+    embedded
     bind:pending={busy}
     {client}
     {messageId}
@@ -348,12 +336,8 @@
     subject={outboundMetadata.subject}
     from={outboundMetadata.from}
     sentAt={outboundMetadata.sent_at}
-    onclose={() => {
-      creating = false;
-      oncomplete?.();
-    }}
+    onclose={() => oncomplete?.()}
     oncreated={() => {
-      creating = false;
       void loadFor(messageId);
       oncomplete?.();
     }}
