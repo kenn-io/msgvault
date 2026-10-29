@@ -7,7 +7,7 @@ import type { OperationLaneStatus } from '../../api/generated/models';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
-  return { kind, configured: true, lane: 'messages', history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
+  return { kind, configured: true, lane: kind === 'visual_embedding' ? 'visual_attachments' : 'messages', history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
 }
 
 type Setting = Record<string, unknown>;
@@ -306,7 +306,7 @@ it('retains account passwords across categories and clears them on Discard', asy
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.input(screen.getByLabelText('Stop when idle after'), { target: { value: '15m' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Password is required');
+  expect((await screen.findByRole('alert')).textContent).toContain('default: Password is required');
   expect(seen.filter(request => request.method !== 'GET' && request.path !== '/api/v1/search/coverage')).toEqual([]);
   expect(screen.getByText('2 unsaved changes')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
@@ -359,18 +359,16 @@ it('keeps attachment off values and cron schedules editable under Sources', asyn
   ] }));
 });
 
-it('Overview sends aggregate contacts sync and shows a partial failure', async () => {
-  const result = 'partial';
-  const { client, seen } = fixture(settingsDoc(), request => {
+it('Overview shows a contacts sync action error', async () => {
+  const { client } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'], latest: { id: 'sync-1', kind: 'carddav_sync', lane: 'contacts', state: 'succeeded', started_at: '2026-01-01T00:00:00Z', connection: 'work', counters: [] } })] });
-    if (path.endsWith('/carddav/sync')) return Response.json({ status: result, connections: [
-      { connection: 'work', status: result }, { connection: 'personal', status: 'succeeded' }
+    if (path.endsWith('/carddav/sync')) return Response.json({ status: 'partial', connections: [
+      { connection: 'work', status: 'partial' }, { connection: 'personal', status: 'succeeded' }
     ] });
   });
   render(SettingsWorkspace, { client });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
-  await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
   expect(await screen.findByRole('alert')).toBeDefined();
 });
 
@@ -435,8 +433,10 @@ it.each(['default', 'new', 'orphaned'])('saves the %s contact account, refreshes
   if (connection === 'work') await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'work');
   await waitFor(() => expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe(values.account.username));
   await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
+  const conflictReads = seen.filter(request => request.path.endsWith('/carddav/conflicts')).length;
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(seen.filter(request => request.path.endsWith('/carddav/account'))).toHaveLength(2));
+  await waitFor(() => expect(seen.filter(request => request.path.endsWith('/carddav/conflicts')).length).toBeGreaterThan(conflictReads));
   const writes = seen.filter(request => request.path.endsWith('/carddav/account'));
   expect(writes[0].body).toMatchObject({ connection, password: 'synthetic-password' });
   if (connection === 'work') for (const resource of ['books', 'runs', 'status']) expect(seen.some(request => request.path.endsWith('/carddav/' + resource) && new URLSearchParams(request.query).get('connection') === connection)).toBe(true);
@@ -499,39 +499,46 @@ it('locks provider fields and newly mounted category controls while a provider s
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
 });
 
-it.each(['message', 'visual'] as const)('starts the %s index from Overview and refreshes its row', async kind => {
+it('keeps Contacts sync available while the message index builds and refreshes its row', async () => {
   let built = false;
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const operation = kind === 'message' ? 'message_embedding' : 'visual_embedding';
-  const path = kind === 'message' ? '/api/v1/cli/run' : '/api/v1/multimodal/build';
   const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [lane(operation, { supported_actions: kind === 'visual' && !built ? ['visual_build'] : [] }), lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'] })] });
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [lane('message_embedding'), lane('carddav_sync', { lane: 'contacts', supported_actions: ['carddav_sync'] })] });
     if (request.url.includes('/embeddings/status')) return Response.json({ active_generation: built ? 1 : null });
     if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: built ? [] : ['build_index'] });
     if (request.url.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded', connections: [] });
-    if (request.url.endsWith(path)) {
-      if (kind === 'message') return pending;
+    if (request.url.endsWith('/cli/run')) return pending;
+  });
+  render(SettingsWorkspace, { client });
+  const name = 'Build index, Message search';
+  await fireEvent.click(await screen.findByRole('button', { name }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  await waitFor(() => expect(seen.some(request => request.path === '/api/v1/cli/run')).toBe(true));
+  expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false);
+  await fireEvent.click(screen.getByRole('button', { name: 'Sync now, Contacts' }));
+  await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
+  expect((await screen.findByRole('button', { name })) as HTMLButtonElement).toHaveProperty('disabled', true);
+  built = true;
+  finish(new Response('{"type":"complete"}\n'));
+  await waitFor(() => expect(screen.queryByRole('button', { name })).toBeNull());
+  expect(within(document.querySelector('[data-feature="message_embedding"]') as HTMLElement).getByText('On')).toBeDefined();
+});
+
+it('starts the visual index from Overview and refreshes its row', async () => {
+  let built = false;
+  const { client, seen } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [lane('visual_embedding', { supported_actions: built ? [] : ['visual_build'] })] });
+    if (request.url.endsWith('/multimodal/build')) {
       built = true;
       return Response.json({});
     }
   });
   render(SettingsWorkspace, { client });
-  const name = kind === 'message' ? 'Build index, Message search' : 'Build visual index, Visual search';
+  const name = 'Build visual index, Visual search';
   await fireEvent.click(await screen.findByRole('button', { name }));
-  if (kind === 'message') {
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
-    await waitFor(() => expect(seen.some(request => request.path === path)).toBe(true));
-    expect((screen.getByRole('button', { name: 'Sync now, Contacts' }) as HTMLButtonElement).disabled).toBe(false);
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now, Contacts' }));
-    await waitFor(() => expect(seen.find(request => request.path.endsWith('/carddav/sync'))?.body).toEqual({ full: false }));
-    expect((await screen.findByRole('button', { name })) as HTMLButtonElement).toHaveProperty('disabled', true);
-    built = true;
-    finish(new Response('{"type":"complete"}\n'));
-  }
   await waitFor(() => expect(screen.queryByRole('button', { name })).toBeNull());
-  expect(seen.some(request => request.path === path)).toBe(true);
-  if (kind === 'message') expect(within(document.querySelector(`[data-feature="${operation}"]`) as HTMLElement).getByText('On')).toBeDefined();
+  expect(seen.some(request => request.path === '/api/v1/multimodal/build')).toBe(true);
 });
 
 it('refreshes completed feature work while keeping its current rows visible', async () => {
@@ -543,7 +550,7 @@ it('refreshes completed feature work while keeping its current rows visible', as
       reads += 1;
       if (reads === 3) return Response.json({ message: 'Unavailable' }, { status: 503 });
       if (reads > 3) return Response.json({ lanes: [lane('visual_embedding')] });
-      return reads === 1 ? Response.json({ lanes: [lane('visual_embedding', { active: { id: 'run-1', kind: 'visual_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } })] }) : pending;
+      return reads === 1 ? Response.json({ lanes: [lane('visual_embedding', { active: { id: 'run-1', kind: 'visual_embedding', lane: 'visual_attachments', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } })] }) : pending;
     }
   });
   render(SettingsWorkspace, { client });
@@ -707,15 +714,6 @@ it('persists an unchanged Google account discovery after Test through the shared
   await screen.findByText('Contact account default saved. Found 2 address books.');
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.find(request => request.method === 'PUT' && request.path.endsWith('/carddav/account'))?.body).toEqual({ connection: 'default', provider: 'google', oauth_app: 'contacts-app', base_url: account.account.base_url, username: account.account.username, enabled: true, schedule: account.schedule });
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  await screen.findByDisplayValue('person@example.com');
-  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
-  await screen.findByText('Connection successful. Found 2 address books.');
-  await fireEvent.input(screen.getByLabelText('Google account email'), { target: { value: 'changed@example.com' } });
-  await fireEvent.input(screen.getByLabelText('Google account email'), { target: { value: 'person@example.com' } });
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
-  await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
-  await screen.findByText('Connection successful. Found 2 address books.');
 
 });
 

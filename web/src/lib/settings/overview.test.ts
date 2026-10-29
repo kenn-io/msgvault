@@ -4,7 +4,7 @@ import type { EmbeddingStatus, OperationLaneStatus } from '../api/generated/mode
 import { overviewRows } from './overview';
 
 function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
-  return { kind, configured: true, lane: 'messages', history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
+  return { kind, configured: true, lane: kind === 'visual_embedding' ? 'visual_attachments' : 'messages', history_availability: 'available', supported_actions: [], ...extra } as OperationLaneStatus;
 }
 
 function row(rows: ReturnType<typeof overviewRows>, id: string) {
@@ -33,8 +33,9 @@ describe('overviewRows', () => {
   });
 
   it.each([true, false])('gates the message build on server coverage actions (%s)', available => {
-    const rows = overviewRows([lane('message_embedding')], { active_generation: available ? 1 : null } as unknown as EmbeddingStatus, undefined, available ? ['build_index'] : []);
+    const rows = overviewRows([lane('message_embedding')], { active_generation: null } as unknown as EmbeddingStatus, undefined, available ? ['build_index'] : []);
     expect(row(rows, 'message_embedding').action).toEqual(available ? { kind: 'start', id: 'messages', label: 'Build index' } : undefined);
+    expect(row(rows, 'message_embedding').chip.text).toBe(available ? 'Unbuilt' : 'On');
   });
 
   it('offers the visual build the server advertises, with its consent line', () => {
@@ -51,7 +52,6 @@ describe('overviewRows', () => {
   });
 });
 
-
 it('offers only the advertised contacts sync action', () => {
   expect(row(overviewRows([lane('carddav_sync')], undefined, undefined), 'carddav_sync').action).toBeUndefined();
   expect(row(overviewRows([lane('carddav_sync', { supported_actions: ['carddav_sync'] })], undefined, undefined), 'carddav_sync').action).toEqual({ kind: 'start', id: 'contacts', label: 'Sync now' });
@@ -61,7 +61,7 @@ it('shows index progress only while a run is active', () => {
   const embedding = { active_generation: 1, current: 2, eligible: 10, pending: 8 } as unknown as EmbeddingStatus;
   const visual = { current: 3, eligible: 10 } as import('../api/generated/models').Status;
   for (const kind of ['message_embedding', 'visual_embedding'] as const) {
-    const active: NonNullable<OperationLaneStatus['active']> = { id: 'run-1', kind, lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] };
+    const active: NonNullable<OperationLaneStatus['active']> = { id: 'run-1', kind, lane: kind === 'visual_embedding' ? 'visual_attachments' : 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] };
     expect(row(overviewRows([lane(kind)], embedding, visual), kind).chip.text).toBe('On');
     expect(row(overviewRows([lane(kind, { active })], embedding, visual), kind).chip.text).toBe(`Building ${kind === 'message_embedding' ? 2 : 3} of 10`);
   }

@@ -60,7 +60,8 @@
         schedule: selectedConnection.status.schedule
       };
     }
-    if (Object.hasOwn(drafts, selected)) return drafts[selected]!.baseline;
+    const draft = Object.hasOwn(drafts, selected) ? drafts[selected] : undefined;
+    if (draft) return draft.baseline;
     // The settings catalog supplies the default form until connection summaries load.
     const catalog = selected === 'default' ? settings : [];
     function stringValue(key: string): string {
@@ -125,6 +126,7 @@
   let availability = $state<Record<string, boolean>>({});
   const available = $derived(Object.values(availability).some(Boolean));
   $effect(() => {
+    void resetRevision;
     if (available) {
       untrack(() => { void conflictsController.load(); });
     } else {
