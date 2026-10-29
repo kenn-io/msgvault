@@ -37,7 +37,16 @@
     const failure = await onDescribe(descriptionView, description);
     describeBusy = false;
     if (failure) describeError = failure;
-    else describing = false;
+    else {
+      describing = false;
+      await focusOpen();
+    }
+  }
+
+  async function closeDescription(): Promise<void> {
+    if (describeBusy) return;
+    describing = false;
+    await focusOpen();
   }
 
   let renaming = $state(false);
@@ -76,11 +85,18 @@
       return;
     }
     renaming = false;
+    await focusOpen();
   }
 
-  function cancelRename(): void {
+  async function cancelRename(): Promise<void> {
+    if (renameBusy) return;
     renaming = false;
     error = '';
+    await focusOpen();
+  }
+
+  async function focusOpen(): Promise<void> {
+    await tick();
     row?.querySelector<HTMLElement>('.saved-view__open')?.focus();
   }
 
@@ -103,6 +119,7 @@
         ariaLabel={`Rename ${view.name}`}
         size="sm"
         block
+        disabled={renameBusy}
         bind:value={draft}
         bind:inputEl={input}
         onkeydown={renameKeydown}
@@ -144,7 +161,7 @@
 </div>
 
 {#if describing}
-  <Dialog title={`Describe ${view.name}`} onclose={() => (describing = false)} primaryLabel="Save" onprimary={() => void saveDescription()} primaryDisabled={describeBusy}>
+  <Dialog title={`Describe ${view.name}`} onclose={() => void closeDescription()} primaryLabel="Save" onprimary={() => void saveDescription()} primaryDisabled={describeBusy}>
     <TextInput ariaLabel="Description" bind:value={description} placeholder="What this view is for" block disabled={describeBusy} />
     {#if describeError}<span class="saved-view__error" role="alert">{describeError}</span>{/if}
   </Dialog>
@@ -205,6 +222,10 @@
   .saved-view:focus-within .saved-view__menu,
   .saved-view--open .saved-view__menu {
     display: flex;
+  }
+
+  @media (hover: none) {
+    .saved-view__menu { display: flex; }
   }
 
   .saved-view__rename {

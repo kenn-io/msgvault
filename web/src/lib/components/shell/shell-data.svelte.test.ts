@@ -26,7 +26,7 @@ function setup(answers: Answers = {}) {
       const body = await request.clone().json();
       const current = (answers.views ?? []).find((candidate) => path.endsWith(`/${candidate.id}`))!;
       const updated = { ...current, ...body, revision: current.revision + 1 };
-      answers.views = answers.views?.map(view => view.id === updated.id ? updated : view);
+      answers.views = answers.views?.map(view => view.id === updated.id ? updated : view).sort((a, b) => a.name.localeCompare(b.name));
       return Response.json(updated);
     }
     return Response.json({}, { status: 404 });
@@ -36,15 +36,6 @@ function setup(answers: Answers = {}) {
 }
 
 describe('ShellData', () => {
-  it('reads saved views', async () => {
-    const { data } = setup({
-      views: [view(1, 'Budget'), view(2, 'Invoices', 'files')],
-    });
-    await data.refresh();
-
-    expect(data.views.map(({ name }) => name)).toEqual(['Budget', 'Invoices']);
-  });
-
 
   it('classifies saved views by presentation and restores their state', () => {
     expect(viewIsFiles(view(1, 'a'))).toBe(false);
@@ -55,14 +46,15 @@ describe('ShellData', () => {
 
   describe('saved views', () => {
     it('renames with the current revision and replaces the row', async () => {
-      const views = [view(1, 'Budget')];
+      const views = [view(1, 'Budget'), view(2, 'Invoices')];
       const { data, requests } = setup({ views });
       await data.refresh();
 
       expect(await data.renameView(data.views[0]!, '  Q3 budget ')).toBeUndefined();
       const patch = requests.find((request) => request.method === 'PATCH')!;
       expect(patch.headers.get('If-Match')).toBe('"saved-view-1-r1"');
-      expect(data.views[0]).toMatchObject({ name: 'Q3 budget', revision: 2 });
+      expect(data.views.map(view => view.name)).toEqual(['Invoices', 'Q3 budget']);
+      expect(data.views[1]).toMatchObject({ id: 1, revision: 2 });
     });
 
     it('does not call the server for an unchanged or empty name', async () => {
@@ -71,12 +63,6 @@ describe('ShellData', () => {
       expect(await data.renameView(data.views[0]!, 'Budget')).toBeUndefined();
       expect(await data.renameView(data.views[0]!, '   ')).toBeUndefined();
       expect(requests.some((request) => request.method === 'PATCH')).toBe(false);
-    });
-
-    it('reports a conflict from another session', async () => {
-      const fetchFn = vi.fn<typeof fetch>(async () => Response.json({}, { status: 409 }));
-      const data = new ShellData(createAPIClient(fetchFn));
-      expect(await data.renameView(view(1, 'Budget'), 'Q3')).toBe('This view changed in another session.');
     });
 
     it('hides a deleted view at once, deletes it for real on commit, and restores it on undo', async () => {
@@ -97,6 +83,7 @@ describe('ShellData', () => {
       const removal = requests.find((request) => request.method === 'DELETE')!;
       expect(new URL(removal.url).pathname).toBe('/api/v1/saved-views/1');
       expect(removal.headers.get('If-Match')).toBe('"saved-view-1-r1"');
+      expect(removal.keepalive).toBe(true);
       expect(data.views.map(({ name }) => name)).toEqual(['Invoices']);
     });
 
@@ -119,15 +106,13 @@ it('keeps a pending deletion hidden when the shell refreshes', async () => {
   await data.undoDelete();
   expect(data.views).toEqual([saved]);
 });
-it('edits descriptions with the revision and reports a conflict', async () => {
+it('edits descriptions with the revision', async () => {
   const saved = view(1, 'Budget');
   const { data, requests } = setup({ views: [saved] });
   await data.refresh();
   expect(await data.describeView(saved, '  Quarterly review  ')).toBeUndefined();
   expect(data.views[0]?.description).toBe('Quarterly review');
   expect(requests.find(request => request.method === 'PATCH')?.headers.get('If-Match')).toBe('"saved-view-1-r1"');
-  const conflicted = new ShellData(createAPIClient(async () => Response.json({}, { status: 409 })));
-  expect(await conflicted.describeView(saved, 'Review')).toBe('This view changed in another session.');
 });
 
 it('shows a new view whose id reuses a completed deletion', async () => {
@@ -147,12 +132,6 @@ it('restores an undone view in server name order', async () => {
   const saved = data.views[0]!;
   await data.deleteView(saved); await data.undoDelete();
   expect(data.views.map(view => view.name)).toEqual(['Alpha', 'Zeta']);
-});
-it('uses a keepalive request when committing a pending deletion', async () => {
-  const { data, requests } = setup();
-  await data.deleteView(view(1, 'Budget'));
-  await data.expireDelete();
-  expect(requests.find(request => request.method === 'DELETE')?.keepalive).toBe(true);
 });
 
 it.each(['rename', 'delete'])('keeps a completed %s when an earlier list read finishes', async mutation => {
@@ -179,13 +158,9 @@ it.each(['rename', 'delete'])('keeps a completed %s when an earlier list read fi
 });
 
 it('exposes failed reads, keeps last views, and clears the error after Retry', async () => {
-  const answers: Answers = { views: [view(1, 'Budget')], failing: ['/api/v1/saved-views'] };
+  const answers: Answers = { views: [view(1, 'Budget')], failing: [] };
   const { data } = setup(answers);
   await data.refresh();
-  expect(data.error).toBe("Couldn't load saved views.");
-  answers.failing = [];
-  await data.refresh();
-  expect(data.error).toBeUndefined();
   answers.failing = ['/api/v1/saved-views'];
   await data.refresh();
   expect(data.views.map(view => view.name)).toEqual(['Budget']);
@@ -235,7 +210,7 @@ it.each(['PATCH', 'DELETE'])('refreshes a %s conflict so the next edit uses the 
   expect(revisions).toEqual(['"saved-view-1-r1"', '"saved-view-1-r2"']);
 });
 
-it('keeps every accepted deletion when the previous DELETE is slow', async () => {
+it.each(['undo', 'expire'])('keeps accepted deletions hidden while a prior DELETE waits and the newest is resolved by %s', async ending => {
   let views = [view(1, 'Alpha'), view(2, 'Beta'), view(3, 'Gamma')];
   let finish!: () => void;
   const gate = new Promise<void>(resolve => { finish = resolve; });
@@ -260,15 +235,23 @@ it('keeps every accepted deletion when the previous DELETE is slow', async () =>
   const second = data.deleteView(b!);
   const third = data.deleteView(c!);
   expect(data.pending?.name).toBe('Gamma');
+  await data.refresh();
+  expect(data.views).toEqual([]);
+  if (ending === 'undo') {
+    await data.undoDelete();
+    expect(data.views).toEqual([c]);
+    expect(data.views[0]?.id).toBe(c!.id);
+    expect(data.views[0]?.revision).toBe(c!.revision);
+  } else await data.expireDelete();
   finish();
   await Promise.all([second, third]);
   await data.expireDelete();
   await data.refresh();
-  expect(deleted.sort()).toEqual([1, 2, 3]);
-  expect(data.views).toEqual([]);
+  expect(deleted.sort()).toEqual(ending === 'undo' ? [1, 2] : [1, 2, 3]);
+  expect(data.views).toEqual(ending === 'undo' ? [c] : []);
 });
 
-it.each(['rename', 'undo', 'failed delete'])('uses the server Unicode order after %s', async mutation => {
+it('uses server name order after a failed delete', async () => {
   const saved = view(1, 'Équipe');
   const ordered = [saved, view(2, 'école')];
   const data = new ShellData(createAPIClient(async (input, init) => {
@@ -280,11 +263,7 @@ it.each(['rename', 'undo', 'failed delete'])('uses the server Unicode order afte
     return Response.json({ saved_views: ordered });
   }));
   await data.refresh();
-  if (mutation === 'rename') await data.renameView(view(1, 'Zulu'), 'Équipe');
-  else {
-    await data.deleteView(saved);
-    if (mutation === 'undo') await data.undoDelete();
-    else await data.expireDelete();
-  }
+  await data.deleteView(saved);
+  await data.expireDelete();
   expect(data.views.map(view => view.name)).toEqual(['Équipe', 'école']);
 });

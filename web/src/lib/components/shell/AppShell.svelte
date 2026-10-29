@@ -282,18 +282,24 @@
     commitWorkspace('settings');
     replaceCommittedNavigation({ settingsCategory: 'carddav' });
   }
-  const runHistory = $derived(exploreState.current.operationHistory || exploreState.current.operationRunID || exploreState.current.operationStatus || exploreState.current.operationLane || exploreState.current.operationKind || exploreState.current.operationState || exploreState.current.operationStartedFrom || exploreState.current.operationStartedBefore
+  const runHistory = $derived(exploreState.current.operationHistory
     ? { operationLane: exploreState.current.operationLane, operationKind: exploreState.current.operationKind, operationState: exploreState.current.operationState, operationStartedFrom: exploreState.current.operationStartedFrom, operationStartedBefore: exploreState.current.operationStartedBefore, operationRunID: exploreState.current.operationRunID, operationStatus: exploreState.current.operationStatus }
     : undefined);
   function setRunHistory(state: OperationsURLState): void {
-    commitNavigation({ ...state, operationHistory: true });
+    beforeCommit();
+    exploreState.openOperationHistory(state);
   }
   function closeRunHistory(): void {
-    commitNavigation({ ...defaultOperationsState(), operationHistory: false });
+    beforeCommit();
+    exploreState.closeOperationHistory();
   }
   let displayOpen = $state(false);
   let resultsWidth = $state(0);
-  const shellData = new ShellData(untrack(() => client));
+  const operationsController = new OperationsController(
+    untrack(() => client),
+    (patch) => { if (runHistory) setRunHistory({ ...runHistory, ...patch }); }
+  );
+  const shellData = new ShellData(untrack(() => client), operationsController);
 
   function openOperations(kind: OperationsURLState['operationKind'] = ''): void {
     setRunHistory(defaultOperationsState(kind));
@@ -311,11 +317,10 @@
 
   function openOperationAuthority(target: RelatedOperationStatus): void {
     if (target === 'listSourceStatus' || target === 'getCardDAVStatus') {
-      if (target === 'listSourceStatus') {
-        announceOperation('Opening source status.');
-        commitWorkspace('sources');
-      } else openCardDAVSettings();
-      replaceCommittedNavigation({ ...defaultOperationsState(), operationHistory: false });
+      announceOperation(target === 'listSourceStatus' ? 'Opening source status.' : 'Opening CardDAV settings.');
+      commitNavigation({ ...defaultOperationsState(), operationHistory: false,
+        workspace: target === 'listSourceStatus' ? 'sources' : 'settings',
+        ...(target === 'getCardDAVStatus' ? { settingsCategory: 'carddav', settingsAuthority: '' } : {}) });
       return;
     }
     const statusTargets: Record<
@@ -332,12 +337,13 @@
 
   function openVisualAttachmentSettings(): void {
     commitNavigation({
+      ...defaultOperationsState(), operationHistory: false,
       workspace: 'settings', settingsCategory: 'search', settingsAuthority: 'visual_attachments'
     });
   }
 
   function setUpOperation(target: OperationSettingsTarget): void {
-    commitNavigation({ workspace: 'settings', ...target });
+    commitNavigation({ ...defaultOperationsState(), operationHistory: false, workspace: 'settings', ...target });
   }
 
   setContext('msgvault:open-carddav-operations', () => openOperations('carddav_sync'));
@@ -387,10 +393,6 @@
     (patch) => commitNavigation(patch),
   );
   const factLedgerController = new FactLedgerController(untrack(() => client));
-  const operationsController = new OperationsController(
-    untrack(() => client),
-    (patch) => { if (runHistory) setRunHistory({ ...runHistory, ...patch }); }
-  );
   // Participant IDs only enter here from a successfully loaded
   // /participants/{id} Relationship detail. It is intentionally ephemeral:
   // browser restoration and ordinary Directory navigation never invent a
@@ -466,7 +468,12 @@
     const active = enabled;
     untrack(() => { if (active) void shellData.refresh(); });
   });
-  onMount(() => { shellData.start(); return () => shellData.stop(); });
+  onMount(() => {
+    shellData.start();
+    const refresh = () => { if (enabled) void shellData.refresh(); };
+    window.addEventListener('focus', refresh);
+    return () => { window.removeEventListener('focus', refresh); shellData.stop(); };
+  });
   let contextualViewerFile = $state<FileViewerTarget>();
   let contextualViewerReturnFocus = $state<HTMLElement>();
   let previousAttachmentID: number | undefined;
@@ -1612,7 +1619,7 @@
 {#if runHistory}
   <RunHistoryDialog {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory} {archiveContextKey}
     onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
-    onConfigure={() => { openVisualAttachmentSettings(); replaceCommittedNavigation({ ...defaultOperationsState(), operationHistory: false }); }} />
+    onConfigure={openVisualAttachmentSettings} />
 {/if}
 <FlashBanner />
 {#if shellData.pending}
