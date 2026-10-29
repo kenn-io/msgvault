@@ -6,7 +6,7 @@ import { collectJobs, jobsHealth, type JobsHealth } from './jobs';
 
 export const SOURCE_STATUS_TIMEOUT_MS = 20_000;
 export type SourceRead = Awaited<ReturnType<typeof listSourceStatus>>;
-type PendingSourceRead = { controller: AbortController; promise: Promise<SourceRead>; waiters: number };
+type PendingSourceRead = { controller: AbortController; promise: Promise<SourceRead>; waiters: number; replacement?: PendingSourceRead };
 
 /**
  * What is running and which latest jobs still have errors. The status dot reads
@@ -37,10 +37,10 @@ export class JobsStore {
   }
 
   async readSources(signal: AbortSignal, supersede = false): Promise<SourceRead> {
-    this.#disposal.signal.throwIfAborted();
+    signal = AbortSignal.any([signal, this.#disposal.signal]);
     signal.throwIfAborted();
     if (supersede || !this.#sourceRead) {
-      this.#sourceRead?.controller.abort();
+      const previous = this.#sourceRead;
       const controller = new AbortController();
       const requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(SOURCE_STATUS_TIMEOUT_MS)]);
       const read: PendingSourceRead = {
@@ -58,8 +58,14 @@ export class JobsStore {
         }).finally(() => { if (this.#sourceRead === read) this.#sourceRead = undefined; }),
       };
       this.#sourceRead = read;
+      // Old waiters may resume after this replacement has already answered.
+      if (previous) { previous.replacement = read; previous.controller.abort(); }
     }
-    const read = this.#sourceRead;
+    return this.#waitForSources(this.#sourceRead, signal);
+  }
+
+  async #waitForSources(read: PendingSourceRead, signal: AbortSignal): Promise<SourceRead> {
+    signal.throwIfAborted();
     read.waiters += 1;
     let released = false;
     const release = () => {
@@ -77,6 +83,10 @@ export class JobsStore {
         signal.addEventListener('abort', leave, { once: true });
         read.promise.then(resolve, reject);
       });
+    } catch (error) {
+      signal.throwIfAborted();
+      if (read.replacement) return this.#waitForSources(read.replacement, signal);
+      throw error;
     } finally {
       signal.removeEventListener('abort', leave);
       release();
