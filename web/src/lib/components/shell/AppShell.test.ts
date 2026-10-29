@@ -2968,6 +2968,8 @@ it.each([
 
 it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending => {
   window.history.replaceState(null, '', '/?workspace=everything');
+  const width = window.innerWidth;
+  window.innerWidth = 480;
   const undo = vi.spyOn(ShellData.prototype, 'undoDelete').mockResolvedValue();
   const expire = vi.spyOn(ShellData.prototype, 'expireDelete').mockResolvedValue(undefined);
   const client = createAPIClient(async input => {
@@ -2977,8 +2979,12 @@ it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending 
   });
   const rendered = render(AppShell, { client });
   try {
+    const opener = screen.getByRole('button', { name: 'Open navigation' });
+    await fireEvent.click(opener);
     await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
+    expect(document.activeElement).toBe(opener);
     if (ending === 'undo') await fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     else window.dispatchEvent(new Event('pagehide'));
     expect(undo).toHaveBeenCalledTimes(ending === 'undo' ? 1 : 0);
@@ -2987,6 +2993,7 @@ it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending 
     rendered.unmount();
     undo.mockRestore();
     expire.mockRestore();
+    window.innerWidth = width;
   }
 });
 
