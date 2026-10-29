@@ -25,13 +25,14 @@ const telegramKeyPrefix = "provider:8:telegram:%"
 // rewriteTelegramProviderKeys rewrites the account-scoped Telegram provider
 // keys (numeric native IDs only) to the shared service-scoped form in
 // participant_contact_observations, identity_match_candidates, and
-// identity_match_evidence, reconciles the observation conflicts the
-// converged keys leave unsupported, then refreshes the stored evidence
-// fingerprints of every surviving candidate whose fingerprint inputs changed
-// so prior accepted and rejected decisions stay valid instead of going
-// stale. Only proofs that matched the pre-migration evidence are renewed:
-// one that was already stale keeps requiring the fresh review that made it
-// stale.
+// identity_match_evidence, rekeys the observation conflicts whose collisions
+// stay valid between distinct Telegram users onto the shared namespace,
+// retires the observation conflicts the converged keys leave unsupported,
+// then refreshes the stored evidence fingerprints of every surviving
+// candidate whose fingerprint inputs changed so prior accepted and rejected
+// decisions stay valid instead of going stale. Only proofs that matched the
+// pre-migration evidence are renewed: one that was already stale keeps
+// requiring the fresh review that made it stale.
 func (s *Store) rewriteTelegramProviderKeys(ctx context.Context, tx *loggedTx) error {
 	// Plan every rewrite and fingerprint every touched candidate before
 	// the first mutation: validity is judged against the pre-migration
@@ -45,6 +46,10 @@ func (s *Store) rewriteTelegramProviderKeys(ctx context.Context, tx *loggedTx) e
 		return err
 	}
 	evidence, err := planTelegramEvidenceDetailRewrites(ctx, tx, observations.rewrites)
+	if err != nil {
+		return err
+	}
+	conflictRekeys, err := planTelegramObservationConflictRekeys(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -81,13 +86,20 @@ func (s *Store) rewriteTelegramProviderKeys(ctx context.Context, tx *loggedTx) e
 	if err := applyTelegramEvidenceDetailRewrites(ctx, tx, evidence); err != nil {
 		return err
 	}
-	// The converged keys orphan the conflicts their observations supported:
-	// no current observation pair still backs a generated conflict, and a
-	// decision a conflicting observation promoted loses that observation.
-	// A resync cannot clear them later, because an unchanged observation
-	// records early. Reconcile before the fingerprint refresh, so a demoted
-	// decision is renewed against the rewritten evidence and a deleted
-	// conflict leaves no proof to renew.
+	// The rewrite also moves the observations under every username conflict
+	// they support. Two distinct Telegram users claiming one username
+	// collide just as validly in the shared namespace, so those conflicts —
+	// and the decisions a conflicting observation promoted — are rekeyed
+	// onto the scope-less edge instead of discarded. What survives the
+	// rekey covers only conflicts whose support truly vanished: the sides
+	// converged on one identity, or no current observation pair still backs
+	// the conflict, and a resync cannot clear those later, because an
+	// unchanged observation records early. Reconcile before the fingerprint
+	// refresh, so a demoted decision is renewed against the rewritten
+	// evidence and a deleted conflict leaves no proof to renew.
+	if err := s.rekeyTelegramObservationConflicts(ctx, tx, conflictRekeys); err != nil {
+		return err
+	}
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
 		return err
 	}
@@ -516,6 +528,141 @@ func applyTelegramEvidenceDetailRewrites(
 		}
 	}
 	return nil
+}
+
+// planTelegramObservationConflictRekeys lists the observation conflicts whose
+// supporting pairs the rewrite breaks: participant conflicts still backed by
+// a current observation pair under the conflict's own scope, with a
+// Telegram-keyed observation joining the pair. Clearing that observation's
+// scope retires the pair against the stored scope, but the collision may
+// persist in the shared namespace between two distinct Telegram users, and
+// a resync of the unchanged observations records early — so those conflicts
+// must be rebuilt here rather than dropped. Planning is read-only, before
+// the first mutation, so support is judged against pre-rewrite observations
+// and a conflict already unsupported before the migration keeps the
+// retirement the general reconciliation owes it.
+func planTelegramObservationConflictRekeys(
+	ctx context.Context, tx *loggedTx,
+) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT c.id
+		FROM identity_match_candidates c
+		WHERE c.left_kind = 'participant'
+		  AND c.right_kind = 'participant'
+		  AND c.state = 'conflict'
+		  AND c.observation_conflict_origin IN ('generated', 'promoted')
+		  AND c.normalized_value IS NOT NULL
+		  AND c.basis IN ('email', 'phone', 'service_scope_username')
+		  AND (c.scope_kind IS NOT NULL OR c.scope_value IS NOT NULL)
+		  AND EXISTS (
+			SELECT 1 FROM participant_contact_observations pre_left
+			WHERE pre_left.participant_id = c.left_id
+			  AND `+identityCandidateObservationMatchSQL("pre_left")+`
+			  AND EXISTS (
+				SELECT 1 FROM participant_contact_observations pre_right
+				WHERE pre_right.participant_id = c.right_id
+				  AND `+identityCandidateObservationMatchSQL("pre_right")+`
+				  AND `+identityCandidateObservationPairSQL("pre_left", "pre_right")+`
+				  AND (pre_left.provider_user_id LIKE ? OR pre_right.provider_user_id LIKE ?)
+			  )
+		)
+		ORDER BY c.id
+	`, telegramKeyPrefix, telegramKeyPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("telegram keys: list rekeyable conflicts: %w", err)
+	}
+	conflicts := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("telegram keys: scan rekeyable conflict: %w", err)
+		}
+		conflicts = append(conflicts, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("telegram keys: iterate rekeyable conflicts: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("telegram keys: close rekeyable conflicts: %w", err)
+	}
+	return conflicts, nil
+}
+
+// rekeyTelegramObservationConflicts moves the planned conflicts onto the
+// shared namespace their supporting observations were rewritten into: scope
+// columns cleared to match, every decision column — state, conflict origin,
+// pre-conflict state, decision author — kept as it was. A conflict moves
+// only while a supporting pair with distinct provider users still exists
+// between the same participants under the shared scope, so a collision whose
+// sides converged on one Telegram identity is left for the general
+// reconciliation to retire, and only when no equivalent conflict already
+// holds the scope-less edge, so one collision never forks into two
+// reviewable rows. The lookup runs chunked for the same bind-variable
+// reasons as the rest of the migration.
+func (s *Store) rekeyTelegramObservationConflicts(
+	ctx context.Context, tx *loggedTx, conflictIDs []int64,
+) error {
+	if len(conflictIDs) == 0 {
+		return nil
+	}
+	query := `
+		WITH rekeyable AS (
+			SELECT c.id
+			FROM identity_match_candidates c
+			WHERE c.id IN (%s)
+			  AND EXISTS (
+				SELECT 1 FROM participant_contact_observations shared_left
+				WHERE shared_left.participant_id = c.left_id
+				  AND ` + identityCandidateSharedObservationMatchSQL("shared_left") + `
+				  AND EXISTS (
+					SELECT 1 FROM participant_contact_observations shared_right
+					WHERE shared_right.participant_id = c.right_id
+					  AND ` + identityCandidateSharedObservationMatchSQL("shared_right") + `
+					  AND ` + identityCandidateObservationPairSQL("shared_left", "shared_right") + `
+				  )
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM identity_match_candidates occupant
+				WHERE occupant.id != c.id
+				  AND occupant.left_kind = c.left_kind
+				  AND occupant.left_id = c.left_id
+				  AND occupant.right_kind = c.right_kind
+				  AND occupant.right_id = c.right_id
+				  AND occupant.basis = c.basis
+				  AND (occupant.service_id = c.service_id
+					  OR (occupant.service_id IS NULL AND c.service_id IS NULL))
+				  AND occupant.scope_kind IS NULL
+				  AND occupant.scope_value IS NULL
+				  AND occupant.normalized_value = c.normalized_value
+			  )
+		)
+		UPDATE identity_match_candidates
+		SET scope_kind = NULL, scope_value = NULL, updated_at = ` + s.dialect.Now() + `
+		WHERE id IN (SELECT id FROM rekeyable)`
+	if err := execInChunksContext(ctx, tx, conflictIDs, nil, query); err != nil {
+		return fmt.Errorf("telegram keys: rekey observation conflicts: %w", err)
+	}
+	return nil
+}
+
+// identityCandidateSharedObservationMatchSQL matches one observation against
+// a candidate exactly as identityCandidateObservationMatchSQL does, except
+// the candidate is judged in the shared namespace the Telegram rewrites
+// converge on: the observation must carry no scope, because the rekey moves
+// the conflict onto the scope-less edge its rewritten observations live in.
+func identityCandidateSharedObservationMatchSQL(observationAlias string) string {
+	return `(c.basis = 'email' AND ` + observationAlias + `.address_kind = 'email'
+		OR c.basis = 'phone' AND ` + observationAlias + `.address_kind = 'phone'
+		OR c.basis = 'service_scope_username' AND ` + observationAlias + `.address_kind NOT IN ('email', 'phone'))
+		AND (` + observationAlias + `.service_id = c.service_id OR
+			(` + observationAlias + `.service_id IS NULL AND c.service_id IS NULL))
+		AND ` + observationAlias + `.scope_kind IS NULL
+		AND ` + observationAlias + `.scope_value IS NULL
+		AND ` + observationAlias + `.normalized_value = c.normalized_value
+		AND ` + observationAlias + `.active_until IS NULL
+		AND ` + observationAlias + `.superseded_at IS NULL`
 }
 
 // telegramCandidatesTouchingParticipants lists candidates with a

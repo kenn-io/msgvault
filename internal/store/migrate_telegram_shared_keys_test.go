@@ -228,9 +228,11 @@ func TestTelegramSharedKeyMigrationReconcilesOrphanedConflicts(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
-	// One Beeper account bridged the same Telegram username to three
-	// participants: two account-scoped keys (one per Telegram user) and the
-	// shared key a later bridge version wrote beside a leftover scope.
+	// One Beeper account bridged the same Telegram username for one Telegram
+	// user under two key forms: the account-scoped key (first and second)
+	// and the shared key a later bridge version wrote beside a leftover
+	// scope (middle). Pre-fix, the two forms looked like two users claiming
+	// one username, so the rewrite converging them retires the conflicts.
 	source, err := st.GetOrCreateSource("beeper", "acct-7")
 	require.NoError(err)
 	seedUsername := func(identifier, providerKey string) int64 {
@@ -248,11 +250,10 @@ func TestTelegramSharedKeyMigrationReconcilesOrphanedConflicts(t *testing.T) {
 		return pid
 	}
 	firstKey := beeperidentity.ProviderKey("telegram", "account", "acct-7", "482111")
-	secondKey := beeperidentity.ProviderKey("telegram", "account", "acct-7", "999777")
 	shared := beeperidentity.ProviderKey("telegram", "service", "", "482111")
 	first := seedUsername("beeper:6:acct-7:9:conflict-first", firstKey)
 	middle := seedUsername("beeper:6:acct-7:9:conflict-middle", shared)
-	second := seedUsername("beeper:6:acct-7:9:conflict-second", secondKey)
+	second := seedUsername("beeper:6:acct-7:9:conflict-second", firstKey)
 
 	// conflictCandidate seeds one username conflict the observations
 	// generated on a fresh edge.
@@ -277,8 +278,10 @@ func TestTelegramSharedKeyMigrationReconcilesOrphanedConflicts(t *testing.T) {
 	}
 	// The first-middle conflict was generated when the middle binding
 	// arrived claiming the same username; the middle-second row is the
-	// user's rejection, promoted to a conflict when the second Telegram
-	// user claimed that username again.
+	// user's rejection, promoted to a conflict when the same Telegram
+	// user's account-scoped key claimed that username again. Both sides of
+	// each pair converge on one shared key, so both conflicts lose their
+	// supporting pair for good.
 	generatedID := conflictCandidate(first, middle, "generated", nil, nil)
 	promotedID := conflictCandidate(middle, second, "promoted", "rejected", "user")
 	promotedFingerprint, err := store.IdentityMatchDecisionFingerprintForTest(
@@ -322,8 +325,8 @@ func TestTelegramSharedKeyMigrationReconcilesOrphanedConflicts(t *testing.T) {
 		SELECT COUNT(*) FROM participant_contact_observations
 		WHERE address_kind = 'username'
 		  AND (scope_kind IS NOT NULL OR scope_value IS NOT NULL
-		       OR provider_user_id IN (?, ?))
-	`), firstKey, secondKey).Scan(&staleUsernameObservations))
+		       OR provider_user_id = ?)
+	`), firstKey).Scan(&staleUsernameObservations))
 	assert.Zero(staleUsernameObservations,
 		"the rewritten username observations converge on scope-less shared keys")
 
@@ -364,6 +367,167 @@ func TestTelegramSharedKeyMigrationReconcilesOrphanedConflicts(t *testing.T) {
 		WHERE candidate_id = ?`), rejectedID).Scan(&stale))
 	assert.Equal("stale-before-migration", stale,
 		"a proof already stale before the migration is not renewed")
+}
+
+// TestTelegramSharedKeyMigrationRekeysValidUsernameConflicts pins the
+// conflicts the rewrite owes a rebuild, not a retirement: two distinct
+// numeric Telegram users claiming one username in one account scope collide
+// just as validly in the shared namespace, so their conflicts survive the
+// migration rekeyed onto the shared keys — a generated conflict intact, a
+// decision a conflicting observation promoted still promoted with its proof
+// renewed — instead of losing the user decision signal. A conflict whose
+// scope-less edge a post-fix conflict already occupies is retired rather
+// than rekeyed, so one collision never forks into two reviewable rows. Rows
+// are seeded with raw SQL for the same pre-fix-shape reason as above. Runs
+// on SQLite and PostgreSQL.
+func TestTelegramSharedKeyMigrationRekeysValidUsernameConflicts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("beeper", "acct-7")
+	require.NoError(err)
+	bridge := func(identifier string) int64 {
+		pid, err := st.EnsureParticipantByIdentifier("beeper", identifier, "Bridge "+identifier)
+		require.NoError(err)
+		return pid
+	}
+	seedUsername := func(pid int64, normalized, providerKey string, scopeKind, scopeValue any) {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO participant_contact_observations (
+				participant_id, source_id, address_kind, scope_kind, scope_value,
+				provider_user_id, original_value, normalized_value,
+				normalization, source
+			) VALUES (?, ?, 'username', ?, ?, ?, ?, ?, 'none', 'archive_observation')
+		`), pid, source.ID, scopeKind, scopeValue, providerKey, normalized, normalized)
+		require.NoError(err)
+	}
+	conflictCandidate := func(left, right int64, normalized string, scopeKind, scopeValue,
+		origin, preConflictState, decidedBy any,
+	) int64 {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO identity_match_candidates (
+				left_kind, left_id, right_kind, right_id, basis,
+				scope_kind, scope_value, normalized_value, state,
+				observation_conflict_origin, pre_conflict_state,
+				decided_by, decided_at, source
+			) VALUES ('participant', ?, 'participant', ?, 'service_scope_username',
+				?, ?, ?, 'conflict', ?, ?, ?,
+				CURRENT_TIMESTAMP, 'archive_observation')
+		`), left, right, scopeKind, scopeValue, normalized,
+			origin, preConflictState, decidedBy)
+		require.NoError(err)
+		var id int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT id FROM identity_match_candidates
+			WHERE left_id = ? AND right_id = ? AND normalized_value = ?
+			  AND (scope_kind = ? OR (scope_kind IS NULL AND CAST(? AS TEXT) IS NULL))
+			  AND (scope_value = ? OR (scope_value IS NULL AND CAST(? AS TEXT) IS NULL))
+			  AND observation_conflict_origin IS NOT NULL`),
+			left, right, normalized, scopeKind, scopeKind, scopeValue, scopeValue).Scan(&id))
+		return id
+	}
+
+	// Two distinct Telegram users claimed one username in one account scope.
+	firstKey := beeperidentity.ProviderKey("telegram", "account", "acct-7", "482111")
+	otherKey := beeperidentity.ProviderKey("telegram", "account", "acct-7", "999777")
+	first := bridge("beeper:6:acct-7:9:rekey-first")
+	seedUsername(first, "split-handle", firstKey, "account", "acct-7")
+	second := bridge("beeper:6:acct-7:9:rekey-second")
+	seedUsername(second, "split-handle", otherKey, "account", "acct-7")
+	third := bridge("beeper:6:acct-7:9:rekey-third")
+	seedUsername(third, "split-handle", otherKey, "account", "acct-7")
+	generatedID := conflictCandidate(first, second, "split-handle",
+		"account", "acct-7", "generated", nil, nil)
+	promotedID := conflictCandidate(first, third, "split-handle",
+		"account", "acct-7", "promoted", "rejected", "user")
+	promotedFingerprint, err := store.IdentityMatchDecisionFingerprintForTest(
+		context.Background(), st, promotedID)
+	require.NoError(err, "fingerprint the promoted decision's pre-migration evidence")
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO identity_match_review_decisions (candidate_id, evidence_fingerprint)
+		VALUES (?, ?)`), promotedID, promotedFingerprint)
+	require.NoError(err)
+
+	// The occupied edge: a post-fix conflict already holds the scope-less
+	// pair — backed by scope-less observations — while the pre-fix
+	// account-scoped conflict describes the same collision.
+	fourth := bridge("beeper:6:acct-7:9:rekey-fourth")
+	seedUsername(fourth, "occupied-handle", firstKey, "account", "acct-7")
+	seedUsername(fourth, "occupied-handle",
+		beeperidentity.ProviderKey("telegram", "service", "", "482111"), nil, nil)
+	fifth := bridge("beeper:6:acct-7:9:rekey-fifth")
+	seedUsername(fifth, "occupied-handle", otherKey, "account", "acct-7")
+	seedUsername(fifth, "occupied-handle",
+		beeperidentity.ProviderKey("telegram", "service", "", "999777"), nil, nil)
+	scopedID := conflictCandidate(fourth, fifth, "occupied-handle",
+		"account", "acct-7", "generated", nil, nil)
+	occupantID := conflictCandidate(fourth, fifth, "occupied-handle",
+		nil, nil, "generated", nil, nil)
+
+	_, err = st.DB().Exec(st.Rebind(
+		`DELETE FROM applied_migrations WHERE name = ?`), telegramSharedKeysMigration)
+	require.NoError(err)
+	require.NoError(st.InitSchema(), "upgrade telegram provider keys")
+
+	// The generated conflict between two distinct Telegram users survives
+	// on the shared keys: same state, same origin, scope-less edge.
+	var state, origin, scopeKind, scopeValue string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT state, COALESCE(observation_conflict_origin, ''),
+		       COALESCE(scope_kind, ''), COALESCE(scope_value, '')
+		FROM identity_match_candidates WHERE id = ?`), generatedID).
+		Scan(&state, &origin, &scopeKind, &scopeValue))
+	assert.Equal("conflict", state,
+		"the distinct-user conflict stays a conflict on the shared keys")
+	assert.Equal("generated", origin,
+		"the surviving conflict keeps its origin")
+	assert.Empty(scopeKind, "the surviving conflict is rekeyed onto the scope-less edge")
+	assert.Empty(scopeValue, "the surviving conflict is rekeyed onto the scope-less edge")
+
+	// The promoted conflict keeps its promotion — the user decision it
+	// suspended — and its proof is renewed against the rewritten evidence.
+	var preConflictState, decidedBy string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT state, COALESCE(observation_conflict_origin, ''),
+		       COALESCE(pre_conflict_state, ''), COALESCE(decided_by, ''),
+		       COALESCE(scope_kind, ''), COALESCE(scope_value, '')
+		FROM identity_match_candidates WHERE id = ?`), promotedID).
+		Scan(&state, &origin, &preConflictState, &decidedBy, &scopeKind, &scopeValue))
+	assert.Equal("conflict", state, "the promotion survives the migration")
+	assert.Equal("promoted", origin, "the promoted conflict stays promoted")
+	assert.Equal("rejected", preConflictState,
+		"the suspended user decision survives the migration")
+	assert.Equal("user", decidedBy, "the decision author survives the migration")
+	assert.Empty(scopeKind, "the promoted conflict is rekeyed onto the scope-less edge")
+	assert.Empty(scopeValue, "the promoted conflict is rekeyed onto the scope-less edge")
+	var renewed string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT evidence_fingerprint FROM identity_match_review_decisions
+		WHERE candidate_id = ?`), promotedID).Scan(&renewed))
+	postFingerprint, err := store.IdentityMatchDecisionFingerprintForTest(
+		context.Background(), st, promotedID)
+	require.NoError(err)
+	assert.Equal(postFingerprint, renewed,
+		"the surviving conflict's proof matches the rewritten evidence")
+	assert.NotEqual(promotedFingerprint, renewed,
+		"the pre-rewrite fingerprint no longer matches")
+
+	// The occupied edge keeps its post-fix conflict; the pre-fix
+	// account-scoped duplicate is retired instead of forking a second row.
+	var retired int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM identity_match_candidates WHERE id = ?`), scopedID).
+		Scan(&retired))
+	assert.Zero(retired,
+		"the account-scoped conflict yields to the conflict holding the shared edge")
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT state, COALESCE(scope_kind, ''), COALESCE(scope_value, '')
+		FROM identity_match_candidates WHERE id = ?`), occupantID).
+		Scan(&state, &scopeKind, &scopeValue))
+	assert.Equal("conflict", state, "the occupant conflict survives untouched")
+	assert.Empty(scopeKind, "the occupant conflict keeps its scope-less edge")
+	assert.Empty(scopeValue, "the occupant conflict keeps its scope-less edge")
 }
 
 // insertObservationBatch inserts count observation rows in bounded
