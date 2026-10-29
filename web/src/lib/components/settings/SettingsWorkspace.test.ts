@@ -583,3 +583,48 @@ it('keeps Build index through a pending or failed coverage refresh', async () =>
   await screen.findByText('Unbuilt');
   expect(screen.getByRole('button', { name })).toBeDefined();
 });
+
+it('shows Unavailable when the first coverage read fails', async () => {
+  const { client, seen } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
+    if (request.url.includes('/search/coverage')) return Response.json({ message: 'Unavailable' }, { status: 503 });
+  });
+  render(SettingsWorkspace, { client });
+  await screen.findByRole('list', { name: 'Features' });
+  await waitFor(() => expect(seen.some(request => request.path === '/api/v1/search/coverage')).toBe(true));
+  const row = screen.getByText('Message search').closest('li')!;
+  expect(await within(row).findByText('Unavailable')).toBeDefined();
+});
+
+it('refreshes status while a message rebuild is pending', async () => {
+  let building = false;
+  let reads = 0;
+  let finish!: (response: Response) => void;
+  let sent!: () => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  // The fake server reads the build request's body before it records the build, so
+  // later status reads wait for it the way the daemon registers a build on arrival.
+  const buildSent = new Promise<void>(resolve => { sent = resolve; });
+  const status = () => Response.json({ lanes: lanes(lane('message_embedding', building ? { active: { id: 'build-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } } : {})) });
+  const { client, seen } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return ++reads === 1 ? status() : buildSent.then(status);
+    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] });
+    if (request.url.endsWith('/cli/run')) { building = true; sent(); return pending; }
+  });
+  render(SettingsWorkspace, { client });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Message search' }));
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    await waitFor(() => expect(seen.some(request => request.path === '/api/v1/cli/run')).toBe(true));
+    const row = screen.getByText('Message search').closest('li')!;
+    await waitFor(() => {
+      expect(within(row).getByText('Running')).toBeDefined();
+      expect(within(row).getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', true);
+    });
+    expect(seen.filter(request => request.path === '/api/v1/operations/status')).toHaveLength(2);
+  } finally {
+    building = false;
+    finish(new Response('{"type":"complete"}\n'));
+  }
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
+});
