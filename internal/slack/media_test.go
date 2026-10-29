@@ -152,7 +152,9 @@ func TestSlackMediaErrorText(t *testing.T) {
 				assert.Contains(detail["fetch_error"], "\ufffd")
 			} else {
 				assert.Equal("F_ERROR: dial tcp: i/o timeout", sum.FirstMediaError)
-				assert.Contains(detail["fetch_error"], "dial tcp: i/o timeout")
+				assert.Equal("dial tcp: i/o timeout", detail["fetch_error"])
+				assert.NotContains(detail["fetch_error"], fileURL)
+				assert.Equal(itemError, sum.FirstMediaError)
 			}
 		})
 	}
