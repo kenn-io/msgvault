@@ -32,10 +32,14 @@ describe('overviewRows', () => {
     expect(row(rows, 'document_extraction').action).toMatchObject({ kind: 'host' });
   });
 
-  it('offers Build index when message search is on but has no index yet', () => {
-    const rows = overviewRows([lane('message_embedding')], { active_generation: null } as unknown as EmbeddingStatus, undefined);
-
+  it('uses server coverage actions even for an already built index', () => {
+    const rows = overviewRows([lane('message_embedding')], { active_generation: 1 } as unknown as EmbeddingStatus, undefined, ['build_index']);
     expect(row(rows, 'message_embedding').action).toMatchObject({ kind: 'start', id: 'messages', label: 'Build index' });
+  });
+
+  it('withholds a duplicate first build before its lane run appears', () => {
+    const rows = overviewRows([lane('message_embedding')], { active_generation: null } as unknown as EmbeddingStatus, undefined, []);
+    expect(row(rows, 'message_embedding').action).toBeUndefined();
   });
 
   it('offers the visual build the server advertises, with its consent line', () => {

@@ -28,7 +28,8 @@
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import { accountRequest, type AccountDraft } from '../../carddav/account-settings';
   import { runOperationAction } from '../../operations/actions';
-  import { maskSecret } from '../../settings/secrets';
+  import { pendingSecret } from '../../settings/secrets';
+  import type { SearchCoverageAction } from '../../search/modes';
   import {
     providerUpdate,
     isChange,
@@ -112,6 +113,7 @@
   let embeddingStatus = $state<EmbeddingStatus>();
   let visualStatus = $state<VisualStatus>();
   let lanes = $state<OperationLaneStatus[]>();
+  let coverageActions = $state<SearchCoverageAction[]>([]);
   let statusSettled = $state(false);
   let statusRefreshing = $state(false);
   let building = $state('');
@@ -133,7 +135,7 @@
     Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length +
     Object.values(providerDrafts).filter(provider => [provider.max_retries, provider.max_requests_per_run, provider.max_requests_per_day, provider.num_results].some(value => String(value) === '')).length,
   );
-  const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus));
+  const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus, coverageActions));
 
   onMount(() => {
     void loadSettings(false);
@@ -161,6 +163,10 @@
     const control = untrack(() => root?.querySelector<HTMLElement>('.feature-refresh'));
     const hadFocus = control?.contains(document.activeElement);
     statusRefreshing = true;
+    coverageActions = [];
+    void createExploreAPI(client).coverage([], controller.signal)
+      .then(coverage => { if (!controller.signal.aborted) coverageActions = coverage.actions; })
+      .catch(() => { if (!controller.signal.aborted) coverageActions = []; });
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (!controller.signal.aborted) embeddingStatus = response.ok ? data : undefined;
@@ -317,12 +323,6 @@
     if (configured) next[setting.key] = { action: 'clear' };
     secretUpdates = next;
   }
-  function secretShown(setting: SettingState): { configured: boolean; hint: string } {
-    const update = secretUpdates[setting.key];
-    if (update?.action === 'set') return { configured: true, hint: maskSecret(update.value) };
-    if (update?.action === 'clear') return { configured: false, hint: '' };
-    return { configured: setting.secret?.configured ?? false, hint: setting.secret?.hint ?? '' };
-  }
   function discardChanges() {
     drafts = {};
     secretUpdates = {};
@@ -372,6 +372,18 @@
         .map(([key, value]) => ({ key, value: typedValue(find(key), value) })),
       ...Object.entries(secretUpdates).map(([key, secret]) => ({ key, secret })),
     ];
+    async function saveProviders(enabled: boolean) {
+      for (const [name, draft] of Object.entries(providerDrafts)) {
+        if (draft.enabled !== enabled) continue;
+        const result = await putSettingsPersonEnrichmentProvider({ name }, providerUpdate(draft), { ...client, headers: { 'If-Match': etag } });
+        if (!result.data) {
+          if (result.response.status === 412) await loadSettings(true);
+          throw new Error(apiErrorMessage(result.error, "Can't save this provider."));
+        }
+        providerSaved(result.data, result.response.headers.get('ETag') ?? etag);
+        delete providerDrafts[name];
+      }
+    }
     saving = true;
     error = '';
     accountSaveStatus = '';
@@ -379,6 +391,7 @@
       for (const draft of Object.values(accountDrafts)) {
         if (draft.error) throw new Error(draft.error);
       }
+      await saveProviders(true);
       if (updates.length > 0) {
         const {
           data: result,
@@ -407,15 +420,7 @@
         if (appearance) onAppearanceSaved(appearance);
 
       }
-      for (const [name, draft] of Object.entries(providerDrafts)) {
-        const result = await putSettingsPersonEnrichmentProvider({ name }, providerUpdate(draft), { ...client, headers: { 'If-Match': etag } });
-        if (!result.data) {
-          if (result.response.status === 412) await loadSettings(true);
-          throw new Error(apiErrorMessage(result.error, "Can't save this provider."));
-        }
-        providerSaved(result.data, result.response.headers.get('ETag') ?? etag);
-        delete providerDrafts[name];
-      }
+      await saveProviders(false);
       for (const [credentialID, update] of Object.entries(credentialUpdates)) {
         const options = { ...client, headers: { 'If-Match': credentialETag } };
         const {
@@ -556,7 +561,7 @@
       <span class="setting__label">{text}</span>
       <div class="setting__control">
         {#if setting.kind === 'secret'}
-          {@const shown = secretShown(setting)}
+          {@const shown = pendingSecret(setting.secret, secretUpdates[setting.key])}
           {#if setting.credential_id}
             <ProviderCredentialControl label={text} credentialState={setting.secret} pending={credentialUpdates[setting.credential_id]} onchange={(update) => setCredential(setting.credential_id!, update)} />
           {:else}
