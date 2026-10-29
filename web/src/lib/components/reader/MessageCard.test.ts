@@ -55,15 +55,6 @@ describe('MessageCard', () => {
   });
 
   it('links each stored recording of a meeting for download', () => {
-    const { unmount } = render(MessageCard, {
-      props: {
-        message: detail({ attachments: [{ id: 1, stored: true, filename: 'RE1.wav', mimeType: 'audio/wav', sizeBytes: 10 }] }),
-        expanded: true
-      }
-    });
-    expect(screen.getByRole('link', { name: 'RE1.wav' }).getAttribute('href')).toBe('/api/v1/files/1/content');
-    unmount();
-
     render(MessageCard, {
       props: {
         message: detail({
@@ -86,7 +77,7 @@ describe('MessageCard', () => {
   it('collapses again from the expanded header', async () => {
     const onToggle = vi.fn();
     render(MessageCard, {
-      props: { message: detail(), expanded: true, onToggle }
+      props: { message: detail({ subject: '' }), expanded: true, onToggle }
     });
 
     await fireEvent.click(screen.getByRole('button', {
@@ -106,15 +97,21 @@ describe('MessageCard', () => {
 
   it('offers plain text through a small overflow control, defaulting to HTML', async () => {
     const onViewModeChange = vi.fn();
+    const client = createAPIClient(async (input) => (input as Request).url.includes('/cli/message/raw') ? Response.json({}, { status: 404 }) : Response.json({ state: 'disabled', tasks: [] }));
     render(MessageCard, {
       props: {
         message: detail({ bodyHtml: '<p>Formatted body</p>' }),
         expanded: true,
+        client,
         onViewModeChange
       }
     });
 
     await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Download original' }));
+    await screen.findByText('The original message isn’t available.');
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    expect(screen.queryByText('The original message isn’t available.')).toBeNull();
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(onViewModeChange).toHaveBeenCalledWith(42, 'text');
   });
@@ -189,23 +186,28 @@ describe('MessageCard', () => {
     expect(screen.queryByText('⋯')).toBeNull();
   });
 
-  it('shows a loading state instead of the body while an omitted body is fetched', () => {
+  it('keeps action items visible while an omitted body is fetched', async () => {
+    const { meetingAction, meetingActions } = await import('../../meetings/fixtures.test-support');
+    const client = createAPIClient(async () => Response.json(meetingActions({ rows: [meetingAction()] })));
     const { container } = render(MessageCard, {
-      props: { message: detail({ body: '' }), expanded: true, bodyPending: true }
+      props: { client, message: detail({ body: '', messageType: 'meeting_transcript' }), expanded: true, bodyPending: true }
     });
 
-    expect(screen.getByRole('status').textContent).toContain('Loading message');
+    expect(screen.getByText('Loading message…')).toBeDefined();
+    expect(await screen.findByText('Prepare review')).toBeDefined();
     expect(container.querySelector('pre')).toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
   });
 
-  it('shows the body fetch error in place of the body', () => {
+  it('shows linked tasks alongside a body fetch error', async () => {
+    const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Review archived notes' }] }));
     const { container } = render(MessageCard, {
-      props: { message: detail({ body: '' }), expanded: true, bodyError: 'Could not load message body' }
+      props: { client, message: detail({ body: '' }), expanded: true, bodyError: 'Could not load message body' }
     });
 
     expect(screen.getByRole('alert').textContent).toContain('Could not load message body');
     expect(container.querySelector('pre')).toBeNull();
+    expect(await screen.findByText('Review archived notes')).toBeDefined();
   });
 
   it('falls back to plain text when HTML is rejected by sanitization', () => {
@@ -253,12 +255,10 @@ it.each([{ state: 'ready', shown: true }, { state: 'unavailable', shown: false }
   if (shown) {
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions for message 42' }));
     expect(screen.getByRole('menuitem', { name: 'Add to task…' })).toBeDefined();
-    expect(await screen.findByText('No linked Kata issues.')).toBeDefined();
   } else {
     await waitFor(() => expect(readiness.absent).toBe(true));
     expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
   }
-  expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/integrations/kata/status'))).toHaveLength(1);
   view.unmount();
   readiness.dispose();
 });

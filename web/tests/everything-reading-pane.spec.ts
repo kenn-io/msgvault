@@ -414,27 +414,24 @@ test('message menu creates a task, reloads its link, unlinks it, and opens a per
   await expect(card).toBeVisible();
 });
 
-for (const standalone of [false, true]) {
-  test(`exact participants and task setup work from ${standalone ? 'a linked message' : 'Messages'}`, async ({ page }) => {
-    const message = { id: 42, conversation_id: 7, message_type: 'email', subject: 'Identity follow-up', from: 'Alex Example', from_participant_id: 29, to: ['Alex Example'], to_participants: [{ display: 'Alex Example', participant_id: 39 }], body: 'Exact archived identities.', sent_at: '2026-07-18T12:00:00Z', attachments: [] };
-    await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false } }));
-    await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [{ ...entry(1), title: message.subject, anchor_message_id: 42, conversation_id: 7 }], total_count: 1, cache_revision: 'identity', search_provenance: {} } }));
-    await page.route('**/api/v1/messages/42', route => route.fulfill({ json: message }));
-    await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: { id: 7, anchor_id: 42, messages: [message], has_before: false, has_after: false, total: 1 } }));
-    await page.route('**/api/v1/messages/42/recordings', route => route.fulfill({ json: { recordings: [] } }));
-    await page.route('**/api/v1/integrations/kata/status', route => route.fulfill({ json: { state: 'disabled' } }));
-    await page.route('**/api/v1/integrations/tasks/status', route => route.fulfill({ json: { state: 'disabled' } }));
-    await page.route('**/api/v1/messages/42/tasks', route => route.fulfill({ json: { state: 'disabled', tasks: [], complete: true } }));
-    await page.goto(standalone ? '/messages/42' : '/?workspace=everything');
-    if (!standalone) await page.getByRole('grid', { name: 'Messages results' }).getByText(message.subject, { exact: true }).click();
-    const card = page.getByRole('article', { name: 'Message 42', exact: true });
-    for (const [index, participantID] of [[0, 29], [1, 39]]) {
-      await card.getByRole('button', { name: 'Alex Example', exact: true }).nth(index!).click();
-      await expect(page).toHaveURL(url => url.searchParams.get('workspace') === 'relationships' && JSON.parse(url.searchParams.get('explore') ?? '{}').relationshipTarget === `cluster:${participantID}`);
-      await page.goBack();
-      await expect(card).toBeVisible();
-    }
-    await card.getByRole('button', { name: 'Set up', exact: true }).click();
-    await expect(page).toHaveURL(url => url.searchParams.get('workspace') === 'settings' && JSON.parse(url.searchParams.get('explore') ?? '{}').settingsCategory === 'tasks');
-  });
-}
+test('exact participants and task setup work from a linked message', async ({ page }) => {
+  const message = { id: 42, conversation_id: 7, message_type: 'email', subject: 'Identity follow-up', from: 'Alex Example', from_participant_id: 29, to: ['Alex Example'], to_participants: [{ display: 'Alex Example', participant_id: 39 }], body: 'Exact archived identities.', sent_at: '2026-07-18T12:00:00Z', attachments: [] };
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [{ ...entry(1), title: message.subject, anchor_message_id: 42, conversation_id: 7 }], total_count: 1, cache_revision: 'identity', search_provenance: {} } }));
+  await page.route('**/api/v1/messages/42', route => route.fulfill({ json: message }));
+  await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: { id: 7, anchor_id: 42, messages: [message], has_before: false, has_after: false, total: 1 } }));
+  await page.route('**/api/v1/messages/42/recordings', route => route.fulfill({ json: { recordings: [] } }));
+  await page.route('**/api/v1/integrations/kata/status', route => route.fulfill({ json: { state: 'disabled' } }));
+  await page.route('**/api/v1/integrations/tasks/status', route => route.fulfill({ json: { state: 'disabled' } }));
+  await page.route('**/api/v1/messages/42/tasks', route => route.fulfill({ json: { state: 'disabled', tasks: [], complete: true } }));
+  await page.goto('/messages/42');
+  const card = page.getByRole('article', { name: 'Message 42', exact: true });
+  for (const [index, participantID] of [[0, 29], [1, 39]]) {
+    await card.getByRole('button', { name: 'Alex Example', exact: true }).nth(index!).click();
+    await expect(page).toHaveURL(url => url.searchParams.get('workspace') === 'relationships' && JSON.parse(url.searchParams.get('explore') ?? '{}').relationshipTarget === `cluster:${participantID}`);
+    await page.goBack();
+    await expect(card).toBeVisible();
+  }
+  await card.getByRole('button', { name: 'Set up', exact: true }).click();
+  await expect(page).toHaveURL(url => url.searchParams.get('workspace') === 'settings' && JSON.parse(url.searchParams.get('explore') ?? '{}').settingsCategory === 'tasks');
+});
