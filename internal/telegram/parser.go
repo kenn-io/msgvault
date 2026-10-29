@@ -303,7 +303,6 @@ type rawMessage struct {
 	MediaType        string         `json:"media_type"`
 	MimeType         string         `json:"mime_type"`
 	FileName         string         `json:"file_name"`
-	Title            string         `json:"title"`
 	StickerEmoji     string         `json:"sticker_emoji"`
 }
 
@@ -342,21 +341,21 @@ func buildMessage(m rawMessage) (*Message, error) {
 		return nil, err
 	}
 	msg := &Message{
-		ID:        m.ID,
-		Service:   m.Type == "service",
-		SentAt:    sentAt,
-		ReplyTo:   m.ReplyToMessageID,
-		Edited:    m.Edited != "" || m.EditedUnixtime != "",
-		FromName:  m.From,
-		FromID:    m.FromID,
-		Text:      flattenText(m.Text, m.TextEntities),
-		Photo:     m.Photo,
-		File:      m.File,
-		Thumbnail: m.Thumbnail,
-		MediaType: m.MediaType,
-		MimeType:  m.MimeType,
-		FileName:  m.FileName,
-		Title:     m.Title,
+		ID:          m.ID,
+		Service:     m.Type == "service",
+		SentAt:      sentAt,
+		ReplyTo:     m.ReplyToMessageID,
+		Edited:      m.Edited != "" || m.EditedUnixtime != "",
+		FromName:    m.From,
+		FromID:      m.FromID,
+		Text:        flattenText(m.Text, m.TextEntities),
+		Photo:       m.Photo,
+		File:        m.File,
+		Thumbnail:   m.Thumbnail,
+		MediaType:   m.MediaType,
+		MimeType:    m.MimeType,
+		FileName:    m.FileName,
+		Unsupported: m.Type == "unsupported",
 	}
 	if m.StickerEmoji != "" && msg.MediaType == "" {
 		msg.MediaType = "sticker"

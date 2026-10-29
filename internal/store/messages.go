@@ -3403,8 +3403,9 @@ func (s *Store) SetReplyToContext(ctx context.Context, sourceID int64, childSour
 	})
 }
 
-// SetReplyToIfMissingContext honors cancellation during
-// SetReplyToIfMissing.
+// SetReplyToIfMissingContext fills one child message's reply link only when
+// the link is still NULL, so an established link is never rewritten. It
+// honors cancellation during the update.
 func (s *Store) SetReplyToIfMissingContext(ctx context.Context, sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
 	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
 		_, err := q.Exec(`

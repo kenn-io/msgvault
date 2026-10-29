@@ -121,6 +121,9 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Messages:         %d processed, %d added, %d skipped\n",
 		summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesSkipped)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Service skipped:  %d\n", summary.ServiceMessagesSkipped)
+	if summary.UnsupportedEntriesSkipped > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Unsupported skipped: %d\n", summary.UnsupportedEntriesSkipped)
+	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Participants:     %d\n", summary.ParticipantsResolved)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Attachments:      %d found, %d stored, %d missing\n",
 		summary.AttachmentsFound, summary.AttachmentsStored, summary.AttachmentsMissing)

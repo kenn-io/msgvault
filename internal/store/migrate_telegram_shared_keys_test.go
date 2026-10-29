@@ -2,6 +2,9 @@ package store_test
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -209,4 +212,153 @@ func TestTelegramSharedKeyMigrationCollapsesDuplicateEdges(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(postFingerprint, fingerprint, "fingerprint matches the rewritten evidence")
 	assert.NotEqual(preFingerprint, fingerprint, "the pre-rewrite fingerprint no longer matches")
+}
+
+// insertObservationBatch inserts count observation rows in bounded
+// multi-row statements, so a scale fixture never itself trips a backend's
+// bind-variable limit. One observation argument set per row keeps each
+// statement far below the 32,766-variable SQLite ceiling.
+func insertObservationBatch(t *testing.T, st *store.Store, count int, row func(i int) []any) {
+	t.Helper()
+	const chunk = 250
+	for start := 0; start < count; start += chunk {
+		end := min(start+chunk, count)
+		values := make([]string, 0, end-start)
+		args := make([]any, 0, (end-start)*10)
+		for i := start; i < end; i++ {
+			rowArgs := row(i)
+			placeholders := make([]string, len(rowArgs))
+			for j, arg := range rowArgs {
+				placeholders[j] = "?"
+				args = append(args, arg)
+			}
+			values = append(values, "("+strings.Join(placeholders, ",")+")")
+		}
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO participant_contact_observations (
+				participant_id, address_kind, scope_kind, scope_value,
+				provider_user_id, original_value, normalized_value,
+				normalization, source
+			) VALUES `+strings.Join(values, ",")), args...)
+		require.NoError(t, err)
+	}
+}
+
+// TestTelegramSharedKeyMigrationSurvivesParticipantScale pins the
+// bind-variable boundary: an archive whose rewrites touch 16,384
+// participants makes the endpoint lookup bind each id twice — 32,768
+// arguments, past SQLite's 32,766-variable limit — so the unchunked
+// migration failed inside InitSchema and blocked opening the archive. The
+// chunked lookups keep every statement under the limit on both dialects.
+func TestTelegramSharedKeyMigrationSurvivesParticipantScale(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	const participants = 16384
+	const chunk = 250
+	for start := 0; start < participants; start += chunk {
+		end := min(start+chunk, participants)
+		values := make([]string, 0, end-start)
+		args := make([]any, 0, end-start)
+		for i := start; i < end; i++ {
+			values = append(values, "(?)")
+			args = append(args, fmt.Sprintf("Scale Participant %d", i))
+		}
+		_, err := st.DB().Exec(st.Rebind(
+			`INSERT INTO participants (display_name) VALUES `+strings.Join(values, ",")), args...)
+		require.NoError(err)
+	}
+	ids := make([]int64, 0, participants)
+	rows, err := st.DB().Query(`SELECT id FROM participants ORDER BY id`)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	for rows.Next() {
+		var id int64
+		require.NoError(rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(rows.Err())
+	require.Len(ids, participants)
+
+	insertObservationBatch(t, st, participants, func(i int) []any {
+		key := beeperidentity.ProviderKey("telegram", "account", "acct-7",
+			strconv.FormatInt(int64(482000+i), 10))
+		return []any{ids[i], "provider_identity", "account", "acct-7", key, key, key, "none", "archive_observation"}
+	})
+
+	_, err = st.DB().Exec(st.Rebind(
+		`DELETE FROM applied_migrations WHERE name = ?`), telegramSharedKeysMigration)
+	require.NoError(err)
+	require.NoError(st.InitSchema(), "rewrite 16,384 participants within the bind limits")
+
+	var remaining int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM participant_contact_observations
+		 WHERE provider_user_id LIKE 'provider:8:telegram:7:account:%'`)).Scan(&remaining))
+	assert.Zero(remaining, "every account-scoped key converges on the shared form")
+}
+
+// TestTelegramSharedKeyMigrationKeepsChainAppliedAcceptance pins how the
+// collapse judges an accepted decision: applied-ness follows the link
+// graph's connectivity, not direct edges. An acceptance whose endpoints are
+// joined through a two-hop link chain is already applied, so the collapse
+// keeps it accepted instead of replacing it with a conflict.
+func TestTelegramSharedKeyMigrationKeepsChainAppliedAcceptance(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	bridge, err := st.EnsureParticipantByIdentifier("beeper", "beeper:6:acct-7:9:bridge-7", "Bridge Alice")
+	require.NoError(err)
+	mid, err := st.EnsureParticipantByIdentifier("telegram", "999001", "Chain Mid")
+	require.NoError(err)
+	export, err := st.EnsureParticipantByIdentifier("telegram", "482111", "Export Alice")
+	require.NoError(err)
+
+	oldKey := beeperidentity.ProviderKey("telegram", "account", "acct-7", "482111")
+	shared := beeperidentity.ProviderKey("telegram", "service", "", "482111")
+	seededCandidate := func(key, scopeValue, state string) int64 {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO identity_match_candidates (
+				left_kind, left_id, right_kind, right_id, basis,
+				scope_kind, scope_value, normalized_value, state,
+				decided_by, decided_at, source
+			) VALUES ('participant', ?, 'participant', ?, 'stable_provider_id',
+				'account', ?, ?, ?, 'user', CURRENT_TIMESTAMP, 'archive_observation')
+		`), bridge, export, scopeValue, key, state)
+		require.NoError(err)
+		var id int64
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT id FROM identity_match_candidates WHERE normalized_value = ?`), key).Scan(&id))
+		return id
+	}
+	acceptedID := seededCandidate(oldKey, "acct-7", "accepted")
+	rejectedID := seededCandidate(shared, "acct-7", "rejected")
+
+	// The acceptance is applied through a two-hop chain: the archive links
+	// the bridge participant to the export participant through a middle
+	// participant, without a direct edge.
+	_, err = st.LinkParticipants(bridge, mid)
+	require.NoError(err)
+	_, err = st.LinkParticipants(mid, export)
+	require.NoError(err)
+
+	_, err = st.DB().Exec(st.Rebind(
+		`DELETE FROM applied_migrations WHERE name = ?`), telegramSharedKeysMigration)
+	require.NoError(err)
+	require.NoError(st.InitSchema(), "upgrade telegram provider keys")
+
+	var state string
+	var pending bool
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT state, application_pending FROM identity_match_candidates WHERE id = ?`),
+		min(acceptedID, rejectedID)).Scan(&state, &pending))
+	assert.Equal("accepted", state, "a chain-applied acceptance survives the collapse as applied")
+	assert.False(pending, "the applied decision is not re-marked pending")
+	var survivors int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM identity_match_candidates WHERE id IN (?, ?)`),
+		acceptedID, rejectedID).Scan(&survivors))
+	assert.Equal(1, survivors, "the colliding edge collapses to one row")
 }

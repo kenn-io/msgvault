@@ -425,6 +425,44 @@ func TestImportReplyLinksAcrossExports(t *testing.T) {
 	assert.Equal("7000000000000555555:1", parentSrc, "reply links to the earlier-export parent")
 }
 
+// TestImportReplyLinkResolvesWhenParentArrivesLater pins the archive-wide
+// deferred pass: a child imported from an export that carried only the
+// reply stays unlinked until any later export of the source archives the
+// parent, without the child being re-imported.
+func TestImportReplyLinkResolvesWhenParentArrivesLater(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	replyOnly := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{{
+		"id": 2, "type": "message", "date_unixtime": "1610909810",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"text": "a reply", "reply_to_message_id": 1,
+	}})
+	importRoot(t, st, replyOnly)
+
+	var linked bool
+	require.NoError(st.DB().QueryRow(`
+		SELECT reply_to_message_id IS NOT NULL FROM messages
+		WHERE source_message_id = '7000000000000555555:2'`).Scan(&linked))
+	assert.False(linked, "the parent's absence leaves the reply unlinked")
+
+	parentOnly := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Reply Chat", []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"text": "the parent",
+	}})
+	importRoot(t, st, parentOnly)
+
+	var parentSrc string
+	require.NoError(st.DB().QueryRow(`
+		SELECT p.source_message_id FROM messages c
+		JOIN messages p ON p.id = c.reply_to_message_id
+		WHERE c.source_message_id = '7000000000000555555:2'`).Scan(&parentSrc))
+	assert.Equal("7000000000000555555:1", parentSrc,
+		"the deferred pass links the reply once the parent is archived")
+}
+
 // TestImportReplyLinksForwardReference pins the post-chat reply pass: a
 // reply whose parent appears later in the same chat still links.
 func TestImportReplyLinksForwardReference(t *testing.T) {
@@ -1196,6 +1234,137 @@ func TestImportOverlappingExportKeepsArchivedAttachmentBytes(t *testing.T) {
 	assert.Equal(rowID, afterID, "the archived occurrence keeps its row")
 	assert.Equal(path, afterPath, "changed bytes never replace the stored file")
 	assert.Equal(hash, afterHash, "changed bytes never replace the stored hash")
+}
+
+// TestImportUnsupportedEntriesAreSkipped pins the shape Telegram Desktop's
+// current serializer emits for entries it cannot represent: an
+// "unsupported" object carrying only id and type must not become an empty
+// regular message.
+func TestImportUnsupportedEntriesAreSkipped(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Mixed Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555", "text": "real message",
+		},
+		{"id": 2, "type": "unsupported"},
+	})
+	summary := importRoot(t, st, root)
+
+	var count int
+	require.NoError(st.DB().QueryRow(`
+		SELECT COUNT(*) FROM messages WHERE source_message_id LIKE '7000000000000555555:%'`).Scan(&count))
+	assert.Equal(1, count, "an unsupported entry never becomes a regular message")
+	assert.EqualValues(1, summary.MessagesProcessed)
+	assert.EqualValues(1, summary.MessagesAdded)
+	assert.EqualValues(1, summary.UnsupportedEntriesSkipped, "the unsupported entry is counted, not imported")
+}
+
+// TestImportLaterAvailableMediaRefreshesMessageFlags pins the recovery rule
+// for media a later export adds to an already-archived text message: the
+// occurrence is inserted and the message's attachment flags are recomputed,
+// so has_attachments and attachment_count match the rows.
+func TestImportLaterAvailableMediaRefreshesMessageFlags(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	textOnly := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555", "text": "no media yet",
+	}})
+	importRoot(t, st, textOnly)
+
+	withPhoto := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"photo": "photos/photo_1.jpg", "text": "no media yet",
+	}})
+	require.NoError(os.MkdirAll(filepath.Join(withPhoto, "photos"), 0o755))
+	require.NoError(os.WriteFile(
+		filepath.Join(withPhoto, "photos", "photo_1.jpg"), []byte("photo-bytes"), 0o644))
+	importRoot(t, st, withPhoto)
+
+	var rows int
+	var hasAttachments bool
+	var attachmentCount int
+	require.NoError(st.DB().QueryRow(`
+		SELECT (SELECT COUNT(*) FROM attachments a
+		        JOIN messages m ON m.id = a.message_id
+		        WHERE m.source_message_id = '7000000000000555555:1'),
+		       has_attachments, attachment_count
+		FROM messages WHERE source_message_id = '7000000000000555555:1'`).
+		Scan(&rows, &hasAttachments, &attachmentCount))
+	assert.Equal(1, rows, "the later-available photo inserts its occurrence")
+	assert.True(hasAttachments, "recovery recomputes has_attachments")
+	assert.Equal(1, attachmentCount, "recovery recomputes attachment_count")
+}
+
+// TestImportOverlappingExportKeepsArchivedAttachmentManifest pins the
+// manifest rule of attachment recovery: a message whose attachment
+// manifest is populated keeps it exactly. Media renamed or added in a
+// later export never creates a new occurrence on an archived message.
+func TestImportOverlappingExportKeepsArchivedAttachmentManifest(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	writeMedia := func(root string, messages []map[string]any) string {
+		export := writeChatExport(t, root, fixturePersonalChatID, "personal_chat", "Media Chat", messages)
+		for _, dir := range []string{"photos", "files"} {
+			require.NoError(os.MkdirAll(filepath.Join(export, dir), 0o755))
+		}
+		require.NoError(os.WriteFile(
+			filepath.Join(export, "photos", "photo_1.jpg"), []byte("photo-bytes"), 0o644))
+		require.NoError(os.WriteFile(
+			filepath.Join(export, "photos", "photo_2.jpg"), []byte("renamed-bytes"), 0o644))
+		require.NoError(os.WriteFile(
+			filepath.Join(export, "files", "report.pdf"), []byte("report-bytes"), 0o644))
+		return export
+	}
+	first := writeMedia(t.TempDir(), []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"photo": "photos/photo_1.jpg", "text": "",
+	}})
+	importRoot(t, st, first)
+
+	manifest := func() []string {
+		rows, err := st.DB().Query(st.Rebind(`
+			SELECT COALESCE(a.source_part_key, '') FROM attachments a
+			JOIN messages m ON m.id = a.message_id
+			WHERE m.source_message_id = ? ORDER BY a.id`), "7000000000000555555:1")
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		var keys []string
+		for rows.Next() {
+			var key string
+			require.NoError(rows.Scan(&key))
+			keys = append(keys, key)
+		}
+		require.NoError(rows.Err())
+		return keys
+	}
+	archived := manifest()
+	require.Len(archived, 1, "the first import archives one occurrence")
+
+	// A later export renames the photo and adds a file on the same message.
+	second := writeMedia(t.TempDir(), []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"photo": "photos/photo_2.jpg", "file": "files/report.pdf", "text": "",
+	}})
+	importRoot(t, st, second)
+
+	assert.Equal(archived, manifest(), "an archived manifest never adopts the newer export's media")
+	var attachmentCount int
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_count FROM messages
+		WHERE source_message_id = '7000000000000555555:1'`).Scan(&attachmentCount))
+	assert.Equal(1, attachmentCount, "the flags keep describing the archived manifest")
 }
 
 // TestImportAudioTitleDoesNotReplaceFilename pins the source-field

@@ -73,9 +73,8 @@ func attachmentCandidates(m *Message) []attachmentCandidate {
 	}
 	if m.File != "" && isMediaPath(m.File) {
 		// The export's file_name is authoritative document metadata; the
-		// storage basename is the fallback. A title is a presentation
-		// title — Telegram documents it as the music title — not a
-		// filename, so it never fills in here.
+		// storage basename is the fallback. The export's title is a music
+		// title, not a filename, so it is not parsed as one.
 		filename := m.FileName
 		if filename == "" {
 			filename = filepath.Base(m.File)

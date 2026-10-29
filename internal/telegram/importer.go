@@ -62,16 +62,20 @@ type ImportSummary struct {
 	Duration               time.Duration
 	ChatsProcessed         int
 	ServiceMessagesSkipped int64
-	MessagesProcessed      int64
-	MessagesAdded          int64
-	MessagesSkipped        int64
-	ParticipantsResolved   int
-	AttachmentsFound       int
-	AttachmentsStored      int
-	AttachmentsMissing     int
-	FromMeCount            int64
-	Errors                 int
-	WasResumed             bool
+	// UnsupportedEntriesSkipped counts "unsupported" entries: objects
+	// Telegram Desktop's serializer emits with only an id and a type when
+	// it cannot represent the entry.
+	UnsupportedEntriesSkipped int64
+	MessagesProcessed         int64
+	MessagesAdded             int64
+	MessagesSkipped           int64
+	ParticipantsResolved      int
+	AttachmentsFound          int
+	AttachmentsStored         int
+	AttachmentsMissing        int
+	FromMeCount               int64
+	Errors                    int
+	WasResumed                bool
 }
 
 // Import reads a Telegram Desktop JSON export under opts.RootDir into st.
@@ -83,7 +87,10 @@ type ImportSummary struct {
 // and search document in one transaction — so an interruption can only
 // lose whole messages, never leave one half-written. Attachments and
 // reply links follow the commit inside their chat; the next run —
-// resumed or not — restores what an interruption left behind.
+// resumed or not — restores what an interruption left behind. After a run
+// adds messages, one bounded pass retries the source's still-NULL reply
+// links, so a child imported before its parent links once any later
+// export archives the parent.
 func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
 	start := time.Now()
 	summary := &ImportSummary{}
@@ -236,6 +243,17 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 		}
 	}
 
+	if summary.MessagesAdded > 0 {
+		// Reply children whose parents were absent at import time stay
+		// unlinked until any export of this source archives the parent.
+		// Retry the remaining NULL links against the grown archive; the
+		// bounded pass reads only replies the archive still carries
+		// unlinked.
+		if err := resolveDeferredReplies(ctx, st, source.ID); err != nil {
+			syncErr = err
+			return summary, err
+		}
+	}
 	refreshStats()
 	summary.ParticipantsResolved = resolver.resolvedCount()
 	summary.Duration = time.Since(start)
@@ -254,10 +272,56 @@ type pendingReply struct {
 	parentSrcID string
 }
 
+// telegramReplyMetadata is the per-message metadata a reply carries. The
+// referenced id is the parent's source-wide message id
+// ("<chat-id>:<message-id>"), recorded at the child's first import so the
+// deferred pass can resolve the link after any later export archives the
+// parent.
+type telegramReplyMetadata struct {
+	ReferencedMessageID string `json:"referenced_message_id,omitempty"`
+}
+
+// telegramReplyPageSize bounds one keyset page of the deferred reply pass.
+const telegramReplyPageSize = 500
+
+// resolveDeferredReplies links telegram replies whose parents were absent
+// when the child was archived and have since arrived in any export of the
+// source. Each child's recorded parent reference drives the lookup, and
+// only NULL links are filled, so a link an earlier import wrote is never
+// rewritten.
+func resolveDeferredReplies(ctx context.Context, st *store.Store, sourceID int64) error {
+	afterID := int64(0)
+	for {
+		unresolved, err := st.ListUnresolvedMessageRepliesAfterContext(ctx,
+			sourceID, MessageType, afterID, telegramReplyPageSize)
+		if err != nil {
+			return fmt.Errorf("telegram: list deferred replies: %w", err)
+		}
+		for _, reply := range unresolved {
+			var metadata telegramReplyMetadata
+			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
+				return fmt.Errorf("telegram: decode reply metadata for %s: %w", reply.SourceMessageID, err)
+			}
+			if metadata.ReferencedMessageID != "" {
+				if err := st.SetReplyToIfMissingContext(ctx, sourceID,
+					reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
+					return fmt.Errorf("telegram: resolve deferred reply %s: %w", reply.SourceMessageID, err)
+				}
+			}
+			afterID = reply.MessageID
+		}
+		if len(unresolved) < telegramReplyPageSize {
+			return nil
+		}
+	}
+}
+
 // importChat imports one chat append-only. A message the archive already
 // carries is skipped as a new write; its reply link is still filled when
-// absent, and its attachment rows are re-ensured, which fills only what an
-// interruption left missing and never rewrites stored media.
+// absent, and its attachment rows are re-ensured: a message with no
+// attachment rows is restored from this export, while a populated
+// manifest is kept exactly — only missing fields of keys it already
+// carries are filled, never rewritten or extended.
 func importChat(
 	ctx context.Context,
 	st *store.Store,
@@ -303,7 +367,7 @@ func importChat(
 	// one transaction.
 	srcIDs := make([]string, 0, len(chat.Messages))
 	for i := range chat.Messages {
-		if !chat.Messages[i].Service {
+		if !chat.Messages[i].Service && !chat.Messages[i].Unsupported {
 			srcIDs = append(srcIDs, fmt.Sprintf("%d:%d", chat.ID, chat.Messages[i].ID))
 		}
 	}
@@ -334,20 +398,49 @@ func importChat(
 			summary.ServiceMessagesSkipped++
 			continue
 		}
+		if m.Unsupported {
+			summary.UnsupportedEntriesSkipped++
+			continue
+		}
 
 		srcMsgID := fmt.Sprintf("%d:%d", chat.ID, m.ID)
 		messageID, existed := archived[srcMsgID]
 		summary.MessagesProcessed++
+		candidates := attachmentCandidates(m)
 		if existed {
 			summary.MessagesSkipped++
 			replyOf(m)
 			// Attachment recovery must not depend on checkpoint state:
 			// a failure or interruption after the message commit but
 			// before the first checkpoint leaves the attachment absent,
-			// and this ordinary run is the next run. The append-only
-			// ensure is a no-op for rows that are populated.
-			if err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, opts, logger, summary); err != nil {
-				return fmt.Errorf("re-ensure attachments for %s: %w", srcMsgID, err)
+			// and this ordinary run is the next run. A message with no
+			// attachment rows is restored from the current export — the
+			// torn-write case; a populated manifest is kept exactly,
+			// filling only missing fields of the source-part keys it
+			// already carries, so media a later export renamed or added
+			// never creates a new occurrence.
+			if len(candidates) > 0 {
+				archivedKeys, err := st.MessageAttachmentSourcePartKeysContext(ctx, messageID)
+				if err != nil {
+					return fmt.Errorf("load attachment manifest for %s: %w", srcMsgID, err)
+				}
+				restore := archivedKeys
+				if len(archivedKeys) == 0 {
+					restore = nil
+				}
+				wrote, err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, restore, opts, logger, summary)
+				if err != nil {
+					return fmt.Errorf("re-ensure attachments for %s: %w", srcMsgID, err)
+				}
+				// Every recovered write refreshes the derived flags a
+				// consumer reads; an insert without the recompute would
+				// leave them describing a manifest the message no
+				// longer has.
+				if wrote {
+					if err := st.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
+						return fmt.Errorf("recompute attachment stats for %s: %w", srcMsgID, err)
+					}
+				}
 			}
 			continue
 		}
@@ -374,7 +467,6 @@ func importChat(
 			summary.FromMeCount++
 		}
 
-		candidates := attachmentCandidates(m)
 		snippet := textutil.SnippetFromBody(m.Text)
 		data := &store.MessagePersistData{
 			Message: &store.Message{
@@ -401,6 +493,18 @@ func importChat(
 		if senderID.Valid {
 			data.Recipients = recipientSets(m, senderID.Int64, isFromMe, ownerPID, direct, peerPID, peerName, ownerName)
 		}
+		// The parent reference outlives the chat pass: the deferred
+		// archive-wide pass reads it after any later export archives the
+		// parent this export lacks.
+		if m.ReplyTo != 0 {
+			meta, err := json.Marshal(telegramReplyMetadata{
+				ReferencedMessageID: fmt.Sprintf("%d:%d", chat.ID, m.ReplyTo),
+			}, json.Deterministic(true))
+			if err != nil {
+				return fmt.Errorf("marshal reply metadata for %s: %w", srcMsgID, err)
+			}
+			data.Metadata = &sql.NullString{String: string(meta), Valid: true}
+		}
 		messageID, err = st.PersistMessageContext(ctx, data)
 		if err != nil {
 			// The atomic persist rolled back, so the message is not in
@@ -416,10 +520,11 @@ func importChat(
 		// Attachments and their stats are deferred writes that follow the
 		// atomic commit. A failure fails the chat — it is never marked
 		// complete — so the next run reprocesses it whole.
-		if err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, opts, logger, summary); err != nil {
+		wrote, err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, nil, opts, logger, summary)
+		if err != nil {
 			return fmt.Errorf("store attachments for %s: %w", srcMsgID, err)
 		}
-		if len(candidates) > 0 {
+		if wrote {
 			if err := st.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 				return fmt.Errorf("recompute attachment stats for %s: %w", srcMsgID, err)
 			}
@@ -507,7 +612,11 @@ func recipientSets(
 // storeAttachments stores each media candidate for one message. The write
 // is append-only: a missing row is inserted and an occurrence an earlier
 // import populated keeps its stored bytes and metadata even when the file
-// at the same export path now differs or is gone.
+// at the same export path now differs or is gone. A nil archivedKeys
+// restores every candidate; a non-nil set — the message's archived
+// manifest — allows only candidates whose source-part key the archive
+// already carries, so media a later export renamed or added never creates
+// a new occurrence. It reports whether any candidate was written.
 func storeAttachments(
 	ctx context.Context,
 	st *store.Store,
@@ -515,13 +624,20 @@ func storeAttachments(
 	chatID int64,
 	m *Message,
 	messageID int64,
+	archivedKeys map[string]struct{},
 	opts ImportOptions,
 	logger *slog.Logger,
 	summary *ImportSummary,
-) error {
+) (bool, error) {
+	wrote := false
 	for _, cand := range attachmentCandidates(m) {
-		summary.AttachmentsFound++
 		partKey := syntheticAttachmentHash(chatID, m.ID, cand.RelPath)
+		if archivedKeys != nil {
+			if _, archived := archivedKeys[partKey]; !archived {
+				continue
+			}
+		}
+		summary.AttachmentsFound++
 		storagePath, contentHash, size, err := storeAttachment(opts.AttachmentsDir, absRoot, cand.RelPath)
 		if err != nil {
 			logger.Warn("telegram: media path rejected", "path", cand.RelPath, "err", err)
@@ -564,10 +680,11 @@ func storeAttachments(
 		// The ensure fills only rows and stored data an interruption left
 		// missing; it never rewrites an archived occurrence.
 		if err := st.EnsureAttachmentRecordAppendOnly(ctx, messageID, write); err != nil {
-			return fmt.Errorf("ensure attachment %s: %w", cand.RelPath, err)
+			return wrote, fmt.Errorf("ensure attachment %s: %w", cand.RelPath, err)
 		}
+		wrote = true
 	}
-	return nil
+	return wrote, nil
 }
 
 // saveCheckpoint persists the completed-chat set. An error fails the

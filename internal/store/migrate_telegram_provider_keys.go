@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
 )
@@ -381,29 +381,21 @@ func (s *Store) loadIdentityMatchCandidateMergeRowTx(
 }
 
 // telegramCandidateAppliedAcceptedTx reports whether an accepted member of
-// the group has a live participant link, so a collapse keeps that decision
-// applied instead of re-marking it pending.
+// the group is applied through the accepted-link graph: its endpoints are
+// connected — directly or through a chain of participant links — so a
+// collapse keeps that decision applied instead of re-marking it pending or
+// replacing it with a conflict. Direct edges alone would misread an
+// acceptance the archive applied through an indirect chain.
 func (s *Store) telegramCandidateAppliedAcceptedTx(
 	ctx context.Context, tx *loggedTx, group []identityMatchCandidateMergeRow,
 ) (bool, error) {
+	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	if err != nil {
+		return false, fmt.Errorf("telegram keys: load participant links: %w", err)
+	}
+	linkAdjacency := buildAdjacency(edges)
 	for _, candidate := range group {
-		if candidate.State != IdentityMatchStateAccepted ||
-			candidate.LeftKind != IdentityMatchParticipant ||
-			candidate.RightKind != IdentityMatchParticipant {
-			continue
-		}
-		var linked bool
-		err := tx.QueryRowContext(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM participant_links
-				WHERE (participant_a = ? AND participant_b = ?)
-				   OR (participant_a = ? AND participant_b = ?)
-			)`, candidate.LeftID, candidate.RightID,
-			candidate.RightID, candidate.LeftID).Scan(&linked)
-		if err != nil {
-			return false, fmt.Errorf("telegram keys: check candidate link %d: %w", candidate.ID, err)
-		}
-		if linked {
+		if acceptedMergeCandidateIsLinked(candidate, linkAdjacency) {
 			return true, nil
 		}
 	}
@@ -478,35 +470,23 @@ func planTelegramEvidenceDetailRewrites(
 	for key := range affected {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
 	if len(keys) == 0 {
 		return plan, nil
 	}
-	args := make([]any, len(keys))
-	for i, key := range keys {
-		args[i] = key
-	}
-	rows, err = tx.QueryContext(ctx, `
-		SELECT DISTINCT candidate_id FROM identity_match_evidence
-		WHERE detail IN (`+placeholders(len(keys))+`)
-	`, args...)
-	if err != nil {
+	// Chunked for the same reason as the endpoint lookup: the affected-key
+	// set scales with archive cardinality, not with one export.
+	if err := queryInChunksContext(ctx, tx, keys, nil,
+		`SELECT DISTINCT candidate_id FROM identity_match_evidence
+		 WHERE detail IN (%s)`,
+		func(rows *loggedRows) error {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return fmt.Errorf("telegram keys: scan evidence candidate: %w", err)
+			}
+			plan.candidates = append(plan.candidates, id)
+			return nil
+		}); err != nil {
 		return nil, fmt.Errorf("telegram keys: list evidence candidates: %w", err)
-	}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("telegram keys: scan evidence candidate: %w", err)
-		}
-		plan.candidates = append(plan.candidates, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, fmt.Errorf("telegram keys: iterate evidence candidates: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("telegram keys: close evidence candidates: %w", err)
 	}
 	return plan, nil
 }
@@ -529,7 +509,10 @@ func applyTelegramEvidenceDetailRewrites(
 // telegramCandidatesTouchingParticipants lists candidates with a
 // participant endpoint in the given set. Their evidence fingerprints embed
 // the endpoint participants' observations, so a rewritten observation
-// changes them even when the candidate carries no Telegram key itself.
+// changes them even when the candidate carries no Telegram key itself. Each
+// side's lookup runs chunked, because archive cardinality — not the export
+// — decides the set's size and an unchunked IN list would pass a backend's
+// bind-variable limit inside InitSchema.
 func telegramCandidatesTouchingParticipants(
 	ctx context.Context, tx *loggedTx, participants map[int64]struct{},
 ) ([]int64, error) {
@@ -537,36 +520,33 @@ func telegramCandidatesTouchingParticipants(
 	for id := range participants {
 		ids = append(ids, id)
 	}
-	inClause, args := sortedIDPlaceholders(ids)
-	if inClause == "" {
+	if len(ids) == 0 {
 		return nil, nil
 	}
-	// The IN list appears twice, so the bound arguments do too.
-	doubledArgs := append(append([]any{}, args...), args...)
-	rows, err := tx.QueryContext(ctx, `
-		SELECT id FROM identity_match_candidates
-		WHERE (left_kind = 'participant' AND left_id IN (`+inClause+`))
-		   OR (right_kind = 'participant' AND right_id IN (`+inClause+`))
-	`, doubledArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("telegram keys: list endpoint candidates: %w", err)
-	}
-	var candidates []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("telegram keys: scan endpoint candidate: %w", err)
+	slices.Sort(ids)
+	seen := make(map[int64]struct{})
+	for _, side := range []struct{ kindColumn, idColumn string }{
+		{"left_kind", "left_id"},
+		{"right_kind", "right_id"},
+	} {
+		query := `SELECT id FROM identity_match_candidates
+			WHERE ` + side.kindColumn + ` = 'participant' AND ` + side.idColumn + ` IN (%s)`
+		if err := queryInChunksContext(ctx, tx, ids, nil, query, func(rows *loggedRows) error {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return fmt.Errorf("telegram keys: scan endpoint candidate: %w", err)
+			}
+			seen[id] = struct{}{}
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("telegram keys: list endpoint candidates: %w", err)
 		}
+	}
+	candidates := make([]int64, 0, len(seen))
+	for id := range seen {
 		candidates = append(candidates, id)
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, fmt.Errorf("telegram keys: iterate endpoint candidates: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("telegram keys: close endpoint candidates: %w", err)
-	}
+	slices.Sort(candidates)
 	return candidates, nil
 }
 

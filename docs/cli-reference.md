@@ -1781,8 +1781,8 @@ Import chats from a Telegram Desktop "Machine-readable JSON" export without
 contacting Telegram. Chats, plain-text messages, senders, and exported media
 are copied into the archive. The exporting user comes from the export;
 `--me` overrides it with a numeric Telegram user ID and is required for
-single-chat exports, which do not identify the owner. Service messages are
-skipped.
+single-chat exports, which do not identify the owner. Service messages and
+`unsupported` entries are skipped.
 
 Imports are append-only and keyed on the chat's `id` and
 `<chat-id>:<message-id>`: re-running with a newer or overlapping export adds

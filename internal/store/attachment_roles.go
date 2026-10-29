@@ -268,6 +268,34 @@ func (s *Store) EnsureAttachmentRecordAppendOnly(
 	})
 }
 
+// MessageAttachmentSourcePartKeysContext returns the source-part keys of
+// one message's archived attachment occurrences. Recovery passes use it to
+// keep an archived manifest exact: only the fields of keys the archive
+// already carries are filled, and keys are never added.
+func (s *Store) MessageAttachmentSourcePartKeysContext(
+	ctx context.Context, messageID int64,
+) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT source_part_key FROM attachments
+		WHERE message_id = ? AND source_part_key IS NOT NULL`, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("list message attachment source-part keys: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	keys := make(map[string]struct{})
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan message attachment source-part key: %w", err)
+		}
+		keys[key] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate message attachment source-part keys: %w", err)
+	}
+	return keys, nil
+}
+
 // UpsertAttachmentRecordWithStats atomically updates an attachment and its message
 // stats. Callers skip unchanged records and request cache invalidation unless the
 // message is new and its attachments will be included in an incremental export.

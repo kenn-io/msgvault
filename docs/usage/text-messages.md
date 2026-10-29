@@ -357,7 +357,9 @@ identify the owner, so they require `--me`.
 Plain-text messages, senders, reply threading, edit markers, and exported
 media (photos, voice messages, stickers, and files, with the export's own
 file names and MIME types) are imported. Service messages such as membership
-changes and calls are skipped. In personal and bot chats, each message's
+changes and calls are skipped, as are `unsupported` entries — objects
+Telegram Desktop writes with only an id and a type when it cannot represent
+the entry. In personal and bot chats, each message's
 recipient is the chat's other participant; group and channel messages record
 only their sender. A Telegram person already known through a Beeper bridge
 resolves to the same participant instead of a duplicate.

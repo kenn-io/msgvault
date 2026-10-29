@@ -65,6 +65,10 @@ type Message struct {
 	// Service marks a service message ("type": "service"): membership
 	// changes, calls, pins. The importer drops them.
 	Service bool
+	// Unsupported marks an entry Telegram Desktop's serializer could not
+	// represent ("type": "unsupported"): it carries only an id and a type.
+	// The importer drops them.
+	Unsupported bool
 	// SentAt is the message timestamp; zero when the export carries none.
 	SentAt time.Time
 	// ReplyTo is the export's reply_to_message_id: the Telegram message ID
@@ -96,6 +100,4 @@ type Message struct {
 	// FileName is the export's official file_name for a file message; empty
 	// when the export carries none.
 	FileName string
-	// Title is the export's title for a file message (its filename).
-	Title string
 }
