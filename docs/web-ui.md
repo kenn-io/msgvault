@@ -110,7 +110,7 @@ and Forward restore them.
 
 One toolbar sits above the results:
 
-- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected local calendar days. From must be on or before To.
+- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected UTC calendar days. From must be on or before To.
 - **Group by** adds a grouping level. Add more levels to group within groups.
 - A restored Timeline shows **Show as** so you can return to Table.
 - The count at the end reports items, or groups when the view is grouped.

@@ -190,8 +190,8 @@ it('keeps the selected chat network and restored kinds when Email is added', asy
 
 it('retains committed dates when a range is reversed, accepts the same day, and clears a bound', async () => {
   const onFiltersChange = vi.fn();
-  const after = new Date(2026, 6, 18).toISOString();
-  const before = new Date(2026, 6, 21).toISOString();
+  const after = '2026-07-18T00:00:00.000Z';
+  const before = '2026-07-21T00:00:00.000Z';
   render(ContextBar, {
     messages: true, client: createAPIClient(async () => Response.json({ rows: [], accounts: [], identities: [] })),
     query: '', searchMode: 'full_text', filters: [{ dimension: 'after', values: [after] }, { dimension: 'before', values: [before] }], groupingChain: [], countLabel: '', sort,
@@ -207,12 +207,12 @@ it('retains committed dates when a range is reversed, accepts the same day, and 
   expect(to.value).toBe('2026-07-20');
   expect(onFiltersChange).not.toHaveBeenCalled();
   await fireEvent.change(from, { target: { value: '2026-07-20' } });
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [before] }, { dimension: 'after', values: [new Date(2026, 6, 20).toISOString()] }]);
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [before] }, { dimension: 'after', values: ['2026-07-20T00:00:00.000Z'] }]);
   expect(screen.queryByRole('alert')).toBeNull();
   await fireEvent.change(from, { target: { value: '' } });
   expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [before] }]);
   await fireEvent.change(to, { target: { value: '2026-07-18' } });
-  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: [after] }, { dimension: 'before', values: [new Date(2026, 6, 19).toISOString()] }]);
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: [after] }, { dimension: 'before', values: ['2026-07-19T00:00:00.000Z'] }]);
 });
 
 it('lets a restored Messages Timeline return to Table', async () => {

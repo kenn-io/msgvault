@@ -7,7 +7,8 @@
   import { formatMeetingDuration } from '../../meetings/format';
   import { createMeetingsAPI } from '../../meetings/api';
   import { MeetingsController, type MeetingPanelScope } from '../../meetings/controller.svelte';
-  import MeetingActionsDialog from './MeetingActionsDialog.svelte';
+  import Dialog from '../common/Dialog.svelte';
+  import MeetingPanel from './MeetingPanel.svelte';
 
   let { client, scope, refreshKey = '', onReloadScope, onOpenMeeting }: {
     client: APIClient; scope: MeetingPanelScope; refreshKey?: string; onReloadScope?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void;
@@ -35,7 +36,11 @@
   {/if}
   <Button size="sm" surface="soft" label={controller.actions ? `Action items · ${controller.actions.total_count}` : 'Action items'} onclick={() => open = true} />
 </section>
-{#if open}<MeetingActionsDialog {client} {controller} onclose={() => open = false} onReload={reload} {onOpenMeeting} />{/if}
+{#if open}
+  <Dialog title="Action items" onclose={() => open = false}>
+    <MeetingPanel {client} {controller} {scope} {refreshKey} compact showHeading={false} {onReloadScope} {onOpenMeeting} />
+  </Dialog>
+{/if}
 
 <style>
   .meeting-summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
