@@ -432,6 +432,54 @@ func TestMCPSearchPeopleKeepsObservedPageWhenProfileQuerySpansContactFields(t *t
 	assert.NotEmpty(toolStructuredContent(t, result)["next_cursor"])
 }
 
+func TestMCPSearchPeopleDraftOnlyProfilePreservesObservedContinuation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := &recordingPeopleBackend{
+		searchPage: &peoplebrowser.SearchPage{
+			Rows: []query.PersonSummary{{
+				ID: 22, DisplayLabel: "Active Contact", ActivityCount: 1,
+				Identifiers: []query.PersonIdentifier{}, SourceCounts: []query.SourceCount{},
+			}},
+			TotalCount: 1, CacheRevision: "cache-7",
+		},
+		profiles: []store.Person{{
+			ID: 7, VCardUID: "person-7", DisplayName: new("Draft Contact"), Revision: 1,
+			ParticipantIDs: []int64{11},
+		}},
+		contact: &query.PersonSummary{
+			ID: 11, DisplayLabel: "Draft Contact", ActivityCount: 0,
+			Identifiers: []query.PersonIdentifier{}, SourceCounts: []query.SourceCount{},
+		},
+	}
+	opts := peopleToolOptions(backend)
+	first := rawCallTool(t, opts, ToolSearchPeople, map[string]any{"query": "", "limit": 1})
+	require.NotEqual(true, first["isError"], "result: %#v", first)
+	firstPage := toolStructuredContent(t, first)
+	assert.InDelta(2, firstPage["total_count"], 0)
+	rows, ok := firstPage["rows"].([]any)
+	require.True(ok)
+	require.Len(rows, 1)
+	row, ok := rows[0].(map[string]any)
+	require.True(ok)
+	assert.InDelta(11, row["id"], 0)
+	cursor, ok := firstPage["next_cursor"].(string)
+	require.True(ok)
+	require.NotEmpty(cursor)
+
+	second := rawCallTool(t, opts, ToolSearchPeople, map[string]any{"query": "", "limit": 1, "cursor": cursor})
+	require.NotEqual(true, second["isError"], "result: %#v", second)
+	secondPage := toolStructuredContent(t, second)
+	assert.InDelta(2, secondPage["total_count"], 0)
+	rows, ok = secondPage["rows"].([]any)
+	require.True(ok)
+	require.Len(rows, 1)
+	row, ok = rows[0].(map[string]any)
+	require.True(ok)
+	assert.InDelta(22, row["id"], 0)
+	assert.Empty(secondPage["next_cursor"])
+}
+
 func TestMCPGetPersonNotesReturnsOnlyNotesFields(t *testing.T) {
 	assert := assert.New(t)
 	now := time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC)

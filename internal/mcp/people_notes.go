@@ -274,7 +274,7 @@ func (h *handlers) prepareCuratedPeopleSearch(
 			if summary.ID == 0 {
 				summary = *contact
 			}
-			if personSummaryMatchesPeopleQuery(*contact, queryText) {
+			if contact.ActivityCount > 0 && personSummaryMatchesPeopleQuery(*contact, queryText) {
 				prepared.excludedIDs[contact.CanonicalID()] = struct{}{}
 			}
 		}
