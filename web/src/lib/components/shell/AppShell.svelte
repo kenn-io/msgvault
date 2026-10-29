@@ -44,9 +44,9 @@
   import { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
   import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
-  import { OperationsController } from '../../operations/controller.svelte';
+  import { defaultOperationsState, OperationsController } from '../../operations/controller.svelte';
   import type { OperationSettingsTarget } from '../../operations/labels';
-  import { defaultOperationsState, type OperationRunDetail, type OperationsURLState } from '../../operations/models';
+  import type { OperationRunDetail, OperationsURLState } from '../../operations/models';
   import {
     settingsNavigationTarget as targetForSettingsAuthority,
     type CardDAVSettingsRequest,
@@ -293,34 +293,18 @@
   let displayOpen = $state(false);
   let resultsWidth = $state(0);
   const shellData = new ShellData(untrack(() => client));
-  let pendingViewDelete = $state<SavedView>();
 
   function openOperations(kind: OperationsURLState['operationKind'] = ''): void {
     setRunHistory(defaultOperationsState(kind));
   }
   function openJob(target: JobTarget): void {
     if (target.kind === 'source') commitWorkspace('sources');
-    else if (target.kind === 'contacts') openCardDAVSettings();
     else if (target.kind === 'status') openOperationAuthority(target.authority);
     else if (target.kind === 'setting') setUpOperation(target.target);
   }
-  function deleteView(view: SavedView): void {
-    if (pendingViewDelete) void commitViewDelete(pendingViewDelete);
-    shellData.hideView(view);
-    pendingViewDelete = view;
-  }
-  async function commitViewDelete(view: SavedView): Promise<void> {
-    const error = await shellData.commitDelete(view);
+  async function flashViewError(result: Promise<string | undefined>): Promise<void> {
+    const error = await result;
     if (error) showFlash(error, { tone: 'danger', durationMs: 8000 });
-  }
-  function expireViewDelete(): void {
-    const view = pendingViewDelete;
-    pendingViewDelete = undefined;
-    if (view) void commitViewDelete(view);
-  }
-  function undoViewDelete(): void {
-    if (pendingViewDelete) shellData.restoreView(pendingViewDelete);
-    pendingViewDelete = undefined;
   }
   type RelatedOperationStatus = NonNullable<OperationRunDetail['related_status']>;
 
@@ -1243,7 +1227,7 @@
     relationshipReviewController.destroy();
     factLedgerController.destroy();
     operationsController.destroy();
-    expireViewDelete();
+    void flashViewError(shellData.expireDelete());
     if (ownsState) exploreState.destroy();
   });
 </script>
@@ -1261,12 +1245,14 @@
       showCollapseToggle
       jobs={shellData.jobs}
       views={shellData.views}
+      viewsError={shellData.error}
+      onRetryViews={() => void shellData.refresh()}
       onPastRuns={() => openOperations()}
       onOpenJob={openJob}
       onOpenView={(view) => void openSavedView(viewState(view))}
       onRenameView={(view, name) => shellData.renameView(view, name)}
       onDescribeView={(view, description) => shellData.describeView(view, description)}
-      onDeleteView={deleteView}
+      onDeleteView={view => void flashViewError(shellData.deleteView(view))}
       onNavigate={openWorkspaceTab}
       onToggleCollapsed={toggleSidebar}
       onOpenHelp={openKeyboardHelp}
@@ -1591,12 +1577,14 @@
         showCollapseToggle={false}
         jobs={shellData.jobs}
         views={shellData.views}
+        viewsError={shellData.error}
+        onRetryViews={() => void shellData.refresh()}
         onPastRuns={() => { void closeDrawer().then(() => openOperations()); }}
         onOpenJob={(target) => { void closeDrawer().then(() => openJob(target)); }}
         onOpenView={(view) => { void closeDrawer().then(() => openSavedView(viewState(view))); }}
         onRenameView={(view, name) => shellData.renameView(view, name)}
         onDescribeView={(view, description) => shellData.describeView(view, description)}
-        onDeleteView={deleteView}
+        onDeleteView={view => void flashViewError(shellData.deleteView(view))}
         onNavigate={(id) => {
           openWorkspaceTab(id);
           void closeDrawer();
@@ -1628,8 +1616,8 @@
     onConfigure={() => { closeRunHistory(); openVisualAttachmentSettings(); }} />
 {/if}
 <FlashBanner />
-{#if pendingViewDelete}
-  {#key pendingViewDelete.id}<UndoToast message={`Deleted ${pendingViewDelete.name}`} onUndo={undoViewDelete} onExpire={expireViewDelete} />{/key}
+{#if shellData.pending}
+  {#key shellData.pending.id}<UndoToast message={`Deleted ${shellData.pending.name}`} onUndo={() => shellData.undoDelete()} onExpire={() => void flashViewError(shellData.expireDelete())} />{/key}
 {/if}
 
 <CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />

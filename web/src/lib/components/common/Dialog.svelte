@@ -12,10 +12,6 @@
     primaryLabel?: string;
     onprimary?: () => void;
     primaryDisabled?: boolean;
-    /** Styles the primary action as destructive. */
-    danger?: boolean;
-    /** Left side of the footer, such as a status line. */
-    footerStart?: Snippet;
   }
 
   let {
@@ -25,19 +21,14 @@
     primaryLabel = undefined,
     onprimary = undefined,
     primaryDisabled = false,
-    danger = false,
-    footerStart = undefined,
   }: Props = $props();
 </script>
 
 {#snippet footer()}
-  {#if footerStart}
-    <span class="dialog-footer-start">{@render footerStart()}</span>
-  {/if}
   {#if primaryLabel}
     <Button
       surface="solid"
-      tone={danger ? 'danger' : 'info'}
+      tone="info"
       label={primaryLabel}
       disabled={primaryDisabled}
       onclick={onprimary}
@@ -50,15 +41,7 @@
   {onclose}
   width="520px"
   maxWidth="calc(100vw - 32px)"
-  footer={primaryLabel || footerStart ? footer : undefined}
+  footer={primaryLabel ? footer : undefined}
 >
   {@render children()}
 </Modal>
-
-<style>
-  .dialog-footer-start {
-    margin-right: auto;
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-</style>
