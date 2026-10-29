@@ -678,3 +678,259 @@ func TestTelegramSharedKeyMigrationKeepsChainAppliedAcceptance(t *testing.T) {
 		acceptedID, rejectedID).Scan(&survivors))
 	assert.Equal(1, survivors, "the colliding edge collapses to one row")
 }
+
+// TestTelegramSharedKeyMigrationCollapsesConvergingConflicts pins the
+// converging-conflict fix: one participant pair can hold the same username
+// collision under two account scopes, and both conflicts rekey onto one
+// shared edge. A statement-level occupancy check cannot see the duplicate
+// it forks, so the reconciliation must run through the canonical candidate
+// collapse — one reviewable row survives, carrying the group's promotion
+// and decision metadata, and the retired row leaves a redirect. Runs on
+// SQLite and PostgreSQL.
+func TestTelegramSharedKeyMigrationCollapsesConvergingConflicts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("beeper", "conv-acct")
+	require.NoError(err)
+	bridge := func(identifier string) int64 {
+		pid, err := st.EnsureParticipantByIdentifier("beeper", identifier, "Bridge "+identifier)
+		require.NoError(err)
+		return pid
+	}
+	seedUsername := func(pid int64, normalized, providerKey, scopeKind, scopeValue string) {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO participant_contact_observations (
+				participant_id, source_id, address_kind, scope_kind, scope_value,
+				provider_user_id, original_value, normalized_value,
+				normalization, source
+			) VALUES (?, ?, 'username', ?, ?, ?, ?, ?, 'none', 'archive_observation')
+		`), pid, source.ID, scopeKind, scopeValue, providerKey, normalized, normalized)
+		require.NoError(err)
+	}
+	conflictCandidate := func(left, right int64, normalized, scopeValue,
+		origin, preConflictState, decidedBy any,
+	) int64 {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO identity_match_candidates (
+				left_kind, left_id, right_kind, right_id, basis,
+				scope_kind, scope_value, normalized_value, state,
+				observation_conflict_origin, pre_conflict_state,
+				decided_by, decided_at, source
+			) VALUES ('participant', ?, 'participant', ?, 'service_scope_username',
+				'account', ?, ?, 'conflict', ?, ?, ?,
+				CURRENT_TIMESTAMP, 'archive_observation')
+		`), left, right, scopeValue, normalized, origin, preConflictState, decidedBy)
+		require.NoError(err)
+		var id int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT id FROM identity_match_candidates
+			WHERE left_id = ? AND right_id = ? AND normalized_value = ?
+			  AND scope_value = ? AND observation_conflict_origin IS NOT NULL`),
+			left, right, normalized, scopeValue).Scan(&id))
+		return id
+	}
+
+	// One participant pair, one username collision, two account scopes: the
+	// pre-fix bridge recorded the same native IDs under two Beeper accounts,
+	// so each scope carries its own conflict for the same collision.
+	first := bridge("beeper:6:conv-acct:9:converge-first")
+	second := bridge("beeper:6:conv-acct:9:converge-second")
+	firstKey := beeperidentity.ProviderKey("telegram", "account", "conv-acct", "482111")
+	firstOther := beeperidentity.ProviderKey("telegram", "account", "conv-other", "482111")
+	secondKey := beeperidentity.ProviderKey("telegram", "account", "conv-acct", "999777")
+	secondOther := beeperidentity.ProviderKey("telegram", "account", "conv-other", "999777")
+	seedUsername(first, "converge-handle", firstKey, "account", "conv-acct")
+	seedUsername(first, "converge-handle", firstOther, "account", "conv-other")
+	seedUsername(second, "converge-handle", secondKey, "account", "conv-acct")
+	seedUsername(second, "converge-handle", secondOther, "account", "conv-other")
+	generatedID := conflictCandidate(first, second, "converge-handle",
+		"conv-acct", "generated", nil, nil)
+	promotedID := conflictCandidate(first, second, "converge-handle",
+		"conv-other", "promoted", "accepted", "user")
+
+	_, err = st.DB().Exec(st.Rebind(
+		`DELETE FROM applied_migrations WHERE name = ?`), telegramSharedKeysMigration)
+	require.NoError(err)
+	require.NoError(st.InitSchema(), "upgrade telegram provider keys")
+
+	// Exactly one reviewable conflict holds the shared edge.
+	var rows int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM identity_match_candidates
+		WHERE left_id = ? AND right_id = ? AND basis = 'service_scope_username'
+		  AND scope_kind IS NULL AND scope_value IS NULL
+		  AND normalized_value = 'converge-handle'`),
+		first, second).Scan(&rows))
+	assert.Equal(1, rows, "converging conflicts collapse onto one shared edge")
+
+	// The canonical collapse outcome: the lowest row survives as a conflict,
+	// the promotion metadata merges into it, and the retired row redirects.
+	var state, origin, preConflictState, decidedBy string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT state, COALESCE(observation_conflict_origin, ''),
+		       COALESCE(pre_conflict_state, ''), COALESCE(decided_by, '')
+		FROM identity_match_candidates WHERE id = ?`), generatedID).
+		Scan(&state, &origin, &preConflictState, &decidedBy))
+	assert.Equal("conflict", state, "the surviving row stays a reviewable conflict")
+	assert.Equal("promoted", origin,
+		"the collapse reconciles a generated and a promoted conflict into a promotion")
+	assert.Equal("accepted", preConflictState,
+		"the suspended decision the promotion carried survives the collapse")
+	assert.Equal("user", decidedBy, "the decision author survives the collapse")
+	var retired int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM identity_match_candidates WHERE id = ?`),
+		promotedID).Scan(&retired))
+	assert.Zero(retired, "the converged conflict retires into the survivor")
+	var redirected bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT EXISTS (
+			SELECT 1 FROM identity_match_candidate_redirects
+			WHERE retired_candidate_id = ? AND surviving_candidate_id = ?
+		)`), promotedID, generatedID).Scan(&redirected))
+	assert.True(redirected,
+		"the retired conflict leaves the canonical collapse redirect")
+}
+
+// TestTelegramSharedKeyMigrationMaterializesSharedCollisions pins the
+// post-rekey reconciliation: clearing account scopes can expose a username
+// collision between distinct Telegram users that no pre-migration conflict
+// ever covered, and a scope-less suggestion occupying the shared edge must
+// resolve through the canonical machinery — promoted by the recording
+// path, or collapsed with a rekeyed conflict — instead of blocking it.
+// Runs on SQLite and PostgreSQL.
+func TestTelegramSharedKeyMigrationMaterializesSharedCollisions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("beeper", "mat-acct")
+	require.NoError(err)
+	bridge := func(identifier string) int64 {
+		pid, err := st.EnsureParticipantByIdentifier("beeper", identifier, "Bridge "+identifier)
+		require.NoError(err)
+		return pid
+	}
+	seedUsername := func(pid int64, normalized, providerKey string, scopeKind, scopeValue any) {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO participant_contact_observations (
+				participant_id, source_id, address_kind, scope_kind, scope_value,
+				provider_user_id, original_value, normalized_value,
+				normalization, source
+			) VALUES (?, ?, 'username', ?, ?, ?, ?, ?, 'none', 'archive_observation')
+		`), pid, source.ID, scopeKind, scopeValue, providerKey, normalized, normalized)
+		require.NoError(err)
+	}
+	edgeCandidate := func(left, right int64, normalized, state, origin any) int64 {
+		_, err := st.DB().Exec(st.Rebind(`
+			INSERT INTO identity_match_candidates (
+				left_kind, left_id, right_kind, right_id, basis,
+				scope_kind, scope_value, normalized_value, state,
+				observation_conflict_origin, source
+			) VALUES ('participant', ?, 'participant', ?, 'service_scope_username',
+				NULL, NULL, ?, ?, ?, 'archive_observation')
+		`), left, right, normalized, state, origin)
+		require.NoError(err)
+		var id int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT id FROM identity_match_candidates
+			WHERE left_id = ? AND right_id = ? AND normalized_value = ?
+			  AND scope_kind IS NULL
+			  AND (observation_conflict_origin = ? OR
+				(observation_conflict_origin IS NULL AND ? IS NULL))`),
+			left, right, normalized, origin, origin).Scan(&id))
+		return id
+	}
+	edgeRow := func(left, right int64, normalized string) (
+		count int, state, origin string, id int64,
+	) {
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT COUNT(*), COALESCE(MAX(state), ''),
+				COALESCE(MAX(observation_conflict_origin), ''), COALESCE(MAX(id), 0)
+			FROM identity_match_candidates
+			WHERE left_id = ? AND right_id = ? AND basis = 'service_scope_username'
+			  AND scope_kind IS NULL AND scope_value IS NULL
+			  AND normalized_value = ?`), left, right, normalized).
+			Scan(&count, &state, &origin, &id))
+		return count, state, origin, id
+	}
+
+	// A collision that only becomes visible post-rekey: two distinct users
+	// in different account scopes, no conflict row anywhere.
+	freshFirst := bridge("beeper:6:mat-acct:9:fresh-first")
+	freshSecond := bridge("beeper:6:mat-acct:9:fresh-second")
+	seedUsername(freshFirst, "fresh-handle",
+		beeperidentity.ProviderKey("telegram", "account", "mat-a", "482111"), "account", "mat-a")
+	seedUsername(freshSecond, "fresh-handle",
+		beeperidentity.ProviderKey("telegram", "account", "mat-b", "999777"), "account", "mat-b")
+
+	// A pending scope-less suggestion on an edge whose scoped side the
+	// rewrite converges: the recording path promotes it, not strands it.
+	suggScoped := bridge("beeper:6:mat-acct:9:suggest-scoped")
+	suggShared := bridge("beeper:6:mat-acct:9:suggest-shared")
+	seedUsername(suggScoped, "suggest-handle",
+		beeperidentity.ProviderKey("telegram", "account", "mat-c", "482222"), "account", "mat-c")
+	seedUsername(suggShared, "suggest-handle",
+		beeperidentity.ProviderKey("telegram", "service", "", "999888"), nil, nil)
+	suggestionID := edgeCandidate(suggScoped, suggShared, "suggest-handle",
+		"candidate", nil)
+
+	// A scoped conflict whose shared edge a scope-less suggestion already
+	// holds: the suggestion resolves through collapse, not by blocking the
+	// rekey and silently deleting the collision.
+	blockFirst := bridge("beeper:6:mat-acct:9:block-first")
+	blockSecond := bridge("beeper:6:mat-acct:9:block-second")
+	seedUsername(blockFirst, "block-handle",
+		beeperidentity.ProviderKey("telegram", "account", "mat-d", "482333"), "account", "mat-d")
+	seedUsername(blockSecond, "block-handle",
+		beeperidentity.ProviderKey("telegram", "account", "mat-d", "999999"), "account", "mat-d")
+	blockerSuggestionID := edgeCandidate(blockFirst, blockSecond, "block-handle",
+		"candidate", nil)
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO identity_match_candidates (
+			left_kind, left_id, right_kind, right_id, basis,
+			scope_kind, scope_value, normalized_value, state,
+			observation_conflict_origin, source
+		) VALUES ('participant', ?, 'participant', ?, 'service_scope_username',
+			'account', 'mat-d', ?, 'conflict', 'generated', 'archive_observation')
+	`), blockFirst, blockSecond, "block-handle")
+	require.NoError(err)
+
+	_, err = st.DB().Exec(st.Rebind(
+		`DELETE FROM applied_migrations WHERE name = ?`), telegramSharedKeysMigration)
+	require.NoError(err)
+	require.NoError(st.InitSchema(), "upgrade telegram provider keys")
+
+	// The never-before-seen collision materializes as a generated conflict.
+	count, state, origin, _ := edgeRow(freshFirst, freshSecond, "fresh-handle")
+	assert.Equal(1, count, "a post-rekey collision becomes exactly one conflict")
+	assert.Equal("conflict", state, "the materialized collision is reviewable")
+	assert.Equal("generated", origin,
+		"the canonical recording path generates the new conflict")
+
+	// The pending suggestion on a now-colliding edge is promoted.
+	count, state, origin, id := edgeRow(suggScoped, suggShared, "suggest-handle")
+	assert.Equal(1, count, "the promoted suggestion stays one edge row")
+	assert.Equal("conflict", state, "the suggestion is promoted to a conflict")
+	assert.Equal("promoted", origin, "the promotion carries its canonical origin")
+	assert.Equal(suggestionID, id, "the suggestion row itself is promoted")
+
+	// The occupied suggestion edge resolves through collapse: one conflict
+	// keeps the edge, and the scoped conflict retires into it.
+	count, state, origin, id = edgeRow(blockFirst, blockSecond, "block-handle")
+	assert.Equal(1, count, "the suggestion no longer blocks one shared conflict")
+	assert.Equal("conflict", state, "the collapsed edge stays reviewable")
+	assert.Equal("promoted", origin,
+		"collapsing a suggestion with a generated conflict yields a promotion")
+	assert.Equal(blockerSuggestionID, id,
+		"the edge's incumbent row survives the collapse")
+	var redirected bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT EXISTS (
+			SELECT 1 FROM identity_match_candidate_redirects
+			WHERE surviving_candidate_id = ?
+		)`), blockerSuggestionID).Scan(&redirected))
+	assert.True(redirected, "the rekeyed conflict retired through the collapse")
+}

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -90,15 +92,33 @@ func (s *Store) rewriteTelegramProviderKeys(ctx context.Context, tx *loggedTx) e
 	// they support. Two distinct Telegram users claiming one username
 	// collide just as validly in the shared namespace, so those conflicts —
 	// and the decisions a conflicting observation promoted — are rekeyed
-	// onto the scope-less edge instead of discarded. What survives the
-	// rekey covers only conflicts whose support truly vanished: the sides
-	// converged on one identity, or no current observation pair still backs
-	// the conflict, and a resync cannot clear those later, because an
-	// unchanged observation records early. Reconcile before the fingerprint
-	// refresh, so a demoted decision is renewed against the rewritten
-	// evidence and a deleted conflict leaves no proof to renew.
-	if err := s.rekeyTelegramObservationConflicts(ctx, tx, conflictRekeys); err != nil {
+	// onto the scope-less edge instead of discarded. Rows that converge on
+	// one shared edge — a second account scope holding the same collision,
+	// or any row the shared namespace already carries — reconcile through
+	// the canonical candidate collapse, and collisions the scope clears
+	// expose for the first time are rebuilt through the same
+	// observation-recording path that would have recorded them, so the
+	// migration's post-state equals what the canonical matcher would have
+	// built. What survives the rekey covers only conflicts whose support
+	// truly vanished: the sides converged on one identity, or no current
+	// observation pair still backs the conflict, and a resync cannot clear
+	// those later, because an unchanged observation records early.
+	// Reconcile before the fingerprint refresh, so a demoted decision is
+	// renewed against the rewritten evidence and a deleted conflict leaves
+	// no proof to renew.
+	conflictSurvivors, err := s.rekeyTelegramObservationConflicts(ctx, tx, conflictRekeys)
+	if err != nil {
 		return err
+	}
+	for id := range conflictSurvivors {
+		touched[id] = struct{}{}
+	}
+	materialized, err := s.materializeTelegramSharedObservationConflicts(ctx, tx, observations)
+	if err != nil {
+		return err
+	}
+	for id := range materialized {
+		touched[id] = struct{}{}
 	}
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
 		return err
@@ -597,54 +617,301 @@ func planTelegramObservationConflictRekeys(
 // only while a supporting pair with distinct provider users still exists
 // between the same participants under the shared scope, so a collision whose
 // sides converged on one Telegram identity is left for the general
-// reconciliation to retire, and only when no equivalent conflict already
-// holds the scope-less edge, so one collision never forks into two
-// reviewable rows. The lookup runs chunked for the same bind-variable
-// reasons as the rest of the migration.
+// reconciliation to retire. A conflict that lands on an occupied edge — a
+// second account scope holding the same collision, or any row the shared
+// namespace already carries, whatever its state — reconciles through the
+// canonical candidate collapse rather than a statement-level existence
+// check, which cannot see the duplicate it forks when two scoped conflicts
+// rekey in one statement. The row already holding the scope-less edge is
+// the collapse's preferred survivor, so the edge keeps its identity while
+// the group's decisions, evidence, and source support merge under one
+// policy. It returns the set of surviving candidate IDs.
 func (s *Store) rekeyTelegramObservationConflicts(
 	ctx context.Context, tx *loggedTx, conflictIDs []int64,
-) error {
-	if len(conflictIDs) == 0 {
-		return nil
+) (map[int64]struct{}, error) {
+	survivors := make(map[int64]struct{}, len(conflictIDs))
+	for _, conflictID := range conflictIDs {
+		var exists bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS (SELECT 1 FROM identity_match_candidates WHERE id = ?)`,
+			conflictID,
+		).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("telegram keys: check conflict %d: %w", conflictID, err)
+		}
+		if !exists {
+			// An earlier collapse already retired this row into its survivor.
+			continue
+		}
+		candidate, err := s.loadIdentityMatchCandidateMergeRowTx(ctx, tx, conflictID)
+		if err != nil {
+			return nil, err
+		}
+		if !candidate.NormalizedValue.Valid {
+			continue
+		}
+		supported, err := s.telegramConflictSupportedOnSharedEdgeTx(ctx, tx, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if !supported {
+			// The collision did not survive the rewrite: the general
+			// reconciliation retires the row.
+			continue
+		}
+		occupantID, err := s.telegramSharedEdgeOccupantTx(ctx, tx, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE identity_match_candidates
+			SET scope_kind = NULL, scope_value = NULL, updated_at = `+s.dialect.Now()+`
+			WHERE id = ?
+		`, conflictID); err != nil {
+			return nil, fmt.Errorf("telegram keys: rekey observation conflict %d: %w",
+				conflictID, err)
+		}
+		candidate, err = s.loadIdentityMatchCandidateMergeRowTx(ctx, tx, conflictID)
+		if err != nil {
+			return nil, err
+		}
+		collisions, err := s.loadIdentityMatchCandidateMergeCollisionsTx(ctx, tx, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if len(collisions) == 0 {
+			survivors[candidate.ID] = struct{}{}
+			continue
+		}
+		group := append([]identityMatchCandidateMergeRow{candidate}, collisions...)
+		winner := occupantID
+		if winner == 0 {
+			winner = group[0].ID
+			for _, row := range group[1:] {
+				if row.ID < winner {
+					winner = row.ID
+				}
+			}
+		}
+		appliedAccepted, err := s.telegramCandidateAppliedAcceptedTx(ctx, tx, group)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.collapseIdentityMatchCandidateMergeGroupTx(
+			ctx, tx, group, appliedAccepted, winner,
+			"telegram key migration reconciled converging username conflicts",
+		); err != nil {
+			return nil, err
+		}
+		survivors[winner] = struct{}{}
 	}
-	query := `
-		WITH rekeyable AS (
-			SELECT c.id
-			FROM identity_match_candidates c
-			WHERE c.id IN (%s)
-			  AND EXISTS (
+	return survivors, nil
+}
+
+// telegramConflictSupportedOnSharedEdgeTx reports whether a current
+// observation pair with distinct provider users still backs the conflict in
+// the shared namespace its supporting observations were rewritten into. The
+// candidate is bound as a derived row, so the shared-namespace match SQL
+// reads exactly the conditions the statement-level rekey used.
+func (s *Store) telegramConflictSupportedOnSharedEdgeTx(
+	ctx context.Context, tx *loggedTx, candidate identityMatchCandidateMergeRow,
+) (bool, error) {
+	var service any
+	if candidate.ServiceID.Valid {
+		service = candidate.ServiceID.Int64
+	}
+	var supported bool
+	err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM (
+				SELECT CAST(? AS BIGINT) AS left_id, CAST(? AS BIGINT) AS right_id,
+					CAST(? AS TEXT) AS basis, CAST(? AS BIGINT) AS service_id,
+					CAST(? AS TEXT) AS normalized_value
+			) c
+			WHERE EXISTS (
 				SELECT 1 FROM participant_contact_observations shared_left
 				WHERE shared_left.participant_id = c.left_id
-				  AND ` + identityCandidateSharedObservationMatchSQL("shared_left") + `
+				  AND `+identityCandidateSharedObservationMatchSQL("shared_left")+`
 				  AND EXISTS (
 					SELECT 1 FROM participant_contact_observations shared_right
 					WHERE shared_right.participant_id = c.right_id
-					  AND ` + identityCandidateSharedObservationMatchSQL("shared_right") + `
-					  AND ` + identityCandidateObservationPairSQL("shared_left", "shared_right") + `
+					  AND `+identityCandidateSharedObservationMatchSQL("shared_right")+`
+					  AND `+identityCandidateObservationPairSQL("shared_left", "shared_right")+`
 				  )
-			  )
-			  AND NOT EXISTS (
-				SELECT 1 FROM identity_match_candidates occupant
-				WHERE occupant.id != c.id
-				  AND occupant.left_kind = c.left_kind
-				  AND occupant.left_id = c.left_id
-				  AND occupant.right_kind = c.right_kind
-				  AND occupant.right_id = c.right_id
-				  AND occupant.basis = c.basis
-				  AND (occupant.service_id = c.service_id
-					  OR (occupant.service_id IS NULL AND c.service_id IS NULL))
-				  AND occupant.scope_kind IS NULL
-				  AND occupant.scope_value IS NULL
-				  AND occupant.normalized_value = c.normalized_value
-			  )
-		)
-		UPDATE identity_match_candidates
-		SET scope_kind = NULL, scope_value = NULL, updated_at = ` + s.dialect.Now() + `
-		WHERE id IN (SELECT id FROM rekeyable)`
-	if err := execInChunksContext(ctx, tx, conflictIDs, nil, query); err != nil {
-		return fmt.Errorf("telegram keys: rekey observation conflicts: %w", err)
+			)
+		)`,
+		candidate.LeftID, candidate.RightID, string(candidate.Basis),
+		service, candidate.NormalizedValue.String,
+	).Scan(&supported)
+	if err != nil {
+		return false, fmt.Errorf(
+			"telegram keys: check conflict %d shared support: %w", candidate.ID, err)
 	}
-	return nil
+	return supported, nil
+}
+
+// telegramSharedEdgeOccupantTx returns the row that already holds the
+// scope-less edge the conflict would rekey onto, whatever its state — a
+// conflict, a decided row, or a pending suggestion. The occupant is the
+// collapse's preferred survivor: it keeps the edge's identity while the
+// group's decisions and support merge under the canonical policy.
+func (s *Store) telegramSharedEdgeOccupantTx(
+	ctx context.Context, tx *loggedTx, candidate identityMatchCandidateMergeRow,
+) (int64, error) {
+	var service any
+	if candidate.ServiceID.Valid {
+		service = candidate.ServiceID.Int64
+	}
+	var occupantID int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT occupant.id
+		FROM identity_match_candidates occupant
+		WHERE occupant.id != ?
+		  AND occupant.left_kind = ?
+		  AND occupant.left_id = ?
+		  AND occupant.right_kind = ?
+		  AND occupant.right_id = ?
+		  AND occupant.basis = ?
+		  AND (occupant.service_id = ? OR
+			(occupant.service_id IS NULL AND CAST(? AS BIGINT) IS NULL))
+		  AND occupant.scope_kind IS NULL
+		  AND occupant.scope_value IS NULL
+		  AND occupant.normalized_value = ?
+		ORDER BY occupant.id
+		LIMIT 1`,
+		candidate.ID, candidate.LeftKind, candidate.LeftID,
+		candidate.RightKind, candidate.RightID, string(candidate.Basis),
+		service, service, candidate.NormalizedValue.String,
+	).Scan(&occupantID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf(
+			"telegram keys: find occupant for conflict %d: %w", candidate.ID, err)
+	}
+	return occupantID, nil
+}
+
+// materializeTelegramSharedObservationConflicts rebuilds, through the
+// canonical observation-recording path, the conflicts the scope clears
+// expose: two distinct Telegram users whose account scopes kept them apart
+// collide in the shared namespace for the first time, and a pending
+// cross-scope suggestion for that username must be promoted instead of
+// left blocking the shared edge. The migration's post-state must equal
+// what the canonical matcher would have built, so every collision between
+// a rewritten observation and another current scope-less observation goes
+// through upsertIdentityMatchCandidateTx with the observation-conflict
+// flag the recording path uses: a pending suggestion is promoted with the
+// canonical promotion columns, an already decided or conflicting row is
+// left exactly as the recording path would leave it, and a genuine new
+// collision becomes a generated conflict. It returns the candidate IDs the
+// pass touched. Provider-identity rows are skipped: a shared stable ID is
+// the same person, and those candidates went through the key-rewrite
+// collapse.
+func (s *Store) materializeTelegramSharedObservationConflicts(
+	ctx context.Context, tx *loggedTx, plan *telegramObservationPlan,
+) (map[int64]struct{}, error) {
+	touched := make(map[int64]struct{})
+	if len(plan.updates) == 0 {
+		return touched, nil
+	}
+	observationIDs := make([]int64, 0, len(plan.updates))
+	for _, update := range plan.updates {
+		observationIDs = append(observationIDs, update.id)
+	}
+	type collisionKey struct {
+		left, right int64
+		basis       IdentityMatchBasis
+		service     sql.NullInt64
+		normalized  string
+	}
+	seen := make(map[collisionKey]struct{})
+	if err := queryInChunksContext(ctx, tx, observationIDs, nil, `
+		SELECT rewritten.participant_id, rewritten.address_kind,
+			rewritten.service_id, rewritten.normalized_value, rewritten.source_id,
+			other.participant_id
+		FROM participant_contact_observations rewritten
+		JOIN participant_contact_observations other
+			ON other.participant_id != rewritten.participant_id
+			AND other.address_kind = rewritten.address_kind
+			AND (other.service_id = rewritten.service_id
+				OR (other.service_id IS NULL AND rewritten.service_id IS NULL))
+			AND other.scope_kind IS NULL
+			AND other.scope_value IS NULL
+			AND other.normalized_value = rewritten.normalized_value
+			AND other.active_until IS NULL
+			AND other.superseded_at IS NULL
+			AND (rewritten.provider_user_id IS NULL
+				OR other.provider_user_id IS NULL
+				OR rewritten.provider_user_id != other.provider_user_id)
+		WHERE rewritten.id IN (%s)
+			AND rewritten.address_kind != 'provider_identity'
+			AND rewritten.scope_kind IS NULL
+			AND rewritten.scope_value IS NULL
+			AND rewritten.active_until IS NULL
+			AND rewritten.superseded_at IS NULL
+		ORDER BY rewritten.participant_id, other.participant_id, rewritten.id`,
+		func(rows *loggedRows) error {
+			var (
+				participant, otherParticipant int64
+				addressKind                   string
+				serviceID                     sql.NullInt64
+				normalized                    string
+				sourceID                      sql.NullInt64
+			)
+			if err := rows.Scan(&participant, &addressKind, &serviceID,
+				&normalized, &sourceID, &otherParticipant); err != nil {
+				return fmt.Errorf("telegram keys: scan shared collision: %w", err)
+			}
+			leftKind, leftID, rightKind, rightID, err := canonicalMatchEndpoints(
+				IdentityMatchParticipant, participant,
+				IdentityMatchParticipant, otherParticipant,
+			)
+			if err != nil {
+				return fmt.Errorf("telegram keys: order shared collision endpoints: %w", err)
+			}
+			basis := identityMatchBasisForAddressKind(ContactAddressKind(addressKind))
+			key := collisionKey{
+				left: leftID, right: rightID, basis: basis,
+				service: serviceID, normalized: normalized,
+			}
+			if _, done := seen[key]; done {
+				return nil
+			}
+			seen[key] = struct{}{}
+			var service any
+			if serviceID.Valid {
+				service = serviceID.Int64
+			}
+			var source *int64
+			if sourceID.Valid {
+				id := sourceID.Int64
+				source = &id
+			}
+			value := normalized
+			candidate, _, err := s.upsertIdentityMatchCandidateTx(
+				ctx, tx,
+				IdentityMatchCandidateInput{
+					LeftKind: leftKind, LeftID: leftID,
+					RightKind: rightKind, RightID: rightID,
+					Basis:           basis,
+					NormalizedValue: &value,
+					State:           IdentityMatchStateConflict,
+					Source:          ProvenanceArchiveObservation,
+					SourceID:        source,
+				},
+				leftKind, leftID, rightKind, rightID, service, true,
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"telegram keys: materialize shared observation conflict: %w", err)
+			}
+			touched[candidate.ID] = struct{}{}
+			return nil
+		}); err != nil {
+		return nil, fmt.Errorf("telegram keys: list shared observation collisions: %w", err)
+	}
+	return touched, nil
 }
 
 // identityCandidateSharedObservationMatchSQL matches one observation against
