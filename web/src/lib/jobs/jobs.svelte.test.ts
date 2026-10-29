@@ -43,7 +43,7 @@ it.each(knownJobs.flatMap(fixture => ['sources', 'operations', 'history'].map(fa
 it.each([true, false])('reports unavailable history only for configured lanes, configured=%s', async configured => {
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    return Response.json(path.includes('/sources') ? { sources: [] } : { lanes: [jobLane('document_extraction', { configured, latest: undefined, history_availability: 'unavailable', unavailable_code: 'document_extraction_history_unavailable' })] });
+    return Response.json(path.includes('/sources') ? { sources: [] } : { lanes: operationLanes(jobLane('document_extraction', { configured, latest: undefined, history_availability: 'unavailable', unavailable_code: 'document_extraction_history_unavailable' })) });
   });
   const operations = new OperationsController(client);
   const store = new JobsStore(client, operations);
@@ -67,9 +67,9 @@ it.each(['sources', 'operations'] as const)('discards a held %s observation afte
     const snapshot = Response.json(source ? { sources: endpoint === 'sources' ? [sourceStatus({
       active_sync: changed ? syncRunStatus({ status: 'running', completed_at: null }) : null,
       can_sync: !changed, sync_unavailable_reason: changed ? 'sync_already_running' : undefined,
-    })] : [] } : { lanes: endpoint === 'operations' ? [jobLane('message_embedding', {
+    })] : [] } : { lanes: operationLanes(...(endpoint === 'operations' ? [jobLane('message_embedding', {
       latest: changed ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined, counters: [{ name: 'attempted', unit: 'messages', value: 1 }, { name: 'succeeded', unit: 'messages', value: 1 }, { name: 'failed', unit: 'messages', value: 0 }] } : jobRun('message_embedding'),
-    })] : [] });
+    })] : [])) });
     if (hold && source === (endpoint === 'sources')) { hold = false; oldSnapshot = snapshot; captured(); await gate; }
     return snapshot;
   });
