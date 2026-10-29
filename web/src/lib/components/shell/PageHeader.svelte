@@ -29,10 +29,10 @@
     display: flex;
     flex-direction: column;
     gap: var(--control-gap);
-    /* Ordinary parents reserve --field-gap; block parents reserve 0. The margin fills the 12px header
-     * band, then leaves --page-header-gap below its line, matching the page's
-     * bottom padding. Full-width panes set that gap to 0 so they meet the line. */
-    margin-bottom: calc(var(--space-5) + var(--page-header-gap, var(--field-gap)) - var(--page-header-parent-gap, var(--field-gap)));
+    /* Ordinary parents reserve --field-gap. The margin fills the 12px header
+     * band, then leaves --page-header-gap below its line. Full-width panes set
+     * that gap to 0 so they meet the line. */
+    margin-bottom: calc(var(--space-5) + var(--page-header-gap, var(--space-5)) - var(--page-header-parent-gap, var(--field-gap)));
   }
 
   .page-header + :global(p) {
