@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"database/sql"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -11,6 +13,69 @@ import (
 
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestStore_BackfillFTS_PreservesCompletedWork(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	ids := f.CreateMessages(3)
+	for _, id := range ids {
+		require.NoError(f.Store.UpsertMessageBody(id,
+			sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
+	}
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assertFTSContains(t, f.Store, "orchard", 3)
+
+	// Leave both an interior hole and an unindexed tail, as an interrupted
+	// sync or backfill can do while earlier messages remain searchable.
+	if isPostgresTestDB() {
+		_, err = f.Store.DB().Exec("UPDATE messages SET search_fts = NULL WHERE id IN ($1, $2)", ids[1], ids[2])
+	} else {
+		_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid IN (?, ?)", ids[1], ids[2])
+	}
+	require.NoError(err)
+	require.True(f.Store.NeedsFTSBackfill())
+
+	interrupted := errors.New("backfill interrupted")
+	restore := f.Store.SetBackfillFTSBatchErrHookForTest(func(_, _ int64) error { return interrupted })
+	t.Cleanup(restore)
+	_, err = f.Store.BackfillFTS(nil)
+	require.ErrorIs(err, interrupted)
+	assertFTSContains(t, f.Store, "orchard", 1)
+	restore()
+
+	n, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assert.Equal(int64(2), n, "only missing entries need backfill")
+	assertFTSContains(t, f.Store, "orchard", 3)
+	assert.False(f.Store.NeedsFTSBackfill())
+}
+
+func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	ids := f.CreateMessages(2)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(`UPDATE messages
+		SET search_fts = to_tsvector('simple', 'obsolete'), indexing_version = 0
+		WHERE id = $1`, ids[1])
+	require.NoError(err)
+	require.True(f.Store.NeedsFTSBackfill())
+	assertFTSContains(t, f.Store, "obsolete", 1)
+
+	n, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
+	assertFTSContains(t, f.Store, "obsolete", 0)
+	assert.False(f.Store.NeedsFTSBackfill())
+}
 
 // isPostgresTestDB reports whether the active test backend is PostgreSQL,
 // inferred from MSGVAULT_TEST_DB. Used by backend-portable tests that must issue

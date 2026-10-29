@@ -56,8 +56,10 @@ msgvault search <query>
 
 !!! note
     The full-text search index (FTS5) is populated automatically during sync.
-    If an older archive needs an index backfill, msgvault checks and rebuilds
-    the index in the background. Search uses the current index and warns about
+    If an older archive needs an index backfill, msgvault fills missing entries
+    in the background and keeps completed work across restarts. Indexed messages
+    stay searchable. `msgvault rebuild-fts` discards and rebuilds the full index.
+    Search uses the current index and warns about
     incomplete results only for a known gap or rebuild, including a queued
     rebuild. A completeness check alone stays quiet. See the
     [CLI reference](../cli-reference.md#search) for details.
