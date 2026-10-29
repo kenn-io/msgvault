@@ -178,3 +178,53 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
   expect(await screen.findByLabelText('Email')).toBeDefined();
   expect(screen.queryByText('Could not load kinds')).toBeNull();
 });
+
+it('keeps the selected chat network and restored kinds when Email is added', async () => {
+  const onFiltersChange = vi.fn();
+  render(ContextBar, {
+    messages: true, client: createAPIClient(async (input) => {
+      if (new URL((input as Request).url).pathname.endsWith('/groups')) return Response.json({ rows: [{ key: 'whatsapp' }, { key: 'discord' }, { key: 'email' }] });
+      return Response.json({ accounts: [], identities: [] });
+    }), query: '', searchMode: 'full_text', filters: [{ dimension: 'message_type', values: ['whatsapp', 'restored-kind'] }], groupingChain: [], countLabel: '', sort,
+    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange,
+  });
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  await fireEvent.click(await screen.findByLabelText('Email'));
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['whatsapp', 'restored-kind', 'email'] }]);
+});
+
+it('retains committed dates when a range is reversed, accepts the same day, and clears a bound', async () => {
+  const onFiltersChange = vi.fn();
+  const after = new Date(2026, 6, 18).toISOString();
+  const before = new Date(2026, 6, 21).toISOString();
+  render(ContextBar, {
+    messages: true, client: createAPIClient(async () => Response.json({ rows: [], accounts: [], identities: [] })),
+    query: '', searchMode: 'full_text', filters: [{ dimension: 'after', values: [after] }, { dimension: 'before', values: [before] }], groupingChain: [], countLabel: '', sort,
+    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange,
+  });
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  const from = screen.getByLabelText('From') as HTMLInputElement;
+  const to = screen.getByLabelText('To') as HTMLInputElement;
+  await fireEvent.change(from, { target: { value: '2026-07-21' } });
+  expect(screen.getByRole('alert').textContent).toBe('From must be on or before To.');
+  expect(from.value).toBe('2026-07-18');
+  await fireEvent.change(to, { target: { value: '2026-07-17' } });
+  expect(to.value).toBe('2026-07-20');
+  expect(onFiltersChange).not.toHaveBeenCalled();
+  await fireEvent.change(from, { target: { value: '2026-07-20' } });
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [before] }, { dimension: 'after', values: [new Date(2026, 6, 20).toISOString()] }]);
+  expect(screen.queryByRole('alert')).toBeNull();
+  await fireEvent.change(from, { target: { value: '' } });
+  expect(onFiltersChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: [before] }]);
+});
+
+it('lets a restored Messages Timeline return to Table', async () => {
+  const onPresentationChange = vi.fn();
+  render(ContextBar, {
+    messages: true, presentation: 'timeline', client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '', sort,
+    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn(), onPresentationChange,
+  });
+  await fireEvent.click(screen.getByRole('combobox', { name: 'Show as: Timeline' }));
+  await fireEvent.click(screen.getByRole('option', { name: 'Table' }));
+  expect(onPresentationChange).toHaveBeenCalledWith('table');
+});

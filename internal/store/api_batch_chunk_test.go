@@ -65,10 +65,13 @@ func TestBatchGetRecipientsAndLabels_ChunkLargeIDSets(t *testing.T) {
 
 	recipients, err := st.batchGetRecipients(ctx, ids, "to")
 	require.NoError(err, "batchGetRecipients")
-	assert.Equal([]string{"Alice <alice@example.com>"}, recipients[ids[0]],
+	assert.Equal([]string{"Alice <alice@example.com>"}, recipientDisplays(recipients[ids[0]]),
 		"a message hydrated in the first recipient chunk must carry its recipient")
-	assert.Equal([]string{"Bob <bob@example.com>"}, recipients[ids[total-1]],
+	assert.Equal([]string{"Bob <bob@example.com>"}, recipientDisplays(recipients[ids[total-1]]),
 		"a message hydrated in the second recipient chunk must carry its recipient too")
+
+	assert.Equal(aliceID, recipients[ids[0]][0].ParticipantID)
+	assert.Equal(bobID, recipients[ids[total-1]][0].ParticipantID)
 
 	labels, err := st.batchGetLabels(ctx, ids)
 	require.NoError(err, "batchGetLabels")

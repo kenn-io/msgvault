@@ -262,3 +262,10 @@ it.each([{ state: 'ready', shown: true }, { state: 'unavailable', shown: false }
   view.unmount();
   readiness.dispose();
 });
+
+it('leaves labels without archived participant IDs as plain text', () => {
+  render(MessageCard, { message: detail(), expanded: true, onOpenPerson: vi.fn() });
+  expect(screen.getByText('Alice Example <alice@example.com>')).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Alice Example <alice@example.com>' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'bob@example.com' })).toBeNull();
+});

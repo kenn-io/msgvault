@@ -56,7 +56,8 @@ export interface ArchiveAttachment {
 }
 
 export interface ArchiveMessageDetail extends ArchiveMessageSummary {
-  senderAddress?: string;
+  senderParticipantID?: number;
+  recipientParticipants?: { display: string; participantID: number }[];
   messageType?: string;
   relatedMessageId?: number;
   body: string;

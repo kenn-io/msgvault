@@ -374,7 +374,7 @@ test('right preview resizes, restores its width, and falls back below on narrow 
 test('message menu creates a task, reloads its link, unlinks it, and opens a person with Back', async ({ page }) => {
   let linked = false;
   const writes: unknown[] = [];
-  const message = { id: 42, conversation_id: 7, message_type: 'email', subject: 'Synthetic subject 1', from: 'Alex Example <alex@example.com>', to: ['owner@example.com'], sent_at: '2026-07-18T12:00:00Z', body: 'Please review the notes.', body_html: '<p>Please review the notes.</p>', attachments: [{ id: 5, filename: 'notes.txt', mime_type: 'text/plain', size: 128, content_hash: 'a'.repeat(64) }] };
+  const message = { id: 42, conversation_id: 7, message_type: 'email', subject: 'Synthetic subject 1', from: 'Alex Example <alex@example.com>', from_participant_id: 19, to: ['owner@example.com'], to_participants: [{ display: 'owner@example.com', participant_id: 20 }], sent_at: '2026-07-18T12:00:00Z', body: 'Please review the notes.', body_html: '<p>Please review the notes.</p>', attachments: [{ id: 5, filename: 'notes.txt', mime_type: 'text/plain', size: 128, content_hash: 'a'.repeat(64) }] };
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [{ ...entry(1), anchor_message_id: 42, conversation_id: 7 }], total_count: 1, cache_revision: 'menu', search_provenance: {} } }));
   await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: { id: 7, anchor_id: 42, messages: [message], has_before: false, has_after: false, total: 1 } }));
@@ -389,7 +389,6 @@ test('message menu creates a task, reloads its link, unlinks it, and opens a per
     await route.fulfill({ json: { state: 'ready', complete: true, tasks: linked ? [{ id: 'task-1', title: 'Synthetic subject 1', revision: 'r1' }] : [], outbound_metadata: { archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: message.subject, from: message.from, sent_at: message.sent_at } } });
   });
   await page.route('**/api/v1/messages/42/tasks/task-1', route => { linked = false; return route.fulfill({ json: { task: { id: 'task-1' } } }); });
-  await page.route('**/api/v1/participants/completions', route => route.fulfill({ json: { cache_revision: 'menu', rows: [{ participant_id: 19, kind: 'email', value: 'alex@example.com', display_label: 'Alex Example' }] } }));
   await page.goto('/?workspace=everything');
   await page.getByRole('grid', { name: 'Messages results' }).getByText('Synthetic subject 1', { exact: true }).click();
   const card = page.getByRole('article', { name: 'Message 42', exact: true });
@@ -410,7 +409,32 @@ test('message menu creates a task, reloads its link, unlinks it, and opens a per
   await card.getByRole('button', { name: 'Unlink Synthetic subject 1' }).click();
   await expect(card.getByText('No linked tasks.', { exact: true })).toBeVisible();
   await card.getByRole('button', { name: 'Alex Example <alex@example.com>', exact: true }).click();
-  await expect(page).toHaveURL(url => url.searchParams.get('workspace') === 'relationships');
+  await expect(page).toHaveURL(url => url.searchParams.get('workspace') === 'relationships' && JSON.parse(url.searchParams.get('explore') ?? '{}').relationshipTarget === 'cluster:19');
   await page.goBack();
   await expect(card).toBeVisible();
 });
+
+for (const standalone of [false, true]) {
+  test(`exact participants and task setup work from ${standalone ? 'a linked message' : 'Messages'}`, async ({ page }) => {
+    const message = { id: 42, conversation_id: 7, message_type: 'email', subject: 'Identity follow-up', from: 'Alex Example', from_participant_id: 29, to: ['Alex Example'], to_participants: [{ display: 'Alex Example', participant_id: 39 }], body: 'Exact archived identities.', sent_at: '2026-07-18T12:00:00Z', attachments: [] };
+    await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false } }));
+    await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [{ ...entry(1), title: message.subject, anchor_message_id: 42, conversation_id: 7 }], total_count: 1, cache_revision: 'identity', search_provenance: {} } }));
+    await page.route('**/api/v1/messages/42', route => route.fulfill({ json: message }));
+    await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: { id: 7, anchor_id: 42, messages: [message], has_before: false, has_after: false, total: 1 } }));
+    await page.route('**/api/v1/messages/42/recordings', route => route.fulfill({ json: { recordings: [] } }));
+    await page.route('**/api/v1/integrations/kata/status', route => route.fulfill({ json: { state: 'disabled' } }));
+    await page.route('**/api/v1/integrations/tasks/status', route => route.fulfill({ json: { state: 'disabled' } }));
+    await page.route('**/api/v1/messages/42/tasks', route => route.fulfill({ json: { state: 'disabled', tasks: [], complete: true } }));
+    await page.goto(standalone ? '/messages/42' : '/?workspace=everything');
+    if (!standalone) await page.getByRole('grid', { name: 'Messages results' }).getByText(message.subject, { exact: true }).click();
+    const card = page.getByRole('article', { name: 'Message 42', exact: true });
+    for (const [index, participantID] of [[0, 29], [1, 39]]) {
+      await card.getByRole('button', { name: 'Alex Example', exact: true }).nth(index!).click();
+      await expect(page).toHaveURL(url => url.searchParams.get('workspace') === 'relationships' && JSON.parse(url.searchParams.get('explore') ?? '{}').relationshipTarget === `cluster:${participantID}`);
+      await page.goBack();
+      await expect(card).toBeVisible();
+    }
+    await card.getByRole('button', { name: 'Set up', exact: true }).click();
+    await expect(page).toHaveURL(url => url.searchParams.get('workspace') === 'settings' && JSON.parse(url.searchParams.get('explore') ?? '{}').settingsCategory === 'tasks');
+  });
+}
