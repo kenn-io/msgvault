@@ -5,7 +5,7 @@ import { tick } from 'svelte';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { formatDateTime } from '../../util/format';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
-import { sourceStatus } from '../../jobs/fixtures.test-support';
+import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, []);
 
@@ -17,11 +17,10 @@ function source(overrides: Record<string, unknown> = {}) {
 }
 
 function run(status: string, processed: number, overrides: Record<string, unknown> = {}) {
-  return {
-    id: 9, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null,
-    status, messages_processed: processed, messages_added: processed,
-    messages_updated: 0, errors_count: 0, error_message: null, ...overrides
-  };
+  return syncRunStatus({
+    id: 9, started_at: '2026-07-19T10:00:00Z', completed_at: null,
+    status, messages_processed: processed, messages_added: processed, ...overrides
+  });
 }
 
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet. Refresh to check again.";

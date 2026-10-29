@@ -471,7 +471,8 @@
   });
   onMount(() => {
     shellData.start();
-    const refresh = () => { if (enabled) void shellData.refresh(); };
+    if (enabled) void shellData.jobs.refresh();
+    const refresh = () => { if (enabled) { void shellData.refresh(); void shellData.jobs.refresh(); } };
     window.addEventListener('focus', refresh);
     return () => { window.removeEventListener('focus', refresh); shellData.stop(); };
   });
@@ -1310,7 +1311,7 @@
           selectSettingsCategory,
           () => commitNavigation({ workspace: 'sources' }),
           openOperationAuthority,
-          () => void shellData.jobs.refresh()
+          () => void shellData.jobs.refresh(true)
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} onStatus={sources => shellData.jobs.setSources(sources)} />
