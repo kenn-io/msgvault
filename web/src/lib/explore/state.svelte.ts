@@ -642,6 +642,7 @@ export class ExploreState {
   private readonly handlePopState = (): void => {
     if (this.restoringHeldLeave) {
       this.restoringHeldLeave = false;
+      if (this.current.operationHistory) this.clearOperationHistory();
       return;
     }
     const next = this.readURLState();
