@@ -221,15 +221,17 @@ describe('SettingsWorkspace', () => {
   });
 
 
-  it('lands a Set up link on the feature switch', async () => {
+  it('focuses an incoming Set up link without committing another navigation', async () => {
     const { client } = fixture();
+    const onCategoryChange = vi.fn();
     render(SettingsWorkspace, {
-      client, category: 'search',
+      client, category: 'search', onCategoryChange,
       navigationTarget: { authority: 'semantic_search', categoryID: 'search', settingKey: 'vector.enabled' }
     });
     await screen.findByRole('heading', { name: 'Search & AI' });
     await waitFor(() => expect((window.document.activeElement as HTMLElement | null)?.dataset['settingKey'])
       .toBe('vector.enabled'));
+    expect(onCategoryChange).not.toHaveBeenCalled();
   });
 
   it('reports a saved Appearance theme', async () => {
@@ -693,4 +695,20 @@ it.each(['constructor', '__proto__'])('preserves and edits the saved endpoint fo
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
   expect(seen.find(request => request.method === 'PUT')?.body).toMatchObject({ endpoint: 'https://replacement.example.test' });
+});
+
+it('names the rejected provider when saving from Overview', async () => {
+  const providers = ['primary', 'secondary'].map(name => ({ name, kind: 'exa', enabled: true, endpoint: 'https://provider.example.test', num_results: 1, credential_id: `people.enrichment.${name}`, credential: { configured: false, source: 'none' } }));
+  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: providers }), request => {
+    if (request.method === 'PUT' && request.url.endsWith('/person-enrichment/providers/primary')) return Response.json({ error: 'validation_failed', message: 'Person-enrichment provider settings are invalid' }, { status: 422 });
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  const card = await screen.findByRole('article', { name: 'primary' });
+  await fireEvent.input(within(card).getByLabelText('Results per request'), { target: { value: '2' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  const error = (await screen.findByRole('alert')).textContent;
+  expect(error).toContain('primary');
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
+  expect(seen.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['/api/v1/settings/person-enrichment/providers/primary']);
 });
