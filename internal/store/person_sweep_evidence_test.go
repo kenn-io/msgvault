@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -691,7 +692,7 @@ func TestPersonSweepRetrievalHonorsTheJournalSequenceBound(t *testing.T) {
 	checks.Equal([]int64{late}, sweepMessageIDs(hydratedLate))
 }
 
-func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
+func TestPersonSweepWithdrawsStoredDocumentEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -710,18 +711,44 @@ func TestPersonSweepConversationWithStoredDocumentEvidence(t *testing.T) {
 	require.NoError(err)
 	persistSweepEvidence(t, f.store, documentKey, document)
 
-	changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, []peoplesweep.ArchiveChange{
-		{PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceConversationText, SourceID: f.sourceID, MessageID: id, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited},
-	})
+	documentUnsupported := personfacts.EvidenceStatusChange{
+		EvidenceKey: documentKey, SourceVersion: document.SourceVersion,
+		Reason: personfacts.EvidenceStatusSourceDeleted,
+	}
+	changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, nil)
 	require.NoError(err)
-	assert.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: key, SourceVersion: input.SourceVersion, Reason: personfacts.EvidenceStatusSourceEdited}}, changes)
+	assert.Equal([]personfacts.EvidenceStatusChange{documentUnsupported}, changes)
 
-	after := latestPersonSweepSequence(t, f.store)
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
-		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
+	_, err = f.store.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{
+		PersonID: f.alicePersonID,
+		SourceCursors: []personfacts.SourceCursor{{
+			Lane: "fixture", Start: "retire-document-evidence", End: "retire-document-evidence-end",
+		}},
+		ProgramID: "fact-projection-fixture", ProgramVersion: "v1",
+		ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "catalog-fixture",
+		Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1",
+		ResolvedAt:            time.Now().UTC(),
+		Policy:                personfacts.PolicyContext{ProviderPolicyFingerprint: "policy-v1"},
+		EvidenceStatusChanges: changes,
+	}, nil)
 	require.NoError(err)
-	changes, err = f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, personSweepChangesAfter(t, f.store, f.alicePersonID, after))
+	stored, err := f.store.ListPersonFactEvidenceContext(t.Context(), f.alicePersonID,
+		personfacts.EvidenceFilter{Limit: 20})
 	require.NoError(err)
-	unsupported := personfacts.EvidenceStatusChange{EvidenceKey: documentKey, SourceVersion: document.SourceVersion, Reason: personfacts.EvidenceStatusSourceDeleted}
-	assert.Contains(changes, unsupported)
+	found := false
+	for _, evidence := range stored {
+		if evidence.Key == documentKey {
+			found = true
+			assert.False(evidence.Supported)
+		}
+	}
+	assert.True(found)
+
+	changes, err = f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, []peoplesweep.ArchiveChange{{
+		PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceConversationText,
+		SourceID: f.sourceID, MessageID: id, EvidenceEffect: peoplesweep.EvidenceEffectSourceReimported,
+	}})
+	require.NoError(err)
+	assert.NotContains(changes, documentUnsupported,
+		"a later source reimport must not reactivate evidence from the retired document lane")
 }

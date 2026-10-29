@@ -820,6 +820,16 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 		if err != nil {
 			return nil, fmt.Errorf("decode stored person sweep evidence %s: %w", stored.Key, err)
 		}
+		if ref.SourceLane == peoplesweep.SourceDocumentText {
+			if stored.Supported {
+				key := evidenceVersion{stored.Key, stored.Input.SourceVersion}
+				terminal[key] = personfacts.EvidenceStatusChange{
+					EvidenceKey: key.key, SourceVersion: key.version,
+					Reason: personfacts.EvidenceStatusSourceDeleted,
+				}
+			}
+			continue
+		}
 		for _, change := range changes {
 			if !personSweepChangeMatchesRef(personID, change, ref) {
 				continue
@@ -884,11 +894,6 @@ func personSweepChangeMatchesRef(personID int64, change peoplesweep.ArchiveChang
 	if change.PersonID != personID ||
 		change.SourceID != ref.SourceID || change.MessageID != ref.MessageID {
 		return false
-	}
-	if ref.SourceLane == peoplesweep.SourceDocumentText {
-		return (change.SourceLane == peoplesweep.SourceConversationText || change.SourceLane == peoplesweep.SourceMeetingText) &&
-			change.AttachmentID == 0 && change.OccurrenceKey == "" &&
-			change.EvidenceEffect != peoplesweep.EvidenceEffectSourceEdited
 	}
 	if change.SourceLane != ref.SourceLane {
 		return false

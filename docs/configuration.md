@@ -1389,6 +1389,8 @@ Search with `msgvault media search "project proposal"`, `GET /api/v1/media/searc
 
 Remove `[attachments.documents]` from old configuration files. The loader warns and ignores that section with guidance to use `document_profile`. The upgrade drops the local document text, chunk, and consent tables. Snapshots made before the upgrade keep them and still restore; `msgvault backup list` marks them in the `DOCUMENT TEXT` column. Docbank processes the mirrored files again, which incurs OCR charges when using Mistral.
 
+Stored person-fact evidence that quotes document text keeps its quote but no longer supports facts. The next consented people sweep withdraws that evidence and retires facts that relied on it alone.
+
 #### Send stored audio to Docbank
 
 The daemon can send stored WAV and MP3 audio from any captured source, including

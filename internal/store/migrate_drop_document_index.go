@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // retiredDocumentTables lists the retired pipeline's tables, children first
@@ -38,6 +40,35 @@ var retiredDocumentCursorColumns = []string{
 func (s *Store) dropDocumentIndex(ctx context.Context) error {
 	postgres := s.IsPostgreSQL()
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		// Retired document evidence stays readable but no longer supports facts.
+		// Reset its owners' surviving cursors so the next sweep withdraws it.
+		documentPeople := map[int64]struct{}{}
+		rows, err := tx.QueryContext(ctx, `
+			SELECT person_id, source_ref FROM person_fact_evidence
+			WHERE source_class = 'archive' AND source_ref LIKE 'person-sweep/v1:%'`)
+		if err != nil {
+			return fmt.Errorf("find stored document evidence: %w", err)
+		}
+		for rows.Next() {
+			var personID int64
+			var sourceRef string
+			if err := rows.Scan(&personID, &sourceRef); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan stored document evidence: %w", err)
+			}
+			ref, err := peoplesweep.DecodePersonSweepEvidenceRef(sourceRef)
+			if err == nil && ref.SourceLane == peoplesweep.SourceDocumentText {
+				documentPeople[personID] = struct{}{}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("read stored document evidence: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close stored document evidence: %w", err)
+		}
+
 		statements := []string{
 			"DROP TRIGGER IF EXISTS trg_person_sweep_documents_message_update",
 			"DROP TRIGGER IF EXISTS trg_document_message_type_revision",
@@ -94,6 +125,17 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 			}
 			if _, err := tx.ExecContext(ctx, drop+column); err != nil {
 				return fmt.Errorf("drop retired cursor column %s: %w", column, err)
+			}
+		}
+		for personID := range documentPeople {
+			query := fmt.Sprintf(`
+				UPDATE person_sweep_cursors
+				SET last_backstop_at = NULL, updated_at = %s
+				WHERE person_id = ? AND source_lane IN (?, ?)
+			`, s.dialect.Now())
+			if _, err := tx.ExecContext(ctx, s.Rebind(query), personID,
+				peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText); err != nil {
+				return fmt.Errorf("schedule document evidence withdrawal for person %d: %w", personID, err)
 			}
 		}
 		return pruneAttachmentChanges(boundQuerier{ctx: ctx, q: tx})

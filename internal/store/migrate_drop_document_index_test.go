@@ -7,9 +7,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -59,6 +62,37 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			for _, lane := range []string{"document_text", "conversation_text"} {
 				exec(`INSERT INTO person_sweep_cursors (person_id,source_lane,program_fingerprint,catalog_fingerprint,optimistic_sequence,reconcile_upper_key,reconcile_after_key,reconciliation_complete) VALUES (?,?,'program','catalog',0,'','',TRUE)`, personID, lane)
 			}
+			exec(`UPDATE person_sweep_cursors SET last_backstop_at = CURRENT_TIMESTAMP
+				WHERE person_id = ? AND source_lane = 'conversation_text'`, personID)
+			now := time.Now().UTC()
+			documentEvidence := sweepEvidenceInput(t, peoplesweep.EvidenceItem{
+				Ref: peoplesweep.EvidenceRef{
+					SourceLane: peoplesweep.SourceDocumentText, SourceID: f.Source.ID,
+					MessageID: messageID, AttachmentID: attachmentID,
+					OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 8,
+				},
+				PersonID: personID, SubjectPersonID: &personID,
+				SourceClass:   peoplesweep.SourceDocumentText,
+				SourceVersion: "document-v1", ContentSHA256: hash,
+				EventTime: now, RecordedTime: now, Excerpt: "synthetic quote",
+				Highlight:  peoplesweep.TextSpan{Start: 0, End: 8},
+				Directness: personfacts.DirectOther, Authority: personfacts.AuthorityOrdinary,
+				IdentityBasisPoints: 500,
+			})
+			documentKey, err := personfacts.EvidenceKey(documentEvidence)
+			requirements.NoError(err)
+			persistSweepEvidence(t, f.Store, documentKey, documentEvidence)
+
+			exec(`INSERT INTO persons (vcard_uid) VALUES ('without-document-evidence')`)
+			var untouchedPersonID int64
+			requirements.NoError(f.Store.DB().QueryRowContext(ctx,
+				`SELECT id FROM persons WHERE vcard_uid='without-document-evidence'`).Scan(&untouchedPersonID))
+			_, err = f.Store.SetPersonTrackingContext(ctx, untouchedPersonID, true)
+			requirements.NoError(err)
+			exec(`INSERT INTO person_sweep_cursors
+				(person_id,source_lane,program_fingerprint,catalog_fingerprint,optimistic_sequence,
+				reconcile_upper_key,reconcile_after_key,reconciliation_complete,last_backstop_at)
+				VALUES (?,'conversation_text','program','catalog',0,'','',TRUE,CURRENT_TIMESTAMP)`, untouchedPersonID)
 
 			// The previous release's person-sweep document hook and ledger.
 			if f.Store.IsPostgreSQL() {
@@ -134,7 +168,8 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			}
 			checks.Zero(count(retired), "the upgrade drops the retired tables, triggers, functions, and cursor columns")
 			var lanes []string
-			rows, err := f.Store.DB().QueryContext(ctx, `SELECT source_lane FROM person_sweep_cursors`)
+			rows, err := f.Store.DB().QueryContext(ctx,
+				f.Store.Rebind(`SELECT source_lane FROM person_sweep_cursors WHERE person_id = ?`), personID)
 			requirements.NoError(err)
 			defer func() { requirements.NoError(rows.Close()) }()
 			for rows.Next() {
@@ -144,6 +179,16 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			}
 			requirements.NoError(rows.Err())
 			checks.Equal([]string{"conversation_text"}, lanes, "only the retired lane's cursors are deleted")
+			var due int
+			requirements.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`
+				SELECT COUNT(*) FROM person_sweep_cursors
+				WHERE person_id = ? AND source_lane = 'conversation_text' AND last_backstop_at IS NULL`), personID).Scan(&due))
+			checks.Equal(1, due, "the next people sweep withdraws stored document evidence")
+			var untouched int
+			requirements.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`
+				SELECT COUNT(*) FROM person_sweep_cursors
+				WHERE person_id = ? AND source_lane = 'conversation_text' AND last_backstop_at IS NOT NULL`), untouchedPersonID).Scan(&untouched))
+			checks.Equal(1, untouched, "people without document evidence keep their backstop schedule")
 		})
 	}
 }

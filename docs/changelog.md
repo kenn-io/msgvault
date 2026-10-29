@@ -20,6 +20,8 @@ All notable changes to msgvault, grouped by release.
 
   Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. The upgrade drops the local document text, chunk, and consent tables. Backups made before the upgrade keep them, still restore, and stay marked by `backup list`. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Stored Kata document citations retain their saved quote and resolve as unavailable.
 
+  Stored person-fact evidence that quotes document text keeps its quote but no longer supports facts. The next consented people sweep withdraws that evidence and retires facts that relied on it alone.
+
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - MCP [`stage_deletion`](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) stages every eligible query match through local or remote daemons, with skipped counts and a 100,000-match limit, instead of stopping at 500 metadata or 100 full-text matches.
