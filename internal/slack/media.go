@@ -196,22 +196,26 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		pendingRow := linkRow
 		pendingRow.MediaType = ""
 		pendingRow.State = attachmentpolicy.StatePending
-		if previous, ok := existing[sourceAttID]; ok {
-			pendingRow.Metadata = previous.Metadata
-			if previous.Size > pendingRow.Size {
-				pendingRow.Size = previous.Size
-			}
+		if previous, ok := existing[sourceAttID]; ok && previous.Size > pendingRow.Size {
+			pendingRow.Size = previous.Size
 		}
 
 		// pend leaves a retryable marker; link records metadata permanently.
-		pend := func(status, kind string, err error) {
+		pend := func(status, kind string, err error) error {
 			if status == store.SyncRunItemStatusError && err != nil {
-				metadata, _ := json.Marshal(map[string]string{"fetch_error": err.Error()})
-				pendingRow.Metadata = string(metadata)
-				err = fmt.Errorf("%s: %w", f.ID, err)
-				if sum.FirstMediaError == "" {
-					sum.FirstMediaError = textutil.TruncateRunes(err.Error(), 200)
+				reason := strings.ToValidUTF8(err.Error(), "\ufffd")
+				metadata, marshalErr := json.Marshal(map[string]string{"fetch_error": reason})
+				if marshalErr != nil {
+					return fmt.Errorf("encode file %s fetch error: %w", f.ID, marshalErr)
 				}
+				pendingRow.Metadata = string(metadata)
+				if sum.FirstMediaError == "" {
+					if urlErr, ok := errors.AsType[*url.Error](err); ok {
+						reason = strings.ToValidUTF8(urlErr.Err.Error(), "\ufffd")
+					}
+					sum.FirstMediaError = textutil.TruncateRunes(f.ID+": "+reason, 200)
+				}
+				err = fmt.Errorf("%s: %s", f.ID, strings.ToValidUTF8(err.Error(), "\ufffd"))
 			}
 			imp.recordItem(ctx, syncID, sourceMessageID("", m.TS), "attachment", status, kind, err)
 			if status == store.SyncRunItemStatusSkipped {
@@ -230,6 +234,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			if status == store.SyncRunItemStatusError {
 				sum.Errors++
 			}
+			return nil
 		}
 		if _, herr := fetchableURL(fetchRef); herr != nil || f.IsExternal {
 			// Off-host / external: never fetched with the token (see mediaHost).
@@ -242,6 +247,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			// A link row here would hide it from the pending queries
 			// forever (link rows are reserved for genuinely external
 			// files that must never be fetched with the token).
+			pendingRow.Metadata = existing[sourceAttID].Metadata
 			refs = append(refs, pendingRow)
 			sum.AttachmentsPending++
 			continue
@@ -249,8 +255,10 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		if reason := policy.Evaluate(opts.MediaConversation, int64(pendingRow.Size)); reason != "" {
 			if reason == attachmentpolicy.SkipSizeCap {
 				pendingRow.SkipReason = reason
-				pend(store.SyncRunItemStatusSkipped, "slack_media_too_large",
-					fmt.Errorf("file %s is %d bytes (cap %d)", f.ID, f.Size, maxBytes))
+				if err := pend(store.SyncRunItemStatusSkipped, "slack_media_too_large",
+					fmt.Errorf("file %s is %d bytes (cap %d)", f.ID, f.Size, maxBytes)); err != nil {
+					return err
+				}
 				continue
 			}
 			pendingRow.State = attachmentpolicy.StateSkipped
@@ -262,14 +270,18 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			continue
 		}
 		if f.Size > 0 && f.Size > maxBytes {
-			pend(store.SyncRunItemStatusSkipped, "slack_media_too_large",
-				fmt.Errorf("file %s is %d bytes (cap %d)", f.ID, f.Size, maxBytes))
+			if err := pend(store.SyncRunItemStatusSkipped, "slack_media_too_large",
+				fmt.Errorf("file %s is %d bytes (cap %d)", f.ID, f.Size, maxBytes)); err != nil {
+				return err
+			}
 			continue
 		}
 		data, derr := imp.client.DownloadFile(ctx, fetchRef, maxBytes)
 		if errors.Is(derr, ErrAssetTooLarge) {
 			pendingRow.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, int64(pendingRow.Size))
-			pend(store.SyncRunItemStatusSkipped, "slack_media_too_large", derr)
+			if err := pend(store.SyncRunItemStatusSkipped, "slack_media_too_large", derr); err != nil {
+				return err
+			}
 			continue
 		}
 		var httpErr *fileHTTPError
@@ -286,17 +298,22 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		if derr != nil {
 			if ctx.Err() != nil {
 				// Interrupted: keep the pending marker without charging an error.
+				pendingRow.Metadata = existing[sourceAttID].Metadata
 				refs = append(refs, pendingRow)
 				sum.AttachmentsPending++
 				continue
 			}
-			pend(store.SyncRunItemStatusError, "slack_media_error", derr)
+			if err := pend(store.SyncRunItemStatusError, "slack_media_error", derr); err != nil {
+				return err
+			}
 			continue
 		}
 		ma := &mime.Attachment{Filename: f.Name, ContentType: f.Mimetype, Content: data}
 		storagePath, serr := export.StoreAttachmentFile(opts.AttachmentsDir, ma)
 		if serr != nil || storagePath == "" {
-			pend(store.SyncRunItemStatusError, "slack_media_error", serr)
+			if err := pend(store.SyncRunItemStatusError, "slack_media_error", serr); err != nil {
+				return err
+			}
 			continue
 		}
 		stored := store.AttachmentRef{

@@ -3,12 +3,14 @@ package slack
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,6 +74,17 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			`), "slack:F_FAILURE").Scan(&metadata))
 			assert.Contains(metadata, tc.reason, "deferring media keeps the last fetch reason")
 			opts.NoMedia, opts.Full = false, false
+			opts.MaxMediaBytes = 2
+			_, err = imp.BackfillMedia(t.Context(), opts)
+			require.NoError(err)
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT attachment_state, attachment_skip_reason, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
+				FROM attachments WHERE source_attachment_id = ?
+			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata))
+			assert.Equal("skipped", state)
+			assert.Equal("size_cap", reason)
+			assert.NotContains(metadata, "fetch_error")
+			opts.MaxMediaBytes = 0
 
 			success := &recordingTransport{body: "pdf bytes"}
 			client.mediaTransport = success
@@ -91,6 +104,61 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			content, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, storagePath))
 			require.NoError(err)
 			assert.Equal("pdf bytes", string(content))
+		})
+	}
+}
+
+func TestSlackMediaErrorText(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		storageFailure bool
+	}{
+		{"invalid UTF-8 storage path", true},
+		{"long download URL", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := testWorkspace(t)
+			fileURL := "https://files.slack.com/files-pri/T01-F_ERROR/" + strings.Repeat("x", 400)
+			f.conv("C01").Msgs[6].Files = []map[string]any{{
+				"id": "F_ERROR", "name": "report.pdf", "mimetype": "application/pdf", "size": 5,
+				"url_private": fileURL, "permalink": "https://testers.slack.com/files/F_ERROR",
+			}}
+			srv := f.serve()
+			defer srv.Close()
+			client := NewClient(srv.URL, "xoxp-test")
+			client.disableRateLimits()
+			transport := &recordingTransport{err: errors.New("dial tcp: i/o timeout")}
+			dir := t.TempDir()
+			if tc.storageFailure {
+				transport = &recordingTransport{body: "pdf bytes"}
+				blocker := filepath.Join(dir, string([]byte{0xff}))
+				require.NoError(os.WriteFile(blocker, []byte("block"), 0600))
+				dir = filepath.Join(blocker, "attachments")
+			}
+			client.mediaTransport = transport
+			st := testutil.NewTestStore(t)
+			imp := NewImporter(st, client, "T01")
+			sum, err := imp.Import(t.Context(), ImportOptions{TeamID: "T01", UserID: "UME", AttachmentsDir: dir})
+			require.NoError(err)
+			assert.Equal([]string{fileURL}, transport.requests)
+			var metadata, itemError string
+			require.NoError(st.DB().QueryRow(`SELECT CAST(attachment_metadata AS TEXT) FROM attachments WHERE source_attachment_id = 'slack:F_ERROR'`).Scan(&metadata))
+			var detail map[string]string
+			require.NoError(json.Unmarshal([]byte(metadata), &detail))
+			require.NoError(st.DB().QueryRow(`SELECT error_message FROM sync_run_items WHERE error_kind = 'slack_media_error'`).Scan(&itemError))
+			assert.True(utf8.ValidString(itemError))
+			assert.True(utf8.ValidString(sum.FirstMediaError))
+			assert.Equal("F_ERROR: "+detail["fetch_error"], itemError)
+			assert.LessOrEqual(utf8.RuneCountInString(sum.FirstMediaError), 200)
+			if tc.storageFailure {
+				assert.Contains(detail["fetch_error"], "\ufffd")
+			} else {
+				assert.Equal("F_ERROR: dial tcp: i/o timeout", sum.FirstMediaError)
+				assert.Contains(detail["fetch_error"], "dial tcp: i/o timeout")
+			}
 		})
 	}
 }
@@ -125,6 +193,7 @@ func TestFetchableURLHostRestriction(t *testing.T) {
 // recordingTransport serves canned bodies for files.slack.com and records
 // every request it sees (it must never see an off-host one).
 type recordingTransport struct {
+	err      error
 	requests []string
 	body     string
 	// bodyByPath overrides body per URL path (distinct content hashes:
@@ -136,6 +205,9 @@ type recordingTransport struct {
 
 func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rt.requests = append(rt.requests, req.URL.String())
+	if rt.err != nil {
+		return nil, rt.err
+	}
 	if rt.redirect != "" {
 		return &http.Response{
 			StatusCode: http.StatusFound,
