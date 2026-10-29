@@ -5,6 +5,20 @@ import { createAPIClient } from '../../api/client';
 import TaskLinks from './TaskLinks.svelte';
 
 describe('TaskLinks', () => {
+  it('completes creation without refreshing the closing add surface', async () => {
+    const reads: string[] = [];
+    const oncomplete = vi.fn();
+    render(TaskLinks, { client: createAPIClient(async (input) => {
+      const request = input as Request;
+      if (request.method === 'POST') return Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 });
+      reads.push(request.url);
+      if (request.url.endsWith('/status')) return Response.json({ state: 'ready', project: 'project' });
+      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: { archive_uid: 'archive-a', conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z' } });
+    }), mode: 'add', messageId: 42, title: 'Follow up', oncomplete });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(oncomplete).toHaveBeenCalledOnce());
+    expect(reads).toHaveLength(2);
+  });
   it('shows loading, linked tasks, and honest partial authority', async () => {
     let resolve!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>((input) => {
@@ -187,6 +201,7 @@ describe('TaskLinks', () => {
 
   it('searches the configured project and links a selected result through the typed route', async () => {
     const requests: Request[] = [];
+    const oncomplete = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input); requests.push(request);
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
@@ -196,7 +211,7 @@ describe('TaskLinks', () => {
         archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
       } });
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic' });
+    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', oncomplete });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Synthetic' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
@@ -207,6 +222,9 @@ describe('TaskLinks', () => {
     expect(post.headers.get('X-Request-Id')).toBeTruthy();
     const body = await post.clone().json() as { added_at?: string };
     expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    await waitFor(() => expect(oncomplete).toHaveBeenCalledOnce());
+    expect(requests.filter((request) => request.url.endsWith('/integrations/tasks/status'))).toHaveLength(1);
+    expect(requests.filter((request) => request.method === 'GET' && request.url.endsWith('/messages/42/tasks'))).toHaveLength(1);
   });
 
   it('reuses one request identity and timestamp when retrying the same existing-task link', async () => {

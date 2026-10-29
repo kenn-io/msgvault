@@ -89,6 +89,37 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 	assert.Equal("Follow up", ops.created.Title)
 }
 
+type cancelAfterArchiveUIDAdapter struct {
+	*storeAPIAdapter
+
+	cancel context.CancelFunc
+}
+
+func (a *cancelAfterArchiveUIDAdapter) ArchiveUIDContext(ctx context.Context) (string, error) {
+	uid, err := a.storeAPIAdapter.ArchiveUIDContext(ctx)
+	a.cancel()
+	return uid, err
+}
+
+func TestTaskMessageRevisionReadHonorsRequestCancellation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("cancel-revision-email")
+	ops := &wiringTaskOperations{}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{}, Store: &cancelAfterArchiveUIDAdapter{storeAPIAdapter: &storeAPIAdapter{store: f.Store}, cancel: cancel},
+		Logger: slog.New(slog.DiscardHandler), TaskLinkOperations: ops,
+	})
+	request := httptest.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/tasks", id), nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Empty(ops.identities)
+}
+
 func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
 	t.Helper()
 	require := require.New(t)
