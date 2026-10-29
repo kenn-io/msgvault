@@ -1,7 +1,6 @@
 <script lang="ts">
   import { reportError } from '../../telemetry/actions';
   import {
-    listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
   } from '../../api/generated/api/api';
   import { Button, Chip, IconButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
@@ -10,8 +9,9 @@
   import { onDestroy, onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
+  import { SOURCE_STATUS_TIMEOUT_MS, type SourceRead } from '../../jobs/jobs.svelte';
   import { scheduleSummary } from '../../settings/cron';
-  import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
+  import { sourceTypeLabel, syncRunning, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import PageHeader from '../shell/PageHeader.svelte';
   import type {
@@ -26,20 +26,20 @@
   const STALE_LAST_RESULT_MS = 24 * 60 * 60 * 1000;
   let {
     client,
-    requestTimeoutMs = 20_000,
+    loadStatus,
+    requestTimeoutMs = SOURCE_STATUS_TIMEOUT_MS,
     maxAwaitingPolls = 6,
     maxLockHoldPolls = 8,
     now = () => new Date(),
     onOpenOperations = () => undefined,
-    onStatus = () => undefined,
   }: {
     client: APIClient;
+    loadStatus: (signal: AbortSignal, supersede: boolean) => Promise<SourceRead>;
     requestTimeoutMs?: number;
     maxAwaitingPolls?: number;
     maxLockHoldPolls?: number;
     now?: () => Date;
     onOpenOperations?: () => void;
-    onStatus?: (sources: Source[]) => void;
   } = $props();
   let sources = $state<Source[]>([]);
   const expanded = new SvelteSet<number>();
@@ -109,7 +109,7 @@
     if (disposed || document.hidden) return;
     if (
       !allowIdle &&
-      !sources.some((source) => source.active_sync || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
+      !sources.some((source) => syncRunning(source) || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
       awaitingSourceID === undefined
     )
       return;
@@ -120,7 +120,7 @@
       void load();
     }, delay);
   }
-  async function load(): Promise<void> {
+  async function load(supersede = false): Promise<void> {
     if (disposed) return;
     if (document.hidden) {
       loading = false;
@@ -133,14 +133,10 @@
     controller = requestController;
     const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
-      const { data, error: responseError } = await generatedListSourceStatus(undefined, {
-        ...client,
-        signal,
-      });
+      const { data, error: responseError } = await loadStatus(signal, supersede);
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
       const next = data.sources ?? [];
-      onStatus(next);
       let nextDelay: number | undefined;
       let lockHoldPoll = false;
       let advanced = false;
@@ -174,7 +170,7 @@
           pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         }
       }
-      const hasActiveSync = next.some((source) => source.active_sync);
+      const hasActiveSync = next.some(syncRunning);
       const hasLockHold = next.some(schedulerHoldsSyncLock);
       if (hasActiveSync) {
         lockHoldPolls = 0;
@@ -200,14 +196,14 @@
       }
     } catch (cause) {
       if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
-      if (signal.aborted && signal.reason?.name === 'TimeoutError') {
+      if (cause instanceof Error && cause.name === 'TimeoutError') {
         statusError = 'Loading source status timed out. The server may be busy; retry in a moment.';
       } else {
         statusError = cause instanceof Error ? cause.message : 'Unable to load source status.';
       }
       if (!hasLoadedStatus) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
-        !sources.some((source) => source.active_sync) && awaitingSourceID === undefined) {
+        !sources.some(syncRunning) && awaitingSourceID === undefined) {
         lockStatusStale = true;
         return;
       }
@@ -226,7 +222,7 @@
         const nextDelay = pollDelay;
         pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         schedulePoll(nextDelay, true, sources.some(schedulerHoldsSyncLock) &&
-          !sources.some((source) => source.active_sync));
+          !sources.some(syncRunning));
       }
     } finally {
       if (requestGeneration === generation) {
@@ -258,7 +254,7 @@
       awaitingBaselineRunID = source.latest_sync?.id;
       awaitingAttempts = 0;
       awaitingState = 'awaiting';
-      await load();
+      await load(true);
     } catch (cause) {
       if (disposed) return;
       triggerError = signal.aborted
@@ -301,7 +297,7 @@
     lockStatusStale = false;
     statusError = '';
     pollDelay = MIN_POLL_MS;
-    void load();
+    void load(true);
   }
 </script>
 

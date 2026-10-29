@@ -1,6 +1,6 @@
 import type { OperationLaneStatus, SourceStatus } from '../api/generated/models';
 import { operationStateChip, OPERATION_KIND_LABELS, OPERATION_SETUP, type OperationSettingsTarget, type RelatedStatus } from '../operations/labels';
-import { syncStatusChip } from '../sources/labels';
+import { syncRunning, syncStatusChip } from '../sources/labels';
 
 export type JobState = 'queued' | 'running' | 'failed';
 export type JobsHealth = 'ok' | 'queued' | 'running' | 'failed' | 'unavailable';
@@ -22,7 +22,7 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
   const items: JobItem[] = [];
   for (const source of sources) {
     const base = { id: `source:${source.id}`, name: source.display_name || source.identifier, target: { kind: 'source' as const } };
-    if (source.active_sync || source.scheduler_started_at || (source.sync_unavailable_reason === 'sync_already_running' && !source.scheduler_queued && !source.scheduler_pending)) {
+    if (syncRunning(source) || source.scheduler_started_at || (source.sync_unavailable_reason === 'sync_already_running' && !source.scheduler_queued && !source.scheduler_pending)) {
       const processed = source.active_sync?.messages_processed;
       items.push({ ...base, state: 'running', detail: processed ? `${processed.toLocaleString()} messages so far` : 'Syncing', at: source.active_sync?.started_at ?? source.scheduler_started_at });
     } else {
