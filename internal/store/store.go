@@ -2308,6 +2308,20 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("initialize chat members projection: %w", err)
 	}
 
+	// Telegram provider identity keys became service-scoped (shared between
+	// Telegram exports and every Beeper bridge account). Rewrite the old
+	// account-scoped keys once so prior identity decisions keep matching.
+	if err := s.runOnceMigration(
+		ctx, migrationTelegramSharedProviderKeys, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.rewriteTelegramProviderKeys(ctx, tx)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("rewrite telegram provider keys: %w", err)
+	}
+
 	// Probe availability through the dialect so it works uniformly for
 	// backends that carry FTS inside their main schema. The probe is a query
 	// like any other and carries ctx: it returns a bool, so a cancellation that

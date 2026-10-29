@@ -1,0 +1,25 @@
+{
+  "id": -1008888888888,
+  "type": "private_group",
+  "name": "Single Chat Export",
+  "messages": [
+    {
+      "id": 401,
+      "type": "message",
+      "date_unixtime": "1610910800",
+      "from": "Carol Sample",
+      "from_id": "user7000000000000888888",
+      "text": "single chat body"
+    },
+    {
+      "id": 402,
+      "type": "message",
+      "date_unixtime": "1610910900",
+      "from": "Carol Sample",
+      "from_id": "user7000000000000888888",
+      "sticker_emoji": "👍",
+      "file": "stickers/sticker_1.webm",
+      "text": ""
+    }
+  ]
+}

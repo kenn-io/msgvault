@@ -1,0 +1,162 @@
+{
+  "about": "Here is all your data",
+  "personal_information": {
+    "user_id": 7000000000000123456,
+    "first_name": "Test",
+    "last_name": "Owner",
+    "phone_number": "+15550100",
+    "username": "test_owner"
+  },
+  "chats": {
+    "about": "This page lists all your chats",
+    "list": [
+      {
+        "id": 7000000000000987654,
+        "type": "personal_chat",
+        "name": "Alice Example",
+        "messages": [
+          {
+            "id": 101,
+            "type": "message",
+            "date": "2021-01-17T18:57:52:00",
+            "date_unixtime": "1610909872",
+            "from": "Alice Example",
+            "from_id": "user7000000000000555555",
+            "text": "Plain string hello"
+          },
+          {
+            "id": 102,
+            "type": "message",
+            "date_unixtime": "1610909900",
+            "from": "Test Owner",
+            "from_id": "user7000000000000123456",
+            "text": [
+              "see ",
+              {"type": "link", "text": "https://example.org/docs"},
+              " and ",
+              {"type": "mention", "text": "@alice"}
+            ],
+            "text_entities": [
+              {"type": "plain", "text": "see "},
+              {"type": "link", "text": "https://example.org/docs"},
+              {"type": "plain", "text": " and "},
+              {"type": "mention", "text": "@alice"}
+            ]
+          },
+          {
+            "id": 103,
+            "type": "message",
+            "date_unixtime": "1610909950",
+            "from": "Alice Example",
+            "from_id": "user7000000000000555555",
+            "photo": "photos/photo_1@01-01-2020_12-00-00.jpg",
+            "width": 1280,
+            "height": 720,
+            "text": ""
+          },
+          {
+            "id": 104,
+            "type": "service",
+            "date_unixtime": "1610909960",
+            "actor": "Alice Example",
+            "actor_id": "user7000000000000555555",
+            "action": "phone_call",
+            "text": ""
+          }
+        ]
+      },
+      {
+        "id": -1009999999999,
+        "type": "public_supergroup",
+        "name": "Example Group",
+        "messages": [
+          {
+            "id": 201,
+            "type": "message",
+            "date_unixtime": "1610910000",
+            "from": "Bob Sample",
+            "from_id": "user7000000000000666666",
+            "file": "voice_messages/voice_message_1@01-01-2020_12-00-00.ogg",
+            "media_type": "voice_message",
+            "text": ""
+          },
+          {
+            "id": 202,
+            "type": "message",
+            "date_unixtime": "1610910100",
+            "from": "Example Group",
+            "from_id": "channel7000000000000777777",
+            "text": "Posted by the channel itself"
+          },
+          {
+            "id": 203,
+            "type": "message",
+            "date_unixtime": "1610910200",
+            "from": "Bob Sample",
+            "from_id": "user7000000000000666666",
+            "text": "[Photo unavailable. You can download it from the Telegram servers.]"
+          },
+          {
+            "id": 204,
+            "type": "message",
+            "date_unixtime": "1610910300",
+            "from": "Bob Sample",
+            "from_id": "user7000000000000666666",
+            "photo": "../secrets/root.jpg",
+            "text": "hostile path"
+          },
+          {
+            "id": 205,
+            "type": "message",
+            "date_unixtime": "1610910400",
+            "from": "Bob Sample",
+            "from_id": "user7000000000000666666",
+            "photo": "/etc/passwd",
+            "text": "absolute path"
+          },
+          {
+            "id": 206,
+            "type": "message",
+            "date_unixtime": "1610910500",
+            "from": "Example Group",
+            "from_id": "chat-1009999999999",
+            "text": "posted by an anonymous group admin"
+          }
+        ]
+      },
+      {
+        "id": -1001111111111,
+        "type": "private_channel",
+        "name": "Example Channel",
+        "messages": [
+          {
+            "id": 601,
+            "type": "message",
+            "date_unixtime": "1610910600",
+            "text": "channel post body"
+          }
+        ]
+      }
+    ]
+  },
+  "left_chats": {
+    "about": "Chats you have left",
+    "list": [
+      {
+        "id": 7000000000000444444,
+        "type": "bot_chat",
+        "name": "Example Bot",
+        "messages": [
+          {
+            "id": 301,
+            "type": "message",
+            "date_unixtime": "1609459200",
+            "from": "Example Bot",
+            "from_id": "user7000000000000444444",
+            "text": "left chat message"
+          }
+        ]
+      }
+    ]
+  }
+}

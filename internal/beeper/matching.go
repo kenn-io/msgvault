@@ -104,6 +104,26 @@ func newIdentityMatcher(s *store.Store) *identityMatcher {
 	}
 }
 
+// MatchProviderIdentity evaluates one recorded provider-identity observation
+// against rung 1 (stable provider ID) of the identity matching ladder — the
+// only rung that may link automatically — using the same policy a Beeper
+// sync runs. Importers that share a stable provider key with a Beeper
+// bridge call this instead of a second linking policy, so an export
+// observation and a bridge observation of the same native ID produce
+// identical outcomes.
+//
+// A nil result or one without a provider user ID matches nothing.
+func MatchProviderIdentity(
+	ctx context.Context, s *store.Store, participantID int64, result *store.RecordContactObservationResult,
+) error {
+	if s == nil || result == nil || result.Observation == nil || result.Observation.ProviderUserID == nil {
+		return nil
+	}
+	m := newIdentityMatcher(s)
+	var outcome matchOutcome
+	return m.matchStableProviderID(ctx, participantID, result.Observation, &outcome)
+}
+
 // match evaluates one recorded observation against the ladder.
 func (m *identityMatcher) match(
 	ctx context.Context, participantID int64, result *store.RecordContactObservationResult,
