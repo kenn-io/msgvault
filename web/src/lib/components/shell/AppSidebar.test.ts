@@ -73,11 +73,21 @@ describe('AppSidebar', () => {
     expect(screen.getByRole('button', { name: 'Plain' }).getAttribute('title')).toBe('Table');
   });
 
-  it('does not open a view the app cannot read', async () => {
+  it.each([
+    { schema_version: 3 },
+    { schema_version: 2, incompatibility_reason: 'Stored filters are incompatible.' },
+  ])('keeps an incompatible schema $schema_version view disabled and deletable', async incompatible => {
     const onOpenView = vi.fn();
-    renderSidebar({ views: [{ ...view(1, 'Old view'), schema_version: 9 }], onOpenView });
-    await fireEvent.click(screen.getByRole('button', { name: 'Old view' }));
+    const onDeleteView = vi.fn();
+    renderSidebar({ views: [{ ...view(1, 'Old view'), ...incompatible, canonical_state: { filters: { source: ['1'] } } }], onOpenView, onDeleteView });
+    const saved = screen.getByRole('button', { name: 'Old view' });
+    expect(saved.getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.click(saved);
     expect(onOpenView).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Old view actions' }));
+    expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(onDeleteView).toHaveBeenCalledOnce();
   });
 
   it('locks a pending rename and returns focus after saving or canceling', async () => {

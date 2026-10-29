@@ -34,6 +34,8 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
           ? [run?.error_message, ...(run?.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).filter(Boolean).join(' · ')
           : '';
         items.push({ ...base, state: 'failed', detail: diagnostics || firstLine(source.scheduler_last_error, 'Sync failed'), at: runFailed ? failedAt ?? undefined : undefined });
+      } else if (source.scheduler_queued || source.scheduler_pending) {
+        items.push({ ...base, state: 'queued', detail: 'Queued' });
       }
     }
   }
