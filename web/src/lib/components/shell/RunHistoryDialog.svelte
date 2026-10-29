@@ -43,13 +43,12 @@
     anchor = operationFocusAnchor(current.rows, id);
     invokingRow = button;
     local = { ...local, operationRunID: id };
+    void restoreFocus();
   }
   async function allRuns(): Promise<void> {
     const id = resolveOperationFocusAnchor(current.rows, anchor) ?? local.operationRunID;
     local = { ...local, operationRunID: null };
-    await tick();
-    const fallback = Array.from(root?.querySelectorAll<HTMLButtonElement>('button[data-run-id]') ?? []).find(button => button.dataset.runId === id);
-    (invokingRow?.isConnected ? invokingRow : fallback)?.focus();
+    await restoreFocus(id);
   }
   function navigateStatus(target: RelatedStatus, button: HTMLButtonElement): void {
     relatedFocus = button.textContent?.trim();
@@ -57,10 +56,18 @@
   }
   async function closeRelatedStatus(): Promise<void> {
     local = { ...local, operationStatus: '' };
+    await restoreFocus();
+    relatedFocus = undefined;
+  }
+  export async function restoreFocus(id = resolveOperationFocusAnchor(current.rows, anchor) ?? local.operationRunID): Promise<void> {
     await tick();
     const buttons = Array.from(root?.querySelectorAll<HTMLButtonElement>('button') ?? []);
-    (buttons.find(button => button.textContent?.trim() === relatedFocus) ?? buttons[0])?.focus();
-    relatedFocus = undefined;
+    if (local.operationRunID || local.operationStatus) {
+      (buttons.find(button => button.textContent?.trim() === relatedFocus) ?? buttons[0])?.focus();
+      return;
+    }
+    const fallback = buttons.find(button => button.dataset.runId === id);
+    (invokingRow?.isConnected ? invokingRow : fallback ?? buttons[0])?.focus();
   }
   const actionSuccess: Record<OperationAction, string> = {
     carddav_sync: 'CardDAV sync request completed; current operation state was refreshed.',
