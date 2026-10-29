@@ -385,7 +385,7 @@ web-check: web-install
 	cd web && bun run check:kit-ui
 
 web-test:
-	cd web && bun run test
+	cd web && bun run test $(WEB_TEST_ARGS)
 
 # Use the remote browser server in CI, or install the locked Chromium locally.
 # Keep other projects' cached browsers.
@@ -398,7 +398,7 @@ web-browser-install: web-install
 # whose fixtures spawn the repo-root msgvault daemon, so the binary must
 # exist before Playwright starts. Same invariant as web-e2e below.
 web-test-browser: build web-browser-install
-	cd web && bun run test:browser
+	cd web && bun run test:browser $(WEB_BROWSER_TEST_ARGS)
 
 # Browser gates use local Chromium or the remote Playwright server in CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.

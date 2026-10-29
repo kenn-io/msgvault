@@ -12,8 +12,10 @@ const secureRow = {
 
 test('operations keeps production privacy sentinels out of rendered text', async ({ page }) => {
   await installOperations(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
-  await expect(page.getByRole('main', { name: 'Operations' })).toBeVisible();
+  await page.goto('/?workspace=everything');
+  await page.getByRole('button', { name: /Sync status:/ }).click();
+  await page.getByRole('menuitem', { name: 'Past runs' }).click();
+  await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
   await page.getByRole('button', { name: 'Open CardDAV sync run' }).click();
   await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
 
@@ -152,6 +154,6 @@ test('daemon API key stays host-managed and never crosses the browser settings w
 	await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
 	expect(settingsPatch).toBeUndefined();
 
-	await page.getByRole('button', { name: 'Everything', exact: true }).click();
+	await page.getByRole('button', { name: 'Messages', exact: true }).click();
 	await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
 });

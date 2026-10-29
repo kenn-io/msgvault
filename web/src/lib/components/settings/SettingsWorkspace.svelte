@@ -52,6 +52,10 @@
   import SecretField from './SecretField.svelte';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
   import SettingField from './SettingField.svelte';
+  import Dialog from '../common/Dialog.svelte';
+  import OperationRelatedStatus from '../operations/OperationRelatedStatus.svelte';
+  import { STATUS_AUTHORITY_BY_KIND } from '../../operations/labels';
+  import type { OperationStatusAuthority } from '../../explore/models';
   import SettingsOverview from './SettingsOverview.svelte';
 
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
@@ -101,8 +105,10 @@
   let root = $state<HTMLElement>();
   let embeddingStatus = $state<EmbeddingStatus>();
   let visualStatus = $state<VisualStatus>();
+  let detailsAuthority = $state<OperationStatusAuthority>();
   let lanes = $state<OperationLaneStatus[]>();
   let coverage = $state<Pick<SearchCoverageValue, 'status' | 'actions'>>();
+  const detailsConfigured = $derived(lanes?.find(lane => STATUS_AUTHORITY_BY_KIND[lane.kind as keyof typeof STATUS_AUTHORITY_BY_KIND] === detailsAuthority)?.configured);
   let statusSettled = $state(false);
   let building = $state<Record<string, boolean>>({});
   let consumedCategoryRequestKey: number | undefined;
@@ -597,7 +603,7 @@
           {:else if !lanes}
             <EmptyState title="Can't load status"><Button label="Retry" onclick={() => (statusRevision += 1)} /></EmptyState>
           {:else}
-            <SettingsOverview {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
+            <SettingsOverview onDetails={(authority) => (detailsAuthority = authority)} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
@@ -675,6 +681,14 @@
     </SettingsLayout>
   {/if}
 </main>
+
+{#if detailsAuthority}
+  <Dialog title="Details" onclose={() => (detailsAuthority = undefined)}>
+    <OperationRelatedStatus {client} authority={detailsAuthority} configured={detailsConfigured}
+      onClose={() => (detailsAuthority = undefined)}
+      onConfigure={() => { detailsAuthority = undefined; onCategoryChange('search'); }} />
+  </Dialog>
+{/if}
 
 <style>
   .settings-fields {

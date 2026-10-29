@@ -16,6 +16,7 @@
   import { formatDateTime } from '../../util/format';
 
   let {
+    compact = false,
     detail,
     actionPending = null,
     showClose = true,
@@ -23,6 +24,7 @@
     onNavigate = () => undefined,
     onAction = () => undefined
   }: {
+    compact?: boolean;
     detail: OperationRunDetail;
     actionPending?: OperationAction | null;
     showClose?: boolean;
@@ -34,14 +36,14 @@
   const stateChip = $derived(operationStateChip(detail.state));
 </script>
 
-<section class="detail" aria-label="Operation run detail">
-  <header>
+<section class="detail" class:detail--compact={compact} aria-label="Operation run detail">
+  {#if !compact}<header>
     <div>
       <p>Run detail</p>
       <h2>{OPERATION_KIND_LABELS[detail.kind]}</h2>
     </div>
     {#if showClose}<Button size="sm" surface="soft" label="Close operation detail" onclick={onClose} />{/if}
-  </header>
+  </header>{/if}
 
   <dl class="facts">
     {#if detail.connection}<div><dt>Connection</dt><dd>{detail.connection}</dd></div>{/if}
@@ -53,7 +55,7 @@
   </dl>
 
   <section aria-labelledby="detail-counters-heading">
-    <h3 id="detail-counters-heading">Counters</h3>
+    <svelte:element this={compact ? 'h2' : 'h3'} id="detail-counters-heading" class="counter-heading">Counters</svelte:element>
     {#if detail.counters.length === 0}
       <p class="muted">No counters reported.</p>
     {:else}
@@ -96,12 +98,13 @@
 </section>
 
 <style>
+  .detail--compact { padding: 0; gap: var(--space-3); }
   .detail { display: grid; align-content: start; gap: var(--space-4); min-width: 0; padding: var(--space-4); }
   header { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); }
-  h2, h3, p, dl, dd { margin: 0; }
+  h2, p, dl, dd { margin: 0; }
   header p { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; }
   h2 { font-size: var(--font-size-lg); }
-  h3 { margin-bottom: var(--space-2); font-size: var(--font-size-sm); }
+  .counter-heading { margin: 0 0 var(--space-2); font-size: var(--font-size-sm); }
   .facts, .counters { display: grid; gap: var(--space-2); }
   .facts div, .counters div { display: grid; grid-template-columns: minmax(100px, .45fr) 1fr; gap: var(--space-3); }
   dt { color: var(--text-muted); font-size: var(--font-size-xs); }
