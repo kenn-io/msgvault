@@ -18,6 +18,7 @@ export type CategoryID = (typeof RAIL)[number]['id'];
 export interface Block {
   title?: string;
   description?: string;
+  section?: string;
   rows: readonly (string | readonly string[])[];
 }
 
@@ -38,9 +39,15 @@ export const BLOCKS: Readonly<Partial<Record<CategoryID, readonly Block[]>>> = {
       ],
     },
     {
+      section: 'people',
       rows: [
         'vector.people.enabled',
         ['vector.people.retention_posture', 'vector.people.training_posture'],
+      ],
+    },
+    {
+      section: 'visual',
+      rows: [
         'vector.multimodal.enabled',
         'vector.multimodal.api_key',
       ],
@@ -138,7 +145,10 @@ export function layoutCategory(id: CategoryID, settings: readonly SettingState[]
   const blocks = sourceGroups.length > 0 ? sourceGroups.flatMap(group => [
     { title: group.id === 'sources' ? undefined : group.label, description: group.description, rows: group.settings.filter(setting => !setting.section).map(setting => setting.key) },
     ...group.sections.map(section => ({ title: section.label, rows: section.settings.map(setting => setting.key) }))
-  ]) : BLOCKS[id] ?? [];
+  ]) : (BLOCKS[id] ?? []).map(block => ({
+    ...block,
+    description: block.description ?? groups.find(group => group.id === id)?.sections?.find(section => section.id === block.section)?.description,
+  }));
   const shown = new Set(blocks.flatMap(flat));
   const own = settings.filter((setting) => categoryOf(setting) === id);
   return {

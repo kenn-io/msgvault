@@ -504,6 +504,8 @@
   function readOnlyValue(setting: SettingState): string {
     if (setting.kind === 'secret') return setting.secret?.configured ? setting.secret.hint || 'Set' : 'None';
     const value = valueText(persistedValue(setting));
+    const off = setting.validation?.off;
+    if (off && value === (off.value ?? '')) return off.label;
     return value || 'Not set';
   }
   // Rows that only matter once something else is on stay out of the way until then.
