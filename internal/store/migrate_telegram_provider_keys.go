@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
 )
@@ -21,42 +22,70 @@ const migrationTelegramSharedProviderKeys = "telegram_shared_provider_keys_v1"
 // percent is a wildcard; sharedTelegramKeyRewrite does the exact filtering.
 const telegramKeyPrefix = "provider:8:telegram:%"
 
-// rewriteTelegramProviderKeys rewrites account-scoped Telegram provider keys
-// (numeric native IDs only) to the shared service-scoped form in
+// rewriteTelegramProviderKeys rewrites the account-scoped Telegram provider
+// keys (numeric native IDs only) to the shared service-scoped form in
 // participant_contact_observations, identity_match_candidates, and
 // identity_match_evidence, then refreshes the stored evidence fingerprints
 // of every surviving candidate whose fingerprint inputs changed so prior
-// accepted and rejected decisions stay valid instead of going stale.
+// accepted and rejected decisions stay valid instead of going stale. Only
+// proofs that matched the pre-migration evidence are renewed: one that was
+// already stale keeps requiring the fresh review that made it stale.
 func (s *Store) rewriteTelegramProviderKeys(ctx context.Context, tx *loggedTx) error {
-	rewrites, participants, err := rewriteTelegramObservations(ctx, tx)
+	// Plan every rewrite and fingerprint every touched candidate before
+	// the first mutation: validity is judged against the pre-migration
+	// evidence, which cannot be recomputed after the rewrites land.
+	observations, err := planTelegramObservationRewrites(ctx, tx)
 	if err != nil {
 		return err
 	}
-	candidates, err := s.rewriteTelegramCandidateKeys(ctx, tx)
+	candidateUpdates, err := planTelegramCandidateKeyRewrites(ctx, tx)
 	if err != nil {
 		return err
 	}
-	evidenceCandidates, err := rewriteTelegramEvidenceDetails(ctx, tx, rewrites)
+	evidence, err := planTelegramEvidenceDetailRewrites(ctx, tx, observations.rewrites)
 	if err != nil {
 		return err
 	}
-	for _, id := range evidenceCandidates {
-		candidates[id] = struct{}{}
-	}
-	endpointCandidates, err := telegramCandidatesTouchingParticipants(ctx, tx, participants)
+	endpointCandidates, err := telegramCandidatesTouchingParticipants(ctx, tx, observations.participants)
 	if err != nil {
 		return err
+	}
+	touched := make(map[int64]struct{},
+		len(candidateUpdates)+len(evidence.candidates)+len(endpointCandidates))
+	for _, update := range candidateUpdates {
+		touched[update.id] = struct{}{}
+	}
+	for _, id := range evidence.candidates {
+		touched[id] = struct{}{}
 	}
 	for _, id := range endpointCandidates {
-		candidates[id] = struct{}{}
+		touched[id] = struct{}{}
+	}
+	preFingerprints, err := telegramPreMigrationFingerprintsTx(ctx, tx, touched)
+	if err != nil {
+		return err
+	}
+
+	if err := applyTelegramObservationRewrites(ctx, tx, observations); err != nil {
+		return err
+	}
+	survivors, err := s.applyTelegramCandidateKeyRewrites(ctx, tx, candidateUpdates)
+	if err != nil {
+		return err
+	}
+	for id := range survivors {
+		touched[id] = struct{}{}
+	}
+	if err := applyTelegramEvidenceDetailRewrites(ctx, tx, evidence); err != nil {
+		return err
 	}
 	// A collapse may have retired some of the collected IDs; only rows
 	// that still exist carry a fingerprint.
-	survivors, err := telegramExistingCandidates(ctx, tx, candidates)
+	existing, err := telegramExistingCandidates(ctx, tx, touched)
 	if err != nil {
 		return err
 	}
-	return refreshIdentityMatchFingerprintsTx(ctx, tx, survivors)
+	return refreshIdentityMatchFingerprintsTx(ctx, tx, existing, preFingerprints)
 }
 
 // telegramKeyRewrite maps one old account-scoped key to its shared form.
@@ -65,16 +94,34 @@ type telegramKeyRewrite struct {
 	newKey string
 }
 
-// rewriteTelegramObservations rewrites provider keys on contact observations
-// and clears the scope columns of every row whose key is — or becomes — the
-// shared service-scoped form, so migrated rows match what the fixed
-// importer writes. It returns the key rewrites (reused for evidence) and
-// the set of participants whose observations changed, because those
-// participants' candidates have fingerprint inputs even when the candidate
-// itself carries no Telegram key.
-func rewriteTelegramObservations(
+// telegramObservationUpdate is one contact-observation row's planned change.
+type telegramObservationUpdate struct {
+	id          int64
+	participant int64
+	rewrite     telegramKeyRewrite
+	hasRewrite  bool
+	normalized  bool
+}
+
+// telegramObservationPlan is the read-only plan of one archive's
+// observation rewrites: the row updates to apply, the old-to-new key
+// rewrites they perform (reused for evidence), and the participants whose
+// observations change, because those participants' candidates have
+// fingerprint inputs even when the candidate itself carries no Telegram
+// key.
+type telegramObservationPlan struct {
+	updates      []telegramObservationUpdate
+	rewrites     []telegramKeyRewrite
+	participants map[int64]struct{}
+}
+
+// planTelegramObservationRewrites lists the provider-key rewrites and
+// scope clears contact observations need, without changing anything: the
+// rewriteTelegramProviderKeys coordinator needs the plan read-only so
+// pre-migration fingerprints are captured before the first mutation.
+func planTelegramObservationRewrites(
 	ctx context.Context, tx *loggedTx,
-) ([]telegramKeyRewrite, map[int64]struct{}, error) {
+) (*telegramObservationPlan, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, participant_id, address_kind, provider_user_id, normalized_value
 		FROM participant_contact_observations
@@ -82,18 +129,10 @@ func rewriteTelegramObservations(
 		ORDER BY id
 	`, telegramKeyPrefix)
 	if err != nil {
-		return nil, nil, fmt.Errorf("telegram keys: list observations: %w", err)
+		return nil, fmt.Errorf("telegram keys: list observations: %w", err)
 	}
-	type observationUpdate struct {
-		id          int64
-		participant int64
-		rewrite     telegramKeyRewrite
-		hasRewrite  bool
-		normalized  bool
-	}
-	var updates []observationUpdate
+	plan := &telegramObservationPlan{participants: map[int64]struct{}{}}
 	byOldKey := make(map[string]telegramKeyRewrite)
-	participants := make(map[int64]struct{})
 	for rows.Next() {
 		var (
 			id, participant                   int64
@@ -101,7 +140,7 @@ func rewriteTelegramObservations(
 		)
 		if err := rows.Scan(&id, &participant, &addressKind, &provider, &normalized); err != nil {
 			_ = rows.Close()
-			return nil, nil, fmt.Errorf("telegram keys: scan observation: %w", err)
+			return nil, fmt.Errorf("telegram keys: scan observation: %w", err)
 		}
 		rewrite, ok := sharedTelegramKeyRewrite(provider)
 		if !ok {
@@ -110,11 +149,12 @@ func rewriteTelegramObservations(
 			if !telegramSharedKeyShape(provider) {
 				continue
 			}
-			updates = append(updates, observationUpdate{id: id, participant: participant})
-			participants[participant] = struct{}{}
+			plan.updates = append(plan.updates,
+				telegramObservationUpdate{id: id, participant: participant})
+			plan.participants[participant] = struct{}{}
 			continue
 		}
-		updates = append(updates, observationUpdate{
+		plan.updates = append(plan.updates, telegramObservationUpdate{
 			id:          id,
 			participant: participant,
 			rewrite:     rewrite,
@@ -123,17 +163,30 @@ func rewriteTelegramObservations(
 				normalized == provider,
 		})
 		byOldKey[rewrite.oldKey] = rewrite
-		participants[participant] = struct{}{}
+		plan.participants[participant] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return nil, nil, fmt.Errorf("telegram keys: iterate observations: %w", err)
+		return nil, fmt.Errorf("telegram keys: iterate observations: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, nil, fmt.Errorf("telegram keys: close observations: %w", err)
+		return nil, fmt.Errorf("telegram keys: close observations: %w", err)
 	}
+	plan.rewrites = make([]telegramKeyRewrite, 0, len(byOldKey))
+	for _, rewrite := range byOldKey {
+		plan.rewrites = append(plan.rewrites, rewrite)
+	}
+	return plan, nil
+}
 
-	for _, update := range updates {
+// applyTelegramObservationRewrites rewrites provider keys on contact
+// observations and clears the scope columns of every row whose key is — or
+// becomes — the shared service-scoped form, so migrated rows match what the
+// fixed importer writes.
+func applyTelegramObservationRewrites(
+	ctx context.Context, tx *loggedTx, plan *telegramObservationPlan,
+) error {
+	for _, update := range plan.updates {
 		var err error
 		switch {
 		case update.hasRewrite && update.normalized:
@@ -157,15 +210,10 @@ func rewriteTelegramObservations(
 			`, update.id)
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("telegram keys: rewrite observation %d: %w", update.id, err)
+			return fmt.Errorf("telegram keys: rewrite observation %d: %w", update.id, err)
 		}
 	}
-
-	rewrites := make([]telegramKeyRewrite, 0, len(byOldKey))
-	for _, rewrite := range byOldKey {
-		rewrites = append(rewrites, rewrite)
-	}
-	return rewrites, participants, nil
+	return nil
 }
 
 // sharedTelegramKeyRewrite validates one key's shape and returns its shared
@@ -195,18 +243,22 @@ func telegramSharedKeyShape(key string) bool {
 	return beeperidentity.TelegramSharedProviderKey(key)
 }
 
-// rewriteTelegramCandidateKeys moves every stable-provider candidate whose
-// normalized value is an account-scoped Telegram key onto the shared key's
-// scope-less edge, and clears the scope columns of candidates already
-// carrying the shared key. Each key is validated against the key encoding
-// itself, so a candidate never depends on an observation surviving. A
-// rewrite that would land on an occupied edge reconciles with the canonical
-// candidate collapse: the surviving row keeps the group's decisions,
-// evidence, source support, and link ownership, and the retired row leaves
-// a redirect. It returns the set of surviving candidate IDs.
-func (s *Store) rewriteTelegramCandidateKeys(
+// telegramCandidateKeyUpdate moves one stable-provider candidate onto the
+// shared key's scope-less edge.
+type telegramCandidateKeyUpdate struct {
+	id     int64
+	newKey string
+}
+
+// planTelegramCandidateKeyRewrites lists the stable-provider candidates
+// whose normalized value is an account-scoped Telegram key to rewrite and
+// those already carrying the shared key whose scope columns need clearing.
+// Each key is validated against the key encoding itself, so a candidate
+// never depends on an observation surviving. Planning is read-only, so the
+// coordinator can capture pre-migration fingerprints first.
+func planTelegramCandidateKeyRewrites(
 	ctx context.Context, tx *loggedTx,
-) (map[int64]struct{}, error) {
+) ([]telegramCandidateKeyUpdate, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, normalized_value FROM identity_match_candidates
 		WHERE basis = 'stable_provider_id' AND normalized_value LIKE ?
@@ -215,11 +267,7 @@ func (s *Store) rewriteTelegramCandidateKeys(
 	if err != nil {
 		return nil, fmt.Errorf("telegram keys: list candidates: %w", err)
 	}
-	type candidateUpdate struct {
-		id     int64
-		newKey string
-	}
-	var updates []candidateUpdate
+	var updates []telegramCandidateKeyUpdate
 	for rows.Next() {
 		var id int64
 		var value *string
@@ -231,11 +279,11 @@ func (s *Store) rewriteTelegramCandidateKeys(
 			continue
 		}
 		if rewrite, ok := sharedTelegramKeyRewrite(*value); ok {
-			updates = append(updates, candidateUpdate{id: id, newKey: rewrite.newKey})
+			updates = append(updates, telegramCandidateKeyUpdate{id: id, newKey: rewrite.newKey})
 			continue
 		}
 		if telegramSharedKeyShape(*value) {
-			updates = append(updates, candidateUpdate{id: id, newKey: *value})
+			updates = append(updates, telegramCandidateKeyUpdate{id: id, newKey: *value})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -245,6 +293,17 @@ func (s *Store) rewriteTelegramCandidateKeys(
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("telegram keys: close candidates: %w", err)
 	}
+	return updates, nil
+}
+
+// applyTelegramCandidateKeyRewrites applies the planned candidate key
+// rewrites. A rewrite that would land on an occupied edge reconciles with
+// the canonical candidate collapse: the surviving row keeps the group's
+// decisions, evidence, source support, and link ownership, and the retired
+// row leaves a redirect. It returns the set of surviving candidate IDs.
+func (s *Store) applyTelegramCandidateKeyRewrites(
+	ctx context.Context, tx *loggedTx, updates []telegramCandidateKeyUpdate,
+) (map[int64]struct{}, error) {
 
 	survivors := make(map[int64]struct{}, len(updates))
 	for _, update := range updates {
@@ -352,13 +411,24 @@ func (s *Store) telegramCandidateAppliedAcceptedTx(
 	return false, nil
 }
 
-// rewriteTelegramEvidenceDetails rewrites stable-provider evidence details
-// and returns the candidates whose evidence rows changed. Each detail is
-// validated against the key encoding itself, so evidence rewriting never
-// depends on an observation surviving.
-func rewriteTelegramEvidenceDetails(
-	ctx context.Context, tx *loggedTx, rewrites []telegramKeyRewrite,
-) ([]int64, error) {
+// telegramEvidencePlan is the read-only plan of the evidence-detail
+// rewrites: the detail renames to apply and the candidates whose evidence
+// carries an affected key — the old form about to be renamed or the shared
+// form already in place.
+type telegramEvidencePlan struct {
+	rewrites   []telegramKeyRewrite
+	candidates []int64
+}
+
+// planTelegramEvidenceDetailRewrites lists the stable-provider evidence
+// details to rewrite and the candidates whose evidence carries an affected
+// key. Each detail is validated against the key encoding itself, so
+// evidence rewriting never depends on an observation surviving. Planning is
+// read-only: the candidate set is collected before the rename, so it equals
+// the post-rewrite set the old inline collection produced.
+func planTelegramEvidenceDetailRewrites(
+	ctx context.Context, tx *loggedTx, observationRewrites []telegramKeyRewrite,
+) (*telegramEvidencePlan, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT DISTINCT detail FROM identity_match_evidence WHERE detail LIKE ?
 	`, telegramKeyPrefix)
@@ -387,49 +457,74 @@ func rewriteTelegramEvidenceDetails(
 		return nil, fmt.Errorf("telegram keys: close evidence details: %w", err)
 	}
 
-	seenKeys := make(map[string]struct{}, len(rewrites))
-	newKeys := make([]string, 0, len(rewrites)+len(details))
-	for _, rewrite := range rewrites {
-		newKeys = append(newKeys, rewrite.newKey)
-	}
+	plan := &telegramEvidencePlan{}
+	seen := make(map[string]struct{}, len(details))
+	// A candidate's fingerprint inputs change when its evidence carries a
+	// key that is renamed or already equals any rewrite target — the
+	// observation rewrites converge on the same shared keys.
+	affected := make(map[string]struct{}, len(details)+len(observationRewrites))
 	for _, detail := range details {
 		rewrite, _ := sharedTelegramKeyRewrite(detail)
+		if _, ok := seen[rewrite.oldKey]; !ok {
+			seen[rewrite.oldKey] = struct{}{}
+			plan.rewrites = append(plan.rewrites, rewrite)
+		}
+		affected[rewrite.oldKey] = struct{}{}
+		affected[rewrite.newKey] = struct{}{}
+	}
+	for _, rewrite := range observationRewrites {
+		affected[rewrite.newKey] = struct{}{}
+	}
+	keys := make([]string, 0, len(affected))
+	for key := range affected {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return plan, nil
+	}
+	args := make([]any, len(keys))
+	for i, key := range keys {
+		args[i] = key
+	}
+	rows, err = tx.QueryContext(ctx, `
+		SELECT DISTINCT candidate_id FROM identity_match_evidence
+		WHERE detail IN (`+placeholders(len(keys))+`)
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("telegram keys: list evidence candidates: %w", err)
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("telegram keys: scan evidence candidate: %w", err)
+		}
+		plan.candidates = append(plan.candidates, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("telegram keys: iterate evidence candidates: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("telegram keys: close evidence candidates: %w", err)
+	}
+	return plan, nil
+}
+
+// applyTelegramEvidenceDetailRewrites renames the planned stable-provider
+// evidence details onto their shared keys.
+func applyTelegramEvidenceDetailRewrites(
+	ctx context.Context, tx *loggedTx, plan *telegramEvidencePlan,
+) error {
+	for _, rewrite := range plan.rewrites {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE identity_match_evidence SET detail = ? WHERE detail = ?
 		`, rewrite.newKey, rewrite.oldKey); err != nil {
-			return nil, fmt.Errorf("telegram keys: rewrite evidence: %w", err)
-		}
-		if _, seen := seenKeys[rewrite.newKey]; !seen {
-			seenKeys[rewrite.newKey] = struct{}{}
-			newKeys = append(newKeys, rewrite.newKey)
+			return fmt.Errorf("telegram keys: rewrite evidence: %w", err)
 		}
 	}
-
-	var candidates []int64
-	for _, newKey := range newKeys {
-		rows, err := tx.QueryContext(ctx, `
-			SELECT DISTINCT candidate_id FROM identity_match_evidence WHERE detail = ?
-		`, newKey)
-		if err != nil {
-			return nil, fmt.Errorf("telegram keys: list evidence candidates: %w", err)
-		}
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("telegram keys: scan evidence candidate: %w", err)
-			}
-			candidates = append(candidates, id)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("telegram keys: iterate evidence candidates: %w", err)
-		}
-		if err := rows.Close(); err != nil {
-			return nil, fmt.Errorf("telegram keys: close evidence candidates: %w", err)
-		}
-	}
-	return candidates, nil
+	return nil
 }
 
 // telegramCandidatesTouchingParticipants lists candidates with a
@@ -497,13 +592,45 @@ func telegramExistingCandidates(
 	return existing, nil
 }
 
+// telegramPreMigrationFingerprintsTx records each candidate's fingerprint
+// against the pre-migration evidence, before any rewrite lands, so the
+// later refresh can renew only proofs that were valid when the migration
+// started.
+func telegramPreMigrationFingerprintsTx(
+	ctx context.Context, tx *loggedTx, candidateIDs map[int64]struct{},
+) (map[int64]string, error) {
+	fingerprints := make(map[int64]string, len(candidateIDs))
+	for id := range candidateIDs {
+		candidate, err := getIdentityMatchCandidateTx(ctx, tx, id)
+		if err != nil {
+			return nil, fmt.Errorf("telegram keys: load candidate %d: %w", id, err)
+		}
+		fingerprint, err := identityMatchFingerprintContext(ctx, tx, candidate, false)
+		if err != nil {
+			return nil, fmt.Errorf("telegram keys: fingerprint candidate %d: %w", id, err)
+		}
+		fingerprints[id] = fingerprint
+	}
+	return fingerprints, nil
+}
+
 // refreshIdentityMatchFingerprintsTx recomputes the evidence fingerprints
 // stored beside user decisions for the given candidates, so a decision
 // recorded against the pre-rewrite evidence keeps matching its candidate.
+// Only a stored fingerprint that matched the candidate's pre-migration
+// evidence is refreshed: a proof that was already stale stays stale,
+// because the user never approved the evidence the rewrite produced.
 func refreshIdentityMatchFingerprintsTx(
 	ctx context.Context, tx *loggedTx, candidateIDs map[int64]struct{},
+	preFingerprints map[int64]string,
 ) error {
 	for id := range candidateIDs {
+		pre, ok := preFingerprints[id]
+		if !ok {
+			// No pre-migration fingerprint was captured, so validity
+			// cannot be proven; the stored proof is left untouched.
+			continue
+		}
 		candidate, err := getIdentityMatchCandidateTx(ctx, tx, id)
 		if err != nil {
 			return fmt.Errorf("telegram keys: load candidate %d: %w", id, err)
@@ -514,14 +641,14 @@ func refreshIdentityMatchFingerprintsTx(
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE identity_match_review_decisions SET evidence_fingerprint = ?
-			WHERE candidate_id = ?
-		`, fingerprint, id); err != nil {
+			WHERE candidate_id = ? AND evidence_fingerprint = ?
+		`, fingerprint, id, pre); err != nil {
 			return fmt.Errorf("telegram keys: refresh decision fingerprint %d: %w", id, err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE identity_match_review_receipts SET evidence_fingerprint = ?
-			WHERE candidate_id = ?
-		`, fingerprint, id); err != nil {
+			WHERE candidate_id = ? AND evidence_fingerprint = ?
+		`, fingerprint, id, pre); err != nil {
 			return fmt.Errorf("telegram keys: refresh receipt fingerprint %d: %w", id, err)
 		}
 	}

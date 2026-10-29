@@ -199,6 +199,75 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 	})
 }
 
+// EnsureAttachmentRecordAppendOnly stores one keyed attachment occurrence
+// without ever rewriting what an earlier import archived. A missing row is
+// inserted; an existing row only gains stored bytes it never had. A changed
+// file at the same source path — or a snapshot without the file — leaves a
+// populated row's bytes, hash, and metadata exactly as first written, which
+// is what append-only import recovery requires.
+func (s *Store) EnsureAttachmentRecordAppendOnly(
+	ctx context.Context,
+	messageID int64,
+	write AttachmentWrite,
+) error {
+	write = write.normalized()
+	if err := write.validate(); err != nil {
+		return err
+	}
+	if write.SourcePartKey == "" {
+		return errors.New("append-only attachment ensure requires a source-part key")
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if s.syncGeneration != nil {
+			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(fmt.Sprintf(`
+			INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash,
+				size, source_attachment_id, media_type, width, height, duration_ms,
+				attachment_metadata, attachment_role, role_source, source_part_key,
+				content_id, attachment_state, attachment_skip_reason, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, %s)
+			ON CONFLICT (message_id, source_part_key) WHERE source_part_key IS NOT NULL
+			DO UPDATE SET
+				storage_path = CASE WHEN COALESCE(attachments.storage_path, '') = ''
+					THEN EXCLUDED.storage_path ELSE attachments.storage_path END,
+				content_hash = CASE WHEN COALESCE(attachments.content_hash, '') = ''
+					THEN EXCLUDED.content_hash ELSE attachments.content_hash END,
+				size = CASE WHEN COALESCE(attachments.storage_path, '') = ''
+					AND COALESCE(attachments.content_hash, '') = ''
+					THEN EXCLUDED.size ELSE attachments.size END,
+				attachment_state = CASE WHEN COALESCE(attachments.storage_path, '') = ''
+					AND COALESCE(attachments.content_hash, '') = ''
+					THEN EXCLUDED.attachment_state ELSE attachments.attachment_state END,
+				attachment_skip_reason = CASE WHEN COALESCE(attachments.storage_path, '') = ''
+					AND COALESCE(attachments.content_hash, '') = ''
+					THEN EXCLUDED.attachment_skip_reason ELSE attachments.attachment_skip_reason END
+		`, s.dialect.JSONBindExpr(), s.dialect.Now()),
+			messageID,
+			write.Filename,
+			write.MIMEType,
+			write.StoragePath,
+			write.ContentHash,
+			write.Size,
+			nullIfEmpty(write.SourceAttachmentID),
+			nullIfEmpty(write.MediaType),
+			nullIfZero(write.Width),
+			nullIfZero(write.Height),
+			nullIfZero(write.DurationMS),
+			nullIfEmpty(write.Metadata),
+			string(write.Role),
+			string(write.RoleSource),
+			nullIfEmpty(write.SourcePartKey),
+			nullIfEmpty(write.ContentID),
+			nullIfEmpty(string(write.State)),
+			nullIfEmpty(string(write.SkipReason)),
+		)
+		return err
+	})
+}
+
 // UpsertAttachmentRecordWithStats atomically updates an attachment and its message
 // stats. Callers skip unchanged records and request cache invalidation unless the
 // message is new and its attachments will be included in an incremental export.

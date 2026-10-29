@@ -99,6 +99,16 @@ func TestInitSchemaRewritesTelegramProviderKeys(t *testing.T) {
 		`, left, key, key, key)
 		require.NoError(err)
 	}
+	// The stale-shape observations join the evidence before the decision is
+	// recorded, so the proof is valid against the complete pre-migration
+	// state and only the key rewrite can stale it.
+	preFingerprint, err = IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidateID)
+	require.NoError(err)
+	_, err = st.DB().Exec(
+		`UPDATE identity_match_review_decisions SET evidence_fingerprint = ? WHERE candidate_id = ?`,
+		preFingerprint, candidateID,
+	)
+	require.NoError(err)
 
 	_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationTelegramSharedProviderKeys)
 	require.NoError(err)
@@ -175,4 +185,48 @@ func TestInitSchemaRewritesTelegramProviderKeys(t *testing.T) {
 		newKey,
 	).Scan(&after))
 	assert.Zero(after, "ledger gate prevents a re-run")
+}
+
+// TestInitSchemaDoesNotRenewStaleTelegramDecisionProofs pins the refresh
+// gate: the migration renews only fingerprints that matched the
+// pre-migration evidence. A proof that was already stale before the
+// migration — recorded against older evidence — stays stale instead of
+// becoming valid for rewritten evidence the user never reviewed.
+func TestInitSchemaDoesNotRenewStaleTelegramDecisionProofs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, err := Open(filepath.Join(t.TempDir(), "telegram-keys-stale.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+
+	_, candidateID, _, _, _ := seedTelegramKeyRows(t, st)
+	// The recorded proof went stale before the migration: the evidence
+	// changed after the decision, without any migration involvement.
+	const staleDecision = "recorded-against-older-evidence"
+	const staleReceipt = "receipt-against-older-evidence"
+	_, err = st.DB().Exec(
+		`UPDATE identity_match_review_decisions SET evidence_fingerprint = ? WHERE candidate_id = ?`,
+		staleDecision, candidateID)
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO identity_match_review_receipts
+		(candidate_id, decision, review_token, evidence_fingerprint)
+		VALUES (?, 'accepted', 'stale-token', ?)`, candidateID, staleReceipt)
+	require.NoError(err)
+
+	_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationTelegramSharedProviderKeys)
+	require.NoError(err)
+	require.NoError(st.InitSchema(), "upgrade telegram provider keys")
+
+	var decision, receipt string
+	require.NoError(st.DB().QueryRow(`
+		SELECT (SELECT evidence_fingerprint FROM identity_match_review_decisions WHERE candidate_id = ?),
+		       (SELECT evidence_fingerprint FROM identity_match_review_receipts WHERE candidate_id = ?)`,
+		candidateID, candidateID).Scan(&decision, &receipt))
+	assert.Equal(staleDecision, decision, "a stale decision proof is not renewed")
+	assert.Equal(staleReceipt, receipt, "a stale receipt proof is not renewed")
+	postFingerprint, err := IdentityMatchDecisionFingerprintForTest(context.Background(), st, candidateID)
+	require.NoError(err)
+	assert.NotEqual(postFingerprint, decision, "the stale proof still does not match the rewritten evidence")
+	assert.NotEqual(postFingerprint, receipt)
 }

@@ -256,8 +256,8 @@ type pendingReply struct {
 
 // importChat imports one chat append-only. A message the archive already
 // carries is skipped as a new write; its reply link is still filled when
-// absent, and its attachment rows are re-ensured, which makes the
-// preserving upsert a no-op except for rows an interruption lost.
+// absent, and its attachment rows are re-ensured, which fills only what an
+// interruption left missing and never rewrites stored media.
 func importChat(
 	ctx context.Context,
 	st *store.Store,
@@ -344,8 +344,8 @@ func importChat(
 			// Attachment recovery must not depend on checkpoint state:
 			// a failure or interruption after the message commit but
 			// before the first checkpoint leaves the attachment absent,
-			// and this ordinary run is the next run. The preserving
-			// upsert is a no-op for rows that are present.
+			// and this ordinary run is the next run. The append-only
+			// ensure is a no-op for rows that are populated.
 			if err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, opts, logger, summary); err != nil {
 				return fmt.Errorf("re-ensure attachments for %s: %w", srcMsgID, err)
 			}
@@ -403,10 +403,12 @@ func importChat(
 		}
 		messageID, err = st.PersistMessageContext(ctx, data)
 		if err != nil {
+			// The atomic persist rolled back, so the message is not in
+			// the archive. Failing the chat keeps it out of the
+			// completed set — a resume reprocesses the chat whole
+			// instead of skipping the message as lost.
 			summary.Errors++
-			summary.MessagesSkipped++
-			logger.Warn("telegram: persist message", "err", err)
-			continue
+			return fmt.Errorf("persist message %s: %w", srcMsgID, err)
 		}
 		summary.MessagesAdded++
 		replyOf(m)
@@ -502,9 +504,10 @@ func recipientSets(
 	return sets
 }
 
-// storeAttachments stores each media candidate for one message. A missing
-// file preserves previously stored bytes: the keyed row keeps its hash, so
-// an interruption-torn import can be resumed without losing archived media.
+// storeAttachments stores each media candidate for one message. The write
+// is append-only: a missing row is inserted and an occurrence an earlier
+// import populated keeps its stored bytes and metadata even when the file
+// at the same export path now differs or is gone.
 func storeAttachments(
 	ctx context.Context,
 	st *store.Store,
@@ -550,17 +553,18 @@ func storeAttachments(
 			SourcePartKey:      partKey,
 		}
 		if storagePath == "" {
-			// No bytes now. Keep the hash empty so
-			// UpsertAttachmentRecordPreservingStored retains a previously
-			// stored blob under this key.
+			// No bytes now. Keep the hash empty so the append-only ensure
+			// inserts a placeholder without claiming stored data.
 			summary.AttachmentsMissing++
 			write.ContentHash = ""
 			write.Size = 0
 		} else {
 			summary.AttachmentsStored++
 		}
-		if err := st.UpsertAttachmentRecordPreservingStored(ctx, messageID, write); err != nil {
-			return fmt.Errorf("upsert attachment %s: %w", cand.RelPath, err)
+		// The ensure fills only rows and stored data an interruption left
+		// missing; it never rewrites an archived occurrence.
+		if err := st.EnsureAttachmentRecordAppendOnly(ctx, messageID, write); err != nil {
+			return fmt.Errorf("ensure attachment %s: %w", cand.RelPath, err)
 		}
 	}
 	return nil

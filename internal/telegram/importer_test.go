@@ -161,22 +161,24 @@ func TestImportFullExportWithoutOptionalChats(t *testing.T) {
 
 func TestImportSingleChatRequiresOwnerOverride(t *testing.T) {
 	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	_, err := Import(context.Background(), st, ImportOptions{
 		RootDir: filepath.Join("testdata", "single"), AttachmentsDir: t.TempDir(),
 	})
-	require.ErrorIs(t, err, ErrNoOwner)
+	require.ErrorIs(err, ErrNoOwner)
 
 	summary := importFixture(t, st, "single", func(t *testing.T, opts *ImportOptions) {
 		t.Helper()
 		opts.Me = "7000000000000888888"
 	})
 	var fromMe int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram' AND is_from_me`,
 	).Scan(&fromMe))
-	assert.Equal(t, 2, fromMe, "--me override drives is_from_me")
-	assert.Equal(t, 1, summary.ChatsProcessed)
+	assert.Equal(2, fromMe, "--me override drives is_from_me")
+	assert.Equal(1, summary.ChatsProcessed)
 }
 
 func TestImportInvalidMeOverride(t *testing.T) {
@@ -946,6 +948,8 @@ FOR EACH ROW EXECUTE FUNCTION fail_sender_resolution()`
 // archives the message whole.
 func TestImportSenderFailureIsNotPermanent(t *testing.T) {
 	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	root := writeChatExport(t, t.TempDir(), fixtureGroupChatID, "private_group", "Sender Group", []map[string]any{
 		{
@@ -959,30 +963,30 @@ func TestImportSenderFailureIsNotPermanent(t *testing.T) {
 	_, err := Import(context.Background(), st, ImportOptions{
 		RootDir: root, AttachmentsDir: t.TempDir(),
 	})
-	require.Error(t, err, "a sender resolution failure fails the chat")
-	assert.Contains(t, err.Error(), "resolve sender")
+	require.Error(err, "a sender resolution failure fails the chat")
+	assert.Contains(err.Error(), "resolve sender")
 	var committed int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&committed))
-	assert.Zero(t, committed, "no message commits with an unresolved sender")
+	assert.Zero(committed, "no message commits with an unresolved sender")
 
 	remove()
 	importRoot(t, st, root)
 
 	alicePID, _, err := st.ParticipantByIdentifier("telegram", "7000000000000555555")
-	require.NoError(t, err)
+	require.NoError(err)
 	var sender sql.NullInt64
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRow(`
 		SELECT sender_id FROM messages WHERE source_message_id = '-1009999999999:1'`).Scan(&sender))
-	assert.True(t, sender.Valid, "the retried chat archives the message with its sender")
-	assert.Equal(t, alicePID, sender.Int64)
+	assert.True(sender.Valid, "the retried chat archives the message with its sender")
+	assert.Equal(alicePID, sender.Int64)
 	var fromPID int64
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRow(`
 		SELECT mr.participant_id FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = '-1009999999999:1'
 		  AND mr.recipient_type = 'from'`).Scan(&fromPID))
-	assert.Equal(t, alicePID, fromPID, "the retried message records its from recipient")
+	assert.Equal(alicePID, fromPID, "the retried message records its from recipient")
 }
 
 // failCheckpointWrites installs a database trigger that fails checkpoint
@@ -1038,6 +1042,8 @@ func TestImportCheckpointFailureFailsRun(t *testing.T) {
 		{name: "after chat completes", options: func(o *ImportOptions) {}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Chat", messages)
 
@@ -1046,18 +1052,150 @@ func TestImportCheckpointFailureFailsRun(t *testing.T) {
 			tc.options(&opts)
 			_, err := Import(context.Background(), st, opts)
 			remove()
-			require.Error(t, err, "a checkpoint that did not persist fails the run")
-			assert.Contains(t, err.Error(), "checkpoint")
+			require.Error(err, "a checkpoint that did not persist fails the run")
+			assert.Contains(err.Error(), "checkpoint")
 
 			// With the trigger gone the same export imports clean.
 			summary := importRoot(t, st, root)
 			var count int
-			require.NoError(t, st.DB().QueryRow(
+			require.NoError(st.DB().QueryRow(
 				`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&count))
-			assert.Equal(t, 2, count)
-			assert.False(t, summary.WasResumed, "no checkpoint was ever persisted")
+			assert.Equal(2, count)
+			assert.False(summary.WasResumed, "no checkpoint was ever persisted")
 		})
 	}
+}
+
+// failMessagePersist installs a database trigger that fails the atomic
+// persist of one message — the observable effect cancellation inside the
+// message transaction has: the transaction rolls back and the importer
+// hears the error. The returned func removes it.
+func failMessagePersist(t *testing.T, st *store.Store, sourceMessageID string) func() {
+	t.Helper()
+	create := `CREATE TRIGGER fail_message_persist BEFORE INSERT ON messages
+WHEN NEW.source_message_id = '` + sourceMessageID + `'
+BEGIN SELECT RAISE(ABORT, 'injected persist failure'); END`
+	drop := `DROP TRIGGER IF EXISTS fail_message_persist`
+	if st.IsPostgreSQL() {
+		create = `CREATE FUNCTION fail_message_persist() RETURNS trigger AS $$
+BEGIN
+	IF NEW.source_message_id = '` + sourceMessageID + `' THEN
+		RAISE EXCEPTION 'injected persist failure';
+	END IF;
+	RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER fail_message_persist BEFORE INSERT ON messages
+FOR EACH ROW EXECUTE FUNCTION fail_message_persist()`
+		drop = `DROP TRIGGER IF EXISTS fail_message_persist ON messages; DROP FUNCTION IF EXISTS fail_message_persist()`
+	}
+	_, err := st.DB().Exec(create)
+	require.NoError(t, err)
+	return func() {
+		_, err := st.DB().Exec(drop)
+		require.NoError(t, err)
+	}
+}
+
+// TestImportPersistFailureKeepsChatRetryable pins the failure semantics of
+// the message transaction itself: a persist error that rolls the message
+// back fails the chat instead of being counted past, so the chat is never
+// checkpointed complete and a retried run imports the message the failed
+// transaction lost.
+func TestImportPersistFailureKeepsChatRetryable(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	// The personal chat's final message fails to persist; the malformed
+	// chat behind it then kills the run — after the swallowed error would
+	// have checkpointed the chat complete.
+	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Persist Chat", []map[string]any{
+		{
+			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"from": "Alice Example", "from_id": "user7000000000000555555", "text": "committed",
+		},
+		{
+			"id": 2, "type": "message", "date_unixtime": "1610909810",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"text": "lost to the failed transaction",
+		},
+	})
+	doc := loadFullExport(t, root)
+	doc.Chats.List = append(doc.Chats.List, fullExportChat{
+		ID: -1002222222222, Type: "personal_chat", Name: "Broken Chat",
+		Messages: []map[string]any{{
+			"id": 1, "type": "message", "date_unixtime": "not-a-timestamp", "text": "broken",
+		}},
+	})
+	saveFullExport(t, root, doc)
+
+	remove := failMessagePersist(t, st, "7000000000000555555:2")
+	_, err := Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	remove()
+	require.Error(err, "a message persist failure fails the chat")
+	assert.Contains(err.Error(), "persist message")
+
+	// The retried run reprocesses the chat whole: the rolled-back message
+	// was never archived, so a resume that skipped the chat would lose it.
+	_, err = Import(context.Background(), st, ImportOptions{
+		RootDir: root, AttachmentsDir: t.TempDir(),
+	})
+	require.Error(err, "the malformed chat still fails the retried run")
+	assert.Contains(err.Error(), "parse date_unixtime")
+	var count int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id LIKE '7000000000000555555:%'`).Scan(&count))
+	assert.Equal(2, count, "the retried run imports the rolled-back message")
+}
+
+// TestImportOverlappingExportKeepsArchivedAttachmentBytes pins the
+// append-only recovery contract for media: an overlapping export whose file
+// at the same export-relative path carries different bytes must not replace
+// the stored bytes, hash, or row of an archived message's attachment.
+func TestImportOverlappingExportKeepsArchivedAttachmentBytes(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	chat := []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800",
+		"from": "Alice Example", "from_id": "user7000000000000555555",
+		"photo": "photos/photo_1.jpg", "text": "",
+	}}
+	first := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", chat)
+	require.NoError(os.MkdirAll(filepath.Join(first, "photos"), 0o755))
+	require.NoError(os.WriteFile(
+		filepath.Join(first, "photos", "photo_1.jpg"), []byte("original-bytes"), 0o644))
+	importRoot(t, st, first)
+
+	var rowID int64
+	var path, hash string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT a.id, a.storage_path, a.content_hash
+		FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "7000000000000555555:1").Scan(&rowID, &path, &hash))
+	require.NotEmpty(path, "the first import stores the photo")
+	require.NotEmpty(hash)
+
+	// A newer export from a different directory carries the same message
+	// with changed bytes at the same export-relative path.
+	second := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", chat)
+	require.NoError(os.MkdirAll(filepath.Join(second, "photos"), 0o755))
+	require.NoError(os.WriteFile(
+		filepath.Join(second, "photos", "photo_1.jpg"), []byte("changed-bytes"), 0o644))
+	importRoot(t, st, second)
+
+	var afterID int64
+	var afterPath, afterHash string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT a.id, a.storage_path, a.content_hash
+		FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "7000000000000555555:1").Scan(&afterID, &afterPath, &afterHash))
+	assert.Equal(rowID, afterID, "the archived occurrence keeps its row")
+	assert.Equal(path, afterPath, "changed bytes never replace the stored file")
+	assert.Equal(hash, afterHash, "changed bytes never replace the stored hash")
 }
 
 // TestImportAudioTitleDoesNotReplaceFilename pins the source-field
@@ -1108,6 +1246,8 @@ func TestImportAudioTitleDoesNotReplaceFilename(t *testing.T) {
 // senders.
 func TestImportMalformedPersonalChatErrors(t *testing.T) {
 	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Malformed Chat", []map[string]any{
 		{
 			"id": 1, "type": "message", "date_unixtime": "1610909800",
@@ -1121,13 +1261,13 @@ func TestImportMalformedPersonalChatErrors(t *testing.T) {
 	_, err := Import(context.Background(), st, ImportOptions{
 		RootDir: root, AttachmentsDir: t.TempDir(),
 	})
-	require.Error(t, err, "a personal chat without a peer user id is malformed")
-	assert.Contains(t, err.Error(), "carries no peer user id")
+	require.Error(err, "a personal chat without a peer user id is malformed")
+	assert.Contains(err.Error(), "carries no peer user id")
 
 	var count int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&count))
-	assert.Zero(t, count, "the malformed chat commits nothing")
+	assert.Zero(count, "the malformed chat commits nothing")
 }
 
 // TestImportErrorRefreshesCompletedChatStats pins derived state on the
@@ -1167,6 +1307,8 @@ func TestImportErrorRefreshesCompletedChatStats(t *testing.T) {
 // archive already carries.
 func TestImportCancellationRefreshesCompletedChatStats(t *testing.T) {
 	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	copyFullFixture(t, dir)
 
@@ -1175,24 +1317,24 @@ func TestImportCancellationRefreshesCompletedChatStats(t *testing.T) {
 	limited, err := Import(context.Background(), st, ImportOptions{
 		RootDir: dir, AttachmentsDir: t.TempDir(), Limit: 3,
 	})
-	require.NoError(t, err)
-	require.EqualValues(t, 3, limited.MessagesAdded)
+	require.NoError(err)
+	require.EqualValues(3, limited.MessagesAdded)
 	_, err = st.DB().Exec(`
 		UPDATE conversations SET message_count = 0 WHERE source_conversation_id = '7000000000000555555'`)
-	require.NoError(t, err)
+	require.NoError(err)
 	failSyncAt(t, st, dir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = Import(ctx, st, ImportOptions{RootDir: dir, AttachmentsDir: t.TempDir()})
-	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(err, context.Canceled)
 
 	var count int
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRow(`
 		SELECT message_count FROM conversations c
 		JOIN sources s ON s.id = c.source_id
 		WHERE s.source_type = 'telegram' AND c.source_conversation_id = '7000000000000555555'`).Scan(&count))
-	assert.Equal(t, 3, count, "the cancellation path still refreshes committed chats' stats")
+	assert.Equal(3, count, "the cancellation path still refreshes committed chats' stats")
 }
 
 // TestImportResumeChangedExportAtSameRoot pins the resume guard: replacing
