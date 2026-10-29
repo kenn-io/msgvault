@@ -53,6 +53,29 @@ test('Past runs keeps focus through detail and history, then restores workspace 
   await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
 });
 
+test('Past runs exposes the dirty Settings leave confirmation before opening Sources', async ({ page }) => {
+  await installOperations(page);
+  await page.goto(`/?workspace=settings&explore=${encodeURIComponent(JSON.stringify({ settingsCategory: 'search' }))}`);
+  const settings = page.getByRole('main', { name: 'Settings' });
+  const semanticSearch = settings.getByRole('switch', { name: 'Semantic search', exact: true });
+  await semanticSearch.click();
+  await expect(semanticSearch).toBeChecked();
+  for (const choice of ['Stay', 'Discard and leave']) {
+    await page.getByRole('button', { name: /Sync status:/ }).click();
+    await page.getByRole('menuitem', { name: 'Past runs' }).click();
+    await page.getByRole('button', { name: 'Open Source sync run' }).click();
+    await page.getByRole('button', { name: 'Open Sources status' }).click();
+    await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeHidden();
+    await expect(settings.getByText('Leave Settings and discard 1 unsaved change?', { exact: true })).toBeVisible();
+    await settings.getByRole('button', { name: choice, exact: true }).click();
+    if (choice === 'Stay') {
+      await expect(settings).toBeVisible();
+      await expect(semanticSearch).toBeChecked();
+    }
+  }
+  await expect(page.getByRole('main', { name: 'Sources' })).toBeVisible();
+});
+
 test('unconfigured visual status opens Search & AI settings', async ({ page }) => {
   const fixture = await installOperations(page);
   fixture.setOperationConfigured('visual_embedding', false);
