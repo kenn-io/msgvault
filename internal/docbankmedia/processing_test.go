@@ -64,10 +64,15 @@ func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {
 }
 
 func TestProcessingInvalidReceipts(t *testing.T) {
-	for _, body := range []string{`{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a") + `"}}`, `{"type":"job","job":{}}`, `broken`} {
-		t.Run(body, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{name: "wrong event", body: `{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a") + `"}}`},
+		{name: "missing job id", body: `{"type":"job","job":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, err := io.WriteString(w, body)
+				_, err := io.WriteString(w, tc.body)
 				assert.NoError(t, err)
 			}))
 			defer server.Close()
@@ -75,6 +80,31 @@ func TestProcessingInvalidReceipts(t *testing.T) {
 			require.NoError(t, err)
 			_, err = client.StartProcessing(t.Context(), docbankmedia.ProcessingSelector{NodeID: 7}, "plan")
 			assert.ErrorIs(t, err, docbankmedia.ErrInvalidReceipt)
+		})
+	}
+}
+
+func TestStartProcessingMalformedResponsesRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{name: "empty", body: ""},
+		{name: "truncated", body: `{"type":"job"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, err := io.WriteString(w, tc.body)
+				assert.NoError(err)
+			}))
+			defer server.Close()
+			client, err := docbankmedia.NewClient(server.URL, nil)
+			require.NoError(err)
+			_, err = client.StartProcessing(t.Context(), docbankmedia.ProcessingSelector{NodeID: 7}, "plan")
+			require.Error(err)
+			assert.NotErrorIs(err, docbankmedia.ErrInvalidReceipt)
+			assert.True(docbankmedia.Retryable(err))
 		})
 	}
 }

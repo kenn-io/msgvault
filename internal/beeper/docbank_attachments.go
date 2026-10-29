@@ -99,7 +99,7 @@ func (w *AttachmentMirror) runPass(ctx context.Context, deadline time.Time) (boo
 	}
 	processMore, processErr := w.processDocuments(ctx, queueDeadline)
 	uploadMore, err := w.drain(ctx, deadline)
-	return discoverMore || replayMore || processMore || uploadMore, errors.Join(processErr, err)
+	return discoverMore || replayMore || processMore || uploadMore, errors.Join(processErr, endMediaPass(err))
 }
 
 // gated runs one Store step under the operation gate so backup freeze sees no writer.
@@ -147,7 +147,7 @@ func (w *AttachmentMirror) drain(ctx context.Context, deadline time.Time) (bool,
 	}
 	u := &attachmentUploader{mirror: w, packed: packed, handled: make(map[string]bool)}
 	more, err := u.drain(ctx, deadline)
-	return more, errors.Join(endMediaPass(err), u.reported, u.streak, attachmentSourceError(packed.Close()))
+	return more, errors.Join(err, u.reported, u.streak, attachmentSourceError(packed.Close()))
 }
 
 // attachmentUploader holds one pass of uploads and its destination failure streak.
@@ -236,10 +236,6 @@ func (u *attachmentUploader) retryLater(ctx context.Context, d store.DocbankAtta
 	err := w.gated(ctx, func() error {
 		return w.store.RecordDocbankAttachmentRetry(ctx, w.destination, d, docbankmedia.ErrorCode(uploadErr))
 	})
-	if errors.Is(err, errBeeperMediaGateBusy) {
-		u.reported = errors.Join(u.reported, uploadErr)
-		return err
-	}
 	if !isDestinationFault(uploadErr) {
 		u.endStreak(nil)
 		return err
