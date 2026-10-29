@@ -110,6 +110,7 @@ describe('Past runs', () => {
     const row = await screen.findByRole('button', { name: 'Open Document extraction run' });
     row.focus(); await fireEvent.click(row);
     await screen.findByRole('region', { name: 'Operation run detail' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'All runs' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open Document index status' }));
     expect(onNavigate).toHaveBeenCalledWith('getDocumentIndexStatus');
     await fireEvent.click(screen.getByRole('button', { name: 'All runs' }));
