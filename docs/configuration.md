@@ -773,13 +773,13 @@ included parent. `exclude` wins when the same ID is in both lists. See
 ### Conversation archive tiers
 
 Conversation policy decides how much of a chat room flows into search,
-embeddings and analytics. It uses the provider's archived roster, with the same
+embeddings, people features and analytics. It uses the provider's archived roster, with the same
 participant-count rules as media policy. Newer `main` builds enforce two tiers:
 
 | Tier | Behavior |
 | --- | --- |
-| `full` | Archive text and include it in default search, embeddings and analytics. |
-| `cold` | Archive text, but leave it out of default lexical search, semantic search inputs, Explore, Files, graph and relationship analytics. |
+| `full` | Archive text and include it in default search, embeddings, people features and analytics. |
+| `cold` | Archive text, but leave it out of default lexical search, semantic search inputs, Explore, Files, graph, identity suggestions, enrichment and relationship analytics. |
 | `stub` (future) | Keep your own messages, direct replies and explicit mentions of you, plus room metadata. |
 | `skip` (future) | Stop importing room history. |
 
@@ -841,10 +841,15 @@ quiet and disabled sources. It then checks settings and activity once a minute,
 so a quiet room can go cold up to a minute after its activity window ends. A
 malformed config reload keeps the last validated settings, and expiry continues.
 A failure during initial configuration blocks startup. Cache-only analytics are
-unavailable while an invalidated cache rebuilds.
+unavailable while an invalidated cache rebuilds. Legacy contact observations
+without confirmed conversation support stay excluded until a normal sync
+supplies that evidence.
 
-When a room turns cold, msgvault removes its message, context, document and
-visual vectors from every generation, even when embedding generation is disabled
+Independent contacts, support from full rooms and manual identity decisions
+survive a room turning cold.
+
+When a room turns cold, msgvault removes its message, context, person, document
+and visual vectors from every generation, even when embedding generation is disabled
 or credentials are absent. A failed cleanup stays pending and is retried each
 minute; policy reads and vector publication stay enforced in the meantime.
 Work that started before a tier change cannot publish vectors for the old tier.

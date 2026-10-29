@@ -132,6 +132,104 @@ func TestConversationPolicySearchDefaultAndIncludeCold(t *testing.T) {
 	requirements.ErrorContains(err, "lexical")
 }
 
+func TestConversationPolicyAggregatesUseOnlyFullParticipantValues(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	s := testutil.NewTestStore(t)
+	source, err := s.GetOrCreateSource("slack", "synthetic:aggregate-policy")
+	requirements.NoError(err)
+	supportRoom, err := s.EnsureConversation(source.ID, "support", "Synthetic support room")
+	requirements.NoError(err)
+	targetRoom, err := s.EnsureConversation(source.ID, "target", "Synthetic target room")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "support", conversationpolicy.Full))
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "target", conversationpolicy.Full))
+
+	coldOnly, err := s.ResolveConversationParticipantContext(t.Context(), supportRoom, store.ConversationParticipantIdentity{
+		IdentifierType: "slack", IdentifierValue: "SYNTHETIC:CONTACT",
+		Email: "cold-only@hidden.test", DisplayName: "Cold Only Contact",
+	})
+	requirements.NoError(err)
+	visible, err := s.ResolveConversationParticipantContext(t.Context(), targetRoom, store.ConversationParticipantIdentity{
+		IdentifierType: "slack", IdentifierValue: "SYNTHETIC:VISIBLE",
+		Email: "visible@example.test", DisplayName: "Visible Contact",
+	})
+	requirements.NoError(err)
+	when := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	message := func(sourceMessageID string, participantID int64) int64 {
+		t.Helper()
+		id, err := s.UpsertMessage(&store.Message{
+			SourceID: source.ID, ConversationID: targetRoom, SourceMessageID: sourceMessageID,
+			MessageType: "slack", Subject: sql.NullString{String: sourceMessageID, Valid: true},
+			SentAt: sql.NullTime{Time: when, Valid: true},
+		})
+		requirements.NoError(err)
+		requirements.NoError(s.ReplaceMessageRecipientsContext(t.Context(), id, "from", []int64{participantID}, []string{""}))
+		requirements.NoError(s.ReplaceMessageRecipientsContext(t.Context(), id, "to", []int64{participantID}, []string{""}))
+		return id
+	}
+	coldOnlyMessage := message("cold-only", coldOnly.ParticipantID)
+	message("visible", visible.ParticipantID)
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "support", conversationpolicy.Cold))
+
+	e := query.NewEngine(s.DB(), s.IsPostgreSQL())
+	for _, view := range []query.ViewType{query.ViewSenders, query.ViewRecipients, query.ViewDomains, query.ViewSenderNames, query.ViewRecipientNames} {
+		rows, err := e.Aggregate(t.Context(), view, query.DefaultAggregateOptions())
+		requirements.NoError(err)
+		keys := make([]string, 0, len(rows))
+		for _, row := range rows {
+			keys = append(keys, row.Key)
+		}
+		assertions.NotContains(keys, "cold-only@hidden.test", "view %v must not expose an email supported only by Cold history", view)
+		assertions.NotContains(keys, "hidden.test", "view %v must not expose a domain supported only by Cold history", view)
+		assertions.NotContains(keys, "Cold Only Contact", "view %v must not expose a name supported only by Cold history", view)
+	}
+
+	for _, filter := range []query.MessageFilter{
+		{Sender: "cold-only@hidden.test"},
+		{Recipient: "cold-only@hidden.test"},
+		{SenderName: "Cold Only Contact"},
+		{RecipientName: "Cold Only Contact"},
+		{Domain: "hidden.test"},
+	} {
+		rows, err := e.ListMessages(t.Context(), filter)
+		requirements.NoError(err)
+		assertions.Empty(rows, "filter %+v must not match a Full message using Cold-only participant data", filter)
+	}
+
+	searchResults, err := e.SearchByDomains(t.Context(), []string{"hidden.test"}, nil, nil, 20, 0, nil)
+	requirements.NoError(err)
+	assertions.Empty(searchResults)
+	for _, text := range []string{
+		"cold-only@hidden.test",
+		"Cold Only Contact",
+		"from:cold-only@hidden.test",
+		"to:cold-only@hidden.test",
+	} {
+		rows, err := e.SearchFast(t.Context(), search.Parse(text), query.MessageFilter{}, 20, 0)
+		requirements.NoError(err)
+		assertions.Empty(rows, "search %q must not match a Full message using Cold-only participant data", text)
+	}
+
+	hydrated, err := e.GetMessageSummariesByIDs(t.Context(), []int64{coldOnlyMessage})
+	requirements.NoError(err)
+	requirements.Len(hydrated, 1)
+	assertions.Empty(hydrated[0].FromEmail)
+	assertions.Empty(hydrated[0].FromName)
+	assertions.Empty(hydrated[0].FromPhone)
+
+	all, err := e.ListMessages(t.Context(), query.MessageFilter{})
+	requirements.NoError(err)
+	var visibleHydrated *query.MessageSummary
+	for i := range all {
+		if all[i].FromEmail == "visible@example.test" {
+			visibleHydrated = &all[i]
+		}
+	}
+	requirements.NotNil(visibleHydrated)
+}
+
 func TestConversationPolicySearchDeletionScopeIndependent(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

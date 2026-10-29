@@ -20,6 +20,8 @@ import (
 // of the request rather than being handed them by the test. Everything else on
 // the path — window, packet, parser, renderer, apply — is production code.
 type scriptedBriefRunner struct {
+	afterBrief    func()
+	beforePrepare func()
 	t             *testing.T
 	briefRequests int
 	briefPackets  []map[string]any
@@ -30,6 +32,11 @@ type scriptedBriefRunner struct {
 func (r *scriptedBriefRunner) PrepareStructured(
 	_ context.Context, request peoplesweep.StructuredRequest,
 ) (peoplesweep.PreparedStructuredRequest, error) {
+	if r.beforePrepare != nil {
+		f := r.beforePrepare
+		r.beforePrepare = nil
+		f()
+	}
 	wire, err := json.Marshal(request)
 	if err != nil {
 		return peoplesweep.PreparedStructuredRequest{}, err
@@ -69,6 +76,9 @@ func (r *scriptedBriefRunner) RunPreparedStructured(
 	packet := decodeBriefPacket(r.t, request.InputText)
 	r.briefPackets = append(r.briefPackets, packet)
 	response.Output = briefCandidateForPacket(r.t, packet)
+	if r.afterBrief != nil {
+		r.afterBrief()
+	}
 	return response, nil
 }
 

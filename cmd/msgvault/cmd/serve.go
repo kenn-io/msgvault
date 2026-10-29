@@ -1880,6 +1880,12 @@ func (a *storeAPIAdapter) CaptureConversationPolicyWork(ctx context.Context) (co
 	return a.store.CaptureConversationPolicyWork(ctx)
 }
 
+func (a *storeAPIAdapter) CheckIdentityMatchJudgmentAdmission(
+	ctx context.Context, lease store.IdentityMatchJudgmentLease,
+) error {
+	return a.store.CheckIdentityMatchJudgmentAdmission(ctx, lease)
+}
+
 func (a *storeAPIAdapter) ClaimNextIdentityMatchJudgmentContext(ctx context.Context, owner string, leaseDuration time.Duration, scoringVersion ...string) (*store.IdentityMatchJudgmentLease, error) {
 	return a.store.ClaimNextIdentityMatchJudgmentContext(ctx, owner, leaseDuration, scoringVersion...)
 }

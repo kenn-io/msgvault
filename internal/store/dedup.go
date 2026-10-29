@@ -564,6 +564,9 @@ func (s *Store) MergeDuplicates(
 				WHERE reply_to_message_id = ?`, survivorID, dupID); err != nil {
 				return fmt.Errorf("repoint replies from duplicate %d: %w", dupID, err)
 			}
+			if err := invalidateEnvelopeContextWith(tx, "support.id=?", dupID); err != nil {
+				return err
+			}
 			if _, err := tx.Exec(softDeleteSQL, batchID, dupID); err != nil {
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
 			}
@@ -722,16 +725,55 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 // copied to survivors, raw MIME backfilled onto survivors) are not
 // reversed — those changes are additive enrichment that leaves
 // survivors strictly better off.
+//
+// Restored messages can again support a shared participant's email or name,
+// so contextual embeddings rebuilt while they were hidden are invalidated.
 func (s *Store) UndoDedup(batchID string) (int64, error) {
-	result, err := s.db.Exec(`
-		UPDATE messages
-		SET deleted_at = NULL, delete_batch_id = NULL
-		WHERE delete_batch_id = ?
-	`, batchID)
+	var restored int64
+	err := s.withTx(func(tx *loggedTx) error {
+		rows, err := tx.Query(`SELECT id FROM messages WHERE delete_batch_id = ? AND deleted_at IS NOT NULL ORDER BY id`, batchID)
+		if err != nil {
+			return err
+		}
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`
+			UPDATE messages
+			SET deleted_at = NULL, delete_batch_id = NULL
+			WHERE delete_batch_id = ?
+		`, batchID)
+		if err != nil {
+			return err
+		}
+		if restored, err = result.RowsAffected(); err != nil {
+			return err
+		}
+		for start := 0; start < len(ids); start += 500 {
+			chunk := ids[start:min(start+500, len(ids))]
+			args := make([]any, len(chunk))
+			for i, id := range chunk {
+				args[i] = id
+			}
+			if err := invalidateEnvelopeContextOnlyWith(tx, "support.id IN ("+sqlPlaceholders(len(chunk))+")", args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, fmt.Errorf("undo dedup: %w", err)
 	}
-	return result.RowsAffected()
+	return restored, nil
 }
 
 // DeleteDedupedBatch permanently deletes all hidden rows associated with a

@@ -145,6 +145,7 @@ func recordStableProviderObservationPair(
 		_, err := st.RecordContactObservationContext(
 			ctx, participantID, store.ParticipantContactObservationInput{
 				SourceID:       &sourceID,
+				ConversationID: new(fullObservationTestRoom(t, st, sourceID)),
 				AddressKind:    store.ContactAddressEmail,
 				ProviderUserID: &providerUserID,
 				OriginalValue:  fmt.Sprintf("support-%d-%d@example.org", sourceID, index),
@@ -308,9 +309,13 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 				f := storetest.New(t)
 				other, err := f.Store.GetOrCreateSource("beeper", "other-support")
 				require.NoError(err)
+				fullObservationTestRoom(t, f.Store, other.ID)
 				left := f.EnsureParticipant("remaining-support-left@example.org", "Left", "example.org")
 				right := f.EnsureParticipant("remaining-support-right@example.org", "Right", "example.org")
 				normalized := "provider:remaining-support"
+				recordStableProviderObservationPair(
+					ctx, t, f.Store, other.ID, left, right, normalized,
+				)
 				candidate, _, err := f.Store.UpsertIdentityMatchCandidateContext(
 					ctx, store.IdentityMatchCandidateInput{
 						LeftKind: store.IdentityMatchParticipant, LeftID: left,
@@ -335,9 +340,6 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 					},
 				)
 				require.NoError(err)
-				recordStableProviderObservationPair(
-					ctx, t, f.Store, other.ID, left, right, normalized,
-				)
 				firstEvidence, err := f.Store.AddIdentityMatchEvidenceContext(
 					ctx, candidate.ID, store.IdentityMatchEvidenceInput{
 						EvidenceKind: "stable_provider_id", Detail: &normalized,
@@ -430,9 +432,13 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 				f := storetest.New(t)
 				other, err := f.Store.GetOrCreateSource("beeper", "replacement-support")
 				require.NoError(err)
+				fullObservationTestRoom(t, f.Store, other.ID)
 				left := f.EnsureParticipant("transfer-left@example.org", "Left", "example.org")
 				right := f.EnsureParticipant("transfer-right@example.org", "Right", "example.org")
 				firstValue := "provider:first-support"
+				recordStableProviderObservationPair(
+					ctx, t, f.Store, f.Source.ID, left, right, firstValue,
+				)
 				first, _, err := f.Store.UpsertIdentityMatchCandidateContext(ctx,
 					store.IdentityMatchCandidateInput{
 						LeftKind: store.IdentityMatchParticipant, LeftID: left,
@@ -442,10 +448,10 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 						Source: store.ProvenanceArchiveObservation, SourceID: &f.Source.ID,
 					})
 				require.NoError(err)
-				recordStableProviderObservationPair(
-					ctx, t, f.Store, f.Source.ID, left, right, firstValue,
-				)
 				secondValue := "provider:replacement-support"
+				recordStableProviderObservationPair(
+					ctx, t, f.Store, other.ID, left, right, secondValue,
+				)
 				second, _, err := f.Store.UpsertIdentityMatchCandidateContext(ctx,
 					store.IdentityMatchCandidateInput{
 						LeftKind: store.IdentityMatchParticipant, LeftID: left,
@@ -455,9 +461,6 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 						Source: store.ProvenanceArchiveObservation, SourceID: &other.ID,
 					})
 				require.NoError(err)
-				recordStableProviderObservationPair(
-					ctx, t, f.Store, other.ID, left, right, secondValue,
-				)
 				_, _, err = f.Store.AcceptIdentityMatchCandidateContext(ctx, first.ID, "system", nil)
 				require.NoError(err)
 				_, _, err = f.Store.AcceptIdentityMatchCandidateContext(ctx, second.ID, "system", nil)
@@ -483,13 +486,18 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 				f := storetest.New(t)
 				secondSource, err := f.Store.GetOrCreateSource("beeper", "forest-second")
 				require.NoError(err)
+				fullObservationTestRoom(t, f.Store, secondSource.ID)
 				thirdSource, err := f.Store.GetOrCreateSource("beeper", "forest-third")
 				require.NoError(err)
+				fullObservationTestRoom(t, f.Store, thirdSource.ID)
 				a := f.EnsureParticipant("forest-a@example.org", "A", "example.org")
 				b := f.EnsureParticipant("forest-b@example.org", "B", "example.org")
 				c := f.EnsureParticipant("forest-c@example.org", "C", "example.org")
 
 				makeAccepted := func(left, right int64, value string, sourceID int64) *store.IdentityMatchCandidate {
+					recordStableProviderObservationPair(
+						ctx, t, f.Store, sourceID, left, right, value,
+					)
 					candidate, _, candidateErr := f.Store.UpsertIdentityMatchCandidateContext(
 						ctx, store.IdentityMatchCandidateInput{
 							LeftKind: store.IdentityMatchParticipant, LeftID: left,
@@ -502,9 +510,6 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 					_, _, candidateErr = f.Store.AcceptIdentityMatchCandidateContext(
 						ctx, candidate.ID, "system", nil)
 					require.NoError(candidateErr)
-					recordStableProviderObservationPair(
-						ctx, t, f.Store, sourceID, left, right, value,
-					)
 					return candidate
 				}
 
@@ -633,6 +638,7 @@ func TestStore_RemoveUnrelatedSourceKeepsGeneratedUsernameConflict(t *testing.T)
 	ctx := t.Context()
 	supportSource, err := f.Store.GetOrCreateSource("beeper", "username-conflict-support")
 	require.NoError(err)
+	fullObservationTestRoom(t, f.Store, supportSource.ID)
 	left := f.EnsureParticipant("username-conflict-left@example.org", "Left", "example.org")
 	right := f.EnsureParticipant("username-conflict-right@example.org", "Right", "example.org")
 	service := "slack"
@@ -642,6 +648,7 @@ func TestStore_RemoveUnrelatedSourceKeepsGeneratedUsernameConflict(t *testing.T)
 		result, recordErr := f.Store.RecordContactObservationContext(
 			ctx, participantID, store.ParticipantContactObservationInput{
 				SourceID:       &supportSource.ID,
+				ConversationID: new(fullObservationTestRoom(t, f.Store, supportSource.ID)),
 				AddressKind:    store.ContactAddressUsername,
 				ServiceSlug:    &service,
 				ScopeKind:      &scopeKind,
@@ -672,6 +679,7 @@ func TestStore_RemoveUnrelatedSourceKeepsSupportedPolymorphicEvidence(t *testing
 	ctx := t.Context()
 	supportSource, err := f.Store.GetOrCreateSource("beeper", "polymorphic-evidence-support")
 	require.NoError(err)
+	fullObservationTestRoom(t, f.Store, supportSource.ID)
 	left := f.EnsureParticipant("polymorphic-left@example.org", "Left", "example.org")
 	right := f.EnsureParticipant("polymorphic-right@example.org", "Right", "example.org")
 	observation, err := f.Store.RecordContactObservationContext(

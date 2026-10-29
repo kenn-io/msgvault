@@ -598,18 +598,10 @@ func unknownMembershipCount(policy attachmentpolicy.Policy) int {
 // rather than the workspace, so an unreadable listing has to be
 // distinguishable there from a conversation with few members.
 func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64, c *Conversation, opts ImportOptions, sum *ImportSummary) ([]messageRecipient, int, error) {
-	var members []store.ConversationParticipantRef
-	directRecipients := make([]messageRecipient, 0)
+	var userIDs []string
 	add := func(userID string) error {
-		pid, err := imp.res.resolveID(ctx, userID)
-		if err != nil {
-			return err
-		}
-		if pid != 0 {
-			members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: "member"})
-			if c.IsIM || c.IsMpim {
-				directRecipients = append(directRecipients, messageRecipient{id: pid, name: imp.res.displayName(userID)})
-			}
+		if userID != "" {
+			userIDs = append(userIDs, userID)
 		}
 		return nil
 	}
@@ -648,13 +640,32 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 			return nil, unknownMembershipCount(opts.MediaPolicy), nil
 		}
 	}
+	// Complete the provider fetch before entering any rich mutation fence.
+	if err := imp.store.SetConversationMemberCountContext(ctx, convID, len(userIDs)); err != nil {
+		return nil, 0, err
+	}
+	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, imp.now()); err != nil {
+		return nil, 0, err
+	}
+	var members []store.ConversationParticipantRef
+	directRecipients := make([]messageRecipient, 0)
+	for _, userID := range userIDs {
+		pid, err := imp.res.resolveID(ctx, userID, convID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if pid == 0 {
+			continue
+		}
+		members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: "member"})
+		if c.IsIM || c.IsMpim {
+			directRecipients = append(directRecipients, messageRecipient{id: pid, name: imp.res.displayName(userID)})
+		}
+	}
 	if err := imp.store.ReplaceConversationParticipantsContext(ctx, convID, members); err != nil {
 		return nil, 0, err
 	}
 	if err := imp.store.SetConversationMemberCountContext(ctx, convID, len(members)); err != nil {
-		return nil, 0, err
-	}
-	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, imp.now()); err != nil {
 		return nil, 0, err
 	}
 	return directRecipients, len(members), nil
@@ -1233,9 +1244,9 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	}
 	var senderPID int64
 	if m.User != "" {
-		senderPID, err = imp.res.resolveID(ctx, m.User)
+		senderPID, err = imp.res.resolveID(ctx, m.User, cc.convID)
 	} else if m.BotID != "" {
-		senderPID, err = imp.res.resolveBot(ctx, m.BotID, m.Username)
+		senderPID, err = imp.res.resolveBot(ctx, m.BotID, m.Username, cc.convID)
 	}
 	if err != nil {
 		return err
@@ -1272,10 +1283,10 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		}
 	}
 
-	if err := imp.persistRecipients(ctx, messageID, m, senderPID, cc.toRecipients); err != nil {
+	if err := imp.persistRecipients(ctx, cc.convID, messageID, m, senderPID, cc.toRecipients); err != nil {
 		return err
 	}
-	if err := imp.persistReactions(ctx, messageID, m); err != nil {
+	if err := imp.persistReactions(ctx, cc.convID, messageID, m); err != nil {
 		return err
 	}
 
@@ -1326,7 +1337,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 // persistRecipients writes the shared sender and mention recipient sets.
 // Conversation membership remains in conversation_participants rather than
 // being fanned out into a "to" row on every channel message.
-func (imp *Importer) persistRecipients(ctx context.Context, messageID int64, m *Message, senderPID int64, toRecipients []messageRecipient) error {
+func (imp *Importer) persistRecipients(ctx context.Context, room, messageID int64, m *Message, senderPID int64, toRecipients []messageRecipient) error {
 	var fromIDs []int64
 	var fromNames []string
 	if senderPID != 0 {
@@ -1361,7 +1372,7 @@ func (imp *Importer) persistRecipients(ctx context.Context, messageID int64, m *
 	var ids []int64
 	var names []string
 	for _, uid := range m.MentionedUserIDs() {
-		pid, err := imp.res.resolveID(ctx, uid)
+		pid, err := imp.res.resolveID(ctx, uid, room)
 		if err != nil {
 			return err
 		}
@@ -1379,11 +1390,11 @@ func (imp *Importer) persistRecipients(ctx context.Context, messageID int64, m *
 // with the target message's timestamp (cosmetic only). The API may truncate
 // a reaction's user list on very popular messages — the archived raw JSON
 // preserves the counts.
-func (imp *Importer) persistReactions(ctx context.Context, messageID int64, m *Message) error {
+func (imp *Importer) persistReactions(ctx context.Context, room, messageID int64, m *Message) error {
 	var reactions []store.ReactionRef
 	for _, rc := range m.Reactions {
 		for _, uid := range rc.Users {
-			pid, err := imp.res.resolveID(ctx, uid)
+			pid, err := imp.res.resolveID(ctx, uid, room)
 			if err != nil {
 				return err
 			}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 )
 
 // TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique simulates an
@@ -368,10 +369,13 @@ func TestEnsureParticipantsPhoneUniqueIndex_PreservesObservationsAndReconcilesMa
 	source, err := st.GetOrCreateSource("beeper", "phone-dedupe-observations")
 	require.NoError(err, "create observation source")
 
+	room, err := st.EnsureConversation(source.ID, "identity-test-room", "Identity fixture")
+	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "identity-test-room", conversationpolicy.Full))
 	matchedProviderID := "provider-before-dedupe"
 	winnerProviderID := "different-winner-provider"
 	input := ParticipantContactObservationInput{
-		SourceID: &source.ID, AddressKind: ContactAddressEmail,
+		SourceID: &source.ID, ConversationID: &room, AddressKind: ContactAddressEmail,
 		OriginalValue: "shared@example.org",
 		Envelope:      ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
 	}

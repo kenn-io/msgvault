@@ -19,32 +19,39 @@ import (
 // bare name. The store-backed API used to read only p.email_address,
 // which dropped phone-only and identifier-only participants (synctech
 // SMS/MMS, etc.). Standard SQL (CASE + ||) — works on SQLite and PG.
-const participantDisplaySQL = `COALESCE(
-		CASE
-			WHEN COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), '')) <> ''
-			  AND COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, '')) <> ''
-			THEN COALESCE(NULLIF(TRIM(mr.display_name), ''), TRIM(p.display_name))
-				|| ' <'
-				|| COALESCE(NULLIF(p.email_address, ''), p.phone_number)
-				|| '>'
-			ELSE COALESCE(
-				NULLIF(p.email_address, ''),
-				NULLIF(p.phone_number, ''),
-				NULLIF(TRIM(mr.display_name), ''),
-				NULLIF(TRIM(p.display_name), ''),
-				''
-			)
-		END,
-		''
-	)`
+func participantNameValueSQL(value string) string {
+	return `CASE WHEN ` + FullParticipantNameWhere("p.id", value) +
+		` THEN NULLIF(TRIM(` + value + `), '') END`
+}
 
-const participantSenderEmailSQL = `COALESCE(NULLIF(p.email_address, ''), '')`
-const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), '')`
-const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
-const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
+func participantContactValueSQL(kind ContactAddressKind, value string) string {
+	return `CASE WHEN ` + FullParticipantValueWhere("p.id", "'"+string(kind)+"'", value) +
+		` THEN NULLIF(` + value + `, '') END`
+}
+
+var participantDisplaySQL = func() string {
+	name := `COALESCE(` + participantNameValueSQL("mr.display_name") + `,` +
+		participantNameValueSQL("p.display_name") + `)`
+	address := `COALESCE(` +
+		participantContactValueSQL(ContactAddressEmail, "p.email_address") + `,` +
+		participantContactValueSQL(ContactAddressPhone, "p.phone_number") + `)`
+	return `COALESCE(CASE
+		WHEN NULLIF(TRIM(` + name + `), '') IS NOT NULL
+		 AND NULLIF(` + address + `, '') IS NOT NULL
+		THEN ` + name + ` || ' <' || ` + address + ` || '>'
+		ELSE COALESCE(NULLIF(` + address + `, ''), NULLIF(TRIM(` + name + `), ''), '')
+	END, '')`
+}()
+
+var (
+	participantSenderEmailSQL   = `COALESCE(` + participantContactValueSQL(ContactAddressEmail, "p.email_address") + `, '')`
+	participantSenderNameSQL    = `COALESCE(NULLIF(TRIM(COALESCE(` + participantNameValueSQL("mr.display_name") + `,` + participantNameValueSQL("p.display_name") + `)), ''), '')`
+	participantSenderPhoneSQL   = `COALESCE(` + participantContactValueSQL(ContactAddressPhone, "p.phone_number") + `, '')`
+	participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 			` + participantSenderEmailSQL + ` as from_email,
 			` + participantSenderNameSQL + ` as from_name,
 			` + participantSenderPhoneSQL + ` as from_phone`
+)
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
@@ -629,6 +636,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = 'from'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+			AND `+FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")+`
 		)`)
 		args = append(args,
 			"%"+escapeLike(strings.ToLower(addr))+"%")
@@ -642,6 +650,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = 'to'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+			AND `+FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")+`
 		)`)
 		args = append(args,
 			"%"+escapeLike(strings.ToLower(addr))+"%")
@@ -655,6 +664,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = 'cc'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+			AND `+FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")+`
 		)`)
 		args = append(args,
 			"%"+escapeLike(strings.ToLower(addr))+"%")
@@ -668,6 +678,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = 'bcc'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+			AND `+FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")+`
 		)`)
 		args = append(args,
 			"%"+escapeLike(strings.ToLower(addr))+"%")

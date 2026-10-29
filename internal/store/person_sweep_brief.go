@@ -38,7 +38,7 @@ func (s *Store) PersonSweepLastContact(
 	var channel sql.NullString
 	err := s.db.QueryRowContext(ctx, s.Rebind(`
 		SELECT last_contact_message_id, last_contact_source_id, last_contact_channel
-		FROM person_contact_state WHERE person_id = ?`), personID).
+		FROM person_contact_state WHERE person_id = ? AND (last_contact_message_id IS NULL OR EXISTS(SELECT 1 FROM messages m WHERE m.id=last_contact_message_id AND `+FullMessageWhere("m")+` AND `+LiveMessagesWhere("m", true)+`))`), personID).
 		Scan(&messageID, &sourceID, &channel)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peoplesweep.BriefLastContact{}, false, nil

@@ -234,6 +234,11 @@ func (w *Worker) processWithLeaseRenewal(ctx context.Context, lease WorkLease) e
 func (w *Worker) processLease(
 	ctx context.Context, lease WorkLease, tokens *leaseTokenState,
 ) error {
+	workCtx, err := w.work.CaptureConversationPolicyWork(ctx)
+	if err != nil {
+		return fmt.Errorf("capture person enrichment policy work: %w", err)
+	}
+	ctx = workCtx
 	profile, err := w.work.LoadProviderProfile(ctx, lease.ProfileFingerprint)
 	if err != nil {
 		return w.releaseRetry(ctx, lease, nil, safeFailure(FailureTransient, 0, "", "profile unavailable"))
@@ -312,6 +317,21 @@ func (w *Worker) processLease(
 	}
 	return w.beginAndStart(ctx, lease, input, request, hashes, profile, config, provider,
 		authorization, knownIDs, tokens)
+}
+
+// requestStillCurrent rebuilds the request from current archive state. An
+// identity value can lose its Full support without a person revision change,
+// such as when the only recipient envelope that carried an email is replaced.
+// Rechecking right before dispatch and publication keeps such a value from
+// being sent or from authorizing claims.
+func (w *Worker) requestStillCurrent(ctx context.Context, lease WorkLease, profile ProviderProfile, request Request) (bool, error) {
+	input, err := w.work.LoadRequestInput(ctx, lease)
+	if err != nil {
+		return false, err
+	}
+	// A request that no longer builds is not current either.
+	current, _, buildErr := BuildRequest(input, profile)
+	return buildErr == nil && current.RequestHash == request.RequestHash, nil
 }
 
 func verifyDurableRequestBinding(
@@ -479,6 +499,12 @@ func (w *Worker) startAttempt(
 	provider Provider,
 	knownIDs []string,
 ) error {
+	if current, err := w.requestStillCurrent(ctx, lease, profile, request); err != nil {
+		return w.releaseRetry(ctx, lease, nil, safeFailure(FailureTransient, 0, "", "request state unavailable"))
+	} else if !current {
+		return w.work.MarkTerminal(ctx, lease.Token,
+			safeFailure(FailurePolicy, 0, "", "enrichment identity changed before dispatch"))
+	}
 	if err := w.work.AuthorizeAttemptDispatch(ctx, lease.Token); err != nil {
 		if errors.Is(err, ErrSuppressed) {
 			return w.work.MarkTerminal(ctx, lease.Token,
@@ -683,6 +709,12 @@ func (w *Worker) completeAttempt(
 	knownIDs []string,
 	result Result,
 ) error {
+	if current, err := w.requestStillCurrent(ctx, lease, profile, request); err != nil {
+		return fmt.Errorf("recheck person enrichment request before publication: %w", err)
+	} else if !current {
+		return w.work.MarkTerminal(ctx, lease.Token,
+			safeFailure(FailurePolicy, 0, result.RequestID, "enrichment identity changed before publication"))
+	}
 	verified := make([]ProviderPersonID, len(knownIDs))
 	for i, id := range knownIDs {
 		verified[i] = ProviderPersonID{ID: id}

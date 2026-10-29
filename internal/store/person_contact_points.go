@@ -67,6 +67,9 @@ func (s *Store) AddPersonContactPointContext(
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 			return err
 		}
+		if err := s.invalidatePersonContactPointParticipantsTx(ctx, tx, personID); err != nil {
+			return err
+		}
 		return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID)
 	})
 	return result, err
@@ -147,8 +150,47 @@ func (s *Store) SupersedePersonContactPointContext(
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 			return err
 		}
+		if err := s.invalidatePersonContactPointParticipantsTx(ctx, tx, personID); err != nil {
+			return err
+		}
 		return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID)
 	})
+}
+
+func (s *Store) invalidatePersonContactPointParticipantsTx(
+	ctx context.Context, tx *loggedTx, personID int64,
+) error {
+	rows, err := tx.QueryContext(ctx, `SELECT participant_id FROM person_participants
+		WHERE person_id = ? ORDER BY participant_id`, personID)
+	if err != nil {
+		return fmt.Errorf("list contact-point participants: %w", err)
+	}
+	var participantIDs []int64
+	for rows.Next() {
+		var participantID int64
+		if err := rows.Scan(&participantID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan contact-point participant: %w", err)
+		}
+		participantIDs = append(participantIDs, participantID)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("read contact-point participants: %w", err)
+	}
+	if len(participantIDs) == 0 {
+		return nil
+	}
+	if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
+		return err
+	}
+	if err := s.invalidateContextualParticipantMessagesTx(ctx, tx, participantIDs); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE person_contact_state SET dirty_at=COALESCE(dirty_at,`+
+		s.dialect.Now()+`) WHERE person_id=?`, personID); err != nil {
+		return fmt.Errorf("mark contact-point participant state dirty: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) addPersonContactPointTx(

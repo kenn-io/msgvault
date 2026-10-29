@@ -15,7 +15,7 @@ import (
 // appleChatMarkerVersion names the marker layout and the message derivation
 // it vouches for. Bump it when either changes so the next import compares
 // every chat again.
-const appleChatMarkerVersion = 1
+const appleChatMarkerVersion = 2
 
 // appleChatMarkerState is the Apple import's source sync cursor: one change
 // marker per chat, valid only after the sync run that wrote it and under the

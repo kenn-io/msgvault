@@ -44,22 +44,24 @@ var (
 )
 
 type DocumentSearchRequest struct {
-	Query          string                  `json:"query"`
-	SourceIDs      []int64                 `json:"source_ids,omitempty"`
-	MessageIDs     []int64                 `json:"message_ids,omitempty"`
-	MessageTypes   []string                `json:"message_types,omitempty"`
-	AttachmentID   int64                   `json:"attachment_id,omitzero"`
-	MessageID      int64                   `json:"message_id,omitzero"`
-	PageSize       int                     `json:"page_size"`
-	Cursor         string                  `json:"cursor,omitempty"`
-	SearchMode     string                  `json:"search_mode,omitempty"`
-	CandidateLimit int                     `json:"candidate_limit,omitzero"`
-	After          *time.Time              `json:"after,omitempty"`
-	Before         *time.Time              `json:"before,omitempty"`
-	PersonID       int64                   `json:"person_id,omitzero"`
-	ParticipantID  int64                   `json:"participant_id,omitzero"`
-	Directions     []personscope.Direction `json:"directions,omitempty"`
-	Person         *personscope.Scope      `json:"person,omitzero" nullable:"false"`
+	// Sweep evidence requires Full conversations even when archival search broadens.
+	requireFullConversation bool
+	Query                   string                  `json:"query"`
+	SourceIDs               []int64                 `json:"source_ids,omitempty"`
+	MessageIDs              []int64                 `json:"message_ids,omitempty"`
+	MessageTypes            []string                `json:"message_types,omitempty"`
+	AttachmentID            int64                   `json:"attachment_id,omitzero"`
+	MessageID               int64                   `json:"message_id,omitzero"`
+	PageSize                int                     `json:"page_size"`
+	Cursor                  string                  `json:"cursor,omitempty"`
+	SearchMode              string                  `json:"search_mode,omitempty"`
+	CandidateLimit          int                     `json:"candidate_limit,omitzero"`
+	After                   *time.Time              `json:"after,omitempty"`
+	Before                  *time.Time              `json:"before,omitempty"`
+	PersonID                int64                   `json:"person_id,omitzero"`
+	ParticipantID           int64                   `json:"participant_id,omitzero"`
+	Directions              []personscope.Direction `json:"directions,omitempty"`
+	Person                  *personscope.Scope      `json:"person,omitzero" nullable:"false"`
 }
 
 type DocumentSearchResponse struct {
@@ -677,6 +679,9 @@ func documentSearchValidityForConsent(consentName string) string {
 
 func documentSearchScope(request DocumentSearchRequest, message, attachment, conversation string) (string, []any) {
 	var conditions strings.Builder
+	if request.requireFullConversation {
+		conditions.WriteString(" AND " + FullMessageWhere(message))
+	}
 	var args []any
 	if len(request.SourceIDs) > 0 {
 		conditions.WriteString(` AND ` + message + `.source_id IN (`)

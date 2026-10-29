@@ -63,12 +63,13 @@ can share the same stored bytes. Repeated imports and syncs use source identity
 to update or skip records according to that provider's rules.
 
 In newer `main` builds, conversation policy classifies the entire archive before
-search, analytics and vector consumers start. Store transactions change a room's
+search, analytics, vector and people consumers start. Store transactions change a room's
 tier and invalidate derived state together. A minute loop in the daemon expires
 quiet rooms, reloads validated settings and retries native vector cleanup,
 including when generation is disabled. A policy lock keeps vector and cache
 publication from racing a tier change, so stale in-flight work is rejected and a
-cache built under an older policy revision is never served. See
+cache built under an older policy revision is never served. Independent contact
+and manual identity support remain intact. See
 [conversation archive tiers](../configuration.md#conversation-archive-tiers).
 
 On SQLite, analytics exports message metadata to Parquet. DuckDB queries those
