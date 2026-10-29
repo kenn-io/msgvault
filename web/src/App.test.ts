@@ -190,6 +190,7 @@ describe('application foundation', () => {
     render(App, { session });
     await session.bootstrap();
     await fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
     await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
@@ -212,12 +213,16 @@ describe('application foundation', () => {
       }
       if (request.method === 'GET') return settingsResponse('system', '"etag-a"');
       if (path === '/api/v1/telemetry/events') return Response.json({ status: 'disabled' }, { status: 202 });
-      return Response.json({ error: 'unauthorized', message: 'Session expired' }, { status: 401 });
+      if (path === '/api/v1/settings' && request.method === 'PATCH') {
+        return Response.json({ error: 'unauthorized', message: 'Session expired' }, { status: 401 });
+      }
+      return Response.json({}, { status: 404 });
     });
     const session = createSessionController(fetchFn);
     render(App, { session });
     await session.bootstrap();
     await fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
     await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
@@ -424,7 +429,7 @@ describe('application foundation', () => {
     });
     await openAppearance(fetchFn);
     const before = window.location.search;
-    await chooseSelectOption(screen.getByLabelText('Default search mode'), 'Hybrid');
+    await chooseSelectOption(screen.getByLabelText('Search opens in'), 'Best match');
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(localStorage.getItem(SEARCH_MODE_PREFERENCE_KEY)).toBe('hybrid'));
     await waitFor(() => expect(releaseDefaultsLoad).toBeDefined());
@@ -446,7 +451,7 @@ describe('application foundation', () => {
     localStorage.removeItem(SEARCH_MODE_PREFERENCE_KEY);
     await openAppearance(appearanceDaemon());
     const before = window.location.search;
-    await chooseSelectOption(screen.getByLabelText('Default search mode'), 'Hybrid');
+    await chooseSelectOption(screen.getByLabelText('Search opens in'), 'Best match');
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(localStorage.getItem(SEARCH_MODE_PREFERENCE_KEY)).toBe('hybrid'));
     expect(window.location.search).toBe(before);
@@ -681,5 +686,6 @@ async function openAppearance(fetchFn: ReturnType<typeof appearanceDaemon>) {
   const session = createSessionController(fetchFn);
   render(App, { session });
   await session.bootstrap();
-  await screen.findByRole('heading', { level: 2, name: 'Appearance' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
+  await screen.findByRole('heading', { level: 2, name: 'Advanced' });
 }
