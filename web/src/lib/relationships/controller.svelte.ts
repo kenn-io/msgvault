@@ -887,10 +887,6 @@ export class RelationshipsController {
       if (!result || result.data || (result === summary && noMatchingActivity(detail, summary))) continue;
       if (result === detail && result.response.status === 404) {
         this.detailMissing = true;
-        if (parseClusterID(this.target) !== undefined) {
-          this.timelineError = null;
-          return;
-        }
         continue;
       }
       if (!this.handleDetailCacheBuilding(result.error, result.response.status, generation, signal))

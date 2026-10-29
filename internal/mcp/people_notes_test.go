@@ -303,7 +303,7 @@ func TestMCPGetPersonRelationshipDraftOnlyOmitsCalendar(t *testing.T) {
 		calendarErr: query.ErrRelationshipPersonNotFound,
 	}
 	result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonRelationship, map[string]any{
-		"participant_id": 9, "year": 2025,
+		"participant_id": 9,
 	})
 	require.NotEqual(true, result["isError"], "result: %#v", result)
 	structured := toolStructuredContent(t, result)
@@ -317,6 +317,16 @@ func TestMCPGetPersonRelationshipDraftOnlyOmitsCalendar(t *testing.T) {
 	assert.InDelta(0, current["temperature"], 0)
 	assert.NotContains(structured, "year")
 	assert.NotContains(structured, "timezone")
+	assert.NotContains(structured, "days")
+	assert.Equal(peoplebrowser.CalendarRequest{}, backend.calendarRequest)
+
+	result = rawCallTool(t, peopleToolOptions(backend), ToolGetPersonRelationship, map[string]any{
+		"participant_id": 9, "year": 2025, "timezone": "America/New_York",
+	})
+	require.NotEqual(true, result["isError"], "result: %#v", result)
+	structured = toolStructuredContent(t, result)
+	assert.InDelta(2025, structured["year"], 0)
+	assert.Equal("America/New_York", structured["timezone"])
 	assert.NotContains(structured, "days")
 	assert.Equal(peoplebrowser.CalendarRequest{}, backend.calendarRequest)
 }
