@@ -1,9 +1,8 @@
 <script lang="ts">
   import type { SecretSettingState } from '../../api/generated/models';
-  import { pendingSecret } from '../../settings/secrets';
+  import { pendingSecret, type SecretUpdate } from '../../settings/secrets';
   import SecretField from './SecretField.svelte';
 
-  type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
   let { label, credentialState, pending, onchange }: {
     label: string;
     credentialState?: SecretSettingState;

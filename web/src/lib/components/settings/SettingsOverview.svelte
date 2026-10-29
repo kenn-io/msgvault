@@ -6,14 +6,14 @@
 
   let {
     rows,
-    working = '',
+    working = {},
     onSetUp,
     onStart,
     onSources,
   }: {
     rows: readonly OverviewRow[];
-    /** The id of the start action in progress; every start button waits. */
-    working?: string;
+    /** Start actions in progress; each button waits for its own action. */
+    working?: Readonly<Record<string, boolean>>;
     onSetUp: (action: Extract<OverviewAction, { kind: 'settings' }>) => void;
     onSources: () => void;
     onStart: (action: Extract<OverviewAction, { kind: 'start' }>) => void;
@@ -28,20 +28,20 @@
       <span class="row__name">
         {row.name}
       </span>
-      <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
+      <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{action?.kind === 'start' && working[action.id] ? (action.id === 'messages' ? 'Building' : 'Working…') : row.chip.text}</Chip></span>
       <span class="row__action">
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${row.name}`} onclick={() => onSetUp(action)} />
         {:else if action?.kind === 'start' && action.id === 'messages'}
-          <BuildIndexAction size="sm" surface="soft" ariaLabel="Build index, Message search" disabled={working !== ''} onconfirm={() => onStart(action)} />
+          <BuildIndexAction size="sm" surface="soft" ariaLabel="Build index, Message search" disabled={Boolean(working[action.id])} onconfirm={() => onStart(action)} />
         {:else if action?.kind === 'start'}
           <Button
             size="sm"
             tone="info"
             surface="soft"
-            label={working === action.id ? 'Working…' : action.label}
+            label={working[action.id] ? 'Working…' : action.label}
             ariaLabel={`${action.label}, ${row.name}`}
-            disabled={working !== ''}
+            disabled={Boolean(working[action.id])}
             onclick={() => onStart(action)}
           />
         {:else if action?.kind === 'sources'}
