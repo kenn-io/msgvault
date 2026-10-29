@@ -100,6 +100,39 @@ func (e *DuckDBEngine) RelationshipCalendar(
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
 	response, effectiveAt, err := e.relationshipTemperatureSummary(ctx, request.CanonicalID)
+	noActivity := false
+	if errors.Is(err, ErrRelationshipPersonNotFound) {
+		var exists bool
+		owners := quoteIdentitySQLPath(e.parquetPath(datasetOwnerParticipants))
+		clusters := quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters))
+		if err := e.db.QueryRowContext(ctx, `
+			SELECT EXISTS (SELECT 1 FROM participants p WHERE p.id = ?
+				AND NOT EXISTS (SELECT 1 FROM read_parquet('`+owners+`') op
+					LEFT JOIN read_parquet('`+clusters+`') c ON c.participant_id = op.participant_id
+					WHERE COALESCE(c.canonical_id, op.participant_id) = p.id
+						OR op.participant_id = p.id))
+		`, request.CanonicalID).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("read relationship participant existence: %w", err)
+		}
+		if !exists {
+			return nil, ErrRelationshipPersonNotFound
+		}
+		people := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
+		if err := e.db.QueryRowContext(ctx, `
+			SELECT COALESCE(MAX(temperature_effective_at), ?)
+			FROM read_parquet('`+people+`')
+		`, state.LastSyncAt).Scan(&effectiveAt); err != nil {
+			return nil, fmt.Errorf("read relationship effective date: %w", err)
+		}
+		response = &RelationshipCalendarResponse{
+			Annual:        []identityindex.AnnualTemperatureSummary{},
+			Days:          []RelationshipCalendarDay{},
+			ScoreVersion:  identityindex.RelationshipScoreVersion,
+			EffectiveDate: effectiveAt.UTC().Format(time.DateOnly),
+		}
+		noActivity = true
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +142,9 @@ func (e *DuckDBEngine) RelationshipCalendar(
 	response.ScoringTimezone = relationshipScoringTimezone
 	response.CacheRevision = state.Revision()
 	response.IdentityRevision = state.IdentityRevision
+	if noActivity {
+		return response, nil
+	}
 	response.Days, err = e.relationshipCalendarDays(ctx, request, location, effectiveAt)
 	if err != nil {
 		return nil, err

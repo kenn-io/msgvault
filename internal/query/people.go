@@ -193,7 +193,7 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 			return row, nil
 		}
 	}
-	result, err := e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
+	result, err := e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs, true)
 	if err != nil || len(result.Rows) == 0 {
 		return nil, err
 	}
@@ -305,11 +305,11 @@ func (e *DuckDBEngine) GetPersonSummary(ctx context.Context, id int64, explore E
 	if id < 1 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidExploreRequest)
 	}
-	return e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
+	return e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs, false)
 }
 
 func (e *DuckDBEngine) searchPeopleLegacy(
-	ctx context.Context, request PersonSearchRequest, exactID *int64, clusterMemberIDs []int64,
+	ctx context.Context, request PersonSearchRequest, exactID *int64, clusterMemberIDs []int64, keepInactive bool,
 ) (*PersonSearchResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -383,6 +383,11 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	}
 	overrideExpr := sqlPersonNameOverrideExpr(e.parquetPath(datasetPersonDisplayNames), overrideFilter)
 	personWhere := []string{"true"}
+	populationFrom := "FROM person_entries pe JOIN participants p ON p.id = pe.person_id"
+	if keepInactive {
+		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id WHERE p.id = ?"
+		args = append(args, *exactID)
+	}
 	if exactID != nil {
 		personWhere = append(personWhere, "person_id = ?")
 		args = append(args, *exactID)
@@ -455,11 +460,11 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + bestNameExpr + ` AS best_display_name,
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
-		COUNT(*)::BIGINT AS activity_count,
+		COUNT(pe.person_id)::BIGINT AS activity_count,
 		COUNT(*) FILTER (WHERE pe.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
-	FROM person_entries pe JOIN participants p ON p.id = pe.person_id
+	` + populationFrom + `
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
 ), filtered_people AS (
 	SELECT *, COALESCE(person_display_name, best_display_name, fallback_label) AS display_label,
@@ -495,14 +500,16 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 	response := &PersonSearchResponse{Rows: make([]PersonSummary, 0), CacheRevision: state.Revision(), SearchProvenance: provenance}
 	for rows.Next() {
 		var row PersonSummary
+		var firstAt, lastAt sql.NullTime
 		var identifiersJSON, sourceCountsJSON string
 		if err := rows.Scan(&row.ID, &row.DisplayLabel, &row.DisplayName, &row.PartialLabel,
 			&identifiersJSON, &row.ActivityCount, &row.MeetingCount, &row.FileCount,
 			&row.CurrentRelationshipTemperature, &row.PeakRelationshipTemperature,
 			&row.PeakRelationshipYear, &sourceCountsJSON,
-			&row.FirstAt, &row.LastAt, &response.TotalCount); err != nil {
+			&firstAt, &lastAt, &response.TotalCount); err != nil {
 			return nil, fmt.Errorf("scan analytical person: %w", err)
 		}
+		row.FirstAt, row.LastAt = firstAt.Time, lastAt.Time
 		if err := json.Unmarshal([]byte(identifiersJSON), &row.Identifiers); err != nil {
 			return nil, fmt.Errorf("decode person identifiers: %w", err)
 		}

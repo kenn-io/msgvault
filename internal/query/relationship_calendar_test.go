@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -213,18 +214,40 @@ func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) 
 func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
+	ownerCanonicalID := b.AddParticipant("owner-alias@example.test", "example.test", "Owner alias")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
 	personID := b.AddParticipant("person@example.test", "example.test", "Person")
+	draftRecipient := b.AddParticipant("draft@example.test", "example.test", "Draft recipient")
 	b.AddOwnerParticipant(sourceID, ownerID)
+	b.LinkCluster(ownerCanonicalID, ownerID)
 	messageID := b.AddMessage(MessageOpt{
 		SourceID: sourceID, MessageType: "email",
 		SentAt: time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC),
 	})
 	b.AddFrom(messageID, ownerID, "Owner")
 	b.AddTo(messageID, personID, "Person")
+	draft := b.AddMessage(MessageOpt{
+		SourceID: sourceID, MessageType: "email", IsFromMe: true,
+		SentAt: time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(draft, ownerID, "Owner")
+	b.AddTo(draft, draftRecipient, "Draft recipient")
+	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
 	engine := b.BuildEngine()
 
-	for _, canonicalID := range []int64{ownerID, 999_999} {
+	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
+		CanonicalID: draftRecipient, Year: 2026, Timezone: "UTC",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, calendar)
+	assert.Equal(t, draftRecipient, calendar.CanonicalID)
+	assert.Equal(t, "2026-01-02", calendar.EffectiveDate)
+	assert.Equal(t, identityindex.RelationshipScoreVersion, calendar.ScoreVersion)
+	assert.Zero(t, calendar.Current)
+	assert.Empty(t, calendar.Annual)
+	assert.Empty(t, calendar.Days)
+
+	for _, canonicalID := range []int64{ownerCanonicalID, ownerID, 999_999} {
 		_, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
 			CanonicalID: canonicalID, Year: 2026, Timezone: "UTC",
 		})

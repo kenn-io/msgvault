@@ -302,6 +302,32 @@ func TestMCPGetPersonRelationshipValidationDoesNotCallBackend(t *testing.T) {
 	assert.Equal(t, peoplebrowser.CalendarRequest{}, backend.calendarRequest)
 }
 
+func TestMCPGetPersonRelationshipDistinguishesDraftOnlyAndMissingContacts(t *testing.T) {
+	backend := &recordingPeopleBackend{
+		contact:  &query.PersonSummary{ID: 7, DisplayLabel: "Draft recipient"},
+		calendar: &query.RelationshipCalendarResponse{CanonicalID: 7, Year: 2026, Timezone: "UTC"},
+	}
+	result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonRelationship, map[string]any{
+		"participant_id": 7, "year": 2026,
+	})
+	assert.NotEqual(t, true, result["isError"], "result: %#v", result)
+	structured := toolStructuredContent(t, result)
+	assert.Equal(t, "Draft recipient", structured["display_label"])
+	current, ok := structured["current"].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(t, float64(0), current["temperature"], 0)
+	assert.Empty(t, structured["annual"])
+	assert.Empty(t, structured["days"])
+	assert.Equal(t, peoplebrowser.CalendarRequest{ParticipantID: 7, Year: 2026, Timezone: "UTC"}, backend.calendarRequest)
+
+	backend.contactErr = peoplebrowser.ErrContactNotFound
+	backend.calendarRequest = peoplebrowser.CalendarRequest{}
+	result = rawCallTool(t, peopleToolOptions(backend), ToolGetPersonRelationship, map[string]any{"participant_id": 7})
+	assert.Equal(t, true, result["isError"])
+	assert.Equal(t, "observed contact was not found", toolErrorTextFromResult(t, result))
+	assert.Zero(t, backend.calendarRequest)
+}
+
 func TestMCPSearchPeopleForwardsArgumentsAndReturnsStructuredPage(t *testing.T) {
 	assert := assert.New(t)
 	now := time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC)

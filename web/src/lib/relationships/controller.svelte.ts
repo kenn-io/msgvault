@@ -127,7 +127,8 @@ export class RelationshipsController {
    * cleared by clearTarget. */
   lastPredicateFingerprint = $state<string | null>(null);
   detail = $state<PersonSummary | DomainSummary | null>(null);
-  detailMissing = $state(false);
+  noActivity = $state(false);
+  personMissing = $state(false);
   timelineRows = $state<RelationshipTimelineRow[]>([]);
   timelineCursor = $state<string | null>(null);
   timelineLoading = $state(false);
@@ -382,7 +383,8 @@ export class RelationshipsController {
     this.lastPredicate = predicate;
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
     this.detail = null;
-    this.detailMissing = false;
+    this.noActivity = false;
+    this.personMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineError = null;
@@ -460,8 +462,10 @@ export class RelationshipsController {
       const base = personResponse.data;
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
-      if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
-      else if (summary) this.detail = summary;
+      if (base) {
+        this.detail = summary ? mergePersonDetail(base, summary) : base;
+        this.noActivity = base.activity_count === 0;
+      } else if (summary) this.detail = summary;
       this.reportDetailFailures(personResponse, summaryResponse, generation, signal);
       return base ?? summary ?? null;
     } catch (cause: unknown) {
@@ -521,7 +525,8 @@ export class RelationshipsController {
     this.lastPredicate = undefined;
     this.lastPredicateFingerprint = null;
     this.detail = null;
-    this.detailMissing = false;
+    this.noActivity = false;
+    this.personMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineLoading = false;
@@ -867,7 +872,7 @@ export class RelationshipsController {
     clearTimeout(this.cacheBuildRetry);
     this.cacheBuildRetry = undefined;
   }
-  /** A detail 404 means no contact activity; a summary 404 means no filter matches. */
+  /** A person detail 404 means missing identity; a summary 404 means no filter matches. */
   private reportDetailFailures(
     detail: FetchResult,
     summary: FetchResult | undefined,
@@ -877,8 +882,11 @@ export class RelationshipsController {
     for (const result of [detail, summary]) {
       if (!result || result.data || (result === summary && noMatchingActivity(detail, summary))) continue;
       if (result === detail && result.response.status === 404) {
-        this.detailMissing = true;
-        continue;
+        if (parseClusterID(this.target) !== undefined) this.personMissing = true;
+        else {
+          this.noActivity = true;
+          continue;
+        }
       }
       if (!this.handleDetailCacheBuilding(result.error, result.response.status, generation, signal))
         this.timelineError ||= errorMessage(result.error, result.response.status);
@@ -946,7 +954,7 @@ function currentYearInTimezone(timezone: string): number {
   }
 }
 function personFirstYear(person: PersonSummary | null, timezone: string, fallback: number): number {
-  if (!person?.first_at) return fallback;
+  if (!person?.first_at || person.activity_count === 0) return fallback;
   try {
     return Number(
       new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric' }).format(new Date(person.first_at)),

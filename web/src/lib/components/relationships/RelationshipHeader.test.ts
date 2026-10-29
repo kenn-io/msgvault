@@ -121,9 +121,25 @@ async function linkToSearchResult(): Promise<void> {
 }
 
 describe('RelationshipHeader', () => {
-  it('shows no contact activity for a draft-only target', () => {
+  it('shows no contact activity for a domain without activity', () => {
     render(RelationshipHeader, baseProps({ detail: null, loading: false, missing: true }));
     expect(screen.getByRole('status').textContent?.trim()).toBe('No sent or received messages with this contact yet.');
+  });
+
+  it('shows a missing person and hides the Files control', () => {
+    render(RelationshipHeader, baseProps({ detail: null, loading: false, notFound: true }));
+    expect(screen.getByRole('status').textContent?.trim()).toBe('Person not found.');
+    expect(screen.queryByRole('radiogroup', { name: 'Relationship view' })).toBeNull();
+  });
+
+  it('keeps a draft-only person’s identity and link controls with no activity', () => {
+    render(RelationshipHeader, baseProps({ detail: { ...person(), activity_count: 0,
+      first_at: '0001-01-01T00:00:00Z', last_at: '0001-01-01T00:00:00Z' }, missing: true }));
+    expect(screen.getByRole('heading', { name: 'Alice Example' })).toBeDefined();
+    expect(screen.getByLabelText('Identity Alice')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Same person…' })).toBeDefined();
+    expect(screen.getByText('No sent or received messages with this contact yet.')).toBeDefined();
+    expect(screen.queryByText(/0 items/)).toBeNull();
   });
 
   it('hides the date range when no activity matches the context', () => {
