@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-10-29"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -1772,6 +1772,41 @@ msgvault import-slackdump --me U0123456789 --limit 100 /path/to/export.zip
 | `--limit` | `0` | Max messages imported per conversation (0 = no limit) |
 | `--max-media-mb` | configured/default limit | Max exported file size in MiB (0 = configured/default limit) |
 | `--no-default-identity` | `false` | Do not auto-confirm the workspace user ID as the source's "me" identity |
+
+---
+
+## import-telegram
+
+Import chats from a Telegram Desktop "Machine-readable JSON" export without
+contacting Telegram. Chats, plain-text messages, senders, and exported media
+are copied into the archive. The exporting user comes from the export;
+`--me` overrides it with a numeric Telegram user ID and is required for
+single-chat exports, which do not identify the owner. Service messages and
+`unsupported` entries are skipped.
+
+Imports are append-only and keyed on the chat's `id` and
+`<chat-id>:<message-id>`: re-running with a newer or overlapping export adds
+only messages the archive does not yet carry and never changes what an
+earlier import stored, so edits and deletions in newer exports do not
+propagate. An interrupted run resumes over the same export bytes, chat by
+chat. A Telegram person already known through a Beeper bridge resolves to
+the same participant. See [Text Messages](/docs/usage/text-messages/#import-telegram).
+
+```bash
+msgvault import-telegram ~/Downloads/TelegramExport
+msgvault import-telegram --me 482111 ./export
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | from the export | Your numeric Telegram user ID (required for single-chat exports) |
+| `--limit` | `0` | Limit number of messages (for testing) |
+| `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
+| `--checkpoint-interval` | `200` | Save progress every N messages |
+
+When `--me` is set and no imported message matches it, the summary prints a
+warning: a wrong numeric ID still imports everything but marks none of it as
+sent by you.
 
 ---
 

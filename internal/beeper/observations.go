@@ -104,6 +104,19 @@ func (r *observationRecorder) capture(
 	slug := serviceSlugOf(service)
 	scopeKind, scopeValue := serviceScope(service, cc.AccountID, u.ID)
 	anchor := providerUserIDScoped(slug, cc.AccountID, scopeKind, scopeValue, u)
+	observationScopeKind, observationScopeValue := scopeKind, scopeValue
+	if beeperidentity.TelegramSharedProviderKey(anchor) {
+		// The shared Telegram key already names its own service-wide
+		// namespace. Keeping the account scope on its observations would
+		// give the same key different candidate edges depending on which
+		// side observed it, so a pair rejected through one edge could
+		// still be auto-accepted through the other. Export observations
+		// use no scope; match them.
+		//
+		// The anchor identifier row keeps the observed scope: it names the
+		// Beeper bridge user, which does live in the account.
+		observationScopeKind, observationScopeValue = nil, nil
+	}
 	if err := r.classifyAnchor(
 		ctx, u.ID, cc.AccountID, service, scopeKind, scopeValue,
 	); err != nil {
@@ -117,7 +130,7 @@ func (r *observationRecorder) capture(
 		key := observationKey{
 			participantID: participantID, sourceID: cc.SourceID,
 			userID: u.ID, addressKind: address.Kind, serviceSlug: slug,
-			scopeKind: derefString(scopeKind), scopeValue: derefString(scopeValue),
+			scopeKind: derefString(observationScopeKind), scopeValue: derefString(observationScopeValue),
 			providerID: anchor, value: address.Value,
 		}
 		if _, seen := r.seen[key]; seen {
@@ -125,7 +138,7 @@ func (r *observationRecorder) capture(
 		}
 		request := recordRequest{
 			SourceID: cc.SourceID, AddressKind: address.Kind,
-			ScopeKind: scopeKind, ScopeValue: scopeValue,
+			ScopeKind: observationScopeKind, ScopeValue: observationScopeValue,
 			ProviderUserID: anchor, OriginalValue: address.Value,
 			ObservedAt: observedAt, SourceRef: sourceRef, SourceUserID: u.ID,
 		}

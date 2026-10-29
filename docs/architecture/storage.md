@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-29"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
@@ -58,7 +58,7 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `conversation_id` | INTEGER FK | References `conversations` |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_message_id` | TEXT | Source-specific message ID |
-| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
+| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `account_address` | TEXT, nullable | The one confirmed address an email or calendar event belongs to; NULL when evidence conflicts or is missing |

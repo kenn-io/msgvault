@@ -1138,7 +1138,7 @@ func personSweepAuthorship(
 func personSweepAuthenticatedSenderSourceTypes() []string {
 	return []string{"apple_messages", "beeper", "discord", "facebook_messenger",
 		"google_messages", "imazing_csv", "imessage", "inline", "matrix", "slack", "slackdump",
-		"synctech-sms", "synctech_sms", "teams", "whatsapp"}
+		"synctech-sms", "synctech_sms", "teams", "telegram", "whatsapp"}
 }
 
 // personSweepSourceAuthenticatesSender is the Go twin of the SQL authorship

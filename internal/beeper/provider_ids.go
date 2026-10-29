@@ -49,6 +49,15 @@ func providerUserIDScoped(
 	}
 	if serviceSlug != "" {
 		if native, ok := providerNativeUserID(u.Raw); ok {
+			// Telegram native user IDs are unique across the whole network,
+			// and Telegram exports cannot know the Beeper account that scoped
+			// them. Numeric Telegram IDs therefore share one service-scoped
+			// key so an export and any bridge account name the same person.
+			if serviceSlug == telegramServiceSlug {
+				if shared := beeperidentity.TelegramStableProviderKey(native); shared != "" {
+					return shared
+				}
+			}
 			kind, value := "service", ""
 			if scopeKind != nil && scopeValue != nil &&
 				strings.TrimSpace(*scopeKind) != "" && strings.TrimSpace(*scopeValue) != "" {
@@ -65,13 +74,21 @@ func providerUserIDScoped(
 	return beeperidentity.Fallback(accountID, u.ID)
 }
 
+// telegramServiceSlug names the communication service whose numeric native
+// user IDs are globally unique and therefore safe to share across accounts.
+const telegramServiceSlug = "telegram"
+
+// Telegram native user IDs, their shared stable key, and that key's shape
+// have one canonical implementation in internal/beeperidentity, next to the
+// provider key encoding itself, so the Telegram export importer and the
+// archive migration accept exactly the same forms the bridge produces.
+
 // providerIdentityKey uses length-delimited components. Separating fields
 // with a raw colon is not collision-safe because service, scope, and provider
-// values can contain that character.
+// values can contain that character. beeperidentity.ProviderKey owns the
+// encoding so callers outside this package produce identical bytes.
 func providerIdentityKey(serviceSlug, scopeKind, scopeValue, native string) string {
-	return "provider:" + beeperidentity.EncodePart(serviceSlug) + ":" +
-		beeperidentity.EncodePart(scopeKind) + ":" + beeperidentity.EncodePart(scopeValue) + ":" +
-		beeperidentity.EncodePart(native)
+	return beeperidentity.ProviderKey(serviceSlug, scopeKind, scopeValue, native)
 }
 
 // providerNativeUserID reads the documented providerID field from a raw user

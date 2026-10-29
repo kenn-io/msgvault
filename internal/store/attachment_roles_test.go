@@ -262,6 +262,82 @@ func TestUpsertAttachmentRecordPreservingStoredRerunWhileMissing(t *testing.T) {
 	assert.Equal(string(attachmentpolicy.SkipFetchFailure), skipReason)
 }
 
+// TestEnsureAttachmentRecordAppendOnlyFillsOnlyMissing pins the append-only
+// recovery contract: a populated occurrence keeps its bytes, hash, and
+// metadata when a later snapshot at the same key carries different bytes or
+// no file, and an unstored placeholder gains only the stored data it lacks.
+func TestEnsureAttachmentRecordAppendOnlyFillsOnlyMissing(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("append-only-attachment")
+	firstHash := strings.Repeat("aa", 32)
+	secondHash := strings.Repeat("bb", 32)
+	write := store.AttachmentWrite{
+		Filename: "first.jpg", MIMEType: "image/jpeg", StoragePath: firstHash[:2] + "/" + firstHash,
+		ContentHash: firstHash, Size: 42, Role: store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "tg:photo:1",
+	}
+	require.NoError(f.Store.EnsureAttachmentRecordAppendOnly(t.Context(), messageID, write))
+	rowID := singleAttachmentID(t, f, messageID)
+
+	occurrence := func() (id int64, filename, storagePath, contentHash string, size int64) {
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+			SELECT id, filename, storage_path, COALESCE(content_hash, ''), size
+			FROM attachments WHERE message_id = ? AND source_part_key = ?`),
+			messageID, write.SourcePartKey).Scan(&id, &filename, &storagePath, &contentHash, &size))
+		return
+	}
+
+	// A later snapshot with different bytes at the same key changes nothing.
+	write.Filename = "second.jpg"
+	write.StoragePath = secondHash[:2] + "/" + secondHash
+	write.ContentHash = secondHash
+	write.Size = 99
+	require.NoError(f.Store.EnsureAttachmentRecordAppendOnly(t.Context(), messageID, write))
+	id, filename, storagePath, contentHash, size := occurrence()
+	assert.Equal(rowID, id)
+	assert.Equal("first.jpg", filename, "an archived occurrence keeps its metadata")
+	assert.Equal(firstHash[:2]+"/"+firstHash, storagePath, "changed bytes never replace the stored file")
+	assert.Equal(firstHash, contentHash)
+	assert.Equal(int64(42), size)
+
+	// A snapshot without the file preserves the stored blob too.
+	write.StoragePath, write.ContentHash, write.Size = "", "", 0
+	require.NoError(f.Store.EnsureAttachmentRecordAppendOnly(t.Context(), messageID, write))
+	id, _, storagePath, contentHash, size = occurrence()
+	assert.Equal(rowID, id)
+	assert.Equal(firstHash[:2]+"/"+firstHash, storagePath)
+	assert.Equal(firstHash, contentHash)
+	assert.Equal(int64(42), size)
+
+	// An unstored placeholder gains exactly the stored data it lacked.
+	placeholderMessage := f.CreateMessage("append-only-attachment-placeholder")
+	placeholder := store.AttachmentWrite{
+		Filename: "missing.jpg", MIMEType: "image/jpeg",
+		Role:          store.AttachmentRoleStandalone,
+		RoleSource:    store.AttachmentRoleSourceImporterSemantics,
+		SourcePartKey: "tg:photo:2",
+	}
+	require.NoError(f.Store.EnsureAttachmentRecordAppendOnly(t.Context(), placeholderMessage, placeholder))
+	placeholder.StoragePath = secondHash[:2] + "/" + secondHash
+	placeholder.ContentHash = secondHash
+	placeholder.Size = 7
+	require.NoError(f.Store.EnsureAttachmentRecordAppendOnly(t.Context(), placeholderMessage, placeholder))
+	var placeholderRows int
+	var placeholderPath, placeholderHash string
+	var placeholderSize int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT COUNT(*), MIN(storage_path), MIN(content_hash), MIN(size)
+		FROM attachments WHERE message_id = ? AND source_part_key = ?`),
+		placeholderMessage, placeholder.SourcePartKey).
+		Scan(&placeholderRows, &placeholderPath, &placeholderHash, &placeholderSize))
+	assert.Equal(1, placeholderRows, "the placeholder never duplicates")
+	assert.Equal(secondHash[:2]+"/"+secondHash, placeholderPath, "a placeholder gains its stored file")
+	assert.Equal(secondHash, placeholderHash)
+	assert.Equal(int64(7), placeholderSize)
+}
+
 func TestDeleteKeyedAttachmentsExceptContextOnlyRemovesStalePrefixRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

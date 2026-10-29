@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-29"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -20,6 +20,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
+| [Telegram](#import-telegram) | Telegram Desktop JSON export directory |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
 
@@ -333,6 +334,70 @@ msgvault import-messenger --me test.user@facebook.messenger --format both ./dyi
 
 !!! note
     Facebook DYI exports do not contain stable participant IDs. msgvault synthesizes participant identifiers from names as `<slug>@facebook.messenger`; identical slugs are treated as the same participant.
+
+## import-telegram
+
+Import chats from a Telegram Desktop export. In Telegram Desktop, open
+Settings → Advanced → Export Telegram Data, choose "Machine-readable JSON",
+and export at least the chats you want; the resulting directory is what you
+pass to the command.
+
+```bash
+msgvault import-telegram <export-dir>
+```
+
+The export directory must be readable on the machine running the msgvault
+daemon. With a configured remote, run the import on the daemon host with
+`--local`; msgvault does not upload the export from a client machine.
+
+The exporting user is taken from the export's `personal_information`
+section. Pass `--me <numeric-id>` to override it; single-chat exports do not
+identify the owner, so they require `--me`.
+
+Plain-text messages, senders, reply threading, edit markers, and exported
+media (photos, voice messages, stickers, and files, with the export's own
+file names and MIME types) are imported. Service messages such as membership
+changes and calls are skipped, as are `unsupported` entries — objects
+Telegram Desktop writes with only an id and a type when it cannot represent
+the entry. In personal and bot chats, each message's
+recipient is the chat's other participant; group and channel messages record
+only their sender. A Telegram person already known through a Beeper bridge
+resolves to the same participant instead of a duplicate.
+
+Imports are append-only: re-running with a newer full or date-ranged export
+adds only messages the archive does not yet carry and never changes what an
+earlier import stored. Edits, deletions, and media changes in newer exports
+therefore do not propagate to already-imported messages. An interrupted run
+resumes over the same export bytes, chat by chat; `--no-resume` starts
+fresh.
+
+Each message is stored atomically — the message row, body, recipients, edit
+marker, and search entry commit in one transaction — so an interruption can
+only lose whole messages, never leave one half-written. Attachments and
+reply links are written right after that commit inside their chat. Any
+later run restores what an interruption left behind: already-imported
+messages get missing attachment rows re-created from the export and reply
+links filled only where empty. Values already stored are never
+overwritten.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | from the export | Your numeric Telegram user ID (required for single-chat exports) |
+| `--limit` | `0` | Limit number of messages (for testing) |
+| `--no-resume` | `false` | Start fresh instead of resuming an interrupted import |
+| `--checkpoint-interval` | `200` | Save progress every N messages |
+
+### Examples
+
+```bash
+# Import a full Telegram Desktop export
+msgvault import-telegram ~/Downloads/TelegramExport
+
+# A single-chat export needs your numeric user ID
+msgvault import-telegram --me 482111 ./ChatExport
+```
 
 ## import-synctech-sms
 

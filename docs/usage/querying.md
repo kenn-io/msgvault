@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-27"
+last_edited: "2026-10-29"
 title: SQL Queries
 description: Run read-only DuckDB queries against the analytics cache.
 ---
@@ -173,7 +173,7 @@ msgvault query --format table "
 
 Known values are `email`, `google_chat`, `calendar_event`,
 `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `slack`, `sms`, `mms`,
-`rcs`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`,
+`rcs`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`,
 `google_voice_text`, `google_voice_call`, and `google_voice_voicemail`.
 
 ### Label statistics

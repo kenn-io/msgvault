@@ -128,6 +128,68 @@ func TestImportCapturesEveryObservedAddressForOneParticipant(t *testing.T) {
 		"the source rendering is always retained")
 }
 
+// TestSharedTelegramKeyObservationCarriesNoScope pins the scope contract of
+// the shared Telegram provider key: the key names a service-wide identity,
+// so its observations — like an export importer's — carry no account scope,
+// and every Beeper account observing the same native user lands on the same
+// candidate edge. Non-shared anchors keep their account scope.
+func TestSharedTelegramKeyObservationCarriesNoScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(observationChat("acct-7", "Telegram", "@telegram_482111:beeper.local",
+		map[string]any{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+		map[string]any{
+			"id":         "@telegram_482111:beeper.local",
+			"fullName":   "Alice Example",
+			"providerID": "482111",
+		},
+	))
+	imp, st, closeServer := newTestImporter(t, f)
+	defer closeServer()
+
+	// A catalog whose telegram service accepts a scope: without the fix,
+	// capture stamps the account scope on the shared key's observations.
+	service, err := st.ResolveCommunicationServiceContext(context.Background(), "telegram")
+	require.NoError(err, "resolve telegram service")
+	_, err = st.UpdateCommunicationServiceContext(context.Background(), service.ID, store.CommunicationServiceInput{
+		Slug:                 service.Slug,
+		DisplayLabel:         service.DisplayLabel,
+		ScopePolicy:          store.ScopePolicyOptional,
+		DefaultScopeKind:     service.DefaultScopeKind,
+		Normalization:        service.Normalization,
+		NormalizationVersion: service.NormalizationVersion,
+		URIScheme:            service.URIScheme,
+		ProfileURLTemplate:   service.ProfileURLTemplate,
+	})
+	require.NoError(err, "flip telegram scope policy to optional")
+
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "acct-7", NoMedia: true})
+	require.NoError(err, "Import")
+
+	participantID := participantForBeeperUser(t, st, "@telegram_482111:beeper.local")
+	observations, err := st.ListParticipantObservationsContext(context.Background(), participantID, true)
+	require.NoError(err, "ListParticipantObservationsContext")
+	require.Len(observations, 1, "ID-only user gets one provider-identity observation")
+	shared := beeperidentity.TelegramStableProviderKey("482111")
+	require.NotNil(observations[0].ProviderUserID)
+	assert.Equal(shared, *observations[0].ProviderUserID, "numeric telegram native id uses the shared key")
+	assert.Nil(observations[0].ScopeKind, "shared key carries no scope kind")
+	assert.Nil(observations[0].ScopeValue, "shared key carries no scope value")
+
+	// The anchor identifier row keeps the account classification: it names
+	// the Beeper bridge user, not the shared identity.
+	var anchorScope string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(scope_kind, '') FROM participant_identifiers
+		WHERE identifier_type = ? AND identifier_value = ?`),
+		participantIdentifierType,
+		beeperidentity.Fallback("acct-7", "@telegram_482111:beeper.local"),
+	).Scan(&anchorScope))
+	assert.Equal("account", anchorScope, "anchor identifier keeps the observed scope")
+}
+
 // observationOriginal returns the original (unnormalized) value of one current
 // observation of the given kind.
 func observationOriginal(

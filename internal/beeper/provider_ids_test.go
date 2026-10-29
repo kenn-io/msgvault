@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/beeperidentity"
 )
 
 // TestParticipantDecodeKeepsIsAdminAndCapturesRawUser pins the promotion
@@ -112,6 +113,40 @@ func TestProviderUserIDNamespacesEveryForm(t *testing.T) {
 				test.serviceSlug, test.accountID, test.scopeKind, test.scopeValue, test.user))
 		})
 	}
+}
+
+func TestTelegramNumericNativeIDUsesSharedServiceScope(t *testing.T) {
+	assert := assert.New(t)
+	user := func(raw string) *User {
+		return &User{ID: "@telegram_482111:beeper.local", Raw: json.RawMessage(raw)}
+	}
+
+	// No observed scope and an account available: today's inputs, but the
+	// key is service-scoped so an export produces the same key.
+	assert.Equal(
+		"provider:8:telegram:7:service:0::6:482111",
+		providerUserIDScoped("telegram", "acct-7", nil, nil,
+			user(`{"id":"@telegram_482111:beeper.local","providerID":"482111"}`)),
+	)
+	// Any Beeper account yields the identical key.
+	assert.Equal(
+		beeperidentity.TelegramStableProviderKey("482111"),
+		providerUserIDScoped("telegram", "another-account", nil, nil,
+			user(`{"id":"@telegram_482111:beeper.local","providerID":"482111"}`)),
+		"the export key and every bridge account's key agree")
+	// Non-numeric Telegram native IDs keep account scoping.
+	assert.Equal(
+		"provider:8:telegram:7:account:6:acct-7:9:not-a-num",
+		providerUserIDScoped("telegram", "acct-7", nil, nil,
+			user(`{"id":"@telegram_x:beeper.local","providerID":"not-a-num"}`)),
+		"non-numeric native ids keep today's account scoping")
+	// Other providers keep account scoping for the same numeric shape.
+	assert.Equal(
+		"provider:7:discord:7:account:6:acct-7:6:482111",
+		providerUserIDScoped("discord", "acct-7", nil, nil,
+			&User{ID: "@discord_482111:beeper.local", Raw: json.RawMessage(
+				`{"id":"@discord_482111:beeper.local","providerID":"482111"}`)}),
+		"other networks are unchanged")
 }
 
 func TestProviderUserIDUsesOnlyDocumentedProviderID(t *testing.T) {
