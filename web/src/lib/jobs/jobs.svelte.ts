@@ -31,12 +31,6 @@ export class JobsStore {
     this.#operations = operations;
   }
 
-  setSources(sources: SourceStatus[]): void {
-    this.#controller?.abort();
-    this.#sources = sources;
-    this.#sourceError = false;
-  }
-
   async refresh(supersede = false): Promise<void> {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());

@@ -8,11 +8,11 @@ import { OperationsController } from '../../operations/controller.svelte';
 import { JobsStore } from '../../jobs/jobs.svelte';
 import type { SavedView, PatchSavedViewRequest } from '../../api/generated/models';
 import type { ExploreURLState } from '../../explore/models';
-import { CURRENT_SCHEMA_VERSION, exploreStateFromSavedView, type CanonicalState } from '../../saved-views/canonical';
+import { supportsSavedViewSchema, exploreStateFromSavedView, type CanonicalState } from '../../saved-views/canonical';
 
 const REFRESH_MS = 30_000;
 export function viewIncompatibility(view: SavedView): string {
-  if (view.schema_version < 1 || view.schema_version > CURRENT_SCHEMA_VERSION) {
+  if (!supportsSavedViewSchema(view.schema_version)) {
     return `This view uses schema version ${view.schema_version}. Automatic migration is not supported; remove it and save the current view again.`;
   }
   return view.incompatibility_reason ?? '';

@@ -172,3 +172,36 @@ it.each(['running', 'failed'] as const)('refreshes the shell dot after Messages 
   await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe(outcome === 'failed' ? 'Sync status: Needs attention' : 'Sync status: Running'), { timeout: 3000 });
   if (outcome === 'failed') await screen.findByText('Embedding endpoint failed');
 });
+
+it('keeps a newer shell observation when an older Sources read finishes', async () => {
+  let holdSources = false;
+  let running = false;
+  let entered!: () => void;
+  let release!: () => void;
+  const captured = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const session = sessionFor(async (_request, path) => {
+    if (path === '/api/v1/sources/status') {
+      const snapshot = Response.json({ sources: [sourceStatus({
+        latest_sync: syncRunStatus(),
+        active_sync: running ? syncRunStatus({ id: 2, status: 'running', completed_at: null }) : null,
+        sync_unavailable_reason: running ? 'sync_already_running' : undefined,
+      })] });
+      if (holdSources) { holdSources = false; entered(); await gate; }
+      return snapshot;
+    }
+  });
+  render(App, { session });
+  await screen.findByRole('button', { name: 'Sync status: Idle' });
+  holdSources = true;
+  await fireEvent.click(screen.getByRole('button', { name: 'Sources' }));
+  await captured;
+  // A scheduled sync starts after Sources captured its response.
+  running = true;
+  window.dispatchEvent(new Event('focus'));
+  await screen.findByRole('button', { name: 'Sync status: Running' });
+  release();
+  await within(screen.getByRole('main', { name: 'Sources' })).findByText('Completed');
+  await tick();
+  expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Running');
+});

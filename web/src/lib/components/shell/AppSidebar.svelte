@@ -9,7 +9,7 @@
   import SavedViewRow from './SavedViewRow.svelte';
   import type { JobsStore } from '../../jobs/jobs.svelte';
   import type { JobTarget } from '../../jobs/jobs';
-  import { CURRENT_SCHEMA_VERSION, type CanonicalState } from '../../saved-views/canonical';
+  import { supportsSavedViewSchema, type CanonicalState } from '../../saved-views/canonical';
   import SyncStatusMenu from './SyncStatusMenu.svelte';
   import { NAVIGATION_ITEMS, SETTINGS_ITEM, type NavigationItem } from './navigation';
 
@@ -57,7 +57,7 @@
     const messages: SavedView[] = [];
     const files: SavedView[] = [];
     for (const view of views) {
-      const target = view.schema_version >= 1 && view.schema_version <= CURRENT_SCHEMA_VERSION &&
+      const target = supportsSavedViewSchema(view.schema_version) &&
         (view.canonical_state as CanonicalState)?.presentation === 'files' ? files : messages;
       target.push(view);
     }
