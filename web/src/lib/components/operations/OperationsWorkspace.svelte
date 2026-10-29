@@ -309,7 +309,7 @@
           busy={current.statusRefreshing}
           onRefresh={() => void refreshStatus()}
         />
-    <Button label="Settings overview" onclick={onOverview} />
+        <Button label="Settings overview" onclick={onOverview} />
       {/snippet}
     </PageHeader>
 
