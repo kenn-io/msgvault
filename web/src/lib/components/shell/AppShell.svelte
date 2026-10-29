@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getCLIMessageRaw as generatedGetCLIMessageRaw } from '../../api/generated/api/api';
+  import { downloadRawMessage } from '../../api/download';
+  import { relationshipDestination } from './navigation';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
     Button,
@@ -671,18 +672,7 @@
     const target = selectionPreflight?.action_targets.find((item) => item.action === 'export');
     if (!target || !apiSelection || selectionPreflight?.count !== 1) return;
     try {
-      const { data, response } = await generatedGetCLIMessageRaw(
-        { id: String(target.message_id) },
-        client,
-      );
-      if (!response.ok || data === undefined)
-        throw new Error('The authorized raw message export is no longer available.');
-      const objectURL = URL.createObjectURL(data);
-      const anchor = document.createElement('a');
-      anchor.href = objectURL;
-      anchor.download = target.filename;
-      anchor.click();
-      URL.revokeObjectURL(objectURL);
+      await downloadRawMessage(client, target.message_id, target.filename);
     } catch (cause) {
       loader.errorKind = 'other';
       loader.error = cause instanceof Error ? cause.message : 'Unable to export the selected message.';
@@ -754,6 +744,7 @@
     editableScopeCleanup = focused ? appShortcuts.pushScope('everything-editable') : undefined;
   }
   function focusGrid(): void {
+    if (document.querySelector('[aria-modal="true"]')) return;
     focusableResultsGrid()?.focus();
   }
   async function restoreHistoryFocus(): Promise<void> {
@@ -830,9 +821,14 @@
     // Kit releases its focus trap during teardown; focus the surviving source
     // link after that cleanup (or the current workspace's own control).
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const modal = Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).at(-1);
+    const sourceHref = archiveReturnFocus?.getAttribute('href');
+    const sourceLink = sourceHref && modal
+      ? Array.from(modal.querySelectorAll<HTMLAnchorElement>('a[href]')).find((link) => link.getAttribute('href') === sourceHref)
+      : undefined;
     const target = archiveReturnFocus?.isConnected
       ? archiveReturnFocus
-      : fallback ?? focusableResultsGrid() ?? navigationFocusTarget();
+      : sourceLink ?? modal ?? fallback ?? focusableResultsGrid() ?? navigationFocusTarget();
     target?.focus();
   }
 
@@ -1147,24 +1143,7 @@
     void relationshipsController.openTarget(target, predicate);
   });
   function openRelationship(participantID: number): void {
-    commitNavigation({
-      workspace: 'relationships',
-      // Entering the hub never carries the text query (see
-      // ExploreState.commitWorkspace): the relationships ranking and
-      // cluster-timeline endpoints have no text-query input, so a carried
-      // query would half-apply across the hub's surfaces.
-      query: '',
-      relationshipFacet: 'people',
-      relationshipTarget: `cluster:${participantID}`,
-      relationshipFiles: false,
-      relationshipShowAll: false,
-      analysisTarget: null,
-      selectedIdentifier: null,
-      selectedRow: null,
-      activeRow: null,
-      conversationAnchor: null,
-      scrollAnchor: null,
-    });
+    commitNavigation(relationshipDestination(participantID));
   }
   onMount(() => {
     // Kit popovers close on Escape from a document listener and claim the key with preventDefault
@@ -1358,6 +1337,7 @@
             })}
           onOpenEverything={() => commitWorkspace('everything')}
           onOpenPerson={openRelationship}
+          onOpenSettings={() => commitNavigation({ workspace: 'settings', settingsCategory: 'tasks' })}
           onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}
           onAnnounce={announceOperation}

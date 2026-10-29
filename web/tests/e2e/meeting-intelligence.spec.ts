@@ -71,7 +71,7 @@ test("production imports expose archived actions, duration evidence, and exact c
   await page.goto(meetingURL(daemon));
   const summary = page.getByRole('region', { name: 'Meeting summary', exact: true });
   await expect(summary).toContainText('5 meetings');
-  await expect(summary).toContainText('1h 41m known');
+  await expect(summary).toContainText('1h 40m 45s known');
   await summary.getByRole('button', { name: /Action items/ }).click();
   const panel = page.getByRole('dialog', { name: 'Action items', exact: true });
   await expect(panel.getByText('Send the Circleback recap', { exact: true })).toBeVisible();

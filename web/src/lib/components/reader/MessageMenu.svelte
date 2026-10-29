@@ -2,7 +2,8 @@
   import { Menu, MenuContent, MenuItem, MenuTrigger } from '@kenn-io/kit-ui';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
 
-  import { getCLIMessageRaw } from '../../api/generated/api/api';
+  import { downloadRawMessage } from '../../api/download';
+  import { isEmailMessageType } from '../../explore/models';
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
@@ -35,7 +36,7 @@
   const kata = kataReadiness();
   const isMeeting = $derived(message.messageType === 'meeting_transcript');
   // Only email keeps its original bytes.
-  const hasOriginal = $derived(!message.messageType || message.messageType === 'email');
+  const hasOriginal = $derived(isEmailMessageType(message.messageType ?? ''));
   const canAddToTask = $derived(Boolean(client) && (hasOriginal || kata?.ready));
   const canExportMeeting = $derived(Boolean(client) && isMeeting);
   const canDownload = $derived(Boolean(client) && hasOriginal);
@@ -47,17 +48,8 @@
   async function downloadOriginal(): Promise<void> {
     if (!client) return;
     try {
-      const { data, response } = await getCLIMessageRaw({ id: String(message.id) }, client);
-      if (!response.ok || data === undefined) throw new Error('The original message isn’t available.');
-      const objectURL = URL.createObjectURL(data);
-      try {
-        const anchor = document.createElement('a');
-        anchor.href = objectURL;
-        anchor.download = `message-${message.id}.eml`;
-        anchor.click();
-      } finally {
-        URL.revokeObjectURL(objectURL);
-      }
+      await downloadRawMessage(client, message.id, `message-${message.id}.eml`);
+      onError?.('');
     } catch (cause) {
       onError?.(cause instanceof Error ? cause.message : 'The original message isn’t available.');
     }
@@ -65,7 +57,7 @@
 </script>
 
 {#if hasItems}
-  <Menu align="end">
+  <Menu align="end" onopenchange={(open) => { if (open) onError?.(''); }}>
     <MenuTrigger ariaLabel={`More actions for message ${message.id}`} title="More actions">
       <Ellipsis size={16} aria-hidden="true" />
     </MenuTrigger>

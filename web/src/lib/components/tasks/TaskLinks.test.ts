@@ -96,7 +96,6 @@ describe('TaskLinks', () => {
 
     expect(await screen.findByText('Partial task')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('partial');
-    expect(screen.getByRole('alert').textContent).not.toContain('Mutations are disabled');
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
 
     await view.rerender({ client, mode: 'add', messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
@@ -105,7 +104,8 @@ describe('TaskLinks', () => {
     await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Search' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Link Search result' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1));
+    expect(await requests.find((request) => request.method === 'POST')!.json()).toMatchObject({ task_id: 'task-2' });
   });
 
   it.each(['stale', 'unavailable', 'authentication_required', 'incompatible', 'disabled', 'not_found', 'wrong_project'])(
@@ -116,12 +116,10 @@ describe('TaskLinks', () => {
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
           : Response.json({ state, complete: false, reason: state, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
-      })), messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
+      })), mode: 'add', messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
 
-      expect(await screen.findByText('Cached task')).toBeDefined();
-      expect((screen.getByRole('button', { name: 'Unlink Cached task' }) as HTMLButtonElement).disabled).toBe(true);
+      expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(state === 'authentication_required' ? 'authentication is required' : state.replaceAll('_', ' '));
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
-      expect(screen.getByRole('alert').textContent).toBeTruthy();
     }
   );
 

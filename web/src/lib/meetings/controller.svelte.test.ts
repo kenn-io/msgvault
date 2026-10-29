@@ -81,8 +81,11 @@ describe('MeetingsController', () => {
     vi.mocked(transport.actions).mockResolvedValue(meetingActions({ next_cursor: 'next' }));
     await controller.setScope(person);
     await controller.loadMore();
+    const metrics = controller.metrics;
     await controller.setFilters({ status: 'pending', assigneeEmail: ' Person@Example.test ' });
     expect(vi.mocked(transport.actions).mock.lastCall![0]).toEqual({ scope: { person_id: 7 }, limit: 50, status: 'pending', assignee_email: 'person@example.test' });
+    expect(transport.metrics).toHaveBeenCalledTimes(1);
+    expect(controller.metrics).toBe(metrics);
   });
 
   it('reconciles repeated stable action keys with newer evidence while retaining distinct actions', async () => {

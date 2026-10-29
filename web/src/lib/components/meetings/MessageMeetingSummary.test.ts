@@ -31,10 +31,13 @@ describe('Messages meeting summary', () => {
     const metrics = within(dialog).getByRole('region', { name: 'Meeting metrics' });
     expect(within(metrics).getByLabelText('Average known duration').textContent).toBe('33m 20s');
     expect(within(metrics).getByRole('table', { name: 'Monthly meeting activity' })).toBeDefined();
+    await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person' } });
     await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person@example.test' } });
     await waitFor(() => expect(requests.filter((request) => request.url.endsWith('/actions'))).toHaveLength(2));
     await expect(requests.filter((request) => request.url.endsWith('/actions')).at(-1)!.json()).resolves.toEqual({ scope: { message_ids: [42] }, assignee_email: 'person@example.test', limit: 50 });
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Show more' }));
+    expect(requests.filter((request) => request.url.endsWith('/metrics'))).toHaveLength(1);
+    expect((metrics.closest('details') as HTMLDetailsElement).open).toBe(true);
+    await fireEvent.click(await within(dialog).findByRole('button', { name: 'Show more' }));
     await waitFor(() => expect(within(dialog).queryByRole('button', { name: 'Show more' })).toBeNull());
     await fireEvent.click(within(dialog).getByRole('link', { name: 'Archived review' }));
     expect(onOpenMeeting).toHaveBeenCalledWith(expect.objectContaining({ message_id: 42 }));
@@ -50,10 +53,16 @@ describe('Messages meeting summary', () => {
   it('asks the workspace for fresh authority after a changed scope', async () => {
     const onReloadScope = vi.fn();
     render(MessageMeetingSummary, {
-      client: createAPIClient(async () => Response.json({ error: 'meeting_scope_changed', message: 'Meetings changed.' }, { status: 409 })),
+      client: createAPIClient(async (input) => (input as Request).url.endsWith('/metrics')
+        ? Response.json({ error: 'meeting_scope_changed', message: 'Meetings changed.' }, { status: 409 })
+        : Response.json(meetingActions({ rows: [meetingAction()], total_count: 1 }))),
       scope: { kind: 'explore', explore: { predicate: {}, cache_revision: 'old', search_provenance: {} } }, onReloadScope,
     });
     await screen.findByText(/Meetings changed/);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Action items · 1' }));
+    const dialog = screen.getByRole('dialog', { name: 'Action items' });
+    expect(within(dialog).getByText('Prepare review')).toBeDefined();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Reload meeting activity' }));
     expect(onReloadScope).toHaveBeenCalledOnce();
   });
