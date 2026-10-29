@@ -466,7 +466,9 @@ func TestSnapshotCoverageCountsSuppliedIDsWithinBatchLimit(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 	mainDB := openMainDBWithOneMessage(t)
-	_, err := mainDB.Exec(`INSERT INTO messages (id) VALUES (3)`)
+	// Message 2 exists and is stamped like the others but is not supplied, so
+	// only the supplied-ID filter keeps its vector out of the count.
+	_, err := mainDB.Exec(`INSERT INTO messages (id) VALUES (2), (3)`)
 	require.NoError(err)
 	b, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 4, MainDB: mainDB})
 	require.NoError(err)
@@ -478,12 +480,15 @@ func TestSnapshotCoverageCountsSuppliedIDsWithinBatchLimit(t *testing.T) {
 		{MessageID: 1, ChunkIndex: 1, Vector: []float32{0, 1, 0, 0}},
 		{MessageID: 2, Vector: []float32{0, 0, 1, 0}},
 	}))
-	_, err = mainDB.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (1, 3)`, int64(gen))
+	_, err = mainDB.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (1, 2, 3)`, int64(gen))
 	require.NoError(err)
 
 	count, err := b.EmbeddedMessageCountForSnapshot(ctx, gen, []int64{1, 3})
 	require.NoError(err)
 	assert.Equal(int64(1), count, "a multi-chunk message counts once; unsupplied vectors are ignored")
+	count, err = b.EmbeddedMessageCountForSnapshot(ctx, gen, []int64{1, 2, 3})
+	require.NoError(err)
+	assert.Equal(int64(2), count, "message 2 counts once it is supplied")
 
 	_, err = b.EmbeddedMessageCountForSnapshot(ctx, gen, make([]int64, vector.FilteredCoverageBatchSize+1))
 	assert.ErrorIs(err, vector.ErrCoverageBatchTooLarge)

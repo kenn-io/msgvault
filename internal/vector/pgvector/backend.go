@@ -1453,6 +1453,10 @@ func (b *Backend) pruneEmbeddingBatch(ctx context.Context, policy, resetProgress
 			if _, err := tx.ExecContext(ctx, `UPDATE embedding_document_progress SET reconcile_cursor='', journal_cursor='' WHERE reconcile_cursor<>'' OR journal_cursor<>''`); err != nil {
 				return 0, 0, err
 			}
+			// Work captured before this reset must not write progress over it.
+			if err := b.policyStore.InvalidateConversationPolicyWorkTx(ctx, tx); err != nil {
+				return 0, 0, err
+			}
 		}
 	}
 
