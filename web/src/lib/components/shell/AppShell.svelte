@@ -1595,7 +1595,7 @@
         onOpenView={(view) => { void closeDrawer().then(() => openSavedView(viewState(view))); }}
         onRenameView={(view, name) => shellData.renameView(view, name)}
         onDescribeView={(view, description) => shellData.describeView(view, description)}
-        onDeleteView={view => void flashViewError(shellData.deleteView(view))}
+        onDeleteView={view => { void closeDrawer().then(() => flashViewError(shellData.deleteView(view))); }}
         onNavigate={(id) => {
           openWorkspaceTab(id);
           void closeDrawer();
