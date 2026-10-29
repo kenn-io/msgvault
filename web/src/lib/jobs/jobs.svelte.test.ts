@@ -49,3 +49,37 @@ it.each([true, false])('reports unavailable history only for configured lanes, c
   store.dispose();
   operations.destroy();
 });
+
+
+it('keeps healthy overlapping refreshes loading until operation status answers', async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.includes('/sources')) return Response.json({ sources: [] });
+    entered();
+    await gate;
+    return Response.json({ lanes: [] });
+  });
+  const operations = new OperationsController(client);
+  const store = new JobsStore(client, operations);
+  try {
+    const first = store.refresh();
+    await started;
+    const second = store.refresh();
+    // Let the source response settle while the healthy operation read is held.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(store.loaded).toBe(false);
+    expect(store.error).toBeUndefined();
+    release();
+    await Promise.all([first, second]);
+    expect(store.health).toBe('ok');
+    expect(store.error).toBeUndefined();
+  } finally {
+    release();
+    store.dispose();
+    operations.destroy();
+  }
+});

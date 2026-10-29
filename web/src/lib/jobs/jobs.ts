@@ -3,7 +3,7 @@ import { operationStateChip, OPERATION_KIND_LABELS, OPERATION_SETUP, type Operat
 import { syncStatusChip } from '../sources/labels';
 
 export type JobState = 'queued' | 'running' | 'failed';
-export type JobsHealth = 'ok' | 'running' | 'failed' | 'unavailable';
+export type JobsHealth = 'ok' | 'queued' | 'running' | 'failed' | 'unavailable';
 export type JobTarget =
   | { kind: 'source' }
   | { kind: 'setting'; target: OperationSettingsTarget }
@@ -54,5 +54,6 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
 }
 export function jobsHealth(items: readonly JobItem[]): JobsHealth {
   if (items.some(item => item.state === 'failed')) return 'failed';
-  return items.some(item => item.state === 'running' || item.state === 'queued') ? 'running' : 'ok';
+  if (items.some(item => item.state === 'running')) return 'running';
+  return items.some(item => item.state === 'queued') ? 'queued' : 'ok';
 }
