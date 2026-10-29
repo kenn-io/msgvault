@@ -70,3 +70,54 @@ describe('Past runs', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open Document extraction run' })));
   });
 });
+
+it('filters all document runs through Kind without adding a fourth control', async () => {
+  const { queries } = setup();
+  await screen.findByRole('button', { name: 'Open Document extraction run' });
+  await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All documents');
+  await waitFor(() => expect(queries.at(-1)?.get('lane')).toBe('documents'));
+  expect(queries.at(-1)?.has('kind')).toBe(false);
+  await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'CardDAV sync');
+  await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('carddav_sync'));
+  expect(queries.at(-1)?.has('lane')).toBe(false);
+});
+
+it('refreshes on reopening and retries an unreadable history through Refresh', async () => {
+  let failed = false;
+  let runs = [run];
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/status')) return Response.json({ lanes: [] });
+    return failed ? Response.json({}, { status: 500 }) : Response.json({ runs, membership_revision: 1, unavailable_kinds: [] });
+  });
+  const controller = new OperationsController(client); controllers.push(controller);
+  const props = { client, controller, state: defaultOperationsState(), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() };
+  const first = render(RunHistoryDialog, props);
+  await screen.findByRole('button', { name: 'Open Document extraction run' });
+  first.unmount();
+  runs = [{ ...run, kind: 'source_sync' }];
+  failed = true;
+  render(RunHistoryDialog, props);
+  await screen.findByText('Unable to load operation history.');
+  failed = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByRole('button', { name: 'Open Source sync run' });
+  expect(screen.queryByText('Unable to load operation history.')).toBeNull();
+});
+
+it('retries the selected run detail through Refresh', async () => {
+  let failed = true;
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/status')) return Response.json({ lanes: [] });
+    if (path.endsWith('/runs')) return Response.json({ runs: [run], membership_revision: 1, unavailable_kinds: [] });
+    return failed ? Response.json({}, { status: 500 }) : Response.json({ ...run, supported_actions: [] });
+  });
+  const controller = new OperationsController(client); controllers.push(controller);
+  render(RunHistoryDialog, { client, controller, state: { ...defaultOperationsState(), operationRunID: run.id }, onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+  await screen.findByText('Unable to load operation detail.');
+  failed = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByRole('region', { name: 'Operation run detail' });
+  expect(screen.queryByText('Unable to load operation detail.')).toBeNull();
+});
