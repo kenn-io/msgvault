@@ -11,11 +11,6 @@ function row(rows: ReturnType<typeof overviewRows>, id: string) {
 }
 
 describe('overviewRows', () => {
-  it('shows incomplete message coverage', () => {
-    const rows = overviewRows(lanes(lane('message_embedding')), undefined, undefined, { status: 'incomplete', actions: ['build_index'] });
-    expect(row(rows, 'message_embedding').chip).toEqual({ tone: 'warning', text: 'Incomplete' });
-  });
-
   it('lists every background feature, off ones with a way to turn them on', () => {
     const rows = overviewRows(lanes(lane('message_embedding', { configured: false })), undefined, undefined);
 
@@ -35,6 +30,7 @@ describe('overviewRows', () => {
   });
 
   it.each([
+    { status: 'incomplete' as const, available: true, chip: 'Incomplete' },
     { status: 'initializing' as const, available: false, chip: 'Initializing' },
     { status: 'unavailable' as const, available: false, chip: 'Unavailable' },
     { status: 'unavailable' as const, available: true, chip: 'Unbuilt' },
@@ -44,6 +40,7 @@ describe('overviewRows', () => {
     const rows = overviewRows(lanes(lane('message_embedding')), undefined, undefined, { status, actions: available ? ['build_index'] : [] });
     expect(row(rows, 'message_embedding').action).toEqual(available ? { kind: 'start', id: 'messages', label: 'Build index' } : undefined);
     expect(row(rows, 'message_embedding').chip.text).toBe(chip);
+    if (status === 'incomplete') expect(row(rows, 'message_embedding').chip.tone).toBe('warning');
   });
 
   it('offers the visual build the server advertises, with its consent line', () => {

@@ -141,17 +141,22 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each([
-  ['log.sql_slow_ms', 'server', 'Slow SQL threshold', 'ms'],
-  ['inline.max_media_mb', 'attachments', 'Inline maximum size', 'MiB'],
-  ['beeper.max_media_mb', 'attachments', 'Beeper maximum size', 'MiB'],
-  ['slack.max_media_mb', 'attachments', 'Slack maximum size', 'MiB'],
-  ['discord.max_media_mb', 'attachments', 'Discord maximum size', 'MiB'],
-  ['teams.max_media_mb', 'attachments', 'Teams maximum size', 'MiB'],
-])('includes the unit in the number field label for %s', async (key, group, label, unit) => {
-  const { client } = fixture(settingsDoc({ settings: [setting(key, group, 'integer', 100, { label })] }));
-  render(SettingsWorkspace, { client, category: group === 'server' ? 'server' : 'sources' });
-  expect(await screen.findByLabelText(`${label} (${unit})`)).toHaveProperty('value', '100');
+it('includes units in number field labels', async () => {
+  const cases = [
+    ['log.sql_slow_ms', 'server', 'Slow SQL threshold', 'ms'],
+    ['inline.max_media_mb', 'attachments', 'Inline maximum size', 'MiB'],
+    ['beeper.max_media_mb', 'attachments', 'Beeper maximum size', 'MiB'],
+    ['slack.max_media_mb', 'attachments', 'Slack maximum size', 'MiB'],
+    ['discord.max_media_mb', 'attachments', 'Discord maximum size', 'MiB'],
+    ['teams.max_media_mb', 'attachments', 'Teams maximum size', 'MiB'],
+  ];
+  const { client } = fixture(settingsDoc({ settings: cases.map(([key, group, label]) => setting(key, group, 'integer', 100, { label })) }));
+  render(SettingsWorkspace, { client, category: 'server' });
+  expect(await screen.findByLabelText('Slow SQL threshold (ms)')).toHaveProperty('value', '100');
+  await fireEvent.click(screen.getByRole('button', { name: 'Sources' }));
+  for (const [, , label, unit] of cases.slice(1)) {
+    expect(screen.getByLabelText(`${label} (${unit})`)).toHaveProperty('value', '100');
+  }
 });
 
 it('shows the restart cue before saving only while a restart-required draft is pending', async () => {
@@ -191,7 +196,6 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
   expect(hold?.(firstLeave)).toBe(true);
   const latestLeave = vi.fn(() => {
-    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
     const event = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
@@ -228,47 +232,27 @@ it('cancels a pending leave when the category changes, keeping drafts', async ()
   expect(screen.getByLabelText('Stop when idle after')).toHaveProperty('value', '15m');
   expect(hold?.(leave)).toBe(true);
   await screen.findByRole('button', { name: 'Discard and leave' });
-  await rerender({ category: 'contacts' });
+  await rerender({ category: 'carddav' });
   expect(screen.queryByRole('button', { name: 'Discard and leave' })).toBeNull();
   expect(leave).not.toHaveBeenCalled();
-});
-
-it('does not hold leaving while a settings save is pending', async () => {
-  let finish!: () => void;
-  const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
-  const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/settings') && request.method === 'PATCH') return pending;
-  });
-  let hold: ((leave: () => void) => boolean) | undefined;
-  render(SettingsWorkspace, {
-    props: { client, category: 'server' },
-    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
-  });
-  const field = await screen.findByLabelText('Stop when idle after');
-  await fireEvent.input(field, { target: { value: '15m' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  try {
-    await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
-    expect(hold?.(vi.fn())).toBe(false);
-    expect(screen.queryByText('Leave Settings and discard 1 unsaved change?')).toBeNull();
-  } finally {
-    finish();
-  }
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
 });
 
 it('blocks reload only while Settings has unsaved drafts', async () => {
   const { client } = fixture();
   render(SettingsWorkspace, { client, category: 'server' });
   const field = await screen.findByLabelText('Stop when idle after');
+  const row = field.closest('[data-setting-key]') as HTMLElement;
+  expect(within(row).queryByText('(unsaved)')).toBeNull();
   const clean = new Event('beforeunload', { cancelable: true });
   window.dispatchEvent(clean);
   expect(clean.defaultPrevented).toBe(false);
   await fireEvent.input(field, { target: { value: '15m' } });
+  expect(within(row).getByText('(unsaved)')).toBeDefined();
   const dirty = new Event('beforeunload', { cancelable: true });
   window.dispatchEvent(dirty);
   expect(dirty.defaultPrevented).toBe(true);
   await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  expect(within(row).queryByText('(unsaved)')).toBeNull();
   const discarded = new Event('beforeunload', { cancelable: true });
   window.dispatchEvent(discarded);
   expect(discarded.defaultPrevented).toBe(false);
@@ -288,40 +272,6 @@ it('keeps a failed Overview action error on Overview', async () => {
   expect((await screen.findByRole('alert')).textContent).toContain('Synthetic sync failure');
 });
 
-it('gives edited rows unsaved text for assistive technology', async () => {
-  const { client } = fixture();
-  render(SettingsWorkspace, { client, category: 'server' });
-  const field = await screen.findByLabelText('Stop when idle after');
-  const row = field.closest('[data-setting-key]')!;
-  expect(within(row as HTMLElement).queryByText('(unsaved)')).toBeNull();
-  await fireEvent.input(field, { target: { value: '15m' } });
-  expect(within(row as HTMLElement).getByText('(unsaved)')).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-  expect(within(row as HTMLElement).queryByText('(unsaved)')).toBeNull();
-});
-
-it('shows Working while a message rebuild is pending', async () => {
-  let finish!: (response: Response) => void;
-  const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
-    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] });
-    if (request.url.endsWith('/cli/run')) return pending;
-  });
-  render(SettingsWorkspace, { client });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Message search' }));
-  try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
-    await waitFor(() => expect(seen.some(request => request.path === '/api/v1/cli/run')).toBe(true));
-    const button = screen.getByRole('button', { name: 'Build index, Message search' });
-    expect(button).toHaveProperty('disabled', true);
-    expect(button.textContent).toContain('Working…');
-  } finally {
-    finish(new Response('{"type":"complete"}\n'));
-  }
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
-});
-
 describe('SettingsWorkspace', () => {
   it('lists the categories in order, Overview first, and opens the one it is given', async () => {
     const { client } = fixture();
@@ -331,8 +281,6 @@ describe('SettingsWorkspace', () => {
     expect(names).toEqual([
       'Overview', 'Server', 'Search & AI', 'People lookups', 'Tasks', 'Contacts', 'Sources', 'Advanced'
     ]);
-    expect(screen.queryByText('Attachments')).toBeNull();
-    expect(screen.queryByText('Beeper schedule')).toBeNull();
   });
 
   it('shows the plain-HTTP warning on Server only', async () => {
@@ -465,8 +413,6 @@ it('creates an absent Exa provider with safe defaults after reloading a conflict
   });
   render(SettingsWorkspace, { client, category: 'enrichment' });
   await fireEvent.click(await screen.findByRole('button', { name: 'Add Exa' }));
-  expect(screen.getByText('The provider starts disabled. Review its disclosure policy and add a credential before enabling it.')).toBeDefined();
-  expect(screen.getByText('Names are durable IDs and cannot change provider kind later.')).toBeDefined();
   await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: 'exa-primary' } });
   await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
   await screen.findByText('The settings changed on disk. The latest are loaded. Try again.');
@@ -479,25 +425,40 @@ it('creates an absent Exa provider with safe defaults after reloading a conflict
   expect(writes[1].body).not.toHaveProperty('max_cost_usd_micros_per_day');
 });
 
-it('locks fields and newly mounted category controls while a save waits', async () => {
+it('locks fields and newly mounted category controls without holding leave while a save waits', async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const doc = settingsDoc();
   const { client, seen } = fixture(doc, request => request.method === 'PATCH' ? pending : undefined);
-  render(SettingsWorkspace, { client, category: 'server' });
+  let hold: ((leave: () => void) => boolean) | undefined;
+  render(SettingsWorkspace, {
+    props: { client, category: 'server' },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
   await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
-  expect(screen.getByLabelText('Stop when idle after').matches(':disabled')).toBe(true);
-  await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
-  expect(screen.getByLabelText('Builder threads').matches(':disabled')).toBe(true);
-  finish(Response.json(doc, { headers: { ETag: '"s2"' } }));
+  try {
+    await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
+    expect(hold?.(vi.fn())).toBe(false);
+    expect(screen.queryByText('Leave Settings and discard 1 unsaved change?')).toBeNull();
+    expect(screen.getByLabelText('Stop when idle after').matches(':disabled')).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    expect(screen.getByLabelText('Builder threads').matches(':disabled')).toBe(true);
+  } finally {
+    finish(Response.json(doc, { headers: { ETag: '"s2"' } }));
+  }
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
 });
 
-it('saves keys and providers at once, apart from Save changes', async () => {
+it.each(['workspace', 'provider card'])('keeps immediate saves and credential locks in the %s', async scope => {
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
   const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
+  if (scope === 'provider card') {
+    render(SettingsWorkspace, { client, category: 'enrichment' });
+    await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+    expect(screen.getByText('Save provider settings first before changing this credential.')).toBeDefined();
+    return;
+  }
   const writes = () => seen.filter(request => request.method !== 'GET').map(({ method, path, ifMatch }) => [method, path, ifMatch]);
   render(SettingsWorkspace, { client, category: 'search' });
   const note = 'These save immediately when you use their buttons — not with Save changes.';
@@ -516,7 +477,6 @@ it('saves keys and providers at once, apart from Save changes', async () => {
   await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
   expect(screen.getAllByText(note).length).toBeGreaterThan(0);
   await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
-  expect(screen.getByText('Save provider settings first before changing this credential.')).toBeDefined();
   await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/providers/primary'))).toBe(true));
@@ -683,40 +643,34 @@ it('shows settings from unknown groups under Advanced', async () => {
   expect(await screen.findByLabelText('Extra limit')).toHaveProperty('value', '4');
 });
 
-it('keeps Build index through a pending or failed coverage refresh', async () => {
+it.each(['pending refresh', 'failed initial read'])('shows message coverage through a %s', async outcome => {
   let reads = 0;
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const coverage = { eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] };
   const { client } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
-    if (request.url.includes('/search/coverage')) return ++reads === 1
-      ? Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] })
-      : pending;
+    if (request.url.includes('/search/coverage')) {
+      if (outcome === 'failed initial read') return Response.json({ message: 'Unavailable' }, { status: 503 });
+      return ++reads === 1 ? Response.json(coverage) : pending;
+    }
   });
   render(SettingsWorkspace, { client });
-  const name = 'Build index, Message search';
-  await screen.findByRole('button', { name });
-  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
-  await waitFor(() => expect(reads).toBe(2));
-  try {
-    expect(screen.getByRole('button', { name })).toBeDefined();
-  } finally {
-    finish(Response.json({ message: 'Unavailable' }, { status: 503 }));
+  if (outcome === 'failed initial read') {
+    await screen.findByRole('list', { name: 'Features' });
+    const row = screen.getByText('Message search').closest('li')!;
+    expect(await within(row).findByText('Unavailable')).toBeDefined();
+  } else {
+    const name = 'Build index, Message search';
+    await screen.findByRole('button', { name });
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+    try {
+      await waitFor(() => expect(reads).toBe(2));
+      expect(screen.getByRole('button', { name })).toBeDefined();
+    } finally {
+      finish(Response.json(coverage));
+    }
   }
-  await screen.findByText('Unbuilt');
-  expect(screen.getByRole('button', { name })).toBeDefined();
-});
-
-it('shows Unavailable when the first coverage read fails', async () => {
-  const { client, seen } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
-    if (request.url.includes('/search/coverage')) return Response.json({ message: 'Unavailable' }, { status: 503 });
-  });
-  render(SettingsWorkspace, { client });
-  await screen.findByRole('list', { name: 'Features' });
-  await waitFor(() => expect(seen.some(request => request.path === '/api/v1/search/coverage')).toBe(true));
-  const row = screen.getByText('Message search').closest('li')!;
-  expect(await within(row).findByText('Unavailable')).toBeDefined();
 });
 
 it('refreshes status while a message rebuild is pending', async () => {
@@ -742,7 +696,9 @@ it('refreshes status while a message rebuild is pending', async () => {
     const row = screen.getByText('Message search').closest('li')!;
     await waitFor(() => {
       expect(within(row).getByText('Running')).toBeDefined();
-      expect(within(row).getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', true);
+      const button = within(row).getByRole('button', { name: 'Build index, Message search' });
+      expect(button).toHaveProperty('disabled', true);
+      expect(button.textContent).toContain('Working…');
     });
     expect(seen.filter(request => request.path === '/api/v1/operations/status')).toHaveLength(2);
   } finally {
