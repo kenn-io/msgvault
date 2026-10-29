@@ -4,7 +4,7 @@
     listSavedViews as generatedListSavedViews,
     patchSavedView as generatedPatchSavedView,
   } from '../../api/generated/api/api';
-  import { Button, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Chip, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
   import PageHeader from '../shell/PageHeader.svelte';
   import type { APIClient } from '../../api/client';
@@ -227,7 +227,7 @@
               {#if !incompatibility}
                 <ul class="summary" aria-label={`${view.name} summary`}>
                   {#each savedViewSummary(view.canonical_state as CanonicalState) as part, index (index)}
-                    <li class="filter-chip">{part}</li>
+                    <li><Chip size="sm" uppercase={false} class="summary-chip">{part}</Chip></li>
                   {/each}
                 </ul>
               {/if}
@@ -397,7 +397,7 @@
     padding: 0;
     list-style: none;
   }
-  .summary li {
+  .summary :global(.summary-chip) {
     border: 1px solid var(--border-default);
     background: var(--bg-subtle);
     color: var(--text-secondary);

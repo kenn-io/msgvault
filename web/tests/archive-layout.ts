@@ -52,7 +52,7 @@ export async function mockArchiveLayout(page: Page) {
     id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Archive',
     last_sync_at: null, updated_at: row.occurred_at,
     active_sync: null, latest_sync: null, last_successful_sync: null,
-    can_sync: true, scheduled: false, next_sync_at: null
+    can_sync: false, scheduled: false, sync_unavailable_reason: 'sync_not_configured', next_sync_at: null
   }] } }));
   await page.route('**/api/v1/files/search', (route) => route.fulfill({
     json: {

@@ -117,7 +117,7 @@ test('loaded message sender, body, and attachment edges align with the reader', 
   expect(insets).toEqual([12, 12, 12]);
 });
 
-test('filter, saved-query, and status chips share heights and visible insets', async ({ page }) => {
+test('chips keep pill corners and removable chips keep visible insets', async ({ page }) => {
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
     id: 1, name: 'Archive search', schema_version: 2, revision: 1,
     canonical_state: { query: 'archive', search_mode: 'full_text' },
@@ -131,7 +131,7 @@ test('filter, saved-query, and status chips share heights and visible insets', a
   await expect(chips).toHaveCount(2);
   const geometry = await chips.evaluateAll((elements) => elements.map((element) => {
     const range = document.createRange();
-    range.selectNodeContents(element.firstChild!);
+    range.selectNodeContents(element.querySelector('.kit-chip__label')!);
     const box = element.getBoundingClientRect();
     const icon = element.querySelector('svg')!.getBoundingClientRect();
     const border = Number.parseFloat(getComputedStyle(element).borderLeftWidth);
@@ -139,13 +139,28 @@ test('filter, saved-query, and status chips share heights and visible insets', a
       right: box.right - border - icon.right };
   }));
   expect(geometry).toEqual([{ height: 26, left: 8, right: 8 }, { height: 26, left: 8, right: 8 }]);
+  for (const chip of await chips.all()) {
+    const shape = await chip.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
+    expect.soft(shape.radius).toBeGreaterThanOrEqual(shape.height / 2);
+  }
+  const longQuery = 'archive '.repeat(100).trim();
+  await page.getByRole('searchbox', { name: 'Search everything' }).fill(longQuery);
+  const queryChip = chips.filter({ hasText: longQuery });
+  await expect(queryChip).toHaveAttribute('title', `Full text: “${longQuery}”`);
+  const truncation = await queryChip.locator('.kit-chip__label').evaluate((element) => ({
+    clipped: element.scrollWidth > element.clientWidth,
+    overflow: getComputedStyle(element).textOverflow,
+    whiteSpace: getComputedStyle(element).whiteSpace
+  }));
+  expect(truncation).toEqual({ clipped: true, overflow: 'ellipsis', whiteSpace: 'nowrap' });
+  await expect(queryChip.getByRole('button', { name: 'Remove search', exact: true })).toBeVisible();
   await selectWorkspace(page, 'Directory');
   await page.getByRole('button', { name: 'Filters', exact: true }).click();
   await page.getByRole('textbox', { name: 'Category filter' }).fill('Archive');
   const filter = page.locator('.filter-chips .chip');
   await expect(filter).toBeVisible();
   const directoryGeometry = await filter.evaluate((element) => {
-    const range = document.createRange(); range.selectNodeContents(element.firstChild!);
+    const range = document.createRange(); range.selectNodeContents(element.querySelector('.kit-chip__label')!);
     const box = element.getBoundingClientRect();
     const icon = element.querySelector('svg')!.getBoundingClientRect();
     const border = Number.parseFloat(getComputedStyle(element).borderLeftWidth);
@@ -153,22 +168,28 @@ test('filter, saved-query, and status chips share heights and visible insets', a
       right: box.right - border - icon.right };
   });
   expect(directoryGeometry).toEqual({ height: 26, left: 8, right: 8 });
+  const directoryShape = await filter.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
+  expect.soft(directoryShape.radius).toBeGreaterThanOrEqual(directoryShape.height / 2);
   await filter.getByRole('button', { name: 'Remove Category: Archive filter', exact: true }).click();
   await expect(filter).toHaveCount(0);
   await selectWorkspace(page, 'Saved views');
-  const summary = page.locator('.summary li').filter({ hasText: 'archive' });
+  const summary = page.locator('.summary .kit-chip').filter({ hasText: 'archive' });
   await expect(summary).toBeVisible();
-  const savedGeometry = await summary.evaluate((element) => {
-    const range = document.createRange(); range.selectNodeContents(element);
-    const box = element.getBoundingClientRect(); const text = range.getBoundingClientRect();
-    return { height: box.height, centered: Math.abs((text.top + text.bottom) / 2 - (box.top + box.bottom) / 2) };
+  const savedShape = await summary.evaluate((element) => {
+    return { radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height };
   });
-  expect(savedGeometry.height).toBe(26);
+  expect.soft(savedShape.radius).toBeGreaterThanOrEqual(savedShape.height / 2);
+  const savedGeometry = await summary.evaluate((element) => {
+    const range = document.createRange(); range.selectNodeContents(element.querySelector('.kit-chip__label')!);
+    const box = element.getBoundingClientRect(); const text = range.getBoundingClientRect();
+    return { centered: Math.abs((text.top + text.bottom) / 2 - (box.top + box.bottom) / 2) };
+  });
   expect(savedGeometry.centered).toBeLessThanOrEqual(1);
   await selectWorkspace(page, 'Sources');
   const status = page.locator('.kit-chip').filter({ hasText: 'Never synced' });
   await expect(status).toBeVisible();
-  expect((await status.boundingBox())!.height).toBe(26);
+  const statusShape = await status.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
+  expect.soft(statusShape.radius).toBeGreaterThanOrEqual(statusShape.height / 2);
 });
 
 test('linked message uses the page title text scale', async ({ page }) => {
