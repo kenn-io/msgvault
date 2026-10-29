@@ -41,8 +41,6 @@ export interface OperationsSnapshot {
   readonly statusReadable: boolean;
   readonly historyReadable: boolean;
   /** Epoch ms of the last successful status load, from page one or a status refresh. */
-  readonly statusUpdatedAt: number | null;
-  readonly statusRefreshing: boolean;
   readonly initialLoading: boolean;
   readonly backgroundLoading: boolean;
   readonly paging: boolean;
