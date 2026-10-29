@@ -152,6 +152,8 @@ func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 }
 
 func TestGetPersonDraftOnlyLinkedAlias(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("owner@example.com", "gmail")
 	owner := b.AddParticipant("owner@example.com", "example.com", "Owner")
@@ -169,14 +171,14 @@ func TestGetPersonDraftOnlyLinkedAlias(t *testing.T) {
 	engine := b.BuildEngine()
 
 	detail, err := engine.GetPerson(t.Context(), alias, Context{}, []int64{primary, alias})
-	require.NoError(t, err)
-	require.NotNil(t, detail)
-	assert.Equal(t, alias, detail.ID)
-	assert.Zero(t, detail.ActivityCount)
-	assert.Zero(t, detail.FileCount)
-	assert.True(t, detail.FirstAt.IsZero())
-	assert.True(t, detail.LastAt.IsZero())
-	assert.Len(t, detail.Identifiers, 2)
+	require.NoError(err)
+	require.NotNil(detail)
+	assert.Equal(alias, detail.ID)
+	assert.Zero(detail.ActivityCount)
+	assert.Zero(detail.FileCount)
+	assert.True(detail.FirstAt.IsZero())
+	assert.True(detail.LastAt.IsZero())
+	assert.Len(detail.Identifiers, 2)
 }
 
 func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {

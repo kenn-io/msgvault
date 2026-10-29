@@ -67,6 +67,7 @@ func relationshipCalendarMessage(t *testing.T, cmd tea.Cmd) peopleRelationshipLo
 }
 
 func TestPeopleOverviewDraftOnlySkipsRelationshipCalendar(t *testing.T) {
+	assert := assert.New(t)
 	contact := testPerson(7, "Draft recipient")
 	contact.ActivityCount = 0
 	backend := &fakePeopleRelationshipBackend{
@@ -74,12 +75,12 @@ func TestPeopleOverviewDraftOnlySkipsRelationshipCalendar(t *testing.T) {
 	}
 	model := peopleContentModel(backend, &contact)
 	cmd := model.beginPeopleRelationshipLoad()
-	assert.Nil(t, cmd)
+	assert.Nil(cmd)
 	overview := stripANSI(strings.Join(model.peopleContactTabLines(), "\n"))
-	assert.Contains(t, overview, "No sent or received messages with this contact yet.")
-	assert.NotContains(t, overview, "has not loaded")
-	assert.NotContains(t, overview, "Press r to retry")
-	assert.NotContains(t, overview, "Relationship")
+	assert.Contains(overview, "No sent or received messages with this contact yet.")
+	assert.NotContains(overview, "has not loaded")
+	assert.NotContains(overview, "Press r to retry")
+	assert.NotContains(overview, "Relationship")
 }
 
 func TestPeopleOverviewLoadsRelationshipForObservedContact(t *testing.T) {

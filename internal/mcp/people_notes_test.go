@@ -293,6 +293,8 @@ func TestMCPGetPersonRelationshipReturnsSummaryAndOptionalCalendar(t *testing.T)
 }
 
 func TestMCPGetPersonRelationshipDraftOnlyOmitsCalendar(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	backend := &recordingPeopleBackend{
 		contact: &query.PersonSummary{
 			ID: 9, DisplayLabel: "Draft recipient", CacheRevision: "cache-8",
@@ -303,20 +305,20 @@ func TestMCPGetPersonRelationshipDraftOnlyOmitsCalendar(t *testing.T) {
 	result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonRelationship, map[string]any{
 		"participant_id": 9, "year": 2025,
 	})
-	require.NotEqual(t, true, result["isError"], "result: %#v", result)
+	require.NotEqual(true, result["isError"], "result: %#v", result)
 	structured := toolStructuredContent(t, result)
-	assert.Equal(t, "Draft recipient", structured["display_label"])
-	assert.InDelta(t, 9, structured["participant_id"], 0)
-	assert.InDelta(t, 7, structured["canonical_id"], 0)
-	assert.Equal(t, "cache-8", structured["cache_revision"])
-	assert.Equal(t, []any{}, structured["annual"])
+	assert.Equal("Draft recipient", structured["display_label"])
+	assert.InDelta(9, structured["participant_id"], 0)
+	assert.InDelta(7, structured["canonical_id"], 0)
+	assert.Equal("cache-8", structured["cache_revision"])
+	assert.Equal([]any{}, structured["annual"])
 	current, ok := structured["current"].(map[string]any)
-	require.True(t, ok)
-	assert.InDelta(t, 0, current["temperature"], 0)
-	assert.NotContains(t, structured, "year")
-	assert.NotContains(t, structured, "timezone")
-	assert.NotContains(t, structured, "days")
-	assert.Equal(t, peoplebrowser.CalendarRequest{}, backend.calendarRequest)
+	require.True(ok)
+	assert.InDelta(0, current["temperature"], 0)
+	assert.NotContains(structured, "year")
+	assert.NotContains(structured, "timezone")
+	assert.NotContains(structured, "days")
+	assert.Equal(peoplebrowser.CalendarRequest{}, backend.calendarRequest)
 }
 
 func TestMCPGetPersonRelationshipValidationDoesNotCallBackend(t *testing.T) {
