@@ -294,7 +294,10 @@ func TestMCPGetPersonRelationshipReturnsSummaryAndOptionalCalendar(t *testing.T)
 
 func TestMCPGetPersonRelationshipDraftOnlyOmitsCalendar(t *testing.T) {
 	backend := &recordingPeopleBackend{
-		contact:     &query.PersonSummary{ID: 7, DisplayLabel: "Draft recipient", CacheRevision: "cache-8"},
+		contact: &query.PersonSummary{
+			ID: 9, DisplayLabel: "Draft recipient", CacheRevision: "cache-8",
+			Cluster: &query.PersonCluster{CanonicalID: 7, MemberIDs: []int64{7, 9}},
+		},
 		calendarErr: query.ErrRelationshipPersonNotFound,
 	}
 	result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonRelationship, map[string]any{

@@ -160,6 +160,8 @@ The API publishes its generated OpenAPI contract at `/openapi.json`.
 opening an archive. OpenAPI `info.version` is the **API schema version**;
 it is separate from the binary release version. The current schema is **3.28.0**.
 
+Schema 3.28.0 returns HTTP 200 from `GET /api/v1/participants/{id}` for a participant with no sent or received messages, with `activity_count` set to 0 and `first_at` and `last_at` omitted.
+
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.

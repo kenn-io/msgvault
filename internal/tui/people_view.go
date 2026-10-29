@@ -518,6 +518,9 @@ func (m Model) peopleContactTabLines() []string {
 }
 
 func (m Model) peopleOverviewRelationshipLines() []string {
+	if m.peopleState.contact != nil && m.peopleState.contact.ActivityCount == 0 {
+		return []string{"", "No sent or received messages with this contact yet."}
+	}
 	year := m.peopleState.relationshipYear
 	heading := relationshipAlignedLine("● Relationship", strconv.Itoa(year), max(m.width, 1))
 	switch {

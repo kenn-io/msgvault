@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,9 +77,11 @@ func TestPeopleOverviewDraftOnlySkipsRelationshipCalendar(t *testing.T) {
 	cmd := model.beginPeopleRelationshipLoad()
 	assert.Nil(t, cmd)
 	assert.Empty(t, backend.calendarRequests)
-	assert.False(t, model.peopleState.relationshipLoading)
-	assert.NoError(t, model.peopleState.relationshipErr)
-	assert.Nil(t, model.peopleState.relationshipCalendar)
+	overview := stripANSI(strings.Join(model.peopleContactTabLines(), "\n"))
+	assert.Contains(t, overview, "No sent or received messages with this contact yet.")
+	assert.NotContains(t, overview, "has not loaded")
+	assert.NotContains(t, overview, "Press r to retry")
+	assert.NotContains(t, overview, "Relationship")
 }
 
 func TestPeopleOverviewLoadsRelationshipForObservedContact(t *testing.T) {

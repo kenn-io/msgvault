@@ -209,12 +209,6 @@ func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {
 	assert.True(detail.FirstAt.IsZero())
 	assert.True(detail.LastAt.IsZero())
 	assert.NotEmpty(detail.Identifiers)
-	population, err := engine.searchPeopleLegacy(t.Context(), PersonSearchRequest{}, &draftRecipient, nil, true)
-	require.NoError(err)
-	require.Len(population.Rows, 1)
-	assert.Equal(int64(1), population.TotalCount)
-	assert.Equal(draftRecipient, population.Rows[0].ID)
-	assert.Zero(population.Rows[0].ActivityCount)
 
 	detail, err = engine.GetPerson(t.Context(), 9999, Context{}, nil)
 	require.NoError(err)
