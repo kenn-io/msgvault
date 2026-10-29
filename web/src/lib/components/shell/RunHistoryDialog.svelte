@@ -3,7 +3,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { OperationsController } from '../../operations/controller.svelte';
-  import type { OperationsURLState } from '../../operations/models';
+  import type { OperationAction, OperationsURLState } from '../../operations/models';
   import { OPERATION_KIND_LABELS, type RelatedStatus } from '../../operations/labels';
   import { operationFocusAnchor, resolveOperationFocusAnchor, type OperationFocusAnchor } from '../../operations/focus';
   import OperationRelatedStatus from '../operations/OperationRelatedStatus.svelte';
@@ -11,7 +11,7 @@
   import OperationRunTable from '../operations/OperationRunTable.svelte';
   import Dialog from '../common/Dialog.svelte';
 
-  let { client, controller, state: local = $bindable(), archiveContextKey = '', onclose, onNavigate, onConfigure }: {
+  let { client, controller, state: local = $bindable(), archiveContextKey = '', onclose, onNavigate, onConfigure, onAnnounce = () => undefined }: {
     client: APIClient;
     controller: OperationsController;
     state: OperationsURLState;
@@ -19,6 +19,7 @@
     onclose: () => void;
     onNavigate: (target: RelatedStatus) => void;
     onConfigure: () => void;
+    onAnnounce?: (message: string) => void;
   } = $props();
   let root = $state<HTMLElement>();
   let anchor: OperationFocusAnchor | undefined;
@@ -63,6 +64,23 @@
     (buttons.find(button => button.textContent?.trim() === relatedFocus) ?? buttons[0])?.focus();
     relatedFocus = undefined;
   }
+  const actionSuccess: Record<OperationAction, string> = {
+    carddav_sync: 'CardDAV sync request completed; current operation state was refreshed.',
+    visual_build: 'Visual index build request completed; current operation state was refreshed.',
+    visual_resume: 'Visual index resume request completed; current operation state was refreshed.'
+  };
+  async function runAction(action: OperationAction): Promise<void> {
+    const outcome = await controller.runAction(action);
+    if (outcome === 'succeeded') onAnnounce(actionSuccess[action]);
+    else if (outcome !== 'discarded') onAnnounce(controller.snapshot.actionConflict ?? controller.snapshot.actionError ?? '');
+  }
+  async function refresh(event: MouseEvent): Promise<void> {
+    const button = event.currentTarget as HTMLButtonElement;
+    const focused = document.activeElement === button;
+    await controller.refresh();
+    await tick();
+    if (focused && document.activeElement === document.body && button.isConnected) button.focus();
+  }
   function dayOffset(date: string, days: number): string {
     const value = new Date(`${date}T00:00:00Z`);
     value.setUTCDate(value.getUTCDate() + days);
@@ -77,17 +95,19 @@
 <Dialog title={current.detail && local.operationRunID ? OPERATION_KIND_LABELS[current.detail.kind] : 'Past runs'} {onclose}>
   <div class="history" bind:this={root}>
     {#if local.operationStatus}
-      {#key local.operationStatus}
-        <OperationRelatedStatus {client} authority={local.operationStatus} {configured}
-          onClose={() => void closeRelatedStatus()} {onConfigure} />
-      {/key}
+      {#if current.statusReadable || current.statusError}
+        {#key local.operationStatus}
+          <OperationRelatedStatus {client} authority={local.operationStatus} {configured}
+            onClose={() => void closeRelatedStatus()} {onConfigure} />
+        {/key}
+      {:else}<p class="muted" role="status">Loading status…</p>{/if}
     {:else if local.operationRunID}
       <Button size="sm" surface="soft" label="All runs" onclick={() => void allRuns()} />
       {#if current.detailLoading}<p class="muted" role="status">Loading run…</p>{/if}
       {#if current.detailError}<p class="error" role="alert">{current.detailError}</p>{/if}
       {#if current.detail}
         <OperationRunDetail detail={current.detail} compact showClose={false} actionPending={current.actionPending}
-          onNavigate={navigateStatus} onAction={(action) => void controller.runAction(action)} />
+          onNavigate={navigateStatus} onAction={(action) => void runAction(action)} />
       {/if}
     {:else}
       <div class="filters" aria-label="Operation filters">
@@ -100,7 +120,7 @@
       <div class="runs"><OperationRunTable rows={current.rows} onSelect={selectRun} /></div>
       {#if current.nextCursor}<Button size="sm" surface="soft" label={current.paging ? 'Loading…' : 'Show more'} disabled={current.paging} onclick={() => void controller.loadMore()} />{/if}
     {/if}
-    {#if !local.operationStatus}<Button size="sm" surface="soft" label="Refresh" disabled={current.initialLoading || current.backgroundLoading || current.detailLoading} onclick={() => void controller.refresh()} />{/if}
+    {#if !local.operationStatus}<Button size="sm" surface="soft" label="Refresh" disabled={current.initialLoading || current.backgroundLoading || current.detailLoading} onclick={(event) => void refresh(event)} />{/if}
     {#each current.unavailableKinds as unavailable (unavailable.kind)}<p class="muted" role="status">{OPERATION_KIND_LABELS[unavailable.kind]} history is unavailable.</p>{/each}
     {#if current.statusError}<p class="error" role="alert">{current.statusError}</p>{/if}
     {#if current.runsError}<p class="error" role="alert">{current.runsError}</p>{/if}
