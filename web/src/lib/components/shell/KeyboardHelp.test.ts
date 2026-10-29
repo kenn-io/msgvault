@@ -30,7 +30,8 @@ describe('keyboard command registry', () => {
     const onclose = vi.fn();
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
-      onclose
+      onclose,
+      onOpenCommands: vi.fn()
     });
 
     expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeDefined();
@@ -48,6 +49,7 @@ describe('keyboard command registry', () => {
   it('renders a modified shortcut as one chord instead of key alternatives', () => {
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
+      onOpenCommands: vi.fn(),
       onclose: vi.fn()
     });
 

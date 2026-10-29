@@ -18,11 +18,16 @@ function setup(answers: Answers = {}) {
     const path = new URL(request.url).pathname;
     if (answers.failing?.includes(path)) return Response.json({ error: 'boom' }, { status: 500 });
     if (path === '/api/v1/saved-views' && request.method === 'GET') return Response.json({ saved_views: answers.views ?? [] });
-    if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') return new Response(null, { status: 204 });
+    if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') {
+      answers.views = answers.views?.filter(view => !path.endsWith(`/${view.id}`));
+      return new Response(null, { status: 204 });
+    }
     if (path.startsWith('/api/v1/saved-views/') && request.method === 'PATCH') {
       const body = await request.clone().json();
       const current = (answers.views ?? []).find((candidate) => path.endsWith(`/${candidate.id}`))!;
-      return Response.json({ ...current, ...body, revision: current.revision + 1 });
+      const updated = { ...current, ...body, revision: current.revision + 1 };
+      answers.views = answers.views?.map(view => view.id === updated.id ? updated : view);
+      return Response.json(updated);
     }
     return Response.json({}, { status: 404 });
   });
@@ -84,7 +89,7 @@ describe('ShellData', () => {
       expect(data.views.map(({ name }) => name)).toEqual(['Invoices']);
       expect(requests.some((request) => request.method === 'DELETE')).toBe(false);
 
-      data.undoDelete();
+      await data.undoDelete();
       expect(data.views.map(({ name }) => name)).toEqual(['Budget', 'Invoices']);
 
       await data.deleteView(budget!);
@@ -111,7 +116,7 @@ it('keeps a pending deletion hidden when the shell refreshes', async () => {
   const { data } = setup({ views: [saved] });
   await data.refresh(); await data.deleteView(saved); await data.refresh();
   expect(data.views).toEqual([]);
-  data.undoDelete();
+  await data.undoDelete();
   expect(data.views).toEqual([saved]);
 });
 it('edits descriptions with the revision and reports a conflict', async () => {
@@ -140,7 +145,7 @@ it('restores an undone view in server name order', async () => {
   const { data } = setup({ views: [view(2, 'Alpha'), view(1, 'Zeta')] });
   await data.refresh();
   const saved = data.views[0]!;
-  await data.deleteView(saved); data.undoDelete();
+  await data.deleteView(saved); await data.undoDelete();
   expect(data.views.map(view => view.name)).toEqual(['Alpha', 'Zeta']);
 });
 it('uses a keepalive request when committing a pending deletion', async () => {
@@ -154,11 +159,14 @@ it.each(['rename', 'delete'])('keeps a completed %s when an earlier list read fi
   const saved = view(1, 'Budget');
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
+  let reads = 0;
   const data = new ShellData(createAPIClient(async (input, init) => {
     const request = new Request(input, init);
+    if (new URL(request.url).pathname === '/api/v1/operations/status') return Response.json({ lanes: [] });
+    if (new URL(request.url).pathname === '/api/v1/sources/status') return Response.json({ sources: [] });
     if (request.method === 'PATCH') return Response.json({ ...saved, name: 'Q3 budget', revision: 2 });
     if (request.method === 'DELETE') return new Response(null, { status: 204 });
-    if (new URL(request.url).pathname === '/api/v1/saved-views') return pending;
+    if (new URL(request.url).pathname === '/api/v1/saved-views') return ++reads === 1 ? pending : Response.json({ saved_views: [{ ...saved, name: 'Q3 budget', revision: 2 }] });
     return Response.json({}, { status: 404 });
   }));
   data.views = [saved];
@@ -196,7 +204,7 @@ it('commits the previous pending deletion before offering Undo for the next', as
   await data.deleteView(second!);
   expect(requests.filter(request => request.method === 'DELETE').map(request => new URL(request.url).pathname)).toEqual(['/api/v1/saved-views/1']);
   expect(data.pending?.id).toBe(2);
-  data.undoDelete();
+  await data.undoDelete();
   expect(data.pending).toBeUndefined();
   expect(data.views.map(view => view.name)).toEqual(['Invoices']);
 });
@@ -208,6 +216,8 @@ it.each(['PATCH', 'DELETE'])('refreshes a %s conflict so the next edit uses the 
   const read = new Promise<void>(resolve => { refreshed = resolve; });
   const data = new ShellData(createAPIClient(async (input, init) => {
     const request = new Request(input, init);
+    if (new URL(request.url).pathname === '/api/v1/operations/status') return Response.json({ lanes: [] });
+    if (new URL(request.url).pathname === '/api/v1/sources/status') return Response.json({ sources: [] });
     const path = new URL(request.url).pathname;
     if (request.method === 'PATCH' || request.method === 'DELETE') {
       revisions.push(request.headers.get('If-Match')!);
@@ -223,4 +233,58 @@ it.each(['PATCH', 'DELETE'])('refreshes a %s conflict so the next edit uses the 
   await vi.waitFor(() => expect(data.views[0]?.revision).toBe(2));
   await data.renameView(data.views[0]!, 'Q3');
   expect(revisions).toEqual(['"saved-view-1-r1"', '"saved-view-1-r2"']);
+});
+
+it('keeps every accepted deletion when the previous DELETE is slow', async () => {
+  let views = [view(1, 'Alpha'), view(2, 'Beta'), view(3, 'Gamma')];
+  let finish!: () => void;
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  const deleted: number[] = [];
+  const data = new ShellData(createAPIClient(async (input, init) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).pathname === '/api/v1/operations/status') return Response.json({ lanes: [] });
+    if (new URL(request.url).pathname === '/api/v1/sources/status') return Response.json({ sources: [] });
+    const path = new URL(request.url).pathname;
+    if (request.method === 'DELETE') {
+      const id = Number(path.split('/').at(-1));
+      if (id === 1) await gate;
+      deleted.push(id);
+      views = views.filter(view => view.id !== id);
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({ saved_views: views });
+  }));
+  await data.refresh();
+  const [a, b, c] = views;
+  await data.deleteView(a!);
+  const second = data.deleteView(b!);
+  const third = data.deleteView(c!);
+  expect(data.pending?.name).toBe('Gamma');
+  finish();
+  await Promise.all([second, third]);
+  await data.expireDelete();
+  await data.refresh();
+  expect(deleted.sort()).toEqual([1, 2, 3]);
+  expect(data.views).toEqual([]);
+});
+
+it.each(['rename', 'undo', 'failed delete'])('uses the server Unicode order after %s', async mutation => {
+  const saved = view(1, 'Équipe');
+  const ordered = [saved, view(2, 'école')];
+  const data = new ShellData(createAPIClient(async (input, init) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).pathname === '/api/v1/operations/status') return Response.json({ lanes: [] });
+    if (new URL(request.url).pathname === '/api/v1/sources/status') return Response.json({ sources: [] });
+    if (request.method === 'PATCH') return Response.json(saved);
+    if (request.method === 'DELETE') return Response.json({}, { status: 500 });
+    return Response.json({ saved_views: ordered });
+  }));
+  await data.refresh();
+  if (mutation === 'rename') await data.renameView(view(1, 'Zulu'), 'Équipe');
+  else {
+    await data.deleteView(saved);
+    if (mutation === 'undo') await data.undoDelete();
+    else await data.expireDelete();
+  }
+  expect(data.views.map(view => view.name)).toEqual(['Équipe', 'école']);
 });

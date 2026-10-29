@@ -4,7 +4,7 @@ import { OPERATION_KIND_LABELS, OPERATION_SETUP, type OperationSettingsTarget, t
 export type JobState = 'running' | 'failed';
 export type JobsHealth = 'ok' | 'running' | 'failed' | 'unavailable';
 export type JobTarget =
-  | { kind: 'source'; id: number }
+  | { kind: 'source' }
   | { kind: 'setting'; target: OperationSettingsTarget }
   | { kind: 'status'; authority: RelatedStatus }
   | { kind: 'none' };
@@ -21,7 +21,7 @@ const firstLine = (message: string | null | undefined, fallback: string): string
 export function collectJobs(sources: readonly SourceStatus[], lanes: readonly OperationLaneStatus[]): JobItem[] {
   const items: JobItem[] = [];
   for (const source of sources) {
-    const base = { id: `source:${source.id}`, name: source.display_name || source.identifier, target: { kind: 'source' as const, id: source.id } };
+    const base = { id: `source:${source.id}`, name: source.display_name || source.identifier, target: { kind: 'source' as const } };
     if (source.active_sync || source.sync_unavailable_reason === 'sync_already_running') {
       const processed = source.active_sync?.messages_processed;
       items.push({ ...base, state: 'running', detail: processed ? `${processed.toLocaleString()} messages so far` : 'Syncing', at: source.active_sync?.started_at ?? source.scheduler_started_at });

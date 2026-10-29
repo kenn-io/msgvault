@@ -102,24 +102,26 @@ export class ShellData {
         return failure;
       }
       this.#controller?.abort();
-      this.views = this.views.map(candidate => candidate.id === data.id ? data : candidate).sort(viewOrder);
+      this.views = this.views.map(candidate => candidate.id === data.id ? data : candidate);
+      await this.refresh();
       return undefined;
     } catch {
       return failure;
     }
   }
 
-  /** Commits the previous deletion before offering Undo for this view. */
+  /** Offers Undo for this view while committing the previous deletion. */
   async deleteView(view: SavedView): Promise<string | undefined> {
-    const error = await this.expireDelete();
+    const previous = this.pending;
     this.pending = view;
     this.views = this.views.filter(candidate => candidate.id !== view.id);
-    return error;
+    if (previous) return this.commitDelete(previous);
   }
 
-  undoDelete(): void {
-    if (this.pending) this.restoreView(this.pending);
+  async undoDelete(): Promise<void> {
+    const view = this.pending;
     this.pending = undefined;
+    if (view) await this.restoreView(view);
   }
 
   async expireDelete(): Promise<string | undefined> {
@@ -128,9 +130,9 @@ export class ShellData {
     if (view) return this.commitDelete(view);
   }
 
-  private restoreView(view: SavedView): void {
-    if (this.views.some(candidate => candidate.id === view.id)) return;
-    this.views = [...this.views, view].sort(viewOrder);
+  private async restoreView(view: SavedView): Promise<void> {
+    if (!this.views.some(candidate => candidate.id === view.id)) this.views = [...this.views, view];
+    await this.refresh();
   }
 
   private async commitDelete(view: SavedView): Promise<string | undefined> {
@@ -140,21 +142,14 @@ export class ShellData {
         { ...this.#client, keepalive: true, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
       );
       if (!response.ok) {
-        this.restoreView(view);
-        if (response.status === 409) void this.refresh();
+        await this.restoreView(view);
         return `Couldn't delete ${view.name}.`;
       }
       this.#controller?.abort();
       this.views = this.views.filter(candidate => candidate.id !== view.id);
     } catch {
-      this.restoreView(view);
+      await this.restoreView(view);
       return `Couldn't delete ${view.name}.`;
     }
   }
-}
-
-function viewOrder(a: SavedView, b: SavedView): number {
-  const left = a.name.toLowerCase();
-  const right = b.name.toLowerCase();
-  return left < right ? -1 : left > right ? 1 : a.id - b.id;
 }

@@ -18,7 +18,7 @@ describe('jobs', () => {
   });
   it('counts source sync once per source and includes scheduler errors', () => {
     const source = { id: 1, display_name: 'Example archive', identifier: 'archive@example.com', updated_at: '2026-10-28T10:00:00Z', scheduler_last_error: 'Schedule failed\nmore detail' } as SourceStatus;
-    expect(collectJobs([source], [lane('source_sync')])).toEqual([{ id: 'source:1', name: 'Example archive', state: 'failed', detail: 'Schedule failed', at: undefined, target: { kind: 'source', id: 1 } }]);
+    expect(collectJobs([source], [lane('source_sync')])).toEqual([{ id: 'source:1', name: 'Example archive', state: 'failed', detail: 'Schedule failed', at: undefined, target: { kind: 'source' } }]);
   });
   it('keeps unresolved source and lane failures regardless of age', () => {
     const source = { id: 1, identifier: 'archive@example.com', latest_sync: { status: 'failed', started_at: '2026-10-28T10:00:00Z', error_message: 'Authorization expired\nmore detail' } } as SourceStatus;
