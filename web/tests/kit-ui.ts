@@ -10,13 +10,14 @@ export async function selectKitOption(
 }
 
 export async function selectWorkspace(page: Page, label: string): Promise<void> {
+  const opener = page.getByRole('button', { name: 'Open navigation' });
+  if (await opener.isVisible()) await opener.click();
   if (['Directory', 'Reviews', 'Deletions'].includes(label)) {
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
+    await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Help', exact: true }).click();
+    await page.getByRole('button', { name: 'Commands', exact: true }).click();
     await page.getByRole('dialog', { name: 'Messages commands' }).getByRole('option', { name: label === 'Reviews' ? 'Open Reviews' : label, exact: true }).click();
     return;
   }
-  const opener = page.getByRole('button', { name: 'Open navigation' });
-  if (await opener.isVisible()) await opener.click();
   await page
     .getByRole('complementary', { name: 'Sidebar' })
     .getByRole('button', { name: label, exact: true })
