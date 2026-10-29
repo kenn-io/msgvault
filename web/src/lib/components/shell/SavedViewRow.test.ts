@@ -22,6 +22,23 @@ it('shows what a saved view holds in its tooltip', () => {
   expect(screen.getByRole('button', { name: 'Plain' }).getAttribute('title')).toBe('Table');
 });
 
+it.each([
+  { reason: 'unsupported schema', schema_version: 3, incompatibility_reason: 'unsupported saved view schema version: Saved View 1 uses schema version 3', canonical_state: { presentation: 'files', filters: [{ field: 'source', operator: 'in', values: ['1'] }] } },
+  { reason: 'invalid state', schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] } },
+])('keeps a view with $reason disabled and deletable', async ({ reason: _reason, ...incompatible }) => {
+  const onOpenView = vi.fn();
+  const onDeleteView = vi.fn();
+  renderRow({ ...view(1, 'Old view'), ...incompatible }, { onOpen: onOpenView, onDelete: onDeleteView });
+  const saved = screen.getByRole('button', { name: 'Old view' });
+  expect(saved.getAttribute('aria-disabled')).toBe('true');
+  await fireEvent.click(saved);
+  expect(onOpenView).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole('button', { name: 'Old view actions' }));
+  expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
+  await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+  expect(onDeleteView).toHaveBeenCalledOnce();
+});
+
 it.each(['save', 'move'])('locks a pending rename and preserves focus through %s', async ending => {
   let finish!: () => void;
   const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
