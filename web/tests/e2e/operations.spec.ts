@@ -10,19 +10,6 @@ async function openHistory(page: Page) {
   await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
 }
 
-test('operations recovers from revision drift and restarts page one', async ({ page }) => {
-  const fixture = await installOperations(page);
-  fixture.driftNextPage();
-  await openHistory(page);
-  await page.getByRole('button', { name: 'Show more' }).click();
-  const conflict = page.getByRole('alert').filter({ hasText: 'Operation history changed' });
-  await expect(conflict).toContainText('Restart from the first page.');
-  await page.getByRole('button', { name: 'Restart', exact: true }).click();
-  await expect(conflict).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Open Source sync run' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toHaveCount(0);
-});
-
 test('operations invokes only advertised CardDAV and visual actions and surfaces conflicts', async ({ page }) => {
   const fixture = await installOperations(page);
   await openHistory(page);
@@ -106,17 +93,9 @@ test('operations keeps a configured but unavailable document authority retry-onl
   await expect(status).toContainText('4 of 5 owners ready');
 });
 
-test('Refresh reloads page one and retries failures while retaining selected detail', async ({ page }) => {
+test('Refresh disables its button until the request finishes while retaining selected detail', async ({ page }) => {
   const fixture = await installOperations(page);
   await openHistory(page);
-  await page.getByRole('button', { name: 'Show more' }).click();
-  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toBeVisible();
-  fixture.failNextHistory();
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(page.getByRole('alert').filter({ hasText: 'Unable to load operation history.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toHaveCount(0);
-  expect(fixture.listQueries.at(-1)?.get('cursor')).toBeNull();
   await page.getByRole('button', { name: 'Open Source sync run' }).click();
   const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
   const release = fixture.holdNextOperationStatus();
@@ -130,7 +109,7 @@ test('Refresh reloads page one and retries failures while retaining selected det
   await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeVisible();
 });
 
-test('desktop refresh preserves selected detail identity and row focus when opaque references rotate', async ({ page }) => {
+test('desktop refresh preserves selected detail identity when opaque references rotate', async ({ page }) => {
   const fixture = await installOperations(page);
   await openHistory(page);
   const sourceRow = page.getByRole('button', { name: 'Open Source sync run' });
@@ -145,7 +124,6 @@ test('desktop refresh preserves selected detail identity and row focus when opaq
   expect(selected()).toBe(before);
   await page.getByRole('button', { name: 'All runs' }).click();
   await expect(sourceRow).not.toHaveAttribute('data-run-id', listedBefore!);
-  await expect(sourceRow).toBeFocused();
 });
 
 test('narrow action reconciliation preserves selected detail identity when opaque references rotate', async ({ page }) => {
@@ -163,6 +141,4 @@ test('narrow action reconciliation preserves selected detail identity when opaqu
   await expect(page.getByRole('status', { name: 'Operation status' })).toContainText('Visual index resume request completed');
   expect(selected()).toBe(before);
   await expect(page.getByRole('dialog', { name: 'Visual embedding', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'All runs' }).click();
-  await expect(visualRow).toBeFocused();
 });

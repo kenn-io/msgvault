@@ -157,7 +157,7 @@ export class OperationsController {
   }
 
   async refreshStatus(): Promise<boolean> {
-    if (this.disposed || !this.loaded || this.initialLoading || this.backgroundLoading ||
+    if (this.disposed || this.initialLoading || this.backgroundLoading ||
       this.statusRefreshing) {
       return false;
     }

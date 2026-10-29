@@ -4,6 +4,7 @@ import {
   patchSavedView,
 } from '../../api/generated/api/api';
 import type { APIClient } from '../../api/client';
+import { OperationsController } from '../../operations/controller.svelte';
 import { JobsStore } from '../../jobs/jobs.svelte';
 import type { SavedView, PatchSavedViewRequest } from '../../api/generated/models';
 import type { ExploreURLState } from '../../explore/models';
@@ -27,7 +28,12 @@ export function viewState(view: SavedView): Partial<ExploreURLState> {
 
 /** Saved views and live jobs shown in the shell. */
 export class ShellData {
-  views = $state<SavedView[]>([]);
+  #ordered = $state<SavedView[]>([]);
+  #deleting = $state<number[]>([]);
+  get views(): SavedView[] {
+    return this.#ordered.filter(view => view.id !== this.pending?.id && !this.#deleting.includes(view.id));
+  }
+  set views(views: SavedView[]) { this.#ordered = views; }
   pending = $state<SavedView>();
   error = $state<string>();
   readonly jobs: JobsStore;
@@ -36,15 +42,15 @@ export class ShellData {
   #timer: ReturnType<typeof setInterval> | undefined;
   #controller: AbortController | undefined;
 
-  constructor(client: APIClient) {
+  constructor(client: APIClient, operations = new OperationsController(client)) {
     this.#client = client;
-    this.jobs = new JobsStore(client);
+    this.jobs = new JobsStore(client, operations);
   }
 
-  /** Refreshes on a timer. The shell also refreshes on every page change, including the first. */
+  /** Jobs poll while visible; saved views refresh on entry, focus, and writes. */
   start(): void {
     this.#timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') void this.refresh();
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') void this.jobs.refresh();
     }, REFRESH_MS);
   }
 
@@ -63,7 +69,7 @@ export class ShellData {
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
     this.error = views ? undefined : "Couldn't load saved views.";
-    if (views) this.views = views.filter(view => view.id !== this.pending?.id);
+    if (views) this.#ordered = views;
   }
 
   async #loadViews(client: APIClient): Promise<SavedView[] | undefined> {
@@ -102,7 +108,7 @@ export class ShellData {
         return failure;
       }
       this.#controller?.abort();
-      this.views = this.views.map(candidate => candidate.id === data.id ? data : candidate);
+      this.#ordered = this.#ordered.map(candidate => candidate.id === data.id ? data : candidate);
       await this.refresh();
       return undefined;
     } catch {
@@ -114,7 +120,6 @@ export class ShellData {
   async deleteView(view: SavedView): Promise<string | undefined> {
     const previous = this.pending;
     this.pending = view;
-    this.views = this.views.filter(candidate => candidate.id !== view.id);
     if (previous) return this.commitDelete(previous);
   }
 
@@ -131,25 +136,26 @@ export class ShellData {
   }
 
   private async restoreView(view: SavedView): Promise<void> {
-    if (!this.views.some(candidate => candidate.id === view.id)) this.views = [...this.views, view];
+    if (!this.#ordered.some(candidate => candidate.id === view.id)) this.#ordered = [...this.#ordered, view];
     await this.refresh();
   }
 
   private async commitDelete(view: SavedView): Promise<string | undefined> {
+    this.#deleting = [...this.#deleting, view.id];
     try {
       const { response } = await deleteSavedView(
         { id: view.id },
         { ...this.#client, keepalive: true, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
       );
-      if (!response.ok) {
-        await this.restoreView(view);
-        return `Couldn't delete ${view.name}.`;
-      }
+      if (!response.ok) throw new Error(`DELETE ${response.status}`);
       this.#controller?.abort();
-      this.views = this.views.filter(candidate => candidate.id !== view.id);
+      this.#ordered = this.#ordered.filter(candidate => candidate.id !== view.id);
     } catch {
+      this.#deleting = this.#deleting.filter(id => id !== view.id);
       await this.restoreView(view);
       return `Couldn't delete ${view.name}.`;
+    } finally {
+      this.#deleting = this.#deleting.filter(id => id !== view.id);
     }
   }
 }
