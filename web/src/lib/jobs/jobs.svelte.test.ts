@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { lanes as operationLanes } from '../../test/operations';
 import { createAPIClient } from '../api/client';
 import { JobsStore } from './jobs.svelte';
 import { jobLane, jobRun, sourceStatus, syncRunStatus } from './fixtures.test-support';
@@ -12,22 +13,25 @@ const knownJobs = [
   { name: 'running work', sources: [], lanes: [jobLane('visual_embedding', { active, latest: active })], details: ['Running'], health: 'running' },
 ];
 
-it.each(knownJobs.flatMap(fixture => ['sources', 'operations'].map(failedEndpoint => ({ ...fixture, failedEndpoint }))))('keeps known $name when $failedEndpoint cannot refresh', async ({ sources, lanes, details, health, failedEndpoint }) => {
+it.each(knownJobs.flatMap(fixture => ['sources', 'operations', 'history'].map(failedEndpoint => ({ ...fixture, failedEndpoint }))))('keeps known $name when $failedEndpoint cannot refresh', async ({ sources, lanes, details, health, failedEndpoint }) => {
   let failing = false;
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
     const source = path.includes('/sources');
-    if (failing && source === (failedEndpoint === 'sources')) return Response.json({}, { status: 500 });
-    return Response.json(source ? { sources } : { lanes });
+    if (failing && failedEndpoint !== 'history' && source === (failedEndpoint === 'sources')) return Response.json({}, { status: 500 });
+    return Response.json(source ? { sources } : { lanes: operationLanes(...lanes.map(lane => failing && failedEndpoint === 'history' ? { ...lane, active: undefined, latest: undefined, history_availability: 'unavailable' as const, unavailable_code: `${lane.kind}_history_unavailable` } : lane)) });
   });
   const operations = new OperationsController(client);
   const store = new JobsStore(client, operations);
   await store.refresh();
   expect(store.items.map(item => item.detail)).toEqual(details);
+  const targets = store.items.map(item => item.target);
   failing = true;
-  await store.refresh();
+  if (failedEndpoint === 'history') await operations.refreshStatus();
+  else await store.refresh();
   expect(store.items.map(item => item.detail)).toEqual(details);
   expect(store.health).toBe(health);
+  expect(store.items.map(item => item.target)).toEqual(targets);
   expect(store.error).toBe('Unable to refresh all job status.');
   failing = false;
   await store.refresh();
@@ -64,7 +68,7 @@ it.each(['sources', 'operations'] as const)('discards a held %s observation afte
       active_sync: changed ? syncRunStatus({ status: 'running', completed_at: null }) : null,
       can_sync: !changed, sync_unavailable_reason: changed ? 'sync_already_running' : undefined,
     })] : [] } : { lanes: endpoint === 'operations' ? [jobLane('message_embedding', {
-      latest: changed ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined } : jobRun('message_embedding'),
+      latest: changed ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined, counters: [{ name: 'attempted', unit: 'messages', value: 1 }, { name: 'succeeded', unit: 'messages', value: 1 }, { name: 'failed', unit: 'messages', value: 0 }] } : jobRun('message_embedding'),
     })] : [] });
     if (hold && source === (endpoint === 'sources')) { hold = false; oldSnapshot = snapshot; captured(); await gate; }
     return snapshot;
