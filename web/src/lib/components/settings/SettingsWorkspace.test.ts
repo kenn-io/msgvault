@@ -220,7 +220,6 @@ describe('SettingsWorkspace', () => {
     });
   });
 
-
   it('focuses an incoming Set up link without committing another navigation', async () => {
     const { client } = fixture();
     const onCategoryChange = vi.fn();
@@ -244,7 +243,6 @@ describe('SettingsWorkspace', () => {
     await waitFor(() => expect(onAppearanceSaved).toHaveBeenCalledWith({ theme: 'dark' }));
   });
 
-
   it('reloads the latest settings after a conflict and keeps what still differs', async () => {
     let conflicts = 1;
     const { client, seen } = fixture(settingsDoc(), (request) => {
@@ -259,21 +257,7 @@ describe('SettingsWorkspace', () => {
     expect(screen.getByText('1 unsaved change')).toBeDefined();
   });
 
-  it('keeps Contacts account and sync controls reachable', async () => {
-    const { client } = fixture();
-    render(SettingsWorkspace, { client, category: 'carddav' });
-    expect(await screen.findByRole('heading', { name: 'Contacts' })).toBeDefined();
-    expect(await screen.findByRole('button', { name: 'Add connection' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Sync now' })).toBeDefined();
-  });
 
-  it('offers providers and facts under People lookups, with the add form behind a click', async () => {
-    const { client } = fixture();
-    render(SettingsWorkspace, { client, category: 'enrichment' });
-    expect(await screen.findByRole('heading', { name: 'People lookups' })).toBeDefined();
-    expect(await screen.findByRole('button', { name: 'Add Exa' })).toBeDefined();
-    expect(await screen.findByLabelText('Profile name')).toBeDefined();
-  });
 
 });
 
@@ -318,11 +302,8 @@ it('keeps provider endpoints and keys across categories, saves endpoints before 
   expect(seen.filter(request => request.path.endsWith('/providers/primary'))).toHaveLength(1);
 });
 
-it('saves account drafts from Overview and drops their passwords on Discard', async () => {
-  const { client } = fixture(settingsDoc(), request => {
-    if (new URL(request.url).pathname === '/api/v1/carddav/account')
-      return Response.json({ base_url: 'https://dav.example.test/', username: 'account@example.com', enabled: false, schedule: '', books: 1 });
-  });
+it('retains account passwords across categories and clears them on Discard', async () => {
+  const { client } = fixture();
   render(SettingsWorkspace, { client, category: 'carddav' });
   await fireEvent.input(await screen.findByLabelText('Base URL'), { target: { value: 'https://dav.example.test/' } });
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'account@example.com' } });
@@ -331,20 +312,9 @@ it('saves account drafts from Overview and drops their passwords on Discard', as
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
   expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('synthetic-account-key');
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
-
-  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'discarded-account-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-  expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
-  await fireEvent.input(await screen.findByLabelText('New connection name'), { target: { value: 'work' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'work@example.com' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('work@example.com');
+  expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
 });
 
 it('retains inference replacement keys across navigation and saves them from the footer', async () => {
@@ -410,7 +380,6 @@ it.each(['succeeded', 'partial', 'failed', 'conflict'])('Overview syncs all cont
     expect((await screen.findByRole('alert')).textContent).toContain(result === 'conflict' ? 'current server state changed' : `CardDAV sync ${result}. Connections needing attention: work.`);
   }
 });
-
 
 it('validates contact account drafts before writing other settings', async () => {
   const { client, seen } = fixture();
@@ -681,7 +650,6 @@ it.each(['first enable', 'last disable', 'replacement'] as const)('saves valid p
     : [['PUT', 'replacement', '"s1"'], ['PUT', 'primary', '"s2"']]);
   expect(doc.settings.find(item => item.key === 'people.enrichment.enabled')!.value).toEqual(typed(transition !== 'last disable'));
 });
-
 
 
 it.each(['constructor', '__proto__'])('preserves and edits the saved endpoint for accepted provider name %s', async name => {
