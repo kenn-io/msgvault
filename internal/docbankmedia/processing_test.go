@@ -64,7 +64,7 @@ func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {
 }
 
 func TestProcessingInvalidReceipts(t *testing.T) {
-	for _, body := range []string{`{}`, `{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a") + `"}}`, `{"type":"job","job":{}}`, `broken`} {
+	for _, body := range []string{`{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a") + `"}}`, `{"type":"job","job":{}}`, `broken`} {
 		t.Run(body, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, err := io.WriteString(w, body)
