@@ -1312,7 +1312,7 @@
           () => void shellData.jobs.refresh(true)
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} loadStatus={(signal, supersede) => shellData.jobs.readSources(signal, supersede)} />
+        <SourcesWorkspace {client} onOpenOperations={() => openOperations('source_sync')} jobs={shellData.jobs} />
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace
           {client}

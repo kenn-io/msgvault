@@ -29,7 +29,6 @@ export class ShellData {
   get views(): SavedView[] {
     return this.#ordered.filter(view => view.id !== this.pending?.id && !this.#deleting.includes(view.id));
   }
-  set views(views: SavedView[]) { this.#ordered = views; }
   pending = $state<SavedView>();
   error = $state<string>();
   readonly jobs: JobsStore;
