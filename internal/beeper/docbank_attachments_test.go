@@ -1453,8 +1453,59 @@ func TestAttachmentMirrorProcessingDeadline(t *testing.T) {
 	more, err := r.worker.processDocuments(t.Context(), time.Now().Add(-time.Second))
 	require.NoError(err)
 	assert.True(more)
+	assert.Zero(r.processing.Profiles)
 	assert.Empty(r.processing.Plans)
 	assert.Equal(int64(1), r.processingCounts().Waiting)
+}
+
+func TestAttachmentMirrorProcessingRequestsUseRemainingDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		poll bool
+	}{
+		{name: "profile", path: "/api/v1/processing/profiles"},
+		{name: "plan", path: "/api/v1/processing/plans"},
+		{name: "poll", path: "/api/v1/processing/jobs/job-a", poll: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			r := newMirrorRig(t)
+			r.delivered("a")
+			if tc.poll {
+				require.NoError(r.runBatch(t.Context()))
+				r.processingDue()
+			}
+			requestStarted := make(chan struct{}, 1)
+			releaseRequest := make(chan struct{})
+			defer close(releaseRequest)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path == tc.path {
+					requestStarted <- struct{}{}
+					<-releaseRequest
+					return
+				}
+				r.serve(w, req)
+			}))
+			t.Cleanup(srv.Close)
+			client, err := docbankmedia.NewClient(srv.URL, nil)
+			require.NoError(err)
+			r.worker.client = client
+
+			deadline := time.Now().Add(time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			more, err := r.worker.processDocuments(ctx, deadline)
+			require.NoError(err)
+			assert.True(more)
+			select {
+			case <-requestStarted:
+			case <-time.After(2 * time.Second):
+				assert.Fail("processing request did not start")
+			}
+		})
+	}
 }
 
 func TestAttachmentMirrorProcessingCancelled(t *testing.T) {

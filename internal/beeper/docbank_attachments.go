@@ -525,9 +525,18 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 	if w.options.DocumentProfile == "" {
 		return false, nil
 	}
-	actionCtx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
+	if !time.Now().Before(deadline) {
+		return true, nil
+	}
+	actionCtx, cancel := docbankProcessingActionContext(ctx, deadline)
 	profile, err := w.client.Profile(actionCtx, w.options.DocumentProfile)
 	cancel()
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if !time.Now().Before(deadline) {
+		return true, nil
+	}
 	if err == nil && !profile.Rendition {
 		err = errors.New("profile has no rendition stage")
 	}
@@ -545,6 +554,9 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 	var failures attachmentRetryStreak
 	var cursor store.DocbankAttachmentProcessingCursor
 	for {
+		if !time.Now().Before(deadline) {
+			return true, failures.reported
+		}
 		var files []store.DocbankAttachmentProcessing
 		err := w.gated(ctx, func() (err error) {
 			files, err = w.store.DocbankAttachmentsToProcess(ctx, w.destination, profile.Fingerprint, &cursor, 20)
@@ -573,10 +585,11 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 					return false, errors.Join(failures.reported, failures.streak, endMediaPass(saveErr))
 				}
 			}
-			job, jobID, err := w.askProcessing(ctx, d)
+			job, jobID, err := w.askProcessing(ctx, d, deadline)
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
+			budgetExpired := !time.Now().Before(deadline)
 			answer := processingAnswer(job, err)
 			if d.JobID != "" && jobID == d.JobID && errors.Is(err, docbankmedia.ErrInvalidReceipt) {
 				answer = documentProcessingAnswer{delay: store.BeeperMediaRetryDelay, retry: true}
@@ -607,12 +620,15 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			}); saveErr != nil {
 				return false, errors.Join(failures.reported, failures.streak, err, endMediaPass(saveErr))
 			}
-			if answer.retry && isDestinationFault(err) {
+			if answer.retry && isDestinationFault(err) && !budgetExpired {
 				if stopErr := failures.retry(err); stopErr != nil {
 					return false, errors.Join(failures.reported, stopErr)
 				}
 			} else {
 				failures.endStreak(answer.report)
+			}
+			if budgetExpired {
+				return true, failures.reported
 			}
 		}
 	}
@@ -620,8 +636,8 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 
 // askProcessing polls a saved job, or plans and starts one when there is none
 // or Docbank lost it, as restoring an older backup does.
-func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (docbankmedia.JobStatus, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
+func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing, deadline time.Time) (docbankmedia.JobStatus, string, error) {
+	ctx, cancel := docbankProcessingActionContext(ctx, deadline)
 	defer cancel()
 	if d.JobID != "" {
 		if job, err := w.client.JobStatus(ctx, d.JobID); !docbankmedia.IsNotFound(err) {
@@ -629,6 +645,14 @@ func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAtt
 		}
 	}
 	return w.startProcessing(ctx, d)
+}
+
+func docbankProcessingActionContext(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	actionDeadline := time.Now().Add(beeperMediaActionTimeout)
+	if deadline.Before(actionDeadline) {
+		actionDeadline = deadline
+	}
+	return context.WithDeadline(ctx, actionDeadline)
 }
 
 // startProcessing plans the file's processing and starts a job.
