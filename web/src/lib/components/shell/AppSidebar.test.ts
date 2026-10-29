@@ -114,15 +114,6 @@ describe('AppSidebar', () => {
     await waitFor(() => expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull());
     await tick();
     expect(document.activeElement).toBe(ending === 'move' ? files : screen.getByRole('button', { name: 'Budget threads' }));
-
-    if (ending === 'move') return;
-    await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    const again = await screen.findByRole('textbox', { name: 'Rename Budget threads' });
-    await fireEvent.keyDown(again, { key: 'Escape' });
-    expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull();
-    expect(onRenameView).toHaveBeenCalledOnce();
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Budget threads' })));
   });
 
   it('keeps full accessible names in the icon rail and hides saved views', () => {

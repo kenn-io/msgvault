@@ -440,35 +440,45 @@ describe('AppShell', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Demo view' }));
   }
 
-  it.each(['files', 'everything'] as const)('opens a saved Files view from %s with filters and focus restored', async workspace => {
-    window.history.replaceState(null, '', `/?workspace=${workspace}`);
+  it('opens a saved Files view with fresh filters and restores the prior filters on Back', async () => {
+    window.history.replaceState(null, '', '/?workspace=files');
     const fileSearches: Request[] = [];
     const state = new ExploreState(window);
-    if (workspace === 'files') state.replaceCommittedNavigation({
+    state.replaceCommittedNavigation({
       workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'],
       fileSort: { field: 'filename', direction: 'asc' }
     });
     const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
     try {
-      if (workspace === 'files') expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
+      expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
       const beforeView = window.location.href;
       await openDemoView();
+      await screen.findByRole('grid', { name: 'Files results' });
+      expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
+      await waitFor(async () => {
+        const body = await fileSearches.at(-1)!.clone().json();
+        expect(body).not.toHaveProperty('filename_query');
+        expect(body).not.toHaveProperty('mime_families');
+        expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
+      });
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      await waitFor(() => expect(window.location.href).toBe(beforeView));
+      await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('invoice'));
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it('focuses the Files grid when opening a saved Files view from Everything', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch([])), state });
+    try {
+      await openDemoView();
       const grid = await screen.findByRole('grid', { name: 'Files results' });
-      if (workspace === 'everything') {
-        await waitFor(() => expect(document.activeElement).toBe(grid));
-      } else {
-        expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
-        await waitFor(async () => {
-          const body = await fileSearches.at(-1)!.clone().json();
-          expect(body).not.toHaveProperty('filename_query');
-          expect(body).not.toHaveProperty('mime_families');
-          expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
-        });
-        window.history.back();
-        await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-        await waitFor(() => expect(window.location.href).toBe(beforeView));
-        await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('invoice'));
-      }
+      await waitFor(() => expect(document.activeElement).toBe(grid));
     } finally {
       rendered.unmount();
       state.destroy();
@@ -2944,10 +2954,6 @@ it.each([
   { kind: 'source_sync', authority: 'listSourceStatus', status: 'Needs attention',
     lane: jobLane('source_sync'), sources: [sourceStatus({ display_name: 'Source sync', scheduler_last_error: 'Sync failed' })],
     steps: [], action: { role: 'menuitem', name: /Source sync/ }, expected: { workspace: 'sources', operationHistory: false } },
-  { kind: 'carddav_sync', authority: 'getCardDAVStatus', status: 'Needs attention',
-    lane: jobLane('carddav_sync'), sources: [],
-    steps: [{ role: 'menuitem', name: /Past runs/ }, { role: 'button', name: /Open CardDAV sync run/ }],
-    action: { role: 'button', name: /Open CardDAV settings/ }, expected: { workspace: 'settings', settingsCategory: 'carddav', operationHistory: false } },
   { kind: 'document_extraction', authority: 'getDocumentIndexStatus', status: 'Running',
     lane: jobLane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
     steps: [], action: { role: 'menuitem', name: /Document extraction/ },

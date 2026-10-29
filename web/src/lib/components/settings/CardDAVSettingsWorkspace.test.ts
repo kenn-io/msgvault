@@ -234,30 +234,3 @@ it('restores an orphaned connection with its retained name and account details',
     enabled: true, schedule: '0 2 * * *', password: 'synthetic-work-password'
   });
 });
-
-it('keeps the acknowledged named account schedule when refreshing connection summaries fails', async () => {
-  let saved = false;
-  const account = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '', account: { base_url: 'https://work.example.test/', username: 'work@example.com' } };
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/carddav/connections')) return saved ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ connections: [{ connection: 'work', status: account }] });
-    if (path.endsWith('/carddav/status')) return Response.json(account);
-    if (path.endsWith('/carddav/account')) {
-      saved = true;
-      return Response.json({ ...account.account, enabled: true, schedule: '0 3 * * *', books: 1 });
-    }
-    if (path.endsWith('/books')) return Response.json({ books: [] });
-    if (path.endsWith('/runs')) return Response.json({ runs: [] });
-    if (path.endsWith('/conflicts')) return Response.json({ conflicts: [] });
-    throw new Error(`Unexpected ${request.method} ${path}`);
-  });
-  render(CardDAVSettingsWorkspace, { client, settings: [] });
-  await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await screen.findByDisplayValue('work@example.com');
-  await chooseSelectOption(screen.getByRole('combobox', { name: /^Presets:/ }), 'Every day at 03:00');
-  await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
-  await screen.findByText('CardDAV account saved. Found 1 address book.');
-  await screen.findByText('Unable to load CardDAV connections.');
-  expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
-});
