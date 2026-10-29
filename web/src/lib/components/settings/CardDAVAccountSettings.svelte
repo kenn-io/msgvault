@@ -161,7 +161,7 @@
     const currentValues: CardDAVAccountValues = { provider, oauthApp, baseURL, username, passwordConfigured: persistedPasswordConfigured, enabled, schedule };
     const changed = provider !== persistedProvider || oauthApp !== persistedOAuthApp || baseURL !== persistedBaseURL || username !== persistedUsername || enabled !== persistedEnabled || schedule !== persistedSchedule || password !== '';
     const needsPassword = passwordRequiredForSave() && password === '';
-    onDraft(changed || (provider === 'google' && testedTuple === identityTuple()) ? { baseline: { provider: persistedProvider, oauthApp: persistedOAuthApp, baseURL: persistedBaseURL, username: persistedUsername, passwordConfigured: persistedPasswordConfigured, enabled: persistedEnabled, schedule: persistedSchedule }, values: currentValues, password, testedTuple, error: needsPassword ? 'Password is required for a new or changed CardDAV account.' : (!oauth && !baseURL) || !username ? 'Enter the contact account URL and username.' : undefined } : undefined);
+    onDraft(changed || (oauth && enabled && testedTuple === identityTuple()) ? { baseline: { provider: persistedProvider, oauthApp: persistedOAuthApp, baseURL: persistedBaseURL, username: persistedUsername, passwordConfigured: persistedPasswordConfigured, enabled: persistedEnabled, schedule: persistedSchedule }, values: currentValues, password, testedTuple, error: needsPassword ? 'Password is required for a new or changed CardDAV account.' : (!oauth && !baseURL) || !username ? 'Enter the contact account URL and username.' : undefined } : undefined);
   });
   function apiErrorMessage(responseError: unknown, fallback: string): string {
     if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {
