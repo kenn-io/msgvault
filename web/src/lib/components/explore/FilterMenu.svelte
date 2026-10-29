@@ -53,7 +53,7 @@
       // Several message types read as one kind, such as every chat network.
       const byName = new Map<string, string[]>();
       for (const row of loaded.result.rows) {
-        const name = entryKindPresentation('', row.key).name.replace(' item', '');
+        const name = entryKindPresentation('', row.key).name;
         byName.set(name, [...(byName.get(name) ?? []), row.key]);
       }
       kinds = [...byName].map(([name, values]) => ({ name, values }));
