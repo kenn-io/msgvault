@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/svelte';
 
 import type {
@@ -18,6 +18,30 @@ import { createAllMatchingSelection, predicateFingerprint } from './selection';
 import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
+  it.each([0, 3])('lets Back to an unindexed entry leave dirty Settings at index %s without reloading or swallowing Forward', async (index) => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    window.history.pushState({ exploreIndex: index }, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    const go = vi.spyOn(window.history, 'go');
+    state.holdLeave = vi.fn(() => true);
+    try {
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(go).not.toHaveBeenCalled();
+      expect(state.holdLeave).not.toHaveBeenCalled();
+      expect(state.current.workspace).toBe('sources');
+      expect(window.location.search).toBe('?workspace=sources');
+
+      window.history.forward();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings');
+    } finally {
+      go.mockRestore();
+      state.destroy();
+    }
+  });
+
   it('holds leaving Settings until the draft is discarded', () => {
     window.history.replaceState(null, '', '/?workspace=settings');
     const state = new ExploreState(window);
