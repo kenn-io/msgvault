@@ -83,7 +83,7 @@ consent and revocation to be independent as well.
 1. Configure a Google OAuth client following the [OAuth setup guide](../guides/oauth-setup.md),
    and enable the **Google Contacts CardDAV API** in the same Google Cloud
    project. The Gmail and Calendar APIs do not cover contacts; without it,
-   **Save CardDAV account** fails during discovery.
+   **Save changes** fails during discovery.
    For Web UI sign-in, register the Web UI's root URL, including its trailing
    slash, as an authorized redirect URI in a **Web application** OAuth client.
    The settings form shows the exact URL. Remote Web UIs need HTTPS; loopback
@@ -91,7 +91,7 @@ consent and revocation to be independent as well.
 2. Click **Connect Google**. A new window opens for Google sign-in. Choose the
    requested account and keep existing permissions checked while granting
    contacts access. Return to settings when the window closes.
-3. Click **Test CardDAV connection**, then **Save CardDAV account**. Review the
+3. Click **Test CardDAV connection**, then **Save changes**. Review the
    discovered book's roles before the first sync.
 
 The daemon requests Google's `https://www.googleapis.com/auth/carddav` scope
