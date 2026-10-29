@@ -134,7 +134,7 @@ describe('RelationshipHeader', () => {
 
   it('keeps a draft-only person’s identity and link controls with no activity', () => {
     render(RelationshipHeader, baseProps({ detail: { ...person(), activity_count: 0,
-      first_at: '0001-01-01T00:00:00Z', last_at: '0001-01-01T00:00:00Z' }, missing: true }));
+      first_at: undefined, last_at: undefined }, missing: true }));
     expect(screen.getByRole('heading', { name: 'Alice Example' })).toBeDefined();
     expect(screen.getByLabelText('Identity Alice')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Same person…' })).toBeDefined();

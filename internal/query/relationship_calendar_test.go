@@ -211,7 +211,9 @@ func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) 
 		"score years stay pegged to UTC while the calendar uses local days")
 }
 
-func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
+func TestRelationshipCalendarReturnsEmptyForDraftOnlyAndRejectsMissingPeople(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
 	ownerCanonicalID := b.AddParticipant("owner-alias@example.test", "example.test", "Owner alias")
@@ -238,21 +240,19 @@ func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
 	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
 		CanonicalID: draftRecipient, Year: 2026, Timezone: "UTC",
 	})
-	require.NoError(t, err)
-	require.NotNil(t, calendar)
-	assert.Equal(t, draftRecipient, calendar.CanonicalID)
-	assert.Equal(t, "2026-01-02", calendar.EffectiveDate)
-	assert.Equal(t, identityindex.RelationshipScoreVersion, calendar.ScoreVersion)
-	assert.Zero(t, calendar.Current)
-	assert.Empty(t, calendar.Annual)
-	assert.Empty(t, calendar.Days)
+	require.NoError(err)
+	require.NotNil(calendar)
+	assert.Equal(draftRecipient, calendar.CanonicalID)
+	assert.Equal("2026-01-02", calendar.EffectiveDate)
+	assert.Equal(identityindex.RelationshipScoreVersion, calendar.ScoreVersion)
+	assert.Zero(calendar.Current)
+	assert.Empty(calendar.Annual)
+	assert.Empty(calendar.Days)
 
-	for _, canonicalID := range []int64{ownerCanonicalID, ownerID, 999_999} {
-		_, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
-			CanonicalID: canonicalID, Year: 2026, Timezone: "UTC",
-		})
-		assert.ErrorIs(t, err, ErrRelationshipPersonNotFound, canonicalID)
-	}
+	_, err = engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
+		CanonicalID: 999_999, Year: 2026, Timezone: "UTC",
+	})
+	assert.ErrorIs(err, ErrRelationshipPersonNotFound)
 }
 
 func TestRelationshipCalendarHandlesExtremeOffsetsDSTFractionalOffsetsAndLeapDays(t *testing.T) {

@@ -3,16 +3,19 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -606,4 +609,47 @@ func TestParticipantDetailUsesParticipantNotFoundError(t *testing.T) {
 	var body ErrorResponse
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
 	assert.Equal(t, "participant_not_found", body.Error)
+}
+
+func TestParticipantDetailDistinguishesDraftOnlyAndMissingPeople(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Parallel()
+	_, analyticsDir := newExploreDuckDBFixtureWithDir(t)
+	db, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(db.Close()) })
+	_, err = identityindex.Build(t.Context(), db, identityindex.BuildOptions{
+		Mode: identityindex.ModeFull, StagedBaseRoot: analyticsDir, OutputRoot: analyticsDir,
+		UnsentMessages: "(SELECT 3::BIGINT AS message_id)",
+	})
+	require.NoError(err)
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(err)
+	state.DatasetFingerprint, err = query.CacheDatasetFingerprint(analyticsDir)
+	require.NoError(err)
+	stateJSON, err := json.Marshal(state)
+	require.NoError(err)
+	require.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), stateJSON, 0o600))
+	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(engine.Close()) })
+	server := newTestServerWithEngine(t, engine)
+
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/participants/2", nil))
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var person map[string]any
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &person))
+	assert.Equal("Bob", person["display_label"])
+	assert.InDelta(0, person["activity_count"], 0)
+	assert.NotContains(person, "first_at")
+	assert.NotContains(person, "last_at")
+
+	response = httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/participants/9999", nil))
+	require.Equal(http.StatusNotFound, response.Code, response.Body.String())
+	var missing ErrorResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &missing))
+	assert.Equal("participant_not_found", missing.Error)
 }

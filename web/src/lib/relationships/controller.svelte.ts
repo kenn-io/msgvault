@@ -882,8 +882,10 @@ export class RelationshipsController {
     for (const result of [detail, summary]) {
       if (!result || result.data || (result === summary && noMatchingActivity(detail, summary))) continue;
       if (result === detail && result.response.status === 404) {
-        if (parseClusterID(this.target) !== undefined) this.personMissing = true;
-        else {
+        if (parseClusterID(this.target) !== undefined) {
+          this.personMissing = true;
+          continue;
+        } else {
           this.noActivity = true;
           continue;
         }

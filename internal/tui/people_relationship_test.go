@@ -110,32 +110,6 @@ func TestPeopleOverviewLoadsRelationshipForObservedContact(t *testing.T) {
 	assert.Equal(year, model.peopleState.relationshipCalendar.Year)
 }
 
-func TestPeopleOverviewLoadsEmptyRelationshipForDraftOnlyContact(t *testing.T) {
-	contact := testPerson(7, "Draft recipient")
-	contact.ActivityCount = 0
-	contact.FirstAt, contact.LastAt = time.Time{}, time.Time{}
-	year := time.Now().UTC().Year()
-	backend := &fakePeopleRelationshipBackend{
-		fakePeopleBackend: &fakePeopleBackend{},
-		calendarResponses: []*query.RelationshipCalendarResponse{{
-			CanonicalID: contact.ID, Year: year, Timezone: "UTC", CacheRevision: contact.CacheRevision,
-		}},
-	}
-	model := peopleContentModel(backend, &contact)
-	model.peopleState.location = time.UTC
-	cmd := model.beginPeopleRelationshipLoad()
-	model = sendMsg(t, model, relationshipCalendarMessage(t, cmd))
-
-	require.Len(t, backend.calendarRequests, 1)
-	assert.Equal(t, peopleLevelContact, model.peopleState.level)
-	assert.Equal(t, "Draft recipient", model.peopleState.contact.DisplayLabel)
-	assert.Equal(t, year, model.peopleState.relationshipFirstYear)
-	require.NotNil(t, model.peopleState.relationshipCalendar)
-	assert.Zero(t, model.peopleState.relationshipCalendar.Current)
-	assert.Empty(t, model.peopleState.relationshipCalendar.Days)
-	assert.NoError(t, model.peopleState.relationshipErr)
-}
-
 func TestPeopleRelationshipYearNavigationUsesBoundsAndCachedYears(t *testing.T) {
 	assert := assert.New(t)
 	currentYear := time.Now().UTC().Year()

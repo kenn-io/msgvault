@@ -110,8 +110,8 @@ type PersonSummary struct {
 	PeakRelationshipTemperature    int                `json:"peak_relationship_temperature"`
 	PeakRelationshipYear           int                `json:"peak_relationship_year"`
 	SourceCounts                   []SourceCount      `json:"source_counts"`
-	FirstAt                        time.Time          `json:"first_at"`
-	LastAt                         time.Time          `json:"last_at"`
+	FirstAt                        time.Time          `json:"first_at,omitzero"`
+	LastAt                         time.Time          `json:"last_at,omitzero"`
 	CacheRevision                  string             `json:"cache_revision"`
 	Cluster                        *PersonCluster     `json:"cluster,omitzero" nullable:"false"`
 	Profile                        *PersonProfile     `json:"profile,omitzero" nullable:"false"`
@@ -385,8 +385,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	personWhere := []string{"true"}
 	populationFrom := "FROM person_entries pe JOIN participants p ON p.id = pe.person_id"
 	if keepInactive {
-		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id WHERE p.id = ?"
-		args = append(args, *exactID)
+		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id"
 	}
 	if exactID != nil {
 		personWhere = append(personWhere, "person_id = ?")

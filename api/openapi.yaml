@@ -13447,8 +13447,6 @@ components:
         - peak_relationship_temperature
         - peak_relationship_year
         - source_counts
-        - first_at
-        - last_at
         - cache_revision
       type: object
     PersonTracking:

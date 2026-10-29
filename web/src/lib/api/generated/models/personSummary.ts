@@ -14,10 +14,10 @@ export interface PersonSummary {
   display_label: string;
   display_name?: string;
   file_count: number;
-  first_at: string;
+  first_at?: string;
   id: number;
   identifiers: PersonIdentifier[];
-  last_at: string;
+  last_at?: string;
   meeting_count: number;
   partial_label: boolean;
   peak_relationship_temperature: number;

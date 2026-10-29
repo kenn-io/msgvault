@@ -361,7 +361,7 @@
       {:else}
         {detail.activity_count.toLocaleString()} items
       {/if}
-      {#if detail.activity_count > 0}
+      {#if detail.activity_count > 0 && detail.first_at && detail.last_at}
         · {formatDate(detail.first_at)} – {formatDate(detail.last_at)}
       {/if}
       {#if !isPersonDetail(detail)}

@@ -2102,7 +2102,7 @@ describe('RelationshipsController draft-only targets', () => {
     expect(controller.detail).toBeNull();
     expect(controller.personMissing).toBe(true);
     expect(controller.noActivity).toBe(false);
-    expect(controller.timelineError).toBe('Participant cluster not found');
+    expect(controller.timelineError).toBeNull();
     expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
 
     controller.clearTarget();
