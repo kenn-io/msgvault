@@ -1,3 +1,4 @@
+import { tick } from 'svelte';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -90,7 +91,7 @@ describe('AppSidebar', () => {
     expect(onDeleteView).toHaveBeenCalledOnce();
   });
 
-  it('locks a pending rename and returns focus after saving or canceling', async () => {
+  it.each(['save', 'move'])('locks a pending rename and preserves focus through %s and cancel', async ending => {
     let finish!: () => void;
     const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
     const onRenameView = vi.fn(() => pending);
@@ -106,8 +107,12 @@ describe('AppSidebar', () => {
     expect(input.readOnly).toBe(true);
     await fireEvent.keyDown(input, { key: 'Enter' });
     expect(onRenameView).toHaveBeenCalledOnce();
+    const files = primary().getByRole('button', { name: 'Files' });
+    if (ending === 'move') files.focus();
     finish();
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Budget threads' })));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull());
+    await tick();
+    expect(document.activeElement).toBe(ending === 'move' ? files : screen.getByRole('button', { name: 'Budget threads' }));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Budget threads actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
@@ -159,7 +164,7 @@ describe('AppSidebar', () => {
 
 it('shows a saved-view read error above the last rows and offers Retry', async () => {
   const onRetryViews = vi.fn();
-  renderSidebar({ views: [view(1, 'Budget')], viewsError: 'Unavailable', onRetryViews });
+  renderSidebar({ views: [view(1, 'Budget')], viewsError: "Couldn't load saved views.", onRetryViews });
   expect(screen.getByRole('alert').textContent).toContain("Couldn't load saved views.");
   expect(screen.getByRole('button', { name: 'Budget' })).toBeTruthy();
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

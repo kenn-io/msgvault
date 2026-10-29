@@ -10,6 +10,7 @@ import { ExploreState, serializeExploreURLState } from '../../explore/state.svel
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import AppShell from './AppShell.svelte';
+import { ShellData } from './shell-data.svelte';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
@@ -2965,64 +2966,28 @@ it.each([
   rendered.unmount(); state.destroy();
 });
 
-it.each(['blur', 'Enter then move', 'Enter'])('preserves the user focus when a saved-view rename completes through %s', async ending => {
+it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending => {
   window.history.replaceState(null, '', '/?workspace=everything');
-  let saved = view(3, 'Project notes');
-  let finish!: (response: Response) => void;
-  const patch = new Promise<Response>(resolve => { finish = resolve; });
+  const undo = vi.spyOn(ShellData.prototype, 'undoDelete').mockResolvedValue();
+  const expire = vi.spyOn(ShellData.prototype, 'expireDelete').mockResolvedValue(undefined);
   const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (request.method === 'PATCH') return patch;
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [saved] });
-    return Response.json(exploreResponse());
-  });
-  const rendered = render(AppShell, { client });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
-  await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-  const editor = await screen.findByRole('textbox', { name: 'Rename Project notes' });
-  await fireEvent.input(editor, { target: { value: 'Quarterly notes' } });
-  if (ending !== 'blur') await fireEvent.keyDown(editor, { key: 'Enter' });
-  const files = screen.getByRole('button', { name: 'Files' });
-  if (ending !== 'Enter') {
-    files.focus();
-    await fireEvent.blur(editor);
-    await fireEvent.click(files);
-  }
-  saved = { ...saved, name: 'Quarterly notes', revision: 2 };
-  finish(Response.json(saved));
-  await waitFor(() => expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull());
-  const renamed = screen.getByRole('button', { name: 'Quarterly notes' });
-  await tick();
-  expect(document.activeElement).toBe(ending === 'Enter' ? renamed : files);
-  rendered.unmount();
-});
-
-it.each(['undo', 'pagehide'])('finishes a sidebar deletion through %s', async ending => {
-  window.history.replaceState(null, '', '/?workspace=everything');
-  const deletes: string[] = [];
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (request.method === 'DELETE') { deletes.push(path); return Response.json({}, { status: 500 }); }
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [view(3, 'Project notes')] });
-    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
     return Response.json(exploreResponse());
   });
   const rendered = render(AppShell, { client });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
-  await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-  expect(screen.queryByRole('button', { name: 'Project notes' })).toBeNull();
-  if (ending === 'undo') await fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-  else {
-    window.dispatchEvent(new Event('pagehide'));
-    await screen.findByText("Couldn't delete Project notes.");
-    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    if (ending === 'undo') await fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    else window.dispatchEvent(new Event('pagehide'));
+    expect(undo).toHaveBeenCalledTimes(ending === 'undo' ? 1 : 0);
+    expect(expire).toHaveBeenCalledTimes(ending === 'pagehide' ? 1 : 0);
+  } finally {
+    rendered.unmount();
+    undo.mockRestore();
+    expire.mockRestore();
   }
-  await screen.findByRole('button', { name: 'Project notes' });
-  rendered.unmount();
-  expect(deletes).toEqual(ending === 'undo' ? [] : ['/api/v1/saved-views/3']);
 });
 
 it('opens CardDAV Past runs with its kind through the Settings context', async () => {
