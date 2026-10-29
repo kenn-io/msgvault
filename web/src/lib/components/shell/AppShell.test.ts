@@ -3098,3 +3098,57 @@ it('restores a saved view and shows the delete failure after pagehide flushes Un
   await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
   rendered.unmount(); state.destroy();
 });
+
+
+it.each([
+  ['listSourceStatus', 'Source sync', 'Sources status', 'sources', false],
+  ['listSourceStatus', 'Source sync', 'Sources status', 'sources', true],
+  ['getCardDAVStatus', 'CardDAV sync', 'CardDAV settings', 'settings', false],
+  ['getCardDAVStatus', 'CardDAV sync', 'CardDAV settings', 'settings', true],
+] as const)('opens %s with one restorable history entry (%s, %s, %s, modal=%s)', async (authority, name, label, workspace, modal) => {
+  window.history.replaceState(null, '', '/?workspace=everything&mode=full_text');
+  const kind = authority === 'getCardDAVStatus' ? 'carddav_sync' : 'source_sync';
+  const run = operationSummary({ kind, lane: kind === 'carddav_sync' ? 'contacts' : 'messages', state: 'failed', related_status: authority, error: { code: 'sync_failed', message: 'Sync failed' } });
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [{ kind, lane: run.lane, configured: true, related_status: authority, history_availability: 'available', supported_actions: [], latest: run }] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: kind === 'source_sync' ? [{ id: 1, display_name: name, identifier: 'archive@example.com', source_type: 'gmail', scheduler_last_error: 'Sync failed' }] : [] });
+    if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
+    if (path.includes('/operations/runs/')) return Response.json({ ...run, supported_actions: [] });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(window);
+  const rendered = render(AppShell, { client, state });
+  await screen.findByRole('button', { name: 'Sync status: Needs attention' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Needs attention' }));
+  if (modal) {
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Past runs/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: `Open ${name} run` }));
+    await screen.findByRole('button', { name: `Open ${label}` });
+  }
+  const previousURL = window.location.href;
+  const push = vi.spyOn(window.history, 'pushState').mockClear();
+  if (modal) await fireEvent.click(screen.getByRole('button', { name: `Open ${label}` }));
+  else await fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(name) }));
+  expect(push).toHaveBeenCalledTimes(1);
+  expect(state.current.workspace).toBe(workspace);
+  if (workspace === 'settings') expect(state.current.settingsCategory).toBe('carddav');
+  expect(state.current.operationHistory).toBe(false);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  const destinationURL = window.location.href;
+  const back = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.back();
+  await back;
+  await waitFor(() => expect(window.location.href).toBe(previousURL));
+  expect(state.current.workspace).toBe('everything');
+  if (modal) await screen.findByRole('button', { name: `Open ${label}` });
+  const forward = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.forward();
+  await forward;
+  await waitFor(() => expect(window.location.href).toBe(destinationURL));
+  expect(state.current.workspace).toBe(workspace);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  push.mockRestore();
+  rendered.unmount(); state.destroy();
+});
