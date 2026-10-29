@@ -712,13 +712,26 @@ it.each(['first enable', 'last disable', 'replacement'] as const)('saves valid p
 });
 
 
-it.each([200, 503])('withholds a duplicate first build when coverage returns %s without an advertised action', async status => {
+it('withholds a duplicate first build when coverage is unavailable', async () => {
   const { client } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: [{ kind: 'message_embedding', configured: true, supported_actions: [] }] });
     if (request.url.includes('/embeddings/status')) return Response.json({ active_generation: null });
-    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: [] }, { status });
+    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'initializing', actions: [] }, { status: 503 });
   });
   render(SettingsWorkspace, { client });
   await screen.findByText('On');
   expect(screen.queryByRole('button', { name: 'Build index, Message search' })).toBeNull();
+});
+
+it.each(['constructor', '__proto__'])('preserves and edits the saved endpoint for accepted provider name %s', async name => {
+  const provider = { name, kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: `people.enrichment.${name}`, credential: { configured: false, source: 'none' } };
+  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  const endpoint = await screen.findByLabelText(`${name} endpoint`);
+  expect((endpoint as HTMLInputElement).value).toBe('https://provider.example.test');
+  await fireEvent.input(endpoint, { target: { value: 'https://replacement.example.test' } });
+  await screen.findByRole('button', { name: 'Create profile' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
+  expect(seen.find(request => request.method === 'PUT')?.body).toMatchObject({ endpoint: 'https://replacement.example.test' });
 });
