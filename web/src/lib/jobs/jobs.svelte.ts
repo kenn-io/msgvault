@@ -13,7 +13,10 @@ export class JobsStore {
   /** False until the first refresh answers. */
   loaded = $state(false);
   error = $state<string>();
-  health = $derived<JobsHealth>(this.items.some(item => item.state === 'failed') ? 'failed' : this.error || !this.loaded ? 'unavailable' : jobsHealth(this.items));
+  health = $derived.by<JobsHealth>(() => {
+    const health = jobsHealth(this.items);
+    return health === 'failed' ? health : this.error || !this.loaded ? 'unavailable' : health;
+  });
   #sources: SourceStatus[] = [];
   #lanes: OperationLaneStatus[] = [];
   #client: APIClient;
@@ -27,20 +30,16 @@ export class JobsStore {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     const options = { ...this.#client, signal: controller.signal };
-    try {
-      const [sources, operations] = await Promise.all([
-        listSourceStatus(undefined, options).catch(() => undefined),
-        getOperationStatus(options).catch(() => undefined),
-      ]);
-      if (controller.signal.aborted) return;
-      if (sources?.data) this.#sources = sources.data.sources;
-      if (operations?.data) this.#lanes = operations.data.lanes;
-      this.error = !sources?.data || !operations?.data || this.#lanes.some(lane => lane.configured && lane.history_availability === 'unavailable') ? 'Unable to refresh all job status.' : undefined;
-      this.items = collectJobs(this.#sources, this.#lanes);
-      this.loaded = true;
-    } catch {
-      // A failed refresh keeps the last answer; the next one corrects it.
-    }
+    const [sources, operations] = await Promise.all([
+      listSourceStatus(undefined, options).catch(() => undefined),
+      getOperationStatus(options).catch(() => undefined),
+    ]);
+    if (controller.signal.aborted) return;
+    if (sources?.data) this.#sources = sources.data.sources;
+    if (operations?.data) this.#lanes = operations.data.lanes;
+    this.error = !sources?.data || !operations?.data || this.#lanes.some(lane => lane.configured && lane.history_availability === 'unavailable') ? 'Unable to refresh all job status.' : undefined;
+    this.items = collectJobs(this.#sources, this.#lanes);
+    this.loaded = true;
   }
 
   dispose(): void {

@@ -695,14 +695,12 @@ it('keeps the acknowledged named account schedule when refreshing connection sum
   expect(screen.getByRole('combobox', { name: /^Presets:/ }).textContent).toContain('Every day at 03:00');
 });
 
-it('opens live document counts from Overview Details without a past run', async () => {
-  const { client, seen } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents', related_status: 'getDocumentIndexStatus' })] });
-    if (path.endsWith('/documents/status/current')) return Response.json({ status: { profile_exists: true, profile_enabled: true, exact_consent: true, ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0, terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2 } });
+it('opens document status from Overview Details without a past run', async () => {
+  const { client } = fixture(settingsDoc(), request => {
+    if (new URL(request.url).pathname.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents', related_status: 'getDocumentIndexStatus' })] });
   });
-  render(SettingsWorkspace, { client });
+  const onOpenStatus = vi.fn();
+  render(SettingsWorkspace, { client, onOpenStatus });
   await fireEvent.click(await screen.findByRole('button', { name: 'Details, Document extraction' }));
-  expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
-  expect(seen.some(request => request.path === '/api/v1/documents/status/current')).toBe(true);
+  expect(onOpenStatus).toHaveBeenCalledWith('getDocumentIndexStatus');
 });

@@ -5,8 +5,11 @@ import { defaultOperationsState, OperationsController } from '../../operations/c
 import type { OperationsURLState } from '../../operations/models';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import RunHistoryDialog from './RunHistoryDialog.svelte';
+import publicOperations from '../../../../tests/e2e/fixtures/operations-public.json';
+import type { OperationRunsResponse } from '../../api/generated/models';
 
-const run = { id: `op2.${'a'.repeat(32)}.synthetic`, kind: 'document_extraction', lane: 'documents', state: 'partial', started_at: '2026-10-28T11:00:00Z', finished_at: '2026-10-28T11:01:00Z', trigger: 'manual', counters: [], error: { code: 'provider_failed', message: 'Example provider failed' } };
+const fixture = publicOperations as OperationRunsResponse;
+const run = fixture.runs.find(run => run.kind === 'document_extraction')!;
 const controllers: OperationsController[] = [];
 afterEach(() => { for (const controller of controllers.splice(0)) controller.destroy(); });
 function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLState> = {}) {
@@ -18,7 +21,7 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
     if (url.pathname === '/api/v1/operations/runs') {
       queries.push(url.searchParams);
       if (conflict && url.searchParams.has('cursor')) return Response.json({ error: 'operation_history_conflict', message: 'History changed' }, { status: 409 });
-      return Response.json({ runs: url.searchParams.has('cursor') ? [{ ...run, id: `op2.${'b'.repeat(32)}.synthetic` }] : [run], membership_revision: 1, unavailable_kinds: [{ kind: 'person_embedding', code: 'unavailable' }], next_cursor: url.searchParams.has('cursor') ? undefined : 'next' });
+      return Response.json({ runs: url.searchParams.has('cursor') ? [fixture.runs.find(run => run.kind === 'source_sync')!] : [run], membership_revision: 1, unavailable_kinds: fixture.unavailable_kinds, next_cursor: url.searchParams.has('cursor') ? undefined : 'next' });
     }
     if (url.pathname.startsWith('/api/v1/operations/runs/')) return Response.json({ ...run, related_status: 'getDocumentIndexStatus', supported_actions: [] });
     return Response.json({}, { status: 404 });
@@ -48,8 +51,10 @@ describe('Past runs', () => {
     await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('document_extraction'));
     await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'Partial');
     await waitFor(() => expect(queries.at(-1)?.get('state')).toBe('partial'));
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All kinds');
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'All states');
     await fireEvent.click(await screen.findByRole('button', { name: 'Show more' }));
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Open Document extraction run' })).toHaveLength(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open Source sync run' })).toBeDefined());
     expect(queries.at(-1)?.get('cursor')).toBe('next');
   });
   it('offers Restart when page membership changes', async () => {
@@ -95,7 +100,7 @@ it('refreshes on reopening and retries an unreadable history through Refresh', a
   const first = render(RunHistoryDialog, props);
   await screen.findByRole('button', { name: 'Open Document extraction run' });
   first.unmount();
-  runs = [{ ...run, kind: 'source_sync' }];
+  runs = [fixture.runs.find(run => run.kind === 'source_sync')!];
   failed = true;
   render(RunHistoryDialog, props);
   await screen.findByText('Unable to load operation history.');

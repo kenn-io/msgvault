@@ -406,7 +406,7 @@ and status polling continues while the tab is visible.
 
 ## Operations
 
-The footer status dot opens running jobs and unresolved failures. It shows **Synced** when the list is empty, **Syncing** while work runs, and **Needs attention** while a latest run or scheduler reports errors. Failed rows show the daemon's run or item error. If a status read fails, the menu keeps the last known jobs and reports that status is unavailable. Select a job to open its source, contact settings, index status, or owning setting.
+The footer status dot opens running jobs and unresolved failures. It shows **Idle** when the list is empty, **Syncing** while work runs, and **Needs attention** while a latest run or scheduler reports errors. Failed rows show the daemon's run or item error. If a status read fails, the menu keeps the last known jobs and reports that status is unavailable. Select a job to open its source, contact settings, index status, or owning setting.
 
 Choose **Past runs…** in the status menu to browse history. Filter by Kind, including all runs in a lane, State, or dates, and choose **Show more** for the next page. **Refresh** reloads the current history. Run links preserve filters and selection when shared or restored with Back. If history changes during paging, **Restart** reloads the first page. Unavailable history is labeled by kind.
 
