@@ -1,4 +1,5 @@
-import { expect, type Page } from '@playwright/test';
+import { lanes } from '../src/test/operations';
+import { expect, type Page, type BrowserContext } from '@playwright/test';
 
 export async function selectKitOption(
   page: Page,
@@ -44,4 +45,8 @@ export async function expectKitTheme(page: Page, theme: 'light' | 'dark'): Promi
   const root = page.locator('html');
   if (theme === 'dark') await expect(root).toHaveClass(/\bdark\b/);
   else await expect(root).not.toHaveClass(/\bdark\b/);
+}
+
+export async function stubOperationStatus(target: Page | BrowserContext): Promise<void> {
+  await target.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: lanes() } }));
 }

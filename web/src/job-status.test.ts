@@ -1,3 +1,4 @@
+import { lanes } from './test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it } from 'vitest';
 
@@ -15,7 +16,7 @@ function sessionFor(handle: (request: Request, path: string) => Promise<Response
     if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
     if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
     if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
-    if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
     if (path === '/api/v1/telemetry/events') return Response.json({ status: 'disabled' }, { status: 202 });
     return Response.json({}, { status: 404 });
   });
@@ -89,21 +90,18 @@ it('refreshes the shell dot after Sources Sync now', async () => {
   await screen.findByRole('button', { name: 'Sync status: Running' });
 });
 
-it.each(['failed', 'completed'] as const)('refreshes the shell dot after Build index: %s', async outcome => {
-  const settings = outcome === 'completed';
-  window.history.replaceState(null, '', settings ? '/?workspace=settings' : '/?workspace=everything&mode=hybrid');
+it('refreshes the shell dot after Settings completes Build index', async () => {
+  window.history.replaceState(null, '', '/?workspace=settings');
   let built = false;
   const session = sessionFor(async (request, path) => {
     if (path === '/api/v1/operations/status') {
       const snapshot = Response.json({ lanes: [jobLane('message_embedding', {
-        latest: settings
-          ? built ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined } : jobRun('message_embedding')
-          : built ? jobRun('message_embedding') : undefined,
+        latest: built ? { ...jobRun('message_embedding'), state: 'succeeded', error: undefined } : jobRun('message_embedding'),
       })] });
       return snapshot;
     }
     if (path === '/api/v1/search/coverage') {
-      if (built && outcome === 'completed') return Response.json({
+      if (built) return Response.json({
         eligible_count: 10, embedded_count: 10, percentage: 100, cache_revision: 'cache-2',
         status: 'ready', actions: [],
       });
@@ -114,17 +112,47 @@ it.each(['failed', 'completed'] as const)('refreshes the shell dot after Build i
     }
     if (request.method === 'POST' && path === '/api/v1/cli/run') {
       built = true;
-      return new Response(outcome === 'failed' ? '{"type":"complete","error":"Embedding endpoint failed"}\n' : '{"type":"complete"}\n');
+      return new Response('{"type":"complete"}\n');
     }
   });
   render(App, { session });
-  await screen.findByRole('button', { name: settings ? 'Sync status: Needs attention' : 'Sync status: Idle' });
-  const build = await screen.findByRole('button', { name: settings ? 'Build index, Message search' : 'Build index' });
+  await screen.findByRole('button', { name: 'Sync status: Needs attention' });
+  const build = await screen.findByRole('button', { name: 'Build index, Message search' });
   await fireEvent.click(build);
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   await waitFor(() => expect(built).toBe(true));
-  if (settings) await within(screen.getByText('Message search').closest('li')!).findByText('On');
-  else await waitFor(() => expect(screen.queryByRole('button', { name: 'Build index' })).toBeNull());
-  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe(settings ? 'Sync status: Idle' : 'Sync status: Needs attention'), { timeout: 3000 });
-  if (outcome === 'failed') await screen.findByText('Embedding endpoint failed');
+  await within(screen.getByText('Message search').closest('li')!).findByText('On');
+  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Idle'), { timeout: 3000 });
+});
+
+it('refreshes the shell dot after Messages fails Build index', async () => {
+  window.history.replaceState(null, '', '/?workspace=everything&mode=hybrid');
+  let built = false;
+  const session = sessionFor(async (request, path) => {
+    if (path === '/api/v1/operations/status') {
+      const snapshot = Response.json({ lanes: [jobLane('message_embedding', {
+        latest: built ? jobRun('message_embedding') : undefined,
+      })] });
+      return snapshot;
+    }
+    if (path === '/api/v1/search/coverage') {
+      return Response.json({
+        eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1',
+        status: 'initializing', actions: built ? [] : ['build_index'],
+      });
+    }
+    if (request.method === 'POST' && path === '/api/v1/cli/run') {
+      built = true;
+      return new Response('{"type":"complete","error":"Embedding endpoint failed"}\n');
+    }
+  });
+  render(App, { session });
+  await screen.findByRole('button', { name: 'Sync status: Idle' });
+  const build = await screen.findByRole('button', { name: 'Build index' });
+  await fireEvent.click(build);
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  await waitFor(() => expect(built).toBe(true));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Build index' })).toBeNull());
+  await waitFor(() => expect(screen.getByRole('button', { name: /Sync status:/ }).getAttribute('aria-label')).toBe('Sync status: Needs attention'), { timeout: 3000 });
+  await screen.findByText('Embedding endpoint failed');
 });

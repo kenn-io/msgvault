@@ -1,8 +1,9 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
-  await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [] } }));
+  await stubOperationStatus(page);
 });
 
 const row = {

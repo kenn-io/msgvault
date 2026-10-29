@@ -1,3 +1,4 @@
+import { lane, lanes } from '../../../test/operations';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -17,7 +18,7 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
   let conflict = false;
   const client = createAPIClient(async input => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: [{ kind: 'document_extraction', lane: 'documents', configured: true, supported_actions: [], history_availability: 'available' }] });
+    if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('document_extraction', { related_status: 'getDocumentIndexStatus' })) });
     if (url.pathname === '/api/v1/operations/runs') {
       queries.push(url.searchParams);
       if (conflict && url.searchParams.has('cursor')) return Response.json({ error: 'operation_history_conflict', message: 'History changed' }, { status: 409 });
@@ -43,10 +44,7 @@ describe('Past runs', () => {
     let configured = false;
     const client = createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [{
-        kind: 'document_extraction', lane: 'documents', configured,
-        related_status: 'getDocumentIndexStatus', supported_actions: [], history_availability: 'available'
-      }] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('document_extraction', { configured, related_status: 'getDocumentIndexStatus' })) });
       if (path === '/api/v1/operations/runs') return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
       if (path === '/api/v1/documents/status/current') return Response.json({ status: {
         profile_exists: true, profile_enabled: false, exact_consent: true,
@@ -74,12 +72,31 @@ describe('Past runs', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Oct 13, 2026' }));
     await waitFor(() => expect(queries.at(-1)?.get('started_from')).toBe('2026-10-11T00:00:00Z'));
     expect(queries.at(-1)?.get('started_before')).toBe('2026-10-14T00:00:00Z');
+    await fireEvent.keyDown(document, { key: 'Escape' });
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All documents');
     await waitFor(() => expect(queries.at(-1)?.get('lane')).toBe('documents'));
     expect(queries.at(-1)?.has('kind')).toBe(false);
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'CardDAV sync');
     await waitFor(() => expect(queries.at(-1)?.get('kind')).toBe('carddav_sync'));
     expect(queries.at(-1)?.has('lane')).toBe(false);
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'Source sync');
+    await fireEvent.click(screen.getByRole('button', { name: /2026-10-11/ }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Relative' }));
+    await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+    await screen.findByText('No runs match.');
+    await fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    await screen.findByRole('button', { name: 'Open Source sync run' });
+    expect(queries.at(-1)?.has('started_from')).toBe(false);
+    expect(queries.at(-1)?.has('started_before')).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+    await screen.findByText('No runs match.');
+    await fireEvent.keyDown(document, { key: 'Escape' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear operation dates' }));
+    await screen.findByRole('button', { name: 'Open Source sync run' });
+    expect(queries.at(-1)?.has('started_from')).toBe(false);
+    expect(queries.at(-1)?.has('started_before')).toBe(false);
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'Paused');
+    await waitFor(() => expect(queries.at(-1)?.get('state')).toBe('paused'));
   });
   it('offers Restart when page membership changes', async () => {
     const { drift, queries } = setup();
@@ -102,10 +119,12 @@ describe('Past runs', () => {
 
 it('refreshes on reopening and retries an unreadable history through Refresh', async () => {
   let failed = false;
+  let detailFailed = true;
   let runs = [run];
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/status')) return Response.json({ lanes: [] });
+    if (path.endsWith('/status')) return Response.json({ lanes: lanes() });
+    if (path.includes('/runs/')) return detailFailed ? Response.json({}, { status: 500 }) : Response.json({ ...runs[0], supported_actions: [] });
     return failed ? Response.json({}, { status: 500 }) : Response.json({ runs, membership_revision: 1, unavailable_kinds: [] });
   });
   const controller = new OperationsController(client); controllers.push(controller);
@@ -121,47 +140,10 @@ it('refreshes on reopening and retries an unreadable history through Refresh', a
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await screen.findByRole('button', { name: 'Open Source sync run' });
   expect(screen.queryByText('Unable to load operation history.')).toBeNull();
-});
-
-it('retries the selected run detail through Refresh', async () => {
-  let failed = true;
-  const client = createAPIClient(async input => {
-    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/status')) return Response.json({ lanes: [] });
-    if (path.endsWith('/runs')) return Response.json({ runs: [run], membership_revision: 1, unavailable_kinds: [] });
-    return failed ? Response.json({}, { status: 500 }) : Response.json({ ...run, supported_actions: [] });
-  });
-  const controller = new OperationsController(client); controllers.push(controller);
-  render(RunHistoryDialog, { client, controller, state: { ...defaultOperationsState(), operationRunID: run.id }, onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+  await fireEvent.click(screen.getByRole('button', { name: 'Open Source sync run' }));
   await screen.findByText('Unable to load operation detail.');
-  failed = false;
+  detailFailed = false;
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await screen.findByRole('region', { name: 'Operation run detail' });
   expect(screen.queryByText('Unable to load operation detail.')).toBeNull();
-});
-
-it('restores older archived runs after narrowing dates through All or Clear', async () => {
-  const oldRun = { ...fixture.runs.find(run => run.kind === 'source_sync')!, started_at: '2020-01-01T12:00:00Z', finished_at: '2020-01-01T12:01:00Z' };
-  const client = createAPIClient(async input => {
-    const url = new URL((input as Request).url);
-    if (url.pathname.endsWith('/status')) return Response.json({ lanes: [] });
-    const from = url.searchParams.get('started_from');
-    const before = url.searchParams.get('started_before');
-    const matches = (!from || oldRun.started_at >= from) && (!before || oldRun.started_at < before);
-    return Response.json({ runs: matches ? [oldRun] : [], membership_revision: 1, unavailable_kinds: [] });
-  });
-  const controller = new OperationsController(client); controllers.push(controller);
-  render(RunHistoryDialog, { client, controller, state: defaultOperationsState(), onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
-  await screen.findByRole('button', { name: 'Open Source sync run' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Custom range' }));
-  await fireEvent.click(screen.getByRole('radio', { name: 'Relative' }));
-  await fireEvent.click(screen.getByRole('button', { name: '7d' }));
-  await screen.findByText('No runs match.');
-  await fireEvent.click(screen.getByRole('button', { name: 'All' }));
-  await screen.findByRole('button', { name: 'Open Source sync run' });
-  await fireEvent.click(screen.getByRole('button', { name: '7d' }));
-  await screen.findByText('No runs match.');
-  await fireEvent.keyDown(document, { key: 'Escape' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Clear operation dates' }));
-  await screen.findByRole('button', { name: 'Open Source sync run' });
 });

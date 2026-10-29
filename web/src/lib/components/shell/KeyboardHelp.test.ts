@@ -28,10 +28,11 @@ describe('keyboard command registry', () => {
 
   it('renders and searches the registry, including selection commands', async () => {
     const onclose = vi.fn();
+    const onOpenCommands = vi.fn();
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
       onclose,
-      onOpenCommands: vi.fn()
+      onOpenCommands
     });
 
     expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeDefined();
@@ -42,6 +43,8 @@ describe('keyboard command registry', () => {
     });
     expect(screen.getByText('Select all visible rows')).toBeDefined();
     expect(screen.queryByText('Open filters')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Commands', exact: true }));
+    expect(onOpenCommands).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onclose).toHaveBeenCalledOnce();
   });

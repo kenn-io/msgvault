@@ -1,3 +1,4 @@
+import { lanes } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -575,7 +576,7 @@ describe('AppShell', () => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
         if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
         if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
-        if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+        if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
         if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
         if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
         return Response.json(exploreResponse());
@@ -2882,7 +2883,7 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations', settingsCategory: 'server' }))}`);
     const client = createAPIClient(async input => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
       if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
       return Response.json(exploreResponse());
     });
@@ -2948,7 +2949,7 @@ it('opens CardDAV Past runs with its kind through the Settings context', async (
   });
   const client = createAPIClient(async input => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: [] });
+    if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
     if (url.pathname.endsWith('/operations/runs')) { queries.push(url.searchParams); return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 }); }
     return Response.json(exploreResponse());
   });
@@ -2965,7 +2966,7 @@ it('selects a run and mounts detail restored from its URL', async () => {
   const client = createAPIClient(async input => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const path = url.pathname;
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
     if (path.endsWith('/operations/runs')) { queries.push(url.searchParams); return Response.json({ runs: [sourceRun], unavailable_kinds: [], membership_revision: 1 }); }
     if (path.includes('/operations/runs/')) return Response.json({ ...sourceRun, supported_actions: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });

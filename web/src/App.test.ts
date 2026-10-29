@@ -1,3 +1,4 @@
+import { lanes } from './test/operations';
 import { getHealth as generatedGetHealth } from './lib/api/generated/api/api';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -13,7 +14,7 @@ describe('application foundation', () => {
     const session = createSessionController(async (input) => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
       if (path === '/api/v1/telemetry/events') {
@@ -118,7 +119,7 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         sessionCalls += 1;
@@ -178,7 +179,7 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         return Response.json({
@@ -211,7 +212,7 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         return Response.json({ auth_mode: 'required', https: true, plain_http_warning: false });
@@ -257,7 +258,7 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         return Response.json({ auth_mode: 'required', https: true, plain_http_warning: false });
@@ -322,7 +323,7 @@ describe('application foundation', () => {
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
         const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
         if (path === '/api/session') {
           return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
@@ -371,7 +372,7 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/v1/settings' && request.method === 'GET' && ++settingsReads === 2) {
         // The browser-defaults load reads the daemon before the save, then stalls.
@@ -400,7 +401,7 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/v1/settings' && request.method === 'GET' && ++settingsReads === 2) {
         // The browser-defaults load reads an older daemon default, then stalls past the save.
@@ -442,7 +443,7 @@ describe('application foundation', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (path === '/api/session') {
         return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
