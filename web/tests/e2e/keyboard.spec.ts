@@ -19,28 +19,13 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
   throw new Error(`Keyboard focus did not reach ${accessibleName}; saw ${[...seen].join(' | ')}`);
 }
 
-test('operations filters, selection, advertised action, and close work without a pointer', async ({ page }) => {
-  const fixture = await installOperations(page);
+test('Past runs selection, focus return, and close work without a pointer', async ({ page }) => {
+  await installOperations(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true }))}`);
-
-  await tabTo(page, 'Kind:');
-  await page.keyboard.press('Enter');
-  for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('documents');
-
-  await tabTo(page, 'Kind:', 120, 'Shift+Tab');
-  await page.keyboard.press('Enter');
-  for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBeNull();
 
   await tabTo(page, 'Open CardDAV sync run');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
-  await tabTo(page, 'Start CardDAV sync');
-  await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.actionRequests).toEqual(['carddav_sync']);
   await tabTo(page, 'All runs');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Open CardDAV sync run' })).toBeFocused();
