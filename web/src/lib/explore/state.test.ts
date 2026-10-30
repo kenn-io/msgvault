@@ -64,6 +64,41 @@ describe('Explore URL state', () => {
     }
   });
 
+  it.each(['stay', 'leave'] as const)('closes Past runs over an unindexed history destination and handles %s', async outcome => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    let leave!: () => void;
+    let stay: (() => void) | undefined;
+    try {
+      state.openOperationHistory({ operationKind: 'source_sync' });
+      state.commitNavigation({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
+      state.holdLeave = (next, restore) => { leave = next; stay = restore; return true; };
+      const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.go(-3);
+      await popped;
+      expect(state.current).toMatchObject({ workspace: 'settings', operationHistory: false,
+        operationKind: '', operationRunID: null });
+      expect(window.location.search).toBe('?workspace=sources');
+      expect(window.history.state).toBeNull();
+      state.holdLeave = undefined;
+      if (outcome === 'leave') leave();
+      else {
+        stay!();
+        expect(state.current.workspace).toBe('settings');
+        expect(parseExploreURLState(window.location.search)).toMatchObject({ workspace: 'settings', operationHistory: false });
+        const back = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+        window.history.back();
+        await back;
+      }
+      expect(state.current).toMatchObject({ workspace: 'sources', operationHistory: false });
+      expect(window.location.search).toBe('?workspace=sources');
+      expect(window.history.state).toBeNull();
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('drops a held Back to an unindexed entry when Forward returns to Settings first', async () => {
     window.history.replaceState(null, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');

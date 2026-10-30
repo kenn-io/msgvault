@@ -659,7 +659,9 @@ export class ExploreState {
   private holdPop(delta: number, commit: () => void): boolean {
     if (delta === 0) {
       this.pendingHeldLeaveRestore = () => this.pushCommitted();
-      return this.holdLeave?.(commit, this.pendingHeldLeaveRestore) ?? false;
+      const held = this.holdLeave?.(commit, this.pendingHeldLeaveRestore) ?? false;
+      if (held && this.current.operationHistory) this.clearOperationHistory(false);
+      return held;
     }
     if (!this.holdLeave?.(() => this.browser.history.go(delta))) return false;
     this.restoringHeldLeave = true;
@@ -843,9 +845,15 @@ export class ExploreState {
     if (patch.operationHistory === false && this.current.operationHistory) this.clearOperationHistory();
   }
 
-  private clearOperationHistory(): void {
-    this.replaceCommittedNavigation({ operationHistory: false, operationLane: '', operationKind: '',
-      operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' });
+  private clearOperationHistory(replaceURL = true): void {
+    const patch: Partial<ExploreURLState> = { operationHistory: false, operationLane: '', operationKind: '',
+      operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' };
+    if (replaceURL) this.replaceCommittedNavigation(patch);
+    else {
+      // Keep the unindexed destination intact until the user chooses Stay or Discard.
+      Object.assign(this.current, patch);
+      this.committed = normalize(this.current);
+    }
   }
 
   commitNavigation(patch: Partial<ExploreURLState>): void {
