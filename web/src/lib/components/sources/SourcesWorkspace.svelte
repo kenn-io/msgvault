@@ -24,7 +24,7 @@
   type Source = SourceStatus;
   const MIN_POLL_MS = 500;
   const MAX_POLL_MS = 8000;
-  const ADD_SOURCE_COMMAND = 'msgvault add-account you@gmail.com';
+  const ADD_SOURCE_COMMAND = 'msgvault add-account user@example.com';
 
   let {
     client,

@@ -147,9 +147,9 @@ describe('SourcesWorkspace', () => {
   it('shows the add-account command when there are no sources, and from Add source', async () => {
     render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
     expect(await screen.findByText('No sources yet')).toBeDefined();
-    expect(screen.getByText('msgvault add-account you@gmail.com')).toBeDefined();
+    expect(screen.getByText('msgvault add-account user@example.com')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
-    expect(screen.getAllByText('msgvault add-account you@gmail.com')).toHaveLength(2);
+    expect(screen.getAllByText('msgvault add-account user@example.com')).toHaveLength(2);
   });  it('keeps polling through idle races until the accepted run completes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusReads = 0;
