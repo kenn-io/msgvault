@@ -101,7 +101,7 @@ contains email only; it does not illustrate chat, calendar, or attachment conten
 Messages opens as a compact table of logical entries, newest first: one row
 per email, calendar event, meeting note, other durable item, or chat
 conversation. Raw chat fragments appear only after drilling into a
-conversation. Search, Filter, and Group by form a shareable view.
+conversation. Search, Filter, Group by, and Show as form a shareable view.
 Ordinary tabs use short URLs such as `?workspace=everything&mode=full_text`.
 Filters, layout changes, and the selected item appear in the link only when
 they differ from the defaults. Keyboard focus, scroll position, and choices
@@ -198,7 +198,7 @@ background, and border colors. Images keep their original colors. Choose
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
 
-Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a linked sender or recipient to open that exact person; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Unavailable task connections offer **Open Settings**.
+Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a linked sender or recipient to open that exact person; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Unavailable task connections offer **Set up**.
 
 ## Meeting context and follow-ups
 
