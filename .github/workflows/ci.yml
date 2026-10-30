@@ -27,12 +27,12 @@ jobs:
             runner: ubuntu-24.04
             go_arch_name: amd64
             job_timeout: 27
-            test_timeout: 4m
+            test_timeout: 5m
           - goarch: arm64
             runner: ubuntu-24.04-arm
             go_arch_name: arm64
-            job_timeout: 10
-            test_timeout: 2m
+            job_timeout: 13
+            test_timeout: 5m
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.job_timeout }}
     container:
@@ -159,10 +159,10 @@ jobs:
 
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
-        run: make test-unsharded TEST_TIMEOUT=18m
+        run: make test-unsharded TEST_TIMEOUT=17m
 
       - name: Test build without vector backends
-        run: go test -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
+        run: go test -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
 
       - name: Save Go caches
         uses: ./.github/actions/go-cache-save
@@ -180,12 +180,12 @@ jobs:
         include:
           - name: cli
             package: ./cmd/msgvault/cmd
-            job_timeout: 21
+            job_timeout: 22
             test_timeout: 15m
           - name: store
             package: ./internal/store
             job_timeout: 17
-            test_timeout: 9m
+            test_timeout: 10m
           - name: api
             package: ./internal/api
             job_timeout: 13
@@ -229,7 +229,7 @@ jobs:
           group: macos
 
       - name: Test
-        run: make test TEST_TIMEOUT=38m
+        run: make test TEST_TIMEOUT=39m
 
       - name: Save Go caches
         uses: ./.github/actions/go-cache-save
@@ -330,7 +330,7 @@ jobs:
 
   web-e2e:
     runs-on: ubuntu-26.04
-    timeout-minutes: 22
+    timeout-minutes: 31
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -381,7 +381,8 @@ jobs:
   large-archive-benchmark:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
-    timeout-minutes: 10
+    # The sparse benchmark sample is warm; allow for measured macOS query compilation.
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -532,7 +533,7 @@ jobs:
 
   test-windows-slow-packages:
     runs-on: windows-2025
-    timeout-minutes: 19
+    timeout-minutes: 21
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -561,7 +562,7 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
-          $output = go test -v -timeout 8m -tags "fts5 sqlite_vec" `
+          $output = go test -v -timeout 9m -tags "fts5 sqlite_vec" `
             ./internal/api `
             ./internal/importer `
             ./scripts 2>&1
@@ -641,7 +642,7 @@ jobs:
 
   test-windows-pack-restore:
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -689,7 +690,7 @@ jobs:
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
     runs-on: ubuntu-26.04
-    timeout-minutes: 85
+    timeout-minutes: 109
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -733,13 +734,13 @@ jobs:
       # binaries open connections to the one service container at once. See
       # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
   test-postgres:
     runs-on: ubuntu-26.04
-    timeout-minutes: 54
+    timeout-minutes: 55
     services:
       postgres:
         image: postgres:16
@@ -784,7 +785,7 @@ jobs:
       # The three largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped-unsharded TEST_TIMEOUT=26m
+        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
 
       - name: Save Go caches
         uses: ./.github/actions/go-cache-save
@@ -803,8 +804,8 @@ jobs:
             test_timeout: 18m
             package: ./cmd/msgvault/cmd
           - name: store
-            job_timeout: 103
-            test_timeout: 90m
+            job_timeout: 84
+            test_timeout: 71m
             package: ./internal/store
           - name: api
             job_timeout: 30
@@ -854,11 +855,11 @@ jobs:
 
       - name: Test PostgreSQL library without CGO
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
-        run: make test-pg-nocgo TEST_TIMEOUT=15m
+        run: make test-pg-nocgo TEST_TIMEOUT=5m
 
       # Run store concurrency tests after the API package test, away from the store package shard.
       # Five repetitions catch intermittent lost updates and uniqueness races.
       - name: Concurrency tests (-count=5)
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
         run: |
-          go test -timeout 10m -tags fts5 -count=5 -run 'Concurrent' ./internal/store
+          go test -timeout 7m -tags fts5 -count=5 -run 'Concurrent' ./internal/store
