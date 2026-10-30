@@ -636,12 +636,12 @@ describe('AppShell', () => {
       ]);
     });
 
-    it('moves between Messages and Files from the sidebar, keeping the query and filters', async () => {
+    it('switches Messages to Files through Show as and returns through the sidebar, keeping query and filters', async () => {
       const state = shellState('everything');
       state.commitNavigation({ query: 'pasta', filters: [{ dimension: 'source', values: ['1'] }] });
       render(AppShell, { client: exploreClient(), state, enabled: false });
 
-      await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+      await chooseSelectOption(screen.getByRole('combobox', { name: /^Show as:/ }), 'Files');
       expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
       expect(state.current).toMatchObject({
         workspace: 'files', presentation: 'files', query: 'pasta',

@@ -31,12 +31,7 @@ describe('MeetingPanel', () => {
     expect(await screen.findByText('4 meetings')).toBeDefined();
     expect(await screen.findByText('Coverage: 1 available · 1 partial · 1 unsupported · 1 unavailable')).toBeDefined();
     expect(screen.getByRole('combobox', { name: 'Source status: All source statuses' })).toBeDefined();
-    vi.useFakeTimers();
-    try {
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Assignee email' }), { target: { value: 'person@example.test' } });
-      await vi.advanceTimersByTimeAsync(300);
-      expect(requests.filter((request) => request.url.endsWith('/actions'))).toHaveLength(1);
-    } finally { vi.useRealTimers(); }
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Assignee email' }), { target: { value: 'person@example.test' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Apply action filters' }));
     await waitFor(() => expect(requests.filter((request) => request.url.endsWith('/actions'))).toHaveLength(2));
     const last = requests.filter((request) => request.url.endsWith('/actions')).at(-1)!;

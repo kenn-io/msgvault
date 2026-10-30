@@ -41,10 +41,12 @@ describe('CreateTaskDialog', () => {
 
   it('keeps the request ID and added_at stable across a failed browser retry', async () => {
     const requests: Request[] = [];
+    let fail!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { fail = resolve; });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      if (requests.length === 1) return Response.json({ message: 'Unavailable' }, { status: 503 });
+      if (requests.length === 1) return pending;
       return Response.json({ task: { id: 'task-1', project: 'project', title: 'Synthetic', revision: 'r1' } }, { status: 201 });
     });
     render(CreateTaskDialog, {
@@ -54,7 +56,10 @@ describe('CreateTaskDialog', () => {
     });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
-    await screen.findByRole('alert');
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
+    fail(Response.json({ message: 'Unavailable' }, { status: 503 }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Unavailable');
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', false);
     await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[0]!.headers.get('X-Request-Id')).toBe(requests[1]!.headers.get('X-Request-Id'));
