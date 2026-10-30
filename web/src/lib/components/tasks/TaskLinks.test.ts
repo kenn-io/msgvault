@@ -1,3 +1,5 @@
+import { taskCreationClient } from './fixtures.test-support';
+import { tick } from 'svelte';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -13,15 +15,10 @@ describe('TaskLinks', () => {
   it('completes creation without refreshing the closing add surface', async () => {
     const reads: Request[] = [];
     const oncomplete = vi.fn();
-    render(TaskLinks, { client: createAPIClient(async (input) => {
-      const request = input as Request;
-      reads.push(request);
-      if (request.method === 'POST') return Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 });
-      if (request.url.endsWith('/status')) return Response.json({ state: 'ready', project: 'project' });
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: { archive_uid: 'archive-a', conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z' } });
-    }), mode: 'add', messageId: 42, title: 'Follow up', oncomplete });
+    render(TaskLinks, { client: taskCreationClient(reads), mode: 'add', messageId: 42, title: 'Follow up', oncomplete });
     await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(oncomplete).toHaveBeenCalledOnce());
+    await tick();
     expectOneInitialTaskRead(reads);
   });
   it('shows loading, linked tasks, and honest partial authority', async () => {

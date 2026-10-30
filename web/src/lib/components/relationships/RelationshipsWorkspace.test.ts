@@ -1,3 +1,4 @@
+import { disabledTaskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
@@ -1014,7 +1015,7 @@ it('opens a person from a relationship timeline reader', async () => {
   const onOpenPerson = vi.fn();
   const { fetchFn } = fetchHandler({
     '/api/v1/integrations/tasks/status': async () => Response.json({ state: 'disabled' }),
-    '/api/v1/messages/42/tasks': async () => Response.json({ state: 'disabled', complete: true, tasks: [] }),
+    '/api/v1/messages/42/tasks': async () => Response.json(disabledTaskLookup()),
     '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
     '/api/v1/relationships/1/timeline': async () => Response.json({ canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [{ key: 'message:42', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Archived email', has_attachments: false, message_count: 1, conversation_id: 8, anchor_message_id: 42 }], total_count: 1 }),
     '/api/v1/conversations/8': async () => Response.json({ id: 8, messages: [{ id: 42, conversation_id: 8, from: 'Alex Example', from_participant_id: 4, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }], subject: 'Archived email', sent_at: when, body: 'Email body', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Preview' }], anchor_id: 42, total: 1, has_before: false, has_after: false })
