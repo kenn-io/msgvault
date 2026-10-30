@@ -935,7 +935,9 @@ export class ExploreState {
   private readURLState(): ExploreURLState {
     const history = this.browser.history.state;
     const parsed = isRecord(history) && history.exploreSearch === this.browser.location.search &&
-      isRecord(history.exploreState)
+      isRecord(history.exploreState) &&
+      (history.exploreState.schemaVersion === undefined || history.exploreState.schemaVersion === 1 ||
+        history.exploreState.schemaVersion === defaultExploreURLState.schemaVersion)
       ? normalize(history.exploreState)
       : parseExploreURLState(this.browser.location.search);
     parsed.searchMode = resolveInitialSearchMode(

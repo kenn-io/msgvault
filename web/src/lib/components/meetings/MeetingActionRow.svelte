@@ -26,7 +26,7 @@
         {#if row.action.due_date}<div><dt>Due</dt><dd>{row.action.due_date}</dd></div>{/if}
       </dl>
     {/if}
-    <a href={row.meeting.archive_path} onclick={(event) => { if (onOpenMeeting) { event.preventDefault(); onOpenMeeting(row.meeting); } }}>{compact ? row.meeting.title || 'Open archived meeting' : 'Open archived meeting'}</a>
+    <a href={`/messages/${row.meeting.message_id}`} onclick={(event) => { if (onOpenMeeting) { event.preventDefault(); onOpenMeeting(row.meeting); } }}>{compact ? row.meeting.title || 'Open archived meeting' : 'Open archived meeting'}</a>
   </div>
 </li>
 

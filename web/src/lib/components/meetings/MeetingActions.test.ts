@@ -86,7 +86,7 @@ describe('MeetingActions', () => {
     const archiveLink = screen.getByRole('link', {
       name: 'Open archived meeting',
     });
-    expect(archiveLink.getAttribute('href')).toBe('/api/v1/messages/42');
+    expect(archiveLink.getAttribute('href')).toBe('/messages/42');
     await fireEvent.click(archiveLink);
     expect(onOpenMeeting).toHaveBeenCalledWith(meeting);
     await expect(requests[0]!.clone().json()).resolves.toEqual(request);

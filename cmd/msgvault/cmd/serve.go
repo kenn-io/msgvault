@@ -1909,6 +1909,7 @@ var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
 var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
+var _ api.ArchiveIdentityStore = (*storeAPIAdapter)(nil)
 var _ operations.HistoryReader = (*storeAPIAdapter)(nil)
 var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
 var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
@@ -2035,8 +2036,8 @@ func (a *storeAPIAdapter) ArchiveUIDContext(ctx context.Context) (string, error)
 	return a.store.ArchiveUIDContext(ctx)
 }
 
-func (a *storeAPIAdapter) ArchiveRevisionContext(ctx context.Context) (string, error) {
-	return a.store.ArchiveRevisionContext(ctx)
+func (a *storeAPIAdapter) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
+	return a.store.ArchiveIdentityContext(ctx)
 }
 
 func (a *storeAPIAdapter) ActiveOperationTokenKey(ctx context.Context) (store.OperationTokenKey, error) {
