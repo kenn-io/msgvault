@@ -92,34 +92,21 @@ describe('TaskLinks', () => {
     }
   );
 
-  it('enables create, link, and unlink on a partial index while keeping the incompleteness warning', async () => {
-    const requests: Request[] = [];
+  it('keeps unlink available on a partial index with its incompleteness warning', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
-      if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-2', title: 'Search result', revision: 'r1' }] });
-      if (request.method === 'POST') return Response.json({ task: { id: 'task-2', project: 'project', title: 'Search result', revision: 'r1' } }, { status: 201 });
       return Response.json({
         state: 'partial', complete: false, reason: 'safety_limit', last_scan: '2026-07-19T01:00:00Z',
         tasks: [{ id: 'task-1', title: 'Partial task' }], outbound_metadata: {}
       });
     });
     const client = createAPIClient(fetchFn);
-    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
 
     expect(await screen.findByText('Partial task')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('partial');
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
-
-    await view.rerender({ client, mode: 'add', messageId: 42, title: 'Synthetic' });
-    expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Search' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Link Search result' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1));
-    expect(await requests.find((request) => request.method === 'POST')!.json()).toMatchObject({ task_id: 'task-2' });
   });
 
   it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project'])(

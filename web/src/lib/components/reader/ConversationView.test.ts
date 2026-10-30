@@ -129,7 +129,7 @@ describe('ConversationView', () => {
     expect(screen.getByText('Body 2')).toBeDefined();
   });
 
-  it('expands additional messages inline without refetching and reports the anchor change', async () => {
+  it('expands messages without refetching, shares Tasks status and setup, preserves cached links, and refreshes on remount', async () => {
     const lookedUp: number[] = [];
     let configured = false;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
