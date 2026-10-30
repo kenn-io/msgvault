@@ -143,10 +143,14 @@ export interface CategoryLayout {
 /** Splits one category's settings into its up-front blocks, Advanced, and Set in config.toml. */
 export function layoutCategory(id: CategoryID, settings: readonly SettingState[], groups: readonly SettingGroupState[] = []): CategoryLayout {
   const sourceGroups = id === 'sources' ? groupSettings(settings, groups).filter(group => group.id === 'sources' || group.id === 'attachments') : [];
-  const blocks = sourceGroups.length > 0 ? sourceGroups.flatMap(group => [
-    { title: group.id === 'sources' ? undefined : group.label, description: group.description, rows: group.settings.filter(setting => !setting.section).map(setting => setting.key) },
-    ...group.sections.map(section => ({ title: section.label, rows: section.settings.map(setting => setting.key) }))
-  ]) : (BLOCKS[id] ?? []).map(block => ({
+  const blocks = sourceGroups.length > 0 ? sourceGroups.flatMap(group => {
+    const rows = group.settings.filter(setting => !setting.section).map(setting => setting.key);
+    // The Sources group's description only restates the category heading.
+    return [
+      group.id === 'sources' ? { rows } : { title: group.label, description: group.description, rows },
+      ...group.sections.map(section => ({ title: section.label, rows: section.settings.map(setting => setting.key) })),
+    ];
+  }) : (BLOCKS[id] ?? []).map(block => ({
     ...block,
     description: block.description ?? groups.find(group => group.id === id)?.sections?.find(section => section.id === block.section)?.description,
   }));
