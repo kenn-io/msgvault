@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { onDestroy, setContext, tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
 
   import {
     getConversation as generatedGetConversation,
+    getTaskIntegrationStatus,
     getMessage as generatedGetMessage,
   } from '../../api/generated/api/api';
   import type { ConversationMessage as GeneratedConversationMessage } from '../../api/generated/models';
@@ -12,6 +13,7 @@
   import type { MessageViewMode } from '../../archive/types';
   import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
+  import { conversationTaskStatusKey, type TaskStatusLoader } from '../tasks/task-status';
   import { reportError, reportAction, reportWhenVisible } from '../../telemetry/actions';
 
   type APIMessageDetail = GeneratedConversationMessage;
@@ -42,6 +44,10 @@
   } = $props();
 
   const apiClient = untrack(() => client);
+  const taskStatusController = new AbortController();
+  let taskStatus: ReturnType<TaskStatusLoader> | undefined;
+  setContext<TaskStatusLoader>(conversationTaskStatusKey, () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }));
+  onDestroy(() => taskStatusController.abort());
   let scroller = $state<HTMLElement>();
   let messages = $state<APIMessageDetail[]>([]);
   let activeAnchor = $state(0);
