@@ -56,6 +56,44 @@ func TestArchiveAPIMessageRefusesWrongPeerAndAcceptsEmptyMedia(t *testing.T) {
 	assert.Equal(1, count)
 }
 
+func TestArchiveAPIMessagePreservesMetadataOnlyMedia(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	dialog := CatalogDialog{ChatID: -123, NativeID: 123, Kind: "group", Title: "Synthetic"}
+	msg := &tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100}
+	msg.SetMedia(&tg.MessageMediaGeo{Geo: &tg.GeoPointEmpty{}})
+	require.NoError(ArchiveAPIMessage(ctx, st, source.ID, 999, "Synthetic", dialog, msg, nil, nil))
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-123:7").Scan(&id))
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(err)
+	assert.NotEmpty(raw)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), id).Scan(&count))
+	assert.Zero(count)
+}
+
+func TestArchiveAPIMessageRejectsUnsupportedMedia(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	dialog := CatalogDialog{ChatID: -123, NativeID: 123, Kind: "group", Title: "Synthetic"}
+	msg := &tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "synthetic"}
+	msg.SetMedia(&tg.MessageMediaUnsupported{})
+	require.ErrorContains(ArchiveAPIMessage(context.Background(), st, source.ID, 999, "Owner", dialog, msg, nil, nil), "unsupported Telegram media")
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
+	assert.Zero(count)
+}
+
 func TestArchiveAPIMessagePersistsPendingMediaMetadata(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

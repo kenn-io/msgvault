@@ -117,6 +117,29 @@ func TestMapSupergroupRetainsPtsAndInputPeer(t *testing.T) {
 	assert.Equal(&tg.InputPeerChannel{ChannelID: 321, AccessHash: 654}, peer)
 }
 
+func TestMapDialogPreservesKnownMembershipForMediaPolicy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	group := &tg.Chat{ID: 123, ParticipantsCount: 12}
+	mapped, err := MapDialog(&tg.Dialog{Peer: &tg.PeerChat{ChatID: 123}}, nil, []tg.ChatClass{group})
+	require.NoError(err)
+	assert.True(mapped.ParticipantCountKnown)
+	assert.Equal(12, mapped.ParticipantCount)
+	channel := &tg.Channel{ID: 321, Megagroup: true}
+	channel.SetAccessHash(42)
+	channel.SetParticipantsCount(25)
+	mapped, err = MapDialog(&tg.Dialog{Peer: &tg.PeerChannel{ChannelID: 321}}, nil, []tg.ChatClass{channel})
+	require.NoError(err)
+	assert.True(mapped.ParticipantCountKnown)
+	assert.Equal(25, mapped.ParticipantCount)
+	channel = &tg.Channel{ID: 321, Megagroup: true}
+	channel.SetAccessHash(42)
+	mapped, err = MapDialog(&tg.Dialog{Peer: &tg.PeerChannel{ChannelID: 321}}, nil, []tg.ChatClass{channel})
+	require.NoError(err)
+	assert.False(mapped.ParticipantCountKnown)
+}
+
 func TestMapMonoforumUsesSafeHistoryMode(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

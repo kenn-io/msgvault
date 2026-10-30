@@ -15,7 +15,6 @@ import (
 )
 
 // ArchiveAPIMessage writes one API message through the shared export writer.
-// Media is refused until its durable locator and attachment policy are wired.
 func ArchiveAPIMessage(ctx context.Context, st *store.Store, sourceID, ownerID int64, ownerName string, dialog CatalogDialog, msg *tg.Message, users []tg.UserClass, chats []tg.ChatClass) error {
 	return archiveAPIMessage(ctx, ownerID, dialog, msg, users, chats, func(chat telegram.Chat, message telegram.Message) error {
 		return telegram.WriteLiveMessage(ctx, st, sourceID, ownerID, ownerName, chat, message)

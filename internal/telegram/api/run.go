@@ -6,21 +6,33 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telegram"
 )
 
 // HistoryOptions control a manual history scan. Scheduled runs use defaults.
 type HistoryOptions struct {
-	Full    bool
-	After   time.Time
-	Takeout bool
+	Full           bool
+	After          time.Time
+	Takeout        bool
+	MediaProcessor func(context.Context, telegram.Chat, *telegram.LiveMedia) error
+	Media          *MediaOptions
+}
+
+// MediaOptions configure attachment policy, content storage and downloader.
+type MediaOptions struct {
+	AttachmentsDir string
+	TempDir        string
+	Policy         attachmentpolicy.Policy
+	Download       func(context.Context, *MediaReference, string, int64) (*os.File, error)
 }
 
 // RunAuthenticatedBackfill verifies the account before repairing legacy keys
@@ -89,6 +101,17 @@ func runAuthenticatedBackfill(ctx context.Context, st *store.Store, sourceID int
 	writer, err := telegram.NewLiveWriter(ctx, st, sourceID, owner.ID, strings.TrimSpace(owner.FirstName+" "+owner.LastName))
 	if err != nil {
 		return err
+	}
+	if options.Media != nil {
+		if options.MediaProcessor != nil || options.Media.AttachmentsDir == "" || options.Media.TempDir == "" || options.Media.Download == nil {
+			return errors.New("invalid Telegram media options")
+		}
+		if err := options.Media.Policy.Validate(); err != nil {
+			return err
+		}
+		writer.SetMediaProcessor(newMediaProcessor(options.Media.Policy, dialogs, options.Media.AttachmentsDir, options.Media.TempDir, options.Media.Download))
+	} else {
+		writer.SetMediaProcessor(options.MediaProcessor)
 	}
 	var backfillErr error
 	if options.Takeout {

@@ -124,6 +124,50 @@ func TestSyncTelegramSourceRejectsInvalidIdentifier(t *testing.T) {
 	require.ErrorContains(t, err, "identifier")
 }
 
+func TestSyncTelegramSourceStoresMediaThroughConnectedTransport(t *testing.T) {
+	assert := assert.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	{
+		require := require.New(t)
+		require.NoError(err)
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0700))
+	require.NoError(t, telegramapi.NewSessionStore(dir, 123, "synthetic-hash", 999).StoreSession(ctx, []byte("synthetic-session")))
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.UsersUserFull{FullUser: tg.UserFull{ID: 999}, Users: []tg.UserClass{&tg.User{ID: 999, Self: true}}})
+	mock.Expect().ThenResult(&tg.UpdatesState{Pts: 12, Date: 100})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{Dialogs: []tg.DialogClass{&tg.Dialog{Peer: &tg.PeerChat{ChatID: 123}, TopMessage: 7}}, Chats: []tg.ChatClass{&tg.Chat{ID: 123, ParticipantsCount: 2, Photo: &tg.ChatPhotoEmpty{}}}})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{})
+	message := &tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100}
+	media := &tg.MessageMediaDocument{}
+	media.SetDocument(&tg.Document{ID: 101, DCID: 1, Size: 9})
+	message.SetMedia(media)
+	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{message}})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
+	download := telegramMediaDownload(func(_ context.Context, _ *telegramapi.MediaReference, dir string, _ int64) (*os.File, error) {
+		file, err := os.CreateTemp(dir, "synthetic-*")
+		require.NoError(t, err)
+		_, err = file.WriteString("synthetic")
+		require.NoError(t, err)
+		_, err = file.Seek(0, 0)
+		return file, err
+	})
+	options := telegramapi.HistoryOptions{Media: &telegramapi.MediaOptions{AttachmentsDir: t.TempDir(), TempDir: dir}}
+	connect := func(ctx context.Context, _ *telegramapi.SessionStore, run func(context.Context, *tg.Client) error) error {
+		return run(context.WithValue(ctx, telegramMediaTransportKey{}, download), tg.NewClient(mock))
+	}
+	require.NoError(t, syncTelegramSource(ctx, st, source, dir, time.Unix(200, 0), false, 0, options, connect))
+	var state string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT a.attachment_state FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&state))
+	assert.Equal("stored", state)
+	assert.True(mock.AllWereMet())
+}
+
 func TestSyncTelegramSourceRecordsConnectionFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

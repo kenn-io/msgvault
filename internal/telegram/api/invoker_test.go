@@ -102,3 +102,28 @@ func TestReadInvokerRejectsAuthenticationRequests(t *testing.T) {
 	require.NoError(t, invoker.Invoke(context.Background(), &tg.MessagesGetHistoryRequest{}, nil))
 	assert.Equal(t, 1, underlying.calls)
 }
+
+func TestReadInvokerAllowsOnlyScopedDataCenterTransfer(t *testing.T) {
+	require := require.New(t)
+
+	underlying := &stubInvoker{}
+	invoker := NewReadInvoker(underlying, rate.Inf, 1, time.Minute)
+	request := &tg.AuthExportAuthorizationRequest{DCID: 2}
+	require.Error(invoker.Invoke(context.Background(), request, nil))
+	transfer := context.WithValue(context.Background(), transferContextKey{}, true)
+	require.NoError(invoker.Invoke(transfer, request, nil))
+	require.Error(invoker.Invoke(transfer, &tg.AuthSendCodeRequest{}, nil))
+	require.Error(invoker.Invoke(transfer, &tg.InvokeWithTakeoutRequest{Query: request}, nil))
+	for _, method := range []bin.Encoder{&tg.HelpGetCDNConfigRequest{}, &tg.UploadGetFileHashesRequest{}, &tg.UploadGetCDNFileRequest{}, &tg.UploadGetCDNFileHashesRequest{}, &tg.UploadReuploadCDNFileRequest{}} {
+		require.NoError(invoker.Invoke(context.Background(), method, nil))
+	}
+	assert.Equal(t, 6, underlying.calls)
+}
+
+func TestReadInvokerAllowsMessageRefresh(t *testing.T) {
+	underlying := &stubInvoker{}
+	invoker := NewReadInvoker(underlying, rate.Inf, 1, time.Minute)
+	require.NoError(t, invoker.Invoke(context.Background(), &tg.MessagesGetMessagesRequest{}, nil))
+	require.NoError(t, invoker.Invoke(context.Background(), &tg.ChannelsGetMessagesRequest{}, nil))
+	assert.Equal(t, 2, underlying.calls)
+}

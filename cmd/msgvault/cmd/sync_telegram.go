@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,17 +12,22 @@ import (
 	gotd "github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telegram"
 	telegramapi "go.kenn.io/msgvault/internal/telegram/api"
+	"golang.org/x/time/rate"
 )
 
 type telegramSyncDeps struct {
-	bind         func(context.Context) telegramSyncDeps
-	openStore    func() (*store.Store, func(), error)
-	tokensDir    func() string
-	connect      telegramConnect
-	refreshCache func() error
+	bind           func(context.Context) telegramSyncDeps
+	openStore      func() (*store.Store, func(), error)
+	tokensDir      func() string
+	attachmentsDir func() string
+	mediaPolicy    func(string) attachmentpolicy.Policy
+	connect        telegramConnect
+	refreshCache   func() error
 }
 
 func defaultTelegramSyncDeps(ctx context.Context) telegramSyncDeps {
@@ -40,7 +46,14 @@ func defaultTelegramSyncDeps(ctx context.Context) telegramSyncDeps {
 			}
 			return state.cfg.TokensDir()
 		},
-		connect: connectTelegram,
+		attachmentsDir: func() string {
+			if state == nil || state.cfg == nil {
+				return ""
+			}
+			return state.cfg.AttachmentsDir()
+		},
+		mediaPolicy: func(account string) attachmentpolicy.Policy { return state.cfg.Telegram.MediaPolicy(account) },
+		connect:     connectTelegram,
 		refreshCache: func() error {
 			if state == nil || state.cfg == nil {
 				return errors.New("configuration is unavailable")
@@ -99,7 +112,15 @@ func newSyncTelegramLocalCmd(deps telegramSyncDeps) *cobra.Command {
 			var runErr error
 			for _, source := range sources {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Telegram account: %s\n", source.Identifier)
-				if err := syncTelegramSource(cmd.Context(), st, source, deps.tokensDir(), time.Now().UTC(), includeChannels, chatID, telegramapi.HistoryOptions{Full: full || afterValue != "", After: after, Takeout: takeout}, deps.connect); err != nil {
+				options := telegramapi.HistoryOptions{Full: full || afterValue != "", After: after, Takeout: takeout}
+				if deps.attachmentsDir != nil {
+					policy := attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxParticipants: config.DefaultMediaMaxParticipants, MaxBytes: attachmentpolicy.DefaultChatMaxBytes}
+					if deps.mediaPolicy != nil {
+						policy = deps.mediaPolicy(source.Identifier)
+					}
+					options.Media = &telegramapi.MediaOptions{AttachmentsDir: deps.attachmentsDir(), TempDir: deps.tokensDir(), Policy: policy}
+				}
+				if err := syncTelegramSource(cmd.Context(), st, source, deps.tokensDir(), time.Now().UTC(), includeChannels, chatID, options, deps.connect); err != nil {
 					runErr = errors.Join(runErr, fmt.Errorf("sync Telegram account %s: %w", source.Identifier, err))
 				}
 			}
@@ -119,10 +140,19 @@ func init() { rootCmd.AddCommand(newSyncTelegramCmd(defaultTelegramSyncDeps(cont
 
 type telegramConnect func(context.Context, *telegramapi.SessionStore, func(context.Context, *tg.Client) error) error
 
+type telegramMediaTransportKey struct{}
+type telegramMediaDownload func(context.Context, *telegramapi.MediaReference, string, int64) (*os.File, error)
+
 func connectTelegram(ctx context.Context, session *telegramapi.SessionStore, run func(context.Context, *tg.Client) error) error {
 	appID, appHash := session.ApplicationCredentials()
-	client := gotd.NewClient(appID, appHash, telegramapi.ReadClientOptions(session, Version))
-	return client.Run(ctx, func(ctx context.Context) error { return run(ctx, client.API()) })
+	limiter := rate.NewLimiter(rate.Limit(2), 1)
+	client := gotd.NewClient(appID, appHash, telegramapi.ReadClientOptionsWithLimiter(session, Version, limiter))
+	return client.Run(ctx, func(ctx context.Context) error {
+		download := telegramMediaDownload(func(ctx context.Context, ref *telegramapi.MediaReference, dir string, maxBytes int64) (*os.File, error) {
+			return telegramapi.DownloadMediaFromDC(ctx, client, ref, dir, maxBytes, limiter)
+		})
+		return run(context.WithValue(ctx, telegramMediaTransportKey{}, download), client.API())
+	})
 }
 
 // syncTelegramSource holds the credential lifecycle lock for the whole run.
@@ -142,6 +172,15 @@ func syncTelegramSource(ctx context.Context, st *store.Store, source *store.Sour
 				return fmt.Errorf("open Telegram session: %w", err)
 			}
 			return connect(ctx, session, func(ctx context.Context, client *tg.Client) error {
+				if options.Media != nil {
+					download, ok := ctx.Value(telegramMediaTransportKey{}).(telegramMediaDownload)
+					if !ok || download == nil {
+						return errors.New("Telegram media transport is unavailable")
+					}
+					media := *options.Media
+					media.Download = download
+					options.Media = &media
+				}
 				return telegramapi.RunAuthenticatedBackfillWithOptions(ctx, scoped, source.ID, client, state, now, includeChannels, chatID, options, save)
 			})
 		})

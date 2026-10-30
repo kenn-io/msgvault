@@ -1,20 +1,15 @@
 Archive email, chats, and meetings offline. Use the daemon
-or config.toml's [remote].url; --local forces local.
+or [remote].url in config.toml; --local forces local.
 
 Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com' --json
   msgvault show-message <id> --json
-  msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --help
-  msgvault person --help
-  msgvault daemon status
   msgvault setup status --json
 
-Output:
-  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
-  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.
+Output: --json writes to stdout; logs go to stderr.
+Exit: 0 success, 1 error, 130 interrupted.
+More: msgvault quickstart.
 
 Usage:
   msgvault [command]
@@ -53,60 +48,62 @@ People, organizations, and identity:
   relationship-type    Manage person relationship types
 
 Add and sync sources:
-  add-account            Add a Gmail account via OAuth
-  add-beeper             Add Beeper Desktop as an archive source
-  add-calendar           Authorize Google Calendar and register its calendars
-  add-carddav            Discover and configure a CardDAV account
-  add-chatwoot           Register Chatwoot inboxes
-  add-circleback         Authorize a Circleback account (browser OAuth)
-  add-discord            Register Discord guilds for bot-based archival
-  add-granola            Register a Granola account and validate its API key
-  add-imap               Add an IMAP account
-  add-inline             Authorize an Inline account
-  add-matrix             Add a read-only Matrix account as an archive source
-  add-muesli             Register a local Muesli meeting database
-  add-notion-meetings    Register and validate a Notion AI Meeting Notes source
-  add-o365               Add a Microsoft 365 account via OAuth
-  add-omi                Register an Omi account and validate its API key
-  add-plaud              Authorize and register a Plaud cloud account
-  add-slack              Add a Slack workspace as an archive source
-  add-synctech-sms-drive Configure a Google Drive SMS Backup & Restore source
-  add-teams              Authorize Microsoft Teams (delegated Graph) for an account
-  add-telegram           Register a Telegram account for archival
-  add-twenty             Register and validate a Twenty Call Recorder source
-  add-twilio             Register and validate a Twilio call source
-  archive-remote-images  Download remote images in archived email (needs consent)
-  backfill-beeper-media  Retry pending Beeper attachment downloads
-  backfill-discord-media Retry pending Discord attachment downloads
-  backfill-inline-media  Retry eligible Inline attachment downloads
-  backfill-slack-media   Retry pending Slack file downloads
-  backfill-teams-media   Re-fetch missing Teams inline images for imported messages
-  list-folders           List IMAP folders (mailboxes) available for an account
-  merge-account          Merge archived accounts
-  muesli-hook            Sync the meeting named by a Muesli completion event
-  remove-account         Remove an account and all its data
-  sync                   Sync new mail from Gmail, IMAP, and Microsoft accounts
-  sync-beeper            Sync chats from Beeper Desktop (all connected networks)
-  sync-calendar          Sync Google Calendar events for an account
-  sync-carddav           Synchronize enabled CardDAV connections
-  sync-chatwoot          Sync Chatwoot inboxes
-  sync-circleback        Sync Circleback meetings, notes, and transcripts
-  sync-discord           Sync registered Discord guild history
-  sync-full              Perform a full sync of Gmail accounts
-  sync-granola           Sync Granola meeting notes and transcripts
-  sync-inline            Archive Inline chats
-  sync-matrix            Sync joined rooms from Matrix
-  sync-muesli            Sync meetings from a local Muesli database
-  sync-notion-meetings   Sync Notion AI Meeting Notes
-  sync-omi               Sync Omi meeting conversations and transcripts
-  sync-plaud             Sync Plaud recordings, transcripts, and notes
-  sync-slack             Sync Slack conversations (channels, group DMs, DMs)
-  sync-synctech-sms      Run one configured synctech-sms source now
-  sync-teams             Sync Microsoft Teams chats and channels
-  sync-twenty            Sync Twenty Call Recorder meetings
-  sync-twilio            Sync Twilio calls and recordings
-  update-account         Update account settings
-  verify                 Verify archive integrity against Gmail
+  add-account             Add a Gmail account via OAuth
+  add-beeper              Add Beeper Desktop as an archive source
+  add-calendar            Authorize Google Calendar and register its calendars
+  add-carddav             Discover and configure a CardDAV account
+  add-chatwoot            Register Chatwoot inboxes
+  add-circleback          Authorize a Circleback account (browser OAuth)
+  add-discord             Register Discord guilds for bot-based archival
+  add-granola             Register a Granola account and validate its API key
+  add-imap                Add an IMAP account
+  add-inline              Authorize an Inline account
+  add-matrix              Add a read-only Matrix account as an archive source
+  add-muesli              Register a local Muesli meeting database
+  add-notion-meetings     Register and validate a Notion AI Meeting Notes source
+  add-o365                Add a Microsoft 365 account via OAuth
+  add-omi                 Register an Omi account and validate its API key
+  add-plaud               Authorize and register a Plaud cloud account
+  add-slack               Add a Slack workspace as an archive source
+  add-synctech-sms-drive  Configure a Google Drive SMS Backup & Restore source
+  add-teams               Authorize Microsoft Teams (delegated Graph) for an account
+  add-telegram            Register a Telegram account for archival
+  add-twenty              Register and validate a Twenty Call Recorder source
+  add-twilio              Register and validate a Twilio call source
+  archive-remote-images   Download remote images in archived email (needs consent)
+  backfill-beeper-media   Retry pending Beeper attachment downloads
+  backfill-discord-media  Retry pending Discord attachment downloads
+  backfill-inline-media   Retry eligible Inline attachment downloads
+  backfill-slack-media    Retry pending Slack file downloads
+  backfill-teams-media    Re-fetch missing Teams inline images for imported messages
+  backfill-telegram-media Retry pending Telegram attachment downloads
+  list-folders            List IMAP folders (mailboxes) available for an account
+  merge-account           Merge archived accounts
+  muesli-hook             Sync the meeting named by a Muesli completion event
+  remove-account          Remove an account and all its data
+  sync                    Sync new mail from Gmail, IMAP, and Microsoft accounts
+  sync-beeper             Sync chats from Beeper Desktop (all connected networks)
+  sync-calendar           Sync Google Calendar events for an account
+  sync-carddav            Synchronize enabled CardDAV connections
+  sync-chatwoot           Sync Chatwoot inboxes
+  sync-circleback         Sync Circleback meetings, notes, and transcripts
+  sync-discord            Sync registered Discord guild history
+  sync-full               Perform a full sync of Gmail accounts
+  sync-granola            Sync Granola meeting notes and transcripts
+  sync-inline             Archive Inline chats
+  sync-matrix             Sync joined rooms from Matrix
+  sync-muesli             Sync meetings from a local Muesli database
+  sync-notion-meetings    Sync Notion AI Meeting Notes
+  sync-omi                Sync Omi meeting conversations and transcripts
+  sync-plaud              Sync Plaud recordings, transcripts, and notes
+  sync-slack              Sync Slack conversations (channels, group DMs, DMs)
+  sync-synctech-sms       Run one configured synctech-sms source now
+  sync-teams              Sync Microsoft Teams chats and channels
+  sync-telegram           Sync registered Telegram accounts
+  sync-twenty             Sync Twenty Call Recorder meetings
+  sync-twilio             Sync Twilio calls and recordings
+  update-account          Update account settings
+  verify                  Verify archive integrity against Gmail
 
 Import local exports:
   import-eml          Import a tree of RFC 5322 .eml files

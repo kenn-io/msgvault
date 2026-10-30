@@ -513,6 +513,21 @@ type MediaAccountConfig struct {
 	MaxMediaMB int   `toml:"max_media_mb"`
 }
 
+// TelegramConfig holds provider-wide and per-account media download settings.
+type TelegramConfig struct {
+	Media                *bool                         `toml:"media"`
+	MediaScope           string                        `toml:"media_scope"`
+	MediaMaxParticipants int                           `toml:"media_max_participants"`
+	MaxMediaMB           int                           `toml:"max_media_mb"`
+	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
+}
+
+// MediaPolicy resolves Telegram media settings for a registered account.
+func (t TelegramConfig) MediaPolicy(accountID string) attachmentpolicy.Policy {
+	account, ok := t.AccountsConfig[accountID]
+	return resolveMediaPolicy(t.Media, t.MediaScope, t.MediaMaxParticipants, t.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
+}
+
 // DiscordConfig holds provider-wide Discord import settings and optional
 // per-guild message-container filters.
 //
@@ -597,6 +612,7 @@ type Config struct {
 	Twenty             []TwentySource                  `toml:"twenty"`
 	Backup             BackupConfig                    `toml:"backup"`
 	Discord            DiscordConfig                   `toml:"discord"`
+	Telegram           TelegramConfig                  `toml:"telegram"`
 	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
 	Activity           ActivityConfig                  `toml:"activity"`
 	People             PeopleConfig                    `toml:"people"`
@@ -914,11 +930,12 @@ func NewDefaultConfig() *Config {
 		SynctechSMS:        SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:               []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
-		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Inline:  InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Beeper:   BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Slack:    SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Inline:   InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Discord:  DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Telegram: TelegramConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Teams:    TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
@@ -1876,6 +1893,8 @@ func (c *Config) validateMediaPolicies() error {
 			accountMaxMedia: mediaAccountMaximums(c.Inline.AccountsConfig)},
 		{name: "discord", policy: c.Discord.MediaPolicy(""), providerMaxMB: c.Discord.MaxMediaMB,
 			accountMaxMedia: discordGuildMaximums(c.Discord.Guilds)},
+		{name: "telegram", policy: c.Telegram.MediaPolicy(""), providerMaxMB: c.Telegram.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Telegram.AccountsConfig)},
 		{name: "teams", policy: c.Teams.MediaPolicy(""), providerMaxMB: c.Teams.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Teams.AccountsConfig)},
 	}

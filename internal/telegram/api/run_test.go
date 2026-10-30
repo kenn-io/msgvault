@@ -14,6 +14,7 @@ import (
 	"github.com/gotd/td/tgmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telegram"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -766,6 +767,77 @@ func TestAuthenticatedSyncAppliesCommonChangesAfterHistory(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), id).Scan(&body))
 	assert.Equal("edited", body)
 	assert.Equal(11, state.Common.Pts)
+	assert.True(mock.AllWereMet())
+}
+
+func TestAuthenticatedSyncProcessesMediaBeforeHistoryCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(t, err)
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.UpdatesState{Pts: 10, Date: 100})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{Dialogs: []tg.DialogClass{&tg.Dialog{Peer: &tg.PeerChat{ChatID: 123}, TopMessage: 7}}, Chats: []tg.ChatClass{&tg.Chat{ID: 123, Title: "Synthetic", Photo: &tg.ChatPhotoEmpty{}}}})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{})
+	message := &tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100}
+	media := &tg.MessageMediaDocument{}
+	media.SetDocument(&tg.Document{ID: 101, DCID: 1, Size: 20})
+	message.SetMedia(media)
+	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{message}})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
+	state := telegram.NewSyncState()
+	options := HistoryOptions{MediaProcessor: func(_ context.Context, _ telegram.Chat, media *telegram.LiveMedia) error {
+		media.SkipReason = attachmentpolicy.SkipSizeCap
+		return nil
+	}}
+	var sawCheckpoint bool
+	err = runAuthenticatedBackfill(ctx, st, source.ID, tg.NewClient(mock), &tg.User{ID: 999}, state, time.Unix(200, 0), false, 0, options, func(_ context.Context, next *telegram.SyncState) error {
+		if next.Dialogs["-123"].Frontier == 7 {
+			var result string
+			require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT a.attachment_state FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&result))
+			assert.Equal(t, "skipped", result)
+			sawCheckpoint = true
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	assert.True(t, sawCheckpoint)
+	assert.True(t, mock.AllWereMet())
+}
+
+func TestAuthenticatedSyncStoresMediaUnderPolicy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.UpdatesState{Pts: 10, Date: 100})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{Dialogs: []tg.DialogClass{&tg.Dialog{Peer: &tg.PeerChat{ChatID: 123}, TopMessage: 7}}, Chats: []tg.ChatClass{&tg.Chat{ID: 123, Title: "Synthetic", ParticipantsCount: 2, Photo: &tg.ChatPhotoEmpty{}}}})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{})
+	message := &tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100}
+	media := &tg.MessageMediaDocument{}
+	media.SetDocument(&tg.Document{ID: 101, DCID: 1, Size: 9})
+	message.SetMedia(media)
+	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{message}})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
+	options := HistoryOptions{Media: &MediaOptions{AttachmentsDir: t.TempDir(), TempDir: secureTempDir(t), Policy: attachmentpolicy.Policy{MaxBytes: 20, MaxParticipants: 20}, Download: func(_ context.Context, _ *MediaReference, dir string, _ int64) (*os.File, error) {
+		file, err := os.CreateTemp(dir, "synthetic-*")
+		require.NoError(err)
+		_, err = file.WriteString("synthetic")
+		require.NoError(err)
+		_, err = file.Seek(0, 0)
+		return file, err
+	}}}
+	err = runAuthenticatedBackfill(ctx, st, source.ID, tg.NewClient(mock), &tg.User{ID: 999}, telegram.NewSyncState(), time.Unix(200, 0), false, 0, options, func(context.Context, *telegram.SyncState) error { return nil })
+	require.NoError(err)
+	var path, state string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT a.storage_path, a.attachment_state FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&path, &state))
+	assert.NotEmpty(path)
+	assert.Equal("stored", state)
 	assert.True(mock.AllWereMet())
 }
 

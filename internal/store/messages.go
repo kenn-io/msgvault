@@ -6606,6 +6606,11 @@ func (s *Store) MessageProviderAttachments(messageID int64, prefix string) (map[
 	return s.messageProviderAttachments(messageID, prefix)
 }
 
+// MessageProviderAttachmentsContext returns provider attachment rows with cancellation.
+func (s *Store) MessageProviderAttachmentsContext(ctx context.Context, messageID int64, prefix string) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachmentsContext(ctx, messageID, prefix)
+}
+
 // EndWaitingProviderAttachments ends a source's provider rows, keyed with
 // prefix, still waiting for bytes on messages dated before before: unavailable
 // when the provider never produced the recording, failed otherwise. It

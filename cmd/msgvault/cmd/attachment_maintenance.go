@@ -470,6 +470,7 @@ func attachmentProducingCommand(args []string) bool {
 	case "archive-remote-images",
 		"backfill-beeper-media",
 		"backfill-discord-media",
+		"backfill-telegram-media",
 		"backfill-inline-media",
 		"backfill-slack-media",
 		"backfill-teams-media",

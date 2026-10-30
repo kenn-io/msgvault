@@ -834,7 +834,7 @@ messages or contact a provider.
 
 ### Media policy
 
-`[beeper]`, `[inline]`, `[slack]`, `[discord]`, and `[teams]` share one attachment
+`[beeper]`, `[inline]`, `[slack]`, `[discord]`, `[telegram]`, and `[teams]` share one attachment
 policy vocabulary. It decides which chat media is downloaded during sync and
 backfill; message text is always archived.
 
@@ -847,7 +847,7 @@ account. Its `media = false` records an `account_policy` skip marker.
 | `media_scope` | `all` | `all` collects from every conversation; `direct` collects only from direct and group chats (not channels, rooms, or guild channels); `none` collects nothing |
 | `media_max_participants` | `20` | Skip media from conversations with more participants than this. Omitting the key applies the default; an explicit `0` removes the cap |
 | `max_media_mb` | `250` (Discord `50`) | Per-attachment size cap in MiB. Sized for long voice notes, screen recordings, and phone video from direct chats now that the participant cap keeps large-room volume out |
-| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Inline canonical account identifier, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
+| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Inline canonical account identifier, Slack team ID, Telegram account identifier (such as `user123`), or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
 
 The participant cap exists because most attachment bytes in a real chat
 archive come from large rooms whose forwarded videos nobody wants kept. Direct
@@ -875,7 +875,8 @@ media = false
 
 Policy changes apply to future downloads. Media already stored under an
 earlier policy stays until you run `msgvault purge-excluded-media`, which
-removes attachment bytes the current policy would no longer collect.
+removes attachment bytes the current policy would no longer collect. Telegram
+media is not yet included in that purge command.
 
 Participant limits use provider membership, not the number of senders observed
 in archived messages. A normal Beeper sync refreshes missing or unreadable

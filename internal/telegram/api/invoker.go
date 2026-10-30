@@ -22,6 +22,8 @@ type Invoker struct {
 	allowAuth bool
 }
 
+type transferContextKey struct{}
+
 // NewInvoker wraps a transport. A wait exceeding maxWait ends the run.
 func NewInvoker(next tg.Invoker, limit rate.Limit, burst int, maxWait time.Duration) *Invoker {
 	return &Invoker{next: next, limiter: rate.NewLimiter(limit, burst), maxWait: maxWait, allowAuth: true}
@@ -62,9 +64,11 @@ func allowedRequest(input bin.Encoder, depth int, allowAuth bool) bool {
 	case *tg.AccountFinishTakeoutSessionRequest:
 		return depth <= 1
 	case *tg.UsersGetUsersRequest, *tg.UsersGetFullUserRequest,
-		*tg.MessagesGetDialogsRequest, *tg.MessagesGetHistoryRequest, *tg.MessagesGetSplitRangesRequest, *tg.ChannelsGetFullChannelRequest,
+		*tg.MessagesGetDialogsRequest, *tg.MessagesGetHistoryRequest, *tg.MessagesGetSplitRangesRequest, *tg.MessagesGetMessagesRequest,
+		*tg.ChannelsGetFullChannelRequest, *tg.ChannelsGetMessagesRequest,
 		*tg.UpdatesGetStateRequest, *tg.UpdatesGetDifferenceRequest, *tg.UpdatesGetChannelDifferenceRequest,
-		*tg.UploadGetFileRequest:
+		*tg.UploadGetFileRequest, *tg.UploadGetFileHashesRequest, *tg.UploadGetCDNFileRequest,
+		*tg.UploadGetCDNFileHashesRequest, *tg.UploadReuploadCDNFileRequest, *tg.HelpGetCDNConfigRequest:
 		return true
 	default:
 		return false
@@ -73,7 +77,9 @@ func allowedRequest(input bin.Encoder, depth int, allowAuth bool) bool {
 
 // Invoke refuses unlisted operations, including those nested inside wrappers.
 func (i *Invoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
-	if !allowedRequest(input, 0, i.allowAuth) {
+	_, transferRequest := input.(*tg.AuthExportAuthorizationRequest)
+	transferAllowed := transferRequest && !reflect.ValueOf(input).IsNil() && ctx.Value(transferContextKey{}) == true
+	if !transferAllowed && !allowedRequest(input, 0, i.allowAuth) {
 		return errors.New("Telegram request is not permitted")
 	}
 	for {

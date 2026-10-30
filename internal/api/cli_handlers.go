@@ -1779,6 +1779,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-twilio",
 		"backfill-beeper-media",
 		"backfill-discord-media",
+		"backfill-telegram-media",
 		"backfill-inline-media",
 		"backfill-slack-media",
 		"backfill-teams-media",

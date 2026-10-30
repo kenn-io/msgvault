@@ -91,6 +91,8 @@ type CatalogDialog struct {
 	HasObservedPTS        bool                    `json:"has_observed_pts"`
 	EnabledByDefault      bool                    `json:"enabled_by_default"`
 	Self                  bool                    `json:"self,omitempty"`
+	ParticipantCount      int                     `json:"participant_count,omitempty"`
+	ParticipantCountKnown bool                    `json:"participant_count_known,omitempty"`
 }
 
 // ListDialogsForRanges remembers the split ranges in which Telegram returned
@@ -173,6 +175,10 @@ func MapDialog(dialog *tg.Dialog, users []tg.UserClass, chats []tg.ChatClass) (C
 				return CatalogDialog{}, errors.New("Telegram user access hash is unavailable")
 			}
 			out.NativeID, out.Kind, out.AccessHash, out.Self = user.ID, "user", hash, user.Self
+			out.ParticipantCount, out.ParticipantCountKnown = 2, true
+			if user.Self {
+				out.ParticipantCount = 1
+			}
 			out.Title = strings.TrimSpace(user.FirstName + " " + user.LastName)
 			out.EnabledByDefault = true
 			return out, nil
@@ -185,6 +191,7 @@ func MapDialog(dialog *tg.Dialog, users []tg.UserClass, chats []tg.ChatClass) (C
 					continue
 				}
 				out.NativeID, out.Kind, out.Title = chat.ID, "group", chat.Title
+				out.ParticipantCount, out.ParticipantCountKnown = chat.ParticipantsCount, chat.ParticipantsCount > 0
 				out.EnabledByDefault = true
 				return out, nil
 			case *tg.ChatForbidden:
@@ -209,6 +216,8 @@ func MapDialog(dialog *tg.Dialog, users []tg.UserClass, chats []tg.ChatClass) (C
 					return CatalogDialog{}, errors.New("Telegram channel access hash is unavailable")
 				}
 				out.NativeID, out.AccessHash, out.Title = channel.ID, hash, channel.Title
+				out.ParticipantCount, out.ParticipantCountKnown = channel.GetParticipantsCount()
+				out.ParticipantCountKnown = out.ParticipantCountKnown && out.ParticipantCount > 0
 				switch {
 				case channel.Monoforum:
 					rights, present := channel.GetAdminRights()

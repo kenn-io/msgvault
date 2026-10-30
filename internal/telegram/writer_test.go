@@ -4,11 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -127,6 +131,238 @@ func TestLiveWriterFlushesConversationStatsAfterCancellation(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestLiveWriterPersistsMediaPlaceholderAndReplays(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	chat := Chat{ID: -123, Type: "private_group", Name: "Synthetic"}
+	message := Message{ID: 7, SentAt: time.Unix(100, 0), RawJSON: `{}`, LiveMedia: &LiveMedia{SourceID: "document:101", Filename: "example.ogg", MIMEType: "audio/ogg", Kind: "voice_message", Metadata: `{"document_id":101}`}}
+	require.NoError(writer.Write(ctx, chat, message))
+	require.NoError(writer.Write(ctx, chat, message))
+	var count int
+	var metadata, state string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*), MIN(CAST(a.attachment_metadata AS TEXT)), MIN(a.attachment_state) FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&count, &metadata, &state))
+	assert.Equal(1, count)
+	assert.JSONEq(`{"document_id":101}`, metadata)
+	assert.Equal("pending", state)
+}
+
+func TestLiveMediaDoesNotExpandArchivedManifest(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	chat := Chat{ID: -123, Type: "private_group", Name: "Synthetic"}
+	message := Message{ID: 7, SentAt: time.Unix(100, 0), RawJSON: `{}`}
+	require.NoError(writer.Write(ctx, chat, message))
+	message.LiveMedia = &LiveMedia{SourceID: "document:101", Kind: "file", Metadata: `{}`}
+	require.NoError(writer.Write(ctx, chat, message))
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&count))
+	assert.Zero(t, count)
+}
+
+func TestLiveWriterFillsPendingMediaWithDownloadedContent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	chat := Chat{ID: -123, Type: "private_group"}
+	media := &LiveMedia{SourceID: "document:101", Kind: "file", Metadata: `{}`}
+	message := Message{ID: 7, SentAt: time.Unix(100, 0), RawJSON: `{}`, LiveMedia: media}
+	require.NoError(writer.Write(ctx, chat, message))
+	path, hash, size, err := export.StoreAttachmentStream(ctx, t.TempDir(), strings.NewReader("synthetic"), 20)
+	require.NoError(err)
+	media.StoragePath, media.ContentHash, media.Size = path, hash, size
+	require.NoError(writer.Write(ctx, chat, message))
+	var gotPath, gotHash, state string
+	var gotSize int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT a.storage_path, a.content_hash, a.size, a.attachment_state FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&gotPath, &gotHash, &gotSize, &state))
+	assert.Equal(path, gotPath)
+	assert.Equal(hash, gotHash)
+	assert.Equal(int64(9), gotSize)
+	assert.Equal("stored", state)
+}
+
+func TestLiveWriterRecordsMediaPolicySkip(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	message := Message{ID: 7, SentAt: time.Unix(100, 0), RawJSON: `{}`, LiveMedia: &LiveMedia{SourceID: "document:101", Kind: "file", Metadata: `{}`, SkipReason: attachmentpolicy.SkipSizeCap}}
+	require.NoError(writer.Write(ctx, Chat{ID: -123, Type: "private_group"}, message))
+	var state, reason string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT a.attachment_state, a.attachment_skip_reason FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&state, &reason))
+	assert.Equal("skipped", state)
+	assert.Equal("size_cap", reason)
+}
+
+func TestLiveWriterRecordsRetryableMediaFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	message := Message{ID: 7, SentAt: time.Unix(100, 0), RawJSON: `{}`, LiveMedia: &LiveMedia{SourceID: "document:101", Kind: "file", Metadata: `{}`, Failed: true}}
+	require.NoError(writer.Write(ctx, Chat{ID: -123, Type: "private_group"}, message))
+	var state, reason string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT a.attachment_state, a.attachment_skip_reason FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&state, &reason))
+	assert.Equal("failed", state)
+	assert.Equal("fetch_failure", reason)
+}
+
+func TestLiveWriterProcessesOnlyMediaAllowedByManifest(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	chat := Chat{ID: -123, Type: "private_group"}
+	message := Message{ID: 7, SentAt: time.Unix(100, 0), RawJSON: `{}`}
+	require.NoError(writer.Write(ctx, chat, message))
+	called := 0
+	writer.SetMediaProcessor(func(_ context.Context, _ Chat, media *LiveMedia) error {
+		called++
+		media.SkipReason = attachmentpolicy.SkipSizeCap
+		return nil
+	})
+	message.LiveMedia = &LiveMedia{SourceID: "document:101", Kind: "file", Metadata: `{}`}
+	require.NoError(writer.Write(ctx, chat, message))
+	assert.Zero(called)
+	message.ID = 8
+	require.NoError(writer.Write(ctx, chat, message))
+	assert.Equal(1, called)
+	var state string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT a.attachment_state FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:8").Scan(&state))
+	assert.Equal("skipped", state)
+}
+
+func TestLiveWriterDoesNotRedownloadStoredMedia(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	path, hash, size, err := export.StoreAttachmentStream(ctx, t.TempDir(), strings.NewReader("synthetic"), 20)
+	require.NoError(err)
+	calls := 0
+	writer.SetMediaProcessor(func(_ context.Context, _ Chat, media *LiveMedia) error {
+		calls++
+		media.StoragePath, media.ContentHash, media.Size = path, hash, size
+		return nil
+	})
+	message := Message{ID: 7, SentAt: time.Unix(100, 0), RawJSON: `{}`, LiveMedia: &LiveMedia{SourceID: "document:101", Kind: "file", Metadata: `{}`}}
+	chat := Chat{ID: -123, Type: "private_group"}
+	require.NoError(writer.Write(ctx, chat, message))
+	require.NoError(writer.Write(ctx, chat, message))
+	assert.Equal(t, 1, calls)
+}
+
+func TestLiveEditRetriesPendingMediaBeforeUpdatingMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	chat := Chat{ID: -123, Type: "private_group"}
+	message := Message{ID: 7, SentAt: time.Unix(100, 0), Text: "original", RawJSON: `{}`, LiveMedia: &LiveMedia{SourceID: "document:101", Kind: "file", Metadata: `{}`}}
+	require.NoError(writer.Write(ctx, chat, message))
+	path, hash, size, err := export.StoreAttachmentStream(ctx, t.TempDir(), strings.NewReader("synthetic"), 20)
+	require.NoError(err)
+	writer.SetMediaProcessor(func(_ context.Context, _ Chat, media *LiveMedia) error {
+		media.StoragePath, media.ContentHash, media.Size = path, hash, size
+		return nil
+	})
+	message.Text, message.Edited, message.EditedAt = "edited", true, time.Unix(101, 0)
+	require.NoError(writer.WriteEdit(ctx, chat, message))
+	var state string
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.id, a.attachment_state FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&id, &state))
+	assert.Equal("stored", state)
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), id).Scan(&body))
+	assert.Equal("edited", body)
+	assert.Equal(SyncCounts{Processed: 2, Added: 1, Updated: 1}, writer.Counts())
+}
+
+func TestTelegramPendingMediaSelectionIsSourceScopedAndPaged(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	first, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	second, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(998))
+	require.NoError(err)
+	chat := Chat{ID: -123, Type: "private_group"}
+	for _, source := range []*store.Source{first, second} {
+		owner := int64(999)
+		if source.ID == second.ID {
+			owner = 998
+		}
+		writer, err := NewLiveWriter(ctx, st, source.ID, owner, "Synthetic")
+		require.NoError(err)
+		for id := int64(1); id <= 2; id++ {
+			message := Message{ID: id, SentAt: time.Unix(100, 0), RawJSON: `{}`, LiveMedia: &LiveMedia{SourceID: fmt.Sprintf("document:%d", id), Kind: "file", Metadata: `{}`}}
+			if id == 1 {
+				message.LiveMedia.SkipReason = attachmentpolicy.SkipSizeCap
+			}
+			require.NoError(writer.Write(ctx, chat, message))
+		}
+		path, hash, size, err := export.StoreAttachmentStream(ctx, t.TempDir(), strings.NewReader("synthetic"), 20)
+		require.NoError(err)
+		stored := Message{ID: 3, SentAt: time.Unix(100, 0), RawJSON: `{}`, LiveMedia: &LiveMedia{SourceID: "document:3", Kind: "file", Metadata: `{}`, StoragePath: path, ContentHash: hash, Size: size}}
+		require.NoError(writer.Write(ctx, chat, stored))
+	}
+	page, err := st.ListTelegramPendingMediaAfterContext(ctx, first.ID, 0, 1)
+	require.NoError(err)
+	require.Len(page, 1)
+	assert.Equal("-123:1", page[0].SourceMessageID)
+	next, err := st.ListTelegramPendingMediaAfterContext(ctx, first.ID, page[0].MessageID, 1)
+	require.NoError(err)
+	require.Len(next, 1)
+	assert.Equal("-123:2", next[0].SourceMessageID)
+	end, err := st.ListTelegramPendingMediaAfterContext(ctx, first.ID, next[0].MessageID, 1)
+	require.NoError(err)
+	assert.Empty(end)
+}
+
 func TestLiveWriterEditPersistsNewMediaManifestBeforeRecovery(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -197,6 +433,15 @@ func TestLiveWriterEditUsesMigratedMediaIdentity(t *testing.T) {
 
 	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Owner")
 	require.NoError(t, err)
+	path, hash, size, err := export.StoreAttachmentStream(ctx, t.TempDir(), strings.NewReader("synthetic"), 20)
+	require.NoError(t, err)
+	processed := 0
+	writer.SetMediaProcessor(func(_ context.Context, _ Chat, media *LiveMedia) error {
+		processed++
+		assert.Equal(t, "document:new", media.SourceID)
+		media.StoragePath, media.ContentHash, media.Size = path, hash, size
+		return nil
+	})
 	edited := Message{
 		ID: messageID, SentAt: sentAt, Text: "after edit", Edited: true,
 		EditedAt: time.Unix(200, 0).UTC(), RawJSON: `{"id":7}`,
@@ -216,4 +461,11 @@ func TestLiveWriterEditUsesMigratedMediaIdentity(t *testing.T) {
 	var attachmentCount int
 	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, messageKey).Scan(&attachmentCount))
 	assert.Equal(t, 2, attachmentCount, "the edit recovery stores media under the retained legacy identity")
+	assert.Equal(t, 1, processed)
+	var archivedID int64
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, messageKey).Scan(&archivedID))
+	attachments, err := st.MessageProviderAttachmentsContext(ctx, archivedID, "api:")
+	require.NoError(t, err)
+	assert.Equal(t, path, attachments["api:document:new"].StoragePath)
+	assert.Equal(t, hash, attachments["api:document:new"].ContentHash)
 }

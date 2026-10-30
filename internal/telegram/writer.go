@@ -73,6 +73,7 @@ type LiveWriter struct {
 	unrepairedShiftedChats      map[int64]struct{}
 	dirtyConversations          map[int64]struct{}
 	counts                      SyncCounts
+	mediaProcessor              func(context.Context, Chat, *LiveMedia) error
 }
 
 // NewLiveWriter verifies the source and refuses unsafe legacy identity states.
@@ -133,6 +134,55 @@ func (w *LiveWriter) OwnerID() int64 { return w.ownerID }
 // Counts returns the successful message writes attempted by this writer.
 func (w *LiveWriter) Counts() SyncCounts { return w.counts }
 
+// SetMediaProcessor configures attachment processing before message writes.
+func (w *LiveWriter) SetMediaProcessor(process func(context.Context, Chat, *LiveMedia) error) {
+	w.mediaProcessor = process
+}
+
+func (w *LiveWriter) prepareMedia(ctx context.Context, chat Chat, message *Message) error {
+	if w.mediaProcessor == nil || message.LiveMedia == nil {
+		return nil
+	}
+	key := fmt.Sprintf("%d:%d", chat.ID, message.ID)
+	rows, err := w.store.MessageMetadataBatchContext(ctx, w.sourceID, []string{key})
+	if err != nil {
+		return fmt.Errorf("load Telegram media manifest: %w", err)
+	}
+	if row, ok := rows[key]; ok {
+		if !row.Metadata.Valid {
+			return nil
+		}
+		var metadata telegramMessageMetadata
+		if err := json.Unmarshal([]byte(row.Metadata.String), &metadata); err != nil {
+			return fmt.Errorf("decode Telegram media manifest: %w", err)
+		}
+		partKey := syntheticAttachmentHash(telegramMediaChatID(chat.ID, metadata), message.ID, "api:"+message.LiveMedia.SourceID)
+		found := false
+		for _, archived := range metadata.AttachmentPartKeys {
+			found = found || archived == partKey
+		}
+		if !found {
+			return nil
+		}
+		attachments, err := w.store.MessageProviderAttachmentsContext(ctx, row.ID, "api:")
+		if err != nil {
+			return fmt.Errorf("load Telegram media occurrence: %w", err)
+		}
+		if attachment, ok := attachments["api:"+message.LiveMedia.SourceID]; ok && attachment.StoragePath != "" {
+			return nil
+		}
+	}
+	media := *message.LiveMedia
+	if err := w.mediaProcessor(ctx, chat, &media); err != nil {
+		return err
+	}
+	if media.SourceID != message.LiveMedia.SourceID || media.Metadata != message.LiveMedia.Metadata {
+		return errors.New("Telegram media processor changed its reference")
+	}
+	message.LiveMedia = &media
+	return nil
+}
+
 // Write persists a message and marks its conversation for a stats refresh.
 // The caller flushes stats after a page or batch and before checkpointing.
 func (w *LiveWriter) Write(ctx context.Context, chat Chat, message Message) error {
@@ -141,6 +191,15 @@ func (w *LiveWriter) Write(ctx context.Context, chat Chat, message Message) erro
 	}
 	if w.RequiresShiftedHistoryRepair(chat.ID) {
 		return errors.New("Telegram shifted group history requires verified migration linkage before live sync")
+	}
+	if !validLiveMedia(message.LiveMedia) {
+		return errors.New("invalid Telegram live media reference")
+	}
+	if err := w.prepareMedia(ctx, chat, &message); err != nil {
+		return err
+	}
+	if !validLiveMedia(message.LiveMedia) {
+		return errors.New("invalid processed Telegram media reference")
 	}
 	if !w.typedPeers[chat.ID] && (chat.Type == chatTypePersonalChat || chat.Type == chatTypeBotChat) && chat.ID >= constant.MinMTProtoMonoforumID && chat.ID <= constant.MaxMTProtoMonoforumID {
 		if err := w.store.EnsureTelegramTypedUserContext(ctx, w.sourceID, chat.ID, chat.Name); err != nil {
@@ -170,6 +229,10 @@ func (w *LiveWriter) Write(ctx context.Context, chat Chat, message Message) erro
 	w.counts.Processed += summary.MessagesProcessed
 	w.counts.Added += summary.MessagesAdded
 	return nil
+}
+
+func validLiveMedia(media *LiveMedia) bool {
+	return media == nil || (media.SourceID != "" && media.Kind != "" && json.Valid([]byte(media.Metadata)) && media.Size >= 0 && (media.StoragePath == "") == (media.ContentHash == "") && (media.StoragePath == "" || (media.SkipReason == "" && !media.Failed)) && (!media.Failed || media.SkipReason == ""))
 }
 
 // FlushConversationStats refreshes each conversation written since the last
@@ -225,6 +288,13 @@ func (w *LiveWriter) writeEdit(ctx context.Context, chat Chat, message Message, 
 			return fmt.Errorf("decode recovery state for %s: %w", key, err)
 		}
 		mediaChatID = telegramMediaChatID(chat.ID, recovery)
+	}
+	if message.LiveMedia != nil {
+		counts := w.counts
+		if err := w.Write(ctx, chat, message); err != nil {
+			return err
+		}
+		w.counts = counts
 	}
 	target, err := w.store.GetMessageRelationTarget(record.ID)
 	if err != nil {
