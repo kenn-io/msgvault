@@ -41,18 +41,12 @@ func TestDerivationDueAt(t *testing.T) {
 		{name: "min interval tier 2", input: DueInput{NewExplicit: 5, Tier: 2, LastDeriveAt: at(-2 * time.Hour)}, automatic: true, want: now.Add(70 * time.Hour)},
 		{name: "tier 3 never auto derives", input: DueInput{NewExplicit: 5, Tier: 3}, automatic: true},
 		{name: "manual provenance at tier 3 uses 20h", input: DueInput{NewExplicit: 5, Tier: 3, LastDeriveAt: at(-2 * time.Hour)}, want: now.Add(18 * time.Hour)},
-		{name: "backlog with max wait elapsed", input: DueInput{Backlog: 40, NewExplicit: 3, OldestUnprocessedAt: at(-15 * day), NewestEvidenceAt: at(-15 * day), LastDeriveAt: at(-2 * day)}, want: now},
-		{name: "backlog without new rows", input: DueInput{Backlog: 40}},
-		{name: "owner path consumes backlog", input: DueInput{Backlog: 40, NewExplicit: 2, ManualRequested: true}, want: now},
 		{name: "recheck pending", input: DueInput{Rechecks: 1, LastDeriveAt: at(-2 * time.Hour)}, want: now.Add(18 * time.Hour)},
 		{name: "recheck waits for quiet", input: DueInput{Rechecks: 1, NewExplicit: 1, OldestUnprocessedAt: at(-time.Hour), NewestEvidenceAt: at(-time.Hour)}, want: now.Add(5 * time.Hour)},
 		{name: "reverify after 30 days", input: DueInput{ReverifyContexts: 2, LastDeriveAt: at(-31 * day)}, want: now},
 		{name: "reverify before 30 days", input: DueInput{ReverifyContexts: 2, LastDeriveAt: at(-10 * day)}, want: now.Add(20 * day)},
 		{name: "never derived reverify", input: DueInput{ReverifyContexts: 1}, want: now},
 		{name: "manual request bypasses interval and quiet", input: DueInput{ManualRequested: true, NewExplicit: 1, LastDeriveAt: at(-time.Hour), NewestEvidenceAt: at(-time.Minute)}, want: now},
-	}
-	for n := 1; n <= 4; n++ {
-		cases = append(cases, dueCase{name: fmt.Sprintf("backlog never bypasses threshold/%d", n), input: DueInput{Backlog: 40, NewExplicit: n, OldestUnprocessedAt: at(-day), NewestEvidenceAt: at(-7 * time.Hour), LastDeriveAt: at(-2 * day)}, want: now.Add(13 * day)})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

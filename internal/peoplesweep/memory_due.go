@@ -66,7 +66,6 @@ type DueInput struct {
 	NewExplicit         int
 	Rechecks            int
 	ReverifyContexts    int
-	Backlog             int // Status only; backlog never triggers automatic derivation.
 	OldestUnprocessedAt *time.Time
 	LastDeriveAt        *time.Time
 	// NewestEvidenceAt is capped per observation at its persisted creation time
