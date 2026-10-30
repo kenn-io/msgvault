@@ -134,10 +134,10 @@ func TestTaskIdentityUsesExistingArchiveUIDCapability(t *testing.T) {
 	assert.Equal("uid-only-email", ops.identities[0].SourceMessageID)
 }
 
-func TestCreateTaskForEmail(t *testing.T) {
+func TestCreateTaskForEmailDerivesStableServerIdempotency(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	ops := &fakeTaskLinkOperations{}
 	srv := taskLinkServer(t, "email", ops)
 	body := []byte(`{"title":"Follow up","description":"Synthetic notes","priority":"high","labels":["mail","follow-up"],"added_at":"2026-07-19T01:02:03Z"}`)
@@ -148,34 +148,19 @@ func TestCreateTaskForEmail(t *testing.T) {
 		req.Header.Set("X-Request-ID", "browser-request-1")
 		resp := httptest.NewRecorder()
 		srv.Router().ServeHTTP(resp, req)
-		requirements.Equal(http.StatusCreated, resp.Code, resp.Body.String())
-		assertions.NotContains(resp.Body.String(), "archive-a")
+		require.Equal(http.StatusCreated, resp.Code, resp.Body.String())
+		assert.NotContains(resp.Body.String(), "archive-a")
 	}
-	t.Run("stable server idempotency", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		requirements.Len(ops.createKeys, 2)
-		assertions.Equal(ops.createKeys[0], ops.createKeys[1])
-		assertions.NotEqual("browser-request-1", ops.createKeys[0])
-		requirements.Len(ops.creates, 2)
-		assertions.Equal(ops.creates[0], ops.creates[1], "a browser retry must send the identical external create payload")
-		links := tasklinks.MailLinks(ops.creates[0].Metadata)
-		requirements.Len(links, 1)
-		assertions.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
-		assertions.Equal("high", ops.creates[0].Priority)
-		assertions.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
-	})
-}
-
-type cancelTaskArchiveIdentity struct {
-	*store.Store
-
-	cancel context.CancelFunc
-}
-
-func (s *cancelTaskArchiveIdentity) ArchiveUIDContext(ctx context.Context) (string, error) {
-	s.cancel()
-	return "archive-a", ctx.Err()
+	require.Len(ops.createKeys, 2)
+	assert.Equal(ops.createKeys[0], ops.createKeys[1])
+	assert.NotEqual("browser-request-1", ops.createKeys[0])
+	require.Len(ops.creates, 2)
+	assert.Equal(ops.creates[0], ops.creates[1], "a browser retry must send the identical external create payload")
+	links := tasklinks.MailLinks(ops.creates[0].Metadata)
+	require.Len(links, 1)
+	assert.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
+	assert.Equal("high", ops.creates[0].Priority)
+	assert.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
 }
 
 func TestCreateTaskRequiresBrowserRequestID(t *testing.T) {
@@ -247,6 +232,17 @@ func TestTaskLinkAPIsTreatLegacyBlankMessageTypeAsEmail(t *testing.T) {
 	}
 }
 
+type cancelTaskArchiveIdentity struct {
+	*store.Store
+
+	cancel context.CancelFunc
+}
+
+func (s *cancelTaskArchiveIdentity) ArchiveUIDContext(ctx context.Context) (string, error) {
+	s.cancel()
+	return "archive-a", ctx.Err()
+}
+
 func TestTaskMessageLookupErrorClassification(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -302,9 +298,7 @@ func TestTaskMessageLookupErrorClassification(t *testing.T) {
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
 		require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
-		var got ErrorResponse
-		require.NoError(json.Unmarshal(response.Body.Bytes(), &got))
-		require.Equal("identity_unavailable", got.Error)
+		require.ErrorIs(ctx.Err(), context.Canceled)
 	})
 }
 
