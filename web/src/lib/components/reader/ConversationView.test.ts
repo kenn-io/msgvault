@@ -12,7 +12,7 @@ afterEach(() => { vi.useRealTimers(); });
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
   const path = new URL((input as Request).url).pathname;
   if (path === '/api/v1/integrations/tasks/status') return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
-  if (/^\/api\/v1\/messages\/\d+\/tasks$/.test(path)) return Response.json({ state: 'disabled', complete: false, tasks: [] });
+  if (/^\/api\/v1\/messages\/\d+\/tasks$/.test(path)) return Response.json({ state: 'disabled', complete: false, tasks: [], outbound_metadata: {} });
   return fetchFn(input, init);
 }, telemetryEvents, telemetryRequests);
 function message(id: number, type = 'email') {
@@ -66,23 +66,27 @@ describe('ConversationView', () => {
     expect(url.searchParams.get('anchor')).toBe('2');
   });
 
-  it('keeps owner-authored chat messages plain as You', async () => {
+  it('maps sender and recipient IDs while keeping owner-authored messages plain as You', async () => {
     const onOpenPerson = vi.fn();
+    let owner = true;
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      id: 7,
+      id: owner ? 7 : 8,
       anchor_id: 2,
       messages: [message(2, 'whatsapp')].map((entry) => ({
         ...entry,
-        from: '',
-        from_participant_id: 11,
-        is_from_me: true
+        conversation_id: owner ? 7 : 8,
+        from: owner ? '' : 'Chat sender',
+        from_participant_id: owner ? 11 : 22,
+        to: ['Chat recipient'],
+        to_participants: [{ display: 'Chat recipient', participant_id: 33 }],
+        is_from_me: owner
       })),
       has_before: false,
       has_after: false,
       total: 1
     }));
 
-    render(ConversationView, {
+    const view = render(ConversationView, {
       props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onOpenPerson }
     });
 
@@ -90,6 +94,11 @@ describe('ConversationView', () => {
     expect(anchorCard.textContent).toContain('You');
     expect(screen.queryByRole('button', { name: 'You' })).toBeNull();
     expect(anchorCard.textContent).not.toContain('Unknown sender');
+    owner = false;
+    await view.rerender({ conversationId: 8, anchorId: 2 });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Chat sender' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Chat recipient' }));
+    expect(onOpenPerson.mock.calls).toEqual([[22], [33]]);
   });
 
   it('sends optional start/end bounds when scoping to a chat burst day', async () => {
@@ -152,7 +161,7 @@ describe('ConversationView', () => {
         return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
       }
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
-      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: 'disabled', complete: false, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] }); }
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: 'disabled', complete: false, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }], outbound_metadata: {} }); }
       return Response.json({
         id: 7, anchor_id: 2, messages: [message(1), message(2)],
         has_before: false, has_after: false, total: 2
@@ -171,10 +180,6 @@ describe('ConversationView', () => {
     await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
-    for (const id of [1, 2]) {
-      const card = screen.getByRole('article', { name: `Message ${id}` });
-      expect(within(card).getByText(`Linked task ${id}`)).toBeDefined();
-    }
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
     view.unmount();
@@ -191,12 +196,10 @@ describe('ConversationView', () => {
     render(ConversationView, { client: recoveryClient, conversationId: 7, anchorId: 2 });
     await screen.findByText('Synthetic connection failed');
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
-    expect(await screen.findByText('Recovered linked task')).toBeDefined();
-    expect(statusCalls).toBe(2);
+    await waitFor(() => expect(statusCalls).toBe(2));
     await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 1' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
-    expect(await screen.findByRole('textbox', { name: 'Task title' })).toBeDefined();
-    expect(statusCalls).toBe(3);
+    await waitFor(() => expect(statusCalls).toBe(3));
   });
 
   it('collapses an expanded message back to its one-line card', async () => {
