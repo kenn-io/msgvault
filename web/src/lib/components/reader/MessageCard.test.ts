@@ -100,12 +100,10 @@ describe('MessageCard', () => {
 
   it('offers plain text through a small overflow control, defaulting to HTML', async () => {
     const onViewModeChange = vi.fn();
-    const client = createAPIClient(async () => Response.json({ state: 'disabled', tasks: [] }));
     render(MessageCard, {
       props: {
         message: detail({ bodyHtml: '<p>Formatted body</p>' }),
         expanded: true,
-        client,
         onViewModeChange
       }
     });
@@ -210,7 +208,8 @@ describe('MessageCard', () => {
   });
 
   it('gates task and meeting actions by message type while the body fails', async () => {
-    const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Review archived notes' }] }));
+    const { meetingActions } = await import('../../meetings/fixtures.test-support');
+    const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/actions') ? meetingActions() : (input as Request).url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Review archived notes' }] }));
     const view = render(MessageCard, {
       props: { client, message: detail({ body: '', messageType: 'email' }), expanded: true, bodyError: 'Could not load message body' }
     });
@@ -218,12 +217,15 @@ describe('MessageCard', () => {
     expect(screen.getByRole('alert').textContent).toContain('Could not load message body');
     expect(view.container.querySelector('pre')).toBeNull();
     expect(await screen.findByText('Review archived notes')).toBeDefined();
+    expect(screen.queryByRole('region', { name: 'Action items' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
     expect(screen.queryByRole('menuitem', { name: 'Export meeting…' })).toBeNull();
     await fireEvent.keyDown(document, { key: 'Escape' });
     await view.rerender({ message: detail({ messageType: 'meeting_transcript' }) });
+    expect(await screen.findByRole('region', { name: 'Action items' })).toBeDefined();
     expect(screen.queryByText('Review archived notes')).toBeNull();
     await view.rerender({ message: detail({ messageType: 'meeting_notes' }) });
+    expect(screen.queryByRole('region', { name: 'Action items' })).toBeNull();
     expect(screen.queryByText('Review archived notes')).toBeNull();
     expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
   });

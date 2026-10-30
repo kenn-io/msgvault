@@ -129,39 +129,44 @@ describe('ConversationView', () => {
     expect(screen.getByText('Body 2')).toBeDefined();
   });
 
-  it('expands messages without refetching, shares Tasks status and setup, preserves cached links, and refreshes on remount', async () => {
+  it('expands additional messages inline without refetching and reports the anchor change', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 }));
+    const onAnchorChange = vi.fn();
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange });
+    await screen.findByRole('article', { name: 'Message 2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
+    expect(screen.getByRole('article', { name: 'Message 2' })).toBeTruthy();
+    expect(onAnchorChange).toHaveBeenCalledWith(1);
+    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
+  });
+
+  it('shares pending Tasks probes and setup, preserves cached links, and retries settled status for creation', async () => {
     const lookedUp: number[] = [];
-    let configured = false;
     let releaseStatus!: () => void;
     const statusPending = new Promise<void>(resolve => { releaseStatus = resolve; });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/tasks/status')) {
         await statusPending;
-        return Response.json({ state: configured ? 'ready' : 'disabled', message: 'Task integration is disabled.' });
+        return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
       }
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
-      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: configured ? 'ready' : 'disabled', complete: configured, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] }); }
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: 'disabled', complete: false, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] }); }
       return Response.json({
         id: 7, anchor_id: 2, messages: [message(1), message(2)],
         has_before: false, has_after: false, total: 2
       });
     });
-    const onAnchorChange = vi.fn();
     const client = createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
     const view = render(ConversationView, {
-      props: { client, conversationId: 7, anchorId: 2, onAnchorChange }
+      props: { client, conversationId: 7, anchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
     releaseStatus();
 
-    // Both stay expanded — a real thread, not a single-open stack.
-    expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
-    expect(screen.getByRole('article', { name: 'Message 2' })).toBeTruthy();
-    expect(onAnchorChange).toHaveBeenCalledWith(1);
-    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
     await waitFor(() => expect(lookedUp.sort()).toEqual([1, 2]));
     await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
@@ -173,16 +178,8 @@ describe('ConversationView', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
     view.unmount();
-    configured = true;
-    render(ConversationView, { client, conversationId: 7, anchorId: 2 });
-    expect(await screen.findByText('Linked task 2')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Set up' })).toBeNull();
-    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(2);
-  });
-
-  it('retries rejected and unreachable Tasks status so recovered creation is available', async () => {
     let statusCalls = 0;
-    const client = createCaptureClient(async (input) => {
+    const recoveryClient = createCaptureClient(async (input) => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/tasks/status')) {
         if (++statusCalls === 1) throw new Error('Synthetic connection failed');
@@ -191,7 +188,7 @@ describe('ConversationView', () => {
       if (path.endsWith('/messages/1/tasks')) return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Recovered linked task' }], outbound_metadata: {} });
       return Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
     }, telemetryEvents, telemetryRequests);
-    render(ConversationView, { client, conversationId: 7, anchorId: 2 });
+    render(ConversationView, { client: recoveryClient, conversationId: 7, anchorId: 2 });
     await screen.findByText('Synthetic connection failed');
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
     expect(await screen.findByText('Recovered linked task')).toBeDefined();

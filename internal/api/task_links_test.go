@@ -44,12 +44,13 @@ func (s *taskLinkMessageStore) GetMessageContext(_ context.Context, id int64) (*
 }
 
 type fakeTaskLinkOperations struct {
-	createKeys []string
-	creates    []taskclient.TaskCreate
-	identities []tasklinks.MessageIdentity
-	lookup     tasklinks.LookupResult
-	search     []tasklinks.TaskSummary
-	err        error
+	lookupCalls int
+	createKeys  []string
+	creates     []taskclient.TaskCreate
+	identities  []tasklinks.MessageIdentity
+	lookup      tasklinks.LookupResult
+	search      []tasklinks.TaskSummary
+	err         error
 }
 
 func (f *fakeTaskLinkOperations) Create(_ context.Context, key string, create taskclient.TaskCreate, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error) {
@@ -68,6 +69,7 @@ func (f *fakeTaskLinkOperations) Unlink(_ context.Context, _ string, identity ta
 	return taskclient.Task{ID: "task-1", Project: "project", Title: "Linked", Revision: "r2"}, f.err
 }
 func (f *fakeTaskLinkOperations) Lookup(context.Context, tasklinks.MessageIdentity) tasklinks.LookupResult {
+	f.lookupCalls++
 	return f.lookup
 }
 func (f *fakeTaskLinkOperations) Search(context.Context, string) ([]tasklinks.TaskSummary, error) {
@@ -127,26 +129,30 @@ func TestCreateTaskForEmailResolvesSourceIdentityAndDerivesStableServerIdempoten
 	assertions.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
 	assertions.Equal("high", ops.creates[0].Priority)
 	assertions.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
-	for _, identity := range ops.identities {
+	for _, identity := range []tasklinks.MessageIdentity{ops.identities[0], ops.identities[1]} {
 		assertions.Equal("gmail", identity.SourceType)
 		assertions.Equal("test@example.com", identity.SourceIdentifier)
 		assertions.Equal("identity-email", identity.SourceMessageID)
 	}
-	t.Run("cancelled identity", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		srv := NewServerWithOptions(ServerOptions{
-			Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{Store: f.Store, cancel: cancel},
-			Logger: testLogger(), TaskLinkOperations: ops,
-		})
-		request := httptest.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/tasks", id), nil)
-		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, request)
-		require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
-		assert.Len(ops.identities, 2)
+}
+
+func TestListMessageTasksRejectsCancelledIdentity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("cancelled-identity")
+	ops := &fakeTaskLinkOperations{}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{Store: f.Store, cancel: cancel},
+		Logger: testLogger(), TaskLinkOperations: ops,
 	})
+	request := httptest.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/tasks", id), nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Zero(ops.lookupCalls)
 }
 
 type cancelTaskArchiveIdentity struct {

@@ -4,20 +4,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import TaskLinks from './TaskLinks.svelte';
 
+function expectOneInitialTaskRead(requests: Request[]): void {
+  expect(requests.filter(request => request.url.endsWith('/integrations/tasks/status'))).toHaveLength(1);
+  expect(requests.filter(request => request.method === 'GET' && request.url.endsWith('/messages/42/tasks'))).toHaveLength(1);
+}
+
 describe('TaskLinks', () => {
   it('completes creation without refreshing the closing add surface', async () => {
-    const reads: string[] = [];
+    const reads: Request[] = [];
     const oncomplete = vi.fn();
     render(TaskLinks, { client: createAPIClient(async (input) => {
       const request = input as Request;
+      reads.push(request);
       if (request.method === 'POST') return Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 });
-      reads.push(request.url);
       if (request.url.endsWith('/status')) return Response.json({ state: 'ready', project: 'project' });
       return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: { archive_uid: 'archive-a', conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z' } });
     }), mode: 'add', messageId: 42, title: 'Follow up', oncomplete });
     await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(oncomplete).toHaveBeenCalledOnce());
-    expect(reads).toHaveLength(2);
+    expectOneInitialTaskRead(reads);
   });
   it('shows loading, linked tasks, and honest partial authority', async () => {
     let resolve!: (response: Response) => void;
@@ -109,7 +114,7 @@ describe('TaskLinks', () => {
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project'])(
+  it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project', 'authentication_required'])(
     'keeps mutations disabled when the index state is %s even with a ready integration',
     async (state) => {
       const view = render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
@@ -212,8 +217,7 @@ describe('TaskLinks', () => {
     const body = await post.clone().json() as { added_at?: string };
     expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     await waitFor(() => expect(oncomplete).toHaveBeenCalledOnce());
-    expect(requests.filter((request) => request.url.endsWith('/integrations/tasks/status'))).toHaveLength(1);
-    expect(requests.filter((request) => request.method === 'GET' && request.url.endsWith('/messages/42/tasks'))).toHaveLength(1);
+    expectOneInitialTaskRead(requests);
   });
 
   it('reuses one request identity and timestamp when retrying the same existing-task link', async () => {
