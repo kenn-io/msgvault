@@ -58,13 +58,14 @@
     if (!loading) void Promise.all(rows.map(batch => controller.getDetail(batch.id)));
   });
   const selectedBatch = $derived(batches.find(batch => batch.id === selectedID));
+  const shownDetail = $derived(selectedID ? controller.details[selectedID] ?? panelDetail : undefined);
   async function open(batch: Batch): Promise<void> {
     const generation = ++detailGeneration;
     if (selectedID === batch.id) { selectedID = undefined; return; }
     selectedID = batch.id;
     panelDetail = undefined;
     const data = await controller.getDetail(batch.id, { retry: true, fresh: true });
-    if (generation !== detailGeneration || controller.batches.find(current => current.id === batch.id)?.status !== batch.status) return;
+    if (generation !== detailGeneration) return;
     error = data ? '' : "Can't open this batch."; panelDetail = data; selectedID = data ? batch.id : undefined;
   }
   function close(): void { detailGeneration++; selectedID = undefined; }
@@ -147,50 +148,50 @@
   />
 {/snippet}
 
-{#if selectedID && panelDetail && selectedBatch}
+{#if selectedID && shownDetail && selectedBatch}
   {@const chip = batchStatus(selectedBatch.status)}
   <SidePanel
-    title={`Staged ${formatDateTime(panelDetail.created_at)}`}
+    title={`Staged ${formatDateTime(shownDetail.created_at)}`}
     onclose={close}
     footer={cancellable(selectedBatch.status) ? cancelAction : undefined}
   >
     <div class="panel">
       <div class="line">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
-        <span class="muted">{panelDetail.account || (panelDetail.summary?.accounts ?? []).join(', ')}</span>
+        <span class="muted">{shownDetail.account || (shownDetail.summary?.accounts ?? []).join(', ')}</span>
       </div>
-      {#if panelDetail.description}<p>{panelDetail.description}</p>{/if}
+      {#if shownDetail.description}<p>{shownDetail.description}</p>{/if}
       <section class="block" aria-label="Messages">
-        <h3>{count(panelDetail.message_count)}</h3>
-        {#if panelDetail.summary}
+        <h3>{count(shownDetail.message_count)}</h3>
+        {#if shownDetail.summary}
           <span class="muted">
-            {formatBytes(panelDetail.summary.total_size_bytes)}{#if panelDetail.summary.date_range?.[0]} · {panelDetail.summary.date_range[0].slice(0, 10)} to {panelDetail.summary.date_range[1]?.slice(0, 10)}{/if}
+            {formatBytes(shownDetail.summary.total_size_bytes)}{#if shownDetail.summary.date_range?.[0]} · {shownDetail.summary.date_range[0].slice(0, 10)} to {shownDetail.summary.date_range[1]?.slice(0, 10)}{/if}
           </span>
-          {#if panelDetail.summary.top_senders?.length}
+          {#if shownDetail.summary.top_senders?.length}
             <ul class="senders">
-              {#each panelDetail.summary.top_senders as sender (sender.sender)}
+              {#each shownDetail.summary.top_senders as sender (sender.sender)}
                 <li><span>{sender.sender}</span><span class="muted">{sender.count.toLocaleString()}</span></li>
               {/each}
             </ul>
           {/if}
         {/if}
       </section>
-      {#if panelDetail.execution}
+      {#if shownDetail.execution}
         <span class="muted">
-          {panelDetail.execution.succeeded.toLocaleString()} deleted · {panelDetail.execution.failed.toLocaleString()} failed
+          {shownDetail.execution.succeeded.toLocaleString()} deleted · {shownDetail.execution.failed.toLocaleString()} failed
         </span>
-        {#if panelDetail.execution.failed_ids?.length}
+        {#if shownDetail.execution.failed_ids?.length}
           <section class="block" aria-label="Failed message IDs">
             <h3>Failed message IDs</h3>
-            {#each panelDetail.execution.failed_ids as id}<code>{id}</code>{/each}
+            {#each shownDetail.execution.failed_ids as id}<code>{id}</code>{/each}
           </section>
         {/if}
       {/if}
       <div class="id">
         <span class="muted">Batch ID</span>
         <span class="id__value">
-          <code>{panelDetail.id}</code>
-          <CopyButton text={panelDetail.id} ariaLabel="Copy batch ID" />
+          <code>{shownDetail.id}</code>
+          <CopyButton text={shownDetail.id} ariaLabel="Copy batch ID" />
         </span>
       </div>
     </div>

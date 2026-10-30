@@ -104,7 +104,15 @@ export class DeletionsController {
             if (data && !controller.signal.aborted) {
               this.details = { ...this.details, [id]: data };
               const batch = this.batches.find(batch => batch.id === id);
-              if (batch && batchIsRecent(batch, Date.now(), data.execution?.completed_at)) this.visible = true;
+              if (batch) {
+                const updated = { ...batch, status: data.status };
+                if (batchIsRecent(updated, Date.now(), data.execution?.completed_at)) this.visible = true;
+                if (batch.status !== data.status) {
+                  this.batches = this.batches.map(current => current.id === id ? updated : current);
+                  this.#revision++;
+                  void this.#retention();
+                }
+              }
             } else this.#failed.add(id);
           }
           return current && !controller.signal.aborted ? data : undefined;
