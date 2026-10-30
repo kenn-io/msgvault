@@ -889,10 +889,10 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 	}
 	diagnostics.setAttempted(attempted)
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, admitted, err
 	}
 	if jobctx.PreemptionRequested(ctx) {
-		return 0, errContextRunBudgetExhausted
+		return 0, admitted, errContextRunBudgetExhausted
 	}
 	page := &contextEmbeddingPage{
 		gen:         gen,
@@ -908,12 +908,12 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 		page.identities[key] = append(page.identities[key], savedDocumentIdentity{owner, revision})
 		saved, err := page.checkpoints.Load(ctx, gen, owner, revision)
 		if err != nil {
-			return 0, err
+			return 0, admitted, err
 		}
 		for inputKey, vectors := range saved {
 			decoded, err := hex.DecodeString(inputKey)
 			if err != nil || len(decoded) != sha256.Size {
-				return 0, fmt.Errorf("invalid contextual checkpoint key %q", inputKey)
+				return 0, admitted, fmt.Errorf("invalid contextual checkpoint key %q", inputKey)
 			}
 			var savedKey [sha256.Size]byte
 			copy(savedKey[:], decoded)
