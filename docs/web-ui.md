@@ -414,7 +414,7 @@ Messages supports individual row selection and select-all-matching for the curre
 
 The dialog shows the selected count and estimated size, eligible and skipped counts, exclusions, and review expiration. Semantic search reviews warn that they cover active messages only. **Dry run** reports matched, staged, and skipped counts without creating a batch. **Stage N messages** creates the batch and leaves a success summary with its ID. **Done** returns to Messages. Staging supports Gmail and Microsoft Graph mail; use `msgvault delete-staged` to execute deletion.
 
-The Deletions workspace lists batches by creation date, message count, account, and status. Select a row to inspect its description, summary, execution counts, and failed message IDs. **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches in page history; cancelled-only batches do not keep the sidebar entry visible. With no batches, the workspace says "Nothing staged". The sidebar entry remains visible for active batches and for seven days after execution finishes.
+The Staged deletions workspace lists batches by creation date, message count, account, and status. Select a row to inspect its description, summary, execution counts, and failed message IDs. **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches in page history; cancelled-only batches do not keep the sidebar entry visible. With no batches, the workspace says "Nothing staged". The sidebar entry remains visible for active batches and for seven days after execution finishes.
 
 ## Keyboard controls
 

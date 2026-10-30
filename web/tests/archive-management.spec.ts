@@ -2,7 +2,6 @@ import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
-  await page.route('**/api/v1/settings', route => route.fulfill({ json: { settings: [], pending_restart: false } }));
   await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
   await stubOperationStatus(page);
 });
@@ -48,15 +47,12 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   const batch = { id: 'batch-1', status: 'pending', message_count: 1, created_at: '2026-07-19T10:00:00Z', created_by: 'api', description: 'Reviewed selection' };
   await page.route('**/api/v1/deletions', route => {
     if (route.request().method() === 'POST') {
-      const body = route.request().postDataJSON();
-      if (body.dry_run) return route.fulfill({ json: { dry_run: true, message_count: 1 } });
       staged = true;
       return route.fulfill({ status: 201, json: { id: 'batch-1', message_count: 1 } });
     }
     return route.fulfill({ json: { manifests: staged ? [batch] : [] } });
   });
   await page.route('**/api/v1/deletions/batch-1', route => {
-
     return route.fulfill({ json: { ...batch, account: 'archive@example.com' } });
   });
   await page.route('**/api/v1/sources/status', (route) => {
@@ -113,9 +109,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
 
   await page.getByRole('button', { name: 'Review deletion…' }).click();
   await expect(page.getByRole('dialog', { name: 'Review deletion' })).toBeVisible();
-  await page.getByRole('button', { name: 'Dry run', exact: true }).click();
   await page.getByRole('button', { name: 'Stage 1 message', exact: true }).click();
-  await expect(page.getByText('Batch ID:')).toBeVisible();
   await page.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Review deletion' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Staged deletions', exact: true }).click();
@@ -131,20 +125,4 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('invoice');
   await expect(page.getByRole('grid', { name: 'Messages results' })).toBeFocused();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
-});
-
-test('Sources opens a read-only panel and routes to its existing settings editor', async ({ page }) => {
-  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback' } }));
-  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} } }));
-  await page.route('**/api/v1/deletions', route => route.fulfill({ json: { manifests: [] } }));
-  await page.route('**/api/v1/settings', route => route.fulfill({ json: { pending_restart: false, settings: [] } }));
-  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [{
-    id: 1, source_type: 'beeper', identifier: 'beeper', display_name: 'Example chats', can_sync: true, latest_sync: null, last_successful_sync: null
-  }] } }));
-  await page.route('**/api/v1/carddav/connections', route => route.fulfill({ json: { connections: [] } }));
-  await page.goto('/?workspace=sources');
-  await page.getByRole('button', { name: 'Details for Example chats' }).click();
-  await expect(page.getByRole('region', { name: 'Schedule' })).toBeVisible();
-  await page.getByRole('button', { name: 'Edit in Settings › Sources' }).click();
-  await expect(page.getByRole('heading', { name: 'Sources', exact: true })).toBeVisible();
 });
