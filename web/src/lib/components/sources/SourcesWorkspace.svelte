@@ -7,7 +7,7 @@
     triggerSync as generatedTriggerSync,
   } from '../../api/generated/api/api';
   import { Button, Table, TableHeaderCell } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVConnectionResponse, SourceStatus } from '../../api/generated/models';
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
@@ -31,7 +31,6 @@
     requestTimeoutMs = 20_000,
     maxAwaitingPolls = 6,
     maxLockHoldPolls = 8,
-    open = undefined,
     onOpenOperations = () => undefined,
     onStatusChange = () => undefined,
     onOpenSettings = () => undefined,
@@ -42,8 +41,6 @@
     requestTimeoutMs?: number;
     maxAwaitingPolls?: number;
     maxLockHoldPolls?: number;
-    /** A row to open on arrival: `source:<id>` or `contacts:<connection>`. */
-    open?: string;
     /** Opens a Settings category, such as `carddav` for the contacts account. */
     onOpenSettings?: (categoryID: string) => void;
   } = $props();
@@ -51,7 +48,7 @@
   let sources = $state<Source[]>([]);
   let contacts = $state<CardDAVConnectionResponse[]>([]);
   let panel = $state<SourcePanel>();
-  let selected = $state<string | undefined>(untrack(() => open));
+  let selected = $state<string>();
   let adding = $state(false);
   let loading = $state(true);
   let lockStatusStale = $state(false);
@@ -61,9 +58,6 @@
   let triggering = $state<string>();
   $effect(() => {
     if (triggerError) return reportError(() => client, () => 'sync');
-  });
-  $effect(() => {
-    if (open) selected = open;
   });
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -175,7 +169,10 @@
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
       const next = data.sources ?? [];
+      sources = next;
+      loading = false;
       await loadContacts(signal);
+      if (requestGeneration !== generation || disposed) return;
       let nextDelay: number | undefined;
       let lockHoldPoll = false;
       let advanced = false;
@@ -227,7 +224,6 @@
         lockHoldPolls = 0;
         lockStatusStale = false;
       }
-      sources = next;
       statusError = '';
       hasLoadedStatus = true;
       if (nextDelay !== undefined) {

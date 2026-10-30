@@ -33,6 +33,7 @@
   let result = $state<StageDeletionResponse>();
   let preview = $state<StageDeletionResponse>();
   let pending = $state(true);
+  let staging = $state(false);
   let error = $state('');
 
   const deletable = $derived(review?.deletable_count ?? 0);
@@ -84,7 +85,7 @@
   // The reviewed operation token binds staging to this selection.
   async function stage(): Promise<void> {
     if (!review || pending) return;
-    pending = true;
+    pending = staging = true;
     error = '';
     preview = undefined;
     try {
@@ -108,7 +109,7 @@
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Can't stage these messages.";
     } finally {
-      pending = false;
+      pending = staging = false;
     }
   }
 
@@ -129,7 +130,7 @@
 
   <Dialog
     title="Review deletion"
-    {onclose}
+    onclose={() => { if (!staging) onclose(); }}
     primaryLabel={result ? 'Done' : `Stage ${deletable.toLocaleString()} ${noun(deletable)}`}
     primaryDisabled={!result && (pending || !review || deletable === 0 || Boolean(blocked))}
     onprimary={() => result ? onclose() : void stage()}
