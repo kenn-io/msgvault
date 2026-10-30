@@ -64,6 +64,30 @@ describe('Explore URL state', () => {
     }
   });
 
+  it('drops a held Back to an unindexed entry when Forward returns to Settings first', async () => {
+    window.history.replaceState(null, '', '/?workspace=files');
+    window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    let leave!: () => void;
+    const cancel = vi.fn();
+    state.holdLeave = (next) => { leave = next; return true; };
+    state.cancelHeldLeave = cancel;
+    try {
+      window.history.back();
+      await popped();
+      window.history.forward();
+      await popped();
+      expect(cancel).toHaveBeenCalledOnce();
+      state.holdLeave = undefined;
+      leave();
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings');
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('holds leaving Settings until the draft is discarded', () => {
     window.history.replaceState(null, '', '/?workspace=settings');
     const state = new ExploreState(window);

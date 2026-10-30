@@ -114,8 +114,11 @@
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
   const draftNeedsRestart = $derived(settings.some(setting => setting.restart_required && isDirty(setting.key)));
   let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
-  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean) => void) | undefined>('msgvault:hold-settings-leave');
-  registerLeave?.((leave, stay) => dirtyCount > 0 && !saving && (pendingLeave = { leave, stay }, true));
+  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => void) | undefined>('msgvault:hold-settings-leave');
+  registerLeave?.(
+    (leave, stay) => dirtyCount > 0 && !saving && (pendingLeave = { leave, stay }, true),
+    () => { pendingLeave = undefined; }
+  );
   onDestroy(() => registerLeave?.(undefined));
   function focusStay(node: HTMLElement) {
     node.querySelector('button')?.focus();
