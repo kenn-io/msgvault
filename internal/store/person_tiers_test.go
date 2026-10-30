@@ -258,6 +258,7 @@ func TestPersonTiersCountSentMailThatKeptDraftEvidence(t *testing.T) {
 	require.NoError(err)
 	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`SELECT id FROM messages WHERE sender_id = ?`), owner)
 	require.NoError(err)
+	defer func() { _ = rows.Close() }()
 	var sent []int64
 	for rows.Next() {
 		var id int64
@@ -265,7 +266,6 @@ func TestPersonTiersCountSentMailThatKeptDraftEvidence(t *testing.T) {
 		sent = append(sent, id)
 	}
 	require.NoError(rows.Err())
-	require.NoError(rows.Close())
 	require.Len(sent, 4)
 	for _, id := range sent {
 		require.NoError(f.Store.AddMessageLabels(id, []int64{labels["Drafts"], labels["Sent"]}))
