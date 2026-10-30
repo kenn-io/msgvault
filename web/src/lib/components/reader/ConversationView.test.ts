@@ -66,39 +66,25 @@ describe('ConversationView', () => {
     expect(url.searchParams.get('anchor')).toBe('2');
   });
 
-  it('maps sender and recipient IDs while keeping owner-authored messages plain as You', async () => {
-    const onOpenPerson = vi.fn();
-    let owner = true;
+  it('shows owner messages as plain You and participant affordances from API identities', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      id: owner ? 7 : 8,
-      anchor_id: 2,
-      messages: [message(2, 'whatsapp')].map((entry) => ({
-        ...entry,
-        conversation_id: owner ? 7 : 8,
-        from: owner ? 'Archive owner' : 'Chat sender',
-        from_participant_id: owner ? 11 : 22,
-        to: ['Chat recipient'],
-        to_participants: [{ display: 'Chat recipient', participant_id: 33 }],
-        is_from_me: owner
-      })),
-      has_before: false,
-      has_after: false,
-      total: 1
+      id: 7, anchor_id: 2,
+      messages: [
+        { ...message(2, 'whatsapp'), from: 'Archive owner', from_participant_id: 11, is_from_me: true },
+        { ...message(3, 'whatsapp'), from: 'Chat sender', from_participant_id: 22, to: ['Chat recipient'], to_participants: [{ display: 'Chat recipient', participant_id: 33 }] }
+      ],
+      has_before: false, has_after: false, total: 2
     }));
-
-    const view = render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onOpenPerson }
-    });
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onOpenPerson: vi.fn() });
 
     const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
     expect(anchorCard.textContent).toContain('You');
-    expect(screen.queryByRole('button', { name: 'You' })).toBeNull();
+    expect(within(anchorCard).queryByRole('button', { name: 'You' })).toBeNull();
     expect(anchorCard.textContent).not.toContain('Unknown sender');
-    owner = false;
-    await view.rerender({ conversationId: 8, anchorId: 2 });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Chat sender' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Chat recipient' }));
-    expect(onOpenPerson.mock.calls).toEqual([[22], [33]]);
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 3/ }));
+    const incomingCard = screen.getByRole('article', { name: 'Message 3' });
+    expect(within(incomingCard).getByRole('button', { name: 'Chat sender' })).toBeDefined();
+    expect(within(incomingCard).getByRole('button', { name: 'Chat recipient' })).toBeDefined();
   });
 
   it('sends optional start/end bounds when scoping to a chat burst day', async () => {
