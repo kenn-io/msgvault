@@ -19,10 +19,11 @@ type SearchMetadata struct {
 
 func (s *Store) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Query, includeSnippet bool) (map[int64]SearchMetadata, error) {
 	result := make(map[int64]SearchMetadata, len(ids))
+	includeCold := q != nil && q.IncludeCold
 	// Attachment rows can lag the authoritative stored count while sync is writing them.
 	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, COALESCE(m.attachment_count, 0), a.id IS NOT NULL, COALESCE(a.filename, '')
 		FROM messages m LEFT JOIN attachments a ON a.message_id = m.id
-		WHERE m.id IN (%s) ORDER BY m.id, a.id`, func(rows *loggedRows) error {
+		WHERE m.id IN (%s) AND `+LexicalMessageWhere("m", includeCold)+` ORDER BY m.id, a.id`, func(rows *loggedRows) error {
 		var id int64
 		var count int
 		var hasRow bool

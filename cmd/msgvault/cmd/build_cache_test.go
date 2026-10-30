@@ -65,8 +65,7 @@ func TestBuildCacheLockedAcceptsSQLiteFileURI(t *testing.T) {
 	dbURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}).String()
 
 	result, err := buildCacheLocked(
-		dbURI, filepath.Join(tmpDir, "analytics"), true, false, acquirePublishLock,
-	)
+		dbURI, filepath.Join(tmpDir, "analytics"), true, false)
 
 	require.NoError(t, err, "buildCacheLocked with file URI")
 	assert.NotNil(t, result)
@@ -135,6 +134,9 @@ func setupTestSQLite(t *testing.T) string {
 			identifier_value TEXT NOT NULL,
 			display_value TEXT,
 			is_primary BOOLEAN DEFAULT FALSE,
+			service_id INTEGER,
+			scope_kind TEXT,
+			scope_value TEXT,
 			UNIQUE(identifier_type, identifier_value)
 		);
 
@@ -187,6 +189,16 @@ func setupTestSQLite(t *testing.T) string {
 			PRIMARY KEY (conversation_id, participant_id)
 		);
 
+		CREATE TABLE conversation_policy (conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, effective_tier TEXT NOT NULL DEFAULT 'full' CHECK(effective_tier IN ('full','cold','stub','skip')), override_tier TEXT CHECK(override_tier IN ('full','cold','stub','skip')), last_activity_at DATETIME);
+		CREATE TABLE communication_services (id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE);
+		CREATE TABLE participant_contact_observations (
+			id INTEGER PRIMARY KEY, participant_id INTEGER NOT NULL, source_id INTEGER,
+			address_kind TEXT NOT NULL, service_id INTEGER, scope_kind TEXT, scope_value TEXT,
+			provider_user_id TEXT, original_value TEXT, normalized_value TEXT NOT NULL,
+			source TEXT NOT NULL, source_ref TEXT,
+			active_until DATETIME, superseded_at DATETIME
+		);
+		CREATE TABLE participant_contact_observation_conversations (observation_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL, PRIMARY KEY(observation_id, conversation_id));
 		CREATE TABLE archive_metadata (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -222,6 +234,10 @@ func setupTestSQLite(t *testing.T) string {
 			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
 			PRIMARY KEY (person_id, participant_id),
 			UNIQUE(participant_id)
+		);
+		CREATE TABLE person_contact_points (
+			person_id INTEGER NOT NULL, address_kind TEXT NOT NULL, normalized_value TEXT NOT NULL,
+			source TEXT NOT NULL, active_until DATETIME, superseded_at DATETIME
 		);
 	`
 
@@ -1217,6 +1233,9 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	require.NoError(err, "open sqlite")
 
 	_, err = db.Exec(`
+		INSERT INTO conversations (id, source_id, source_conversation_id, title)
+		VALUES (105, 1, 'thread105', 'New Message Thread');
+
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
 			(6, 1, 'msg6', 105, 'New Message 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0),
 			(7, 1, 'msg7', 105, 'New Message 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0);
@@ -1234,8 +1253,15 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES
 			(7, 'notes.txt', 'text/plain', 500);
 	`)
-	_ = db.Close()
+	require.NoError(db.Close())
 	require.NoError(err, "insert new messages")
+	db, err = sql.Open("sqlite3", dbPath)
+	require.NoError(err, "reopen sqlite for policy fixture")
+	_, err = db.Exec(`INSERT INTO conversation_policy (conversation_id, effective_tier, override_tier)
+		VALUES (105, 'full', 'full')
+		ON CONFLICT(conversation_id) DO UPDATE SET effective_tier = 'full', override_tier = 'full'`)
+	require.NoError(err, "mark synthetic room Full")
+	require.NoError(db.Close())
 
 	// Second export (incremental)
 	result2, err := buildCache(dbPath, analyticsDir, false)
@@ -2986,14 +3012,19 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, source_type TEXT NOT NULL DEFAULT 'gmail', identifier TEXT);
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
-		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE participant_identifiers (id INTEGER PRIMARY KEY, participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN, service_id INTEGER, scope_kind TEXT, scope_value TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, source_id INTEGER, source_label_id TEXT, system_role TEXT, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
 		CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, size INTEGER, filename TEXT);
-		CREATE TABLE conversations (id INTEGER PRIMARY KEY, source_conversation_id TEXT, title TEXT, conversation_type TEXT NOT NULL DEFAULT 'email');
+		CREATE TABLE conversations (id INTEGER PRIMARY KEY, source_id INTEGER, source_conversation_id TEXT, title TEXT, conversation_type TEXT NOT NULL DEFAULT 'email');
 		CREATE TABLE conversation_participants (conversation_id INTEGER, participant_id INTEGER, PRIMARY KEY (conversation_id, participant_id));
+		CREATE TABLE conversation_policy (conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, effective_tier TEXT NOT NULL DEFAULT 'full' CHECK(effective_tier IN ('full','cold','stub','skip')), override_tier TEXT CHECK(override_tier IN ('full','cold','stub','skip')), last_activity_at DATETIME);
+		CREATE TABLE communication_services (id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE);
+		CREATE TABLE participant_contact_observations (id INTEGER PRIMARY KEY, participant_id INTEGER NOT NULL, source_id INTEGER, address_kind TEXT NOT NULL, service_id INTEGER, scope_kind TEXT, scope_value TEXT, provider_user_id TEXT, original_value TEXT, normalized_value TEXT NOT NULL, source TEXT NOT NULL, source_ref TEXT, active_until DATETIME, superseded_at DATETIME);
+		CREATE TABLE participant_contact_observation_conversations (observation_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL, PRIMARY KEY(observation_id, conversation_id));
+		CREATE TABLE person_contact_points (person_id INTEGER NOT NULL, address_kind TEXT NOT NULL, normalized_value TEXT NOT NULL, source TEXT NOT NULL, active_until DATETIME, superseded_at DATETIME);
 		CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		CREATE TABLE account_identities (source_id INTEGER, address TEXT, source_signal TEXT NOT NULL DEFAULT '', confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (source_id, address));
 		CREATE TABLE participant_links (participant_a INTEGER, participant_b INTEGER, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (participant_a, participant_b));
@@ -3186,7 +3217,7 @@ func BenchmarkBuildCache(b *testing.B) {
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
-		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
+		CREATE TABLE participant_identifiers (id INTEGER PRIMARY KEY, participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN, service_id INTEGER, scope_kind TEXT, scope_value TEXT);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
@@ -3293,8 +3324,8 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			phone_number TEXT
 		);
 		CREATE TABLE participant_identifiers (
-			participant_id INTEGER, identifier_type TEXT, identifier_value TEXT,
-			display_value TEXT, is_primary BOOLEAN
+			id INTEGER PRIMARY KEY, participant_id INTEGER, identifier_type TEXT, identifier_value TEXT,
+			display_value TEXT, is_primary BOOLEAN, service_id INTEGER, scope_kind TEXT, scope_value TEXT
 		);
 		CREATE TABLE message_recipients (
 			id INTEGER PRIMARY KEY,
@@ -3339,6 +3370,10 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			PRIMARY KEY (conversation_id, participant_id)
 		);
 
+		CREATE TABLE conversation_policy (conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, effective_tier TEXT NOT NULL DEFAULT 'full' CHECK(effective_tier IN ('full','cold','stub','skip')), override_tier TEXT CHECK(override_tier IN ('full','cold','stub','skip')), last_activity_at DATETIME);
+		CREATE TABLE communication_services (id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE);
+		CREATE TABLE participant_contact_observations (id INTEGER PRIMARY KEY, participant_id INTEGER NOT NULL, source_id INTEGER, address_kind TEXT NOT NULL, service_id INTEGER, scope_kind TEXT, scope_value TEXT, provider_user_id TEXT, original_value TEXT, normalized_value TEXT NOT NULL, source TEXT NOT NULL, source_ref TEXT, active_until DATETIME, superseded_at DATETIME);
+		CREATE TABLE participant_contact_observation_conversations (observation_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL, PRIMARY KEY(observation_id, conversation_id));
 		CREATE TABLE archive_metadata (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -3374,6 +3409,10 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
 			PRIMARY KEY (person_id, participant_id),
 			UNIQUE(participant_id)
+		);
+		CREATE TABLE person_contact_points (
+			person_id INTEGER NOT NULL, address_kind TEXT NOT NULL, normalized_value TEXT NOT NULL,
+			source TEXT NOT NULL, active_until DATETIME, superseded_at DATETIME
 		);
 	`
 	_, err = db.Exec(schema)
@@ -4766,7 +4805,7 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 					_, err = db.Exec(`UPDATE conversations SET title=CAST(? AS TEXT) WHERE id=101`, []byte(title))
 					require.NoError(err)
 					stderr = captureStderrDuring(t, func() {
-						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, acquirePublishLock, false)
+						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, false)
 					})
 					require.NoError(err)
 					assert.True(result.IdentityOnly)

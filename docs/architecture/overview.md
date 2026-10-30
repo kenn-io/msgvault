@@ -62,6 +62,14 @@ records. Attachments are addressed by their SHA-256 content hash so occurrences
 can share the same stored bytes. Repeated imports and syncs use source identity
 to update or skip records according to that provider's rules.
 
+In newer `main` builds, conversation policy classifies the entire archive before
+search and analytics consumers start. Store transactions change a room's tier
+and invalidate derived analytics together. A minute loop in the daemon expires
+quiet rooms and reloads validated settings. A policy lock keeps cache publication
+from racing a tier change, and a cache built under an older policy revision is
+never served. See
+[conversation archive tiers](../configuration.md#conversation-archive-tiers).
+
 On SQLite, analytics exports message metadata to Parquet. DuckDB queries those
 files for grouping and drill-down without scanning message bodies. FTS5 indexes
 message text for keyword search. Semantic search stores vectors in a separate

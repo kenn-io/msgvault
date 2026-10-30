@@ -3,6 +3,23 @@ title: Development
 description: Build, test, lint, and code conventions.
 ---
 
+## Conversation policy runtime
+
+Daemon initialization runs schema recovery, whole-archive policy configuration
+and expiry before consumers start. Keep the cancellation root for the daemon
+lifetime. Periodic refresh uses current sanitized settings. On reload failure,
+expiry uses persisted validated settings without replacing them.
+
+Authorized ingest and worker commands use the policy writer initializer.
+Read-only commands and previews use `openInitializedStoreForInvocation`: it
+validates the existing schema without DDL, policy configuration, expiry, dirty-hint
+draining or attachment packing. A preview must not acquire mutation
+behavior merely because its command also offers an apply mode. Child commands
+own confirmation flags; parent routing selects subcommands only.
+
+Runtime regressions use synthetic SQLite archives and isolated PostgreSQL test
+databases.
+
 ## Build
 
 The macOS and Linux builds require Go 1.27.3+, Bun 1.4.4+, Node.js (22.23.4+ on

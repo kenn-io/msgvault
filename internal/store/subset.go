@@ -2297,6 +2297,13 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 		`participant_id IN (SELECT id FROM participants)`); err != nil {
 		return 0, fmt.Errorf("copy participant_contact_observations: %w", err)
 	}
+	if exists, err := sourceTableExists(tx, "participant_contact_observation_conversations"); err != nil {
+		return 0, err
+	} else if exists {
+		if _, err := copyByName(tx, "participant_contact_observation_conversations", `observation_id IN (SELECT id FROM participant_contact_observations) AND conversation_id IN (SELECT id FROM conversations)`); err != nil {
+			return 0, fmt.Errorf("copy observation room support: %w", err)
+		}
+	}
 	hasCandidates, err := sourceTableExists(tx, identityMatchCandidatesTableName)
 	if err != nil {
 		return 0, fmt.Errorf("check identity match candidate schema: %w", err)
@@ -2558,6 +2565,9 @@ func copyMessages(tx *sql.Tx) error {
 // source lacks is left out of the INSERT, so the destination's own DEFAULT,
 // where it has one, supplies it. Columns the source has and the destination
 // does not are dropped.
+//
+// table and where must be internal SQL templates, never user or archive strings.
+// Schema-derived columns are escaped by commonColumns; values stay bound in args.
 func copyByName(tx *sql.Tx, table, where string, args ...any) (sql.Result, error) {
 	cols, err := commonColumns(tx, table)
 	if err != nil {
@@ -2568,6 +2578,7 @@ func copyByName(tx *sql.Tx, table, where string, args ...any) (sql.Result, error
 			"source and destination share no %s columns", table)
 	}
 	list := strings.Join(cols, ", ")
+	// #nosec G701 -- table/where are internal SQL templates; commonColumns uses quoteIdentifier to escape schema columns; values remain bound in args.
 	res, err := tx.Exec(fmt.Sprintf(`
 		INSERT INTO %s (%s) SELECT %s FROM src.%s
 		WHERE %s`, table, list, list, table, where), args...)

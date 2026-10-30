@@ -706,14 +706,16 @@ func TestListMessages_MatchEmptySenderName_NotExists(t *testing.T) {
 	env := newTestEnv(t)
 
 	env.AddMessage(dbtest.MessageOpts{Subject: "Ghost Message", SentAt: "2024-06-01 10:00:00"})
+	namelessSender := env.AddParticipant(dbtest.ParticipantOpts{})
+	env.AddMessage(dbtest.MessageOpts{Subject: "Nameless Direct Sender", SentAt: "2024-06-02 10:00:00"})
+	_, err := env.DB.Exec(`UPDATE messages SET sender_id = ? WHERE id = ?`, namelessSender, env.LastMessageID())
+	require.NoError(t, err)
 
 	filter := MessageFilter{EmptyValueTargets: emptyTargets(ViewSenderNames)}
 	messages := env.MustListMessages(filter)
 
-	assert.Len(messages, 1, "messages with empty sender name")
-	if len(messages) > 0 {
-		assert.Equal("Ghost Message", messages[0].Subject)
-	}
+	require.Len(t, messages, 2, "messages with empty sender name")
+	assert.ElementsMatch([]string{"Ghost Message", "Nameless Direct Sender"}, []string{messages[0].Subject, messages[len(messages)-1].Subject})
 	for _, m := range messages {
 		assert.NotEqual("Hello World", m.Subject, "should not match message with valid sender")
 		assert.NotEqual("Re: Hello", m.Subject, "should not match message with valid sender")

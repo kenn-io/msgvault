@@ -42,9 +42,13 @@ import (
 // Version 32 marks merged archive-only messages so deletion preflight counts
 // only messages that can still be deleted from their source.
 // Version 33 flags unsent messages in the relationship activity dataset.
+// Version 34 retains conversation tiers, fences live policy publications, and
+// filters exported participant identity values by Full-room or independent
+// support, so older publications must be rebuilt to remove values that were
+// only available from Cold rooms.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 33
+const CacheSchemaVersion = 34
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
@@ -56,6 +60,8 @@ type CacheSyncState struct {
 	LastCompletedSyncRunID int64     `json:"last_completed_sync_run_id,omitzero"`
 	LastCacheAdditionCount int64     `json:"last_cache_addition_count,omitzero"`
 	LastCacheUpdateCount   int64     `json:"last_cache_update_count,omitzero"`
+	// ArchivedMessageCount counts physical rows, including Cold, for export repair.
+	ArchivedMessageCount int64 `json:"archived_message_count"`
 	// LastRelatedChangeSeq is the highest child-row journal entry represented
 	// by this committed publication. The journal is written transactionally
 	// with SQLite mutations and advances only after marker-last publication.
@@ -64,7 +70,9 @@ type CacheSyncState struct {
 	// The field names predate resumable scheduler cancellations.
 	LastFailedSyncRunCount int64 `json:"last_failed_sync_run_count,omitzero"`
 	LastFailedSyncRunIDSum int64 `json:"last_failed_sync_run_id_sum,omitzero"`
-	IdentityRevision       int64 `json:"identity_revision,omitzero"`
+	// ConversationPolicyRevision identifies the Full/Cold eligibility snapshot.
+	ConversationPolicyRevision int64 `json:"conversation_policy_revision,omitzero"`
+	IdentityRevision           int64 `json:"identity_revision,omitzero"`
 	// DerivedDataRevision tracks offline repairs that rewrite existing
 	// message, snippet, search, or attachment facts. Those rows are already
 	// inside the committed message ID boundary, so drift requires a full cache
@@ -141,7 +149,7 @@ func (e *CacheUnavailableError) Unwrap() error { return ErrCacheUnavailable }
 // Revision identifies one committed cache publication. It intentionally uses
 // only commit-marker fields, never ambient filesystem state.
 func (s CacheSyncState) Revision() string {
-	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|related=%d|fail_count=%d|fail_sum=%d|identity=%d|derived_data=%d|account_identity=%d|participant_identifier=%d|participant_display_name=%d|person_display_name=%d|published=%s",
+	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|related=%d|fail_count=%d|fail_sum=%d|identity=%d|derived_data=%d|account_identity=%d|participant_identifier=%d|participant_display_name=%d|person_display_name=%d|conversation_policy=%d|published=%s",
 		s.SchemaVersion,
 		s.LastMessageID,
 		s.LastSyncAt.UTC().Format(time.RFC3339Nano),
@@ -157,6 +165,7 @@ func (s CacheSyncState) Revision() string {
 		s.ParticipantIdentifierRevision,
 		s.ParticipantDisplayNameRevision,
 		s.PersonDisplayNameRevision,
+		s.ConversationPolicyRevision,
 		s.PublishedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return fmt.Sprintf("cache-%x", sha256.Sum256([]byte(payload)))

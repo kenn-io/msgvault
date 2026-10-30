@@ -23,6 +23,12 @@ to read a message. On newer `main` builds, `show` is an alias; use
 Message search does not search extracted document text or attachment pixels.
 Those have separate indexes and setup steps.
 
+In newer `main` builds, default searches exclude cold conversations. Use
+`msgvault search --mode fts --include-cold "query"` or the `include:cold` query
+operator for retained cold text. This broadens lexical discovery only; explicit
+message and conversation details remain readable. See
+[conversation archive tiers](../configuration.md#conversation-archive-tiers).
+
 ## Filename suggestions
 
 Newer than the latest release, person file lookup can suggest a filename when

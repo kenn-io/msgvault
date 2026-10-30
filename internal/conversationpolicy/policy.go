@@ -11,11 +11,14 @@ import (
 type Tier string
 
 const (
-	Full                      Tier = "full"
-	Cold                      Tier = "cold"
-	Stub                      Tier = "stub"
-	Skip                      Tier = "skip"
-	DefaultActivityWindowDays      = 180
+	Full Tier = "full"
+	Cold Tier = "cold"
+	Stub Tier = "stub"
+	Skip Tier = "skip"
+	// RecommendedMaxParticipants is the documented starting limit for users who
+	// turn on automatic classification. Classification is off by default.
+	RecommendedMaxParticipants = 20
+	DefaultActivityWindowDays  = 180
 )
 
 // ParseTier accepts the exact configuration spelling of a tier.

@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -470,7 +471,7 @@ func (imp *Importer) sweepQuery(scope, day string, syncID int64) string {
 // drain-first step pays. Fetching is entirely the drain's job:
 // budget-sized pages, reply-granular resume, gone-thread churn handling,
 // and the guarded parent skip all come with it.
-func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []SearchMatch, queryFloor string, targets map[string]sweepTarget, budget *sweepBudget, state *SyncState, sum *ImportSummary) error {
+func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []SearchMatch, queryFloor string, targets map[string]sweepTarget, budget *sweepBudget, state *SyncState, sum *ImportSummary) (retErr error) {
 	type group struct {
 		channelID string
 		anchorTS  string // any ts within the thread; replies resolves it
@@ -516,6 +517,16 @@ func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []S
 		ids = append(ids, cid)
 	}
 	sort.Strings(ids)
+	// Refresh only the rooms whose canonical drain this batch actually attempts.
+	// Sweep replies arrive after syncConversation's finalizer has already run.
+	var conversationIDs []int64
+	defer func() {
+		if ctx.Err() != nil {
+			return
+		}
+		_, refreshErr := imp.store.RefreshConversationPolicy(ctx, conversationIDs, imp.now())
+		retErr = errors.Join(retErr, refreshErr)
+	}()
 	for _, cid := range ids {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -524,6 +535,7 @@ func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []S
 		// the workspace budget bound this phase's fetch work, and reading
 		// it back carries the spend across conversations and days.
 		target := targets[cid]
+		conversationIDs = append(conversationIDs, target.convID)
 		cc := &convScope{
 			channelID: cid, convID: target.convID, sourceID: imp.sourceID,
 			syncID: syncID, opts: imp.opts, cs: state.Conversations[cid],

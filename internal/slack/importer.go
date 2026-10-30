@@ -499,16 +499,23 @@ func includeConversation(c *Conversation, opts *ImportOptions) bool {
 // incremental fetch are the same walk). Thread replies are owed by the
 // walks as recorded drain debt (paid before anything else each run) and
 // discovered by the reply sweep thereafter.
-func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int64, c *Conversation, opts ImportOptions, state *SyncState, sum *ImportSummary) (*convScope, error) {
+func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int64, c *Conversation, opts ImportOptions, state *SyncState, sum *ImportSummary) (_ *convScope, retErr error) {
 	convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, c.ID, conversationType(c), conversationTitle(c, imp.res.displayName))
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		_, refreshErr := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, imp.now())
+		retErr = errors.Join(retErr, refreshErr)
+	}()
 	toRecipients, participantCount, err := imp.ensureMembership(ctx, syncID, convID, c, opts, sum)
 	if err != nil {
 		return nil, err
 	}
 
+	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, imp.now()); err != nil {
+		return nil, err
+	}
 	cs := state.EnsureConv(c.ID)
 	cc := &convScope{
 		channelID: c.ID, convID: convID, sourceID: sourceID, syncID: syncID,
@@ -645,6 +652,9 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 		return nil, 0, err
 	}
 	if err := imp.store.SetConversationMemberCountContext(ctx, convID, len(members)); err != nil {
+		return nil, 0, err
+	}
+	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, imp.now()); err != nil {
 		return nil, 0, err
 	}
 	return directRecipients, len(members), nil

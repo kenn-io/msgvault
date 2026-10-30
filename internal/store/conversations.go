@@ -427,7 +427,7 @@ func (s *Store) SetConversationMetadata(conversationID int64, metadata sql.NullS
 
 // SetConversationMetadataContext honors cancellation during SetConversationMetadata.
 func (s *Store) SetConversationMetadataContext(ctx context.Context, conversationID int64, metadata sql.NullString) error {
-	err := s.withSyncConversationWriteContext(ctx, conversationID, func(q querier) error {
+	err := s.withConversationPolicyActivityWriteContext(ctx, conversationID, func(q querier) error {
 		_, err := q.Exec(fmt.Sprintf(`
 			UPDATE conversations
 			SET metadata = %s

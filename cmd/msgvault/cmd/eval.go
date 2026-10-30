@@ -624,7 +624,7 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 // same malformed filter be dropped silently three times over.
 func (e *evaluator) ranked(mode, qstr string, q *search.Query) ([]string, error) {
 	switch mode {
-	case "fts":
+	case searchModeFTS:
 		return e.rankedFTS(q)
 	case "vector", "hybrid":
 		return e.rankedVector(mode, qstr, q)
@@ -737,6 +737,15 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 			"\"<qid>\\t<query text>\" — spaces where tabs are expected is the usual cause",
 			evalTopics, topicsStats)
 	}
+	// Production search admits include:cold only for lexical search. Scoring
+	// it in another mode would report results no user can get.
+	if needVec || len(rerankOptions.Shapes) > 0 {
+		for _, topic := range topics {
+			if search.ParseOR(topic.Query).IncludeCold {
+				return usageErr(cmd, fmt.Errorf("topic %s: include:cold is available only for lexical evaluation; use --modes fts without reranking", topic.ID))
+			}
+		}
+	}
 	if len(rerankOptions.Shapes) > 0 {
 		judgedTopics := 0
 		for _, topic := range topics {
@@ -778,6 +787,9 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 	}
 	if err := runStartupMigrationsContext(ctx, s, state); err != nil {
 		return fmt.Errorf("startup migrations: %w", err)
+	}
+	if err := initializeConversationPolicy(ctx, s, cfg, time.Now()); err != nil {
+		return fmt.Errorf("initialize conversation policy: %w", err)
 	}
 	if err := requireFTS5ForModes(modes, s.FTS5Available()); err != nil {
 		return err
@@ -963,7 +975,7 @@ func parseEvalModes(spec string) (modes []string, needVec bool, err error) {
 			continue
 		}
 		switch m {
-		case "fts":
+		case searchModeFTS:
 		case "vector", "hybrid":
 			needVec = true
 		default:

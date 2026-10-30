@@ -163,6 +163,10 @@ func ImportSlackdump(
 			return summary, err
 		}
 
+		if _, err = scopedStore.RefreshConversationPolicy(ctx, []int64{conversationID}, time.Now()); err != nil {
+			return summary, err
+		}
+		var replyLinks [][2]string
 		before := summary.MessagesProcessed
 		cc := &convScope{
 			channelID:              conversation.ID,
@@ -178,6 +182,9 @@ func ImportSlackdump(
 			ParticipantCount: participantCount,
 		}
 		err = export.walkMessages(*conversation, func(message *Message) error {
+			if message.ThreadTS != "" && message.ThreadTS != message.TS {
+				replyLinks = append(replyLinks, [2]string{message.TS, message.ThreadTS})
+			}
 			if err = ctx.Err(); err != nil {
 				return err
 			}
@@ -215,6 +222,14 @@ func ImportSlackdump(
 			return nil
 		})
 		if err != nil && !errors.Is(err, errSlackdumpMessageLimitReached) {
+			return summary, err
+		}
+		for _, link := range replyLinks {
+			if err = scopedStore.SetReplyToContext(ctx, source.ID, sourceMessageID(conversation.ID, link[0]), sourceMessageID(conversation.ID, link[1])); err != nil {
+				return summary, err
+			}
+		}
+		if _, err = scopedStore.RefreshConversationPolicy(ctx, []int64{conversationID}, time.Now()); err != nil {
 			return summary, err
 		}
 		summary.ConversationsProcessed++

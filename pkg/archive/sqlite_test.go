@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/archive"
 )
@@ -194,4 +195,81 @@ func TestOpenSQLiteRequiresSetupForChatMembers(t *testing.T) {
 	_, err = runtime.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: chat,
 		SourceMessageID: "after", MessageType: "beeper"})
 	require.NoError(err)
+}
+
+// An archive upgraded from before room policy has chat rooms without policy
+// rows, which default search hides. Setup must give them their rows.
+func TestSetupSQLiteInitializesPolicyForUpgradedChatRooms(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	st, err := store.Open(path)
+	require.NoError(err)
+	source, err := st.GetOrCreateSource("slack", "T0SYNTHETIC")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "general", "General")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "chat-1", MessageType: "slack",
+		Subject: sql.NullString{String: "Observatory", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertFTS(id, "Observatory", "The telescope is ready.", "", "", ""))
+	// Simulate rows written before the conversation policy table existed.
+	_, err = st.DB().Exec(`DELETE FROM conversation_policy`)
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	runtime, err := archive.OpenSQLite(t.Context(), path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(runtime.Close()) })
+	searchIDs(t, runtime, "telescope", 1)
+}
+
+// Activity can age out of its window while nothing runs. Setup must expire
+// such a room, as CLI startup does, rather than keep it full.
+func TestSetupSQLiteExpiresActivityThatAgedOut(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	st, err := store.Open(path)
+	require.NoError(err)
+	source, err := st.GetOrCreateSource("slack", "T0SYNTHETIC")
+	require.NoError(err)
+	room, err := st.EnsureConversation(source.ID, "large", "Large room")
+	require.NoError(err)
+	require.NoError(st.SetConversationMemberCount(room, 25))
+	now := time.Now().UTC()
+	_, err = st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: room, SourceMessageID: "own", MessageType: "slack",
+		IsFromMe: true, SentAt: sql.NullTime{Time: now.Add(-36 * time.Hour), Valid: true},
+	})
+	require.NoError(err)
+	settings := conversationpolicy.RecommendedSettings()
+	settings.ActivityWindowDays = 1
+	// Classified two days ago, when the own message was recent.
+	_, err = st.ConfigureConversationPolicy(t.Context(), settings, now.Add(-30*time.Hour))
+	require.NoError(err)
+	require.Equal(conversationpolicy.Full, policyTier(t, st, room))
+	require.NoError(st.Close())
+
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	st, err = store.Open(path)
+	require.NoError(err)
+	defer func() { _ = st.Close() }()
+	require.Equal(conversationpolicy.Cold, policyTier(t, st, room), "the own message is now outside the activity window")
+}
+
+func policyTier(t *testing.T, st *store.Store, room int64) conversationpolicy.Tier {
+	t.Helper()
+	rows, err := st.ListConversationPolicies(t.Context())
+	require.NoError(t, err)
+	for _, row := range rows {
+		if row.ConversationID == room {
+			return row.EffectiveTier
+		}
+	}
+	require.FailNow(t, "missing policy row")
+	return ""
 }

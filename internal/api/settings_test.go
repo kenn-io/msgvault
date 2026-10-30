@@ -2189,3 +2189,25 @@ func TestSecretHint(t *testing.T) {
 		})
 	}
 }
+
+func TestSettingsPatchPreservesConversationPolicy(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	for _, body := range []string{"", "[beeper]\nmax_participants=0\n[slack]\nmax_participants=17\n[discord]\nmax_participants=25\n[teams]\nmax_participants=31\n[conversation_policy]\nactivity_window_days=13\n[[conversation_policy.overrides]]\nsource_type='slack'\nsource_identifier='T_EXAMPLE:U_EXAMPLE'\nconversation_id='room'\ntier='cold'\n"} {
+		srv, path := newSettingsTestServer(t, body)
+		before, err := config.Load(path, "")
+		requirements.NoError(err)
+		get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+		requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+		resp := patchSettings(t, srv, `{"updates":[{"key":"beeper.media_max_participants","value":{"integer":12}},{"key":"web.theme","value":{"string":"dark"}}]}`)
+		requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+		after, err := config.Load(path, "")
+		requirements.NoError(err)
+		assertions.Equal(before.ConversationPolicySettings(), after.ConversationPolicySettings())
+		if body == "" {
+			assertions.Zero(after.Beeper.MaxParticipants)
+			assertions.Equal(180, after.ConversationPolicy.ActivityWindowDays)
+		}
+	}
+}

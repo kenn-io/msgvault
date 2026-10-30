@@ -39,6 +39,37 @@ func TestMigrateFreshAndRepeated(t *testing.T) {
 	require.NoError(s.Close())
 }
 
+func TestMigrateInitializesConversationPolicyForExistingChatRooms(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	conf := lifecycleTestConfig(t.TempDir())
+	s, err := store.OpenForTest(conf.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	source, err := s.GetOrCreateSource("beeper", "policy-bootstrap@example.com")
+	require.NoError(err)
+	conversationID, err := s.EnsureConversation(source.ID, "room-policy-bootstrap", "Room")
+	require.NoError(err)
+	require.NoError(s.SetConversationMemberCount(conversationID, 2))
+	_, err = s.DB().Exec(s.Rebind(`DELETE FROM conversation_policy WHERE conversation_id=?`), conversationID)
+	require.NoError(err)
+	require.NoError(s.Close())
+
+	cmd := commandWithInvocation(t, newMigrateCommand(), conf, invocationOptions{})
+	cmd.SetOut(&bytes.Buffer{})
+	require.NoError(cmd.Execute())
+
+	s, err = store.OpenReadOnly(conf.DatabaseDSN())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(s.Close()) })
+	var tier string
+	require.NoError(s.DB().QueryRow(s.Rebind(`SELECT effective_tier FROM conversation_policy WHERE conversation_id=?`), conversationID).Scan(&tier))
+	assert.Equal("full", tier)
+	var visible bool
+	require.NoError(s.DB().QueryRow(s.Rebind(`SELECT EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND `+store.FullConversationWhere("c")+")"), conversationID).Scan(&visible))
+	assert.True(visible, "a small chat room is available to full-only read paths after migration")
+}
+
 func TestMigrateRefusesOwnersBeforeCreatingArchive(t *testing.T) {
 	for _, kind := range []string{"daemon", "writer"} {
 		t.Run(kind, func(t *testing.T) {

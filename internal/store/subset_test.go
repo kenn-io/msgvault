@@ -2347,7 +2347,8 @@ func TestCopySubsetPreservesIdentityMatchSourceSupport(t *testing.T) {
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
 	source, err := Open(srcDB)
 	require.NoError(err)
-	supportSource, err := source.GetOrCreateSource("beeper", "support-only")
+	// Independent contact support remains eligible without a copied chat room.
+	supportSource, err := source.GetOrCreateSource("carddav", "support-only")
 	require.NoError(err)
 	candidate, created, err := source.UpsertIdentityMatchCandidateContext(
 		ctx, IdentityMatchCandidateInput{
@@ -3967,10 +3968,7 @@ func TestCopySubset_CommonColumnWithQuoteIsEscapedAndCopied(t *testing.T) {
 	assert.Equal([]string{`"id"`, quoted}, cols,
 		"the embedded quote must be doubled, not dropped and not rejected")
 
-	// The rendered list is what the copy interpolates, so run the copy it feeds.
-	list := strings.Join(cols, ", ")
-	_, err = tx.Exec(fmt.Sprintf(
-		`INSERT INTO t (%s) SELECT %s FROM src.t`, list, list))
+	_, err = copyByName(tx, "t", "id = ?", 1)
 	require.NoError(err, "copy through the escaped column list")
 
 	var carried string

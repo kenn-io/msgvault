@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"go.kenn.io/msgvault/internal/query"
@@ -92,7 +93,30 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 		return err
 	}
 	defer func() { _ = st.Close() }()
-	return st.InitSchemaContext(ctx)
+	return initArchive(ctx, st)
+}
+
+// initArchive upgrades the schema and gives every existing room its policy
+// row. Chat rooms without one are hidden from default search, and an upgraded
+// archive has none until policy is configured.
+func initArchive(ctx context.Context, st *store.Store) error {
+	if err := st.InitSchemaContext(ctx); err != nil {
+		return err
+	}
+	settings, err := st.ConversationPolicySettingsContext(ctx)
+	if err != nil {
+		return fmt.Errorf("read conversation policy settings: %w", err)
+	}
+	now := time.Now()
+	if _, err := st.ConfigureConversationPolicy(ctx, settings, now); err != nil {
+		return fmt.Errorf("initialize conversation policy: %w", err)
+	}
+	// Activity can age out of its window while nothing runs. Configuration
+	// alone keeps such a room full, so expire it as CLI startup does.
+	if _, err := st.ExpireConversationPolicy(ctx, now); err != nil {
+		return fmt.Errorf("expire conversation policy: %w", err)
+	}
+	return nil
 }
 
 // Archive owns its connection pool.
@@ -161,7 +185,7 @@ func SetupSQLite(ctx context.Context, path string) error {
 		return err
 	}
 	defer func() { _ = st.Close() }()
-	return st.InitSchemaContext(ctx)
+	return initArchive(ctx, st)
 }
 
 // OpenSQLite opens a previously initialized SQLite archive without schema DDL.

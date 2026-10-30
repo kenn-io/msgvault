@@ -523,7 +523,7 @@ func (e *DuckDBEngine) listConversationMessages(
 		LEFT JOIN direct_sender ds ON ds.message_id = msg.id
 		LEFT JOIN conv c ON c.id = msg.conversation_id
 		ORDER BY msg.sent_at %s, msg.id %s
-	`, e.parquetCTEs(), where, direction, direction, direction, direction)
+	`, e.archivalParquetCTEs(), where, direction, direction, direction, direction)
 
 	args = append(args, limit, filter.Pagination.Offset)
 
