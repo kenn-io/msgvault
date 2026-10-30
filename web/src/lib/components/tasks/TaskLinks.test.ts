@@ -142,17 +142,18 @@ describe('TaskLinks', () => {
     expect(screen.queryByText('No linked tasks.')).toBeNull();
   });
 
-  it('loads last-good cached links even when integration status is unavailable', async () => {
+  it('loads last-good cached links even when the integration status request fails', async () => {
     render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       return request.url.endsWith('/integrations/tasks/status')
-        ? Response.json({ state: 'unavailable', project: 'project', message: 'Unavailable' })
+        ? Response.json({ message: 'Status temporarily unavailable' }, { status: 503 })
         : Response.json({ state: 'unavailable', complete: false, reason: 'daemon_unavailable', tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {
           archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
         } });
     })), messageId: 42, title: 'Synthetic' });
     expect(await screen.findByText('Cached task')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('unavailable');
+    expect(screen.getByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
   });
 
   it.each(['disabled', 'not_found', 'unreachable', 'incompatible', 'wrong_project'])(
