@@ -5,10 +5,12 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it('reloads persisted links after refresh', async () => {
+  it('reloads persisted email links and skips task lookup for non-email messages', async () => {
+    const requests: Request[] = [];
     let title = 'Review notes';
     const client = createAPIClient(async (input) => {
       const request = input as Request;
+      requests.push(request);
       return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title }] });
     });
     const view = render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
@@ -16,6 +18,8 @@ describe('Message task list', () => {
     title = 'Review revised notes';
     await view.rerender({ refresh: 1 });
     expect(await screen.findByText('Review revised notes')).toBeDefined();
+    await view.rerender({ email: false, messageId: 43 });
+    expect(requests.some(request => request.url.endsWith('/messages/43/tasks'))).toBe(false);
   });
 
   it('shows linked Kata issues and refreshes them after the task dialog closes', async () => {

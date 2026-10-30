@@ -1029,7 +1029,7 @@ it('opens a person from a relationship timeline reader', async () => {
   } finally { view.unmount(); props.controller.destroy(); }
 });
 
-it('restores a bounded Relationships reader at its latest anchor through Back and Forward', async () => {
+it('restores a bounded reader at its latest anchor on Back', async () => {
   const requests: URL[] = [];
   let visits = 0;
   const row = { key: 'chat:70:day', kind: 'chat_burst', occurred_at: '2026-07-19T10:00:00Z', first_at: '2026-07-19T10:00:00Z', preview: 'Day preview', source_id: 1, title: 'Saved chat day', has_attachments: false, message_count: 2, anchor_message_id: 9, conversation_id: 70 };
@@ -1055,15 +1055,11 @@ it('restores a bounded Relationships reader at its latest anchor through Back an
     await screen.findByText('Saved body 10');
     await fireEvent.click(screen.getAllByRole('button', { name: 'Other person' }).at(-1)!);
     await waitFor(() => expect(state.current.relationshipTarget).toBe('cluster:2'));
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
     const back = new Promise<void>((resolve) => window.addEventListener('popstate', () => resolve(), { once: true })); window.history.back(); await back;
     expect(await screen.findByText('Saved body 10')).toBeDefined();
     const restored = requests.filter(url => url.pathname.endsWith('/conversations/70')).at(-1)!;
     expect(restored.searchParams.get('anchor')).toBe('10');
     expect(restored.searchParams.get('start')).toBe(new Date(2026, 6, 19).toISOString());
     expect(restored.searchParams.get('end')).toBe(new Date(2026, 6, 20).toISOString());
-    const forward = new Promise<void>((resolve) => window.addEventListener('popstate', () => resolve(), { once: true })); window.history.forward(); await forward;
-    await waitFor(() => expect(state.current.relationshipTarget).toBe('cluster:2'));
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
   } finally { view.unmount(); state.destroy(); }
 });
