@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import XIcon from '@lucide/svelte/icons/x';
   import { Button, Chip, IconButton, SelectDropdown } from '@kenn-io/kit-ui';
 
@@ -27,6 +28,8 @@
   let {
     client,
     messages = false,
+    filterExtra = undefined,
+    extraControls = undefined,
     query,
     searchMode,
     filters,
@@ -45,6 +48,8 @@
   }: {
     client: APIClient;
     messages?: boolean;
+    filterExtra?: Snippet;
+    extraControls?: Snippet;
     query: string;
     searchMode: ExploreSearchMode;
     filters: ExploreFilter[];
@@ -96,7 +101,7 @@
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} onChange={onFiltersChange} onClear={onClearFilters} />
+      <FilterMenu {client} {filters} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
     {:else}
     <Button
       size="sm"
@@ -129,6 +134,7 @@
         />
       </div>
     {/if}
+    {@render extraControls?.()}
     <span class="context-count" aria-live="polite" data-mono>{countLabel}</span>
   </div>
 

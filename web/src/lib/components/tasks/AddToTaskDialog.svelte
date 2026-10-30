@@ -3,17 +3,17 @@
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
-  import { EVIDENCE_WINDOW } from '../../kata/evidence';
+  import { EVIDENCE_WINDOW, type EvidenceSelector } from '../../kata/evidence';
   import Dialog from '../common/Dialog.svelte';
   import KataEvidenceDialog from '../kata/KataEvidenceDialog.svelte';
   import TaskLinks from './TaskLinks.svelte';
 
-  let { client, messageId, title, email, onclose, onsettings, onchanged }: {
-    client: APIClient; messageId: number; title: string; email: boolean; onclose: () => void; onsettings?: () => void; onchanged?: () => void;
+  let { client, messageId, title, email, selector = undefined, onclose, onsettings, onchanged }: {
+    selector?: EvidenceSelector; client: APIClient; messageId: number; title: string; email: boolean; onclose: () => void; onsettings?: () => void; onchanged?: () => void;
   } = $props();
   const kata = kataReadiness();
   let provider = $state(untrack(() => email ? 'tasks' : 'kata'));
-  let quoteOpen = $state(false);
+  let quoteOpen = $state(untrack(() => Boolean(selector)));
   let busy = $state(false);
   let changed = false;
   onDestroy(() => { if (changed) onchanged?.(); });
@@ -24,7 +24,7 @@
 </script>
 
 {#if quoteOpen || (!email && kata?.ready)}
-  <KataEvidenceDialog {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} {onclose} oncreated={() => changed = true} />
+  <KataEvidenceDialog {client} selector={selector ?? { kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} {onclose} oncreated={() => changed = true} />
 {:else}
   <Dialog title="Add to task" onclose={() => { if (!busy) onclose(); }}>
     <div class="task-dialog">

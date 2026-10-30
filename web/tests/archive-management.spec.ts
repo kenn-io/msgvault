@@ -25,6 +25,8 @@ function syncRun(status: string, processed: number) {
 
 test('archive management workspaces preserve reviewed authority and daemon job boundaries', async ({ page }) => {
   const preflights: unknown[] = [];
+  const stages: unknown[] = [], cancellations: string[] = [];
+  let staged = false;
   const sourceRequests: Array<{ method: string; accept: string | null }> = [];
   let syncStarted = false;
 
@@ -43,7 +45,24 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
     rows: [row], total_count: 1, cache_revision: 'cache-management', search_provenance: {}
   } }));
-  await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [] } }));
+  const batch = { id: 'batch-1', status: 'pending', message_count: 1, created_at: '2026-07-19T10:00:00Z', created_by: 'api', description: 'Reviewed selection' };
+  await page.route('**/api/v1/deletions', route => {
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON();
+      stages.push(body);
+      if (body.dry_run) return route.fulfill({ json: { dry_run: true, message_count: 1 } });
+      staged = true;
+      return route.fulfill({ status: 201, json: { id: 'batch-1', message_count: 1 } });
+    }
+    return route.fulfill({ json: { manifests: staged ? [batch] : [] } });
+  });
+  await page.route('**/api/v1/deletions/batch-1', route => {
+    if (route.request().method() === 'DELETE') {
+      cancellations.push(route.request().url());
+      return route.fulfill({ json: { id: 'batch-1', status: 'cancelled' } });
+    }
+    return route.fulfill({ json: { ...batch, account: 'archive@example.com' } });
+  });
   await page.route('**/api/v1/sources/status', (route) => {
     sourceRequests.push({ method: route.request().method(), accept: route.request().headers().accept ?? null });
     const active = syncStarted ? syncRun('running', 5) : null;
@@ -85,24 +104,39 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   } });
 
   await page.keyboard.press('d');
-  await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Confirm selected deletion' })).toBeVisible();
-  await expect(page.getByText(/creates a staged manifest; it does not execute deletion/i)).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Delete from Gmail' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stage 1 message' })).toBeVisible();
+  await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'Messages' }).click();
   await page.getByRole('button', { name: 'Select all 1 matching items' }).click();
   await page.keyboard.press('Shift+d');
-  await expect(page.getByRole('dialog', { name: 'Confirm matching deletion' })).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('dialog', { name: 'Delete from Gmail' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Selection status' })).toHaveText('All 1 matching items selected');
+  await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'Messages' }).click();
-  await expect(page.getByRole('status', { name: 'Selection status' }))
-    .toHaveText('All 1 matching items selected');
-  await page.getByRole('button', { name: 'Review for deletion…' }).click();
-  await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Confirm matching deletion' })).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Delete from Gmail…' }).click();
+  await expect(page.getByRole('dialog', { name: 'Delete from Gmail' })).toBeVisible();
+  await page.getByRole('button', { name: 'Dry run', exact: true }).click();
+  await expect(page.getByText('Dry run: 1 message would be staged.')).toBeVisible();
+  await page.getByRole('button', { name: 'Stage 1 message', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Delete from Gmail' })).toHaveCount(0);
+  expect(stages).toEqual([
+    expect.objectContaining({ dry_run: true, operation_token: 'operation-1' }),
+    expect.objectContaining({ dry_run: false, operation_token: 'operation-1' }),
+  ]);
+  await page.getByRole('button', { name: 'Staged deletions', exact: true }).click();
+  await page.getByRole('button', { name: /^Open batch from/ }).click();
+  await page.getByRole('button', { name: 'Cancel batch', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: 'Cancel deletion batch?' });
+  await expect(confirmation).toBeVisible();
+  expect(cancellations).toEqual([]);
+  await confirmation.getByRole('button', { name: 'Cancel batch', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  expect(cancellations).toHaveLength(1);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Show cancelled (1)' }).check();
+  await expect(page.getByRole('table', { name: 'Staged deletions' }).getByText('Cancelled')).toBeVisible();
 
   await page.getByRole('button', { name: 'Sources' }).click();
   await page.getByRole('button', { name: 'Sync now Archive' }).click();

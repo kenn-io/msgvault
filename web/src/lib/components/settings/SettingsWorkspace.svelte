@@ -22,6 +22,7 @@
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import { runOperationAction } from '../../operations/actions';
   import type { OperationsController } from '../../operations/controller.svelte';
+  import { draftValue, editDraft, scalarUpdates } from '../../settings/draft.svelte';
   import { pendingSecret } from '../../settings/secrets';
   import type { SearchCoverageValue } from '../../search/modes';
   import {
@@ -277,17 +278,10 @@
     return settings.find((candidate) => candidate.key === key);
   }
   function currentValue(setting: SettingState): unknown {
-    return Object.hasOwn(drafts, setting.key) ? drafts[setting.key] : persistedValue(setting);
+    return draftValue(settings, drafts, setting.key);
   }
   function setDraft(key: string, value: unknown) {
-    const setting = find(key);
-    if (setting && !isChange(setting, value)) {
-      const next = { ...drafts };
-      delete next[key];
-      drafts = next;
-      return;
-    }
-    drafts = { ...drafts, [key]: value };
+    drafts = editDraft(settings, drafts, key, value);
   }
   // After a reload that keeps local edits, drop the ones the daemon already
   // holds: a draft equal to the new persisted value, or a clear for a secret
@@ -343,9 +337,7 @@
   async function saveSettings() {
     if (saving || inference.busy || dirtyCount === 0) return;
     const updates: SettingUpdate[] = [
-      ...Object.entries(drafts)
-        .filter(([key]) => !find(key)?.read_only)
-        .map(([key, value]) => ({ key, value: typedValue(find(key), value) })),
+      ...scalarUpdates(settings, drafts),
       ...Object.entries(secretUpdates).map(([key, secret]) => ({ key, secret })),
     ];
     saving = true;
