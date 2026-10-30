@@ -260,7 +260,7 @@
   );
 </script>
 
-{#if showSetup || integrationState !== 'disabled' || tasks.length > 0}
+{#if showSetup || integrationState === 'ready' || loading || tasks.length > 0 || error}
 <section class="task-links" aria-label="Linked tasks">
   {#if mode !== 'add' && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
