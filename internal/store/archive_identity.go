@@ -42,7 +42,7 @@ func (s *Store) ArchiveUIDContext(ctx context.Context) (string, error) {
 // external project revision so caches can compare all three values explicitly.
 func (s *Store) ArchiveRevision() (string, error) {
 	_, err := s.ArchiveUIDContext(context.Background())
-	return ArchiveRevisionV1, err
+	return map[bool]string{true: ArchiveRevisionV1}[err == nil], err
 }
 
 func (s *Store) ensureArchiveUID() error {

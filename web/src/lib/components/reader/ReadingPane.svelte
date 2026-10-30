@@ -112,9 +112,9 @@
     if (!selection) return '';
     if (selection.kind === 'archive') return `${entryKindPresentation('', selection.message.message_type).name} · ${formatDate(selection.message.sent_at)}`;
     if (selection.kind === 'entry') {
-      const row = selection.row;
-      const parts = [entryKindPresentation(row.kind, row.message_type).name, row.source_identifier, formatDate(row.occurred_at)];
+      const { row } = selection, parts = [entryKindPresentation(row.kind, row.message_type).name, row.source_identifier, formatDate(row.occurred_at)];
       if (row.message_count > 1) parts.push(`${row.message_count.toLocaleString()} items`);
+      if (row.attachment_count > 0) parts.push(`${row.attachment_count.toLocaleString()} ${row.attachment_count === 1 ? 'file' : 'files'}`);
       return parts.filter(Boolean).join(' · ');
     }
     const parts = [`Grouped by ${selection.dimension}`];

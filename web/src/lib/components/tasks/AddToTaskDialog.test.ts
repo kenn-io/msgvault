@@ -1,10 +1,23 @@
-import { taskCreationClient } from './fixtures.test-support';
+import { taskCreationClient, taskOutboundMetadata } from './fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import AddToTaskDialog from './AddToTaskDialog.svelte';
+
+function pendingCreate() {
+  let respond!: (response: Response) => void;
+  const response = new Promise<Response>(resolve => { respond = resolve; });
+  const onclose = vi.fn();
+  const client = createAPIClient(async (input) => {
+    const request = input as Request;
+    if (request.method === 'POST') return response;
+    return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+  });
+  render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
+  return { respond, onclose };
+}
 
 describe('Add to task', () => {
   it.each([false, true])('opens Kata evidence for email=%s when Kata is ready', async (email) => {
@@ -41,5 +54,32 @@ describe('Add to task', () => {
       view.unmount();
       expect(onchanged).toHaveBeenCalledTimes(mode === 'cancel' ? 0 : 1);
     } finally { view.unmount(); }
+  });
+
+  it('blocks Cancel, Escape, backdrop, and Close while creating a task', async () => {
+    const { respond, onclose } = pendingCreate();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
+    const close = screen.getByRole('button', { name: 'Close' });
+    close.focus();
+    await fireEvent.keyDown(close, { key: 'Escape' });
+    await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
+    await fireEvent.click(close);
+    expect(onclose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeDefined();
+    respond(Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 }));
+    await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+  });
+
+  it('keeps failed creation visible and re-enables dismissal', async () => {
+    const { respond, onclose } = pendingCreate();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
+    respond(Response.json({ message: 'Unavailable' }, { status: 503 }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Unavailable');
+    expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeDefined();
+    expect(onclose).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', false);
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onclose).toHaveBeenCalledOnce();
   });
 });
