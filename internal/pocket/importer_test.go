@@ -593,6 +593,14 @@ func TestPocketImportAfterSkipsListedRecordingsBeforeCutoff(t *testing.T) {
 		testRecording(t, `{"id":"old","recording_at":"2026-08-01T10:00:00Z","transcript":{"segments":[]}}`),
 		testRecording(t, `{"id":"new","recording_at":"2026-09-10T10:00:00Z","transcript":{"segments":[]}}`),
 	)
+	// Give the newer recording an earlier attempt so the old one sorts first.
+	first := archiveOptions()
+	first.Limit = 1
+	_, err := imp.Import(t.Context(), first)
+	requirements.NoError(err)
+	requirements.Equal([]string{"new"}, src.read)
+	src.read = nil
+
 	opts := archiveOptions()
 	opts.Full = true
 	opts.Limit = 1
@@ -602,7 +610,6 @@ func TestPocketImportAfterSkipsListedRecordingsBeforeCutoff(t *testing.T) {
 	// The out-of-window recording neither costs a detail fetch nor uses the limit.
 	assertions.Equal([]string{"new"}, src.read)
 	assertions.Equal(int64(1), sum.MeetingsProcessed)
-	assertions.Equal(int64(1), sum.MeetingsAdded)
 	existing, err := st.MessageExistsBatch(sum.SourceID, []string{"old", "new"})
 	requirements.NoError(err)
 	assertions.Zero(existing["old"])
