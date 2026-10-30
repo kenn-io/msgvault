@@ -1,12 +1,11 @@
 <script lang="ts">
   import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
-  import { Button, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   let {
     client,
-    embedded = false,
     pending = $bindable(false),
     messageId,
     project,
@@ -23,7 +22,6 @@
     onclose = () => undefined,
   }: {
     client: APIClient;
-    embedded?: boolean;
     pending?: boolean;
     messageId: number;
     project: string;
@@ -118,17 +116,12 @@
       ? value.message
       : 'Unable to create task.';
   }
-  /** Every dismissal path (Cancel, Escape, backdrop, the × button) funnels
-   * through here: while the create request is in flight the dialog must stay
-   * visible until the outcome is known — hiding it would let the task be
-   * created (or fail) invisibly. */
   function requestClose(): void {
     if (pending) return;
     onclose();
   }
 </script>
 
-{#snippet content()}
   <form
     aria-busy={pending}
     onsubmit={(event) => {
@@ -210,13 +203,6 @@
       <Button type="submit" tone="info" surface="solid" label="Create task" disabled={pending || !title.trim()} />
     </div>
   </form>
-{/snippet}
-
-{#if embedded}
-  {@render content()}
-{:else}
-  <Modal title="Create task" onclose={requestClose}>{@render content()}</Modal>
-{/if}
 
 <style>
   form {

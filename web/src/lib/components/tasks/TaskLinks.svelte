@@ -324,25 +324,26 @@
 </section>
 {/if}
 
-{#if mode === 'add' && action === 'create' && mutationReady && outboundMetadata}
-  <CreateTaskDialog
-    embedded
-    bind:pending={busy}
-    {client}
-    {messageId}
-    {project}
-    defaultTitle={title}
-    archiveUID={outboundMetadata.archive_uid}
-    conversationId={outboundMetadata.conversation_id}
-    sourceType={outboundMetadata.source_type}
-    sourceIdentifier={outboundMetadata.source_identifier}
-    sourceMessageId={outboundMetadata.source_message_id}
-    subject={outboundMetadata.subject}
-    from={outboundMetadata.from}
-    sentAt={outboundMetadata.sent_at}
-    onclose={oncancel}
-    oncreated={() => oncomplete?.()}
-  />
+{#if mode === 'add' && mutationReady && outboundMetadata}
+  <div hidden={action !== 'create'}>
+    <CreateTaskDialog
+      bind:pending={busy}
+      {client}
+      {messageId}
+      {project}
+      defaultTitle={title}
+      archiveUID={outboundMetadata.archive_uid}
+      conversationId={outboundMetadata.conversation_id}
+      sourceType={outboundMetadata.source_type}
+      sourceIdentifier={outboundMetadata.source_identifier}
+      sourceMessageId={outboundMetadata.source_message_id}
+      subject={outboundMetadata.subject}
+      from={outboundMetadata.from}
+      sentAt={outboundMetadata.sent_at}
+      onclose={oncancel}
+      oncreated={() => oncomplete?.()}
+    />
+  </div>
 {/if}
 
 <style>
