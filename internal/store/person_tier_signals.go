@@ -99,24 +99,29 @@ type tierSignalRow struct {
 	Inbound   bool
 	Meeting   bool
 	List      bool
+	Call      bool
 }
 
 // personTierRows reads up to personTierRowPage direct links in the long window,
 // in (person, date, message) order after the given row. The WHERE clause is the
 // counting rule: sent email and chat messages between the person and the owner,
-// not drafts, unsent texts, or call records, and meetings in either direction.
-// Unsent uses the projector's own predicate, so a sent copy that kept draft
-// evidence after dedup still counts.
+// not drafts or unsent texts; answered calls that stayed connected at least
+// MinCallSeconds, whoever dialed; and meetings in either direction. Unsent uses
+// the projector's own predicate, so a sent copy that kept draft evidence after
+// dedup still counts.
 func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
 	args := personMergeSnapshotIDArgs(personIDs)
 	args = append(args,
 		asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly),
 		asOf.Format(time.DateOnly),
-		after.PersonID, after.LocalDate, after.MessageID, personTierRowPage)
+		after.PersonID, after.LocalDate, after.MessageID,
+		cfg.MinCallSeconds, cfg.MinCallSeconds, personTierRowPage)
+	callTypes := `'` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `'`
 	rows, err := tx.QueryContext(ctx, `SELECT aep.person_id,aep.message_id,aep.local_date,ae.channel,
  CASE WHEN ae.direction='inbound' THEN 1 ELSE 0 END,
  CASE WHEN ae.ref_kind='meeting' THEN 1 ELSE 0 END,
- CASE WHEN m.list_id IS NULL THEN 0 ELSE 1 END
+ CASE WHEN m.list_id IS NULL THEN 0 ELSE 1 END,
+ CASE WHEN m.message_type IN (`+callTypes+`) THEN 1 ELSE 0 END
  FROM activity_event_persons aep
  JOIN activity_events ae ON ae.message_id=aep.message_id
  JOIN messages m ON m.id=ae.message_id
@@ -129,8 +134,9 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  (ae.ref_kind='meeting' AND aep.role IN ('attendee','organizer')) OR
  (ae.ref_kind='message' AND ((ae.direction='inbound' AND aep.role='sender') OR
  (ae.direction='outbound' AND aep.role IN ('addressed','member')))
- AND (COALESCE(m.message_type,'') IN ('','`+MessageTypeEmail+`') OR `+identityindex.IsChatSQL("m.message_type", "c.conversation_type")+`)
- AND NOT `+s.activityUnsentSQL()+`))
+ AND (((COALESCE(m.message_type,'') IN ('','`+MessageTypeEmail+`') OR `+identityindex.IsChatSQL("m.message_type", "c.conversation_type")+`)
+ AND NOT `+s.activityUnsentSQL()+`)
+ OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?))))
  ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier signals: %w", err)
@@ -139,11 +145,11 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
 	result := make([]tierSignalRow, 0, personTierRowPage)
 	for rows.Next() {
 		var r tierSignalRow
-		var inbound, meeting, list int
-		if err = rows.Scan(&r.PersonID, &r.MessageID, &r.LocalDate, &r.Channel, &inbound, &meeting, &list); err != nil {
+		var inbound, meeting, list, call int
+		if err = rows.Scan(&r.PersonID, &r.MessageID, &r.LocalDate, &r.Channel, &inbound, &meeting, &list, &call); err != nil {
 			return nil, fmt.Errorf("scan person tier signals: %w", err)
 		}
-		r.Inbound, r.Meeting, r.List = inbound != 0, meeting != 0, list != 0
+		r.Inbound, r.Meeting, r.List, r.Call = inbound != 0, meeting != 0, list != 0, call != 0
 		result = append(result, r)
 	}
 	if err = rows.Err(); err != nil {
@@ -182,12 +188,18 @@ func (s *Store) personTierBroadcast(ctx context.Context, tx *loggedTx, rows []ti
 // from a mailing list (when excluded) or is an inbound message to more people
 // than the direct limit; an excluded row takes the first reason that applies.
 // A meeting adds to the active and meeting days but is not a message channel.
+// A call is its own channel, even though calls share the chat channel in the
+// projection, so calls plus texts reach the breadth rule.
 type tierTally struct {
 	cfg    persontiers.Config
 	short  string
 	result map[int64]persontiers.Signals
 	seen   map[int64]*tierDays
 }
+
+// tierCallChannel names calls as a channel. It cannot collide with a
+// projection channel.
+const tierCallChannel = "call"
 
 type tierDays struct{ short, long, meeting, channel map[string]struct{} }
 
@@ -220,7 +232,10 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 		}
 		inShort := r.LocalDate >= t.short
 		d.long[r.LocalDate] = struct{}{}
-		if !r.Meeting {
+		switch {
+		case r.Call:
+			d.channel[tierCallChannel] = struct{}{}
+		case !r.Meeting:
 			d.channel[r.Channel] = struct{}{}
 		}
 		s.LastDate = max(s.LastDate, r.LocalDate)
@@ -230,6 +245,11 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 		switch {
 		case r.Meeting:
 			d.meeting[r.LocalDate] = struct{}{}
+		case r.Call:
+			s.CallsLong++
+			if inShort {
+				s.CallsShort++
+			}
 		case r.Inbound:
 			s.InboundLong++
 			if inShort {
