@@ -340,7 +340,7 @@ describe('AppShell', () => {
 
   it.each([
     ['everything', 'Messages'],
-    ['directory', 'Directory'], ['deletions', 'Deletions'], ['settings', 'Settings']
+    ['directory', 'Directory'], ['deletions', 'Staged deletions'], ['settings', 'Settings']
   ])('reaches %s through the command palette', async (workspace, label) => {
     window.history.replaceState(null, '', `/?workspace=${workspace === 'everything' ? 'sources' : 'everything'}`);
     const state = new ExploreState(window);
@@ -443,7 +443,10 @@ describe('AppShell', () => {
     });
     const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
     try {
-      if (workspace === 'files') expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
+      if (workspace === 'files') {
+        await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+        expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
+      }
       await openDemoView();
       const grid = await screen.findByRole('grid', { name: 'Files results' });
       if (workspace === 'everything') await waitFor(() => expect(document.activeElement).toBe(grid));
@@ -531,7 +534,7 @@ describe('AppShell', () => {
     it.each([
       ['relationships', 'Relationships'], ['directory', 'Directory'], ['directory_review', 'Reviews'],
       ['everything', 'Messages'], ['files', 'Files'],
-      ['sources', 'Sources'], ['deletions', 'Deletions']
+      ['sources', 'Sources'], ['deletions', 'Staged deletions']
     ])('shows one visible page title in %s', async (workspace, title) => {
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -2187,7 +2190,7 @@ describe('AppShell', () => {
 
     const row = (await screen.findByText('report.pdf')).closest('[role="row"]')!;
     await fireEvent.click(row);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open containing item' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open message' }));
 
     await waitFor(() => expect(state.current.workspace).toBe('everything'));
     expect(state.current.selectedRow).toBe('message:42');
@@ -2242,6 +2245,7 @@ describe('AppShell', () => {
     state.replaceTransient({ workspace: 'files' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
       const input = await screen.findByLabelText('Filter filename');
       await screen.findByRole('grid', { name: 'Files results' });
       const initialRequestCount = searchRequests.length;
@@ -2277,10 +2281,10 @@ describe('AppShell', () => {
     state.replaceTransient({ workspace: 'files' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
       const input = await screen.findByLabelText('Filter filename');
       await screen.findByRole('grid', { name: 'Files results' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Type' }));
-      const pdfs = await screen.findByRole('button', { name: 'PDFs' });
+      const pdfs = await screen.findByRole('checkbox', { name: 'PDFs' });
       const initialRequestCount = searchRequests.length;
       // Start a debounced filename-search patch (queued for 250ms) and then,
       // still inside that window, commit a navigation.
@@ -2323,6 +2327,7 @@ describe('AppShell', () => {
     state.commitNavigation({ workspace: 'files' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
       const input = await screen.findByLabelText('Filter filename');
       await screen.findByRole('grid', { name: 'Files results' });
       const initialRequestCount = searchRequests.length;
@@ -2425,7 +2430,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('shows no file filter chips beside the ungrouped Files controls', async () => {
+  it('shows removable file filter chips above ungrouped Files', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2439,9 +2444,10 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     await screen.findByRole('grid', { name: 'Files results' });
-    expect((screen.getByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).value).toBe('invoice');
-    expect(screen.queryByRole('button', { name: 'Remove filename filter' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Remove type filter' })).toBeNull();
+    expect(screen.getByText('Filename: “invoice”')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Remove filename filter' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove type filter' }));
+    expect(state.current.fileMIMEFamilies).toEqual([]);
     rendered.unmount();
     state.destroy();
   });
@@ -2501,7 +2507,7 @@ describe('AppShell', () => {
     await screen.findByText('Synthetic subject 1');
 
     const main = screen.getByRole('main', { name: 'Messages' });
-    expect(within(main).getAllByText('2 items')).toHaveLength(1);
+    await waitFor(() => expect(within(main).getAllByText('2 items')).toHaveLength(1));
     await fireEvent.keyDown(document.body, { key: 's' });
     const sort = screen.getByRole('combobox', { name: 'Sort: Newest first' });
     expect(document.activeElement).toBe(sort);
@@ -2706,14 +2712,15 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
-    expect(screen.queryByRole('button', { name: 'Review for deletion…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete from Gmail…' })).toBeNull();
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
     await waitFor(() => expect(preflights).toBe(1));
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Review for deletion…' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete from Gmail…' }));
 
-    await waitFor(() => expect(state.current.workspace).toBe('deletions'));
+    expect(await screen.findByRole('dialog', { name: 'Delete from Gmail' })).toBeDefined();
+    expect(state.current.workspace).toBe('everything');
     await waitFor(() => expect(preflights).toBe(2));
     rendered.unmount();
     state.destroy();
@@ -3061,8 +3068,8 @@ it('reloads a failed source job when Sources is already open', async () => {
     const readsBeforeOpen = statusReads;
     await fireEvent.click(job);
     await waitFor(() => expect(statusReads).toBeGreaterThan(readsBeforeOpen));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Show details for Example archive' }));
-    await screen.findByText('Scheduler: Scheduled sync failed');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Example archive' }));
+    await screen.findByText('Scheduled sync failed');
     expect(state.current.workspace).toBe('sources');
   } finally {
     rendered.unmount(); state.destroy();

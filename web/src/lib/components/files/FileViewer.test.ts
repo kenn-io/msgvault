@@ -136,16 +136,16 @@ describe('FileViewer', () => {
     render(FileViewer, { props: { client, file: file(), onClose }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
     const escape = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Create Kata issue from file' }));
-    expect(screen.getByRole('dialog', { name: 'Choose a passage' })).toBeTruthy();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add to task…' }));
+    expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
     escape();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Choose a passage' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add to task' })).toBeNull());
     expect(onClose).not.toHaveBeenCalled();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Create Kata issue from file' }));
-    await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'budget' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Use passage 1' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add to task…' }));
+    await fireEvent.input(screen.getByLabelText('Search this file'), { target: { value: 'budget' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use quote 1' }));
     expect(await screen.findByRole('dialog', { name: 'Kata issue' })).toBeTruthy();
     escape();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Kata issue' })).toBeNull());
@@ -258,10 +258,10 @@ describe('FileViewer', () => {
     render(FileViewer, { client: createAPIClient(fetchFn), file: { id: 7 }, onOpenItem, onOpenConversation });
     await screen.findByText('This attachment has metadata only.');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Open containing item' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Open containing conversation' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
     expect(onOpenConversation).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11', 11, 21);
     expect(fetchFn).toHaveBeenCalledOnce();
   });
@@ -280,7 +280,7 @@ describe('FileViewer', () => {
     });
     await screen.findByText('This attachment has metadata only.');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Open containing item' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:conversation:21');
   });
 

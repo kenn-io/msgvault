@@ -215,3 +215,24 @@ it('restores the visible view and reports a failed delete', async () => {
   expect(await deleting).toBe("Couldn't delete Équipe.");
   expect(data.views).toContainEqual(saved);
 });
+
+
+it.each([
+  ['pending', '2020-01-01T00:00:00Z', true],
+  ['in_progress', '2020-01-01T00:00:00Z', true],
+  ['completed', '2026-10-22T12:00:00Z', true],
+  ['failed', '2026-10-22T11:59:59Z', false],
+  ['cancelled', '2026-10-28T12:00:00Z', true],
+  ['cancelled', '2026-10-01T12:00:00Z', false],
+])('shows the deletion sidebar entry for %s created at %s: %s', async (status, created_at, visible) => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-29T12:00:00Z'));
+  const data = new ShellData(createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/deletions')) return Response.json({ manifests: [{ id: 'batch-1', status, created_at }] });
+    return Response.json({ saved_views: [] });
+  }));
+  try {
+    await data.refresh();
+    expect(data.deletionsStaged).toBe(visible);
+  } finally { data.stop(); vi.restoreAllMocks(); }
+});
