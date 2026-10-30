@@ -84,7 +84,7 @@ test('one registry drives selection, searchable help, palette, and editable susp
   await expect(renderedRow).toHaveAttribute('aria-selected', 'false');
   await expect(grid).toBeFocused();
 
-  const search = page.getByRole('searchbox', { name: 'Search everything' });
+  const search = page.getByRole('searchbox', { name: 'Search messages' });
   await search.focus();
   await page.keyboard.press('Shift+A');
   await expect(renderedRow).toHaveAttribute('aria-selected', 'false');
@@ -246,7 +246,7 @@ test('Staged deletions keeps the global search shortcut available', async ({ pag
   await selectWorkspace(page, 'Staged deletions');
   await expect(page.getByRole('heading', { name: 'Staged deletions', exact: true })).toBeVisible();
   await page.keyboard.press('/');
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toBeFocused();
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toBeFocused();
 });
 
 test('truncated people and filenames disclose full labels on hover', async ({ page }) => {
