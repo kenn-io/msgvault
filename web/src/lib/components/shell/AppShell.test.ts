@@ -13,6 +13,7 @@ import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry
 import AppShell from './AppShell.svelte';
 import { ShellData } from './shell-data.svelte';
 import SettingsWorkspace from '../settings/SettingsWorkspace.svelte';
+import type { CardDAVSettingsRequest } from '../../carddav/navigation';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
@@ -3071,10 +3072,18 @@ it.each(['sources', 'carddav', 'search'])('opens %s settings from its workspace 
     if (path.endsWith('/settings')) return Response.json({ settings: [], groups: [], pending_restart: false });
     return Response.json({});
   });
-  const view = render(AppShell, { client, state });
+  const settings = createRawSnippet<[CardDAVSettingsRequest | undefined, (key: number) => void]>((getRequest, getConsumed) => ({
+    render: () => '<div></div>',
+    setup: element => {
+      const component = mount(SettingsWorkspace, { target: element, props: { client, category: 'carddav', cardDAVRequest: getRequest(), onCardDAVRequestConsumed: getConsumed() } });
+      return () => { void unmount(component); };
+    }
+  }));
+  const view = render(AppShell, { client, state, ...(category === 'carddav' ? { settings: settings as never } : {}) });
   if (category !== 'search') await fireEvent.click(await screen.findByRole('button', { name: category === 'sources' ? 'Details for Example Slack' : 'Details for contacts@example.com' }));
   await fireEvent.click(await screen.findByRole('button', { name: category === 'search' ? 'Set up' : category === 'sources' ? 'Edit in Settings › Sources' : 'Open Settings › Contacts' }));
   await waitFor(() => expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: category, settingsAuthority: category === 'search' ? 'visual_attachments' : '' }));
+  if (category === 'carddav') await waitFor(() => expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('contacts@example.com'));
   view.unmount(); state.destroy();
 });
 

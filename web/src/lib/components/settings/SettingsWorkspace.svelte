@@ -248,7 +248,7 @@
     const request = cardDAVRequest;
     if (!request || request.key === consumedCategoryRequestKey) return;
     activeCategory = 'carddav';
-    if (request.conflictID === undefined) {
+    if (request.conflictID === undefined && request.connection === undefined) {
       consumedCategoryRequestKey = request.key;
       onCardDAVRequestConsumed(request.key);
     }
