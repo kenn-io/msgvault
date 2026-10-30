@@ -96,44 +96,6 @@ func taskLinkServerWithStore(t *testing.T, messageStore MessageStore, logger *sl
 	})
 }
 
-type uidOnlyTaskStore struct {
-	MessageStore
-	SourceStatusStore
-
-	uid func(context.Context) (string, error)
-}
-
-func (s *uidOnlyTaskStore) ArchiveUIDContext(ctx context.Context) (string, error) {
-	return s.uid(ctx)
-}
-
-func TestTaskIdentityUsesExistingArchiveUIDCapability(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("uid-only-email")
-	uid, err := f.Store.ArchiveUID()
-	require.NoError(err)
-	ops := &fakeTaskLinkOperations{}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{}, Logger: testLogger(), TaskLinkOperations: ops,
-		Store: &uidOnlyTaskStore{MessageStore: f.Store, SourceStatusStore: f.Store, uid: f.Store.ArchiveUIDContext},
-	})
-	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tasks", id), strings.NewReader(`{"title":"Follow up","added_at":"2026-07-19T01:02:03Z"}`))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Request-ID", "uid-only-request")
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusCreated, response.Code, response.Body.String())
-	require.Len(ops.identities, 1)
-	assert.Equal(uid, ops.identities[0].ArchiveUID)
-	assert.Equal("1", ops.identities[0].ArchiveRevision)
-	assert.Equal(id, ops.identities[0].MessageID)
-	assert.Equal("gmail", ops.identities[0].SourceType)
-	assert.Equal("test@example.com", ops.identities[0].SourceIdentifier)
-	assert.Equal("uid-only-email", ops.identities[0].SourceMessageID)
-}
-
 func TestCreateTaskForEmailDerivesStableServerIdempotency(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

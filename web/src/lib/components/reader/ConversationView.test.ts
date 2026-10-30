@@ -204,6 +204,33 @@ describe('ConversationView', () => {
     }
   });
 
+  it.each(['HTTP 500', 'rejected fetch'])('disables every card and keeps cached links after a failed latest status probe: %s', async (failure) => {
+    let statusCalls = 0;
+    const client = createCaptureClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) {
+        if (++statusCalls === 1) return Response.json({ state: 'ready', project: 'example' });
+        if (failure === 'rejected fetch') throw new Error('Tasks status could not be read.');
+        return Response.json({ message: 'Tasks status could not be read.' }, { status: 500 });
+      }
+      const lookup = /messages\/(\d+)\/tasks$/.exec(path);
+      if (lookup) return Response.json({ state: 'ready', complete: true, tasks: [{ id: `task-${lookup[1]}`, title: `Cached task ${lookup[1]}` }], outbound_metadata: {} });
+      return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    }, telemetryEvents, telemetryRequests);
+    render(ConversationView, { client, conversationId: 7, anchorId: 1 });
+    await screen.findByText('Cached task 1');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+    expect(await screen.findByText('Cached task 2')).toBeDefined();
+    expect(screen.getByText('Cached task 1')).toBeDefined();
+    expect(statusCalls).toBe(2);
+    const owner = within(screen.getByRole('article', { name: 'Message 1' }));
+    expect(owner.getByRole('alert').textContent).toContain('Tasks status could not be read.');
+    expect(screen.getAllByRole('button', { name: 'Open Settings' })).toHaveLength(1);
+    expect(owner.getByRole('button', { name: 'Open Settings' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink Cached task 1' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Unlink Cached task 2' })).toHaveProperty('disabled', true);
+  });
+
   it('shows a non-owner message index warning while Tasks is ready', async () => {
     const client = createCaptureClient(async (input) => {
       const path = new URL((input as Request).url).pathname;
@@ -227,11 +254,12 @@ describe('ConversationView', () => {
         if (++statusCalls === 1) throw new Error('Synthetic connection failed');
         return Response.json({ state: statusCalls === 2 ? 'unreachable' : 'ready' });
       }
+      if (path.endsWith('/messages/2/tasks')) return Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} });
       if (path.endsWith('/messages/1/tasks')) return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Recovered linked task' }], outbound_metadata: {} });
       return Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
     }, telemetryEvents, telemetryRequests);
     render(ConversationView, { client: recoveryClient, conversationId: 7, anchorId: 2 });
-    await screen.findByText('Synthetic connection failed');
+    await screen.findByText('Task integration unreachable: Synthetic connection failed');
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
     await waitFor(() => expect(statusCalls).toBe(2));
     await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 1' }));
