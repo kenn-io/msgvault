@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { installOperations } from './fixtures/operations';
+import { readFileSync } from 'node:fs';
+import type { OperationRunsResponse, OperationRunSummary } from '../../src/lib/api/generated/models';
 
 const historyURL = (state: Record<string, unknown> = {}) => `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true, ...state }))}`;
 
@@ -9,6 +11,19 @@ async function openHistory(page: Page, path = '/') {
   await page.getByRole('menuitem', { name: 'Past runs' }).click();
   await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
 }
+
+test('Past runs describes the time and outcome of repeated job kinds', async ({ page }) => {
+  await installOperations(page);
+  const publicOperations = JSON.parse(readFileSync(new URL('./fixtures/operations-public.json', import.meta.url), 'utf8')) as OperationRunsResponse & { job_runs: OperationRunSummary[] };
+  await page.route(url => url.pathname === '/api/v1/operations/runs', route => route.fulfill({ json: {
+    runs: [publicOperations.runs.find(run => run.kind === 'source_sync')!, publicOperations.job_runs.find(run => run.kind === 'source_sync')!],
+    membership_revision: 1, unavailable_kinds: [],
+  } }));
+  await openHistory(page);
+  const runs = page.getByRole('button', { name: 'Open Source sync run', exact: true });
+  await expect(runs.nth(0)).toHaveAccessibleDescription(/Aug 30, 2026, 12:00 PM.*Succeeded/);
+  await expect(runs.nth(1)).toHaveAccessibleDescription(/Aug 30, 2026, 11:00 AM.*Failed/);
+});
 
 test('operations invokes only advertised CardDAV and visual actions and surfaces conflicts', async ({ page }) => {
   const fixture = await installOperations(page);
