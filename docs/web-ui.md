@@ -230,10 +230,10 @@ conversation.
 Files uses the same toolbar as Messages, with **Show as** set to Files. Choose Table
 or Timeline there to return to Messages. **Sort** offers Newest first, Oldest
 first, Filename A–Z, Filename Z–A, Largest first, and Smallest first. The
-Filename field and the **Type** menu (Images, PDFs, Audio, Video, Text,
-Documents, Archives, Other) narrow the table. Grouping replaces the table with
-groups and hides Sort, Filename, Type, and Visual search; active Filename and
-Type filters stay visible as chips.
+**Filter** menu includes Filename and Type (Images, PDFs, Audio, Video, Text,
+Documents, Archives, Other). Grouping replaces the table with groups and hides
+Sort and Visual search; Filename and Type remain editable in Filter, and active
+filters stay visible as chips.
 **Save view…** saves the search, filters, and grouping, but not the Filename
 filter, Type filter, or file sort.
 
