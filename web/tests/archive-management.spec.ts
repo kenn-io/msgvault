@@ -2,6 +2,7 @@ import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/settings', route => route.fulfill({ json: { settings: [], pending_restart: false } }));
   await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
   await stubOperationStatus(page);
 });
@@ -105,22 +106,24 @@ test('archive management workspaces preserve reviewed authority and daemon job b
 
   await page.keyboard.press('d');
   await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Delete from Gmail' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Review deletion' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stage 1 message' })).toBeVisible();
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'Select all 1 matching items' }).click();
   await page.keyboard.press('Shift+d');
-  await expect(page.getByRole('dialog', { name: 'Delete from Gmail' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Review deletion' })).toBeVisible();
   await expect(page.getByRole('status', { name: 'Selection status' })).toHaveText('All 1 matching items selected');
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'Delete from Gmail…' }).click();
-  await expect(page.getByRole('dialog', { name: 'Delete from Gmail' })).toBeVisible();
+  await page.getByRole('button', { name: 'Review deletion…' }).click();
+  await expect(page.getByRole('dialog', { name: 'Review deletion' })).toBeVisible();
   await page.getByRole('button', { name: 'Dry run', exact: true }).click();
-  await expect(page.getByText('Dry run: 1 message would be staged.')).toBeVisible();
+  await expect(page.getByText('Dry run: Matched: 1 · Staged: 1 · Skipped: 0')).toBeVisible();
   await page.getByRole('button', { name: 'Stage 1 message', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Delete from Gmail' })).toHaveCount(0);
+  await expect(page.getByText('Batch ID:')).toBeVisible();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Review deletion' })).toHaveCount(0);
   expect(stages).toEqual([
     expect.objectContaining({ dry_run: true, operation_token: 'operation-1' }),
     expect.objectContaining({ dry_run: false, operation_token: 'operation-1' }),
@@ -148,4 +151,41 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('invoice');
   await expect(page.getByRole('grid', { name: 'Messages results' })).toBeFocused();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
+});
+
+test('dirty source settings hold navigation and contact-only runs finish', async ({ page }) => {
+  let contactsReads = 0;
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback' } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} } }));
+  await page.route('**/api/v1/deletions', route => route.fulfill({ json: { manifests: [] } }));
+  await page.route('**/api/v1/settings', route => route.fulfill({ json: { pending_restart: false, settings: [
+    { key: 'beeper.schedule', kind: 'string', value: { string: '0 3 * * *' }, group: 'sources', label: 'Schedule', validation: { format: 'cron' } }
+  ] } }));
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [{
+    id: 1, source_type: 'beeper', identifier: 'beeper', display_name: 'Example chats', can_sync: true, latest_sync: null, last_successful_sync: null
+  }] } }));
+  await page.route('**/api/v1/carddav/connections', route => route.fulfill({ json: { connections: [{ connection: 'default', status: {
+    configured: true, available: true, credential_configured: true, account: { username: 'contacts@example.com' },
+    active: ++contactsReads === 1 ? { state: 'running' } : null, latest: { state: 'succeeded', started_at: '2026-10-29T10:00:00Z' }
+  } }] } }));
+  await page.goto('/?workspace=everything');
+  await page.getByRole('button', { name: 'Sources', exact: true }).click();
+  await expect(page.getByText('Succeeded', { exact: true })).toBeVisible();
+  expect(contactsReads).toBeGreaterThanOrEqual(2);
+  await page.getByRole('button', { name: 'Details for Example chats' }).click();
+  await page.getByRole('combobox', { name: 'Presets: Every day at 03:00' }).click();
+  await page.getByRole('option', { name: 'Every hour', exact: true }).click();
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
+  const discard = page.getByRole('dialog', { name: 'Discard changes?' });
+  await expect(discard).toBeVisible();
+
+  await discard.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(page.getByRole('combobox', { name: 'Presets: Every hour' })).toBeVisible();
+  await page.goBack();
+  await expect(discard).toBeVisible();
+  await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
+  await page.goForward();
+  await page.getByRole('button', { name: 'Details for Example chats' }).click();
+  await expect(page.getByRole('combobox', { name: 'Presets: Every day at 03:00' })).toBeVisible();
 });

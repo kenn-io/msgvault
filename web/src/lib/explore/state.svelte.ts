@@ -674,7 +674,7 @@ export class ExploreState {
       return;
     }
     const commit = () => this.commitPopped(next, nextIndex);
-    if (this.current.workspace === 'settings' && next.workspace !== 'settings' && this.holdPop(nextIndex - this.historyIndex, commit)) return;
+    if (['settings', 'sources'].includes(this.current.workspace) && next.workspace !== this.current.workspace && this.holdPop(nextIndex - this.historyIndex, commit)) return;
     commit();
   };
 
@@ -957,7 +957,7 @@ export class ExploreState {
   ): void {
     this.pendingHeldLeaveRestore?.();
     this.cancelHeldLeave?.();
-    if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
+    if (['settings', 'sources'].includes(this.current.workspace) && patch.workspace !== undefined && patch.workspace !== this.current.workspace &&
       this.holdLeave?.(() => this.navigate(patch, mode))) return this.clearHeldOperationHistory(patch);
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
