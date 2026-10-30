@@ -131,19 +131,21 @@ describe('ConversationView', () => {
 
   it('expands additional messages inline without refetching and reports the anchor change', async () => {
     const lookedUp: number[] = [];
+    let configured = false;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/tasks/status')) return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
+      if (path.endsWith('/tasks/status')) return Response.json({ state: configured ? 'ready' : 'disabled', message: 'Task integration is disabled.' });
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
-      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: 'disabled', complete: false, tasks: [] }); }
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: configured ? 'ready' : 'disabled', complete: configured, tasks: configured ? [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] : [] }); }
       return Response.json({
         id: 7, anchor_id: 2, messages: [message(1), message(2)],
         has_before: false, has_after: false, total: 2
       });
     });
     const onAnchorChange = vi.fn();
-    render(ConversationView, {
-      props: { client: createCaptureClient(fetchFn, telemetryEvents, telemetryRequests), conversationId: 7, anchorId: 2, onAnchorChange }
+    const client = createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
+    const view = render(ConversationView, {
+      props: { client, conversationId: 7, anchorId: 2, onAnchorChange }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -157,8 +159,15 @@ describe('ConversationView', () => {
     await waitFor(() => expect(lookedUp.sort()).toEqual([1, 2]));
     await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
+    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
+    view.unmount();
+    configured = true;
+    render(ConversationView, { client, conversationId: 7, anchorId: 2 });
+    expect(await screen.findByText('Linked task 2')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Set up' })).toBeNull();
+    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(2);
   });
 
   it('collapses an expanded message back to its one-line card', async () => {
