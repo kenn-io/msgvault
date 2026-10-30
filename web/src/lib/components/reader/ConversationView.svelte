@@ -46,9 +46,10 @@
   const apiClient = untrack(() => client);
   const taskStatusController = new AbortController();
   let taskStatus: ReturnType<TaskStatusLoader> | undefined;
-  setContext<TaskStatusLoader>(conversationTaskStatusKey, () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).finally(() => {
-    taskStatus = undefined;
-  }));
+  setContext<TaskStatusLoader>(conversationTaskStatusKey, () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).then(
+    result => { if (!result.data || result.data.state === 'unreachable') taskStatus = undefined; return result; },
+    cause => { taskStatus = undefined; throw cause; },
+  ));
   onDestroy(() => taskStatusController.abort());
   let scroller = $state<HTMLElement>();
   let messages = $state<APIMessageDetail[]>([]);
