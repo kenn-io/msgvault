@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Every fixture is reachable: active days never exceed the messages and
+// meeting days that could produce them, and channels count message channels.
 func TestEvaluateThresholds(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -16,15 +18,15 @@ func TestEvaluateThresholds(t *testing.T) {
 		wantTier  int
 		wantRule  string
 	}{
-		{"outbound short", Signals{InboundShort: 2, InboundLong: 2, ActiveDaysShort: 6, ActiveDaysLong: 6}, func(s *Signals, n int) { s.OutboundShort, s.OutboundLong = n, n }, 2, 1, ""},
-		{"inbound short", Signals{OutboundShort: 2, OutboundLong: 2, ActiveDaysShort: 6, ActiveDaysLong: 6}, func(s *Signals, n int) { s.InboundShort, s.InboundLong = n, n }, 2, 1, ""},
-		{"intensity days", Signals{OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2}, func(s *Signals, n int) { s.ActiveDaysShort, s.ActiveDaysLong = n, n }, 6, 1, ""},
+		{"outbound short", Signals{InboundShort: 6, InboundLong: 6, ActiveDaysShort: 6, ActiveDaysLong: 6}, func(s *Signals, n int) { s.OutboundShort, s.OutboundLong = n, n }, 2, 1, ""},
+		{"inbound short", Signals{OutboundShort: 6, OutboundLong: 6, ActiveDaysShort: 6, ActiveDaysLong: 6}, func(s *Signals, n int) { s.InboundShort, s.InboundLong = n, n }, 2, 1, ""},
+		{"intensity days", Signals{OutboundShort: 4, OutboundLong: 4, InboundShort: 4, InboundLong: 4}, func(s *Signals, n int) { s.ActiveDaysShort, s.ActiveDaysLong = n, n }, 6, 1, ""},
 		{"breadth days", Signals{OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2, ChannelsLong: 2}, func(s *Signals, n int) { s.ActiveDaysShort, s.ActiveDaysLong = n, n }, 3, 1, ""},
 		{"breadth channels", Signals{OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2, ActiveDaysShort: 3, ActiveDaysLong: 3}, func(s *Signals, n int) { s.ChannelsLong = n }, 2, 1, ""},
 		{"breadth meeting days", Signals{OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2, ActiveDaysShort: 3, ActiveDaysLong: 3}, func(s *Signals, n int) { s.MeetingDaysLong = n }, 2, 1, "tier1_breadth"},
-		{"outbound long", Signals{InboundLong: 1, ActiveDaysLong: 3}, func(s *Signals, n int) { s.OutboundLong = n }, 1, 2, ""},
-		{"inbound long", Signals{OutboundLong: 1, ActiveDaysLong: 3}, func(s *Signals, n int) { s.InboundLong = n }, 1, 2, ""},
-		{"long days", Signals{OutboundLong: 1, InboundLong: 1}, func(s *Signals, n int) { s.ActiveDaysLong = n }, 3, 2, ""},
+		{"outbound long", Signals{InboundLong: 3, ActiveDaysLong: 3}, func(s *Signals, n int) { s.OutboundLong = n }, 1, 2, ""},
+		{"inbound long", Signals{OutboundLong: 3, ActiveDaysLong: 3}, func(s *Signals, n int) { s.InboundLong = n }, 1, 2, ""},
+		{"long days", Signals{OutboundLong: 2, InboundLong: 2}, func(s *Signals, n int) { s.ActiveDaysLong = n }, 3, 2, ""},
 		{"meeting days", Signals{}, func(s *Signals, n int) { s.MeetingDaysLong, s.ActiveDaysLong = n, n }, 2, 2, "tier2_meetings"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,7 +93,7 @@ func TestDisabledAlternatives(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 	breadth := Evaluate(Signals{
 		OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2,
-		ActiveDaysShort: 3, ActiveDaysLong: 100, MeetingDaysLong: 100, ChannelsLong: 4,
+		ActiveDaysShort: 3, ActiveDaysLong: 100, MeetingDaysLong: 100, ChannelsLong: 2,
 	}, cfg)
 	assert.Equal(t, "tier2_two_way", breadth.Rule, "channels and meeting days no longer make tier 1")
 	meetings := Evaluate(Signals{ActiveDaysLong: 100, MeetingDaysLong: 100}, cfg)
@@ -100,7 +102,7 @@ func TestDisabledAlternatives(t *testing.T) {
 
 func TestEvaluateReportsEveryThresholdCheck(t *testing.T) {
 	assert := assert.New(t)
-	d := Evaluate(Signals{OutboundShort: 1, OutboundLong: 1, InboundShort: 2, InboundLong: 2}, DefaultConfig())
+	d := Evaluate(Signals{OutboundShort: 1, OutboundLong: 1, InboundShort: 2, InboundLong: 2, ActiveDaysShort: 3, ActiveDaysLong: 3}, DefaultConfig())
 	require.Len(t, d.Thresholds, 10)
 	assert.Equal(ThresholdCheck{Name: "tier1.min_outbound_short", Observed: 1, Required: 2, Enabled: true}, d.Thresholds[0])
 	assert.Equal(ThresholdCheck{Name: "tier1.min_inbound_short", Observed: 2, Required: 2, Enabled: true, Met: true}, d.Thresholds[1])
