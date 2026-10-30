@@ -84,6 +84,9 @@ describe('DeletionsWorkspace', () => {
     expect(onChanged).not.toHaveBeenCalled();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel batch' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+    const panel = screen.getByRole('dialog', { name: /^Staged / });
+    expect(within(panel).getByText('Cancelled')).toBeDefined();
+    expect(within(panel).queryByRole('button', { name: 'Cancel batch' })).toBeNull();
   });
 });
 
@@ -152,4 +155,55 @@ it('keeps the table and open detail visible during background list reads', async
   finish!(Response.json({ manifests: [batch('b1', 'pending')] }));
   await refresh;
   view.unmount(); controller.destroy();
+});
+
+it.each(['failed', 'pending'])('retains the open batch through a focus refresh with %s detail reads', async failure => {
+  let refreshDetail = false, status = 'in_progress';
+  const controller = new DeletionsController(createAPIClient(async input => {
+    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [batch('active', status)] });
+    if (refreshDetail) return failure === 'failed' ? Response.json({}, { status: 503 }) : new Promise<Response>(() => undefined);
+    return Response.json(detail('active', 'in_progress', { execution: { succeeded: 1, failed: 0 } }));
+  }));
+  const view = render(DeletionsWorkspace, { controller });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
+    await screen.findByText('1 deleted · 0 failed');
+    refreshDetail = true;
+    await controller.refresh();
+    await tick();
+    const panel = screen.getByRole('dialog', { name: /^Staged / });
+    expect(within(panel).getByText('1 deleted · 0 failed')).toBeDefined();
+    expect(within(panel).getByRole('button', { name: 'Cancel batch' })).toBeDefined();
+    status = 'completed';
+    await controller.refresh();
+    await tick();
+    expect(within(panel).getByText('Deleted')).toBeDefined();
+    expect(within(panel).queryByRole('button', { name: 'Cancel batch' })).toBeNull();
+    expect(within(panel).getByText('1 deleted · 0 failed')).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('reads fresh progress when a batch is explicitly reopened', async () => {
+  let succeeded = 0, reads = 0;
+  const controller = new DeletionsController(createAPIClient(async input => {
+    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [batch('active', 'in_progress')] });
+    reads++;
+    return Response.json(detail('active', succeeded ? 'completed' : 'in_progress', { execution: { succeeded, failed: 0 } }));
+  }));
+  const view = render(DeletionsWorkspace, { controller });
+  try {
+    const row = await screen.findByRole('button', { name: /^Open batch from/ });
+    await fireEvent.click(row);
+    await screen.findByText('0 deleted · 0 failed');
+    await fireEvent.click(row);
+    expect(screen.queryByRole('dialog', { name: /^Staged / })).toBeNull();
+    const beforeReopen = reads;
+    succeeded = 2;
+    await fireEvent.click(row);
+    await screen.findByText('2 deleted · 0 failed');
+    expect(reads).toBe(beforeReopen + 1);
+    const panel = screen.getByRole('dialog', { name: /^Staged / });
+    expect(within(panel).getByText('Deleting')).toBeDefined();
+    expect(within(panel).getByRole('button', { name: 'Cancel batch' })).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
 });

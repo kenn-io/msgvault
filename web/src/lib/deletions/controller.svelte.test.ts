@@ -136,7 +136,7 @@ it('queues a fresh list after a write while an older list is pending', async () 
   controller.destroy();
 });
 
-it('refreshes execution progress while the batch remains in progress', async () => {
+it('keeps execution detail cached until a fresh read is requested', async () => {
   let deleted = 0, reads = 0;
   const controller = new DeletionsController(createAPIClient(async input => {
     if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [batch('active', 'in_progress')] });
@@ -147,7 +147,9 @@ it('refreshes execution progress while the batch remains in progress', async () 
   await controller.getDetail('active');
   deleted = 100;
   await controller.refresh();
-  expect((await controller.getDetail('active'))?.execution?.succeeded).toBe(100);
+  expect((await controller.getDetail('active'))?.execution?.succeeded).toBe(0);
+  expect(reads).toBe(1);
+  expect((await controller.getDetail('active', { fresh: true }))?.execution?.succeeded).toBe(100);
   expect(reads).toBe(2);
   controller.destroy();
 });
