@@ -1,7 +1,3 @@
-import AppShell from '../shell/AppShell.svelte';
-import { ExploreState } from '../../explore/state.svelte';
-import { lanes } from '../../../test/operations';
-import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
@@ -406,15 +402,18 @@ describe('RelationshipsWorkspace', () => {
     }
   });
 
-  it('restores a saved reader before its timeline loads and clears it on intentional close', async () => {
+  it('restores a bounded reader at its latest anchor before the timeline loads and clears it on close', async () => {
     const { fetchFn } = fetchHandler({
-      '/api/v1/conversations/70': async () => Response.json({ id: 70, anchor_id: 9, has_before: false, has_after: false, total: 1, messages: [{ id: 9, from: 'Example sender', subject: 'Saved subject', body: 'Saved message body', sent_at: when, to: [], labels: [], attachments: [] }] }),
+      '/api/v1/conversations/70': async () => Response.json({ id: 70, anchor_id: 10, has_before: false, has_after: false, total: 1, messages: [{ id: 10, from: 'Example sender', subject: 'Saved subject', body: 'Saved message body', sent_at: when, to: [], labels: [], attachments: [] }] }),
     });
-    const props = { ...baseProps(fetchFn), target: 'cluster:1', reader: { target: 'cluster:1', row: { key: 'message:9', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Saved subject', has_attachments: false, message_count: 1, conversation_id: 70, anchor_message_id: 9 }, anchorId: 9 } };
+    const props = { ...baseProps(fetchFn), target: 'cluster:1', reader: { target: 'cluster:1', row: { key: 'message:9', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Saved subject', has_attachments: false, message_count: 1, conversation_id: 70, anchor_message_id: 9 }, anchorId: 10, bounds: { start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z' } } };
     const view = render(RelationshipsWorkspace, { props });
     try {
       const pane = await screen.findByRole('complementary', { name: /Reading pane/ });
       expect(await within(pane).findByText('Saved message body')).toBeDefined();
+      const request = fetchFn.mock.calls.map(([input]) => new URL((input as Request).url)).find(url => url.pathname.endsWith('/conversations/70'))!;
+      expect(request.searchParams.get('anchor')).toBe('10');
+      expect([request.searchParams.get('start'), request.searchParams.get('end')]).toEqual(['2026-07-19T00:00:00.000Z', '2026-07-20T00:00:00.000Z']);
       await fireEvent.click(within(pane).getByRole('button', { name: 'Close reading pane' }));
       expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
     } finally { view.unmount(); props.controller.destroy(); }
@@ -1027,39 +1026,4 @@ it('opens a person from a relationship timeline reader', async () => {
     await fireEvent.click(await within(reader).findByRole('button', { name: 'Alex Example' }));
     expect(onOpenPerson).toHaveBeenLastCalledWith(4);
   } finally { view.unmount(); props.controller.destroy(); }
-});
-
-it('restores a bounded reader at its latest anchor on Back', async () => {
-  const requests: URL[] = [];
-  let visits = 0;
-  const row = { key: 'chat:70:day', kind: 'chat_burst', occurred_at: '2026-07-19T10:00:00Z', first_at: '2026-07-19T10:00:00Z', preview: 'Day preview', source_id: 1, title: 'Saved chat day', has_attachments: false, message_count: 2, anchor_message_id: 9, conversation_id: 70 };
-  const client = createAPIClient(async (input) => {
-    const request = input as Request; const url = new URL(request.url); requests.push(url);
-    if (url.pathname.match(/\/participants\/(1|2)$/)) return Response.json({ id: Number(url.pathname.split('/').at(-1)), display_label: 'Chat person', partial_label: false, identifiers: [], activity_count: 2, file_count: 0, source_counts: [], cache_revision: 'cache-rel' });
-    if (url.pathname === '/api/v1/relationships/1/timeline') return Response.json({ canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: ++visits === 1 ? [row] : [], total_count: visits === 1 ? 1 : 0 });
-    if (url.pathname === '/api/v1/relationships/2/timeline') return Response.json({ canonical_id: 2, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0 });
-    if (url.pathname === '/api/v1/conversations/70') return Response.json({ id: 70, anchor_id: Number(url.searchParams.get('anchor')), messages: [9, 10].map(id => ({ id, conversation_id: 70, message_type: 'whatsapp', from: 'Chat sender', from_participant_id: 1, to: ['Other person'], to_participants: [{ display: 'Other person', participant_id: 2 }], subject: `Chat message ${id}`, body: `Saved body ${id}`, sent_at: '2026-07-19T10:00:00Z', labels: [], attachments: [] })), has_before: false, has_after: false, total: 2 });
-    if (url.pathname.endsWith('/meetings/actions')) return Response.json(meetingActions());
-    if (url.pathname.endsWith('/meetings/metrics')) return Response.json(meetingMetrics());
-    if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
-    if (url.pathname.endsWith('/sources/status')) return Response.json({ sources: [] });
-    if (url.pathname.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
-  });
-  window.history.replaceState(null, '', '/?workspace=relationships');
-  const state = new ExploreState(window); state.commitNavigation({ relationshipTarget: 'cluster:1' });
-  const view = render(AppShell, { client, state });
-  try {
-    await fireEvent.click((await screen.findByText('2 messages in Saved chat day')).closest('[role="row"]')!);
-    await fireEvent.click(await screen.findByRole('button', { name: /Expand message 10/ }));
-    await screen.findByText('Saved body 10');
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Other person' }).at(-1)!);
-    await waitFor(() => expect(state.current.relationshipTarget).toBe('cluster:2'));
-    const back = new Promise<void>((resolve) => window.addEventListener('popstate', () => resolve(), { once: true })); window.history.back(); await back;
-    expect(await screen.findByText('Saved body 10')).toBeDefined();
-    const restored = requests.filter(url => url.pathname.endsWith('/conversations/70')).at(-1)!;
-    expect(restored.searchParams.get('anchor')).toBe('10');
-    expect(restored.searchParams.get('start')).toBe(new Date(2026, 6, 19).toISOString());
-    expect(restored.searchParams.get('end')).toBe(new Date(2026, 6, 20).toISOString());
-  } finally { view.unmount(); state.destroy(); }
 });

@@ -96,16 +96,16 @@ func taskLinkServerWithStore(t *testing.T, messageStore MessageStore, logger *sl
 	})
 }
 
-func TestCreateTaskForEmailDerivesStableServerIdempotency(t *testing.T) {
+func TestCreateTaskForEmailResolvesSourceIdentityAndDerivesStableServerIdempotency(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	ops := &fakeTaskLinkOperations{}
 	f := storetest.New(t)
 	id := f.CreateMessage("identity-email")
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "test-key"}}, Store: f.Store, Logger: testLogger(), TaskLinkOperations: ops})
 	uid, err := f.Store.ArchiveUID()
-	require.NoError(err)
+	requirements.NoError(err)
 	body := []byte(`{"title":"Follow up","description":"Synthetic notes","priority":"high","labels":["mail","follow-up"],"added_at":"2026-07-19T01:02:03Z"}`)
 	for range 2 {
 		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tasks", id), bytes.NewReader(body))
@@ -114,24 +114,49 @@ func TestCreateTaskForEmailDerivesStableServerIdempotency(t *testing.T) {
 		req.Header.Set("X-Request-ID", "browser-request-1")
 		resp := httptest.NewRecorder()
 		srv.Router().ServeHTTP(resp, req)
-		require.Equal(http.StatusCreated, resp.Code, resp.Body.String())
-		assert.NotContains(resp.Body.String(), uid)
+		requirements.Equal(http.StatusCreated, resp.Code, resp.Body.String())
+		assertions.NotContains(resp.Body.String(), uid)
 	}
-	require.Len(ops.createKeys, 2)
-	assert.Equal(ops.createKeys[0], ops.createKeys[1])
-	assert.NotEqual("browser-request-1", ops.createKeys[0])
-	require.Len(ops.creates, 2)
-	assert.Equal(ops.creates[0], ops.creates[1], "a browser retry must send the identical external create payload")
+	requirements.Len(ops.createKeys, 2)
+	assertions.Equal(ops.createKeys[0], ops.createKeys[1])
+	assertions.NotEqual("browser-request-1", ops.createKeys[0])
+	requirements.Len(ops.creates, 2)
+	assertions.Equal(ops.creates[0], ops.creates[1], "a browser retry must send the identical external create payload")
 	links := tasklinks.MailLinks(ops.creates[0].Metadata)
-	require.Len(links, 1)
-	assert.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
-	assert.Equal("high", ops.creates[0].Priority)
-	assert.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
+	requirements.Len(links, 1)
+	assertions.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
+	assertions.Equal("high", ops.creates[0].Priority)
+	assertions.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
 	for _, identity := range ops.identities {
-		assert.Equal("gmail", identity.SourceType)
-		assert.Equal("test@example.com", identity.SourceIdentifier)
-		assert.Equal("identity-email", identity.SourceMessageID)
+		assertions.Equal("gmail", identity.SourceType)
+		assertions.Equal("test@example.com", identity.SourceIdentifier)
+		assertions.Equal("identity-email", identity.SourceMessageID)
 	}
+	t.Run("cancelled identity", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{Store: f.Store, cancel: cancel},
+			Logger: testLogger(), TaskLinkOperations: ops,
+		})
+		request := httptest.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/tasks", id), nil)
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+		assert.Len(ops.identities, 2)
+	})
+}
+
+type cancelTaskArchiveIdentity struct {
+	*store.Store
+	cancel context.CancelFunc
+}
+
+func (s *cancelTaskArchiveIdentity) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
+	s.cancel()
+	return "archive-a", "1", ctx.Err()
 }
 
 func TestCreateTaskRequiresBrowserRequestID(t *testing.T) {

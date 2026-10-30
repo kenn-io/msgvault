@@ -54,7 +54,10 @@ describe('MessageCard', () => {
     expect(screen.queryByRole('button', { name: /HTML/ })).toBeNull();
   });
 
-  it('links each stored recording of a meeting for download', () => {
+  it('links stored message attachments and meeting recordings for download', () => {
+    const ordinary = render(MessageCard, { message: detail({ attachments: [{ id: 1, stored: true, filename: 'RE1.wav', mimeType: 'audio/wav', sizeBytes: 10 }] }), expanded: true });
+    expect(screen.getByRole('link', { name: 'RE1.wav' }).getAttribute('href')).toBe('/api/v1/files/1/content');
+    ordinary.unmount();
     render(MessageCard, {
       props: {
         message: detail({
@@ -209,20 +212,19 @@ describe('MessageCard', () => {
   it('gates task and meeting actions by message type while the body fails', async () => {
     const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Review archived notes' }] }));
     const view = render(MessageCard, {
-      props: { client, message: detail({ body: '', messageType: '' }), expanded: true, bodyError: 'Could not load message body' }
+      props: { client, message: detail({ body: '', messageType: 'email' }), expanded: true, bodyError: 'Could not load message body' }
     });
 
     expect(screen.getByRole('alert').textContent).toContain('Could not load message body');
     expect(view.container.querySelector('pre')).toBeNull();
     expect(await screen.findByText('Review archived notes')).toBeDefined();
-    await view.rerender({ message: detail({ messageType: 'email' }) });
-    expect(await screen.findByText('Review archived notes')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
     expect(screen.queryByRole('menuitem', { name: 'Export meeting…' })).toBeNull();
     await fireEvent.keyDown(document, { key: 'Escape' });
+    await view.rerender({ message: detail({ messageType: 'meeting_transcript' }) });
+    expect(screen.queryByText('Review archived notes')).toBeNull();
     await view.rerender({ message: detail({ messageType: 'meeting_notes' }) });
     expect(screen.queryByText('Review archived notes')).toBeNull();
-    expect(screen.queryByText('Prepare review')).toBeNull();
     expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
   });
 
@@ -268,6 +270,7 @@ it.each([{ state: 'ready', shown: true }, { state: 'unavailable', shown: false }
   const readiness = new KataReadiness(client);
   const context = new Map([[kataReadinessKey, readiness]]);
   const view = render(MessageCard, { props: { message: detail({ messageType: 'imessage' }), expanded: true, client }, context });
+  const sibling = render(MessageCard, { props: { message: detail({ id: 43, messageType: 'imessage' }), expanded: true, client }, context });
   if (shown) {
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions for message 42' }));
     expect(screen.getByRole('menuitem', { name: 'Add to task…' })).toBeDefined();
@@ -275,6 +278,8 @@ it.each([{ state: 'ready', shown: true }, { state: 'unavailable', shown: false }
     await waitFor(() => expect(readiness.absent).toBe(true));
     expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
   }
+  expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/kata/status'))).toHaveLength(1);
+  sibling.unmount();
   view.unmount();
   readiness.dispose();
 });
