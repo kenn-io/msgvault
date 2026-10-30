@@ -31,6 +31,8 @@ describe('source labels', () => {
 
   it('maps run states for rows and status tones for the job indicator', () => {
     expect(sourceRunState({ active_sync: null, latest_sync: null, scheduler_queued: true })).toBe('queued');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled'), scheduler_queued: true })).toBe('queued');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('failed'), scheduler_queued: true })).toBe('failed');
     expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled') })).toBe('cancelled');
     expect(sourceRunState({ active_sync: null, latest_sync: run('completed', 2) })).toBe('partial');
     expect(sourceRunState({ active_sync: null, latest_sync: run('paused') })).toBe('paused');
@@ -43,6 +45,6 @@ describe('source labels', () => {
   });
 });
 
-it('preserves paused run errors before scheduler errors', () => {
+it('prefers the run error over the scheduler error', () => {
   expect(sourceFailure({ latest_sync: { ...run('paused'), error_message: 'Rate limit reached' }, identifier: 'archive@example.com', source_type: 'omi', scheduler_last_error: 'Scheduler stopped' })).toEqual({ reason: 'Rate limit reached' });
 });

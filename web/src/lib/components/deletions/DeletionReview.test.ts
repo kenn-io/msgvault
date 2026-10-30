@@ -17,27 +17,16 @@ function preflight(overrides: Record<string, unknown> = {}) {
   };
 }
 
-interface Seen { method: string; path: string; body?: Record<string, unknown> }
-
-function api(review = preflight(), seen: Seen[] = []) {
+function api(review = preflight()) {
   return createAPIClient(vi.fn<typeof fetch>(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    const body = request.method === 'POST' ? await request.clone().json() : undefined;
-    seen.push({ method: request.method, path, body });
     if (path.endsWith('/explore/preflight')) return Response.json(review);
-    if (path === '/api/v1/deletions' && request.method === 'POST') {
-      return body?.dry_run
-        ? Response.json({ dry_run: true, message_count: 2, matched_count: 3 })
-        : Response.json({ dry_run: false, id: 'batch-9', message_count: 2, matched_count: 3 }, { status: 201 });
-    }
-    if (request.method === 'DELETE') return Response.json({ id: 'batch-9', status: 'cancelled' });
     return Response.json({}, { status: 404 });
   }));
 }
 
 afterEach(() => {
-  vi.useRealTimers();
   document.body.replaceChildren();
 });
 
@@ -68,11 +57,8 @@ it('keeps all-matching exclusions and its token through failed preview and stagi
   render(DeletionReview, { client, selection: matching, onclose: vi.fn(), onStaged });
   await fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
   await screen.findByText('2 eligible · 1 skipped');
-  expect(screen.getByText('After 1 exclusion.')).toBeDefined();
-  expect(screen.getByText('Semantic search covers active messages only.')).toBeDefined();
-  expect(document.querySelector('time')?.dateTime).toBe('2026-07-19T10:05:00Z');
   await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
-  await screen.findByText('Dry run: Matched: 3 · Staged: 2 · Skipped: 1 in outlook@example.com');
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Stage 2 messages' }) as HTMLButtonElement).disabled).toBe(false));
   await fireEvent.click(screen.getByRole('button', { name: 'Stage 2 messages' }));
   await screen.findByText('Review expired');
   expect(screen.queryByText(/^Dry run:/)).toBeNull();

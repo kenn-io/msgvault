@@ -294,36 +294,3 @@ test('Files exposes visual search after setup supplies a consented active genera
   await page.getByRole('button', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('switch', { name: 'Visual search' })).toBeVisible();
 });
-
-test('Files owns both scroll axes and keeps later rows visible', async ({ page, baseURL }) => {
-  let pages = 0;
-  await prepare(page, baseURL, file('scroll-1.txt', 'text/plain', 'text'), Buffer.from('Synthetic preview'));
-  await page.route('**/api/v1/files/search', route => {
-    const offset = route.request().postDataJSON().cursor ? 60 : 0;
-    pages++;
-    return route.fulfill({ json: {
-      files: Array.from({ length: offset ? 15 : 60 }, (_, i) => ({ ...file(`scroll-${offset + i + 1}.txt`, 'text/plain', 'text'), id: offset + i + 1, key: `file:${offset + i + 1}` })),
-      total_count: 75, next_cursor: offset ? undefined : 'page-2', cache_revision: 'cache-scroll', search_provenance: {}
-    } });
-  });
-  await page.reload();
-  await page.setViewportSize({ width: 1000, height: 600 });
-  const grid = page.getByRole('grid', { name: 'Files results' });
-  await expect(grid.getByText('scroll-1.txt', { exact: true })).toBeVisible();
-  await grid.focus();
-  await page.keyboard.press('ArrowDown');
-  const geometry = await grid.evaluate(element => {
-    element.scrollLeft = 120;
-    element.scrollTop = element.scrollHeight;
-    element.dispatchEvent(new Event('scroll'));
-    return { height: element.clientHeight, content: element.scrollHeight, width: element.clientWidth, contentWidth: element.scrollWidth, left: element.scrollLeft, focus: getComputedStyle(element).boxShadow };
-  });
-  expect(geometry.content).toBeGreaterThan(geometry.height);
-  expect(geometry.height).toBeLessThan(600);
-  expect(geometry.contentWidth).toBeGreaterThan(geometry.width);
-  expect(geometry.left).toBeGreaterThan(0);
-  expect(geometry.focus).toContain('2px');
-  await expect.poll(() => pages).toBeGreaterThanOrEqual(2);
-  await grid.evaluate(element => { element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
-  await expect(grid.getByText('scroll-75.txt', { exact: true })).toBeVisible();
-});

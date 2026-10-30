@@ -30,10 +30,10 @@ const contact = {
   }
 };
 
-type Handler = (url: URL, request: Request) => Response | undefined;
+type Handler = (url: URL, request: Request) => Response | Promise<Response> | undefined;
 
 // Routes the sources page reads. A handler answers first; anything else is empty.
-function api(sources: unknown[], handler: Handler = () => undefined, contacts: unknown[] = []) {
+function api(sources: unknown[], handler: Handler = () => undefined, contacts: Array<{ connection: string; status: unknown }> = []) {
   return vi.fn<typeof fetch>(async (input) => {
     const request = input as Request;
     const url = new URL(request.url);
@@ -41,6 +41,9 @@ function api(sources: unknown[], handler: Handler = () => undefined, contacts: u
     if (custom) return custom;
     if (url.pathname.endsWith('/sources/status')) return Response.json({ sources });
     if (url.pathname.endsWith('/carddav/connections')) return Response.json({ connections: contacts });
+    if (url.pathname.endsWith('/carddav/status')) return Response.json(contacts.find(contact => contact.connection === url.searchParams.get('connection'))?.status);
+    if (url.pathname.endsWith('/carddav/books')) return Response.json({ books: [] });
+    if (url.pathname.endsWith('/carddav/runs')) return Response.json({ runs: [] });
     return Response.json({}, { status: 404 });
   });
 }
@@ -95,35 +98,32 @@ describe('SourcesWorkspace', () => {
   it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
     const onOpenSettings = vi.fn();
     const settings = [{ key: 'beeper.media', kind: 'boolean', value: { boolean: true } }, { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 0 }, validation: { off: { value: '0', label: 'No size limit' } } }];
-    const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper', scheduled: true, schedule: '0 3 * * *' })], url => url.pathname.endsWith('/settings') ? Response.json({ settings }) : undefined);
+    const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper', scheduled: true, schedule: '0 3 * * *', next_sync_at: '2026-07-19T11:00:00Z' })], url => url.pathname.endsWith('/settings') ? Response.json({ settings }) : undefined);
     render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []), onOpenSettings });
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
     await screen.findByText('No size limit');
     expect(screen.getByText('On')).toBeDefined();
     expect(screen.getByText('At 03:00 every day')).toBeDefined();
+    expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
     await fireEvent.click(screen.getByRole('button', { name: 'Edit in Settings › Sources' }));
     expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
   });
 
-  it('shows config-only Gmail schedules and next sync', async () => {
-    render(SourcesWorkspace, { client: createAPIClient(api([source({ source_type: 'gmail', scheduled: true, schedule: '0 * * * *', next_sync_at: '2026-07-19T11:00:00Z' })])) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
-    expect(await screen.findByText('At :00 past every hour')).toBeDefined();
-    expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
-  });
-
-  it.each(['ready', 'failed'])('keeps contacts visible while polling %s mail status through completion', async mail => {
+  it.each(['ready', 'failed', 'contacts-only'])('keeps contacts visible through completion with %s mail status', async mail => {
     vi.useFakeTimers();
-    let reads = 0, finish!: (response: Response) => void;
-    const fetch = vi.fn<typeof globalThis.fetch>(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/sources/status')) return mail === 'ready' ? Response.json({ sources: [] }) : Response.json({ message: 'Mail status unavailable' }, { status: 500 });
-      if (path.endsWith('/carddav/connections')) {
-        if (++reads === 1) return Response.json({ connections: [{ ...contact, status: { ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null } } }] });
+    let reads = 0, finish!: (response: Response) => void, finishSync!: (response: Response) => void;
+    const syncs: Request[] = [];
+    const fetch = api(mail === 'contacts-only' ? [] : [source()], (url, request) => {
+      if (url.pathname.endsWith('/sources/status') && mail === 'failed') return Response.json({ message: 'Mail status unavailable' }, { status: 500 });
+      if (url.pathname.endsWith('/carddav/status')) {
+        if (++reads === 1) return Response.json({ ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null } });
         return new Promise<Response>(resolve => { finish = resolve; });
       }
-      return Response.json({}, { status: 404 });
-    });
+      if (url.pathname.endsWith('/carddav/sync')) {
+        syncs.push(request);
+        return new Promise<Response>(resolve => { finishSync = resolve; });
+      }
+    }, [contact]);
     const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
     try {
       await vi.advanceTimersByTimeAsync(0);
@@ -133,10 +133,17 @@ describe('SourcesWorkspace', () => {
       expect(reads).toBe(2);
       expect(screen.getByRole('table', { name: 'Sources' })).toBe(table);
       expect(screen.queryByText('Loading…')).toBeNull();
-      finish(Response.json({ connections: [contact] }));
+      finish(Response.json(contact.status));
       await vi.advanceTimersByTimeAsync(0);
       expect(within(table).getByText('Succeeded')).toBeDefined();
-      expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+      await fireEvent.click(screen.getByRole('button', { name: 'Sync now user-a' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await syncs[0].clone().json()).toEqual({ full: false, connection: 'default' });
+      if (mail === 'failed') expect(screen.getByRole('alert').textContent).toContain('Mail status unavailable');
+      else if (mail === 'ready') expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(false);
+      finishSync(Response.json({ status: 'partial', connections: [{ connection: 'default', status: 'failed' }] }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText(/CardDAV sync partial/)).toBeDefined();
     } finally { view.unmount(); }
   });
 
@@ -686,16 +693,22 @@ it('opens sync history and the selected run’s item failures', async () => {
 });
 
 it('publishes source rows while the optional contacts request waits', async () => {
-  let finish!: (response: Response) => void;
+  vi.useFakeTimers();
+  let reads = 0;
   const client = createCaptureClient(async input => (input as Request).url.endsWith('/sources/status')
-    ? Response.json({ sources: [source()] })
-    : new Promise<Response>(resolve => { finish = resolve; }), []);
+    ? Response.json({ sources: [++reads === 1 ? source({ active_sync: run('running', 5, { messages_added: 3, errors_count: 2 }) }) : source({ latest_sync: run('completed', 8) })] })
+    : new Promise<Response>(() => undefined), []);
   const view = render(SourcesWorkspace, { client });
-  await screen.findByRole('button', { name: 'Details for Archive' });
-  expect(screen.queryByRole('rowheader', { name: 'Contacts' })).toBeNull();
-  finish(Response.json({ connections: [contact] }));
-  await screen.findByRole('rowheader', { name: 'Contacts' });
-  view.unmount();
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText('5 processed')).toBeDefined();
+    const counts = screen.queryByText('3 added · 2 errors');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(screen.getByText('Succeeded')).toBeDefined();
+    expect(counts).not.toBeNull();
+    expect(screen.getByText('This result may be out of date.')).toBeDefined();
+    expect(reads).toBe(2);
+  } finally { view.unmount(); }
 });
 
 it.each(['failed', 'partial'])('shows the latest contacts %s error in the account panel', async state => {
@@ -711,7 +724,7 @@ it('shows OAuth app repair instructions for contacts rather than assuming expiry
   const onOpenSettings = vi.fn();
   render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [{ ...contact, status: { ...contact.status, repair_reason: 'google_authorization_required', latest: { ...contact.status.latest, state: 'partial', error_code: 'upstream_failed', error_message: 'CardDAV server request failed.' } } }]), []), onOpenSettings });
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for user-a' }));
-  expect(screen.getByRole('region', { name: 'Failure' })).toBeDefined();
+  expect(within(screen.getByRole('region', { name: 'Failure' })).getByText("Check the selected OAuth app's client settings. Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.")).toBeDefined();
   expect(screen.queryByText('CardDAV server request failed.')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Open Settings › Contacts' }));
   expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('carddav');
@@ -727,6 +740,8 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
       if (failure === 'error') return Response.json({}, { status: 500 });
       return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
     }
+    if (request.url.includes('/carddav/status')) return Response.json(contact.status);
+    if (request.url.includes('/carddav/books')) return Response.json({ books: [] });
     return Response.json({}, { status: 404 });
   });
   const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []), requestTimeoutMs: 20 });
@@ -739,28 +754,23 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
   } finally { view.unmount(); }
 });
 
-it.each(['fails', 'pends'])('publishes usable contacts when mail status %s', async mail => {
-  const syncs: Request[] = [];
-  const fetch = vi.fn<typeof globalThis.fetch>(async input => {
-    const request = input as Request;
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/sources/status')) {
-      if (mail === 'fails') return Response.json({ message: 'Mail status unavailable' }, { status: 500 });
-      return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
-    }
-    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [contact] });
-    if (path.endsWith('/carddav/sync')) { syncs.push(request); return Response.json({ status: 'accepted' }); }
-    return Response.json({}, { status: 404 });
-  });
-  const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+it('publishes usable contacts when mail status pends', async () => {
+  vi.useFakeTimers();
+  let reads = 0;
+  const client = createCaptureClient(api([], url => {
+    if (url.pathname.endsWith('/sources/status')) return new Promise<Response>(() => undefined);
+    if (url.pathname.endsWith('/carddav/status') && url.searchParams.get('connection') === 'slow') return new Promise<Response>(() => undefined);
+    if (url.pathname.endsWith('/carddav/status')) return Response.json(++reads === 1
+      ? { ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null } }
+      : contact.status);
+  }, [contact, { ...contact, connection: 'slow', status: { ...contact.status, account: { ...contact.status.account, username: 'user-b' } } }]), []);
+  const view = render(SourcesWorkspace, { client });
   try {
-    expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText('Running')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(within(screen.getByRole('row', { name: /user-a/ })).getByText('Succeeded')).toBeDefined();
     expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
-    if (mail === 'fails') {
-      expect((await screen.findByRole('alert')).textContent).toContain('Mail status unavailable');
-      await fireEvent.click(screen.getByRole('button', { name: 'Sync now user-a' }));
-      await waitFor(() => expect(syncs).toHaveLength(1));
-      await expect(syncs[0].clone().json()).resolves.toEqual({ full: false, connection: 'default' });
-    }
+    expect((screen.getByRole('button', { name: 'Sync now user-b' }) as HTMLButtonElement).disabled).toBe(true);
   } finally { view.unmount(); }
 });

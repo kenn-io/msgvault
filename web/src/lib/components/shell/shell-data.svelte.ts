@@ -50,7 +50,7 @@ export class ShellData {
   /** Jobs poll while visible; saved views refresh on entry, focus, and writes. */
   start(): void {
     this.#timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') { void this.refreshDeletions(); void this.jobs.refresh(); }
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') { void this.jobs.refresh(); }
     }, REFRESH_MS);
   }
 

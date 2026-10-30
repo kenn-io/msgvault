@@ -217,15 +217,16 @@ it('restores the visible view and reports a failed delete', async () => {
   expect(data.views).toContainEqual(saved);
 });
 
-
-it('refreshes deletions on the timer without rereading saved views', async () => {
+it('refreshes jobs on the timer and deletions on explicit refresh', async () => {
   vi.useFakeTimers();
   const { data, requests } = setup();
   try {
     await data.refresh();
     data.start();
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/saved-views')).toHaveLength(1);
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(1);
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/sources/status')).toHaveLength(1);
+    await data.refresh();
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(2);
   } finally { data.stop(); vi.useRealTimers(); }
 });
