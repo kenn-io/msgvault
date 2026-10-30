@@ -1393,6 +1393,8 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			deadline = time.Time{}
+			hasDeadline = false
 			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
 			started := time.Now()
 			handler.ServeHTTP(recorder, tt.request)
