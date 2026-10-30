@@ -356,7 +356,10 @@
   }
 
   setContext('msgvault:open-carddav-operations', () => openOperations('contacts', 'carddav_sync'));
-  setContext('msgvault:hold-settings-leave', (hold: ExploreState['holdLeave']) => { exploreState.holdLeave = hold; });
+  setContext('msgvault:hold-settings-leave', (hold: ExploreState['holdLeave'], cancel: ExploreState['cancelHeldLeave']) => {
+    exploreState.holdLeave = hold;
+    exploreState.cancelHeldLeave = cancel;
+  });
   function consumeCardDAVSettingsRequest(key: number): void {
     if (cardDAVSettingsRequest?.key === key) cardDAVSettingsRequest = undefined;
   }
