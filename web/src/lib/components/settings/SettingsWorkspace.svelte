@@ -533,6 +533,7 @@
           {#if block.description}<p class="setting__hint">{block.description}</p>{/if}
         </div>
       {/if}
+      <div class="rows">
       {#each block.rows as row, rowIndex (rowIndex)}
         {@const fields = rowFields(row)}
         {#if fields.length > 0}
@@ -545,6 +546,7 @@
           </div>
         {/if}
       {/each}
+      </div>
     </section>
     {/if}
   {/each}
@@ -638,6 +640,8 @@
             <PeopleInferenceSettings {client} controller={inference} />
           {/if}
 
+          {#if layout.advanced.length > 0 || layout.config.length > 0}
+          <div class="disclosures">
           {#if layout.advanced.length > 0}
             <details class="disclosure">
               <summary>Advanced</summary>
@@ -660,6 +664,8 @@
               </dl>
             </details>
           {/if}
+          </div>
+          {/if}
         {/if}
         </fieldset>
       {/snippet}
@@ -671,7 +677,7 @@
   .settings-fields {
     display: flex;
     flex-direction: column;
-    gap: var(--space-8);
+    gap: var(--space-7);
     min-width: 0;
     margin: 0;
     padding: 0;
@@ -696,6 +702,15 @@
   .settings :global(.kit-settings__panel),
   .settings :global(.kit-settings__footer) {
     padding: var(--pane-pad-y) var(--pane-pad-x);
+  }
+  @media (max-width: 760px) {
+    /* Title, category tabs, and fields share one left edge. */
+    .settings-header {
+      padding-inline: var(--pane-pad-x);
+    }
+    .settings :global(.kit-settings__sidebar) {
+      padding-inline: calc(var(--pane-pad-x) - var(--space-4));
+    }
   }
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {
@@ -735,6 +750,7 @@
 
   h2 {
     margin: 0;
+    line-height: 1.2;
     font-size: var(--font-size-xl);
     font-weight: var(--font-weight-semibold);
     letter-spacing: -0.01em;
@@ -747,7 +763,7 @@
 
   .block {
     display: grid;
-    gap: var(--section-gap);
+    gap: var(--space-5);
     min-width: 0;
   }
   .block__head,
@@ -756,6 +772,7 @@
     gap: var(--control-gap);
     min-width: 0;
   }
+  .rows,
   .fields {
     display: grid;
     gap: var(--section-gap);
@@ -788,13 +805,15 @@
     align-items: center;
     justify-content: start;
     gap: var(--control-gap);
-    min-height: var(--control-height);
   }
   .setting__label {
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
   }
   .setting--switch .setting__label {
+    /* Centering the line box leaves the letters looking high beside the switch. */
+    position: relative;
+    top: 1px;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
   }
@@ -821,6 +840,13 @@
     line-height: 1.45;
   }
 
+  .disclosures {
+    display: grid;
+    gap: var(--field-gap);
+  }
+  .disclosure[open] {
+    padding-bottom: var(--space-5);
+  }
   .disclosure summary {
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
