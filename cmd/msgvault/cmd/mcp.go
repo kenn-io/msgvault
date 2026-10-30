@@ -50,7 +50,7 @@ aggregate, get_person_agenda, list_saved_views, run_saved_view, stage_deletion,
 draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
 draft_recover, and draft_send_as.
 Draft tools create, read, edit, delete, and recover managed drafts through the
-daemon. Msgvault never sends. With --agent-url and --agent-token-file, stdio
+daemon. send_message sends immediately when enabled by the daemon owner. With --agent-url and --agent-token-file, stdio
 exposes scoped read, draft and calendar tools and the daemon enforces the
 agent grant.
 
@@ -182,6 +182,8 @@ const savedViewsMinAPISchemaVersion = "2.21.0"
 const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
+const sendMessageMinAPISchemaVersion = "3.28.0"
+
 const draftsMinAPISchemaVersion = "3.0.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
@@ -199,7 +201,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		return mcpserver.ServeOptions{}, fmt.Errorf("MCP draft tools require daemon API schema %s or newer (daemon reports %q); upgrade the daemon", draftsMinAPISchemaVersion, schemaVersion)
 	}
 	opts := mcpserver.ServeOptions{
-		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
+		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommandsForSchema(true, schemaVersion), DelegatedOnly: true,
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
 		grant, err := st.AgentTokenSelf(ctx)
@@ -357,7 +359,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.IdentityScoring = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
-		opts.DraftCommands = mcpDraftCommands(false)
+		opts.DraftCommands = mcpDraftCommandsForSchema(false, schemaVersion)
 	}
 
 	return opts

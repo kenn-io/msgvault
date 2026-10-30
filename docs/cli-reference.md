@@ -115,7 +115,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
    remote daemon as a restricted caller. `search`, `show-message`, `stats`,
-   `mcp`, `calendar`, `draft-reply`, `draft-compose`, `draft-get`, `draft-edit`,
+   `mcp`, `calendar`, `send-message`, `draft-reply`, `draft-compose`, `draft-get`, `draft-edit`,
    `draft-delete`, and `draft-recover` are available with their required
    permissions (see [scoped archive reads](#scoped-archive-reads) and
    [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)). The CLI rejects owner
@@ -429,6 +429,57 @@ stores the Gmail draft and its `DRAFT` label after a confirmed response.
 `draft-reply` never sends mail.
 
 ---
+
+## send-message
+
+On unreleased `main`, send text, one local file, or both into an existing
+archived Beeper chat. Sending happens immediately and is disabled by default.
+The sent message appears in the msgvault archive after the next Beeper sync.
+The daemon owner enables each source in config.toml, then restarts the daemon:
+
+```toml
+[[beeper.sends]]
+source_id = 42
+enabled = true
+```
+
+```bash
+msgvault send-message --source-id 42 --to '!room:beeper.local' --body 'On my way'
+msgvault send-message --account whatsapp --to '!room:beeper.local' --file ./photo.jpg
+msgvault send-message --source-id 42 --to '!room:beeper.local' --body 'Reply' --reply-to 123 --json
+```
+
+Use exactly one of `--account` and `--source-id`. `--reply-to` names an
+archived message from the same source and chat. `--file` accepts one regular
+file on the daemon host; Beeper enforces its upload limit. Relative paths use the CLI working
+directory. The CLI requires an owner session and a local daemon for files; remote daemons
+and delegated tokens cannot attach files through the CLI. Owner MCP sessions
+can supply an absolute daemon-host `file` path.
+
+Delegated tokens need `message.send` on the source. Draft permissions do not
+grant sending, and a token cannot enable `[[beeper.sends]]`.
+
+The JSON result includes `status`, `source_id`, `chat_id`, and, when
+available, `pending_message_id`, `reply_to_message_id`, and `file_name`.
+
+| Code | Meaning |
+|------|---------|
+| `accepted` | Beeper accepted the message and returned a pending ID; network delivery is not yet confirmed. |
+| `send_disabled` | The source has no enabled `[[beeper.sends]]` entry. |
+| `not_permitted` | The token lacks source permission or requested a file. |
+| `chat_not_archived` | The chat has not been archived under this source. |
+| `chat_not_found` | Beeper has no chat with that ID. |
+| `provider_identity_mismatch` | Beeper returned another chat. |
+| `not_supported` | The destination is a merged container; send to an archived member chat. |
+| `invalid_args` | Arguments or the local file are invalid. |
+| `invalid_reply_target` | The reply target does not belong to this source and chat. |
+| `provider_rejected` | Beeper rejected the upload or message. Nothing was sent. |
+| `provider_unavailable` | A pre-send lookup or upload failed. Nothing was sent. |
+| `remote_unknown` | The send outcome is unknown. Beeper may have sent the message. |
+
+Each upload and send is attempted once. On `remote_unknown`, read the chat
+before sending again. Repeating the command creates another send attempt and
+can duplicate the message.
 
 ## draft-compose
 
@@ -4311,7 +4362,7 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
-Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. The `send_message` tool sends immediately to an archived Beeper chat when the daemon enables `[[beeper.sends]]`; agent tokens also need `message.send`. Sending requires API schema 3.28.0 or newer. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
 With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 
@@ -5279,7 +5330,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `message.send` for [immediate Beeper sends](#send-message); `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |

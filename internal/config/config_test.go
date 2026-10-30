@@ -2538,3 +2538,24 @@ trusted_imap_sent_mailboxes = { "imaps://alice@example.com@imap.example.com:993"
 	assert.Empty(cfg.Sync.TrustedIMAPSentMailboxes,
 		"unconfigured archives carry no explicit Sent-folder trust")
 }
+
+func TestBeeperSendConfig(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[[beeper.sends]]\nsource_id = 42\nenabled = true\n"), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	require.Len(cfg.Beeper.Sends, 1)
+	assert.Equal(int64(42), cfg.Beeper.Sends[0].SourceID)
+	assert.True(cfg.Beeper.Sends[0].Enabled)
+	for _, content := range []string{
+		"[[beeper.sends]]\nenabled = true\n",
+		"[[beeper.sends]]\nsource_id = 42\n[[beeper.sends]]\nsource_id = 42\n",
+		"[[beeper.sends]]\nsource_id = 42\nextra = true\n",
+	} {
+		require.NoError(os.WriteFile(path, []byte(content), 0o600))
+		_, err := Load(path, "")
+		assert.Error(err)
+	}
+}

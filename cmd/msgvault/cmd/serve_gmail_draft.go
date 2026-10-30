@@ -34,20 +34,20 @@ const (
 // authorizeGmailDraft applies the daemon-start policy snapshot. Reads from
 // the archive and owner-only send-as listing do not use this write grant.
 func authorizeGmailDraft(policy []config.GmailDraftSource, sourceID int64, sourceType string) error {
-	return authorizeDraftPolicy("gmail", policy, sourceID, sourceType)
+	return authorizeDraftPolicy("gmail", "drafts", "draft_disabled", policy, sourceID, sourceType)
 }
 
-// authorizeDraftPolicy checks a [[{provider}.drafts]] opt-in for the source.
-func authorizeDraftPolicy(provider string, policy []config.GmailDraftSource, sourceID int64, sourceType string) error {
+// authorizeDraftPolicy checks a provider section opt-in for the source.
+func authorizeDraftPolicy(provider, section, code string, policy []config.GmailDraftSource, sourceID int64, sourceType string) error {
 	if sourceType != provider {
-		return draftReplyError("draft_disabled", fmt.Errorf("source %d is a %q source, not %s", sourceID, sourceType, provider))
+		return draftReplyError(code, fmt.Errorf("source %d is a %q source, not %s", sourceID, sourceType, provider))
 	}
 	for _, grant := range policy {
 		if grant.SourceID == sourceID && grant.Enabled {
 			return nil
 		}
 	}
-	return draftReplyError("draft_disabled", fmt.Errorf("source %d has no enabled [[%s.drafts]] grant", sourceID, provider))
+	return draftReplyError(code, fmt.Errorf("source %d has no enabled [[%s.%s]] grant", sourceID, provider, section))
 }
 
 func gmailDraftScopeGate(ctx context.Context, cfg *config.Config, source *store.Source, accepted []string) error {

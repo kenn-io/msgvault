@@ -44,6 +44,27 @@ func TestDraftComposeArgs(t *testing.T) {
 	}
 }
 
+func TestDraftComposeArgsSendMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	base := []string{"send-message", "--source-id=42", "--to=chat"}
+	for _, extra := range [][]string{{"--body=hello", "--json", "--log-level=warn", "--verbose", "--log-sql", "--log-sql-slow-ms=100"}, {"--file=image.png"}, {"--file=image.png", "--body=caption", "--reply-to=1"}} {
+		intent, err := parseDraftComposeArgs(append(append([]string{}, base...), extra...))
+		require.NoError(err)
+		assert.True(intent.Send)
+	}
+	for _, extra := range [][]string{{}, {"--body="}, {"--file=a", "--body="}, {"--body=x", "--to=other"}, {"--file=a", "--file=b"}, {"--body=x", "--account=other"}, {"--body=x", "--cc=other@example.test"}, {"--body=x", "--conversation=1"}} {
+		_, err := parseDraftComposeArgs(append(append([]string{}, base...), extra...))
+		assertBeeperDraftCode(t, err, "invalid_args")
+	}
+	command := newSendMessageCommand()
+	require.NoError(command.ParseFlags([]string{"--source-id=42", "--to=chat", "--body=x", "--file=a", "--file=b"}))
+	args, err := daemonCLIArgsFromCobra(command, nil)
+	require.NoError(err)
+	_, err = parseDraftComposeArgs(args)
+	assertBeeperDraftCode(t, err, "invalid_args")
+}
+
 func TestDraftComposeEndToEnd(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

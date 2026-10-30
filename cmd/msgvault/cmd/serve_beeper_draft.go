@@ -100,15 +100,9 @@ func (a *storeAPIAdapter) beeperDraftClient() (*beeper.Client, error) {
 // readBeeperDraft reads the chat's composer from Beeper and checks that the
 // chat belongs to the source's account.
 func readBeeperDraft(ctx context.Context, client *beeper.Client, source *store.Source, chatID string) (beeper.DraftState, error) {
-	chat, err := client.GetChat(ctx, chatID)
-	if errors.Is(err, beeper.ErrNotFound) {
-		return beeper.DraftState{}, draftReplyError("chat_not_found", err)
-	}
+	chat, err := checkBeeperChat(ctx, client, source, chatID)
 	if err != nil {
-		return beeper.DraftState{}, draftReplyError("provider_unavailable", err)
-	}
-	if chat.ID != chatID || chat.AccountID != source.Identifier {
-		return beeper.DraftState{}, draftReplyError("provider_identity_mismatch", errors.New("beeper returned another chat"))
+		return beeper.DraftState{}, err
 	}
 	state, err := chat.DraftState()
 	if err != nil {
@@ -138,7 +132,7 @@ func validBeeperDraftBody(body string) error {
 // runBeeperDraftCreate writes a new draft into an empty Beeper chat composer.
 // --to names the chat.
 func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agentgrant.Grant, intent draftComposeIntent, source *store.Source, emit func(api.CLIRunEvent) error) error {
-	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
+	if err := authorizeDelegatedDraftSource(grant, source, agentgrant.PermissionDraftCreate); err != nil {
 		return err
 	}
 	if len(intent.To) != 1 || len(intent.Cc)+len(intent.Bcc) != 0 || intent.Subject != "" || intent.From != "" {
@@ -147,7 +141,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	if err := validBeeperDraftBody(intent.Body); err != nil {
 		return err
 	}
-	if err := authorizeDraftPolicy("beeper", a.beeperDraftPolicy, source.ID, source.SourceType); err != nil {
+	if err := authorizeDraftPolicy("beeper", "drafts", "draft_disabled", a.beeperDraftPolicy, source.ID, source.SourceType); err != nil {
 		return err
 	}
 	client, err := a.beeperDraftClient()
@@ -235,7 +229,7 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}
-	if err := authorizeDraftPolicy("beeper", a.beeperDraftPolicy, source.ID, source.SourceType); err != nil {
+	if err := authorizeDraftPolicy("beeper", "drafts", "draft_disabled", a.beeperDraftPolicy, source.ID, source.SourceType); err != nil {
 		return err
 	}
 	client, err := a.beeperDraftClient()
@@ -312,7 +306,7 @@ func (a *storeAPIAdapter) writeBeeperDraft(ctx context.Context, client *beeper.C
 	fail := func(err error) error {
 		evidenceCtx, cancel := localDraftEvidenceContext(ctx)
 		defer cancel()
-		var writeErr *beeper.DraftWriteError
+		var writeErr *beeper.WriteError
 		if errors.As(err, &writeErr) && writeErr.Status >= 400 && writeErr.Status < 500 && !changed {
 			if _, abortErr := a.store.AbortBeeperDraftContext(evidenceCtx, claimed.DraftID, claimed.Revision); abortErr == nil {
 				return a.beeperDraftFailure(ctx, emit, intent, claimed.DraftID, "provider_rejected", err)
@@ -349,4 +343,18 @@ func (a *storeAPIAdapter) writeBeeperDraft(ctx context.Context, client *beeper.C
 		return a.beeperDraftFailure(ctx, emit, intent, claimed.DraftID, "accepted_local_failed", err)
 	}
 	return emitBeeperDraft(emit, cliStreamStdout, intent, status, finished)
+}
+
+func checkBeeperChat(ctx context.Context, client *beeper.Client, source *store.Source, chatID string) (*beeper.Chat, error) {
+	chat, err := client.GetChat(ctx, chatID)
+	if errors.Is(err, beeper.ErrNotFound) {
+		return nil, draftReplyError("chat_not_found", err)
+	}
+	if err != nil {
+		return nil, draftReplyError("provider_unavailable", err)
+	}
+	if chat.ID != chatID || chat.AccountID != source.Identifier {
+		return nil, draftReplyError("provider_identity_mismatch", errors.New("beeper returned another chat"))
+	}
+	return chat, nil
 }

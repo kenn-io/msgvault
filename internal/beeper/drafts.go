@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // maxDraftResponseBytes bounds a PATCH response, which carries the whole chat.
@@ -51,18 +52,20 @@ func (c Chat) DraftState() (DraftState, error) {
 	return state, nil
 }
 
-// DraftWriteError reports a failed draft write with its HTTP status, or 0
-// when the request may have reached Beeper without a response.
-type DraftWriteError struct {
+// WriteError reports a failed write. Status is the HTTP status Beeper
+// returned, 400 for a 200 upload response that carries an error
+// payload, or 0 when the request may have reached Beeper without a
+// complete success response.
+type WriteError struct {
 	Status int
 	Err    error
 }
 
-func (e *DraftWriteError) Error() string {
-	return fmt.Sprintf("beeper draft update failed (status %d)", e.Status)
+func (e *WriteError) Error() string {
+	return fmt.Sprintf("beeper write failed (status %d)", e.Status)
 }
 
-func (e *DraftWriteError) Unwrap() error { return e.Err }
+func (e *WriteError) Unwrap() error { return e.Err }
 
 // SetDraft replaces a chat's composer draft with text, or clears it when text
 // is nil. Beeper rejects setting text over an occupied draft, so callers clear
@@ -76,6 +79,18 @@ func (c *Client) SetDraft(ctx context.Context, chatID string, text *string) (*Ch
 		}
 		body = encoded
 	}
+	data, err := c.writeOnce(ctx, http.MethodPatch, "/v1/chats/"+url.PathEscape(chatID), "application/json", bytes.NewReader(body), c.http.Timeout, false)
+	if err != nil {
+		return nil, err
+	}
+	var chat Chat
+	if err := json.Unmarshal(data, &chat); err != nil {
+		return nil, &WriteError{Err: err}
+	}
+	return &chat, nil
+}
+
+func (c *Client) writeOnce(ctx context.Context, method, path, contentType string, body io.Reader, timeout time.Duration, refuseRedirects bool) ([]byte, error) {
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("wait for beeper rate limit: %w", err)
 	}
@@ -83,28 +98,33 @@ func (c *Client) SetDraft(ctx context.Context, chatID string, text *string) (*Ch
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+"/v1/chats/"+url.PathEscape(chatID), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	req.Header.Set("Content-Type", contentType)
+	writeClient := *c.http
+	writeClient.Timeout = timeout
+	if refuseRedirects {
+		writeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
+	resp, err := writeClient.Do(req)
 	if err != nil {
-		return nil, &DraftWriteError{Err: err}
+		return nil, &WriteError{Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDraftResponseBytes))
 	if err != nil {
-		return nil, &DraftWriteError{Err: err}
+		failure := &WriteError{Err: err}
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			failure.Status = resp.StatusCode
+		}
+		return nil, failure
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, &DraftWriteError{Status: resp.StatusCode, Err: errPermanentResponse}
+		return nil, &WriteError{Status: resp.StatusCode, Err: errPermanentResponse}
 	}
-	var chat Chat
-	if err := json.Unmarshal(data, &chat); err != nil {
-		return nil, &DraftWriteError{Err: err}
-	}
-	return &chat, nil
+	return data, nil
 }

@@ -892,6 +892,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
 		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
 		beeperDraftPolicy:      snapshotBeeperDraftPolicy(cfg),
+		beeperSendPolicy:       slices.Clone(cfg.Beeper.Sends),
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
@@ -1780,6 +1781,7 @@ type storeAPIAdapter struct {
 	draftClientFactory        func(context.Context, *store.Source) (*imaplib.Client, error)
 	gmailDraftPolicy          []config.GmailDraftSource
 	beeperDraftPolicy         []config.GmailDraftSource
+	beeperSendPolicy          []config.GmailDraftSource
 	gmailDraftClientFactory   func(context.Context, *store.Source) (gmail.DraftAPI, error)
 	calendarClientFactory     func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
 	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
@@ -2559,6 +2561,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 			return nil
 		}
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
+	}
+	if api.IsCLIRunSendMessage(req.Args) {
+		return a.runCLISendMessage(ctx, req, emit)
 	}
 	if api.IsCLIRunDraftCreate(req.Args) {
 		if api.IsCLIRunDraftForward(req.Args) {

@@ -19,6 +19,8 @@ type draftComposeIntent struct {
 	SourceID    int64
 	SourceIDSet bool
 	To          []string
+	File        []string
+	Send        bool
 	Cc          []string
 	Bcc         []string
 	Subject     string
@@ -34,10 +36,10 @@ func invalidDraftComposeArgs(format string, args ...any) (draftComposeIntent, er
 }
 
 func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
-	if !api.IsCLIRunDraftCompose(args) {
+	if !api.IsCLIRunDraftCompose(args) && !api.IsCLIRunSendMessage(args) {
 		return invalidDraftComposeArgs("expected %s as the first argument", api.CLIRunDraftComposeCommand)
 	}
-	var intent draftComposeIntent
+	intent := draftComposeIntent{Send: api.IsCLIRunSendMessage(args)}
 	var fromSet, accountSet, sourceIDSet, subjectSet, bodySet, jsonSet bool
 	rest := args[1:]
 	for len(rest) > 0 {
@@ -49,7 +51,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 		}
 		name, value, hasValue := strings.Cut(nameValue, "=")
 		switch name {
-		case draftFromFlag, "account", "source-id", "subject", "body", "to", "cc", "bcc", "conversation", "reply-to":
+		case draftFromFlag, "account", "source-id", "subject", "body", "to", "cc", "bcc", "conversation", "reply-to", "file":
 			if !hasValue {
 				if len(rest) == 0 {
 					return invalidDraftComposeArgs("--%s requires a value", name)
@@ -102,6 +104,11 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 					return invalidDraftComposeArgs("--body given more than once")
 				}
 				intent.Body, bodySet = value, true
+			case "file":
+				if !intent.Send || strings.TrimSpace(value) == "" {
+					return invalidDraftComposeArgs("--file requires a path for send-message")
+				}
+				intent.File = append(intent.File, value)
 			case "to":
 				if strings.TrimSpace(value) == "" {
 					return invalidDraftComposeArgs("--to must not be empty")
@@ -130,6 +137,18 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 		default:
 			return invalidDraftComposeArgs("unknown flag --%s", name)
 		}
+	}
+	if intent.Send {
+		if accountSet == sourceIDSet || len(intent.To) != 1 || len(intent.File) > 1 || fromSet || subjectSet || len(intent.Cc)+len(intent.Bcc) != 0 || intent.ConversationID != 0 {
+			return invalidDraftComposeArgs("send-message requires one source, one --to, and at most one --file; no email or conversation flags")
+		}
+		intent.To[0] = strings.TrimSpace(intent.To[0])
+		if bodySet || len(intent.File) == 0 {
+			if err := validBeeperDraftBody(intent.Body); err != nil {
+				return invalidDraftComposeArgs("%s", err)
+			}
+		}
+		return intent, nil
 	}
 	if intent.ConversationID != 0 {
 		if fromSet || accountSet || sourceIDSet || subjectSet || len(intent.To)+len(intent.Cc)+len(intent.Bcc) > 0 {

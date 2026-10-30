@@ -74,12 +74,13 @@ non-dry-run plan through client elicitation.
 
 ## Draft tools
 
-These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
+These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Draft commands do not send. On unreleased `main`, `send_message` sends immediately and requires API schema 3.28.0 or newer.
 
 `draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
 
 | Tool | Command | Parameters |
 |---|---|---|
+| `send_message` | `send-message` | Required `to` chat ID (string); `account` or `source_id`; `body` and/or `file`; optional `reply_to` |
 | `draft_reply` | `draft-reply` | Required `message_id`, `body`; optional `from`, `all`, `account`, `source_id` |
 | `draft_compose` | `draft-compose` | `account`, `source_id`, `from`, `to`, `cc`, `bcc`, `subject`, `body`, `conversation`, `reply_to` |
 | `draft_forward` | `draft-forward` | Required `message_id`; optional `from`, `to`, `cc`, `bcc`, `account`, `source_id`, `body` |
@@ -89,9 +90,14 @@ These tools run the matching CLI commands through your selected daemon. They req
 | `draft_recover` | `draft-recover` | Required `draft_id`, `revision`; recovery can finish an interrupted deletion |
 | `draft_send_as` | `draft-send-as` | Required `account`; lists Gmail sender identities |
 
-Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
+Draft recipient parameters `to`, `cc`, and `bcc` are arrays of strings. `send_message.to` is one chat ID. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
+`send_message` requires the daemon owner's `[[beeper.sends]]` opt-in.
+Delegated tokens also need `message.send` for that source and cannot attach
+files. For owner sessions, `file` is an absolute daemon-host path. On `remote_unknown`, read the chat before sending again.
+See [send-message](../cli-reference.md#send-message) for results and limits.
+
+Owner sessions expose all nine tools on supporting daemons alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, `draft_recover`, and `send_message` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
 For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
 

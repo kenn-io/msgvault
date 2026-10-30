@@ -328,7 +328,7 @@ func agentDelegatedCapable(cmd *cobra.Command) bool {
 // agentDelegatedCommand owns the command set offered to an agent grant.
 func agentDelegatedCommand(name string) bool {
 	switch name {
-	case "search", "show-message", "show-thread", "stats", "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":
+	case "send-message", "search", "show-message", "show-thread", "stats", "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":
 		return true
 	}
 	return false

@@ -205,7 +205,7 @@ func init() {
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenLabel, "label", "",
 		"Human-readable label for the token (required)")
 	agentTokenIssueCmd.Flags().StringSliceVar(&agentTokenPermissions, "permissions", nil,
-		"Comma-separated permissions (search.read, message.read, attachment.read, stats.read, draft.create, draft.edit, draft.delete, calendar.read, calendar.event.read, calendar.write, calendar.invite)")
+		"Comma-separated permissions (search.read, message.read, attachment.read, stats.read, message.send, draft.create, draft.edit, draft.delete, calendar.read, calendar.event.read, calendar.write, calendar.invite)")
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenSourceIDs, "source-ids", "",
 		"Comma-separated list of source IDs the token may access")
 	agentTokenIssueCmd.Flags().StringArrayVar(&agentTokenSenders, "sender", nil,

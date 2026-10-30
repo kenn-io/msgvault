@@ -285,7 +285,7 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 	positionals := map[string]string{"draft_reply": "message_id", "draft_forward": "message_id", "draft_get": "draft_id", "draft_edit": "draft_id", "draft_delete": "draft_id", "draft_recover": "draft_id", "draft_send_as": "account"}
 	var names []string
 	for _, tool := range listed.Tools {
-		if !strings.HasPrefix(tool.Name, "draft_") {
+		if !strings.HasPrefix(tool.Name, "draft_") && tool.Name != "send_message" {
 			continue
 		}
 		names = append(names, tool.Name)
@@ -310,7 +310,7 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 		sort.Strings(properties)
 		assert.Equal(flags, properties, tool.Name)
 	}
-	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as"}, names)
+	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as", "send_message"}, names)
 }
 
 func TestMCPDraftCapabilityGate(t *testing.T) {
@@ -398,5 +398,69 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 				require.Equal(int64(2), healthCalls.Load(), "startup compatibility and capability probes")
 			})
 		}
+	}
+}
+
+func TestMCPSendMessageCapabilityGate(t *testing.T) {
+	for _, delegated := range []bool{false, true} {
+		assert.NotContains(t, mcpDraftCommandsForSchema(delegated, "3.26.0"), api.CLIRunSendMessageCommand)
+		assert.NotContains(t, mcpDraftCommandsForSchema(delegated, "3.27.0"), api.CLIRunSendMessageCommand)
+		assert.Contains(t, mcpDraftCommandsForSchema(delegated, "3.28.0"), api.CLIRunSendMessageCommand)
+	}
+}
+
+func TestMCPSendMessageFiles(t *testing.T) {
+	requirements := require.New(t)
+	f := newBeeperDraftFixture(t)
+	f.adapter.beeperSendPolicy = []config.GmailDraftSource{{SourceID: f.source.ID, Enabled: true}}
+	_, err := f.store.EnsureConversationWithType(f.source.ID, beeperDraftTestChat, "direct", "Example chat")
+	requirements.NoError(err)
+	var requests []string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/chats/" + beeperDraftTestChat:
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": beeperDraftTestChat, "accountID": f.source.Identifier})
+		case "/v1/assets/upload":
+			_, _ = w.Write([]byte(`{"uploadID":"upload-1"}`))
+		default:
+			_, _ = w.Write([]byte(`{"chatID":"chat","pendingMessageID":"pending-1"}`))
+		}
+	}))
+	defer provider.Close()
+	f.adapter.config.Beeper.URL = provider.URL
+	daemon := mcpDraftTestDaemon(t, f.adapter, nil)
+	path := filepath.Join(t.TempDir(), "photo.png")
+	requirements.NoError(os.WriteFile(path, []byte("image"), 0o600))
+	cwd, err := os.Getwd()
+	requirements.NoError(err)
+	relativePath, err := filepath.Rel(cwd, path)
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		name, path, code string
+		delegated        bool
+	}{
+		{"owner absolute", path, "accepted", false}, {"owner relative", relativePath, "invalid_args", false}, {"delegated", path, "not_permitted", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: daemon.URL, APIKey: "owner-test-key", AllowInsecure: true}})
+			if tc.delegated {
+				ctx = mcpDraftAgentContext(t, daemon, f.source.ID, []string{"message.send"})
+			}
+			session := mcpDraftTestSession(ctx, t)
+			requests = nil
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolSendMessage, Arguments: map[string]any{"source_id": f.source.ID, "to": beeperDraftTestChat, "file": tc.path}})
+			require.NoError(err)
+			assert.Contains(mcpDraftResultText(t, result), tc.code)
+			if tc.code == "accepted" {
+				assert.False(result.IsError)
+				assert.Equal([]string{"GET /v1/chats/" + beeperDraftTestChat, "POST /v1/assets/upload", "POST /v1/chats/" + beeperDraftTestChat + "/messages"}, requests)
+			} else {
+				assert.True(result.IsError)
+				assert.Empty(requests)
+			}
+		})
 	}
 }

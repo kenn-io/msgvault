@@ -133,6 +133,7 @@ Drafts, calendar, and Kata (write to providers):
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
   message-tags  Read or update native email tags
+  send-message  Send to a Beeper chat
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches
@@ -186,7 +187,7 @@ Setup, daemon, and integrations:
   openapi      Print the msgvault OpenAPI schema
   quickstart   Print a quickstart guide for AI agents
   serve        Run msgvault as a daemon with scheduled sync
-  setup        Run first-time setup; 'setup status' shows enabled features
+  setup        Run first-time setup
   skills       Manage agent skills for coding assistants
   update       Update msgvault to the latest version
   version      Print version information
