@@ -1833,21 +1833,6 @@ it('stores relationship readers outside Explore state and shareable URLs', () =>
   } finally { state.destroy(); }
 });
 
-it('restores relationship readers through same-target Back and Forward entries', async () => {
-  window.history.replaceState(null, '', '/?workspace=relationships');
-  const state = new ExploreState(window);
-  const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-  try {
-    state.commitNavigation({ relationshipTarget: 'cluster:1' });
-    state.replaceTransient({ relationshipReader: { ...savedRelationshipReader, anchorId: 10 } });
-    state.commitNavigation({ relationshipReader: null });
-    const back = popped(); window.history.back(); await back;
-    expect(state.current.relationshipReader).toEqual({ ...savedRelationshipReader, anchorId: 10 });
-    const forward = popped(); window.history.forward(); await forward;
-    expect(state.current.relationshipReader).toBeNull();
-  } finally { state.destroy(); }
-});
-
 it('clears relationship readers on target and workspace changes and restores them on Back', async () => {
   window.history.replaceState(null, '', '/?workspace=relationships');
   const state = new ExploreState(window);
@@ -1859,6 +1844,12 @@ it('clears relationship readers on target and workspace changes and restores the
     expect(state.current.relationshipReader).toBeNull();
     const back = popped(); window.history.back(); await back;
     expect(state.current.relationshipReader).toEqual(savedRelationshipReader);
+    state.commitNavigation({ relationshipReader: null });
+    const readerBack = popped(); window.history.back(); await readerBack;
+    expect(state.current.relationshipReader).toEqual(savedRelationshipReader);
+    const forward = popped(); window.history.forward(); await forward;
+    expect(state.current.relationshipReader).toBeNull();
+    state.replaceTransient({ relationshipReader: savedRelationshipReader });
     state.commitWorkspace('files');
     expect(state.current.relationshipReader).toBeNull();
   } finally { state.destroy(); }
