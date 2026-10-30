@@ -61,6 +61,7 @@ linters:
     - intrange
     - iotamixing
     - kennlint
+    - kennnolint
     - loggercheck
     - makezero
     - mirror
@@ -108,6 +109,9 @@ linters:
   #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
 
   settings:
+    nolintlint:
+      require-specific: true
+
     misspell:
       ignore-rules:
         - thrid # Google exports use the literal X-GM-THRID header.
@@ -213,8 +217,13 @@ linters:
         - .Err(
 
     custom:
+      kennnolint:
+        type: module
+        description: Kit suppression rule labels and reasons.
+        original-url: go.kenn.io/kit/lint
       # Kit's analyzers, built into custom-gcl by `make lint`. Only sleeptest
-      # and deadlinetest run. The stock sqlclosecheck and rowserrcheck above
+      # and deadlinetest run here; the separate kennnolint rule is listed above.
+      # The stock sqlclosecheck and rowserrcheck above
       # stay; Kit's copies and its other analyzers are off until they get
       # their own pass.
       kennlint:

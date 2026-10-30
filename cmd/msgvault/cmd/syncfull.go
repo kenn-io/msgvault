@@ -955,12 +955,12 @@ func (p *CLIProgress) printProgress() {
 
 	if p.outputMode() == progressModePlain {
 		_, _ = fmt.Fprintf(p.writer(),
-			"  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s\n",
+			"  Scanned: %07d | Added: %07d | Skipped: %07d | Rate: %.1f/s | Elapsed: %s%s\n",
 			p.processed, p.added, p.skipped, rate, elapsedStr, dateStr)
 		return
 	}
 	_, _ = fmt.Fprintf(p.writer(),
-		"\r  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s    ",
+		"\r  Scanned: %07d | Added: %07d | Skipped: %07d | Rate: %.1f/s | Elapsed: %s%s    ",
 		p.processed, p.added, p.skipped, rate, elapsedStr, dateStr)
 }
 

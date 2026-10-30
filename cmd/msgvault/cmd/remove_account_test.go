@@ -1016,7 +1016,7 @@ func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
 	case result := <-aggregateDone:
 		close(resumeRemoval)
 		require.FailNow("cache reader passed the removal writer lock", "rows=%v err=%v", result.rows, result.err)
-	case <-time.After(150 * time.Millisecond): //nolint:kennlint // absence check: the paused removal holds the writer lock
+	case <-time.After(150 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the paused removal holds the writer lock
 	}
 
 	close(resumeRemoval)
@@ -1610,7 +1610,7 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	select {
 	case err := <-removeDone:
 		require.FailNow("removal bypassed Discord lifecycle lock", "error: %v", err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // absence check: the paused Discord add holds the lifecycle lock
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the paused Discord add holds the lifecycle lock
 	}
 
 	close(resumeAdd)

@@ -4022,7 +4022,7 @@ func TestServeHTTPWithOptions_ContextCancellation(t *testing.T) {
 	}()
 
 	// Give the goroutine a moment to start the listener.
-	time.Sleep(50 * time.Millisecond) //nolint:kennlint // gives the real TCP listener time to start
+	time.Sleep(50 * time.Millisecond) //nolint:kennlint // sleeptest: gives the real TCP listener time to start
 	cancel()
 
 	select {

@@ -1806,6 +1806,11 @@ msgvault sync-slack --private-channels=false --dms=false --group-dms=false
 | `--maintenance` | `false` | Repair edits/reaction changes on recent messages (ignored by default after capture) |
 | `--no-media` | `false` | Skip file downloads for this run (files become pending markers; `backfill-slack-media` fetches them later) |
 
+When a file download fails, the summary shows the error count and the first
+media error, including the Slack file ID. Each failed attachment retains its
+reason in `attachments.attachment_metadata.fetch_error`; the sync run item
+also records the error.
+
 ---
 
 ## backfill-slack-media
@@ -1819,6 +1824,10 @@ already-downloaded ones are never re-fetched. Files hosted outside
 msgvault backfill-slack-media
 msgvault backfill-slack-media T0123456789
 ```
+
+The summary shows the error count and first media error when downloads fail.
+Failed files remain eligible for retry. A successful retry clears the previous
+failure detail from the attachment row.
 
 ---
 

@@ -190,7 +190,6 @@ func seededMutationService(t *testing.T, fixture *mutationFixture) (*Service, *s
 	server := httptest.NewServer(fixture.handler(t))
 	t.Cleanup(server.Close)
 	service, st, book := newPullService(t, server, false)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
 	var personID int64
 	err := st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
 		VALUES (?, ?) RETURNING id`), "person", "Alice Example").Scan(&personID)
@@ -283,6 +282,7 @@ func TestTimedOutUpdatePersistsIntentAndSyncRecoveryDoesNotReplay(t *testing.T) 
 	require.NoError(err)
 	fixture.timeout = true
 
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	err = service.PublishPerson(t.Context(), personID)
 	require.Error(err)
 	assert.Equal(2, fixture.puts)
@@ -309,6 +309,7 @@ func TestTimedOutCreateRecoveryProvesCanonicalResourceWithoutReplay(t *testing.T
 
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, _ := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	_, err := st.DB().Exec(st.Rebind(`UPDATE persons SET display_name = ? WHERE id = ?`), "Alice\nExample", personID)
 	require.NoError(err)
 
@@ -337,6 +338,7 @@ func TestTimedOutCreateRecoveryAdoptsResourceMaterializedByPull(t *testing.T) {
 
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, _ := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 
 	require.Error(service.PublishPerson(t.Context(), personID))
 	assert.Equal(1, fixture.puts)
@@ -389,7 +391,7 @@ func TestCreateRecoveryAcceptsOneConditional412OnlyAfterCanonicalProof(t *testin
 	}))
 	t.Cleanup(server.Close)
 	service, st, personID, _ := seededMutationServiceForServer(t, server)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the first create response must expire before a conditional retry proves the canonical resource
 
 	require.Error(service.PublishPerson(t.Context(), personID))
 	require.NoError(service.PublishPerson(t.Context(), personID))
@@ -607,6 +609,7 @@ func TestTimedOutCreateRecoveryRoutesDivergentCanonicalCardToConflict(t *testing
 	require := require.New(t)
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, _ := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	require.Error(service.PublishPerson(t.Context(), personID))
 	remoteBody := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Remote Owner\r\nEND:VCARD\r\n")
 	fixture.mu.Lock()
@@ -706,6 +709,7 @@ func TestTimedOutDeleteRecoveryAcceptsPullTombstoneWithoutReplay(t *testing.T) {
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	fixture.deleteTimeout = true
 
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	err := service.UnpublishPerson(t.Context(), personID)
 	require.Error(err)
 	publication, getErr := st.GetCardDAVPublicationContext(t.Context(), personID)
@@ -732,6 +736,7 @@ func TestTimedOutDeleteRecoveryAcceptsCanonicalGoneWithoutReplay(t *testing.T) {
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	fixture.deleteTimeout = true
 
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	require.Error(service.UnpublishPerson(t.Context(), personID))
 	assert.Equal(1, fixture.deletes)
 	require.NoError(service.ReconcilePublications(t.Context()))
@@ -870,6 +875,7 @@ func TestActiveRetryGateStopsPendingRecoveryBeforeAnyRequest(t *testing.T) {
 
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, _ := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	require.Error(service.PublishPerson(t.Context(), personID))
 	setRetryGate(t, st, time.Now().Add(time.Hour))
 	requestsBefore := fixture.puts + fixture.gets + fixture.deletes + fixture.reports
@@ -931,6 +937,7 @@ func TestRecoveryGet429PersistsGateAndPreservesPendingIntent(t *testing.T) {
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	addProjectedEmail(t, st, personID)
 	fixture.timeout = true
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds mutation replies until expiry to test ambiguous write recovery
 	require.Error(service.PublishPerson(t.Context(), personID))
 	fixture.throttleGets = 1
 	before := time.Now()

@@ -3,3 +3,9 @@
 self-hosted-runner:
   labels:
     - ubuntu-26.04
+
+# actionlint 1.7.12 predates cache-mode. Remove these ignores once it supports it.
+paths:
+  .github/workflows/*-pr.yml:
+    ignore:
+      - 'unexpected key "cache-mode" for "(job|workflow)" section'

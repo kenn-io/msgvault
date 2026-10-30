@@ -496,6 +496,20 @@ func (d *SQLiteDialect) FTSBackfillBatchSQL() string {
 		WHERE m.id >= ? AND m.id < ?`
 }
 
+func (d *SQLiteDialect) FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.DB) (string, error) {
+	// Use indexed IDs without loading stored FTS text. columnsize=0 tables
+	// have no docsize table and use the same fallback as completeness probes.
+	var id int64
+	err := db.QueryRowContext(ctx, "SELECT id FROM messages_fts_docsize LIMIT 0").Scan(&id)
+	predicate := ` AND NOT EXISTS (SELECT 1 FROM messages_fts_docsize d WHERE d.id = m.id)`
+	if d.IsNoSuchTableError(err) {
+		predicate = ` AND NOT EXISTS (SELECT 1 FROM messages_fts f WHERE f.rowid = m.id)`
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("probe FTS indexed IDs: %w", err)
+	}
+	return d.FTSBackfillBatchSQL() + predicate, nil
+}
+
 // FTSAvailable probes for FTS5 by querying the virtual table.
 // Checking sqlite_master alone is insufficient: a binary built without FTS5
 // support will fail with "no such module: fts5" even if the table exists.
@@ -554,11 +568,6 @@ func (d *SQLiteDialect) FTSNeedsBackfillQuick(ctx context.Context, db *sql.DB) b
 		).Scan(&ftsMax)
 	}
 	return err == nil && ftsMax < msgMax
-}
-
-// FTSClearSQL returns the SQL to clear all FTS5 data.
-func (d *SQLiteDialect) FTSClearSQL() string {
-	return "DELETE FROM messages_fts"
 }
 
 // SchemaFTS returns the embedded filename containing FTS5 virtual table DDL.

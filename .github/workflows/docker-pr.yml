@@ -27,4 +27,5 @@ concurrency:
 
 jobs:
   validate:
+    cache-mode: read
     uses: kenn-io/msgvault/.github/workflows/docker.yml@main

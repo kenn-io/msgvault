@@ -13,4 +13,5 @@ concurrency:
 
 jobs:
   run:
+    cache-mode: read
     uses: kenn-io/msgvault/.github/workflows/ci.yml@main
