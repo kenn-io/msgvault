@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        uses: step-security/setup-buildx-action@e50058a0fcd8d1a7d626c905502d010a468bf238 # v4.4.1
         with:
           driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
 
@@ -30,7 +30,7 @@ jobs:
         run: make web-assets-check
 
       - name: Build amd64 image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        uses: step-security/docker-build-push-action@b736dc8a921e02a288f956d3dd9111e276a4cfec # v7.4.0
         with:
           context: .
           platforms: linux/amd64
