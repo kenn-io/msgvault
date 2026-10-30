@@ -53,11 +53,9 @@ export class DeletionsController {
         if (!data) { this.error = "Can't load staged deletions."; return; }
         const next = data.manifests ?? [];
         const previous = new Map(this.batches.map(batch => [batch.id, batch]));
-        const activeDetails: string[] = [];
         for (const batch of next) {
           const old = previous.get(batch.id);
-          if (old && (old.status !== batch.status || (batch.status === 'in_progress' && this.details[batch.id]))) {
-            if (batch.status === 'in_progress' && this.details[batch.id]) activeDetails.push(batch.id);
+          if (old && old.status !== batch.status) {
             this.#controllers.get(batch.id)?.abort();
             this.#pending.delete(batch.id);
             this.#failed.delete(batch.id);
@@ -72,16 +70,15 @@ export class DeletionsController {
         this.error = '';
         this.loading = false;
         void this.#retention(revision);
-        activeDetails.forEach(id => void this.getDetail(id));
       } catch { if (!controller.signal.aborted && !this.#disposed) this.error = "Can't load staged deletions."; }
       finally { this.loading = false; this.#list = undefined; }
     })();
     return this.#list;
   }
 
-  getDetail(id: string, retry = false): Promise<DeletionManifestDetail | undefined> {
+  getDetail(id: string, { retry = false, fresh = false }: { retry?: boolean; fresh?: boolean } = {}): Promise<DeletionManifestDetail | undefined> {
     if (this.#disposed) return Promise.resolve(undefined);
-    if (this.details[id]) return Promise.resolve(this.details[id]);
+    if (!fresh && this.details[id]) return Promise.resolve(this.details[id]);
     const pending = this.#pending.get(id);
     if (pending) return pending;
     if (this.#failed.has(id) && !retry) return Promise.resolve(undefined);
@@ -135,7 +132,7 @@ export class DeletionsController {
     await Promise.all(Array.from({ length: Math.min(4, older.length) }, async () => {
       while (index < older.length && !found && !this.#disposed && revision === this.#revision) {
         const batch = older[index++];
-        const detail = await this.getDetail(batch.id, true);
+        const detail = await this.getDetail(batch.id, { retry: true });
         if (revision !== this.#revision || this.#disposed) return;
         if (!detail) failed = true;
         else if (batchIsRecent(batch, now, detail.execution?.completed_at)) { found = true; this.visible = true; }
