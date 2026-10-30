@@ -603,6 +603,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, err
 		}
 	}
+	if err := copyPersonDisplayNameOwners(tx); err != nil {
+		return nil, err
+	}
 
 	if options.IncludeAttributes {
 		hasSensitive, err := sourceColumnExists(
@@ -2251,6 +2254,43 @@ func copySubsetInferenceRevisions(tx *sql.Tx) error {
         SELECT person_id, inference_revision FROM src.person_carddav_inference_state
         WHERE person_id IN (SELECT id FROM persons) AND inference_revision > 0`); err != nil {
 		return fmt.Errorf("copy person inference review revisions: %w", err)
+	}
+	return nil
+}
+
+// copyPersonDisplayNameOwners restores the inferred name row that owns each
+// copied display name. Retiring that row clears the display name it mirrors,
+// so the link must survive the copy. When the owning row is not copied, the
+// display name is an inferred profile value outside the subset; keeping it
+// would publish it as a declared name, so it is dropped. Archives older than
+// the link have no owned display names.
+func copyPersonDisplayNameOwners(tx *sql.Tx) error {
+	hasOwner, err := sourceColumnExists(tx, "persons", "display_name_source_name_id")
+	if err != nil {
+		return fmt.Errorf("check person display-name owner schema: %w", err)
+	}
+	if !hasOwner {
+		return nil
+	}
+	if _, err := tx.Exec(`
+		UPDATE persons SET display_name_source_name_id = (
+			SELECT p.display_name_source_name_id FROM src.persons p WHERE p.id = persons.id
+		)
+		WHERE EXISTS (
+			SELECT 1 FROM src.persons p
+			JOIN person_names n ON n.id = p.display_name_source_name_id AND n.person_id = p.id
+			WHERE p.id = persons.id
+		)`); err != nil {
+		return fmt.Errorf("copy person display-name owners: %w", err)
+	}
+	if _, err := tx.Exec(`
+		UPDATE persons SET display_name = NULL
+		WHERE display_name_source_name_id IS NULL
+		  AND EXISTS (
+			SELECT 1 FROM src.persons p
+			WHERE p.id = persons.id AND p.display_name_source_name_id IS NOT NULL
+		)`); err != nil {
+		return fmt.Errorf("drop uncopied inferred display names: %w", err)
 	}
 	return nil
 }

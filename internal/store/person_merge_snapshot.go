@@ -87,6 +87,7 @@ type personMergeSnapshotPerson struct {
 	ID                      int64   `json:"id"`
 	VCardUID                string  `json:"vcard_uid"`
 	DisplayName             *string `json:"display_name,omitzero" nullable:"false"`
+	DisplayNameSourceNameID *int64  `json:"display_name_source_name_id,omitzero" nullable:"false"`
 	Revision                int64   `json:"revision"`
 	VCardProjectionRevision int64   `json:"vcard_projection_revision"`
 	CreatedAt               string  `json:"created_at"`
@@ -308,16 +309,16 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "person_briefs", KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
-	"person_names": {
-		TableName: "person_names", KeyColumn: "id", Snapshot: true,
+	personNamesTableName: {
+		TableName: personNamesTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
 	personContactPointsTableName: {
 		TableName: personContactPointsTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
-	"person_addresses": {
-		TableName: "person_addresses", KeyColumn: "id", Snapshot: true,
+	personAddressesTableName: {
+		TableName: personAddressesTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
 	"person_dates": {
@@ -518,16 +519,19 @@ func capturePersonMergeRootTx(
 	ctx context.Context, tx *loggedTx, personID int64,
 ) (personMergeSnapshotPerson, error) {
 	var (
-		person      personMergeSnapshotPerson
-		displayName sql.NullString
-		createdAt   any
-		updatedAt   any
+		person                  personMergeSnapshotPerson
+		displayName             sql.NullString
+		displayNameSourceNameID sql.NullInt64
+		createdAt               any
+		updatedAt               any
 	)
 	err := tx.QueryRowContext(ctx, `SELECT
-		id, vcard_uid, display_name, revision, vcard_projection_revision,
+		id, vcard_uid, display_name, display_name_source_name_id,
+		revision, vcard_projection_revision,
 		created_at, updated_at
 		FROM persons WHERE id = ?`, personID).Scan(
-		&person.ID, &person.VCardUID, &displayName, &person.Revision,
+		&person.ID, &person.VCardUID, &displayName, &displayNameSourceNameID,
+		&person.Revision,
 		&person.VCardProjectionRevision, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -538,6 +542,9 @@ func capturePersonMergeRootTx(
 	}
 	if displayName.Valid {
 		person.DisplayName = &displayName.String
+	}
+	if displayNameSourceNameID.Valid {
+		person.DisplayNameSourceNameID = &displayNameSourceNameID.Int64
 	}
 	person.CreatedAt = personMergeSnapshotTextValue(createdAt)
 	person.UpdatedAt = personMergeSnapshotTextValue(updatedAt)
