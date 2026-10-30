@@ -32,8 +32,6 @@ export class OperationsController {
   private nextCursor = $state<string>();
   private statusReadable = $state(false);
   private historyReadable = $state(false);
-  private statusUpdatedAt = $state<number>();
-  private statusRefreshing = $state(false);
 
   private initialLoading = $state(false);
   private backgroundLoading = $state(false);
@@ -49,10 +47,8 @@ export class OperationsController {
   private actionError = $state<string | null>(null);
 
   private readonly client: APIClient;
-  private readonly commitURLState: (patch: Pick<OperationsURLState, 'operationRunID'>) => void;
-  private filters: OperationsURLState = emptyURLState();
+  private filters: OperationsURLState = defaultOperationsState();
   private filterSignature = '';
-  private archiveContext = '';
   private selectedRunID: string | null = null;
   private loaded = false;
   private disposed = false;
@@ -67,13 +63,10 @@ export class OperationsController {
   private pageAbort?: AbortController;
   private actionAbort?: AbortController;
   private statusAbort?: AbortController;
+  private statusRead?: Promise<boolean>;
 
-  constructor(
-    client: APIClient,
-    commitURLState: (patch: Pick<OperationsURLState, 'operationRunID'>) => void = () => undefined
-  ) {
+  constructor(client: APIClient) {
     this.client = client;
-    this.commitURLState = commitURLState;
   }
 
   get snapshot(): Readonly<OperationsSnapshot> {
@@ -86,8 +79,6 @@ export class OperationsController {
       nextCursor: this.nextCursor ?? null,
       statusReadable: this.statusReadable,
       historyReadable: this.historyReadable,
-      statusUpdatedAt: this.statusUpdatedAt ?? null,
-      statusRefreshing: this.statusRefreshing,
       initialLoading: this.initialLoading,
       backgroundLoading: this.backgroundLoading,
       paging: this.paging,
@@ -103,22 +94,17 @@ export class OperationsController {
     });
   }
 
-  async applyURLState(state: OperationsURLState, archiveContext = ''): Promise<void> {
+  async applyURLState(state: OperationsURLState, refreshUnchanged = false): Promise<void> {
     if (this.disposed) return;
     const filters = copyURLState(state);
     const signature = filterFingerprint(filters);
-    const archiveChanged = archiveContext !== this.archiveContext;
-    const clearSelectionForArchive = archiveChanged && this.filterSignature !== '' &&
-      filters.operationRunID !== null;
-    if (clearSelectionForArchive) filters.operationRunID = null;
     const filtersChanged = signature !== this.filterSignature;
     const selectionChanged = filters.operationRunID !== this.selectedRunID;
 
-    if (archiveChanged || filtersChanged || !this.loaded) {
+    if (filtersChanged || !this.loaded) {
       this.invalidateContext();
       this.filters = filters;
       this.filterSignature = signature;
-      this.archiveContext = archiveContext;
       this.selectedRunID = filters.operationRunID;
       this.rows = [];
       this.unavailableKinds = [];
@@ -128,11 +114,6 @@ export class OperationsController {
       this.historyReadable = false;
       this.conflict = null;
       this.restartRequired = false;
-      if (archiveChanged) {
-        this.statusKinds = [];
-        this.statusReadable = false;
-      }
-      if (clearSelectionForArchive) this.commitURLState({ operationRunID: null });
       await Promise.all([
         this.loadPageOne(false),
         filters.operationRunID ? this.loadDetail(filters.operationRunID) : Promise.resolve()
@@ -142,29 +123,36 @@ export class OperationsController {
 
     if (selectionChanged) {
       this.selectedRunID = filters.operationRunID;
-      if (filters.operationRunID) await this.loadDetail(filters.operationRunID);
-      else this.clearDetail();
+      if (!filters.operationRunID) this.clearDetail();
+      else if (!refreshUnchanged) await this.loadDetail(filters.operationRunID);
     }
+    if (refreshUnchanged) await this.refresh();
   }
 
   async refresh(): Promise<boolean> {
     if (this.disposed) return false;
-    return this.loadPageOne(this.loaded);
+    const results = await Promise.all([
+      this.loadPageOne(this.loaded),
+      this.selectedRunID ? this.loadDetail(this.selectedRunID) : Promise.resolve(true),
+    ]);
+    return results.every(Boolean);
   }
 
-  async refreshStatus(): Promise<boolean> {
-    if (this.disposed || !this.loaded || this.initialLoading || this.backgroundLoading ||
-      this.statusRefreshing) {
-      return false;
-    }
+  refreshStatus(supersede = false): Promise<boolean> {
+    if (this.disposed) return Promise.resolve(false);
+    if (this.statusRead && !supersede) return this.statusRead;
+    this.cancelStatus();
+    return this.statusRead = this.readStatus();
+  }
+
+  private async readStatus(): Promise<boolean> {
     const request = new AbortController();
     this.statusAbort = request;
     const context = this.contextGeneration;
     const generation = ++this.statusGeneration;
-    this.statusRefreshing = true;
     try {
       const result = await generatedGetOperationStatus({ ...this.client, signal: request.signal });
-      if (!this.ownsStatus(request, generation, context)) return false;
+      if (!this.ownsStatus(request, generation, context)) return this.statusRead ?? false;
       if (!result.data) {
         this.statusError = 'Unable to load operation status.';
         return false;
@@ -172,15 +160,15 @@ export class OperationsController {
       this.statusKinds = result.data.lanes;
       this.statusReadable = true;
       this.statusError = null;
-      this.statusUpdatedAt = Date.now();
       return true;
     } catch {
-      if (this.ownsStatus(request, generation, context)) this.statusError = 'Unable to load operation status.';
+      if (!this.ownsStatus(request, generation, context)) return this.statusRead ?? false;
+      this.statusError = 'Unable to load operation status.';
       return false;
     } finally {
       if (this.ownsStatus(request, generation, context)) {
         this.statusAbort = undefined;
-        this.statusRefreshing = false;
+        this.statusRead = undefined;
       }
     }
   }
@@ -273,9 +261,8 @@ export class OperationsController {
 
     if (reconcile && this.ownsAction(request, generation, context)) {
       const readable = await this.refresh();
-      const detailReadable = this.selectedRunID ? await this.loadDetail(this.selectedRunID) : undefined;
       if (!this.ownsAction(request, generation, context)) return 'discarded';
-      const reconciled = readable && detailReadable !== false;
+      const reconciled = readable;
       if (uncertain) {
         this.actionError = reconciled
           ? 'The operation result is uncertain. Current state was refreshed.'
@@ -307,7 +294,6 @@ export class OperationsController {
   private async loadPageOne(background: boolean): Promise<boolean> {
     this.readAbort?.abort();
     this.cancelPage();
-    this.cancelStatus();
     const request = new AbortController();
     this.readAbort = request;
     const context = this.contextGeneration;
@@ -321,7 +307,7 @@ export class OperationsController {
     else this.initialLoading = true;
 
     const [statusResult, runsResult] = await Promise.allSettled([
-      generatedGetOperationStatus({ ...this.client, signal: request.signal }),
+      this.refreshStatus(true),
       generatedListOperationRuns(operationQuery(this.filters), {
         ...this.client,
         signal: request.signal,
@@ -329,15 +315,7 @@ export class OperationsController {
     ]);
     if (!this.ownsRead(request, generation, context)) return false;
 
-    let statusSucceeded = false;
-    if (statusResult.status === 'fulfilled' && statusResult.value.data) {
-      this.statusKinds = statusResult.value.data.lanes;
-      this.statusReadable = true;
-      this.statusUpdatedAt = Date.now();
-      statusSucceeded = true;
-    } else {
-      this.statusError = 'Unable to load operation status.';
-    }
+    const statusSucceeded = statusResult.status === 'fulfilled' && statusResult.value;
 
     let historySucceeded = false;
     if (runsResult.status === 'fulfilled' && runsResult.value.response.status === 409) {
@@ -366,7 +344,7 @@ export class OperationsController {
     this.detailAbort = request;
     const context = this.contextGeneration;
     const generation = ++this.detailGeneration;
-    this.detail = undefined;
+    if (this.detail?.id !== id) this.detail = undefined;
     this.detailError = null;
     this.detailLoading = true;
     try {
@@ -433,8 +411,8 @@ export class OperationsController {
   private cancelStatus(): void {
     this.statusAbort?.abort();
     this.statusAbort = undefined;
+    this.statusRead = undefined;
     this.statusGeneration += 1;
-    this.statusRefreshing = false;
   }
 
   private advertisedActions(): Set<OperationAction> {
@@ -476,10 +454,10 @@ export class OperationsController {
   }
 }
 
-function emptyURLState(): OperationsURLState {
+export function defaultOperationsState(kind: OperationsURLState['operationKind'] = ''): OperationsURLState {
   return {
     operationLane: '',
-    operationKind: '',
+    operationKind: kind,
     operationState: '',
     operationStartedFrom: '',
     operationStartedBefore: '',

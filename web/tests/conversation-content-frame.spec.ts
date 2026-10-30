@@ -1,5 +1,12 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { setKitTheme } from './kit-ui';
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
+});
 
 const row = {
   key: 'source:1:message:source-1',
@@ -117,7 +124,7 @@ test('archived content has an opaque capability boundary and durable conversatio
 
   const explore = encodeURIComponent(JSON.stringify({ workspace: 'everything' }));
   await page.goto(`/?feature=reader-security&explore=${explore}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText(row.title)).toBeVisible();
   await grid.focus();
   const priorURL = page.url();
@@ -361,7 +368,7 @@ test('opening a message fires no sender-host request until images are enabled', 
 
   const explore = encodeURIComponent(JSON.stringify({ workspace: 'everything' }));
   await page.goto(`/?feature=reader-security&explore=${explore}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText(row.title)).toBeVisible();
   await grid.focus();
   await page.keyboard.press('Enter');
@@ -412,11 +419,9 @@ test.describe('designed archived mail', () => {
   test('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await expect(page.locator('html')).toHaveClass(/dark/);
-    await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
+    await page.getByRole('grid', { name: 'Messages results' }).getByText(row.title).click();
     const content = page.locator('iframe[title="Message body"]').contentFrame();
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
-    let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
-    await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
@@ -461,7 +466,7 @@ test.describe('designed archived mail', () => {
       }]
     } }));
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-    await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
+    await page.getByRole('grid', { name: 'Messages results' }).getByText(row.title).click();
     const content = page.locator('iframe[title="Message body"]').contentFrame();
     await expect.poll(async () => content.locator('html').evaluate((element) => ({
       overflow: element.scrollWidth > element.clientWidth,
@@ -492,7 +497,7 @@ test('switching to light ignores the original-colors override for simple mail', 
     }]
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
+  await page.getByRole('grid', { name: 'Messages results' }).getByText(row.title).click();
   const frame = page.locator('iframe[title="Message body"]');
   await expect(frame.contentFrame().getByText('Simple reply')).toHaveCSS('color', 'rgb(242, 243, 245)');
   await page.getByRole('button', { name: 'Use original colors' }).click();

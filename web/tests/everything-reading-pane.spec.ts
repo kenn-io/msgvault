@@ -1,5 +1,12 @@
+import { stubOperationStatus } from './kit-ui';
 import { recordingMessage, recordingTranscript, recordingSearchHit, recordingSearchReport } from '../src/lib/archive/recording-fixtures.test-support';
 import { expect, test } from '@playwright/test';
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
+});
 
 function entry(index: number) {
   return {
@@ -58,7 +65,7 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
     results: Array.from({ length: 20 }, (_, index) => recordingSearchHit({ containing_title: `Recording ${index + 1}` }))
   }) }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
   const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
@@ -121,7 +128,7 @@ test('recording reader restores history and focus', async ({ page }) => {
   await expect(reader).toHaveCount(0);
   await page.goBack();
   await expect(reader).toBeVisible();
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('quarterly');
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('quarterly');
   await expect(link).toBeVisible();
   await page.clock.fastForward(30_001);
   await reader.getByRole('button', { name: 'Close reading pane' }).click();
@@ -142,7 +149,7 @@ test('the bottom reading pane opens on a single click, resizes, and persists its
   }));
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
 
   // A single click opens the reading pane as a bottom split, never a drawer.
@@ -205,7 +212,7 @@ test('a direct multi-target reading-pane URL restores through refresh, Back, and
   });
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeVisible();
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-1/);
   expect(requests).toHaveLength(3);
@@ -249,7 +256,7 @@ test('a drilled aggregate restores after grouped rows clear and through Back and
   } }));
   const state = exploreURLState({ groupingChain: ['source'] });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
-  const grouped = page.getByRole('grid', { name: 'Everything grouped by source' });
+  const grouped = page.getByRole('grid', { name: 'Messages grouped by source' });
   await expect(grouped.getByText('Example source group')).toBeVisible();
 
   await page.getByRole('button', { name: 'Drill into Example source group' }).click();
@@ -257,7 +264,7 @@ test('a drilled aggregate restores after grouped rows clear and through Back and
   await expect(grouped).toHaveCount(0);
 
   await page.goBack();
-  await expect(page.getByRole('grid', { name: 'Everything grouped by source' })).toBeVisible();
+  await expect(page.getByRole('grid', { name: 'Messages grouped by source' })).toBeVisible();
   await page.goForward();
   await expect(page.getByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeVisible();
 });
@@ -281,14 +288,14 @@ test('global command and Escape shortcuts stay suspended in editable controls', 
   });
 
   for (const locator of [
-    page.getByRole('searchbox', { name: 'Search everything' }),
+    page.getByRole('searchbox', { name: 'Search messages' }),
     page.locator('#shortcut-textarea'),
     page.locator('#shortcut-editable')
   ]) {
     await locator.focus();
     await page.keyboard.press('Control+K');
     await page.keyboard.press('Meta+K');
-    await expect(page.getByRole('dialog', { name: 'Everything commands' })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Messages commands' })).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(locator).toBeFocused();
   }
@@ -304,12 +311,17 @@ test('right preview resizes, restores its width, and falls back below on narrow 
     cache_revision: 'cache-layout', search_provenance: {}
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.getByText('Synthetic subject 1').click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
-  const position = page.getByRole('radiogroup', { name: 'Preview position' });
-  await position.getByRole('radio', { name: 'Right', exact: true }).click();
+  const position = page.getByRole('group', { name: 'Reader position' });
+  const moveReader = async (name: string) => {
+    await page.getByRole('button', { name: 'Display', exact: true }).click();
+    await page.getByRole('menuitemradio', { name, exact: true }).click();
+    await page.keyboard.press('Escape');
+  };
+  await moveReader('Right');
   await expect(resize).toHaveAttribute('aria-orientation', 'vertical');
   const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
   const secondary = page.locator('.results-split > [data-split-pane] > [data-pane="secondary"]');
@@ -334,7 +346,9 @@ test('right preview resizes, restores its width, and falls back below on narrow 
 
   await page.setViewportSize({ width: 760, height: 900 });
   await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
+  await page.getByRole('button', { name: 'Display', exact: true }).click();
   await expect(position).toHaveCount(0);
+  await page.keyboard.press('Escape');
   const narrowList = (await primary.boundingBox())!;
   expect((await secondary.boundingBox())!.y).toBeGreaterThanOrEqual(narrowList.y + narrowList.height);
   await expect(reading).toBeVisible();
@@ -342,15 +356,15 @@ test('right preview resizes, restores its width, and falls back below on narrow 
   await page.setViewportSize({ width: 1920, height: 1080 });
   await expect(resize).toHaveAttribute('aria-orientation', 'vertical');
   await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
-  await position.getByRole('radio', { name: 'Below', exact: true }).click();
+  await moveReader('Below');
   await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
   await resize.press('ArrowUp');
   const bottomHeight = (await secondary.boundingBox())!.height;
-  await position.getByRole('radio', { name: 'Right', exact: true }).click();
+  await moveReader('Right');
   await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
-  await position.getByRole('radio', { name: 'Below', exact: true }).click();
+  await moveReader('Below');
   await expect.poll(async () => (await secondary.boundingBox())!.height).toBe(bottomHeight);
-  await position.getByRole('radio', { name: 'Right', exact: true }).click();
+  await moveReader('Right');
   await page.getByRole('button', { name: 'Close reading pane' }).click();
   await expect(grid).toBeFocused();
   await expect.poll(async () => (await primary.boundingBox())!.width)

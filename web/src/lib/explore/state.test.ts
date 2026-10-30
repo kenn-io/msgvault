@@ -64,6 +64,41 @@ describe('Explore URL state', () => {
     }
   });
 
+  it.each(['stay', 'leave'] as const)('closes Past runs over an unindexed history destination and handles %s', async outcome => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    let leave!: () => void;
+    let stay: (() => void) | undefined;
+    try {
+      state.openOperationHistory({ operationKind: 'source_sync' });
+      state.commitNavigation({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
+      state.holdLeave = (next, restore) => { leave = next; stay = restore; return true; };
+      const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.go(-3);
+      await popped;
+      expect(state.current).toMatchObject({ workspace: 'settings', operationHistory: false,
+        operationKind: '', operationRunID: null });
+      expect(window.location.search).toBe('?workspace=sources');
+      expect(window.history.state).toBeNull();
+      state.holdLeave = undefined;
+      if (outcome === 'leave') leave();
+      else {
+        stay!();
+        expect(state.current.workspace).toBe('settings');
+        expect(parseExploreURLState(window.location.search)).toMatchObject({ workspace: 'settings', operationHistory: false });
+        const back = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+        window.history.back();
+        await back;
+      }
+      expect(state.current).toMatchObject({ workspace: 'sources', operationHistory: false });
+      expect(window.location.search).toBe('?workspace=sources');
+      expect(window.history.state).toBeNull();
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('drops a held Back to an unindexed entry when Forward returns to Settings first', async () => {
     window.history.replaceState(null, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
@@ -101,6 +136,49 @@ describe('Explore URL state', () => {
       leave();
       expect(state.current.workspace).toBe('sources');
       expect(window.location.search).toBe('?workspace=sources&mode=full_text');
+    } finally {
+      state.destroy();
+    }
+  });
+
+  it('closes Past runs while holding a departure from dirty Settings', () => {
+    window.history.replaceState(null, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    let leave!: () => void;
+    state.holdLeave = (next) => { leave = next; return true; };
+    try {
+      state.openOperationHistory({ operationKind: 'source_sync', operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
+      state.commitNavigation({ workspace: 'sources', operationHistory: false,
+        operationKind: '', operationRunID: null });
+      expect(state.current).toMatchObject({ workspace: 'settings', operationHistory: false,
+        operationKind: '', operationRunID: null });
+      state.holdLeave = undefined;
+      leave();
+      expect(state.current).toMatchObject({ workspace: 'sources', operationHistory: false });
+    } finally {
+      state.destroy();
+    }
+  });
+
+  it('closes Past runs after restoring dirty Settings from a three-entry Back jump', async () => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    let leave!: () => void;
+    try {
+      state.commitWorkspace('settings');
+      state.openOperationHistory({ operationKind: 'source_sync' });
+      state.commitNavigation({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
+      const settingsIndex = window.history.state.exploreIndex;
+      state.holdLeave = (next) => { leave = next; return true; };
+      window.history.go(-3);
+      await waitFor(() => expect(leave).toBeTypeOf('function'));
+      await waitFor(() => expect(window.history.state.exploreIndex).toBe(settingsIndex));
+      expect(state.current).toMatchObject({ workspace: 'settings', operationHistory: false,
+        operationKind: '', operationRunID: null });
+      expect(parseExploreURLState(window.location.search).operationHistory).toBe(false);
+      state.holdLeave = undefined;
+      leave();
+      await waitFor(() => expect(state.current.workspace).toBe('sources'));
     } finally {
       state.destroy();
     }
@@ -149,6 +227,12 @@ describe('Explore URL state', () => {
     expect(state.current.operationState).toBe('paused');
     state.destroy();
   });
+  it('routes legacy Operations links to Settings overview', () => {
+    const state = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations', settingsCategory: 'server' }))}`);
+    expect(state.workspace).toBe('settings');
+    expect(state.settingsCategory).toBe('overview');
+  });
+
   it('drops an impossible Directory date when reading the URL', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory', directoryLastContactAfter: '2026-02-31', directoryLastContactBefore: '2026-03-01'
@@ -195,7 +279,7 @@ describe('Explore URL state', () => {
   it('keeps inactive workspace choices in browser history while sharing only the current view', async () => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
-    state.commitNavigation({ relationshipTarget: 'cluster:42' });
+    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:42' });
     state.commitWorkspace('everything');
     expect(window.location.search).toBe('?workspace=everything&mode=full_text');
 
@@ -312,7 +396,7 @@ describe('Explore URL state', () => {
     const operationRunID = `op2.${'a'.repeat(32)}.syntheticCiphertext_1`;
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'operations',
+      workspace: 'everything',
       operationLane: 'documents',
       operationKind: 'document_extraction',
       operationState: 'partial',
@@ -324,7 +408,7 @@ describe('Explore URL state', () => {
     } as ExploreURLState));
 
     expect(restored).toMatchObject({
-      workspace: 'operations',
+      workspace: 'everything',
       operationLane: 'documents',
       operationKind: 'document_extraction',
       operationState: 'partial',
@@ -341,12 +425,12 @@ describe('Explore URL state', () => {
       'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
     ] as const) {
       const restored = parseExploreURLState(serializeExploreURLState({
-        ...defaultExploreURLState, workspace: 'operations', operationStatus
+        ...defaultExploreURLState, workspace: 'everything', operationStatus
       }));
       expect(restored.operationStatus).toBe(operationStatus);
     }
     const invalid = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState, workspace: 'operations', operationStatus: 'getCardDAVStatus'
+      ...defaultExploreURLState, workspace: 'everything', operationStatus: 'getCardDAVStatus'
     } as unknown as ExploreURLState));
     expect(invalid.operationStatus).toBe('');
   });
@@ -454,7 +538,7 @@ describe('Explore URL state', () => {
   it('clears malformed, unknown, and lane-incompatible Operations URL values', () => {
     const invalid = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'operations',
+      workspace: 'everything',
       operationLane: 'contacts',
       operationKind: 'document_embedding',
       operationState: 'future_state',
@@ -464,7 +548,7 @@ describe('Explore URL state', () => {
     } as unknown as ExploreURLState));
 
     expect(invalid).toMatchObject({
-      workspace: 'operations',
+      workspace: 'everything',
       operationLane: 'contacts',
       operationKind: '',
       operationState: '',
@@ -475,7 +559,7 @@ describe('Explore URL state', () => {
 
     const unknownLane = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'operations',
+      workspace: 'everything',
       operationLane: 'future_lane',
       operationKind: 'carddav_sync'
     } as unknown as ExploreURLState));
@@ -486,7 +570,7 @@ describe('Explore URL state', () => {
   it('preserves ordered canonical nanosecond Operations bounds without millisecond truncation', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'operations',
+      workspace: 'everything',
       operationStartedFrom: '2026-08-01T00:00:00.000000001Z',
       operationStartedBefore: '2026-08-01T00:00:00.000000002Z'
     }));
@@ -494,8 +578,9 @@ describe('Explore URL state', () => {
     expect(restored.operationStartedFrom).toBe('2026-08-01T00:00:00.000000001Z');
     expect(restored.operationStartedBefore).toBe('2026-08-01T00:00:00.000000002Z');
   });
+
   it('round-trips every primary management workspace through the URL', () => {
-    for (const workspace of ['saved_views', 'sources', 'deletions'] as const) {
+    for (const workspace of ['sources', 'deletions'] as const) {
       const parsed = parseExploreURLState(serializeExploreURLState({
         ...defaultExploreURLState,
         workspace
@@ -874,6 +959,7 @@ describe('Explore URL state', () => {
   it('normalizes restorable person gallery controls into stable finite values', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
+      workspace: 'relationships',
       personFilePresentation: 'media',
       personFileDirections: ['group', 'from_person', 'group']
     }));
@@ -882,6 +968,7 @@ describe('Explore URL state', () => {
 
     const malformed = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
+      workspace: 'relationships',
       personFilePresentation: 'cards',
       personFileDirections: ['bogus']
     } as unknown as ExploreURLState));
@@ -892,6 +979,7 @@ describe('Explore URL state', () => {
   it.each(['attachment:0', 'recording:abc'])('drops malformed namespaced selection %s', (selectedRow) => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
+      workspace: 'relationships',
       selectedRow
     }));
 
@@ -934,10 +1022,10 @@ describe('relationships workspace state', () => {
     expect(withoutTarget.relationshipTarget).toBeNull();
   });
 
-  it('defaults workspace to relationships', () => {
-    expect(defaultExploreURLState.workspace).toBe('relationships');
+  it('defaults workspace to Messages', () => {
+    expect(defaultExploreURLState.workspace).toBe('everything');
     const restored = parseExploreURLState(`?explore=${encodeURIComponent('{}')}`);
-    expect(restored.workspace).toBe('relationships');
+    expect(restored.workspace).toBe('everything');
     expect(restored.relationshipFacet).toBe('people');
     expect(restored.relationshipTarget).toBeNull();
     expect(restored.relationshipShowAll).toBe(false);
@@ -987,6 +1075,7 @@ describe('relationships workspace state', () => {
   it('rejects invalid facet/target shapes', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
+      workspace: 'relationships',
       relationshipFacet: 'x',
       relationshipTarget: 'garbage'
     } as unknown as ExploreURLState));
@@ -996,18 +1085,21 @@ describe('relationships workspace state', () => {
 
     const validCluster = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
+      workspace: 'relationships',
       relationshipTarget: 'cluster:12'
     } as unknown as ExploreURLState));
     expect(validCluster.relationshipTarget).toBe('cluster:12');
 
     const invalidCluster = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
+      workspace: 'relationships',
       relationshipTarget: 'cluster:abc'
     } as unknown as ExploreURLState));
     expect(invalidCluster.relationshipTarget).toBeNull();
 
     const validDomain = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
+      workspace: 'relationships',
       relationshipTarget: 'domain:example.com'
     } as unknown as ExploreURLState));
     expect(validDomain.relationshipTarget).toBe('domain:example.com');
@@ -1015,112 +1107,6 @@ describe('relationships workspace state', () => {
 });
 
 describe('ExploreState history ownership', () => {
-  it('commits Operations filter changes while clearing detail selection atomically', () => {
-    const operationRunID = `op2.${'b'.repeat(32)}.syntheticCiphertext_2`;
-    window.history.replaceState(null, '', serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'operations',
-      operationLane: 'messages',
-      operationKind: 'source_sync',
-      operationRunID
-    }));
-    const state = new ExploreState(window);
-
-    state.commitRestorableNavigation({ operationState: 'failed' });
-
-    expect(state.current).toMatchObject({
-      operationLane: 'messages',
-      operationKind: 'source_sync',
-      operationState: 'failed',
-      operationRunID: null
-    });
-    expect(parseExploreURLState(window.location.search).operationRunID).toBeNull();
-    state.destroy();
-  });
-
-  it('applies normalized Operations filter dependencies atomically to live state and history', async () => {
-    const operationRunID = `op2.${'e'.repeat(32)}.syntheticCiphertext_5`;
-    window.history.replaceState(null, '', serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'operations',
-      operationLane: 'messages',
-      operationKind: 'source_sync',
-      operationStartedFrom: '2026-08-01T00:00:00Z',
-      operationStartedBefore: '2026-09-01T00:00:00Z',
-      operationRunID
-    }));
-    const state = new ExploreState(window);
-
-    state.commitRestorableNavigation({
-      operationLane: 'contacts',
-      operationStartedBefore: '2026-07-01T00:00:00Z'
-    });
-
-    expect(state.current).toMatchObject({
-      operationLane: 'contacts',
-      operationKind: '',
-      operationStartedFrom: '',
-      operationStartedBefore: '',
-      operationRunID: null
-    });
-    expect(parseExploreURLState(window.location.search)).toMatchObject({
-      operationLane: 'contacts',
-      operationKind: '',
-      operationStartedFrom: '',
-      operationStartedBefore: '',
-      operationRunID: null
-    });
-
-    window.history.back();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current).toMatchObject({
-      operationLane: 'messages',
-      operationKind: 'source_sync',
-      operationStartedFrom: '2026-08-01T00:00:00Z',
-      operationStartedBefore: '2026-09-01T00:00:00Z',
-      operationRunID
-    });
-
-    window.history.forward();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current).toMatchObject({
-      operationLane: 'contacts',
-      operationKind: '',
-      operationStartedFrom: '',
-      operationStartedBefore: '',
-      operationRunID: null
-    });
-    state.destroy();
-  });
-
-  it('restores Operations filters and detail selection on browser back and forward', async () => {
-    const firstRunID = `op2.${'c'.repeat(32)}.syntheticCiphertext_3`;
-    const secondRunID = `op2.${'d'.repeat(32)}.syntheticCiphertext_4`;
-    window.history.replaceState(null, '', serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'operations',
-      operationLane: 'messages',
-      operationKind: 'message_embedding',
-      operationState: 'running',
-      operationRunID: firstRunID
-    }));
-    const state = new ExploreState(window);
-
-    state.commitRestorableNavigation({ operationRunID: secondRunID });
-    window.history.back();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current).toMatchObject({
-      operationLane: 'messages',
-      operationKind: 'message_embedding',
-      operationState: 'running',
-      operationRunID: firstRunID
-    });
-
-    window.history.forward();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current.operationRunID).toBe(secondRunID);
-    state.destroy();
-  });
 
   it('restores Directory filters and selection on browser back and forward', async () => {
     window.history.replaceState(null, '', serializeExploreURLState({
@@ -1593,7 +1579,7 @@ describe('ExploreState history ownership', () => {
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
 
     expect(state.current).toMatchObject({
-      workspace: 'relationships',
+      workspace: 'everything',
       query: 'alpha',
       searchMode: 'full_text',
       columns: ['kind', 'title', 'time'],
@@ -1794,4 +1780,49 @@ describe('session-owned exploration selection', () => {
     ).toThrow('candidate snapshot');
   });
 
+});
+
+it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s after changing filters and detail', async action => {
+  window.history.replaceState(null, '', '/?workspace=files');
+  const state = new ExploreState(window);
+  state.commitWorkspace('everything');
+  state.replaceSearchDraft('budget', 'full_text');
+  const opening = window.location.href;
+  const runID = `op2.${'a'.repeat(32)}.exampleRun`;
+  state.openOperationHistory({ operationKind: 'source_sync', operationRunID: runID });
+  expect(state.current).toMatchObject({ operationHistory: true, operationKind: 'source_sync', operationRunID: runID });
+  state.openOperationHistory({ operationKind: 'carddav_sync' });
+  expect(state.current.operationRunID).toBeNull();
+  state.openOperationHistory({ operationRunID: runID });
+  expect(state.current.operationRunID).toBe(runID);
+  let step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.back();
+  await step;
+  expect(state.current.operationHistory).toBe(true);
+  expect(state.current.operationKind).toBe('carddav_sync');
+  expect(state.current.operationRunID).toBeNull();
+  step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.forward();
+  await step;
+  expect(state.current.operationRunID).toBe(runID);
+
+  const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  if (action === 'close') state.closeOperationHistory();
+  else window.history.back();
+  await popped;
+  if (action === 'back') {
+    for (let entry = 0; entry < 2; entry++) {
+      const step = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await step;
+    }
+  }
+  expect(window.location.href).toBe(opening);
+  expect(state.current.operationHistory).toBe(false);
+  const previous = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  window.history.back();
+  await previous;
+  expect(state.current.workspace).toBe('files');
+  expect(state.current.operationHistory).toBe(false);
+  state.destroy();
 });

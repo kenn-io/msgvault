@@ -147,7 +147,7 @@ const OPERATION_FILTER_FIELDS = [
 
 export const defaultExploreURLState: ExploreURLState = {
   schemaVersion: 2,
-  workspace: 'relationships',
+  workspace: 'everything',
   directoryQuery: '',
   directoryContactState: '',
   directoryCategory: '',
@@ -179,6 +179,7 @@ export const defaultExploreURLState: ExploreURLState = {
   relationshipTarget: null,
   relationshipShowAll: false,
   relationshipFiles: false,
+  operationHistory: false,
   operationLane: '',
   operationKind: '',
   operationState: '',
@@ -199,7 +200,7 @@ export const defaultExploreURLState: ExploreURLState = {
 
 interface ExploreWindow {
   location: Pick<Location, 'href' | 'pathname' | 'search' | 'hash'>;
-  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'go'>;
+  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'go' | 'back'>;
   addEventListener(type: 'popstate', listener: () => void): void;
   removeEventListener(type: 'popstate', listener: () => void): void;
 }
@@ -412,10 +413,10 @@ function normalize(value: unknown): ExploreURLState {
     value.workspace === 'people' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
   const workspace = value.workspace === 'everything' || value.workspace === 'directory' || value.workspace === 'directory_review' || value.workspace === 'settings' ||
     value.workspace === 'files' || value.workspace === 'relationships' ||
-    value.workspace === 'saved_views' || value.workspace === 'sources' ||
-    value.workspace === 'deletions' || value.workspace === 'operations'
+    value.workspace === 'sources' ||
+    value.workspace === 'deletions'
     ? value.workspace
-    : 'relationships';
+    : legacyFacet ? 'relationships' : value.workspace === 'operations' ? 'settings' : 'everything';
   const filesView = workspace === 'files' || (workspace === 'everything' && presentation === 'files');
   const normalizedWorkspace = filesView ? 'files' : workspace;
   const normalizedPresentation = filesView
@@ -459,6 +460,10 @@ function normalize(value: unknown): ExploreURLState {
     OPERATION_STATES.has(value.operationState as OperationState)
     ? value.operationState as OperationState
     : '';
+  const operationStatus = typeof value.operationStatus === 'string' &&
+      OPERATION_STATUS_AUTHORITIES.has(value.operationStatus as OperationStatusAuthority)
+      ? value.operationStatus as OperationStatusAuthority
+      : '';
   let operationStartedFrom = operationDateBound(value.operationStartedFrom);
   let operationStartedBefore = operationDateBound(value.operationStartedBefore);
   if (operationStartedFrom !== '' && operationStartedBefore !== '' &&
@@ -512,18 +517,17 @@ function normalize(value: unknown): ExploreURLState {
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
+    operationHistory: value.operationHistory === true || !!(operationRunID(value.operationRunID) || operationStatus ||
+      operationLane || operationKind || operationState || operationStartedFrom || operationStartedBefore),
     operationLane,
     operationKind,
     operationState,
     operationStartedFrom,
     operationStartedBefore,
     operationRunID: operationRunID(value.operationRunID),
-    operationStatus: typeof value.operationStatus === 'string' &&
-      OPERATION_STATUS_AUTHORITIES.has(value.operationStatus as OperationStatusAuthority)
-      ? value.operationStatus as OperationStatusAuthority
-      : '',
+    operationStatus,
     settingsAuthority,
-    settingsCategory: settingsCategory(value.settingsCategory, settingsAuthority),
+    settingsCategory: settingsCategory(value.workspace === 'operations' ? 'overview' : value.settingsCategory, settingsAuthority),
     columns: columns(value.columns),
     columnWidths: widths(value.columnWidths),
     activeRow:
@@ -568,13 +572,6 @@ const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<Expl
   relationshipTarget: ['relationships'],
   relationshipShowAll: ['relationships'],
   relationshipFiles: ['relationships'],
-  operationLane: ['operations'],
-  operationKind: ['operations'],
-  operationState: ['operations'],
-  operationStartedFrom: ['operations'],
-  operationStartedBefore: ['operations'],
-  operationRunID: ['operations'],
-  operationStatus: ['operations'],
   settingsAuthority: ['settings'],
   settingsCategory: ['settings']
 };
@@ -646,6 +643,7 @@ export class ExploreState {
   private readonly handlePopState = (): void => {
     if (this.restoringHeldLeave) {
       this.restoringHeldLeave = false;
+      if (this.current.operationHistory) this.clearOperationHistory();
       return;
     }
     const next = this.readURLState();
@@ -661,7 +659,9 @@ export class ExploreState {
   private holdPop(delta: number, commit: () => void): boolean {
     if (delta === 0) {
       this.pendingHeldLeaveRestore = () => this.pushCommitted();
-      return this.holdLeave?.(commit, this.pendingHeldLeaveRestore) ?? false;
+      const held = this.holdLeave?.(commit, this.pendingHeldLeaveRestore) ?? false;
+      if (held && this.current.operationHistory) this.clearOperationHistory(false);
+      return held;
     }
     if (!this.holdLeave?.(() => this.browser.history.go(delta))) return false;
     this.restoringHeldLeave = true;
@@ -823,6 +823,39 @@ export class ExploreState {
     }, 'push');
   }
 
+  openOperationHistory(state: Partial<ExploreURLState>): void {
+    const opening = !this.current.operationHistory;
+    if (opening) {
+      this.committed = normalize(this.current);
+      this.pendingSearchPriorFocus = undefined;
+    }
+    this.navigate({ ...state, operationHistory: true }, 'push');
+    if (opening) this.browser.history.replaceState({ ...this.browser.history.state, operationHistoryDepth: 1 }, '');
+  }
+
+  closeOperationHistory(): void {
+    const depth = this.operationHistoryDepth();
+    if (depth) this.browser.history.go(-depth);
+    else this.clearOperationHistory();
+  }
+
+  // A held departure keeps Settings current but must not leave Past runs over its confirmation.
+  // Replace in place: history.go would fire popstate and re-enter the held departure.
+  private clearHeldOperationHistory(patch: Partial<ExploreURLState>): void {
+    if (patch.operationHistory === false && this.current.operationHistory) this.clearOperationHistory();
+  }
+
+  private clearOperationHistory(replaceURL = true): void {
+    const patch: Partial<ExploreURLState> = { operationHistory: false, operationLane: '', operationKind: '',
+      operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' };
+    if (replaceURL) this.replaceCommittedNavigation(patch);
+    else {
+      // Keep the unindexed destination intact until the user chooses Stay or Discard.
+      Object.assign(this.current, patch);
+      this.committed = normalize(this.current);
+    }
+  }
+
   commitNavigation(patch: Partial<ExploreURLState>): void {
     const selectionChanged = 'selectedRow' in patch && patch.selectedRow !== this.current.selectedRow;
     this.navigate(selectionChanged && !('conversationAnchor' in patch)
@@ -898,7 +931,7 @@ export class ExploreState {
   ): void {
     if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings') {
       this.pendingHeldLeaveRestore?.();
-      if (this.holdLeave?.(() => this.navigate(patch, mode))) return;
+      if (this.holdLeave?.(() => this.navigate(patch, mode))) return this.clearHeldOperationHistory(patch);
     }
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
@@ -906,7 +939,7 @@ export class ExploreState {
       patch.workspace !== 'files' && !('presentation' in patch)) {
       effectivePatch = { ...patch, presentation: defaultExploreURLState.presentation };
     }
-    if (mode === 'push' && OPERATION_FILTER_FIELDS.some((key) =>
+    if (!('operationRunID' in patch) && OPERATION_FILTER_FIELDS.some((key) =>
       key in patch && normalize({ ...this.current, ...patch })[key] !== this.current[key])) {
       effectivePatch = { ...effectivePatch, operationRunID: null };
     }
@@ -927,7 +960,7 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow) }, '', committedURL);
+      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow), ...this.operationHistoryState(priorEntry) }, '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -948,10 +981,20 @@ export class ExploreState {
     if (mode === 'push') this.historyIndex += 1;
     const history = historyEntry(search, this.current, this.historyIndex);
     if (mode === 'push') {
-      this.browser.history.pushState(history, '', url);
+      this.browser.history.pushState({ ...history, ...this.operationHistoryState(next, 1) }, '', url);
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
-    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow) }, '', url);
+    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow), ...this.operationHistoryState(this.current) }, '', url);
+  }
+
+  private operationHistoryDepth(): number {
+    const depth = this.browser.history.state?.operationHistoryDepth;
+    return Number.isSafeInteger(depth) && depth > 0 ? depth : 0;
+  }
+
+  private operationHistoryState(state: ExploreURLState, step = 0): { operationHistoryDepth: number } | null {
+    const depth = this.operationHistoryDepth();
+    return state.operationHistory && depth ? { operationHistoryDepth: depth + step } : null;
   }
 
   private archiveHistoryState(selectedRow: string | null): { [ARCHIVE_MEETING_HISTORY_KEY]: ArchiveMeetingHistory } | null {

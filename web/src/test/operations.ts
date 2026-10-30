@@ -1,4 +1,4 @@
-import type { EmbeddingStatus, OperationLaneStatus, Status } from '../lib/api/generated/models';
+import type { DocumentIndexStatusResponse, EmbeddingStatus, OperationLaneStatus, Status } from '../lib/api/generated/models';
 
 export const KIND_LANES: ReadonlyArray<readonly [OperationLaneStatus['kind'], OperationLaneStatus['lane']]> = [
   ['source_sync', 'messages'],
@@ -12,8 +12,16 @@ export const KIND_LANES: ReadonlyArray<readonly [OperationLaneStatus['kind'], Op
   ['visual_embedding', 'visual_attachments']
 ];
 
+export const RELATED_STATUS: Partial<Record<OperationLaneStatus['kind'], OperationLaneStatus['related_status']>> = {
+  source_sync: 'listSourceStatus',
+  carddav_sync: 'getCardDAVStatus',
+  document_extraction: 'getDocumentIndexStatus',
+  document_embedding: 'getDocumentVectorStatus',
+  visual_embedding: 'getVisualAttachmentStatus',
+};
+
 export function lane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
-  return { kind, configured: true, lane: KIND_LANES.find(([candidate]) => candidate === kind)![1], history_availability: 'available', supported_actions: [], ...extra };
+  return { kind, related_status: RELATED_STATUS[kind], configured: true, lane: KIND_LANES.find(([candidate]) => candidate === kind)![1], history_availability: 'available', supported_actions: [], ...extra };
 }
 
 export function lanes(...overrides: OperationLaneStatus[]): OperationLaneStatus[] {
@@ -37,4 +45,17 @@ export const visualStatus: Status = {
   journal_cursor: 0, journal_high_water: 0, journal_lag: 0, reconciliation_complete: true,
   retryable: 0, stale: 0, terminal: 0, tombstoned: 0, unavailable: 0, unknown_role: 0,
   usage: { billed_units: 0, input_bytes: 0, requests: 0, usage_available: false }
+};
+
+export const documentStatus: DocumentIndexStatusResponse = {
+  status: {
+    profile_exists: true, profile_enabled: true, exact_consent: true,
+    ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
+    terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2,
+    average_provider_latency_millis: 0, eligible_bytes: 0, eligible_occurrences: 5,
+    extraction_attempts: 4, failed_attempts: 0, failures: [], failures_exhausted: false,
+    ineligible_role_occurrences: 0, missing_provider_byte_reports: 0, processed_provider_units: 0,
+    provider_latency_millis: 0, provider_retries: 0, reported_provider_bytes: 0,
+    staging_owners: 0, successful_attempts: 4, unknown_role_occurrences: 0, verified_upload_bytes: 0,
+  },
 };

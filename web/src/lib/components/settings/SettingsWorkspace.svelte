@@ -52,6 +52,7 @@
   import SecretField from './SecretField.svelte';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
   import SettingField from './SettingField.svelte';
+  import type { OperationStatusAuthority } from '../../explore/models';
   import SettingsOverview from './SettingsOverview.svelte';
 
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
@@ -68,8 +69,10 @@
     category = 'overview',
     onCategoryChange = () => undefined,
     onSources = () => undefined,
+    onOpenStatus = () => undefined,
     onCardDAVRequestConsumed = () => undefined,
     onAppearanceSaved = () => undefined,
+    onStatusChange = () => undefined,
   }: {
     client: APIClient;
     plainHTTPWarning?: boolean;
@@ -77,9 +80,11 @@
     navigationTarget?: SettingsNavigationTarget;
     category?: string;
     onSources?: () => void;
+    onOpenStatus?: (authority: OperationStatusAuthority) => void;
     onCategoryChange?: (categoryID: string) => void;
     onCardDAVRequestConsumed?: (key: number) => void;
     onAppearanceSaved?: (saved: SavedAppearance) => void;
+    onStatusChange?: () => void;
   } = $props();
 
   let settings = $state<SettingState[]>([]);
@@ -200,6 +205,8 @@
       buildError = cause instanceof Error ? cause.message : "Can't build the index.";
     } finally {
       delete building[id];
+      statusRevision += 1;
+      onStatusChange();
     }
   }
 
@@ -376,6 +383,7 @@
     } finally {
       statusRevision += 1;
       saving = false;
+      onStatusChange();
     }
   }
   function apiErrorMessage(responseError: unknown, fallback: string): string {
@@ -597,10 +605,11 @@
           {:else if !lanes}
             <EmptyState title="Can't load status"><Button label="Retry" onclick={() => (statusRevision += 1)} /></EmptyState>
           {:else}
-            <SettingsOverview {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
+            <SettingsOverview onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
+            {onStatusChange}
             {client}
             {settings}
             {cardDAVRequest}

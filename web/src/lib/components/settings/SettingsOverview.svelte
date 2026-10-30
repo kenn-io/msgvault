@@ -2,6 +2,7 @@
   import { Button, Chip } from '@kenn-io/kit-ui';
   import BuildIndexAction from '../search/BuildIndexAction.svelte';
 
+  import type { OperationStatusAuthority } from '../../explore/models';
   import type { OverviewAction, OverviewRow } from '../../settings/overview';
 
   let {
@@ -10,8 +11,10 @@
     onSetUp,
     onStart,
     onSources,
+    onDetails = () => undefined,
   }: {
     rows: readonly OverviewRow[];
+    onDetails?: (authority: OperationStatusAuthority) => void;
     /** Start actions in progress; each button waits for its own action. */
     working?: Readonly<Record<string, boolean>>;
     onSetUp: (action: Extract<OverviewAction, { kind: 'settings' }>) => void;
@@ -24,12 +27,14 @@
 <ul class="overview" aria-label="Features">
   {#each rows as row (row.id)}
     {@const action = row.action}
+    {@const authority = row.relatedStatus}
     <li class="row" data-feature={row.id}>
       <span class="row__name">
         {row.name}
       </span>
       <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
       <span class="row__action">
+        {#if authority}<Button size="sm" surface="soft" label="Details" ariaLabel={`Details, ${row.name}`} onclick={() => onDetails(authority)} />{/if}
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${row.name}`} onclick={() => onSetUp(action)} />
         {:else if action?.kind === 'start' && action.id === 'messages'}
@@ -100,6 +105,7 @@
     min-width: 0;
     align-items: center;
     justify-content: flex-end;
+    gap: var(--control-gap);
   }
   .row__guide {
     color: var(--link-ink);
