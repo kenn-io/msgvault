@@ -162,3 +162,23 @@ it('publishes a staged batch before old retention hydration finishes and ignores
   expect(controller.batches.map(batch => batch.id)).toEqual(['old', 'staged']);
   controller.destroy();
 });
+
+it('restores sidebar visibility on the next polling refresh after a transient retention failure', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(now);
+  let reads = 0;
+  const old = batch('old', 'completed', 2, '2020-01-01T00:00:00Z');
+  const controller = new DeletionsController(createAPIClient(async input => {
+    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [old] });
+    return ++reads === 1 ? Response.json({}, { status: 503 })
+      : Response.json({ ...old, execution: { completed_at: '2026-10-29T11:00:00Z' } });
+  }));
+  try {
+    await controller.refresh();
+    expect(await controller.getDetail('old')).toBeUndefined();
+    expect(controller.visible).toBe(false);
+    await controller.refresh();
+    await controller.getDetail('old');
+    expect(controller.visible).toBe(true);
+    expect(reads).toBe(2);
+  } finally { controller.destroy(); }
+});
