@@ -72,7 +72,7 @@ test('Show as Files opens the Files workspace with the same context, and Back re
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', presentation: 'timeline' }))}`);
   const everything = page.getByRole('grid', { name: 'Messages results' });
   await expect(everything).toBeVisible();
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill('pasta');
+  await page.getByRole('searchbox', { name: 'Search messages' }).fill('pasta');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
 
   const timeline = page.getByRole('region', { name: 'Canonical activity timeline' });
@@ -96,7 +96,7 @@ test('Show as Files opens the Files workspace with the same context, and Back re
   await expect(everything).toBeFocused();
   await expect(filesMain).toHaveCount(0);
   await expect(page).toHaveURL(/[?&]workspace=everything(&|$)/);
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('pasta');
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('pasta');
   await page.goForward();
   await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
 
@@ -130,7 +130,7 @@ test('Show as Files opens the Files workspace with the same context, and Back re
   await page.getByRole('button', { name: 'Pasta files', exact: true }).click();
   await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
   await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('pasta');
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('pasta');
 });
 
 test('an old Everything-as-Files link opens Files at its deep anchor with bounded paging and a focused fallback', async ({ page }) => {

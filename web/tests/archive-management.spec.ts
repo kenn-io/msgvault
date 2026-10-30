@@ -153,7 +153,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   expect(sourceRequests.every((request) => request.accept !== 'text/event-stream')).toBe(true);
 
   await page.getByRole('button', { name: 'Invoices' }).click();
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('invoice');
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('invoice');
   await expect(page.getByRole('grid', { name: 'Messages results' })).toBeFocused();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
 });
