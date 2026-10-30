@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Button, Checkbox, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Checkbox, RadioGroup, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type { PeopleInferencePresetCreateRequest } from '../../api/generated/models';
   import { credentialStatus, PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
@@ -101,12 +101,12 @@
       </fieldset>
       <label>Archive data since (YYYY-MM-DD)<TextInput bind:value={sourceSince} placeholder="YYYY-MM-DD" required block /></label>
       <label>Archive data until (optional, YYYY-MM-DD)<TextInput bind:value={sourceUntil} placeholder="YYYY-MM-DD" block /></label>
-      <fieldset>
-        <legend>Sensitive archive content</legend>
-        <label><input type="radio" name="sensitive-content" value="allow" bind:group={sensitiveChoice} required /> Allow sensitive content</label>
-        <label><input type="radio" name="sensitive-content" value="exclude" bind:group={sensitiveChoice} /> Exclude sensitive content</label>
+      <div class="disclosure-policy">
+        <RadioGroup legend="Sensitive archive content" name="sensitive-content" required
+          value={sensitiveChoice} onchange={(value) => sensitiveChoice = value ?? ''}
+          options={[{ value: 'allow', label: 'Allow sensitive content' }, { value: 'exclude', label: 'Exclude sensitive content' }]} />
         <p>Real sweeps send archive text to this provider. Excluding sensitive content permits only the synthetic check.</p>
-      </fieldset>
+      </div>
       <label>Retention statement<TextInput bind:value={retentionPosture} required autocomplete="off" block /></label>
       <label>Training statement<TextInput bind:value={trainingPosture} required autocomplete="off" block /></label>
       <Button type="submit" disabled={controller.busy} label="Create profile" />
@@ -189,10 +189,9 @@
   .form, .profile, .disclosure, .replacement-key { display: grid; gap: var(--section-gap); min-width: 0; }
   .form, .profile { border: 1px solid var(--border-muted); border-radius: var(--radius-md); padding: var(--pane-pad-x); }
   label { display: grid; gap: var(--control-gap); min-width: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
-  label:has(input[type='radio']) { display: flex; align-items: center; gap: var(--space-3); color: var(--text-primary); font-size: var(--font-size-sm); }
-  fieldset { display: grid; gap: var(--space-3); min-width: 0; margin: 0; padding: 0; border: 0; }
+  fieldset, .disclosure-policy { display: grid; gap: var(--space-3); min-width: 0; margin: 0; padding: 0; border: 0; }
   legend { margin-bottom: var(--control-gap); padding: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
-  fieldset p { color: var(--text-muted); font-size: var(--font-size-2xs); }
+  .disclosure-policy p { color: var(--text-muted); font-size: var(--font-size-2xs); }
   dl { display: grid; gap: var(--space-2); margin: 0; font-size: var(--font-size-sm); }
   dl div { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: var(--space-3); }
   dt { color: var(--text-muted); }
