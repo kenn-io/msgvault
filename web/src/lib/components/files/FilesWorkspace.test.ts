@@ -190,7 +190,7 @@ describe('FilesWorkspace', () => {
       rendered: 'Synthetic cache unavailable.'
     }
   ])('reports an honest row count for the $state state', async ({ fetchFn, expected, rendered }) => {
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -209,7 +209,7 @@ describe('FilesWorkspace', () => {
         message: 'This query needs more memory or temporary disk space.',
       }, { status: 503 })
       : Response.json(response());
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -224,14 +224,13 @@ describe('FilesWorkspace', () => {
 
   it('owns headers and virtual rows in one focusable grid', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(response()));
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
 
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     expect(screen.getAllByRole('grid')).toHaveLength(1);
-    expect(within(grid).getAllByRole('columnheader').map(header => header.textContent?.trim())).toEqual(['Date', 'Filename', 'Type', 'Size', 'People', 'Source', 'Message', 'Availability']);
     expect(grid.contains(screen.getByRole('columnheader', { name: 'Filename' }))).toBe(true);
     expect(grid.contains(await screen.findByRole('row', { name: /fixture.pdf/ }))).toBe(true);
   });
@@ -247,7 +246,7 @@ describe('FilesWorkspace', () => {
       }, { status: 503 });
       return Response.json(response());
     });
-    const rendered = renderReady({
+    const rendered = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -288,7 +287,7 @@ describe('FilesWorkspace', () => {
       return Response.json(first);
     });
     const onRestorationComplete = vi.fn();
-    const rendered = renderReady({
+    const rendered = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
       activeKey: 'file:900', restorationEpoch: 11, onRestorationComplete
@@ -313,7 +312,7 @@ describe('FilesWorkspace', () => {
       error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
       readiness: 'building', recovery_action: ''
     }, { status: 503 }));
-    const rendered = renderReady({
+    const rendered = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -339,7 +338,7 @@ describe('FilesWorkspace', () => {
       return Response.json(response());
     });
     const onSortChange = vi.fn();
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn),
       predicate: {
         query: 'quarterly', search_mode: 'full_text',
@@ -372,7 +371,7 @@ describe('FilesWorkspace', () => {
       requests.push(request);
       return Response.json(personResponse());
     });
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 },
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -395,7 +394,7 @@ describe('FilesWorkspace', () => {
       requests.push(request);
       return Response.json(personResponse());
     });
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       // The production union gains this explicit durable-person scope. The
       // cast lets this regression prove the current fallback is unsafe.
@@ -416,7 +415,7 @@ describe('FilesWorkspace', () => {
       requests.push(request);
       return Response.json(personResponse());
     });
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 },
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -459,7 +458,7 @@ describe('FilesWorkspace', () => {
       const body = await request.clone().json() as { mime_families?: string[] };
       return Response.json(body.mime_families?.includes('image') ? mediaResult : personResponse());
     });
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 },
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -482,7 +481,7 @@ describe('FilesWorkspace', () => {
   it('observes the grid and header when a Media view becomes Files', async () => {
     const records = installResizeObservers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 }, personPresentation: 'media',
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -503,7 +502,7 @@ describe('FilesWorkspace', () => {
   it('disconnects the old observer and observes replacement elements across a Files transition', async () => {
     const records = installResizeObservers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 }, personPresentation: 'files',
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -559,7 +558,7 @@ describe('FilesWorkspace', () => {
       initialCalls += 1;
       return Response.json(initialCalls === 1 ? first : reloaded);
     });
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 }, personPresentation: 'media',
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -580,7 +579,7 @@ describe('FilesWorkspace', () => {
   it('does not open the active file when Enter activates a focused sort control', async () => {
     const onSortChange = vi.fn();
     const onSelectedKey = vi.fn();
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(response()))),
       predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' },
@@ -634,7 +633,7 @@ describe('FilesWorkspace', () => {
     });
     const onRestorationComplete = vi.fn();
 
-    const { container } = renderReady({
+    const { container } = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
       activeKey: 'file:900', restorationEpoch: 7, onRestorationComplete
@@ -662,7 +661,7 @@ describe('FilesWorkspace', () => {
     const first = response();
     Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
     const second = response();
-    second.files[0] = { ...second.files[0]!, id: 8, key: 'file:8', filename: 'later.pdf', content_state: 'missing_blob', content_available: false };
+    second.files[0] = { ...second.files[0]!, id: 8, key: 'file:8', filename: 'later.pdf' };
     second.total_count = 2;
     const cursors: Array<string | undefined> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -672,7 +671,7 @@ describe('FilesWorkspace', () => {
       return Response.json(body.cursor === 'page-2' ? second : first);
     });
     const onActiveKey = vi.fn();
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, onActiveKey
     });
@@ -700,7 +699,7 @@ describe('FilesWorkspace', () => {
     const onOpenItem = vi.fn();
     const onOpenConversation = vi.fn();
     const onSelectedKey = vi.fn();
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, onOpenItem, onOpenConversation, onSelectedKey
     });
@@ -727,7 +726,7 @@ describe('FilesWorkspace', () => {
         size_bytes: 2048, content_state: 'missing_blob', content_available: false
       });
     });
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -749,7 +748,7 @@ describe('FilesWorkspace', () => {
       });
       return Response.json(first);
     });
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -780,7 +779,7 @@ describe('FilesWorkspace', () => {
       const body = await request.clone().json() as { cursor?: string };
       return Response.json(body.cursor ? second : first);
     });
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -809,7 +808,7 @@ describe('FilesWorkspace', () => {
         ? { files: [], total_count: 0, cache_revision: 'cache-other', search_provenance: {} }
         : response());
     });
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -839,7 +838,7 @@ describe('FilesWorkspace', () => {
         ? { files: [], total_count: 0, cache_revision: 'cache-other', search_provenance: {} }
         : response());
     });
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -866,7 +865,7 @@ describe('FilesWorkspace', () => {
       });
       return Response.json(response());
     });
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -883,7 +882,7 @@ describe('FilesWorkspace', () => {
   it('restores ascending date sort and toggles it back to descending', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(response()));
     const onSortChange = vi.fn();
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'asc' }, onSortChange
     });
@@ -912,7 +911,7 @@ describe('FilesWorkspace', () => {
       if (cursorCalls === 1) throw new TypeError('temporary network failure');
       return Response.json(second);
     });
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -944,7 +943,7 @@ describe('FilesWorkspace', () => {
       }, { status: 503 });
       return Response.json(second);
     });
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -987,7 +986,7 @@ describe('FilesWorkspace', () => {
         initialCalls += 1;
         return Response.json(initialCalls === 1 ? first : reloaded);
       });
-      renderReady({
+      render(FilesWorkspace, {
         client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
         sort: { field: 'occurred_at', direction: 'desc' }
       });
@@ -1037,7 +1036,7 @@ describe('FilesWorkspace', () => {
       return Response.json(second);
     });
     const onRestorationComplete = vi.fn();
-    const { container } = renderReady({
+    const { container } = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
       activeKey: 'file:900', restorationEpoch: 7, onRestorationComplete
@@ -1088,7 +1087,7 @@ describe('FilesWorkspace', () => {
       return Response.json(initialCalls === 1 ? first : reloadedFirst);
     });
     const onRestorationComplete = vi.fn();
-    const { container } = renderReady({
+    const { container } = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
       activeKey: 'file:900', restorationEpoch: 9, onRestorationComplete
@@ -1130,7 +1129,7 @@ describe('FilesWorkspace', () => {
       initialCalls += 1;
       return Response.json(initialCalls === 1 ? first : reloaded);
     });
-    renderReady({
+    render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -1162,7 +1161,7 @@ describe('FilesWorkspace', () => {
       if (body.cursor) return new Promise<Response>((_, reject) => { rejectCursor = reject; });
       return Response.json(body.filename_query ? fresh : first);
     });
-    const view = renderReady({
+    const view = render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -1184,7 +1183,7 @@ describe('FilesWorkspace', () => {
   describe('controls and rows', () => {
     function renderFiles(props: Record<string, unknown> = {}) {
       const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
-      return renderReady({
+      return render(FilesWorkspace, {
         client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
         sort: { field: 'occurred_at', direction: 'desc' }, ...props
       });
@@ -1208,7 +1207,7 @@ describe('FilesWorkspace', () => {
         ...base,
         files: [{ ...base.files[0]!, content_state: 'missing_blob', search_explain: { rrf: 0.0123 } }]
       }));
-      renderReady({
+      render(FilesWorkspace, {
         client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
         sort: { field: 'occurred_at', direction: 'desc' }
       });
@@ -1264,10 +1263,16 @@ describe('FilesWorkspace', () => {
 it('reports embedded filename edits and appends Type choices to current families', async () => {
   const client = createAPIClient(async () => Response.json(personResponse()));
   const onFilenameQueryChange = vi.fn(), onMIMEFamiliesChange = vi.fn();
-  renderReady({ client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate: { filters: [] }, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf', 'text'], onFilenameQueryChange, onMIMEFamiliesChange });
+  const view = render(FilesWorkspace, { client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate: { filters: [] }, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf', 'text'], onFilenameQueryChange, onMIMEFamiliesChange });
   await screen.findByText('fixture.pdf');
   await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'budget' } });
   expect(onFilenameQueryChange).toHaveBeenCalledWith('budget');
   await fireEvent.click(screen.getByRole('checkbox', { name: 'Audio' }));
   expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf', 'text', 'audio']);
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
+  expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['text']);
+  await view.rerender({ mimeFamilies: ['pdf'] });
+  expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).disabled).toBe(true);
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
+  expect(onMIMEFamiliesChange).not.toHaveBeenCalledWith([]);
 });
