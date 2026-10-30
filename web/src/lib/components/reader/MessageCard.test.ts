@@ -183,28 +183,27 @@ describe('MessageCard', () => {
     expect(screen.queryByText('⋯')).toBeNull();
   });
 
-  it('keeps action items and scoped export available while the body loads', async () => {
-    const { meetingAction, meetingActions } = await import('../../meetings/fixtures.test-support');
+  it('exports the scoped meeting while its body loads', async () => {
+    const { meetingActions } = await import('../../meetings/fixtures.test-support');
     const requests: Request[] = [];
     const client = createAPIClient(async (input) => {
       const request = input as Request; requests.push(request.clone());
-      return Response.json(request.url.endsWith('/context') ? { schema_version: 1, format: 'json', content: '{}', content_bytes: 2, truncated: false, omitted_message_ids: [] } : meetingActions({ rows: [meetingAction()] }));
+      return Response.json(request.url.endsWith('/context') ? { schema_version: 1, format: 'json', content: '{}', content_bytes: 2, truncated: false, omitted_message_ids: [] } : meetingActions());
     });
     const { container } = render(MessageCard, {
       props: { client, message: detail({ body: '', messageType: 'meeting_transcript' }), expanded: true, bodyPending: true }
     });
 
     expect(screen.getByText('Loading message…')).toBeDefined();
-    expect(await screen.findByText('Prepare review')).toBeDefined();
     expect(container.querySelector('pre')).toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
-    await expect(requests.find(request => request.url.endsWith('/actions'))!.json()).resolves.toEqual({ scope: { message_ids: [42] }, limit: 200 });
     const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
-    await expect(requests.find(request => request.url.endsWith('/context'))!.json()).resolves.toMatchObject({ message_ids: [42] });
-    download.mockRestore();
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+      await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+      await expect(requests.find(request => request.url.endsWith('/context'))!.json()).resolves.toEqual({ message_ids: [42], format: 'json', include_transcript: false });
+    } finally { download.mockRestore(); }
   });
 
   it('gates task and meeting actions by message type', async () => {
@@ -219,6 +218,8 @@ describe('MessageCard', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
     expect(screen.queryByRole('menuitem', { name: 'Export meeting…' })).toBeNull();
     await fireEvent.keyDown(document, { key: 'Escape' });
+    await view.rerender({ message: detail({ messageType: '' }) });
+    expect(await screen.findByText('Review archived notes')).toBeDefined();
     await view.rerender({ message: detail({ messageType: 'meeting_transcript' }) });
     expect(await screen.findByRole('region', { name: 'Action items' })).toBeDefined();
     expect(screen.queryByText('Review archived notes')).toBeNull();

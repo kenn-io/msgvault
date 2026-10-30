@@ -2471,7 +2471,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('shows the Messages count once', async () => {
+  it('focuses the fixed Messages Sort with s and shows its count once', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
       rows: [entry(1), entry(2)], total_count: 2
@@ -2482,6 +2482,10 @@ describe('AppShell', () => {
 
     const main = screen.getByRole('main', { name: 'Messages' });
     expect(within(main).getAllByText('2 items')).toHaveLength(1);
+    await fireEvent.keyDown(document.body, { key: 's' });
+    const sort = screen.getByRole('combobox', { name: 'Sort: Newest first' });
+    expect(document.activeElement).toBe(sort);
+    expect(await screen.findByRole('option', { name: 'Other orders aren’t available yet' })).toHaveProperty('disabled', true);
     rendered.unmount();
     state.destroy();
   });

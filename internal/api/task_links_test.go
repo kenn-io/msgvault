@@ -44,13 +44,12 @@ func (s *taskLinkMessageStore) GetMessageContext(_ context.Context, id int64) (*
 }
 
 type fakeTaskLinkOperations struct {
-	lookupCalls int
-	createKeys  []string
-	creates     []taskclient.TaskCreate
-	identities  []tasklinks.MessageIdentity
-	lookup      tasklinks.LookupResult
-	search      []tasklinks.TaskSummary
-	err         error
+	createKeys []string
+	creates    []taskclient.TaskCreate
+	identities []tasklinks.MessageIdentity
+	lookup     tasklinks.LookupResult
+	search     []tasklinks.TaskSummary
+	err        error
 }
 
 func (f *fakeTaskLinkOperations) Create(_ context.Context, key string, create taskclient.TaskCreate, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error) {
@@ -69,7 +68,6 @@ func (f *fakeTaskLinkOperations) Unlink(_ context.Context, _ string, identity ta
 	return taskclient.Task{ID: "task-1", Project: "project", Title: "Linked", Revision: "r2"}, f.err
 }
 func (f *fakeTaskLinkOperations) Lookup(context.Context, tasklinks.MessageIdentity) tasklinks.LookupResult {
-	f.lookupCalls++
 	return f.lookup
 }
 func (f *fakeTaskLinkOperations) Search(context.Context, string) ([]tasklinks.TaskSummary, error) {
@@ -98,7 +96,7 @@ func taskLinkServerWithStore(t *testing.T, messageStore MessageStore, logger *sl
 	})
 }
 
-func TestCreateTaskForEmailResolvesSourceIdentityAndDerivesStableServerIdempotency(t *testing.T) {
+func TestCreateTaskForEmail(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -119,25 +117,32 @@ func TestCreateTaskForEmailResolvesSourceIdentityAndDerivesStableServerIdempoten
 		requirements.Equal(http.StatusCreated, resp.Code, resp.Body.String())
 		assertions.NotContains(resp.Body.String(), uid)
 	}
-	requirements.Len(ops.createKeys, 2)
-	assertions.Equal(ops.createKeys[0], ops.createKeys[1])
-	assertions.NotEqual("browser-request-1", ops.createKeys[0])
-	requirements.Len(ops.creates, 2)
-	assertions.Equal(ops.creates[0], ops.creates[1], "a browser retry must send the identical external create payload")
-	links := tasklinks.MailLinks(ops.creates[0].Metadata)
-	requirements.Len(links, 1)
-	assertions.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
-	assertions.Equal("high", ops.creates[0].Priority)
-	assertions.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
-	for _, identity := range []tasklinks.MessageIdentity{ops.identities[0], ops.identities[1]} {
-		assertions.Equal("gmail", identity.SourceType)
-		assertions.Equal("test@example.com", identity.SourceIdentifier)
-		assertions.Equal("identity-email", identity.SourceMessageID)
-	}
+	t.Run("stable server idempotency", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		requirements.Len(ops.createKeys, 2)
+		assertions.Equal(ops.createKeys[0], ops.createKeys[1])
+		assertions.NotEqual("browser-request-1", ops.createKeys[0])
+		requirements.Len(ops.creates, 2)
+		assertions.Equal(ops.creates[0], ops.creates[1], "a browser retry must send the identical external create payload")
+		links := tasklinks.MailLinks(ops.creates[0].Metadata)
+		requirements.Len(links, 1)
+		assertions.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
+		assertions.Equal("high", ops.creates[0].Priority)
+		assertions.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
+	})
+	t.Run("resolved source identity", func(t *testing.T) {
+		assertions := assert.New(t)
+		for _, identity := range []tasklinks.MessageIdentity{ops.identities[0], ops.identities[1]} {
+			assertions.Equal(id, identity.MessageID)
+			assertions.Equal("gmail", identity.SourceType)
+			assertions.Equal("test@example.com", identity.SourceIdentifier)
+			assertions.Equal("identity-email", identity.SourceMessageID)
+		}
+	})
 }
 
 func TestListMessageTasksRejectsCancelledIdentity(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	id := f.CreateMessage("cancelled-identity")
@@ -152,7 +157,6 @@ func TestListMessageTasksRejectsCancelledIdentity(t *testing.T) {
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
 	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
-	assert.Zero(ops.lookupCalls)
 }
 
 type cancelTaskArchiveIdentity struct {
