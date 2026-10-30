@@ -442,7 +442,7 @@
                 size="sm"
                 tone="info"
                 surface="soft"
-                label={source.scheduler_queued && !source.active_sync ? 'Sync queued' : syncRunning(source) ? 'Syncing…' : syncing(source) ? 'Starting…' : 'Sync now'}
+                label={source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : syncRunning(source) ? 'Syncing…' : syncing(source) ? 'Starting…' : 'Sync now'}
                 ariaLabel={`Sync now ${label(source)}`}
                 disabled={Boolean(triggering) || syncing(source)}
                 onclick={(event) => {
@@ -451,7 +451,7 @@
                 }}
               />
             {:else}
-              <span class="muted">{source.scheduler_queued && !source.active_sync ? 'Sync queued' : isOnDemandSource(source) ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
+              <span class="muted">{source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : isOnDemandSource(source) ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
             {/if}
           </td>
         </tr>

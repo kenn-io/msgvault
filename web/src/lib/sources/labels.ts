@@ -19,16 +19,16 @@ export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);
 }
 
-type StateSource = Pick<SourceStatus, 'active_sync' | 'latest_sync'> & Partial<Pick<SourceStatus, 'scheduler_queued'>>;
+type StateSource = Pick<SourceStatus, 'active_sync' | 'latest_sync'> & Partial<Pick<SourceStatus, 'scheduler_queued' | 'scheduler_started_at'>>;
 
 export function syncRunning(source: StateSource): boolean {
-  return Boolean(source.active_sync || source.latest_sync?.status === 'running');
+  return Boolean(source.active_sync || source.scheduler_started_at || source.latest_sync?.status === 'running');
 }
 
 /** The run state a source shows, or undefined when it has never synced. */
 export function sourceRunState(source: StateSource): string | undefined {
   const latest = source.latest_sync;
-  if (source.active_sync || (!source.scheduler_queued && syncRunning(source))) return 'running';
+  if (syncRunning(source)) return 'running';
   if (source.scheduler_queued && latest?.status !== 'failed' && !(latest?.status === 'completed' && latest.errors_count > 0)) return 'queued';
   if (!latest) return undefined;
   if (latest.status === 'paused') return 'paused';
