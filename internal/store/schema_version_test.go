@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +18,44 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "pre-range-upload", ProfileID: profile.ID, CanonicalBlobHash: hash,
+		ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
+	})
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_timeout", Terminal: true, RequestCount: 2, UploadCount: 1,
+	}))
+	_, err = f.Store.DB().Exec("ALTER TABLE document_extractions DROP COLUMN upload_count")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("DROP TABLE document_extraction_ranges")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='15' WHERE key='schema_version'")
+	require.NoError(err)
+	require.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "run setup")
+	version, err := f.Store.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(15, version)
+	var count int
+	require.Error(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
+	version, err = f.Store.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(store.SchemaVersion, version)
+	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	assert.Zero(count)
+	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
+	require.NoError(err)
+	assert.Equal(int64(128), status.VerifiedUploadBytes)
+}
 
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require := require.New(t)
@@ -216,6 +255,7 @@ var (
 		13: "c5ccb9e5b3659b94a2d66acfd0cf8ea323e70abb3000f3c5792c10ecf79f85b8",
 		14: "1092127cfc654d884f52634204dee6d04d5c4c9d966fe997263d064c871a21ee",
 		15: "571660ef3e1c045c57ada148b252d90acd7ef291458a7a46a1327b1034dde653",
+		16: "69e4d992a75b48398d7637fcb5f2d9df64f3fb208a9aacdbeb673f2268fe4234",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -233,6 +273,7 @@ var (
 		13: "da8aa0a2023db284656a471e2640b80ec2be2a5d110136cb8e62f81739a384ac",
 		14: "00ca50153fc0f90dc588225b0ce9b9097caf71dc42a47e73e7d03f2bfc460a93",
 		15: "47f70765d8793d9fdbbe65b259829caffb39d737d386216820f3067d4771c244",
+		16: "f27e822772bbcbca153b0be544da5acc823c21756160a79b5302e1cb80c18f6a",
 	}
 )
 

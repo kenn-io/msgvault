@@ -37,6 +37,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/mooijtech/go-pst/v6 v6.0.2
 	github.com/netresearch/go-cron v0.17.0
+	github.com/pdfcpu/pdfcpu v0.15.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/rotisserie/eris v0.5.4
 	github.com/shirou/gopsutil/v4 v4.26.9
@@ -44,7 +45,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
 	github.com/teambition/rrule-go v1.8.2
-	go.kenn.io/docbank v0.16.1-0.20261027125309-a814eff87a92
+	go.kenn.io/docbank v0.16.1-0.20261028144856-154f9e0a7392
 	go.kenn.io/kata v0.20.0
 	go.kenn.io/kit v0.47.1
 	go.opentelemetry.io/otel v1.47.0
@@ -142,7 +143,6 @@ require (
 	github.com/olekukonko/errors v1.3.0 // indirect
 	github.com/olekukonko/ll v0.1.8 // indirect
 	github.com/olekukonko/tablewriter v1.1.4 // indirect
-	github.com/pdfcpu/pdfcpu v0.15.0 // indirect
 	github.com/philhofer/fwd v1.2.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

@@ -1635,6 +1635,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if version < 16 {
+		// Earlier versions submitted one provider job per extraction attempt.
+		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
+			return fmt.Errorf("backfill document upload counts: %w", err)
+		}
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in

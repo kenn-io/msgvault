@@ -31,6 +31,58 @@ func TestDoclingDocumentsNativeCSVConsentBuildAndLifecycle(t *testing.T) {
 	testDoclingDocumentsLifecycle(t, []byte("name,value\nsynthetic,docling1057sentinel\n"), "text/csv", "document.csv")
 }
 
+func TestDoclingStatusDisclosesRangePlaintext(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	markDaemonCLISubprocessForTest(t)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Attachments.Documents.Enabled = true
+	cfg.Attachments.Documents.Provider = documentindex.ProviderDocling
+	cfg.Attachments.Documents.Endpoint = "http://127.0.0.1:5001"
+	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(string) bool { return false })
+	ctx := withTestConfig(t, cfg)
+	f := storetest.New(t)
+	deps := documentsCommandDeps{
+		openStore:            func(context.Context) (*store.Store, func(), error) { return f.Store, func() {}, nil },
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return f.Store, func() {}, nil },
+	}
+	run := func(args ...string) string {
+		command := newDocumentsCmd(deps)
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs(args)
+		requirements.NoError(command.ExecuteContext(ctx))
+		return output.String()
+	}
+	run("consent-docling", "--yes")
+	documentsConfig, _, _, profile, err := configuredDocumentProfile("", invocationFromContext(ctx))
+	requirements.NoError(err)
+	hash := strings.Repeat("a", 64)
+	messageID := f.CreateMessage("range-status")
+	requirements.NoError(f.Store.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+		Filename: "range.pdf", MIMEType: "application/pdf", Size: 128,
+		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:1",
+	}))
+	var attachmentID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&attachmentID))
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(ctx, attachmentID, 1)
+	requirements.NoError(err)
+	requirements.True(eligible)
+	claim, err := f.Store.ClaimDocumentExtraction(ctx, store.DocumentExtractionClaimInput{
+		ExtractionID: "range-status-attempt", ProfileID: profile.ID, CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		OccurrenceAttachmentID: attachmentID, OccurrenceMIMEType: "application/pdf", OccurrenceMessageType: "email",
+		LeaseOwner: "range-status-worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
+	})
+	requirements.NoError(err)
+	requirements.NoError(f.Store.SaveDocumentExtractionRange(ctx, claim, storetest.DocumentRangeCheckpoint(t), documentsConfig.MaxResponseBytes))
+	var status documentStatusOutput
+	requirements.NoError(json.Unmarshal([]byte(run("status", "--json")), &status))
+	assertions.True(status.StoresPlaintext)
+}
+
 func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uploadName string) {
 	t.Helper()
 	assertions := assert.New(t)
@@ -195,7 +247,7 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 	assertions.Equal(int32(3), uploads.Load())
 }
 
-func TestDoclingConsentDisclosesCredentialBinding(t *testing.T) {
+func TestDoclingConsentDisclosesCredentialsAndRangeRetention(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -214,6 +266,11 @@ func TestDoclingConsentDisclosesCredentialBinding(t *testing.T) {
 	requirements.ErrorContains(command.ExecuteContext(withTestConfig(t, cfg)), "requires --yes")
 	assertions.Contains(output.String(), c.APIKeyEnv)
 	assertions.Contains(output.String(), "X-Api-Key")
+	assertions.Contains(output.String(), "PDFs over 50 pages")
+	assertions.Contains(output.String(), "Each job uploads the original PDF again")
+	assertions.Contains(output.String(), "daemon restarts")
+	assertions.Contains(output.String(), "documents purge-derived")
+	assertions.Contains(output.String(), "seven days")
 	assertions.NotContains(output.String(), "synthetic-secret-value")
 }
 

@@ -444,7 +444,7 @@ uses a configured endpoint without a manifest.
 | `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
 | `max_pages_per_document` | `500` | Maximum provider units for one document |
-| `max_response_bytes` | `67108864` | Maximum provider response size (64 MiB) |
+| `max_response_bytes` | `67108864` | Maximum provider response size and aggregate Docling range checkpoint bytes, including canonical normalized evidence (64 MiB) |
 | `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
 | `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
 | `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
@@ -463,6 +463,12 @@ HTML bytes. It verifies sources in bounded memory and does not use the Mistral
 disk spool. Its `max_pages_per_document` bounds returned evidence units before
 any whole-document Markdown fallback. It cannot enforce a pre-upload page
 count for every native format.
+
+For Docling, PDFs over 50 pages run in consecutive 50-page jobs. Each job gets
+its own `total_timeout` and `max_poll_attempts`, while `max_pages_per_document`
+still limits the whole file. See
+[Docling extraction](usage/document-indexing.md#use-a-self-hosted-docling-service)
+for range checkpoints and retry behavior.
 
 Docling’s operator-controlled postures assign responsibility for deployment,
 credentials, model downloads, egress, resource limits, retention, and training
@@ -490,9 +496,10 @@ enabled.
 Provider uploads are manual-only: `msgvault serve` does not schedule document
 extraction. Each `documents build` or `documents resume` displays its upload
 and cost preflight before requiring `--yes`. Mistral receives its capability
-manifest explicitly; Docling uses its configured endpoint and policy. When
-document indexing is enabled, the daemon’s weekly reconciliation and local
-derivative cleanup remain automatic and make no provider requests.
+manifest explicitly; Docling uses its configured endpoint and policy. The
+daemon reconciles attachments weekly when document indexing is enabled.
+While `msgvault serve` runs, it also cleans stale local derivatives weekly,
+even when indexing is disabled. Neither job contacts a provider.
 
 `[attachments.documents.scope]` accepts these fields:
 

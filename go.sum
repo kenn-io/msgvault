@@ -482,12 +482,12 @@ go.duckdb.org/libduckdb/linux-arm64 v0.20000.0 h1:5pTT+NoMvS0RNy1dtK1Zr4I27BDZrZ
 go.duckdb.org/libduckdb/linux-arm64 v0.20000.0/go.mod h1:ViHlRMYp8+C2Bcf671Tn2eGihEc3/fn4H0OEf38HfQw=
 go.duckdb.org/libduckdb/windows-amd64 v0.20000.0 h1:/aGtHSsXGmd3orkky7vmX/rMpky4wnDDaU1leVFYpVQ=
 go.duckdb.org/libduckdb/windows-amd64 v0.20000.0/go.mod h1:eBhoLryMd4QH8f0EX013x32MHnXEXab0eB4oLnMEBhs=
-go.kenn.io/docbank v0.16.1-0.20261027125309-a814eff87a92 h1:nBSfvA42cuqN284pB4cTwML57arZlXdv7GwY9zomoj0=
-go.kenn.io/docbank v0.16.1-0.20261027125309-a814eff87a92/go.mod h1:33jRYkJpmqasi+4/dr375Kw+p/ripVoJKwihhfnfqmk=
 go.kenn.io/kata v0.20.0 h1:2jUPzlO6EA++Uw3CQFvPSOgjzfcRGPNxJXaakbOFtAA=
 go.kenn.io/kata v0.20.0/go.mod h1:GXpEbnQsOWDlafqSZQm5zE96hpm3B27jumGDCmxYOv4=
 go.kenn.io/kit v0.47.1 h1:oh6a8QdF+tzFjaa3qJCasQIcO/a3mdfQ9i3PhTpRic0=
 go.kenn.io/kit v0.47.1/go.mod h1:gt5vRFCsNEhuGZNySwzfjgGh5AK3aEB1XLgd54x9G0Q=
+go.kenn.io/docbank v0.16.1-0.20261028144856-154f9e0a7392 h1:s0UWhBO7BnooLfa1r39bXIek4bz4x95yYdju9Ko+jAQ=
+go.kenn.io/docbank v0.16.1-0.20261028144856-154f9e0a7392/go.mod h1:8fpJQTlsTZWjbe4g8IahyEVZ/gkkm1YnEdSQHYWcAJo=
 go.mau.fi/util v0.11.0 h1:JNEpkVRxfTdJUC0DIGKiRlLKzl4G/qLX/eVzoP7QuwY=
 go.mau.fi/util v0.11.0/go.mod h1:04AEFVsc4zNdIkDC1gkdqbg/nZFolHY50pyXh2DSy7s=
 go.mongodb.org/mongo-driver/v2 v2.9.2 h1:OCAdjI37pC/SVxucz/9CM8zD4jCdegtsY5QcKzYFCgE=

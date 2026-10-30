@@ -15,6 +15,12 @@ import (
 )
 
 func TestBackupManifestDisclosesAndRestoresDocumentPlaintext(t *testing.T) {
+	t.Run("published chunks", func(t *testing.T) { testBackupDocumentDisclosure(t, true) })
+	t.Run("staged ranges without chunks", func(t *testing.T) { testBackupDocumentDisclosure(t, false) })
+}
+
+func testBackupDocumentDisclosure(t *testing.T, chunks bool) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 	archive := t.TempDir()
@@ -39,8 +45,14 @@ func TestBackupManifestDisclosesAndRestoresDocumentPlaintext(t *testing.T) {
 		CREATE TABLE document_extractions (id TEXT PRIMARY KEY);
 		INSERT INTO document_extractions(id) VALUES ('one'), ('two'), ('three');
 		CREATE TABLE document_extraction_heads (extraction_id TEXT PRIMARY KEY);
-		INSERT INTO document_extraction_heads(extraction_id) VALUES ('one'), ('two')`)
+		INSERT INTO document_extraction_heads(extraction_id) VALUES ('one'), ('two');
+		CREATE TABLE document_extraction_ranges (extraction_id TEXT NOT NULL, evidence TEXT NOT NULL, char_count INTEGER NOT NULL);
+		INSERT INTO document_extraction_ranges(extraction_id, evidence, char_count) VALUES ('three', 'checkpoint sentinel', 19)`)
 	require.NoError(err)
+	if !chunks {
+		_, err = database.Exec(`DELETE FROM document_chunks; DELETE FROM document_extraction_heads`)
+		require.NoError(err)
+	}
 	require.NoError(database.Close())
 
 	repository, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
@@ -66,12 +78,11 @@ func TestBackupManifestDisclosesAndRestoresDocumentPlaintext(t *testing.T) {
 	require.Len(capture.artifacts, 1)
 	var disclosure backupapp.DocumentDisclosure
 	require.NoError(json.Unmarshal(capture.artifacts[0].Data, &disclosure))
-	assert.Equal(2, disclosure.SchemaVersion)
+	assert.Equal(3, disclosure.SchemaVersion)
 	assert.Equal(int64(2), disclosure.Profiles)
 	assert.Equal(int64(1), disclosure.EnabledProfiles)
 	assert.Equal(int64(1), disclosure.ConsentedProfiles)
 	assert.Equal(int64(3), disclosure.Extractions)
-	assert.Equal(int64(2), disclosure.CurrentHeads)
 	staged, err := backupapp.NewDocumentAuxiliaryTarget().StageAuxiliary(t.Context(), capture.artifacts)
 	require.NoError(err)
 	require.NoError(staged.Commit(t.Context()))
@@ -79,8 +90,17 @@ func TestBackupManifestDisclosesAndRestoresDocumentPlaintext(t *testing.T) {
 	require.NoError(err)
 	defer func() { require.NoError(restored.Close()) }()
 	var text string
-	require.NoError(restored.QueryRow(`SELECT text FROM document_chunks`).Scan(&text))
-	assert.Equal("synthetic normalized attachment evidence", text)
+	if chunks {
+		require.NoError(restored.QueryRow(`SELECT text FROM document_chunks`).Scan(&text))
+		assert.Equal("synthetic normalized attachment evidence", text)
+	} else {
+		assert.Zero(disclosure.Chunks)
+		assert.Zero(disclosure.CurrentHeads)
+		assert.Equal(int64(1), disclosure.StagedRanges)
+		assert.Equal(int64(19), disclosure.StagedCharacters)
+		require.NoError(restored.QueryRow(`SELECT evidence FROM document_extraction_ranges`).Scan(&text))
+		assert.Equal("checkpoint sentinel", text)
+	}
 }
 
 func TestDocumentAuxiliaryTargetRejectsUndisclosedArtifacts(t *testing.T) {
@@ -113,14 +133,15 @@ func TestDocumentAuxiliaryTargetRestoresSnapshotWithoutDisclosure(t *testing.T) 
 }
 
 func TestDocumentAuxiliaryTargetAcceptsLegacyDisclosureSchema(t *testing.T) {
-	target := backupapp.NewDocumentAuxiliaryTarget()
-	staged, err := target.StageAuxiliary(t.Context(), []backup.RestoredAuxiliary{{
-		Name:   "document-derivatives",
-		Format: "application/vnd.msgvault.document-derivatives+json; contains-normalized-plaintext=true",
-		Data:   []byte(`{"schema_version":1,"contains_normalized_attachment_plaintext":true,"chunks":1,"characters":4}`),
-	}})
-	require.NoError(t, err)
-	require.NoError(t, staged.Commit(t.Context()))
+	for _, payload := range []string{
+		`{"schema_version":1,"contains_normalized_attachment_plaintext":true,"chunks":1,"characters":4}`,
+		`{"schema_version":2,"contains_normalized_attachment_plaintext":true,"chunks":1,"characters":4}`,
+	} {
+		target := backupapp.NewDocumentAuxiliaryTarget()
+		staged, err := target.StageAuxiliary(t.Context(), []backup.RestoredAuxiliary{{Name: "document-derivatives", Format: "application/vnd.msgvault.document-derivatives+json; contains-normalized-plaintext=true", Data: []byte(payload)}})
+		require.NoError(t, err)
+		require.NoError(t, staged.Commit(t.Context()))
+	}
 }
 
 type capturingDocumentAuxiliaryTarget struct {

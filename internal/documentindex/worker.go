@@ -23,15 +23,18 @@ const originalDocumentInputKey = "original"
 const documentFailureCleanupTimeout = 5 * time.Second
 
 var (
-	errDocumentPreparation    = errors.New("document extraction preparation failed")
-	errDocumentLeaseRenewal   = errors.New("document extraction lease renewal failed")
-	errDocumentPublication    = errors.New("document extraction publication failed")
-	errDocumentSizeBounds     = errors.New("document candidate size is outside configured bounds")
-	errDocumentSizeMismatch   = errors.New("document attachment size no longer matches reconciled metadata")
-	errDocumentAttachmentOpen = errors.New("open document attachment failed")
+	errDocumentRangeCheckpoint = errors.New("document range checkpoint storage failed")
+	errDocumentPreparation     = errors.New("document extraction preparation failed")
+	errDocumentLeaseRenewal    = errors.New("document extraction lease renewal failed")
+	errDocumentPublication     = errors.New("document extraction publication failed")
+	errDocumentSizeBounds      = errors.New("document candidate size is outside configured bounds")
+	errDocumentSizeMismatch    = errors.New("document attachment size no longer matches reconciled metadata")
+	errDocumentAttachmentOpen  = errors.New("open document attachment failed")
 )
 
 type DocumentExtractionCatalog interface {
+	LoadDocumentExtractionRanges(ctx context.Context, claim store.DocumentExtractionClaim, maxBytes int64) ([]store.DocumentExtractionRange, error)
+	SaveDocumentExtractionRange(ctx context.Context, claim store.DocumentExtractionClaim, checkpoint store.DocumentExtractionRange, maxBytes int64) error
 	ClaimDocumentExtraction(ctx context.Context, input store.DocumentExtractionClaimInput) (store.DocumentExtractionClaim, error)
 	RenewDocumentExtractionClaim(ctx context.Context, claim store.DocumentExtractionClaim, leaseUntil time.Time) error
 	PublishDocumentExtraction(ctx context.Context, publication store.DocumentExtractionPublication) error
@@ -426,7 +429,7 @@ func (w *MistralWorker) recordFailure(
 	terminal, reason := classifyDocumentExtractionFailure(cause)
 	failure := store.DocumentExtractionFailure{
 		Claim: claim, ReasonCode: reason, Detail: documentFailureDetail(cause), Terminal: terminal,
-		RequestCount: metrics.Requests, RetryCount: metrics.Retries,
+		UploadCount: min(1, metrics.Requests), RequestCount: metrics.Requests, RetryCount: metrics.Retries,
 		ProviderLatencyMS: requestLatencyMillis(metrics.Latency), Conversion: conversion,
 	}
 	if !terminal {
@@ -468,7 +471,7 @@ func publicationFromNormalized(
 ) (store.DocumentExtractionPublication, error) {
 	return publicationFromDocument(claim, documentPublicationAccounting{
 		ReturnedModel: providerResult.ReturnedModel, ProviderBytes: providerResult.ProviderBytes,
-		UnitsProcessed: providerResult.UnitsProcessed, Requests: providerResult.Metrics.Requests,
+		Uploads: min(1, providerResult.Metrics.Requests), UnitsProcessed: providerResult.UnitsProcessed, Requests: providerResult.Metrics.Requests,
 		Retries: providerResult.Metrics.Retries, Latency: providerResult.Metrics.Latency,
 	}, normalized)
 }
@@ -477,6 +480,7 @@ type documentPublicationAccounting struct {
 	ReturnedModel  string
 	ProviderBytes  *int64
 	UnitsProcessed int
+	Uploads        int
 	Requests       int
 	Retries        int
 	Latency        time.Duration
@@ -499,7 +503,7 @@ func publicationFromDocument(
 		UnitsProcessed: accounting.UnitsProcessed, ManifestChecksum: normalized.Checksum,
 		NormalizationVersion: normalized.PolicyVersion, DocumentFamily: normalized.Family,
 		UnitKind: normalized.UnitKind, NormalizedTruncated: normalized.Truncated,
-		RequestCount: accounting.Requests, RetryCount: accounting.Retries,
+		UploadCount: accounting.Uploads, RequestCount: accounting.Requests, RetryCount: accounting.Retries,
 		ProviderLatencyMS: requestLatencyMillis(accounting.Latency),
 		Units:             make([]store.DocumentPublishedUnit, len(normalized.Units)),
 		Chunks:            make([]store.DocumentPublishedChunk, len(normalized.Chunks)),

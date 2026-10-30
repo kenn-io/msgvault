@@ -3648,6 +3648,7 @@ CREATE TABLE IF NOT EXISTS document_extractions (
     lease_until           DATETIME,
     attempt_count         INTEGER NOT NULL DEFAULT 0,
     request_count         INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+    upload_count          INTEGER NOT NULL DEFAULT 0 CHECK (upload_count >= 0),
     retry_count           INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count),
     provider_latency_ms   INTEGER NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0),
     next_retry_at         DATETIME,
@@ -4681,4 +4682,16 @@ CREATE TABLE IF NOT EXISTS conversation_policy (
  effective_tier TEXT NOT NULL DEFAULT 'full' CHECK (effective_tier IN ('full','cold','stub','skip')),
  override_tier TEXT CHECK (override_tier IN ('full','cold','stub','skip')),
  last_activity_at DATETIME
+);
+
+-- Successful PDF selections remain unpublished until the complete extraction commits.
+CREATE TABLE IF NOT EXISTS document_extraction_ranges (
+    extraction_id TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+    first_page INTEGER NOT NULL CHECK (first_page >= 1),
+    last_page INTEGER NOT NULL CHECK (last_page >= first_page),
+    total_pages INTEGER NOT NULL CHECK (total_pages >= last_page),
+    evidence TEXT NOT NULL,
+    evidence_checksum TEXT NOT NULL,
+    char_count BIGINT NOT NULL CHECK (char_count >= 0),
+    PRIMARY KEY (extraction_id, first_page)
 );
