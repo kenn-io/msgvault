@@ -1,3 +1,4 @@
+import { disabledTaskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 
@@ -33,7 +34,7 @@ it('passes exact person navigation from the message reader', async () => {
     if (path === '/api/v1/conversations/7') return Response.json({ id: 7, anchor_id: 2, messages: [{ id: 2, conversation_id: 7, message_type: 'email', from: 'Same name', from_participant_id: 11, to: [], subject: 'Follow up', body: 'Loaded body' }], has_before: false, has_after: false, total: 1 });
     if (path.endsWith('/tasks/status')) return Response.json({ state: 'disabled', message: 'Set up Tasks' });
     if (path.endsWith('/kata/status')) return Response.json({ state: 'disabled' });
-    return Response.json({ recordings: [], state: 'disabled', complete: true, tasks: [] });
+    return Response.json({ recordings: [], ...disabledTaskLookup(2) });
   });
   const client = createCaptureClient(fetchFn, [], []);
   render(MessagePage, { client, messageID: 2, onOpenPerson });

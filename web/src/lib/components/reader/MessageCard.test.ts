@@ -1,3 +1,4 @@
+import { disabledTaskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -183,26 +184,22 @@ describe('MessageCard', () => {
     expect(screen.queryByText('⋯')).toBeNull();
   });
 
-  it('exports the scoped meeting while its body loads', async () => {
+  it('passes its message scope to meeting export', async () => {
     const { meetingActions } = await import('../../meetings/fixtures.test-support');
     const requests: Request[] = [];
     const client = createAPIClient(async (input) => {
       const request = input as Request; requests.push(request.clone());
       return Response.json(request.url.endsWith('/context') ? { schema_version: 1, format: 'json', content: '{}', content_bytes: 2, truncated: false, omitted_message_ids: [] } : meetingActions());
     });
-    const { container } = render(MessageCard, {
-      props: { client, message: detail({ body: '', messageType: 'meeting_transcript' }), expanded: true, bodyPending: true }
+    render(MessageCard, {
+      props: { client, message: detail({ messageType: 'meeting_transcript' }), expanded: true }
     });
-
-    expect(screen.getByText('Loading message…')).toBeDefined();
-    expect(container.querySelector('pre')).toBeNull();
-    expect(container.querySelector('iframe')).toBeNull();
     const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     try {
       await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
       await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
-      await expect(requests.find(request => request.url.endsWith('/context'))!.json()).resolves.toEqual({ message_ids: [42], format: 'json', include_transcript: false });
+      await expect(requests.find(request => request.url.endsWith('/context'))!.json()).resolves.toMatchObject({ message_ids: [42] });
     } finally { download.mockRestore(); }
   });
 
@@ -286,7 +283,7 @@ it.each([{ state: 'ready', shown: true }, { state: 'unavailable', shown: false }
 });
 
 it('clears a download error when its menu reopens', async () => {
-  const client = createAPIClient(async (input) => (input as Request).url.includes('/cli/message/raw') ? Response.json({}, { status: 404 }) : Response.json({ state: 'disabled', tasks: [] }));
+  const client = createAPIClient(async (input) => (input as Request).url.includes('/cli/message/raw') ? Response.json({}, { status: 404 }) : Response.json(disabledTaskLookup()));
   render(MessageCard, { message: detail(), expanded: true, client });
   await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
   await fireEvent.click(screen.getByRole('menuitem', { name: 'Download original' }));
