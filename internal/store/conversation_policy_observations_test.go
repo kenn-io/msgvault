@@ -1413,30 +1413,37 @@ func TestSourceMergeClearsColdProviderBindingBesideProviderlessFullObservation(t
 // A native name with surrounding whitespace must keep its independent support
 // after a cold chat sighting gives the participant chat provenance.
 func TestConversationPolicyNativeNameWithWhitespaceKeepsSupport(t *testing.T) {
-	requirements := require.New(t)
-	s := testutil.NewTestStore(t)
-	ctx := t.Context()
-	_, err := s.ConfigureConversationPolicy(ctx, conversationpolicy.RecommendedSettings(), time.Now())
-	requirements.NoError(err)
-	native, err := s.GetOrCreateSource("apple_messages", "native-names")
-	requirements.NoError(err)
-	pid, err := s.EnsureParticipantByIdentifier("imessage", "+15555550142", "Native Name")
-	requirements.NoError(err)
-	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE participants SET display_name=? WHERE id=?`), "  Native Name  ", pid)
-	requirements.NoError(err)
-	_, err = s.RecordContactObservationContext(ctx, pid, store.ParticipantContactObservationInput{SourceID: &native.ID, AddressKind: store.ContactAddressDisplayName, OriginalValue: "  Native Name  ", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
-	requirements.NoError(err)
+	for _, padding := range []struct{ name, value string }{
+		{"spaces", "  "}, {"tabs", "\t"}, {"no-break-spaces", "\u00a0"},
+	} {
+		t.Run(padding.name, func(t *testing.T) {
+			requirements := require.New(t)
+			s := testutil.NewTestStore(t)
+			ctx := t.Context()
+			_, err := s.ConfigureConversationPolicy(ctx, conversationpolicy.RecommendedSettings(), time.Now())
+			requirements.NoError(err)
+			native, err := s.GetOrCreateSource("synctech_sms", "native-names")
+			requirements.NoError(err)
+			pid, err := s.EnsureParticipantByIdentifier("sms", "+15555550142", "Native Name")
+			requirements.NoError(err)
+			raw := padding.value + "Native Name" + padding.value
+			_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE participants SET display_name=? WHERE id=?`), raw, pid)
+			requirements.NoError(err)
+			_, err = s.RecordContactObservationContext(ctx, pid, store.ParticipantContactObservationInput{SourceID: &native.ID, AddressKind: store.ContactAddressDisplayName, OriginalValue: raw, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
+			requirements.NoError(err)
 
-	chat, err := s.GetOrCreateSource("slack", "T0SYNTHETIC")
-	requirements.NoError(err)
-	room, err := s.EnsureConversation(chat.ID, "cold-room", "Cold room")
-	requirements.NoError(err)
-	requirements.NoError(s.SetConversationPolicyOverride(ctx, chat.ID, "cold-room", conversationpolicy.Cold))
-	message, err := s.UpsertMessage(&store.Message{SourceID: chat.ID, ConversationID: room, SourceMessageID: "sighting", MessageType: "slack"})
-	requirements.NoError(err)
-	requirements.NoError(s.ReplaceMessageRecipients(message, "from", []int64{pid}, []string{"Someone Else"}))
+			chat, err := s.GetOrCreateSource("slack", "T0SYNTHETIC")
+			requirements.NoError(err)
+			room, err := s.EnsureConversation(chat.ID, "cold-room", "Cold room")
+			requirements.NoError(err)
+			requirements.NoError(s.SetConversationPolicyOverride(ctx, chat.ID, "cold-room", conversationpolicy.Cold))
+			message, err := s.UpsertMessage(&store.Message{SourceID: chat.ID, ConversationID: room, SourceMessageID: "sighting", MessageType: "slack"})
+			requirements.NoError(err)
+			requirements.NoError(s.ReplaceMessageRecipients(message, "from", []int64{pid}, []string{"Someone Else"}))
 
-	var supported bool
-	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT `+store.FullParticipantNameWhere("p.id", "p.display_name")+` FROM participants p WHERE id=?`), pid).Scan(&supported))
-	assert.True(t, supported, "the native observation still supports the participant's name")
+			var supported bool
+			requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT `+store.FullParticipantNameWhere("p.id", "p.display_name")+` FROM participants p WHERE id=?`), pid).Scan(&supported))
+			assert.True(t, supported, "the native observation still supports the participant's name")
+		})
+	}
 }

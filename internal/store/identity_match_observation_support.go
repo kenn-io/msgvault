@@ -103,23 +103,44 @@ func dropUnsupportedGeneratedNameEvidence(
 	if len(ids) == 0 {
 		return evidence, nil
 	}
-	unsupported := make(map[int64]bool, len(ids))
+	unsupported, err := unsupportedGeneratedNameEvidenceIDs(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	kept := evidence[:0:0]
+	for _, item := range evidence {
+		if !unsupported[item.ID] {
+			kept = append(kept, item)
+		}
+	}
+	return kept, nil
+}
+
+// unsupportedGeneratedNameEvidenceIDs reports which of the given evidence rows
+// are generated display-name explanations that have lost Full name support.
+// Rows of any other kind or source are never reported.
+func unsupportedGeneratedNameEvidenceIDs(
+	ctx context.Context, q identityMatchReviewQuerier, ids []int64,
+) (map[int64]bool, error) {
+	unsupported := make(map[int64]bool)
 	supported := func(side string) string {
 		return `CASE WHEN ` + FullParticipantNameWhere(side+".id", side+".display_name") + ` THEN 1 ELSE 0 END`
 	}
 	for start := 0; start < len(ids); start += 500 {
 		chunk := ids[start:min(start+500, len(ids))]
-		args := make([]any, len(chunk))
-		for i, id := range chunk {
-			args[i] = id
+		args := make([]any, 0, len(chunk)+1)
+		for _, id := range chunk {
+			args = append(args, id)
 		}
+		args = append(args, ProvenanceArchiveObservation)
 		rows, err := q.QueryContext(ctx, `SELECT e.id, COALESCE(e.detail,''),
 			COALESCE(l.display_name,''), `+supported("l")+`, COALESCE(r.display_name,''), `+supported("r")+`
 			FROM identity_match_evidence e
 			JOIN identity_match_candidates c ON c.id = e.candidate_id
 			LEFT JOIN participants l ON l.id = c.left_id AND c.left_kind = 'participant'
 			LEFT JOIN participants r ON r.id = c.right_id AND c.right_kind = 'participant'
-			WHERE e.id IN (`+sqlPlaceholders(len(chunk))+`)`, args...)
+			WHERE e.id IN (`+sqlPlaceholders(len(chunk))+`)
+			AND e.evidence_kind = 'display_name' AND e.source = ?`, args...)
 		if err != nil {
 			return nil, fmt.Errorf("check generated name evidence support: %w", err)
 		}
@@ -133,17 +154,13 @@ func dropUnsupportedGeneratedNameEvidence(
 			}
 			ok := detail != "" && leftSupported == 1 && rightSupported == 1 &&
 				strings.EqualFold(left, detail) && strings.EqualFold(right, detail)
-			unsupported[id] = !ok
+			if !ok {
+				unsupported[id] = true
+			}
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return nil, err
 		}
 	}
-	kept := evidence[:0:0]
-	for _, item := range evidence {
-		if !unsupported[item.ID] {
-			kept = append(kept, item)
-		}
-	}
-	return kept, nil
+	return unsupported, nil
 }

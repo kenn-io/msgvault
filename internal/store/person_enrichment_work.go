@@ -1296,6 +1296,24 @@ func (s *Store) MarkUncertainStart(
 func (s *Store) MarkTerminal(
 	ctx context.Context, token personenrichment.LeaseToken, failure personenrichment.SafeFailure,
 ) error {
+	return s.markTerminal(ctx, token, failure, personenrichment.Cost{})
+}
+
+// MarkTerminalWithCost ends a completed attempt without publishing its result
+// and reconciles the cost the provider reported for that call. Without it, a
+// result discarded after a paid call would record no spending when the
+// profile has no hard cost cap.
+func (s *Store) MarkTerminalWithCost(
+	ctx context.Context, token personenrichment.LeaseToken, failure personenrichment.SafeFailure,
+	cost personenrichment.Cost,
+) error {
+	return s.markTerminal(ctx, token, failure, cost)
+}
+
+func (s *Store) markTerminal(
+	ctx context.Context, token personenrichment.LeaseToken, failure personenrichment.SafeFailure,
+	cost personenrichment.Cost,
+) error {
 	if err := validateSafeFailure(failure); err != nil {
 		return err
 	}
@@ -1337,7 +1355,7 @@ func (s *Store) MarkTerminal(
 			return fmt.Errorf("load terminal person enrichment attempt revision: %w", err)
 		}
 		if _, err := reconcilePersonEnrichmentCostTx(ctx, tx, s.dialect, token.AttemptID,
-			personenrichment.Cost{}, true, s.personEnrichmentTime()); err != nil {
+			cost, cost == (personenrichment.Cost{}), s.personEnrichmentTime()); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts

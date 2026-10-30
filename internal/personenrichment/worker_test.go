@@ -2583,19 +2583,21 @@ func TestWorkerSixtyfourDuplicateValues(t *testing.T) {
 	}
 }
 
-// driftingRequestStore serves the original request input once, then input in
-// which the person's profile URL lost its Full support.
+// driftingRequestStore serves the original request input for the first
+// driftAfter loads (default one), then input in which the person's profile
+// URL lost its Full support.
 type driftingRequestStore struct {
 	personenrichment.WorkStore
 
-	loads atomic.Int64
+	driftAfter int64
+	loads      atomic.Int64
 }
 
 func (s *driftingRequestStore) LoadRequestInput(
 	ctx context.Context, lease personenrichment.WorkLease,
 ) (personenrichment.RequestInput, error) {
 	input, err := s.WorkStore.LoadRequestInput(ctx, lease)
-	if err == nil && s.loads.Add(1) > 1 {
+	if err == nil && s.loads.Add(1) > max(s.driftAfter, 1) {
 		input.PublicProfileURLs = nil
 	}
 	return input, err
@@ -2628,4 +2630,41 @@ func TestWorkerDoesNotDispatchIdentityThatChangedAfterRequestLoad(t *testing.T) 
 	requirements.NoError(err)
 	requirements.Len(attempts, 1)
 	checks.Equal("terminal", attempts[0].State)
+}
+
+// TestWorkerRecordsChargeWhenIdentityChangesBeforePublication covers a
+// provider call that completed and charged while the identity behind the
+// request lost Full support. The result is discarded, but the charge is real
+// and must still be counted against spending.
+func TestWorkerRecordsChargeWhenIdentityChangesBeforePublication(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newWorkerFixture(t, "identity-drift-paid", nil)
+	f.enqueue(t)
+	// Loads one and two build and recheck the request before dispatch; the
+	// third is the recheck before publication.
+	work := &driftingRequestStore{WorkStore: f.store, driftAfter: 2}
+	charge := personenrichment.Cost{Currency: "USD", AmountMicros: 4200}
+	worker, err := personenrichment.NewWorker(
+		work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+		map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
+			return &functionProvider{start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
+				result := workerResult(t, request, f.target, "paid-request", "", false, "", charge)
+				return personenrichment.Attempt{State: personenrichment.AttemptComplete, RequestID: result.RequestID, AdapterVersion: result.AdapterVersion, SchemaVersion: result.SchemaVersion, ProgramFingerprint: workerProgramFingerprint(t, false, ""), Result: &result}, nil
+			}}, nil
+		}}, f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}))
+	requirements.NoError(err)
+
+	processed, err := worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+	attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
+		PersonID: f.person.ID, RunID: f.run.ID, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(attempts, 1)
+	checks.Equal("terminal", attempts[0].State)
+	checks.Nil(attempts[0].FactGenerationKey)
+	requirements.NotNil(attempts[0].ActualCostUSDMicros)
+	checks.Equal(charge.AmountMicros, *attempts[0].ActualCostUSDMicros)
 }
