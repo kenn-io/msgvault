@@ -133,6 +133,7 @@ func (s *Store) conversationPolicyRefreshDueTx(ctx context.Context, tx *loggedTx
 	}
 	var pending bool
 	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key LIKE 'conversation_policy_activity_dirty:%')
+		OR NOT EXISTS(SELECT 1 FROM archive_metadata WHERE key='conversation_policy_people_bootstrapped')
 		OR EXISTS(SELECT 1 FROM conversations c JOIN sources src ON src.id=c.source_id
 			WHERE src.source_type IN ('beeper','slack','slackdump','discord','teams')
 			  AND NOT EXISTS (SELECT 1 FROM conversation_policy p WHERE p.conversation_id=c.id))
@@ -208,7 +209,11 @@ func (s *Store) configureConversationPolicyTx(ctx context.Context, tx *loggedTx,
 		}
 	}
 	selfChanged := previousFingerprint != fingerprint
-	changed := old != raw || selfChanged
+	var peopleBootstrapped bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key='conversation_policy_people_bootstrapped')`).Scan(&peopleBootstrapped); err != nil {
+		return err
+	}
+	changed := old != raw || selfChanged || !peopleBootstrapped
 	dirty, err := s.drainConversationPolicyActivityDirtyTx(ctx, tx)
 	if err != nil {
 		return err
@@ -460,12 +465,39 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 			return result, fmt.Errorf("queue activity for policy conversation %d: %w", c.row.ConversationID, err)
 		}
 		result.ChangedConversationIDs = append(result.ChangedConversationIDs, c.row.ConversationID)
+		if tier == conversationpolicy.Full {
+			if err := s.reconcilePromotedConversationConflictsTx(ctx, tx, c.row.ConversationID); err != nil {
+				return result, err
+			}
+		}
 	}
 	if settingsChanged || len(result.ChangedConversationIDs) > 0 {
+		if err = s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
+			return result, err
+		}
 		if err = s.bumpConversationPolicyRevision(ctx, tx); err != nil {
 			return result, err
 		}
 		if err = s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
+			return result, err
+		}
+		var oldIdentity int64
+		oldIdentity, err = s.currentIdentityRevisionTxContext(ctx, tx)
+		if err != nil {
+			return result, err
+		}
+		newIdentity, err := s.bumpIdentityRevisionContext(ctx, tx)
+		if err != nil {
+			return result, err
+		}
+		// Advance our own observation marker without hiding external identity drift.
+		var account string
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(value),'0') FROM archive_metadata WHERE key='account_identity_revision'`).Scan(&account)
+		if err != nil {
+			return result, err
+		}
+		_, err = tx.ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value=? WHERE key='conversation_policy_attribution_revision' AND value=?`), strconv.FormatInt(newIdentity, 10)+":"+account, strconv.FormatInt(oldIdentity, 10)+":"+account)
+		if err != nil {
 			return result, err
 		}
 		if _, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE person_contact_state SET dirty_at=COALESCE(dirty_at,%s) WHERE dirty_at IS NULL`, s.dialect.Now())); err != nil {
@@ -490,6 +522,9 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 		return result, err
 	}
 	if len(result.ChangedConversationIDs) > 0 {
+		if err = s.invalidateConversationPolicyPeopleTx(ctx, tx, result.ChangedConversationIDs, result.Revision); err != nil {
+			return result, err
+		}
 		lifecycle, captureErr := s.captureConversationPolicyRoomsTx(ctx, tx, result.ChangedConversationIDs)
 		if captureErr != nil {
 			return result, captureErr
@@ -498,7 +533,19 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 			return result, err
 		}
 	}
-	return result, nil
+	if settingsChanged && ids == nil {
+		var initialized bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key='conversation_policy_people_bootstrapped')`).Scan(&initialized); err != nil {
+			return result, err
+		}
+		if !initialized {
+			if err = s.invalidateConversationPolicyPeopleTx(ctx, tx, nil, result.Revision); err != nil {
+				return result, err
+			}
+			err = s.setConversationPolicyMetadataTx(ctx, tx, "conversation_policy_people_bootstrapped", "1")
+		}
+	}
+	return result, err
 }
 
 // ConversationPolicyCleanupRevision returns the durable reconciliation target.

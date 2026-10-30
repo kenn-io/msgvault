@@ -477,10 +477,7 @@ func (s *Store) retireIMAPDraftMembershipTx(
 		return fmt.Errorf("rebuild IMAP draft labels: %w", err)
 	}
 	if len(mailboxes) == 0 {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP
-			WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
-		`, messageID, receipt.SourceID); err != nil {
+		if err := tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", messageID, receipt.SourceID); err != nil {
 			return fmt.Errorf("tombstone retired IMAP draft: %w", err)
 		}
 	}

@@ -203,6 +203,11 @@ var buildCacheBeforeMessagesExportHook func() error
 // Tests override it to exercise platform-specific snapshot behavior.
 var cacheSnapshotGOOS = runtime.GOOS
 
+const (
+	cacheExportParticipants           = "cache_export_participants"
+	cacheExportParticipantIdentifiers = "cache_export_participant_identifiers"
+)
+
 // buildCacheWriteStateFile atomically publishes the cache sync state marker;
 // a test seam for simulating state persistence failures.
 var buildCacheWriteStateFile = writeCacheStateFile
@@ -926,7 +931,7 @@ func (s *cacheSourceSnapshot) participantIdentifiersExportSelectSQL() string {
 			COALESCE(%s, '') AS identifier_value,
 			COALESCE(%s, '') AS display_value,
 			COALESCE(TRY_CAST(is_primary AS BOOLEAN), false) AS is_primary
-		FROM sqlite_db.participant_identifiers`, s.identityExportSQL("identifier_type"), s.identityExportSQL("identifier_value"), s.textSQL("display_value"))
+		FROM %s pi`, s.participantIdentityExportSQL("pi.identifier_type"), s.participantIdentityExportSQL("pi.identifier_value"), s.participantTextSQL("pi.display_value"), s.snapshotTable(cacheExportParticipantIdentifiers))
 }
 
 // participantsExportSelectSQL renders the participants dataset export. The
@@ -936,12 +941,12 @@ func (s *cacheSourceSnapshot) participantIdentifiersExportSelectSQL() string {
 // (unknown), not as a repaired value that could collide with another address.
 func (s *cacheSourceSnapshot) participantsExportSelectSQL() string {
 	return fmt.Sprintf(`SELECT
-			id,
+			p.id,
 			COALESCE(%s, '') AS email_address,
 			COALESCE(%s, '') AS domain,
 			COALESCE(%s, '') AS display_name,
 			COALESCE(%s, '') AS phone_number
-		FROM sqlite_db.participants`, s.identityExportSQL("email_address"), s.textSQL("domain"), s.textSQL("display_name"), s.textSQL("phone_number"))
+		FROM %s p`, s.participantIdentityExportSQL("p.email_address"), s.participantTextSQL("p.domain"), s.participantTextSQL("p.display_name"), s.participantTextSQL("p.phone_number"), s.snapshotTable(cacheExportParticipants))
 }
 
 // personDisplayNamesExportSelectSQL keeps full and derived-only exports identical.
@@ -2012,6 +2017,13 @@ func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
 	return s.duckDB
 }
 
+func (s *cacheSourceSnapshot) snapshotTable(name string) string {
+	if s.csvSnapshot {
+		return "sqlite_db." + name
+	}
+	return name
+}
+
 // identityPresenceSQL preserves raw address presence independently of UTF-8
 // validity. CSV snapshots carry a boolean computed by SQLite before invalid
 // identity bytes become NULL; scanner snapshots still have the raw bytes.
@@ -2023,16 +2035,23 @@ func (s *cacheSourceSnapshot) identityPresenceSQL(emailRef, presenceRef string) 
 }
 
 // Prepare materializes the CSV fallback after metadata has pinned the SQLite
-// read transaction. sqlite_scanner needs no preparation because DuckDB's
-// transaction reads the attached database directly.
+// read transaction. The sqlite_scanner path also prepares the participant
+// export projections through sqlite_query in that same snapshot.
 func (s *cacheSourceSnapshot) Prepare(through int64) error {
-	return s.prepareTables(s.tables(through))
+	if s.csvSnapshot {
+		return s.prepareTables(s.tables(through))
+	}
+	return s.prepareParticipantExportTables(through)
 }
 
 // PrepareDatasets materializes only the named SQLite tables on the CSV
-// fallback path. sqlite_scanner needs no materialization. Derived refreshes
-// use this to avoid exporting unrelated multi-million-row junction tables.
+// fallback path. sqlite_scanner reads them directly and materializes only the
+// participant export projections. Derived refreshes use this to avoid
+// exporting unrelated multi-million-row junction tables.
 func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) error {
+	if !s.csvSnapshot {
+		return s.prepareParticipantExportTables(through)
+	}
 	wanted := make(map[string]bool, len(names))
 	for _, name := range names {
 		wanted[name] = true
@@ -2053,6 +2072,32 @@ func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) er
 			strings.Join(missing, ", "))
 	}
 	return s.prepareTables(selected)
+}
+
+// prepareParticipantExportTables evaluates value-level policy in SQLite,
+// where the store's eligibility predicates have native query planning. The
+// DuckDB projection then reads only the resulting safe participant values.
+func (s *cacheSourceSnapshot) prepareParticipantExportTables(through int64) error {
+	if s.duckTx == nil {
+		return errors.New("prepare participant exports: missing DuckDB snapshot transaction")
+	}
+	for _, table := range s.tables(through) {
+		if table.name != cacheExportParticipants && table.name != cacheExportParticipantIdentifiers {
+			continue
+		}
+		var querySQL string
+		if table.name == cacheExportParticipants {
+			querySQL = participantExportQuery(true)
+		} else {
+			querySQL = participantIdentifierExportQuery(true)
+		}
+		query := strings.ReplaceAll(querySQL, "'", "''")
+		statement := fmt.Sprintf(`CREATE TEMP TABLE "%s" AS SELECT * FROM sqlite_query('sqlite_db', '%s')`, table.name, query)
+		if _, err := s.duckTx.Exec(statement); err != nil {
+			return fmt.Errorf("prepare %s snapshot: %w", table.name, err)
+		}
+	}
+	return nil
 }
 
 func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
@@ -2092,6 +2137,8 @@ func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
 		messageTypes += ", 'account_address': 'VARCHAR', 'account_path': 'VARCHAR'"
 	}
 	messageTypes += "}"
+	participantExportQuery := participantExportQuery(false)
+	participantIdentifierExportQuery := participantIdentifierExportQuery(false)
 
 	// Every column carries an explicit type so the schema DuckDB sees never
 	// depends on the data: read_csv_auto sniffs empty or all-NULL columns as
@@ -2115,14 +2162,24 @@ func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
 			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR', 'attachment_metadata': 'VARCHAR'}", nil},
 		{"persons", "SELECT id, display_name FROM persons", "types={'id': 'BIGINT', 'display_name': 'VARCHAR'}", nil},
 		{"person_participants", "SELECT person_id, participant_id FROM person_participants", "types={'person_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
+		{"person_contact_points", "SELECT person_id,address_kind,normalized_value,source,active_until,superseded_at FROM person_contact_points", "types={'person_id':'BIGINT','address_kind':'VARCHAR','normalized_value':'VARCHAR','source':'VARCHAR','active_until':'TIMESTAMP','superseded_at':'TIMESTAMP'}", identityColumns("normalized_value")},
+		{"participant_contact_observations", "SELECT id,participant_id,source_id,address_kind,normalized_value,source,active_until,superseded_at FROM participant_contact_observations", "types={'id':'BIGINT','participant_id':'BIGINT','source_id':'BIGINT','address_kind':'VARCHAR','normalized_value':'VARCHAR','source':'VARCHAR','active_until':'TIMESTAMP','superseded_at':'TIMESTAMP'}", identityColumns("normalized_value")},
+		{"participant_contact_observation_conversations", "SELECT observation_id,conversation_id FROM participant_contact_observation_conversations", "types={'observation_id':'BIGINT','conversation_id':'BIGINT'}", nil},
+		{"communication_services", "SELECT id,slug FROM communication_services", "types={'id':'BIGINT','slug':'VARCHAR'}", identityColumns("slug")},
 		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number, " + emailPresence + " AS primary_email_present FROM participants",
 			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR', 'primary_email_present': 'BOOLEAN'}",
 			identityColumns("email_address")},
 		{"account_identities", "SELECT source_id, address FROM account_identities",
 			"types={'source_id': 'BIGINT', 'address': 'VARCHAR'}",
 			identityColumns("address")},
-		{tableParticipantIdentifiers, "SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM participant_identifiers",
-			"types={'participant_id': 'BIGINT', 'identifier_type': 'VARCHAR', 'identifier_value': 'VARCHAR', 'display_value': 'VARCHAR', 'is_primary': 'BOOLEAN'}",
+		{tableParticipantIdentifiers, "SELECT id, participant_id, identifier_type, identifier_value, display_value, is_primary, service_id, scope_kind, scope_value FROM participant_identifiers",
+			"types={'id':'BIGINT','participant_id': 'BIGINT', 'identifier_type': 'VARCHAR', 'identifier_value': 'VARCHAR', 'display_value': 'VARCHAR', 'is_primary': 'BOOLEAN','service_id':'BIGINT','scope_kind':'VARCHAR','scope_value':'VARCHAR'}",
+			identityColumns("identifier_type", "identifier_value")},
+		{cacheExportParticipants, participantExportQuery,
+			"types={'id':'BIGINT','email_address':'VARCHAR','domain':'VARCHAR','display_name':'VARCHAR','phone_number':'VARCHAR'}",
+			identityColumns("email_address")},
+		{cacheExportParticipantIdentifiers, participantIdentifierExportQuery,
+			"types={'participant_id':'BIGINT','identifier_type':'VARCHAR','identifier_value':'VARCHAR','display_value':'VARCHAR','is_primary':'BOOLEAN'}",
 			identityColumns("identifier_type", "identifier_value")},
 		{tableLabels, "SELECT id, name FROM labels",
 			"types={'id': 'BIGINT', 'name': 'VARCHAR'}", nil},
@@ -2133,6 +2190,42 @@ func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
 		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants",
 			"types={'conversation_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
 	}
+}
+
+// participantExportQuery applies the value-level chat policy in SQLite. The
+// scanner path hex-encodes text so DuckDB never materializes malformed UTF-8
+// while creating the temporary table; the final cache projection decodes and
+// repairs display text or rejects invalid identity keys.
+func participantExportQuery(hexEncodeText bool) string {
+	value := func(eligible, column string) string {
+		expression := "CASE WHEN " + eligible + " THEN " + column + " END"
+		if hexEncodeText {
+			return "HEX(CAST(" + expression + " AS BLOB))"
+		}
+		return expression
+	}
+	return fmt.Sprintf(`SELECT p.id,
+		%s AS email_address,
+		%s AS domain,
+		%s AS display_name,
+		%s AS phone_number
+		FROM participants p`,
+		value(store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"), "p.email_address"),
+		value(store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"), "p.domain"),
+		value(store.FullParticipantNameWhere("p.id", "p.display_name"), "p.display_name"),
+		value(store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number"), "p.phone_number"),
+	)
+}
+
+func participantIdentifierExportQuery(hexEncodeText bool) string {
+	identifierType, identifierValue, displayValue := "pi.identifier_type", "pi.identifier_value", "pi.display_value"
+	if hexEncodeText {
+		identifierType = "HEX(CAST(" + identifierType + " AS BLOB))"
+		identifierValue = "HEX(CAST(" + identifierValue + " AS BLOB))"
+		displayValue = "HEX(CAST(" + displayValue + " AS BLOB))"
+	}
+	return `SELECT pi.participant_id, ` + identifierType + ` AS identifier_type, ` + identifierValue + ` AS identifier_value, ` + displayValue + ` AS display_value, pi.is_primary
+		FROM participant_identifiers pi WHERE ` + store.FullParticipantIdentifierWhereSQLite("pi")
 }
 
 func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {

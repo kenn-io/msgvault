@@ -311,6 +311,20 @@ func ensureSlackdumpMembership(ctx context.Context,
 		}
 		return nil, unknownMembershipCount(mediaPolicy), nil
 	}
+	// Normalize the retained membership before rich identity admission.
+	unique := make(map[string]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		if id != "" {
+			unique[id] = struct{}{}
+		}
+	}
+	participantCount := max(len(unique), conversation.NumMembers)
+	if err := st.SetConversationMemberCountContext(ctx, conversationID, participantCount); err != nil {
+		return nil, 0, err
+	}
+	if _, err := st.RefreshConversationPolicy(ctx, []int64{conversationID}, time.Now()); err != nil {
+		return nil, 0, err
+	}
 	seen := make(map[string]struct{}, len(userIDs))
 	participants := make([]store.ConversationParticipantRef, 0, len(userIDs))
 	toRecipients := make([]messageRecipient, 0, len(userIDs))
@@ -322,7 +336,7 @@ func ensureSlackdumpMembership(ctx context.Context,
 			continue
 		}
 		seen[userID] = struct{}{}
-		participantID, err := resolver.resolveID(ctx, userID)
+		participantID, err := resolver.resolveID(ctx, userID, conversationID)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -343,7 +357,7 @@ func ensureSlackdumpMembership(ctx context.Context,
 	if err := st.ReplaceConversationParticipants(conversationID, participants); err != nil {
 		return nil, 0, err
 	}
-	participantCount := max(len(participants), conversation.NumMembers)
+	participantCount = max(len(participants), conversation.NumMembers)
 	if err := st.SetConversationMemberCount(conversationID, participantCount); err != nil {
 		return nil, 0, err
 	}

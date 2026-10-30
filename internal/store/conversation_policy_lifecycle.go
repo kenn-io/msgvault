@@ -28,6 +28,7 @@ func (s *Store) runConversationPolicyMaintenance(ctx context.Context, fn func(co
 }
 
 type conversationPolicyLifecycle struct {
+	people       []int64
 	participants []int64
 	revision     int64
 	// A contact-only merge must not bootstrap unrelated chat policy. Its actual
@@ -66,6 +67,10 @@ func (s *Store) captureConversationPolicyRoomsTx(ctx context.Context, tx *logged
 	var state conversationPolicyLifecycle
 	var err error
 	if len(rooms) > 0 {
+		state.people, err = s.conversationPolicyPeopleForRoomsTx(ctx, tx, rooms)
+		if err != nil {
+			return state, err
+		}
 		if err = queryInChunksContext(ctx, tx, rooms, nil,
 			`WITH target_rooms AS (SELECT id FROM conversations WHERE id IN (%s))
 			 SELECT cp.participant_id FROM conversation_participants cp
@@ -75,6 +80,10 @@ func (s *Store) captureConversationPolicyRoomsTx(ctx context.Context, tx *logged
 			 UNION SELECT mr.participant_id FROM message_recipients mr
 			 WHERE EXISTS (SELECT 1 FROM messages m WHERE m.id=mr.message_id
 			               AND EXISTS (SELECT 1 FROM target_rooms WHERE id=m.conversation_id))
+			 UNION SELECT o.participant_id FROM participant_contact_observations o
+			 WHERE EXISTS (SELECT 1 FROM participant_contact_observation_conversations edge
+			               WHERE edge.observation_id=o.id
+			                 AND EXISTS (SELECT 1 FROM target_rooms WHERE id=edge.conversation_id))
 			 ORDER BY participant_id`,
 			func(rows *loggedRows) error {
 				var id int64
@@ -91,6 +100,50 @@ func (s *Store) captureConversationPolicyRoomsTx(ctx context.Context, tx *logged
 	state.participants = sortedInt64Set(mapInt64Set(state.participants))
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(value AS BIGINT)),0) FROM archive_metadata WHERE key='conversation_policy_revision'`).Scan(&state.revision)
 	return state, err
+}
+
+// Select only the merged identities' supporting rooms. In particular, a merge
+// into an unchanged self ID can alter activity without changing its fingerprint.
+func (s *Store) captureParticipantConversationPolicyTx(ctx context.Context, tx *loggedTx, oldID, newID int64) (conversationPolicyLifecycle, error) {
+	var state conversationPolicyLifecycle
+	rows, err := tx.QueryContext(ctx, `SELECT c.id FROM conversations c JOIN sources src ON src.id=c.source_id
+ WHERE src.source_type IN ('beeper','slack','slackdump','discord','teams') AND c.id IN (
+ SELECT conversation_id FROM messages WHERE sender_id IN (?,?) AND conversation_id IS NOT NULL
+ UNION SELECT m.conversation_id FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE mr.participant_id IN (?,?) AND m.conversation_id IS NOT NULL
+ UNION SELECT conversation_id FROM conversation_participants WHERE participant_id IN (?,?)
+ UNION SELECT edge.conversation_id FROM participant_contact_observations o JOIN participant_contact_observation_conversations edge ON edge.observation_id=o.id WHERE o.participant_id IN (?,?))`, oldID, newID, oldID, newID, oldID, newID, oldID, newID)
+	if err != nil {
+		return state, err
+	}
+	var rooms []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		rooms = append(rooms, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	_ = rows.Close()
+	if err != nil {
+		return state, err
+	}
+	state, err = s.captureConversationPolicyRoomsTx(ctx, tx, rooms)
+	if err != nil {
+		return state, err
+	}
+	if len(rooms) == 0 {
+		state.checkSelfOnly = true
+		state.selfBefore, err = s.conversationPolicySelfFingerprintTx(ctx, tx)
+		if err != nil {
+			return state, err
+		}
+	}
+	state.activityRooms = rooms
+	state.participants = sortedInt64Set(mapInt64Set(append(state.participants, oldID, newID)))
+	return state, nil
 }
 
 // Policy and main-store invalidations commit with the provenance mutation.
@@ -138,7 +191,10 @@ func (s *Store) finishConversationPolicyLifecycleTx(ctx context.Context, tx *log
 	if _, err = tx.ExecContext(ctx, advanceConversationPolicyCleanupSQL); err != nil {
 		return err
 	}
-	return s.invalidateContextualParticipantMessagesTx(ctx, tx, state.participants)
+	if err = s.invalidateContextualParticipantMessagesTx(ctx, tx, state.participants); err != nil {
+		return err
+	}
+	return s.invalidateConversationPolicyPersonsTx(ctx, tx, state.people, refreshed.Revision)
 }
 
 func mapInt64Set(values []int64) map[int64]struct{} {

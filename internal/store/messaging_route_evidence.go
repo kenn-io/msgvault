@@ -203,3 +203,82 @@ func invalidateMessagingRouteMembership(metadata map[string]jsontext.Value, fail
 	metadata["messaging_route"] = encoded
 	return nil
 }
+
+// Repoint stored identity references without changing the provider's proof.
+// Unknown proof fields and unrelated metadata survive the repair as raw JSON.
+func (s *Store) repointMessagingRouteParticipantsTx(ctx context.Context, tx *loggedTx, oldID, newID int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,CAST(metadata AS TEXT) FROM conversations WHERE CAST(metadata AS TEXT) LIKE '%"messaging_route"%'`)
+	if err != nil {
+		return err
+	}
+	type update struct {
+		id       int64
+		metadata string
+	}
+	var updates []update
+	for rows.Next() {
+		var id int64
+		var raw string
+		if err = rows.Scan(&id, &raw); err != nil {
+			break
+		}
+		var metadata map[string]jsontext.Value
+		if json.Unmarshal([]byte(raw), &metadata) != nil {
+			continue
+		}
+		var route map[string]jsontext.Value
+		if json.Unmarshal(metadata["messaging_route"], &route) != nil {
+			continue
+		}
+		changed := false
+		for _, key := range []string{"participant_ids", "self_participant_ids"} {
+			var ids []int64
+			if json.Unmarshal(route[key], &ids) != nil || !slices.Contains(ids, oldID) {
+				continue
+			}
+			for i := range ids {
+				if ids[i] == oldID {
+					ids[i] = newID
+				}
+			}
+			slices.Sort(ids)
+			route[key], err = json.Marshal(slices.Compact(ids))
+			if err != nil {
+				break
+			}
+			changed = true
+		}
+		if err != nil {
+			break
+		}
+		if !changed {
+			continue
+		}
+		metadata["messaging_route"], err = json.Marshal(route, json.Deterministic(true))
+		if err != nil {
+			break
+		}
+		encoded, encodeErr := json.Marshal(metadata, json.Deterministic(true))
+		if encodeErr != nil {
+			err = encodeErr
+			break
+		}
+		updates = append(updates, update{id, string(encoded)})
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, item := range updates {
+		if _, err = tx.ExecContext(ctx, `UPDATE conversations SET metadata=`+s.dialect.JSONBindExpr()+` WHERE id=?`, item.metadata, item.id); err != nil {
+			return err
+		}
+		if err = markConversationPolicyActivitiesDirtyWith(boundQuerier{ctx: ctx, q: tx}, []int64{item.id}); err != nil {
+			return err
+		}
+	}
+	return nil
+}

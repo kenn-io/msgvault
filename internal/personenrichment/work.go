@@ -33,6 +33,7 @@ type SuppressionChecker interface {
 // storage owns every run, lease, active-attempt binding, provider job, retry,
 // and pre-egress budget reservation.
 type WorkStore interface {
+	CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
 	StartRun(ctx context.Context, start RunStart) (*DurableRun, bool, error)
 	ListRunningRuns(ctx context.Context, filter RunningRunFilter) ([]DurableRun, error)
 	CompleteRun(ctx context.Context, runID int64, completion RunCompletion) error
@@ -50,6 +51,9 @@ type WorkStore interface {
 	ScheduleRetry(ctx context.Context, token LeaseToken, retry RetryUpdate) error
 	MarkUncertainStart(ctx context.Context, token LeaseToken, failure SafeFailure) error
 	MarkTerminal(ctx context.Context, token LeaseToken, failure SafeFailure) error
+	// MarkTerminalWithCost ends an attempt whose provider call completed and
+	// reported a charge, recording that charge while discarding the result.
+	MarkTerminalWithCost(ctx context.Context, token LeaseToken, failure SafeFailure, cost Cost) error
 }
 
 type ClaimOptions struct {

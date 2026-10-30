@@ -1487,6 +1487,9 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 	if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 		return false, err
 	}
+	if err := s.invalidatePersonContactPointParticipantsTx(ctx, tx, personID); err != nil {
+		return false, err
+	}
 	if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {
 		return false, err
 	}
@@ -1653,6 +1656,9 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 		}
 	}
 	if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
+		return err
+	}
+	if err := s.invalidatePersonContactPointParticipantsTx(ctx, tx, personID); err != nil {
 		return err
 	}
 	if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {

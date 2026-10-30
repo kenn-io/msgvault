@@ -107,8 +107,34 @@ func (s *Store) applyPersonSweepWithAligner(
 		return peoplesweep.ApplyResult{}, err
 	}
 
+	var references []peoplesweep.EvidenceRef
+	if request.Brief != nil {
+		for _, input := range request.Brief.Evidence {
+			if ref, err := peoplesweep.DecodePersonSweepEvidenceRef(input.SourceRef); err == nil {
+				references = append(references, ref)
+			}
+		}
+	}
+	ctx = context.WithValue(ctx, personSweepPublicationRefsKey{}, references)
 	var result peoplesweep.ApplyResult
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err = s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
+		// A durable caller may no longer carry the worker's context. Recheck the
+		// original cited versions, including inputs rejected by pre-alignment;
+		// dropping citations cannot make their rendered text current again.
+		if request.Brief != nil {
+			for _, input := range request.Brief.Evidence {
+				if _, err := peoplesweep.DecodePersonSweepEvidenceRef(input.SourceRef); err != nil {
+					continue // Other archive references retain their own aligner contract.
+				}
+				valid, err := s.personFactPolicyPromotionValidTx(ctx, tx, input)
+				if err != nil {
+					return err
+				}
+				if !valid {
+					return ErrConversationPolicyStale
+				}
+			}
+		}
 		attempt, err := s.lockPersonSweepBudgetAttempt(ctx, tx, request.AttemptID)
 		if err != nil {
 			return err

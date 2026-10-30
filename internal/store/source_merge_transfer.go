@@ -13,8 +13,26 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	if err := preserveMergedIMAPDrafts(ctx, tx, from, into); err != nil {
 		return fmt.Errorf("preserve merged IMAP draft evidence: %w", err)
 	}
+	var hasParticipantObservations bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM participant_contact_observations WHERE source_id IN (?, ?)
+	)`, from, into).Scan(&hasParticipantObservations); err != nil {
+		return fmt.Errorf("check source merge participant observations: %w", err)
+	}
+	if _, err := s.clearIneligibleProviderBindingsForSourceMergeTx(ctx, tx, from, into); err != nil {
+		return err
+	}
+	if err := s.preserveFullProviderBindingsForSourceMergeTx(ctx, tx, from, into); err != nil {
+		return err
+	}
 	conversations := map[int64]int64{}
 	for _, c := range plan.conversations {
+		// A later merge can move a destination room again. Keep every earlier
+		// source-to-room provenance row pointed at the room's current destination.
+		if _, err := tx.ExecContext(ctx, `UPDATE source_merge_conversations
+			SET destination_conversation_id = ? WHERE destination_conversation_id = ?`, c.destination, c.id); err != nil {
+			return fmt.Errorf("advance merged conversation provenance: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_conversations(conversation_id, original_source_id, original_conversation_id, destination_conversation_id) VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET destination_conversation_id = excluded.destination_conversation_id`, c.id, from, c.providerID, c.destination); err != nil {
 			return err
 		}
@@ -24,6 +42,14 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 				return err
 			}
 		} else {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id)
+                SELECT observation_id,? FROM participant_contact_observation_conversations WHERE conversation_id=?
+                ON CONFLICT(observation_id,conversation_id) DO NOTHING`, c.destination, c.id); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM participant_contact_observation_conversations WHERE conversation_id=?`, c.id); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_participants(conversation_id, participant_id, role, joined_at, left_at)
  SELECT ?, participant_id, role, joined_at, left_at FROM conversation_participants WHERE conversation_id = ?
  ON CONFLICT (conversation_id, participant_id) DO NOTHING`, c.destination, c.id); err != nil {
@@ -54,6 +80,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		if _, err := tx.ExecContext(ctx, incoming+`UPDATE messages SET source_id = ?,
  conversation_id = (SELECT conversation_id FROM incoming WHERE incoming.id = messages.id),
  source_message_id = (SELECT archival_id FROM incoming WHERE incoming.id = messages.id), embed_gen = NULL,
+ embedding_revision = embedding_revision + 1,
  deleted_at = CASE WHEN deleted_from_source_at IS NULL AND
  (SELECT survivor_id FROM incoming WHERE incoming.id = messages.id) IS NOT NULL
  THEN COALESCE(deleted_at, `+s.dialect.Now()+`) ELSE deleted_at END
@@ -185,6 +212,21 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			return err
 		}
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id)
+        SELECT kept.id, support.conversation_id FROM participant_contact_observations incoming
+        JOIN participant_contact_observations kept ON kept.source_id=? AND kept.participant_id=incoming.participant_id
+         AND kept.address_kind=incoming.address_kind
+         AND (kept.service_id=incoming.service_id OR (kept.service_id IS NULL AND incoming.service_id IS NULL))
+         AND (kept.scope_kind=incoming.scope_kind OR (kept.scope_kind IS NULL AND incoming.scope_kind IS NULL))
+         AND (kept.scope_value=incoming.scope_value OR (kept.scope_value IS NULL AND incoming.scope_value IS NULL))
+         AND kept.normalized_value=incoming.normalized_value
+         AND `+sameParticipantObservationBinding("kept", "incoming")+`
+        JOIN participant_contact_observation_conversations support ON support.observation_id=incoming.id
+        WHERE incoming.source_id=? AND incoming.active_until IS NULL AND incoming.superseded_at IS NULL
+         AND kept.active_until IS NULL AND kept.superseded_at IS NULL
+        ON CONFLICT(observation_id,conversation_id) DO NOTHING`, into, from); err != nil {
+		return fmt.Errorf("merge source observation support: %w", err)
+	}
 	// Observation rows and accepted-match endpoints retain their immutable IDs.
 	// A duplicate current observation becomes historical rather than being deleted.
 	if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations SET superseded_at = `+s.dialect.Now()+`
@@ -198,7 +240,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
       (b.scope_kind IS NULL AND participant_contact_observations.scope_kind IS NULL))
  AND (b.scope_value = participant_contact_observations.scope_value OR
       (b.scope_value IS NULL AND participant_contact_observations.scope_value IS NULL))
- AND b.normalized_value = participant_contact_observations.normalized_value AND b.active_until IS NULL AND b.superseded_at IS NULL)`, from, into); err != nil {
+ AND b.normalized_value = participant_contact_observations.normalized_value
+ AND `+sameParticipantObservationBinding("b", "participant_contact_observations")+`
+ AND b.active_until IS NULL AND b.superseded_at IS NULL)`, from, into); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations SET source_id = ? WHERE source_id = ?`, into, from); err != nil {
@@ -234,6 +278,11 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	}
 	if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 		return err
+	}
+	if hasParticipantObservations {
+		if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
+			return err
+		}
 	}
 	return s.bumpDerivedDataRevision(tx)
 }
@@ -275,6 +324,145 @@ func preserveMergedIMAPDrafts(ctx context.Context, tx *loggedTx, from, into int6
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO message_labels(message_id, label_id) SELECT id, ? FROM (`+selection+`) drafts`, labelID, from)
 	return err
+}
+
+// Provider IDs are only admitted by exact Full support. Clear bindings that
+// currently lack that support before source ownership and room tiers can change
+// and make a Cold observation look eligible under the destination account.
+func (s *Store) clearIneligibleProviderBindingsForSourceMergeTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceIDs ...int64,
+) (bool, error) {
+	sourceIDs = sortedInt64Set(mapInt64Set(sourceIDs))
+	if len(sourceIDs) == 0 {
+		return false, nil
+	}
+	marks, args := sortedIDPlaceholders(sourceIDs)
+	if err := s.supersedeCollidingProviderBindingsTx(ctx, tx, marks, args); err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations AS observation
+		SET provider_user_id = NULL, updated_at = `+s.dialect.Now()+`
+		WHERE observation.source_id IN (`+marks+`)
+		  AND observation.active_until IS NULL AND observation.superseded_at IS NULL
+		  AND observation.provider_user_id IS NOT NULL
+		  AND NOT `+FullObservationWhere("observation"), args...)
+	if err != nil {
+		return false, fmt.Errorf("clear unsupported provider bindings before source merge: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check unsupported provider binding changes: %w", err)
+	}
+	return changed > 0, nil
+}
+
+// supersedeCollidingProviderBindingsTx resolves current observations that
+// would share an identity key once their unsupported provider IDs are cleared.
+// Each key keeps one row, preferring an existing providerless row. The others
+// hand their room support to it and become history, as merge dedup does.
+func (s *Store) supersedeCollidingProviderBindingsTx(ctx context.Context, tx *loggedTx, marks string, args []any) error {
+	clearing := func(alias string) string {
+		return alias + `.provider_user_id IS NOT NULL AND NOT ` + FullObservationWhere(alias)
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT loser.id, (
+			SELECT keeper.id FROM participant_contact_observations AS keeper
+			WHERE keeper.id <> loser.id AND keeper.source_id = loser.source_id
+			  AND keeper.participant_id = loser.participant_id
+			  AND keeper.address_kind = loser.address_kind
+			  AND (keeper.service_id = loser.service_id OR (keeper.service_id IS NULL AND loser.service_id IS NULL))
+			  AND (keeper.scope_kind = loser.scope_kind OR (keeper.scope_kind IS NULL AND loser.scope_kind IS NULL))
+			  AND (keeper.scope_value = loser.scope_value OR (keeper.scope_value IS NULL AND loser.scope_value IS NULL))
+			  AND keeper.normalized_value = loser.normalized_value
+			  AND COALESCE(keeper.source_ref, '') = COALESCE(loser.source_ref, '')
+			  AND keeper.active_until IS NULL AND keeper.superseded_at IS NULL
+			  AND (keeper.provider_user_id IS NULL OR (`+clearing("keeper")+` AND keeper.id < loser.id))
+			ORDER BY CASE WHEN keeper.provider_user_id IS NULL THEN 0 ELSE 1 END, keeper.id
+			LIMIT 1)
+		FROM participant_contact_observations AS loser
+		WHERE loser.source_id IN (`+marks+`)
+		  AND loser.active_until IS NULL AND loser.superseded_at IS NULL
+		  AND `+clearing("loser")+`
+		ORDER BY loser.id`, args...)
+	if err != nil {
+		return fmt.Errorf("find colliding provider bindings before source merge: %w", err)
+	}
+	type collision struct{ loser, keeper int64 }
+	var collisions []collision
+	for rows.Next() {
+		var loser int64
+		var keeper sql.NullInt64
+		if err := rows.Scan(&loser, &keeper); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if keeper.Valid {
+			collisions = append(collisions, collision{loser: loser, keeper: keeper.Int64})
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, c := range collisions {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id, conversation_id)
+			SELECT ?, conversation_id FROM participant_contact_observation_conversations WHERE observation_id = ?
+			ON CONFLICT(observation_id, conversation_id) DO NOTHING`, c.keeper, c.loser); err != nil {
+			return fmt.Errorf("move colliding provider binding support: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations
+			SET superseded_at = `+s.dialect.Now()+`, updated_at = `+s.dialect.Now()+` WHERE id = ?`, c.loser); err != nil {
+			return fmt.Errorf("supersede colliding provider binding: %w", err)
+		}
+	}
+	return nil
+}
+
+// preserveFullProviderBindingsForSourceMergeTx selects the binding to retain
+// while source and conversation ownership still describe the original
+// observations. Moving support first can make a Cold-only provider ID look
+// Full once duplicate support edges are combined.
+func (s *Store) preserveFullProviderBindingsForSourceMergeTx(
+	ctx context.Context, tx *loggedTx, from, into int64,
+) error {
+	identity := `kept.participant_id = incoming.participant_id
+		AND kept.address_kind = incoming.address_kind
+		AND (kept.service_id = incoming.service_id OR
+			(kept.service_id IS NULL AND incoming.service_id IS NULL))
+		AND (kept.scope_kind = incoming.scope_kind OR
+			(kept.scope_kind IS NULL AND incoming.scope_kind IS NULL))
+		AND (kept.scope_value = incoming.scope_value OR
+			(kept.scope_value IS NULL AND incoming.scope_value IS NULL))
+		AND kept.normalized_value = incoming.normalized_value
+		AND ` + sameParticipantObservationBinding("kept", "incoming")
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE participant_contact_observations AS kept
+		SET provider_user_id = CASE
+			WHEN kept.provider_user_id IS NOT NULL AND `+FullObservationWhere("kept")+` THEN kept.provider_user_id
+			ELSE (
+				SELECT incoming.provider_user_id
+				FROM participant_contact_observations AS incoming
+				WHERE incoming.source_id = ?
+				  AND incoming.active_until IS NULL AND incoming.superseded_at IS NULL
+				  AND incoming.provider_user_id IS NOT NULL
+				  AND `+FullObservationWhere("incoming")+`
+				  AND `+identity+`
+				ORDER BY incoming.id
+				LIMIT 1
+			)
+		END,
+		updated_at = `+s.dialect.Now()+`
+		WHERE kept.source_id = ?
+		  AND kept.active_until IS NULL AND kept.superseded_at IS NULL
+		  AND EXISTS (
+			SELECT 1 FROM participant_contact_observations AS incoming
+			WHERE incoming.source_id = ?
+			  AND incoming.active_until IS NULL AND incoming.superseded_at IS NULL
+			  AND `+identity+`
+		  )`, from, into, from); err != nil {
+		return fmt.Errorf("preserve full provider bindings during source merge: %w", err)
+	}
+	return nil
 }
 
 // Copy only occurrences not already represented on the survivor. Compare
@@ -352,7 +540,7 @@ func copyMergedMessageEvidence(ctx context.Context, tx *loggedTx, from, into, or
 		}
 	}
 
-	_, err = tx.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL, attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = messages.id),
+	_, err = tx.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL, embedding_revision = embedding_revision + 1, attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = messages.id),
  has_attachments = EXISTS (SELECT 1 FROM attachments WHERE message_id = messages.id) WHERE id = ?`, into)
 	return err
 }

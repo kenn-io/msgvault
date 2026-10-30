@@ -240,6 +240,9 @@ func (s *Store) ApplySenderRepairContext(
 
 	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockMessageForRecipientWrite(q, messageID); err != nil {
 			return err
 		}
@@ -330,7 +333,7 @@ func (s *Store) ApplySenderRepairContext(
 			recipientSet.DisplayNames[i] = addr.displayName
 			recipientSet.EmailAddresses[i] = addr.email
 		}
-		if err := replaceMessageRecipientsTx(q, messageID, recipientSet); err != nil {
+		if err := replaceMessageRecipientsTx(q, s.dialect, messageID, recipientSet); err != nil {
 			return fmt.Errorf("replace message %d From recipient: %w", messageID, err)
 		}
 		if err := refreshMessageAttributionWith(q, messageID); err != nil {

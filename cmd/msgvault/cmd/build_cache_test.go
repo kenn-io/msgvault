@@ -1015,6 +1015,68 @@ func TestBuildCache_PublishesConversationParticipants(t *testing.T) {
 	assert.Equal(t, int64(9), count)
 }
 
+func TestBuildCacheRedactsColdOnlyParticipantValuesFromExports(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		forceCSV bool
+	}{
+		{name: "sqlite scanner"},
+		{name: "CSV snapshot", forceCSV: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			if tc.forceCSV {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+			} else {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+			}
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			_, err = db.Exec(`
+				INSERT INTO sources (id,source_type,identifier) VALUES (2,'beeper','large-room-account');
+				INSERT INTO conversations (id,source_id,source_conversation_id,title,conversation_type) VALUES
+					(201,2,'full-room','Full room','group_chat'),
+					(202,2,'cold-room','Cold room','group_chat');
+				INSERT INTO conversation_policy (conversation_id,effective_tier) VALUES (201,'full'),(202,'cold');
+				INSERT INTO participants (id,email_address,domain,display_name,phone_number) VALUES
+					(5,'cold-only@example.test','example.test','Cold-only name','+15550109991');
+				INSERT INTO conversation_participants (conversation_id,participant_id) VALUES (201,5),(202,5);
+				INSERT INTO participant_identifiers
+					(id,participant_id,identifier_type,identifier_value,display_value,is_primary,service_id,scope_kind,scope_value)
+					VALUES (3,5,'beeper','beeper:account:9:cold-user','Cold-only user',1,NULL,NULL,NULL);
+			`)
+			require.NoError(err)
+			require.NoError(db.Close())
+
+			analyticsDir := filepath.Join(tmpDir, "analytics")
+			_, err = buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
+
+			duckdb, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			defer func() { assert.NoError(duckdb.Close()) }()
+			var email, domain, name, phone string
+			err = duckdb.QueryRow(`SELECT email_address,domain,display_name,phone_number
+				FROM read_parquet(?) WHERE id=5`, filepath.Join(analyticsDir, "participants", "*.parquet"),
+			).Scan(&email, &domain, &name, &phone)
+			require.NoError(err)
+			assert.Empty(email)
+			assert.Empty(domain)
+			assert.Empty(name)
+			assert.Empty(phone)
+			var identifiers int64
+			err = duckdb.QueryRow(`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id=5`,
+				filepath.Join(analyticsDir, "participant_identifiers", "*.parquet"),
+			).Scan(&identifiers)
+			require.NoError(err)
+			assert.Zero(identifiers)
+		})
+	}
+}
+
 // TestBuildCache_ExportsRecipientEnvelopeAddress verifies both address
 // columns of the message_recipients Parquet dataset (cache schema v26).
 // envelope_address is the header address exactly as the store recorded it and

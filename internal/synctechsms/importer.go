@@ -171,7 +171,14 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 		return 0, err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	if err != nil {
+		return messageID, err
+	}
+	if err := i.recordNativeContactName(sourceID, convID, remoteID, sms.ContactName.String); err != nil {
+		return messageID, err
+	}
+	return messageID, nil
 }
 
 func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
@@ -241,7 +248,31 @@ func (i *Importer) importCall(sourceID int64, call Call) (int64, error) {
 	}
 	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
 	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
-	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, 0, call)
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, 0, call)
+	if err != nil {
+		return messageID, err
+	}
+	if err := i.recordNativeContactName(sourceID, convID, remoteID, call.ContactName.String); err != nil {
+		return messageID, err
+	}
+	return messageID, nil
+}
+
+func (i *Importer) recordNativeContactName(sourceID, conversationID, participantID int64, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	_, err := i.store.RecordContactObservationContext(context.Background(), participantID, store.ParticipantContactObservationInput{
+		SourceID:       &sourceID,
+		ConversationID: &conversationID,
+		AddressKind:    store.ContactAddressDisplayName,
+		OriginalValue:  value,
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	})
+	if err != nil {
+		return fmt.Errorf("record native contact name: %w", err)
+	}
+	return nil
 }
 
 func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {

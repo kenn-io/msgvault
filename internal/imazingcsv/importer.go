@@ -166,6 +166,9 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 		}
 		return Summary{}, err
 	}
+	if err := recordParticipantEmailObservations(ctx, syncStore, source.ID, owner.key(), chats); err != nil {
+		return Summary{}, fmt.Errorf("record iMazing CSV participant email evidence: %w", err)
+	}
 	// Denormalized conversation statistics must reflect the committed
 	// messages even when a later stage of the run fails, so recompute them
 	// immediately after persistence and before reply, attachment, and
@@ -764,10 +767,68 @@ func conversationParticipantRefs(chat *chatPlan) []store.ConversationParticipant
 	return result
 }
 
+func recordParticipantEmailObservations(
+	ctx context.Context,
+	st *store.Store,
+	sourceID int64,
+	ownerKey string,
+	chats map[string]*chatPlan,
+) error {
+	chatKeys := make([]string, 0, len(chats))
+	for key := range chats {
+		chatKeys = append(chatKeys, key)
+	}
+	slices.Sort(chatKeys)
+	type observationKey struct {
+		participantID int64
+		email         string
+	}
+	seenObservations := make(map[observationKey]struct{})
+	for _, chatKey := range chatKeys {
+		chat := chats[chatKey]
+		participantKeys := make([]string, 0, len(chat.participants))
+		for key := range chat.participants {
+			participantKeys = append(participantKeys, key)
+		}
+		slices.Sort(participantKeys)
+		for _, key := range participantKeys {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			identity := chat.participants[key]
+			if identity.Kind != identityEmail || key == ownerKey {
+				continue
+			}
+			participantID := chat.participantIDs[key]
+			identityKey := observationKey{participantID: participantID, email: identity.Value}
+			if _, seen := seenObservations[identityKey]; seen {
+				continue
+			}
+			originalValue := identity.OriginalValue
+			if originalValue == "" {
+				originalValue = identity.Value
+			}
+			sourceRef := "imazing_csv:participant:" + stableHash(string(identity.Kind), identity.Value)
+			if _, err := st.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+				SourceID: &sourceID, AddressKind: store.ContactAddressEmail,
+				OriginalValue: originalValue,
+				Envelope: store.ValueEnvelopeInput{
+					Source: store.ProvenanceArchiveObservation, SourceRef: &sourceRef,
+				},
+			}); err != nil {
+				return fmt.Errorf("record participant email observation: %w", err)
+			}
+			seenObservations[identityKey] = struct{}{}
+		}
+	}
+	return nil
+}
+
 func messageRecipients(chat *chatPlan, sender participantIdentity) ([]store.RecipientSet, []string) {
 	fromID := chat.participantIDs[sender.key()]
 	from := store.RecipientSet{
 		Type: "from", ParticipantIDs: []int64{fromID}, DisplayNames: []string{sender.DisplayName},
+		EmailAddresses: []string{participantEmailEnvelope(sender)},
 	}
 	keys := make([]string, 0, len(chat.participantIDs))
 	for key := range chat.participantIDs {
@@ -782,9 +843,20 @@ func messageRecipients(chat *chatPlan, sender participantIdentity) ([]store.Reci
 		identity := chat.participants[key]
 		to.ParticipantIDs = append(to.ParticipantIDs, chat.participantIDs[key])
 		to.DisplayNames = append(to.DisplayNames, identity.DisplayName)
+		to.EmailAddresses = append(to.EmailAddresses, participantEmailEnvelope(identity))
 		toValues = append(toValues, identity.Value)
 	}
 	return []store.RecipientSet{from, to}, toValues
+}
+
+func participantEmailEnvelope(identity participantIdentity) string {
+	if identity.Kind != identityEmail {
+		return ""
+	}
+	if identity.OriginalValue != "" {
+		return identity.OriginalValue
+	}
+	return identity.Value
 }
 
 func boolInt(value bool) int {

@@ -1030,7 +1030,7 @@ func (s *Store) AuthorizeAttemptPoll(
 	if token.AttemptID <= 0 {
 		return errors.New("person enrichment poll authorization requires an active attempt")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
@@ -1097,7 +1097,7 @@ func (s *Store) AuthorizeAttemptDispatch(
 		return errors.New("person enrichment dispatch authorization requires an active attempt")
 	}
 	staleRevision := false
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
@@ -1296,6 +1296,24 @@ func (s *Store) MarkUncertainStart(
 func (s *Store) MarkTerminal(
 	ctx context.Context, token personenrichment.LeaseToken, failure personenrichment.SafeFailure,
 ) error {
+	return s.markTerminal(ctx, token, failure, personenrichment.Cost{})
+}
+
+// MarkTerminalWithCost ends a completed attempt without publishing its result
+// and reconciles the cost the provider reported for that call. Without it, a
+// result discarded after a paid call would record no spending when the
+// profile has no hard cost cap.
+func (s *Store) MarkTerminalWithCost(
+	ctx context.Context, token personenrichment.LeaseToken, failure personenrichment.SafeFailure,
+	cost personenrichment.Cost,
+) error {
+	return s.markTerminal(ctx, token, failure, cost)
+}
+
+func (s *Store) markTerminal(
+	ctx context.Context, token personenrichment.LeaseToken, failure personenrichment.SafeFailure,
+	cost personenrichment.Cost,
+) error {
 	if err := validateSafeFailure(failure); err != nil {
 		return err
 	}
@@ -1337,7 +1355,7 @@ func (s *Store) MarkTerminal(
 			return fmt.Errorf("load terminal person enrichment attempt revision: %w", err)
 		}
 		if _, err := reconcilePersonEnrichmentCostTx(ctx, tx, s.dialect, token.AttemptID,
-			personenrichment.Cost{}, true, s.personEnrichmentTime()); err != nil {
+			cost, cost == (personenrichment.Cost{}), s.personEnrichmentTime()); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
@@ -2118,7 +2136,9 @@ func (s *Store) LoadRequestInput(
 		}
 	}
 	participantRows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.display_name, p.email_address, p.phone_number, p.created_at
+		SELECT p.id, CASE WHEN `+FullParticipantNameWhere("p.id", "p.display_name")+` THEN p.display_name END,
+ CASE WHEN `+FullParticipantValueWhere("p.id", "'email'", "p.email_address")+` THEN p.email_address END,
+ CASE WHEN `+FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")+` THEN p.phone_number END, p.created_at
 		FROM person_participants pp
 		JOIN participants p ON p.id = pp.participant_id
 		WHERE pp.person_id = ? ORDER BY p.id`, person.ID)
@@ -2176,7 +2196,7 @@ func (s *Store) LoadRequestInput(
 			input.Phones = append(input.Phones, candidate)
 		case ContactAddressURL:
 			input.PublicProfileURLs = append(input.PublicProfileURLs, candidate)
-		case ContactAddressUsername, ContactAddressIMPP, ContactAddressSocial,
+		case ContactAddressDisplayName, ContactAddressUsername, ContactAddressIMPP, ContactAddressSocial,
 			ContactAddressCalendar, ContactAddressContactURI, ContactAddressOrgDirectory,
 			ContactAddressLanguage, ContactAddressProviderIdentity:
 			// These classes are not one of the approved enrichment identity primitives.

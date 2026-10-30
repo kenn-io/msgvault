@@ -126,6 +126,9 @@ func loadIdentityMatchEvidencePageContext(
 	if err != nil {
 		return fmt.Errorf("load identity match evidence page: %w", err)
 	}
+	if evidence, err = dropUnsupportedGeneratedNameEvidence(ctx, q, evidence); err != nil {
+		return err
+	}
 	for _, item := range evidence {
 		i := index[item.CandidateID]
 		candidates[i].Evidence = append(candidates[i].Evidence, item)
@@ -234,6 +237,10 @@ func populateIdentityMatchReviewTokensContext(
 			sourceID, sourceOK := row[1].(int64)
 			isConservative, conservativeOK := identityMatchFingerprintBool(row[2])
 			evidenceIndex, exists := evidenceIndexes[evidenceID]
+			if idOK && !exists && data.unsupportedNames[evidenceID] {
+				// The evidence is hidden; its sources have nothing to attach to.
+				continue
+			}
 			if !idOK || !sourceOK || !conservativeOK || !exists {
 				return errors.New("batched identity match evidence source row had invalid values")
 			}
@@ -280,6 +287,8 @@ type identityMatchFingerprintData struct {
 	participants, identifiers, observations     map[int64][][]any
 	componentMembers, bindings, publications    map[int64][][]any
 	persons, personPublications, resources      map[int64][][]any
+	// unsupportedNames holds generated name evidence that lost Full support.
+	unsupportedNames map[int64]bool
 }
 
 func loadIdentityMatchFingerprintDataContext(
@@ -331,6 +340,9 @@ func loadIdentityMatchFingerprintDataContext(
 	if err != nil {
 		return nil, err
 	}
+	if data.unsupportedNames, err = unsupportedGeneratedNameFingerprintIDs(ctx, q, data); err != nil {
+		return nil, err
+	}
 
 	data.participants, err = identityMatchFingerprintRowsByKey(ctx, q,
 		`SELECT id, * FROM participants WHERE id IN (%s) ORDER BY id`, identityMatchInt64MapKeys(participantIDs))
@@ -375,6 +387,26 @@ func loadIdentityMatchFingerprintDataContext(
 	return data, nil
 }
 
+// unsupportedGeneratedNameFingerprintIDs finds generated name evidence that
+// lost Full support. Fingerprints hash these IDs, so withdrawing the envelope
+// behind a shown name retires review tokens issued while it was shown.
+func unsupportedGeneratedNameFingerprintIDs(
+	ctx context.Context, q identityMatchReviewQuerier, data *identityMatchFingerprintData,
+) (map[int64]bool, error) {
+	var ids []int64
+	for _, rows := range data.evidence {
+		for _, row := range rows {
+			if id, ok := row[0].(int64); ok {
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return map[int64]bool{}, nil
+	}
+	return unsupportedGeneratedNameEvidenceIDs(ctx, q, ids)
+}
+
 func (data *identityMatchFingerprintData) fingerprint(candidate *IdentityMatchCandidate, includeDecision bool) (string, error) {
 	h := sha256.New()
 	base := []any{candidate.ID, candidate.LeftKind, candidate.LeftID, candidate.RightKind, candidate.RightID,
@@ -394,6 +426,18 @@ func (data *identityMatchFingerprintData) fingerprint(candidate *IdentityMatchCa
 		rows [][]any
 	}{{"candidate_sources", data.candidateSources[candidate.ID]}, {"evidence", data.evidence[candidate.ID]}, {"evidence_sources", data.evidenceSources[candidate.ID]}} {
 		if err := hashIdentityMatchRows(h, group.name, group.rows); err != nil {
+			return "", err
+		}
+	}
+	var unsupportedNames [][]any
+	for _, row := range data.evidence[candidate.ID] {
+		if id, ok := row[0].(int64); ok && data.unsupportedNames[id] {
+			unsupportedNames = append(unsupportedNames, []any{id})
+		}
+	}
+	// Hash this group only when present so unaffected tokens stay stable.
+	if len(unsupportedNames) > 0 {
+		if err := hashIdentityMatchRows(h, "unsupported_generated_names", unsupportedNames); err != nil {
 			return "", err
 		}
 	}

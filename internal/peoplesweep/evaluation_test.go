@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -473,6 +474,8 @@ func newEvaluationStore(t *testing.T) evaluationStore {
 	conversationID, err := st.EnsureConversationWithType(
 		source.ID, "frozen-person-evaluation", "direct_chat", "Synthetic evaluation")
 	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "frozen-person-evaluation", conversationpolicy.Full))
 	scoped, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	require.NoError(t, err)
 	other, err := st.EnsureParticipant("bob@example.test", "Bob", "example.test")
