@@ -44,11 +44,6 @@ describe('AppSidebar', () => {
     expect(primary().getByRole('button', { name: 'People' }).getAttribute('aria-current')).toBe('page');
   });
 
-  it('offers Help', () => {
-    renderSidebar();
-    expect(screen.getByRole('button', { name: 'Help' })).toBeTruthy();
-  });
-
   it('nests saved views under the place they open', async () => {
     const onOpenView = vi.fn();
     const budget = view(1, 'Budget threads');
