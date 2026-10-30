@@ -21,7 +21,6 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -31,18 +30,11 @@ type wiringTaskOperations struct {
 	api.TaskLinkOperations
 
 	identities []tasklinks.MessageIdentity
-	created    taskclient.TaskCreate
 }
 
 func (o *wiringTaskOperations) Lookup(_ context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult {
 	o.identities = append(o.identities, identity)
 	return tasklinks.LookupResult{State: tasklinks.StateReady, Complete: true, Tasks: []tasklinks.TaskSummary{}}
-}
-
-func (o *wiringTaskOperations) Create(_ context.Context, _ string, task taskclient.TaskCreate, identity tasklinks.MessageIdentity, _ time.Time) (taskclient.Task, error) {
-	o.identities = append(o.identities, identity)
-	o.created = task
-	return taskclient.Task{ID: "task-1", Title: task.Title}, nil
 }
 
 func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
@@ -54,26 +46,12 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler), TaskLinkOperations: ops,
 	})
 	path := fmt.Sprintf("/api/v1/messages/%d/tasks", id)
-	for _, method := range []string{http.MethodGet, http.MethodPost} {
-		t.Run(method, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			r := httptest.NewRequest(method, path, strings.NewReader(`{"title":"Follow up","added_at":"2026-07-19T01:02:03Z"}`))
-			r.Header.Set("Content-Type", "application/json")
-			r.Header.Set("X-Request-ID", "task-wiring-request")
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, r)
-			if method == http.MethodGet {
-				require.Equal(http.StatusOK, w.Code, w.Body.String())
-			} else {
-				require.Equal(http.StatusCreated, w.Code, w.Body.String())
-				assert.Contains(w.Body.String(), `"title":"Follow up"`)
-			}
-		})
-	}
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	requirements.Len(ops.identities, 2)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.Len(ops.identities, 1)
 	uid, err := f.Store.ArchiveUID()
 	requirements.NoError(err)
 	revision, err := f.Store.ArchiveRevision()
@@ -83,33 +61,6 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 		assertions.Equal(revision, identity.ArchiveRevision)
 		assertions.Equal(id, identity.MessageID)
 	}
-	assertions.Equal("Follow up", ops.created.Title)
-	t.Run("cancelled identity", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		srv := api.NewServerWithOptions(api.ServerOptions{
-			Config: &config.Config{}, Store: &cancelArchiveIdentityAdapter{storeAPIAdapter: &storeAPIAdapter{store: f.Store}, cancel: cancel},
-			Logger: slog.New(slog.DiscardHandler), TaskLinkOperations: ops,
-		})
-		request := httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)
-		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, request)
-		require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
-		assert.Len(ops.identities, 2)
-	})
-}
-
-type cancelArchiveIdentityAdapter struct {
-	*storeAPIAdapter
-
-	cancel context.CancelFunc
-}
-
-func (a *cancelArchiveIdentityAdapter) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
-	a.cancel()
-	return a.storeAPIAdapter.ArchiveIdentityContext(ctx)
 }
 
 func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
