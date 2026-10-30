@@ -1827,37 +1827,52 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   state.destroy();
 });
 
-it('keeps relationship readers in their own history entries, including same-target entries', async () => {
+const savedRelationshipReader = { target: 'cluster:1', row: { key: 'chat:70:day', kind: 'chat_burst' as const, occurred_at: '2026-07-19T10:00:00Z', preview: 'Day preview', source_id: 1, title: 'Saved day', has_attachments: false, message_count: 2, conversation_id: 70, anchor_message_id: 9 }, anchorId: 9, bounds: { start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z' } };
+
+it('stores relationship readers outside Explore state and shareable URLs', () => {
   window.history.replaceState(null, '', '/?workspace=relationships');
   const state = new ExploreState(window);
-  const reader = { target: 'cluster:1', row: { key: 'chat:70:day', kind: 'chat_burst' as const, occurred_at: '2026-07-19T10:00:00Z', preview: 'Day preview', source_id: 1, title: 'Saved day', has_attachments: false, message_count: 2, conversation_id: 70, anchor_message_id: 9 }, anchorId: 9, bounds: { start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z' } };
-  const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
   try {
     state.commitNavigation({ relationshipTarget: 'cluster:1' });
-    state.replaceTransient({ relationshipReader: reader });
-    state.replaceTransient({ relationshipReader: { ...reader, anchorId: 10 } });
+    state.replaceTransient({ relationshipReader: savedRelationshipReader });
+    state.replaceTransient({ relationshipReader: { ...savedRelationshipReader, anchorId: 10 } });
     expect(state.current.relationshipReader?.anchorId).toBe(10);
     expect(window.history.state.exploreState.relationshipReader).toBeUndefined();
-    expect(window.history.state.relationshipReader).toEqual({ version: 1, reader: { ...reader, anchorId: 10 } });
+    expect(window.history.state.relationshipReader).toEqual({ version: 1, reader: { ...savedRelationshipReader, anchorId: 10 } });
     expect(JSON.stringify(window.history.state.exploreState)).not.toContain('Saved day');
     expect(JSON.stringify(window.history.state.exploreState)).not.toContain('Day preview');
     expect(serializeExploreURLState(state.current)).not.toContain('relationshipReader');
     expect(parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify(state.current))}`).relationshipReader).toBeNull();
+  } finally { state.destroy(); }
+});
+
+it('restores relationship readers through same-target Back and Forward entries', async () => {
+  window.history.replaceState(null, '', '/?workspace=relationships');
+  const state = new ExploreState(window);
+  const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  try {
+    state.commitNavigation({ relationshipTarget: 'cluster:1' });
+    state.replaceTransient({ relationshipReader: { ...savedRelationshipReader, anchorId: 10 } });
     state.commitNavigation({ relationshipReader: null });
     const back = popped(); window.history.back(); await back;
-    expect(state.current.relationshipReader).toEqual({ ...reader, anchorId: 10 });
+    expect(state.current.relationshipReader).toEqual({ ...savedRelationshipReader, anchorId: 10 });
     const forward = popped(); window.history.forward(); await forward;
     expect(state.current.relationshipReader).toBeNull();
-    state.replaceTransient({ relationshipReader: reader });
+  } finally { state.destroy(); }
+});
+
+it('clears relationship readers on target and workspace changes and restores them on Back', async () => {
+  window.history.replaceState(null, '', '/?workspace=relationships');
+  const state = new ExploreState(window);
+  const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+  try {
+    state.commitNavigation({ relationshipTarget: 'cluster:1' });
+    state.replaceTransient({ relationshipReader: savedRelationshipReader });
     state.commitNavigation({ relationshipTarget: 'cluster:2' });
     expect(state.current.relationshipReader).toBeNull();
-    const returnToReader = popped(); window.history.back(); await returnToReader;
-    expect(state.current.relationshipReader).toEqual(reader);
-    window.history.replaceState({ ...window.history.state, relationshipReader: { version: 1, reader: { ...reader, target: 'cluster:2' } } }, '', window.location.href);
-    window.dispatchEvent(new PopStateEvent('popstate'));
-    expect(state.current.relationshipReader).toBeNull();
+    const back = popped(); window.history.back(); await back;
+    expect(state.current.relationshipReader).toEqual(savedRelationshipReader);
     state.commitWorkspace('files');
     expect(state.current.relationshipReader).toBeNull();
-
   } finally { state.destroy(); }
 });

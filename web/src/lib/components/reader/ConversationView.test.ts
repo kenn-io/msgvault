@@ -150,7 +150,7 @@ describe('ConversationView', () => {
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
   });
 
-  it('shares pending Tasks probes and setup, preserves cached links, and retries settled status for creation', async () => {
+  it('shares pending Tasks probes and setup while preserving cached links', async () => {
     const lookedUp: number[] = [];
     let releaseStatus!: () => void;
     const statusPending = new Promise<void>(resolve => { releaseStatus = resolve; });
@@ -180,9 +180,15 @@ describe('ConversationView', () => {
     await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
+    expect(await screen.findByText('Linked task 1')).toBeDefined();
+    expect(await screen.findByText('Linked task 2')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
+    expect(screen.getByText('Linked task 2')).toBeDefined();
     view.unmount();
+  });
+
+  it('retries rejected and unreachable Tasks status when creating a task', async () => {
     let statusCalls = 0;
     const recoveryClient = createCaptureClient(async (input) => {
       const path = new URL((input as Request).url).pathname;
