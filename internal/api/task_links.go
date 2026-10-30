@@ -260,7 +260,7 @@ func (s *Server) resolveTaskMessageIdentity(ctx context.Context, message *APIMes
 	if !ok {
 		return tasklinks.MessageIdentity{}, errors.New("archive identity unavailable")
 	}
-	uid, revision, err := archive.ArchiveIdentityContext(ctx)
+	uid, err := archive.ArchiveUIDContext(ctx)
 	if err != nil {
 		return tasklinks.MessageIdentity{}, err
 	}
@@ -282,7 +282,7 @@ func (s *Server) resolveTaskMessageIdentity(ctx context.Context, message *APIMes
 	if sourceType == "" {
 		return tasklinks.MessageIdentity{}, fmt.Errorf("source %d not found", message.SourceID)
 	}
-	return tasklinks.MessageIdentity{ArchiveUID: uid, ArchiveRevision: revision, MessageID: message.ID, ConversationID: message.ConversationID,
+	return tasklinks.MessageIdentity{ArchiveUID: uid, ArchiveRevision: store.ArchiveRevisionV1, MessageID: message.ID, ConversationID: message.ConversationID,
 		Subject: message.Subject, From: message.From, SentAt: message.SentAt, SourceType: sourceType,
 		SourceIdentifier: identifier, SourceMessageID: message.SourceMessageID}, nil
 }

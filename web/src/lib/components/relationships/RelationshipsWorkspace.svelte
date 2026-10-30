@@ -64,6 +64,7 @@
     onOpenDirectoryPerson?: (personID: number) => void;
     onAnnounce?: (message: string) => void;
     onOpenSettings?: () => void;
+    onOpenPerson?: (participantID: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     /** Opening a file (or its containing conversation) from the hub's own
      * embedded Files pane has no reading pane of its own to resolve a full
@@ -98,6 +99,7 @@
     onAnnounce = undefined,
     onOpenMeeting = undefined,
     onOpenSettings = undefined,
+    onOpenPerson = undefined,
     onOpenFileItem = undefined,
     onOpenFileConversation = undefined
   }: Props = $props();
@@ -640,6 +642,7 @@
               predicate={contextPredicate(predicate)}
               {onOpenMeeting}
               {onOpenSettings}
+              {onOpenPerson}
               onClose={() => { void closeReadingPane(); }}
               {conversationAnchorId}
               conversationStart={conversationBounds?.start}

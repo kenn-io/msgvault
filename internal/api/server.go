@@ -184,7 +184,6 @@ var _ ChangedMessageLister = (*store.Store)(nil)
 // say which archive it is cannot issue a cursor anyone can safely resume from,
 // and an unbound cursor is the failure the binding exists to prevent.
 type ArchiveIdentifier interface {
-	ArchiveIdentityContext(ctx context.Context) (uid, revision string, err error)
 	ArchiveUIDContext(ctx context.Context) (string, error)
 }
 
