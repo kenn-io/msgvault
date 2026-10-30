@@ -256,7 +256,7 @@ func writeTaskLinkError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) resolveTaskMessageIdentity(ctx context.Context, message *APIMessage) (tasklinks.MessageIdentity, error) {
-	archive, ok := s.store.(ArchiveIdentityStore)
+	archive, ok := s.store.(ArchiveIdentifier)
 	if !ok {
 		return tasklinks.MessageIdentity{}, errors.New("archive identity unavailable")
 	}

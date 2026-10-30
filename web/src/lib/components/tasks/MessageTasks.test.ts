@@ -20,7 +20,9 @@ describe('Message task list', () => {
 
   it('shows linked Kata issues and refreshes them after the task dialog closes', async () => {
     let title = 'Send notes';
-    const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
+    let truncated = false;
+    let empty = false;
+    const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
     const link = await screen.findByRole('link', { name: 'example#abcd: Send notes' });
@@ -28,6 +30,19 @@ describe('Message task list', () => {
     title = 'Send revised notes';
     await view.rerender({ refresh: 1 });
     await waitFor(() => expect(screen.getByRole('link', { name: 'example#abcd: Send revised notes' })).toBeDefined());
+    truncated = true;
+    await view.rerender({ refresh: 2 });
+    expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
+    expect(screen.getByRole('link', { name: 'example#abcd: Send revised notes' })).toBeDefined();
+    empty = true;
+    await view.rerender({ refresh: 3 });
+    await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
+    expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
+    expect(screen.queryByText('No linked Kata issues.')).toBeNull();
+    truncated = false;
+    await view.rerender({ refresh: 4 });
+    expect(await screen.findByText('No linked Kata issues.')).toBeDefined();
+    expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
     view.unmount(); readiness.dispose();
   });
 });

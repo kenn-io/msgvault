@@ -10,6 +10,7 @@
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
   import type { MessageViewMode } from '../../archive/types';
+  import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
   import { reportError, reportAction, reportWhenVisible } from '../../telemetry/actions';
 
@@ -74,6 +75,7 @@
   let total = $state(0);
   let viewModes = $state<Record<number, MessageViewMode>>({});
   const expanded = new SvelteSet<number>();
+  const taskSetupMessageID = $derived(messages.find(message => expanded.has(message.id) && isEmailMessageType(message.message_type ?? ''))?.id);
   const loadingBodies = new SvelteSet<number>();
   let bodyErrors = $state<Record<number, string>>({});
   const reportedBodyErrors = new Set<number>();
@@ -307,6 +309,7 @@
           client={apiClient}
           message={archiveDetail(message)}
           expanded={expanded.has(message.id)}
+          showTaskSetup={message.id === taskSetupMessageID}
           anchor={message.id === activeAnchor}
           viewMode={viewModes[message.id] ?? 'html'}
           bodyPending={loadingBodies.has(message.id)}

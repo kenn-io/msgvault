@@ -21,6 +21,7 @@
   let {
     client,
     mode = 'list',
+    showSetup = true,
     busy = $bindable(false),
     oncomplete = undefined,
     oncancel = undefined,
@@ -30,6 +31,7 @@
   }: {
     client: APIClient;
     mode?: 'list' | 'add';
+    showSetup?: boolean;
     busy?: boolean;
     oncomplete?: () => void;
     oncancel?: () => void;
@@ -230,7 +232,8 @@
   const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   const stateMessage = $derived(
-    integrationState !== 'ready' && integrationState !== 'loading'
+    integrationState === 'disabled' ? integrationMessage || 'Task integration is disabled.'
+      : integrationState !== 'ready' && integrationState !== 'loading'
       ? `Task integration ${integrationState}: ${integrationMessage || 'No status detail was provided.'}`
       : reason === 'cache_persistence_unsupported'
         ? 'Linked-task cache persistence is unavailable on this platform; current-session links may be shown.'
@@ -256,8 +259,9 @@
   );
 </script>
 
+{#if showSetup || integrationState !== 'disabled'}
 <section class="task-links" aria-label="Linked tasks">
-  {#if mode !== 'add'}<header>
+  {#if mode !== 'add' && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
@@ -317,6 +321,7 @@
     {#if error}<p role="alert">{error}</p>{/if}
   {/if}
 </section>
+{/if}
 
 {#if mode === 'add' && action === 'create' && mutationReady && outboundMetadata}
   <CreateTaskDialog

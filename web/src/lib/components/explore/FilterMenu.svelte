@@ -31,22 +31,19 @@
   let panelStyle = $state('');
   let kinds = $state<KindOption[]>([]);
   let kindsStatus = $state('');
-  let kindsLoaded = false;
   let controller: AbortController | undefined;
 
   const kindValues = $derived(filters.find((filter) => filter.dimension === 'message_type')?.values ?? []);
   let dateError = $state('');
 
   async function loadKinds(): Promise<void> {
-    if (kindsLoaded) return;
-    kindsLoaded = true;
+    controller?.abort();
     kindsStatus = 'Loading kinds…';
     controller = new AbortController();
     try {
       const loaded = await api.groups({ limit: 50 }, 'message_type', controller.signal);
       if (loaded.status !== 'ready') {
         kindsStatus = loaded.status === 'unavailable' ? 'Kinds unavailable' : 'Could not load kinds';
-        kindsLoaded = false;
         return;
       }
       // Several message types read as one kind, such as every chat network.
@@ -58,7 +55,6 @@
       kinds = [...byName].map(([name, values]) => ({ name, values }));
       kindsStatus = kinds.length ? '' : 'No message kinds';
     } catch {
-      kindsLoaded = false;
       kindsStatus = 'Could not load kinds';
     }
   }

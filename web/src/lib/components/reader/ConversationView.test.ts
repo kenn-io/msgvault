@@ -130,13 +130,20 @@ describe('ConversationView', () => {
   });
 
   it('expands additional messages inline without refetching and reports the anchor change', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      id: 7, anchor_id: 2, messages: [message(1, 'imessage'), message(2, 'imessage')],
-      has_before: false, has_after: false, total: 2
-    }));
+    const lookedUp: number[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
+      const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: 'disabled', complete: false, tasks: [] }); }
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [message(1), message(2)],
+        has_before: false, has_after: false, total: 2
+      });
+    });
     const onAnchorChange = vi.fn();
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange }
+      props: { client: createCaptureClient(fetchFn, telemetryEvents, telemetryRequests), conversationId: 7, anchorId: 2, onAnchorChange }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -146,7 +153,12 @@ describe('ConversationView', () => {
     expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
     expect(screen.getByRole('article', { name: 'Message 2' })).toBeTruthy();
     expect(onAnchorChange).toHaveBeenCalledWith(1);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
+    await waitFor(() => expect(lookedUp.sort()).toEqual([1, 2]));
+    await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
+    await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+    expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
   });
 
   it('collapses an expanded message back to its one-line card', async () => {

@@ -1837,6 +1837,10 @@ it('keeps relationship readers in their own history entries, including same-targ
     state.replaceTransient({ relationshipReader: reader });
     state.replaceTransient({ relationshipReader: { ...reader, anchorId: 10 } });
     expect(state.current.relationshipReader?.anchorId).toBe(10);
+    expect(window.history.state.exploreState.relationshipReader).toBeUndefined();
+    expect(window.history.state.relationshipReader).toEqual({ version: 1, reader: { ...reader, anchorId: 10 } });
+    expect(JSON.stringify(window.history.state.exploreState)).not.toContain('Saved day');
+    expect(JSON.stringify(window.history.state.exploreState)).not.toContain('Day preview');
     expect(serializeExploreURLState(state.current)).not.toContain('relationshipReader');
     expect(parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify(state.current))}`).relationshipReader).toBeNull();
     state.commitNavigation({ relationshipReader: null });
@@ -1849,6 +1853,11 @@ it('keeps relationship readers in their own history entries, including same-targ
     expect(state.current.relationshipReader).toBeNull();
     const returnToReader = popped(); window.history.back(); await returnToReader;
     expect(state.current.relationshipReader).toEqual(reader);
+    for (const snapshot of [{ version: 2, reader }, { version: 1, reader: { ...reader, target: 'cluster:2' } }]) {
+      window.history.replaceState({ ...window.history.state, relationshipReader: snapshot }, '', window.location.href);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      expect(state.current.relationshipReader).toBeNull();
+    }
     state.commitWorkspace('files');
     expect(state.current.relationshipReader).toBeNull();
     window.history.replaceState({ exploreSearch: window.location.search, exploreState: { ...state.current, schemaVersion: 999, workspace: 'relationships', relationshipTarget: 'cluster:1', relationshipReader: reader } }, '', window.location.href);
