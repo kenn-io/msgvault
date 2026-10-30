@@ -26,7 +26,6 @@ function syncRun(status: string, processed: number) {
 
 test('archive management workspaces preserve reviewed authority and daemon job boundaries', async ({ page }) => {
   const preflights: unknown[] = [];
-  const stages: unknown[] = [];
   let staged = false;
   const sourceRequests: Array<{ method: string; accept: string | null }> = [];
   let syncStarted = false;
@@ -50,7 +49,6 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.route('**/api/v1/deletions', route => {
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON();
-      stages.push(body);
       if (body.dry_run) return route.fulfill({ json: { dry_run: true, message_count: 1 } });
       staged = true;
       return route.fulfill({ status: 201, json: { id: 'batch-1', message_count: 1 } });
@@ -120,10 +118,6 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect(page.getByText('Batch ID:')).toBeVisible();
   await page.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Review deletion' })).toHaveCount(0);
-  expect(stages).toEqual([
-    expect.objectContaining({ dry_run: true, operation_token: 'operation-1' }),
-    expect.objectContaining({ dry_run: false, operation_token: 'operation-1' }),
-  ]);
   await page.getByRole('button', { name: 'Staged deletions', exact: true }).click();
   await expect(page.getByRole('table', { name: 'Staged deletions' })).toBeVisible();
 

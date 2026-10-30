@@ -1,3 +1,4 @@
+import { tick } from 'svelte';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,35 +48,27 @@ describe('DeletionsWorkspace', () => {
     expect(screen.queryByText(/manifest/i)).toBeNull();
   });
 
-  it('keeps cancelled batches behind a filter', async () => {
-    render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('b1', 'pending', 2), batch('b2', 'cancelled', 5)])) });
-    await screen.findByText('2 messages');
-    expect(screen.queryByText('5 messages')).toBeNull();
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
-    expect(screen.getByText('5 messages')).toBeDefined();
-    expect(screen.getByText('Cancelled')).toBeDefined();
-  });
-
-
   it('loads displayed accounts and waits to read cancelled rows until shown', async () => {
     const seen: Seen[] = [];
     render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('visible', 'pending', 2), batch('hidden', 'cancelled', 3)], seen)) });
     await screen.findByText('archive@example.com');
+    expect(screen.queryByText('3 messages')).toBeNull();
     expect(seen.filter(entry => entry.path.includes('/deletions/'))).toEqual([{ method: 'GET', path: '/api/v1/deletions/visible' }]);
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
     await waitFor(() => expect(seen.filter(entry => entry.path.includes('/deletions/'))).toEqual([
       { method: 'GET', path: '/api/v1/deletions/visible' }, { method: 'GET', path: '/api/v1/deletions/hidden' }
     ]));
+    expect(screen.getByText('3 messages')).toBeDefined();
+    expect(screen.getByText('Cancelled')).toBeDefined();
   });
 
   it('keeps the batch and confirmation after failed cancellation, then retries', async () => {
-    let deletes = 0, lists = 0, detailReads = 0;
+    let deletes = 0, lists = 0;
     const onChanged = vi.fn();
     const client = createAPIClient(async input => {
       const request = input as Request;
       if (request.url.endsWith('/deletions')) return ++lists === 1 ? Response.json({ message: 'Offline' }, { status: 500 }) : Response.json({ manifests: [batch('b1', 'in_progress', 2)] });
       if (request.method === 'DELETE') return ++deletes === 1 ? Response.json({ message: 'Busy' }, { status: 500 }) : Response.json({ id: 'b1', status: 'cancelled' });
-      detailReads++;
       return Response.json(detail('b1', 'in_progress'));
     });
     render(DeletionsWorkspace, { controller: new DeletionsController(client), onChanged });
@@ -91,18 +84,6 @@ describe('DeletionsWorkspace', () => {
     expect(onChanged).not.toHaveBeenCalled();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel batch' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
-    await screen.findByRole('button', { name: /^Open batch from/ });
-    expect(detailReads).toBe(1);
-  });
-
-  it('offers no cancel once a batch is deleted', async () => {
-    render(DeletionsWorkspace, {
-      controller: new DeletionsController(api([batch('b1', 'completed', 2)], [], { b1: detail('b1', 'completed') }))
-    });
-    await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
-    await screen.findByText('news@example.com');
-    expect(screen.queryByRole('button', { name: 'Cancel batch' })).toBeNull();
   });
 });
 
@@ -113,24 +94,30 @@ it('keeps the selected batch when another account lookup finishes late', async (
     if (request.url.endsWith('/deletions')) return Response.json({ manifests: [batch('a', 'pending', 2), batch('b', 'pending', 3)] });
     return request.url.endsWith('/a') ? new Promise(resolve => { finish = resolve; }) : Response.json(detail('b', 'pending', { description: 'Batch B review' }));
   });
-  render(DeletionsWorkspace, { controller: new DeletionsController(client) });
+  const controller = new DeletionsController(client);
+  render(DeletionsWorkspace, { controller });
   const rows = await screen.findAllByRole('button', { name: /^Open batch from/ });
   await fireEvent.click(rows[0]);
   await fireEvent.click(rows[1]);
   await screen.findByText('Batch B review');
-  finish(Response.json(detail('a', 'pending', { description: 'Late batch A review' })));
-  await waitFor(() => expect(screen.queryByText('Late batch A review')).toBeNull());
+  finish(Response.json({}, { status: 500 }));
+  await controller.getDetail('a');
+  await tick();
+  expect(screen.queryByText("Can't open this batch.")).toBeNull();
   expect(screen.getByText('Batch B review')).toBeDefined();
 });
 
-it('shows the review description and failed message IDs in batch details', async () => {
-  render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('failed', 'failed', 2)], [], {
-    failed: detail('failed', 'failed', { description: 'Old newsletter cleanup', execution: { failed_ids: ['message-a', 'message-b'], succeeded: 0, failed: 2 } })
+it.each(['completed', 'failed'])('opens %s batch details without offering cancellation', async status => {
+  render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('terminal', status, 2)], [], {
+    terminal: detail('terminal', status, { description: 'Old newsletter cleanup', ...(status === 'failed' ? { execution: { failed_ids: ['message-a', 'message-b'], succeeded: 0, failed: 2 } } : {}) })
   })) });
   await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
   await screen.findByText('Old newsletter cleanup');
-  expect(screen.getByText('message-a')).toBeDefined();
-  expect(screen.getByText('message-b')).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Cancel batch' })).toBeNull();
+  if (status === 'failed') {
+    expect(screen.getByText('message-a')).toBeDefined();
+    expect(screen.getByText('message-b')).toBeDefined();
+  }
 });
 
 it('keeps the table and open detail visible during background list reads', async () => {

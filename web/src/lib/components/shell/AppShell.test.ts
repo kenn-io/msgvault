@@ -2388,12 +2388,13 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('shows grouped Files filename and type filters as removable chips', async () => {
+  it('shows removable filename and type chips in grouped and ungrouped Files', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const groupRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
       if (path.endsWith('/groups')) {
         groupRequests.push(request);
         return Response.json({
@@ -3081,7 +3082,17 @@ it.each(['', 'invoice'])('clears Files filters and a pending filename edit from 
   window.history.replaceState(null, '', '/?workspace=files');
   const state = new ExploreState(window);
   state.replaceTransient({ fileFilenameQuery: filename, fileMIMEFamilies: ['pdf'], filters: [{ dimension: 'after', values: ['2026-07-01T00:00:00Z'] }] });
-  const view = render(AppShell, { client: createAPIClient(async () => Response.json({ files: [], rows: [], total_count: 0, accounts: [], identities: [], manifests: [], cache_revision: 'cache-1', search_provenance: {} })), state });
+  const view = render(AppShell, { client: createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path === '/api/v1/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+    if (path === '/api/v1/cli/accounts') return Response.json({ accounts: [] });
+    if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
+    if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+    if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
+    if (path === '/api/v1/explore/groups') return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+    return Response.json({}, { status: 404 });
+  }), state });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: /^Filter$/ }));
     await fireEvent.input(await screen.findByLabelText('Filter filename'), { target: { value: 'pending' } });

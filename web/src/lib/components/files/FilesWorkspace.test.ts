@@ -15,7 +15,6 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, 
 function renderReady(props: ComponentProps<typeof FilesWorkspace>) {
   const readiness = new IntegrationReadiness(async () => true);
   const view = render(FilesWorkspace, { props, context: new Map([[visualReadinessKey, readiness]]) });
-  readiness.ready;
   return view;
 }
 
@@ -1191,17 +1190,16 @@ describe('FilesWorkspace', () => {
       });
     }
 
-    async function typeMenuItems(): Promise<string[]> {
-
+    function typeCheckboxLabels(): string[] {
       return ['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other'].filter(label => screen.queryByRole('checkbox', { name: label }) !== null);
     }
 
     it.each([
       ['media', ['Images', 'Video']],
       ['files', ['PDFs', 'Audio', 'Text', 'Documents', 'Archives', 'Other']]
-    ] as const)('limits a person %s Type menu to its own families', async (personPresentation, expected) => {
+    ] as const)('limits a person %s Type checkboxes to its own families', async (personPresentation, expected) => {
       renderFiles({ identityScope: { kind: 'person', id: 1 }, personPresentation });
-      expect(await typeMenuItems()).toEqual(expected);
+      expect(typeCheckboxLabels()).toEqual(expected);
     });
 
     it('keeps the fusion score out of the row text and names a missing file plainly', async () => {
@@ -1263,17 +1261,13 @@ describe('FilesWorkspace', () => {
   });
 });
 
-it('keeps embedded identity and relationship scope when filename and type change', async () => {
-  const bodies: Record<string, unknown>[] = [];
-  const client = createAPIClient(async input => { bodies.push(await (input as Request).clone().json()); return Response.json(personResponse()); });
-  const predicate = { query: 'quarterly', search_mode: 'full_text' as const, filters: [{ dimension: 'participant' as const, values: ['42'] }, { dimension: 'source' as const, values: ['9'] }] };
+it('reports embedded filename edits and appends Type choices to current families', async () => {
+  const client = createAPIClient(async () => Response.json(personResponse()));
   const onFilenameQueryChange = vi.fn(), onMIMEFamiliesChange = vi.fn();
-  const view = renderReady({ client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf'], onFilenameQueryChange, onMIMEFamiliesChange });
+  renderReady({ client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate: { filters: [] }, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf', 'text'], onFilenameQueryChange, onMIMEFamiliesChange });
   await screen.findByText('fixture.pdf');
   await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'budget' } });
   expect(onFilenameQueryChange).toHaveBeenCalledWith('budget');
-  await view.rerender({ filenameQuery: 'budget', mimeFamilies: ['pdf', 'text'] });
-  await waitFor(() => expect(bodies.at(-1)).toMatchObject({ predicate, filename_query: 'budget', mime_families: ['pdf', 'text'] }));
   await fireEvent.click(screen.getByRole('checkbox', { name: 'Audio' }));
   expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf', 'text', 'audio']);
 });

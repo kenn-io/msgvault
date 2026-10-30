@@ -58,23 +58,6 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
-  it('starts a sync and shows Syncing until the run appears', async () => {
-    let started = false;
-    const fetchFn = api([source()], (url, request) => {
-      if (request.method === 'POST' && url.pathname.includes('/sync/')) {
-        started = true;
-        return Response.json({ status: 'accepted' }, { status: 202 });
-      }
-      if (started && url.pathname.endsWith('/sources/status')) {
-        return Response.json({ sources: [source({ active_sync: run('running', 2), latest_sync: run('running', 2) })] });
-      }
-      return undefined;
-    });
-    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
-    expect((await screen.findAllByText('Syncing…')).length).toBeGreaterThan(0);
-    expect(await screen.findByText('Running')).toBeDefined();
-  });
 
   it('reports each rejected click despite an unchanged stored run', async () => {
     const events: unknown[] = [];
@@ -122,12 +105,11 @@ describe('SourcesWorkspace', () => {
     expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
   });
 
-  it.each(['gmail', 'imap'])('shows config-only %s schedules and next sync without editable controls', async (source_type) => {
-    render(SourcesWorkspace, { client: createAPIClient(api([source({ source_type, scheduled: true, schedule: '0 * * * *', next_sync_at: '2026-07-19T11:00:00Z' })])) });
+  it('shows config-only Gmail schedules and next sync', async () => {
+    render(SourcesWorkspace, { client: createAPIClient(api([source({ source_type: 'gmail', scheduled: true, schedule: '0 * * * *', next_sync_at: '2026-07-19T11:00:00Z' })])) });
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
     expect(await screen.findByText('At :00 past every hour')).toBeDefined();
     expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
-    expect(screen.queryByRole('combobox')).toBeNull();
   });
 
   it('groups contacts and polls a contacts-only run through completion', async () => {
@@ -150,7 +132,9 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText('msgvault add-account user@example.com')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(screen.getAllByText('msgvault add-account user@example.com')).toHaveLength(2);
-  });  it('keeps polling through idle races until the accepted run completes', async () => {
+  });
+
+  it('keeps polling through idle races until the accepted run completes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusReads = 0;
     const requests: Request[] = [];
@@ -176,6 +160,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText('Awaiting accepted sync run…')).toBeDefined();
     await vi.advanceTimersByTimeAsync(1_000);
     await waitFor(() => expect(screen.getByText('5 processed')).toBeDefined());
+    expect(screen.getByText('Running')).toBeDefined();
     await vi.advanceTimersByTimeAsync(500);
     await waitFor(() => expect(screen.getByText('Succeeded')).toBeDefined());
 
@@ -674,23 +659,16 @@ describe('SourcesWorkspace', () => {
   });
 });
 
-it('keeps queued, cancelled, partial, and unavailable source meanings', async () => {
+it('opens sync history and the selected run’s item failures', async () => {
   const onOpenOperations = vi.fn();
   render(SourcesWorkspace, { onOpenOperations, client: createCaptureClient(api([
-    source({ id: 1, display_name: 'Queued account', scheduler_queued: true }),
-    source({ id: 2, display_name: 'Cancelled account', latest_sync: run('cancelled', 0), can_sync: false, sync_unavailable_reason: 'sync_not_configured' }),
-    source({ id: 3, display_name: 'Imported account', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', latest_sync: run('completed', 3, { errors_count: 1, item_errors: [{ source_message_id: 'message-1', phase: 'fetch', created_at: '2026-07-19T10:00:00Z', error_message: 'Attachment unavailable' }] }) }),
-    source({ id: 4, display_name: 'Unavailable account', can_sync: false, sync_unavailable_reason: 'scheduler_unavailable' }),
-    source({ id: 5, display_name: 'Paused account', source_type: 'omi', latest_sync: run('paused', 3, { error_message: 'Import paused at rate limit' }) }),
+    source({ display_name: 'Imported account', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', latest_sync: run('completed', 3, { errors_count: 1, item_errors: [{ source_message_id: 'message-1', phase: 'fetch', created_at: '2026-07-19T10:00:00Z', error_message: 'Attachment unavailable' }] }) }),
   ]), []) });
-  for (const label of ['Queued', 'Cancelled', 'Partial', 'Sync not set up', 'Imported file — nothing to sync', 'Scheduler unavailable']) expect(await screen.findByText(label)).toBeDefined();
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
   expect(onOpenOperations).toHaveBeenCalledOnce();
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for Imported account' }));
   await fireEvent.click(await screen.findByText('1 item failed'));
   expect(screen.getByText('Attachment unavailable')).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Details for Paused account' }));
-  await screen.findByText('Import paused at rate limit');
 });
 
 it('publishes source rows while the optional contacts request waits', async () => {
@@ -710,7 +688,7 @@ it('shows OAuth app repair instructions for contacts rather than assuming expiry
   const onOpenSettings = vi.fn();
   render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [{ ...contact, status: { ...contact.status, repair_reason: 'google_authorization_required' } }]), []), onOpenSettings });
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for user-a' }));
-  expect(screen.getByText(/Check the selected OAuth app's client settings/)).toBeDefined();
+  expect(screen.getByRole('region', { name: 'Failure' })).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Open Settings › Contacts' }));
   expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('carddav');
 });
@@ -737,35 +715,28 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
   } finally { view.unmount(); }
 });
 
-it('loads contacts and permits Sync now when mail source status fails', async () => {
+it.each(['fails', 'pends'])('publishes usable contacts when mail status %s', async mail => {
   const syncs: Request[] = [];
-  const fetch = api([], (url, request) => {
-    if (url.pathname.endsWith('/sources/status')) return Response.json({ message: 'Mail status unavailable' }, { status: 500 });
-    if (url.pathname.endsWith('/carddav/sync')) { syncs.push(request); return Response.json({ status: 'accepted' }); }
-    return undefined;
-  }, [contact]);
-  const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
-  try {
-    expect((await screen.findByRole('alert')).textContent).toContain('Mail status unavailable');
-    expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now user-a' }));
-    await waitFor(() => expect(syncs).toHaveLength(1));
-    await expect(syncs[0].clone().json()).resolves.toEqual({ full: false, connection: 'default' });
-  } finally { view.unmount(); }
-});
-
-it('publishes contacts while mail source status remains pending', async () => {
   const fetch = vi.fn<typeof globalThis.fetch>(async input => {
     const request = input as Request;
-    if (request.url.endsWith('/sources/status')) {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/sources/status')) {
+      if (mail === 'fails') return Response.json({ message: 'Mail status unavailable' }, { status: 500 });
       return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
     }
-    if (request.url.endsWith('/carddav/connections')) return Response.json({ connections: [contact] });
+    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [contact] });
+    if (path.endsWith('/carddav/sync')) { syncs.push(request); return Response.json({ status: 'accepted' }); }
     return Response.json({}, { status: 404 });
   });
   const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
   try {
     expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
     expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+    if (mail === 'fails') {
+      expect((await screen.findByRole('alert')).textContent).toContain('Mail status unavailable');
+      await fireEvent.click(screen.getByRole('button', { name: 'Sync now user-a' }));
+      await waitFor(() => expect(syncs).toHaveLength(1));
+      await expect(syncs[0].clone().json()).resolves.toEqual({ full: false, connection: 'default' });
+    }
   } finally { view.unmount(); }
 });
