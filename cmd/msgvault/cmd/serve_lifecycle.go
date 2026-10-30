@@ -1023,6 +1023,10 @@ func serveBackgroundChildArgs(options ...invocationOptions) []string {
 	if len(options) > 0 {
 		o = options[0]
 	}
+	return append(invocationGlobalArgs(o), "serve")
+}
+
+func invocationGlobalArgs(o invocationOptions) []string {
 	args := make([]string, 0, 16)
 	if o.cfgFile != "" {
 		args = append(args, "--config", o.cfgFile)
@@ -1048,7 +1052,7 @@ func serveBackgroundChildArgs(options ...invocationOptions) []string {
 	if o.logSQLSlow != 0 {
 		args = append(args, "--log-sql-slow-ms", strconv.FormatInt(o.logSQLSlow, 10))
 	}
-	return append(args, "serve")
+	return args
 }
 
 func waitForBackgroundServeReady(

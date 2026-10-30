@@ -5078,11 +5078,14 @@ Update msgvault to the latest version.
 msgvault update [flags]
 ```
 
+Update restarts only a daemon msgvault started in the background. A daemon run as `msgvault serve` is left to its supervisor or the person who started it. Use `--no-restart` to leave even a background daemon stopped.
+
 A Homebrew install reports whether a newer release exists but does not replace
 itself. Run `brew upgrade msgvault` instead.
 
 | Flag | Description |
 |---|---|
+| `--no-restart` | Leave the daemon stopped after the update |
 | `--check` | Check for updates without installing |
 | `-y`, `--yes` | Skip confirmation prompt |
 | `-f`, `--force` | Force update even if already on the latest version |

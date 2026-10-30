@@ -43,6 +43,7 @@ func TestListLiveDaemonRuntimeRecordsKeepsUnjudgedRecords(t *testing.T) {
 }
 
 func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
+	t.Setenv(serveBackgroundChildEnv, "")
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -68,6 +69,14 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 	assert.Equal(daemonAPIKeyFingerprint("test-api-key"), rec.Metadata[runtimeAuthFingerprint], "api key fingerprint metadata")
 	assert.Equal(shutdownToken, rec.Metadata[runtimeShutdownToken], "shutdown token metadata")
 	assert.Equal(daemonStartupPhaseInitial, rec.Metadata[runtimeStartupPhase], "startup phase metadata")
+	assert.NotContains(rec.Metadata, runtimeBackground)
+
+	t.Setenv(serveBackgroundChildEnv, "1")
+	_, _, err = writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key")
+	require.NoError(err, "write background daemon runtime")
+	rec, err = daemon.RuntimeStore{Dir: dataDir}.Read(path)
+	require.NoError(err, "read background runtime record")
+	assert.Equal("true", rec.Metadata[runtimeBackground])
 }
 
 func TestWriteDaemonRuntimeAcceptsSymlinkedDataDir(t *testing.T) {
