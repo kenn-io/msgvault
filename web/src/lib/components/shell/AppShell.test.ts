@@ -2608,28 +2608,6 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('dismisses Filter before grouping', async () => {
-    window.history.replaceState(null, '', '/');
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(async (input) => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/accounts')) return Response.json({ accounts: [{ id: 1, email: 'first@example.com', virtual_accounts: [{ key: 'identity:1:first', source_id: 1, account_address: 'first@example.com', message_count: 1, source_deleted_count: 0 }] }] });
-      return Response.json(exploreResponse());
-    }), state });
-    await fireEvent.click(screen.getByRole('combobox', { name: 'Group by' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Source' }));
-    const trigger = screen.getByRole('button', { name: 'Filter' });
-    await fireEvent.click(trigger);
-    trigger.focus();
-    await fireEvent.keyDown(trigger, { key: 'Escape' });
-    expect(state.current.groupingChain).toEqual(['source']);
-    expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull();
-    await fireEvent.keyDown(trigger, { key: 'Escape' });
-    expect(state.current.groupingChain).toEqual([]);
-    rendered.unmount();
-    state.destroy();
-  });
-
   it('selects three rows when Shift+Space is pressed outside the grid', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
@@ -2765,6 +2743,7 @@ describe('AppShell', () => {
       states.push(state);
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path.endsWith('/groups')) return Response.json(exploreResponse({ rows: [], total_count: 0 }));
         if (path.endsWith('/explore/preflight')) {
           return Response.json({
             count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
@@ -2800,6 +2779,20 @@ describe('AppShell', () => {
         isOpen: () => screen.queryByRole('dialog', { name: 'Filter' }) !== null
       },
       {
+        layer: 'Filter', outer: 'grouping',
+        openOuter: async () => {
+          const state = await openReadingPane();
+          await fireEvent.click(screen.getByRole('combobox', { name: 'Group by' }));
+          await fireEvent.click(screen.getByRole('option', { name: 'Source' }));
+          state.replaceTransient({ selectedRow: null });
+          return state;
+        },
+        isOuterOpen: (state: ExploreState) => state.current.groupingChain.join() === 'source',
+        isOuterClosed: (state: ExploreState) => state.current.groupingChain.length === 0,
+        open: () => clickFocused(screen.getByRole('button', { name: 'Filter' })),
+        isOpen: () => screen.queryByRole('dialog', { name: 'Filter' }) !== null,
+      },
+      {
         layer: 'More selection actions',
         open: async () => {
           await fireEvent.keyDown(screen.getByRole('grid', { name: 'Messages results' }), { key: ' ' });
@@ -2824,19 +2817,23 @@ describe('AppShell', () => {
         },
         isOpen: () => screen.queryByRole('dialog', { name: 'Save view' }) !== null
       }
-    ])('closes $layer first and leaves the reading pane for the next Escape', async ({ open, isOpen }) => {
-      const state = await openReadingPane();
+    ].map(row => ({
+      outer: 'reading pane', openOuter: openReadingPane,
+      isOuterOpen: (state: ExploreState) => state.current.selectedRow === 'message:1' && screen.queryByRole('complementary', { name: 'Reading pane: Synthetic subject 1' }) !== null,
+      isOuterClosed: (state: ExploreState) => state.current.selectedRow === null,
+      ...row,
+    })))('closes $layer first and leaves $outer for the next Escape', async ({ open, isOpen, openOuter, isOuterOpen, isOuterClosed }) => {
+      const state = await openOuter();
       await open();
       expect(isOpen()).toBe(true);
 
       await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
 
       await waitFor(() => expect(isOpen()).toBe(false));
-      expect(state.current.selectedRow).toBe('message:1');
-      expect(screen.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeDefined();
+      expect(isOuterOpen(state)).toBe(true);
 
       await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-      await waitFor(() => expect(state.current.selectedRow).toBeNull());
+      await waitFor(() => expect(isOuterClosed(state)).toBe(true));
     });
 
     it('closes the reading pane again once the narrow navigation menu is gone', async () => {

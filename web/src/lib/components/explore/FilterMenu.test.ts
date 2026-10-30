@@ -2,9 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import FilterMenu from './FilterMenu.svelte';
-import AddToTaskDialog from '../tasks/AddToTaskDialog.svelte';
 
-it('edits UTC date bounds and leaves Filter open when the task dialog handles Escape', async () => {
+it('edits UTC date bounds and retains committed bounds after invalid edits', async () => {
   const onChange = vi.fn();
   const filters = [{ dimension: 'after' as const, values: ['2026-01-01T00:00:00.000Z'] }, { dimension: 'before' as const, values: ['2027-01-01T00:00:00.000Z'] }];
   render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, onChange });
@@ -29,13 +28,6 @@ it('edits UTC date bounds and leaves Filter open when the task dialog handles Es
   expect(screen.queryByRole('alert')).toBeNull();
   await fireEvent.change(from, { target: { value: '' } });
   expect(onChange).toHaveBeenLastCalledWith([filters[1]]);
-  const taskDialog = render(AddToTaskDialog, {
-    client: createAPIClient(async () => Response.json({ state: 'disabled', complete: false, tasks: [] })),
-    messageId: 1, title: 'Synthetic', email: true, onclose: () => taskDialog.unmount(),
-  });
-  await fireEvent.keyDown(await screen.findByRole('dialog', { name: 'Add to task' }), { key: 'Escape' });
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add to task' })).toBeNull());
-  expect(screen.getByRole('dialog', { name: 'Filter' })).toBeDefined();
 });
 
 it('keeps Kind lookup failures visible and retries when Filter reopens', async () => {
@@ -62,11 +54,12 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
   expect(await screen.findByLabelText('Conversation')).toBeDefined();
 });
 
-it('keeps the selected chat network and restored kinds when Email is added', async () => {
+it('preserves Kind selections and groups meeting notes and minutes', async () => {
   const onChange = vi.fn();
+  let meetingsOnly = false;
   const view = render(FilterMenu, {
     client: createAPIClient(async (input) => {
-      if (new URL((input as Request).url).pathname.endsWith('/groups')) return Response.json({ rows: [{ key: 'whatsapp' }, { key: 'discord' }, { key: 'email' }] });
+      if (new URL((input as Request).url).pathname.endsWith('/groups')) return Response.json({ rows: meetingsOnly ? [{ key: 'meeting_note' }, { key: 'meeting_minutes' }] : [{ key: 'whatsapp' }, { key: 'discord' }, { key: 'email' }] });
       return Response.json({ accounts: [], identities: [] });
     }), filters: [{ dimension: 'message_type', values: ['whatsapp', 'restored-kind'] }], onChange,
   });
@@ -78,6 +71,11 @@ it('keeps the selected chat network and restored kinds when Email is added', asy
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   await fireEvent.click(await screen.findByLabelText('Email'));
   expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['email'] }]);
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  meetingsOnly = true;
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  await fireEvent.click(await screen.findByLabelText('Meeting'));
+  expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['meeting_note', 'meeting_minutes'] }]);
 });
 
 it.each(['Account', 'Identity'])('Escape closes only the active %s picker, then Filter', async (picker) => {

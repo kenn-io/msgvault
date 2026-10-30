@@ -5,7 +5,7 @@ import { meetingAction, meetingActions, meetingMetrics } from '../../meetings/fi
 import MessageMeetingSummary from './MessageMeetingSummary.svelte';
 
 describe('Messages meeting summary', () => {
-  it.each([false, true])('resets action filters on close after same-scope refresh=%s', async (refresh) => {
+  it.each([false, true])('debounces assignee edits and resets action filters on close after same-scope refresh=%s', async (refresh) => {
     const actions: Record<string, unknown>[] = [];
     const client = createAPIClient(async (input) => {
       const request = input as Request;
@@ -21,8 +21,14 @@ describe('Messages meeting summary', () => {
     if (refresh) await view.rerender({ refreshKey: 'second' });
     await waitFor(() => expect(actions).toHaveLength(refresh ? 2 : 1));
     const dialog = screen.getByRole('dialog', { name: 'Action items' });
-    await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person@example.com' } });
-    await waitFor(() => expect(actions).toHaveLength(refresh ? 3 : 2));
+    vi.useFakeTimers();
+    try {
+      await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person' } });
+      await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person@example.com' } });
+      expect(actions).toHaveLength(refresh ? 2 : 1);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(actions).toHaveLength(refresh ? 3 : 2);
+    } finally { vi.useRealTimers(); }
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await screen.findByRole('button', { name: 'Action items · 2' });
     expect(actions.at(-1)).toEqual({ scope: { message_ids: [42] }, limit: 50 });
@@ -31,12 +37,10 @@ describe('Messages meeting summary', () => {
     expect(screen.getByRole('textbox', { name: 'Assignee' })).toHaveProperty('value', '');
   });
 
-  it('opens scoped actions, debounces assignee filters, and navigates to source evidence', async () => {
-    const requests: Request[] = [];
+  it('opens scoped actions and navigates to source evidence', async () => {
     const onOpenMeeting = vi.fn();
     const client = createAPIClient(async (input) => {
       const request = input as Request;
-      requests.push(request.clone());
       if (request.url.endsWith('/metrics')) return Response.json(meetingMetrics());
       return Response.json(meetingActions({ rows: [meetingAction()] }));
     });
@@ -46,9 +50,6 @@ describe('Messages meeting summary', () => {
     await fireEvent.click(await screen.findByRole('button', { name: /Action items/ }));
     const dialog = screen.getByRole('dialog', { name: 'Action items' });
     expect(within(dialog).getByText('Prepare review')).toBeDefined();
-    await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person' } });
-    await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Assignee' }), { target: { value: 'person@example.test' } });
-    await waitFor(() => expect(requests.filter((request) => request.url.endsWith('/actions'))).toHaveLength(2));
     await fireEvent.click(await within(dialog).findByRole('link', { name: 'Archived review' }));
     expect(onOpenMeeting).toHaveBeenCalledWith(expect.objectContaining({ message_id: 42 }));
   });
