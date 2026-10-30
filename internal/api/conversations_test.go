@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -321,27 +320,22 @@ func TestConversationWindowRejectsAnchorOutsideTimeRange(t *testing.T) {
 func TestConversationWindowCarriesExactParticipantIdentities(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("whatsapp", "archive@example.com")
-	require.NoError(err)
-	conversation, err := st.EnsureConversationWithType(source.ID, "identity-group", "group_chat", "Group")
-	require.NoError(err)
-	sender, err := st.EnsureParticipant("alex@example.com", "Alex Example", "example.com")
-	require.NoError(err)
-	recipient, err := st.EnsureParticipant("blair@example.com", "Blair Example", "example.com")
-	require.NoError(err)
-	id, err := st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: source.ID, SourceMessageID: "identity", MessageType: "whatsapp", SenderID: sql.NullInt64{Int64: sender, Valid: true}})
-	require.NoError(err)
-	require.NoError(st.ReplaceMessageRecipients(id, "to", []int64{recipient}, []string{"Blair Example"}))
-	srv := NewServer(&config.Config{}, st, nil, testLogger())
+	srv := NewServer(&config.Config{}, &participantConversationStore{mockStore: &mockStore{}}, nil, testLogger())
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversation, id), nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/7?anchor=42", nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result struct {
 		Messages []map[string]json.RawMessage `json:"messages"`
 	}
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 	require.Len(result.Messages, 1)
-	assert.JSONEq(strconv.FormatInt(sender, 10), string(result.Messages[0]["from_participant_id"]))
-	assert.JSONEq(fmt.Sprintf(`[{"participant_id":%d,"display":"Blair Example <blair@example.com>"}]`, recipient), string(result.Messages[0]["to_participants"]))
+	assert.JSONEq(`11`, string(result.Messages[0]["from_participant_id"]))
+	assert.JSONEq(`[{"participant_id":22,"display":"Blair Example <blair@example.com>"}]`, string(result.Messages[0]["to_participants"]))
+}
+
+type participantConversationStore struct{ *mockStore }
+
+func (*participantConversationStore) ConversationExists(int64) (bool, error) { return true, nil }
+func (*participantConversationStore) GetConversationWindow(int64, int64, int, int) (*store.ConversationWindow, error) {
+	return &store.ConversationWindow{Messages: []store.APIMessage{{ID: 42, ConversationID: 7, FromParticipantID: 11, ToParticipants: []store.ParticipantDisplay{{ParticipantID: 22, Display: "Blair Example <blair@example.com>"}}}}, Total: 1}, nil
 }
