@@ -136,12 +136,13 @@ it('queues a fresh list after a write while an older list is pending', async () 
   controller.destroy();
 });
 
-it('keeps execution detail cached until a fresh read is requested', async () => {
+it('keeps execution detail cached until a fresh read reconciles the completed status', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(now);
   let deleted = 0, reads = 0;
   const controller = new DeletionsController(createAPIClient(async input => {
     if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [batch('active', 'in_progress')] });
     reads++;
-    return Response.json({ ...batch('active', 'in_progress'), execution: { succeeded: deleted } });
+    return Response.json({ ...batch('active', deleted ? 'completed' : 'in_progress'), execution: { succeeded: deleted, completed_at: '2026-10-29T11:00:00Z' } });
   }));
   await controller.refresh();
   await controller.getDetail('active');
@@ -150,6 +151,8 @@ it('keeps execution detail cached until a fresh read is requested', async () => 
   expect((await controller.getDetail('active'))?.execution?.succeeded).toBe(0);
   expect(reads).toBe(1);
   expect((await controller.getDetail('active', { fresh: true }))?.execution?.succeeded).toBe(100);
+  expect(controller.batches[0]?.status).toBe('completed');
+  expect(controller.visible).toBe(true);
   expect(reads).toBe(2);
   controller.destroy();
 });
