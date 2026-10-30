@@ -38,22 +38,23 @@ jobs:
     container:
       image: ubuntu:26.04
     steps:
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install build tools
+        shell: bash
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
-          apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
+          kit-retry 3 5 apt-get -o APT::Update::Error-Mode=any update
+          kit-retry 3 5 apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Go
+        shell: bash
         run: |
           GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
-          # A single stalled transfer must leave time for another attempt.
-          curl -fsSL --connect-timeout 30 --max-time 120 \
-            --retry 5 --retry-all-errors --retry-max-time 600 \
-            "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
+          kit-download "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" go.tar.gz
           tar -C /usr/local -xzf go.tar.gz
           rm go.tar.gz
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
@@ -112,8 +113,10 @@ jobs:
           group: linux-checks
           extra-path: ~/.cache/golangci-lint
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install SQLite development headers
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       - name: Check PostgreSQL build coverage
         run: make pg-shipped-only-check
@@ -154,8 +157,10 @@ jobs:
         with:
           group: linux-test
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install SQLite development headers
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
@@ -205,8 +210,10 @@ jobs:
         with:
           group: linux-test
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}"
@@ -258,9 +265,11 @@ jobs:
         with:
           bun-version-file: web/package.json
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install frontend dependencies
         working-directory: web
-        run: bun install --frozen-lockfile
+        run: kit-retry 3 5 bun install --frozen-lockfile
 
       - &start-browser-server
         name: Start browser server
@@ -271,13 +280,7 @@ jobs:
           version=$(node -p "require('@playwright/test/package.json').version")
           image="mcr.microsoft.com/playwright:v$version-noble"
           cli=$(node -p "require.resolve('@playwright/test/cli')")
-          for attempt in {1..3}; do
-            if docker pull "$image"; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep 5
-          done
+          kit-retry 3 5 docker pull "$image"
           container_id=$(docker run --detach --interactive --init --network host --ipc host \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" \
             --workdir "$GITHUB_WORKSPACE/web" \
@@ -288,6 +291,7 @@ jobs:
               echo 'Browser server container exited before becoming ready.' >&2
               exit 1
             fi
+            # workflowretry: allow Poll the local service for readiness.
             if curl --fail --silent --output /dev/null --max-time 2 http://127.0.0.1:3000/json; then
               exit 0
             fi
@@ -352,9 +356,11 @@ jobs:
         with:
           bun-version-file: web/package.json
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install frontend dependencies
         working-directory: web
-        run: bun install --frozen-lockfile
+        run: kit-retry 3 5 bun install --frozen-lockfile
 
       - *start-browser-server
 
@@ -722,8 +728,10 @@ jobs:
         with:
           group: linux-test
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Enable pgvector extension
         run: |
@@ -772,8 +780,10 @@ jobs:
         with:
           group: linux-postgres
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install SQLite development headers
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       # This lane uses a stock postgres:16 image (no pgvector extension), so it
       # must NOT build the pgvector tag — those tests CREATE EXTENSION "vector"
@@ -845,8 +855,10 @@ jobs:
         with:
           group: linux-postgres
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.

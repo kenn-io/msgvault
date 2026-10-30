@@ -451,7 +451,7 @@ custom-gcl: lint-tools
 		--version "$(GOLANGCI_LINT_VERSION)"
 
 # Run linter (auto-fix)
-lint: custom-gcl
+lint: custom-gcl lint-workflow-retries
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run --fix ./...
 
@@ -475,7 +475,7 @@ huma-check:
 # Run linter (CI, no auto-fix). The second pass lints the files that only the
 # PostgreSQL-only CGO_ENABLED=0 build compiles. It covers the packages whose
 # tests also build without CGO; the others' tests need the SQLite driver.
-lint-ci: custom-gcl testify-helper-check
+lint-ci: custom-gcl testify-helper-check lint-workflow-retries
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run ./...
 	CGO_ENABLED=0 TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run $(NOCGO_LINT_PKGS)
@@ -642,3 +642,7 @@ help:
 	@echo "  bench          - Run query engine benchmarks"
 	@echo "  shootout       - Build MIME shootout tool"
 	@echo "  run-shootout   - Run MIME shootout"
+
+.PHONY: lint-workflow-retries
+lint-workflow-retries:
+	GOOS= GOARCH= go run go.kenn.io/kit/cmd/kennlint@v0.47.3 workflow-retries
