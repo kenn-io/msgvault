@@ -48,8 +48,18 @@ func (s *operationArchiveRealStore) ArchiveUIDContext(context.Context) (string, 
 	return s.uid, nil
 }
 
+func (s *operationArchiveRealStore) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
+	uid, err := s.ArchiveUIDContext(ctx)
+	return uid, "1", err
+}
+
 func (s *operationArchiveStore) ArchiveUIDContext(context.Context) (string, error) {
 	return s.uid, s.err
+}
+
+func (s *operationArchiveStore) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
+	uid, err := s.ArchiveUIDContext(ctx)
+	return uid, "1", err
 }
 
 func (*operationArchiveStore) ActiveOperationTokenKey(context.Context) (store.OperationTokenKey, error) {

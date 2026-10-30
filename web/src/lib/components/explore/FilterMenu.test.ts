@@ -32,10 +32,11 @@ it('shows UTC year bounds and edits only the changed boundary', async () => {
 
 it('keeps Kind lookup failures visible and retries when Filter reopens', async () => {
   let failed = true;
+  let imported = false;
   render(FilterMenu, {
     client: createAPIClient(async (input) => {
       if (new URL((input as Request).url).pathname.endsWith('/groups')) {
-        return failed ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ rows: [{ key: 'email', count: 1 }] });
+        return failed ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ rows: [{ key: 'email', count: 1 }, ...(imported ? [{ key: 'whatsapp', count: 1 }] : [])] });
       }
       return Response.json({ accounts: [], identities: [] });
     }), filters: [], onChange: vi.fn(),
@@ -47,6 +48,10 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   expect(await screen.findByLabelText('Email')).toBeDefined();
   expect(screen.queryByText('Could not load kinds')).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  imported = true;
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  expect(await screen.findByLabelText('Conversation')).toBeDefined();
 });
 
 it('keeps the selected chat network and restored kinds when Email is added', async () => {
