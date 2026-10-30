@@ -1,4 +1,3 @@
-import { disabledTaskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
@@ -260,7 +259,7 @@ describe('RelationshipsWorkspace', () => {
     expect(await screen.findByText('Subject')).toBeDefined();
   });
 
-  it.each([null, 'cluster:2'])('clears a clicked timeline reader when the target becomes %s', async (destination) => {
+  it('single-clicking a timeline row opens the conversation thread in the reading pane', async () => {
     const { fetchFn } = fetchHandler({
       '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
       '/api/v1/relationships/1/timeline': async () => Response.json({
@@ -277,7 +276,7 @@ describe('RelationshipsWorkspace', () => {
       })
     });
     const props = { ...baseProps(fetchFn), target: 'cluster:1' };
-    const view = render(RelationshipsWorkspace, { props });
+    render(RelationshipsWorkspace, { props });
     await props.controller.openTarget('cluster:1', props.predicate);
 
     await fireEvent.click((await screen.findByText('Subject line')).closest('[role="row"]')!);
@@ -285,8 +284,6 @@ describe('RelationshipsWorkspace', () => {
     // The anchor message renders expanded immediately — actual content, not metadata.
     expect(await within(reading).findByText('Full message body text')).toBeDefined();
     expect(within(reading).getByRole('button', { name: 'Collapse message 9 from alice@example.com' })).toBeDefined();
-    await view.rerender({ target: destination });
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
   });
 
   it('opens a chat_burst directly into the conversation window bounded to the local day', async () => {
@@ -405,21 +402,51 @@ describe('RelationshipsWorkspace', () => {
     }
   });
 
-  it('restores a bounded reader and closes it', async () => {
+  it('clears the reading pane when the target is cleared externally, not through this component\'s own Esc handler', async () => {
     const { fetchFn } = fetchHandler({
-      '/api/v1/conversations/70': async () => Response.json({ id: 70, anchor_id: 10, has_before: false, has_after: false, total: 1, messages: [{ id: 10, from: 'Example sender', subject: 'Saved subject', body: 'Saved message body', sent_at: when, to: [], labels: [], attachments: [] }] }),
+      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/relationships/1/timeline': async () => Response.json({
+        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel',
+        rows: [{ key: 'message:1', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Subject', has_attachments: false, message_count: 1 }],
+        total_count: 1
+      })
     });
-    const props = { ...baseProps(fetchFn), target: 'cluster:1', reader: { target: 'cluster:1', row: { key: 'message:9', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Saved subject', has_attachments: false, message_count: 1, conversation_id: 70, anchor_message_id: 9 }, anchorId: 10, bounds: { start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z' } } };
-    const view = render(RelationshipsWorkspace, { props });
-    try {
-      const pane = await screen.findByRole('complementary', { name: /Reading pane/ });
-      expect(await within(pane).findByText('Saved message body')).toBeDefined();
-      const request = fetchFn.mock.calls.map(([input]) => new URL((input as Request).url)).find(url => url.pathname.endsWith('/conversations/70'))!;
-      expect(request.searchParams.get('anchor')).toBe('10');
-      expect([request.searchParams.get('start'), request.searchParams.get('end')]).toEqual(['2026-07-19T00:00:00.000Z', '2026-07-20T00:00:00.000Z']);
-      await fireEvent.click(within(pane).getByRole('button', { name: 'Close reading pane' }));
-      expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
-    } finally { view.unmount(); props.controller.destroy(); }
+    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    const { rerender } = render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+
+    await fireEvent.click((await screen.findByText('Subject')).closest('[role="row"]')!);
+    await screen.findByRole('complementary', { name: /Reading pane/ });
+
+    // AppShell's own hydration effect clears the target directly on a
+    // Back/Forward popstate — never through this component's handleEscape.
+    await rerender({ ...props, target: null });
+
+    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
+  });
+
+  it('clears the reading pane when Back/Forward jumps straight between two targets without clearing to null', async () => {
+    const { fetchFn } = fetchHandler({
+      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/relationships/1/timeline': async () => Response.json({
+        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel',
+        rows: [{ key: 'message:1', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Subject', has_attachments: false, message_count: 1 }],
+        total_count: 1
+      })
+    });
+    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    const { rerender } = render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+
+    await fireEvent.click((await screen.findByText('Subject')).closest('[role="row"]')!);
+    await screen.findByRole('complementary', { name: /Reading pane/ });
+
+    // A history hop can rewrite the URL from one open relationship directly
+    // to another, so the target prop moves between two non-null values —
+    // the previous target's message must not stay open under the new one.
+    await rerender({ ...props, target: 'cluster:2' });
+
+    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
   });
 
   it('does not scope the embedded FilesWorkspace to the previous cluster while a fast target switch is still resolving', async () => {
@@ -1009,24 +1036,4 @@ describe('computeHubLayout', () => {
     expect(computeHubLayout(719)).toBe('narrow');
     expect(computeHubLayout(400)).toBe('narrow');
   });
-});
-
-it('opens a person from a relationship timeline reader', async () => {
-  const onOpenPerson = vi.fn();
-  const { fetchFn } = fetchHandler({
-    '/api/v1/integrations/tasks/status': async () => Response.json({ state: 'disabled' }),
-    '/api/v1/messages/42/tasks': async () => Response.json(disabledTaskLookup()),
-    '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
-    '/api/v1/relationships/1/timeline': async () => Response.json({ canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [{ key: 'message:42', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Archived email', has_attachments: false, message_count: 1, conversation_id: 8, anchor_message_id: 42 }], total_count: 1 }),
-    '/api/v1/conversations/8': async () => Response.json({ id: 8, messages: [{ id: 42, conversation_id: 8, from: 'Alex Example', from_participant_id: 4, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }], subject: 'Archived email', sent_at: when, body: 'Email body', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Preview' }], anchor_id: 42, total: 1, has_before: false, has_after: false })
-  });
-  const props = { ...baseProps(fetchFn), target: 'cluster:1', onOpenPerson };
-  const view = render(RelationshipsWorkspace, { props });
-  try {
-    await props.controller.openTarget('cluster:1', props.predicate);
-    await fireEvent.click((await screen.findByText('Archived email')).closest('[role="row"]')!);
-    const reader = await screen.findByRole('complementary', { name: 'Reading pane: Archived email' });
-    await fireEvent.click(await within(reader).findByRole('button', { name: 'Alex Example' }));
-    expect(onOpenPerson).toHaveBeenLastCalledWith(4);
-  } finally { view.unmount(); props.controller.destroy(); }
 });

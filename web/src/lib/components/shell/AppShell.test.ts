@@ -2471,6 +2471,26 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('keeps the selected message open when Filter clears its filters', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const client = createAPIClient(async () => Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 })));
+    state.commitNavigation({ filters: [{ dimension: 'source', values: ['1'] }] });
+    const rendered = render(AppShell, { client, state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await screen.findByText('Synthetic subject 1');
+      grid.focus();
+      await fireEvent.keyDown(grid, { key: 'Enter' });
+      await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+      expect(state.current.filters).toEqual([]);
+      expect(state.current.selectedRow).toBe('message:1');
+      expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeDefined();
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
   it('focuses the fixed Messages Sort with s and shows its count once', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({

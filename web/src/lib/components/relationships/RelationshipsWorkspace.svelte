@@ -20,7 +20,7 @@
   import { relationshipMeetingScope } from '../../meetings/scopes';
   import type { APIClient } from '../../api/client';
   import { listPersonAttributes } from '../../api/generated/api/api';
-  import type { ExplorePredicate, RelationshipReader, FileMIMEFamily, FileSearchSort, PersonFileDirection } from '../../explore/models';
+  import type { ExplorePredicate, FileMIMEFamily, FileSearchSort, PersonFileDirection } from '../../explore/models';
   import { ExploreSelectionState } from '../../explore/state.svelte';
   import type { RelationshipsController } from '../../relationships/controller.svelte';
   import type { RelationshipFacet, RelationshipTimelineRow } from '../../relationships/models';
@@ -29,7 +29,7 @@
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
-  import ReadingPane from '../reader/ReadingPane.svelte';
+  import ReadingPane, { type ReadingPaneSelection } from '../reader/ReadingPane.svelte';
   import RelationshipHeader from './RelationshipHeader.svelte';
   import RelationshipCalendar from './RelationshipCalendar.svelte';
   import RelationshipList from './RelationshipList.svelte';
@@ -44,7 +44,6 @@
     controller: RelationshipsController;
     facet: RelationshipFacet;
     target: string | null;
-    reader?: RelationshipReader | null;
     showAll: boolean;
     filesOpen: boolean;
     predicate: ExplorePredicate;
@@ -65,7 +64,6 @@
     onOpenDirectoryPerson?: (personID: number) => void;
     onAnnounce?: (message: string) => void;
     onOpenSettings?: () => void;
-    onOpenPerson?: (participantID: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     /** Opening a file (or its containing conversation) from the hub's own
      * embedded Files pane has no reading pane of its own to resolve a full
@@ -83,7 +81,6 @@
     controller,
     facet,
     target,
-    reader = $bindable(null),
     showAll,
     filesOpen,
     predicate,
@@ -101,14 +98,13 @@
     onAnnounce = undefined,
     onOpenMeeting = undefined,
     onOpenSettings = undefined,
-    onOpenPerson = undefined,
     onOpenFileItem = undefined,
     onOpenFileConversation = undefined
   }: Props = $props();
 
-  const selection = $derived(reader?.target === target ? timelineRowToSelection(reader.row) : undefined);
-  const conversationAnchorId = $derived(reader?.anchorId);
-  const conversationBounds = $derived(reader?.bounds);
+  let selection = $state<ReadingPaneSelection | undefined>();
+  let conversationAnchorId = $state<number | undefined>();
+  let conversationBounds = $state<{ start: string; end: string } | undefined>();
   let mobileListOpen = $state(false);
   let fileSort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
   let fileFilenameQuery = $state('');
@@ -308,11 +304,14 @@
 
   function clearReadingPane(): boolean {
     const wasOpen = selection !== undefined;
-    reader = null;
+    selection = undefined;
+    conversationAnchorId = undefined;
+    conversationBounds = undefined;
     return wasOpen;
   }
 
   function selectListRow(nextTarget: string): void {
+    void closeReadingPane();
     const wasDrawerOpen = mobileListOpen;
     mobileListOpen = false;
     onTargetChange(nextTarget);
@@ -413,6 +412,23 @@
     }
   }
 
+  // Esc closes the reading pane before it ever clears `target` (see
+  // handleEscape below), and selectListRow closes it before switching, so an
+  // in-component walk-back never reaches here with a pane still open. An
+  // EXTERNAL change — browser Back/Forward, which rewrites `target` via the
+  // URL without going through either path — skips that ordering, and can
+  // jump straight between two non-null targets as well as clear to null.
+  // Reset on ANY target change so the reading pane never keeps showing a
+  // message from the cluster/domain that just closed underneath it. Plain
+  // state reset only, no focus side effect: AppShell owns focus restoration
+  // for history navigation already.
+  let previousTarget: string | null = untrack(() => target);
+  $effect(() => {
+    if (target === previousTarget) return;
+    previousTarget = target;
+    clearReadingPane();
+  });
+
   async function closeDrawer(): Promise<void> {
     mobileListOpen = false;
     await tick();
@@ -430,11 +446,12 @@
   // chat_burst rows bound the window to the burst's local day; other rows
   // open the full window anchored at the row's own message.
   function openTimelineRow(row: RelationshipTimelineRow): void {
-    if (!target) return;
-    reader = { target, row, anchorId: row.anchor_message_id, bounds: row.kind === 'chat_burst' && row.conversation_id !== undefined &&
+    selection = timelineRowToSelection(row);
+    conversationAnchorId = row.anchor_message_id;
+    conversationBounds = row.kind === 'chat_burst' && row.conversation_id !== undefined &&
       row.anchor_message_id !== undefined
       ? localDayBoundsUTC(row.first_at ?? row.occurred_at)
-      : undefined };
+      : undefined;
   }
 
   // Focus stays on the calendar control the person just used.
@@ -622,13 +639,12 @@
               {selection}
               predicate={contextPredicate(predicate)}
               {onOpenMeeting}
-              {onOpenPerson}
               {onOpenSettings}
               onClose={() => { void closeReadingPane(); }}
               {conversationAnchorId}
               conversationStart={conversationBounds?.start}
               conversationEnd={conversationBounds?.end}
-              onConversationAnchorChange={(anchorId) => { if (reader) reader = { ...reader, anchorId }; }}
+              onConversationAnchorChange={(anchorId) => (conversationAnchorId = anchorId)}
             />
           </div>
         {/if}

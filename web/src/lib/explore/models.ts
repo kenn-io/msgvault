@@ -1,4 +1,3 @@
-import type { RelationshipTimelineRow } from '../relationships/models';
 import type {
   DomainContextSummaryHTTPResponse as GeneratedDomainContextSummaryHTTPResponse,
   DomainSummary as GeneratedDomainSummary,
@@ -125,13 +124,6 @@ export interface ExploreScrollAnchor {
   offset: number;
 }
 
-export interface RelationshipReader {
-  target: string;
-  row: RelationshipTimelineRow;
-  anchorId?: number;
-  bounds?: { start: string; end: string };
-}
-
 /** Browser-restorable exploration context. Bulk selection is session-only. */
 export interface ExploreURLState {
   schemaVersion: number;
@@ -165,7 +157,6 @@ export interface ExploreURLState {
   selectedIdentifier?: string | null;
   relationshipFacet: RelationshipFacet;
   relationshipTarget: string | null;
-  relationshipReader: RelationshipReader | null;
   relationshipShowAll: boolean;
   relationshipFiles: boolean;
   operationHistory: boolean;

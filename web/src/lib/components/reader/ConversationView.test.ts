@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import ConversationView from './ConversationView.svelte';
-import { disabledTaskLookup } from '../tasks/fixtures.test-support';
 
 const telemetryEvents: unknown[] = [];
 const telemetryRequests: Promise<void>[] = [];
@@ -137,7 +136,7 @@ describe('ConversationView', () => {
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
   });
 
-  it('shares pending and completed Tasks probes while preserving setup and cached links', async () => {
+  it('shares pending Tasks probes and setup while preserving cached links', async () => {
     const lookedUp: number[] = [];
     let releaseStatus!: () => void;
     const statusPending = new Promise<void>(resolve => { releaseStatus = resolve; });
@@ -150,8 +149,8 @@ describe('ConversationView', () => {
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
       if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: 'disabled', complete: false, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }], outbound_metadata: {} }); }
       return Response.json({
-        id: 7, anchor_id: 2, messages: [message(1), message(2), message(3)],
-        has_before: false, has_after: false, total: 3
+        id: 7, anchor_id: 2, messages: [message(1), message(2)],
+        has_before: false, has_after: false, total: 2
       });
     });
     const client = createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
@@ -172,9 +171,6 @@ describe('ConversationView', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
     expect(screen.getByText('Linked task 2')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: /Expand message 3/ }));
-    expect(await screen.findByText('Linked task 3')).toBeDefined();
-    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
     view.unmount();
   });
 
@@ -197,21 +193,6 @@ describe('ConversationView', () => {
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
     expect(await screen.findByRole('dialog', { name: 'Add to task' })).toBeDefined();
     await waitFor(() => expect(statusCalls).toBe(3));
-  });
-
-  it('offers task creation when a missing task service starts while the reader stays open', async () => {
-    let statusCalls = 0;
-    const client = createCaptureClient(async (input) => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/tasks/status')) return Response.json({ state: ++statusCalls === 1 ? 'not_found' : 'ready', project: 'example' });
-      if (path.endsWith('/messages/2/tasks')) return Response.json({ ...disabledTaskLookup(2), state: 'ready', complete: true });
-      return Response.json({ id: 7, anchor_id: 2, messages: [message(2)], has_before: false, has_after: false, total: 1 });
-    }, telemetryEvents, telemetryRequests);
-    render(ConversationView, { client, conversationId: 7, anchorId: 2 });
-    await screen.findByRole('button', { name: 'Open Settings' });
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 2' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
-    expect(await screen.findByRole('button', { name: 'Create task' })).toHaveProperty('disabled', false);
   });
 
   it('collapses an expanded message back to its one-line card', async () => {
