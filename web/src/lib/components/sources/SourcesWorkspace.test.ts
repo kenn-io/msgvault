@@ -116,11 +116,11 @@ describe('SourcesWorkspace', () => {
 
   it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
     const onOpenSettings = vi.fn();
-    const settings = [{ key: 'beeper.media', kind: 'boolean', value: { boolean: true } }, { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 25 } }];
+    const settings = [{ key: 'beeper.media', kind: 'boolean', value: { boolean: true } }, { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 0 }, validation: { off: { value: '0', label: 'No size limit' } } }];
     const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper', scheduled: true, schedule: '0 3 * * *' })], url => url.pathname.endsWith('/settings') ? Response.json({ settings }) : undefined);
     render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []), onOpenSettings });
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
-    await screen.findByText('25');
+    await screen.findByText('No size limit');
     expect(screen.getByText('On')).toBeDefined();
     expect(screen.getByText('At 03:00 every day')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Edit in Settings › Sources' }));
@@ -707,4 +707,11 @@ it('shows a contacts-specific failure instead of an empty archive', async () => 
   render(SourcesWorkspace, { client: createCaptureClient(api([], url => url.pathname.endsWith('/carddav/connections') ? Response.json({}, { status: 500 }) : undefined), []) });
   expect((await screen.findByRole('alert')).textContent).toContain("Can't load contacts.");
   expect(screen.queryByText('No sources yet')).toBeNull();
+});
+
+it('shows OAuth app repair instructions for contacts rather than assuming expiry', async () => {
+  render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [{ ...contact, status: { ...contact.status, repair_reason: 'google_authorization_required' } }]), []) });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Details for user-a' }));
+  expect(screen.getByText(/Check the selected OAuth app's client settings/)).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Open Settings › Contacts' })).toBeDefined();
 });

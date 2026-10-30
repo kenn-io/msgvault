@@ -3094,3 +3094,20 @@ it.each(['sources', 'carddav'])('opens %s settings from Sources despite an old s
   await waitFor(() => expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: category, settingsAuthority: '' }));
   view.unmount(); state.destroy();
 });
+
+it.each(['', 'invoice'])('clears Files filters and a pending filename edit from %j', async filename => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  window.history.replaceState(null, '', '/?workspace=files');
+  const state = new ExploreState(window);
+  state.replaceTransient({ fileFilenameQuery: filename, fileMIMEFamilies: ['pdf'], filters: [{ dimension: 'after', values: ['2026-07-01T00:00:00Z'] }] });
+  const view = render(AppShell, { client: createAPIClient(async () => Response.json({ files: [], rows: [], total_count: 0, accounts: [], identities: [], manifests: [], cache_revision: 'cache-1', search_provenance: {} })), state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: /^Filter$/ }));
+    await fireEvent.input(await screen.findByLabelText('Filter filename'), { target: { value: 'pending' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(state.current).toMatchObject({ filters: [], fileFilenameQuery: '', fileMIMEFamilies: [] });
+    expect((screen.getByLabelText('Filter filename') as HTMLInputElement).value).toBe('');
+    expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(false);
+  } finally { view.unmount(); state.destroy(); vi.useRealTimers(); }
+});

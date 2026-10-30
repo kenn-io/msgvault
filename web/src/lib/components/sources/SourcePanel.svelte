@@ -4,7 +4,7 @@
   import { getSettings } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
   import type { SourceStatus, Setting } from '../../api/generated/models';
-  import { persistedValue, valueText } from '../../settings/catalog';
+  import { persistedValue, readOnlyValue } from '../../settings/catalog';
   import { scheduleSummary } from '../../settings/cron';
   import { sourceFailure, sourceRunState, sourceTypeLabel, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
   import { operationStateChip } from '../../operations/labels';
@@ -91,7 +91,7 @@
         <h3>Attachment rules</h3>
         <span class="muted">Applies to all {sourceTypeLabel(source.source_type)} accounts.</span>
         {#if loading}<span class="muted">Loading…</span>{:else if error}<p class="failure" role="alert">{error}</p><Button label="Retry" onclick={() => void load()} />{:else}
-          {#each attachments as { setting, label } (setting.key)}<div class="field"><span class="label">{label}</span><span>{setting.kind === 'boolean' ? persistedValue(setting) ? 'On' : 'Off' : valueText(persistedValue(setting)) || 'Not set'}</span></div>{/each}
+          {#each attachments as { setting, label } (setting.key)}<div class="field"><span class="label">{label}</span><span>{setting.kind === 'boolean' ? persistedValue(setting) ? 'On' : 'Off' : readOnlyValue(setting)}</span></div>{/each}
         {/if}
       </section>
       <Button size="sm" label="Edit in Settings › Sources" onclick={onOpenSettings} />

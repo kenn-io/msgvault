@@ -192,6 +192,7 @@
     });
   });
   const DEFAULT_SORT_NOTICE = 'Newest first is the canonical Messages order.';
+  let fileFiltersReset = $state(0);
   const SEARCH_TYPING_DEBOUNCE_MS = 250;
   const debouncedSearchPatch = bufferedCallback((patch: Partial<ExploreURLState>) => {
     exploreState.replaceCommittedDraft(patch);
@@ -1391,7 +1392,7 @@
                 activeRow: null,
                 scrollAnchor: null,
               })}
-            onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
+            onClearFilters={() => { commitNavigation({ filters: [], fileFilenameQuery: '', fileMIMEFamilies: [], activeRow: null, selectedRow: null, scrollAnchor: null }); fileFiltersReset++; }}
             onFiltersChange={(filters) =>
               commitNavigation({
                 filters,
@@ -1408,7 +1409,7 @@
                 scrollAnchor: null,
               })}
           >
-            {#snippet filterExtra()}<FileFilters filenameQuery={exploreState.current.fileFilenameQuery} mimeFamilies={exploreState.current.fileMIMEFamilies} onFilenameQueryChange={(fileFilenameQuery) => debouncedSearchPatch({ fileFilenameQuery, activeRow: null, selectedRow: null, scrollAnchor: null })} onMIMEFamiliesChange={(fileMIMEFamilies) => commitNavigation({ fileMIMEFamilies, activeRow: null, selectedRow: null, scrollAnchor: null })} />{/snippet}
+            {#snippet filterExtra()}{#key fileFiltersReset}<FileFilters filenameQuery={exploreState.current.fileFilenameQuery} mimeFamilies={exploreState.current.fileMIMEFamilies} onFilenameQueryChange={(fileFilenameQuery) => debouncedSearchPatch({ fileFilenameQuery, activeRow: null, selectedRow: null, scrollAnchor: null })} onMIMEFamiliesChange={(fileMIMEFamilies) => commitNavigation({ fileMIMEFamilies, activeRow: null, selectedRow: null, scrollAnchor: null })} />{/key}{/snippet}
           </ContextBar>
           {/snippet}
           {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined)}{/if}

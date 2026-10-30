@@ -65,7 +65,7 @@ it.each(['refresh', 'open'])('suppresses timer retries after a failed lookup and
   await controller.refresh();
   await controller.refresh();
   expect(reads).toBe(1);
-  if (retry === 'refresh') await controller.refresh(true);
+  if (retry === 'refresh') { await controller.refresh(true); await controller.getDetail('old'); }
   else await controller.getDetail('old', true);
   expect(reads).toBe(2);
   expect(controller.visible).toBe(true);
@@ -84,12 +84,12 @@ it('replaces a pending detail when execution completes and expires it seven days
   await controller.getDetail('delayed');
   status = 'completed';
   await controller.refresh();
-  expect(controller.details.delayed.status).toBe('completed');
+  expect((await controller.getDetail('delayed'))?.status).toBe('completed');
   expect(controller.visible).toBe(true);
   expect(reads).toBe(2);
   vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-05T11:00:01Z'));
   await controller.refresh();
-  expect(controller.visible).toBe(false);
+  await vi.waitFor(() => expect(controller.visible).toBe(false));
   expect(reads).toBe(2);
   controller.destroy();
 });
@@ -139,5 +139,26 @@ it('refreshes execution progress while the batch remains in progress', async () 
   await controller.refresh();
   expect((await controller.getDetail('active'))?.execution?.succeeded).toBe(100);
   expect(reads).toBe(2);
+  controller.destroy();
+});
+
+it('publishes a staged batch before old retention hydration finishes and ignores its stale visibility', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(now);
+  let lists = 0, finish: (response: Response) => void;
+  const old = batch('old', 'completed');
+  const controller = new DeletionsController(createAPIClient(async input => {
+    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: ++lists === 1 ? [old] : [old, batch('staged', 'pending')] });
+    return new Promise(resolve => finish = resolve);
+  }));
+  await controller.refresh();
+  const hydration = controller.getDetail('old');
+  await controller.refresh();
+  expect(lists).toBe(2);
+  expect(controller.visible).toBe(true);
+  finish!(Response.json({ ...old, execution: { completed_at: '2020-01-02T00:00:00Z' } }));
+  await hydration;
+  await new Promise<void>(resolve => queueMicrotask(resolve));
+  expect(controller.visible).toBe(true);
+  expect(controller.batches.map(batch => batch.id)).toEqual(['old', 'staged']);
   controller.destroy();
 });
