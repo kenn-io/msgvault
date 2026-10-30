@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getContext } from 'svelte';
+  import { conversationTaskStatusKey, type TaskStatusLoader } from './task-status';
   import { createBrowserRequestID } from '../../api/request-id';
   import {
     createOrLinkMessageTask as generatedCreateOrLinkMessageTask,
@@ -39,6 +41,7 @@
     title: string;
     onsettings?: () => void;
   } = $props();
+  const conversationStatus = getContext<TaskStatusLoader | undefined>(conversationTaskStatusKey);
   let action = $state('create');
   let loading = $state(true);
   let integrationState = $state('loading');
@@ -96,11 +99,11 @@
     activeController = controller;
     resetForSelection();
     try {
-      const status = await generatedGetTaskIntegrationStatus({
+      const status = await (conversationStatus?.() ?? generatedGetTaskIntegrationStatus({
         ...client,
         signal: controller.signal,
-      });
-      if (currentGeneration !== generation) return;
+      }));
+      if (currentGeneration !== generation || controller.signal.aborted) return;
       project = status.data?.project ?? '';
       integrationState = status.data?.state ?? 'unavailable';
       integrationMessage = status.data?.message ?? 'Task integration status is unavailable.';
