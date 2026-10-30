@@ -20,10 +20,10 @@ you do not need a separate web application process.
 | Which identity matches or profile facts need my decision? | Reviews |
 | Can I return to this search later? | Saved views under Messages and Files |
 | Did sync, enrichment, or indexing finish? | Status dot, Past runs, and Sources |
-| What is staged for deletion? | Deletions |
+| What is staged for deletion? | Staged deletions |
 | How do I change the daemon's configuration? | Settings |
 
-The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory, Reviews, and Deletions remain available through the command palette. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
+The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory and Reviews remain available through the command palette. **Staged deletions** appears for waiting or running batches and for seven days after execution finishes. Use **Go to Staged deletions** in the command palette to open its history when the sidebar entry is hidden. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
 
 The top bar holds global search and **Display**. Display sets theme and density for this tab. On the ungrouped Messages table, it also shows **Columns**. **Reader position** appears when the results are at least 960 pixels wide. **Use Settings defaults** clears temporary theme and density choices. [Settings](#settings-and-restart-behavior) holds the saved defaults.
 
