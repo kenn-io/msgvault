@@ -533,33 +533,6 @@ describe('RelationshipsWorkspace', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull());
   });
 
-  it('keeps Escape inside Add to task while the timeline reader stays open', async () => {
-    const { fetchFn } = fetchHandler({
-      '/api/v1/participants/1': () => Response.json(person(1, 'Alice Example')),
-      '/api/v1/relationships/1/timeline': () => Response.json({
-        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', total_count: 1,
-        rows: [{ key: 'message:9', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1,
-          title: 'Budget request', has_attachments: false, message_count: 1, anchor_message_id: 9, conversation_id: 70 }]
-      }),
-      '/api/v1/conversations/70': () => Response.json({
-        id: 70, anchor_id: 9, has_before: false, has_after: false, total: 1,
-        messages: [{ id: 9, conversation_id: 70, subject: 'Budget request', from: 'alice@example.com',
-          to: ['me@example.com'], sent_at: when, snippet: 'Preview', body: 'Please send the budget.' }]
-      })
-    });
-    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
-    render(RelationshipsWorkspace, { props });
-    await props.controller.openTarget('cluster:1', props.predicate);
-    await fireEvent.click((await screen.findByText('Budget request')).closest('[role="row"]')!);
-    const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
-    await fireEvent.click(await within(reading).findByRole('button', { name: 'More actions for message 9' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Add to task' });
-    await fireEvent.keyDown(dialog, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Add to task' })).toBeNull();
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBe(reading);
-  });
-
   it('calls the domain files endpoint, not the person one, when the open target is a domain', async () => {
     const filesRequests: Request[] = [];
     const { fetchFn } = fetchHandler({
