@@ -287,6 +287,12 @@ type ChunkHit struct {
 	Score          float64 // backend-native; higher is better (1 - distance)
 }
 
+// CosineScores maps each message to the cosine similarity of its closest
+// chunk to a query.
+type CosineScores struct {
+	Scores map[int64]float64
+}
+
 // ChunkScoringBackend scores every embedded chunk of a message against a
 // query vector. sqlitevec and pgvector backends implement this.
 type ChunkScoringBackend interface {

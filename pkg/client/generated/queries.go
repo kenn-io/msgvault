@@ -1020,6 +1020,30 @@ func (g GetPersonMessagingRoutesQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type FindPeopleWhoKnowQuery struct {
+	// Topic Plain words; search operators are refused
+	Topic string `json:"topic" validate:"required"`
+
+	// Limit Saved people to return, 1-50; default 10
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Evidence Citations per person, 1-10; default 3
+	Evidence *int64 `json:"evidence,omitempty"`
+
+	// MinScore Lowest cosine similarity a message needs to count, above 0 and at most 1; default 0.5
+	MinScore *float32 `json:"min_score,omitempty"`
+
+	// After Messages at or after this time (RFC3339 or YYYY-MM-DD)
+	After *string `json:"after,omitempty"`
+
+	// Before Messages before this time (RFC3339 or YYYY-MM-DD)
+	Before *string `json:"before,omitempty"`
+}
+
+func (f FindPeopleWhoKnowQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
 type ListPersonAttributesQuery struct {
 	// History Include superseded values
 	History *bool `json:"history,omitempty"`

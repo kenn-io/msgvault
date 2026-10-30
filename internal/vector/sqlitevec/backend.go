@@ -268,11 +268,12 @@ func (b *Backend) claimOrInsertBuilding(ctx context.Context, model string, dim i
 	// seeded_at is stamped at creation as harmless vestigial metadata:
 	// scan-and-fill has no separate seed pass, and activation no longer
 	// gates on it (coverage is the real gate). Kept only so the column is
-	// populated for legacy display.
+	// populated for legacy display. A new generation holds no vectors, so
+	// its vector length range starts current and empty.
 	res, err := b.db.ExecContext(ctx,
 		`INSERT INTO index_generations
-		 (model, dimension, fingerprint, started_at, seeded_at, state)
-		 VALUES (?, ?, ?, ?, ?, 'building')`,
+		 (model, dimension, fingerprint, started_at, seeded_at, state, vector_norm_revision)
+		 VALUES (?, ?, ?, ?, ?, 'building', 0)`,
 		model, dim, fp, now, now)
 	if err != nil {
 		// A concurrent CreateGeneration may have inserted between our
@@ -852,7 +853,8 @@ func acceleratorTable(accelerator *AcceleratorStatus) string {
 }
 
 // insertMessageChunks writes authoritative metadata, exact vectors, and an
-// eligible accelerator row as one unit inside the caller's transaction.
+// eligible accelerator row as one unit inside the caller's transaction. It
+// widens a current vector length range to cover the new vectors.
 func insertMessageChunks(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -864,6 +866,10 @@ func insertMessageChunks(
 ) error {
 	if len(chunks) == 0 {
 		return nil
+	}
+	lengths, lengthsCurrent, err := readNormRangeTx(ctx, tx, gen)
+	if err != nil {
+		return err
 	}
 	embedStmt, err := tx.PrepareContext(ctx, `INSERT INTO embeddings
 		(generation_id, message_id, chunk_index, embedded_at,
@@ -910,8 +916,12 @@ func insertMessageChunks(
 				return fmt.Errorf("insert accelerator vector (msg %d chunk %d): %w", chunk.MessageID, chunk.ChunkIndex, err)
 			}
 		}
+		lengths.add(chunk.Vector)
 	}
-	return nil
+	if !lengthsCurrent {
+		return nil
+	}
+	return recordNormRangeTx(ctx, tx, gen, lengths)
 }
 
 // distinctMessageIDs returns the unique message_ids referenced by
@@ -933,10 +943,15 @@ func distinctMessageIDs(chunks []vector.Chunk) []int64 {
 // deleteForMessageIDs removes every chunk (in both vec0 and embeddings)
 // belonging to the given message_ids under gen. The vec0 delete runs
 // first so its rowids (which equal embeddings.embedding_id) still exist
-// for the subquery to resolve. Used by Upsert for idempotent replace.
+// for the subquery to resolve. Used by Upsert for idempotent replace. A
+// current vector length range stays current.
 func deleteForMessageIDs(ctx context.Context, tx *sql.Tx, vecTable, acceleratorTable string, gen vector.GenerationID, ids []int64) error {
 	if len(ids) == 0 {
 		return nil
+	}
+	current, err := currentNormRangesTx(ctx, tx, "")
+	if err != nil {
+		return err
 	}
 	blob, err := json.Marshal(ids, json.Deterministic(true))
 	if err != nil {
@@ -968,7 +983,7 @@ func deleteForMessageIDs(ctx context.Context, tx *sql.Tx, vecTable, acceleratorT
 		int64(gen), string(blob)); err != nil {
 		return fmt.Errorf("delete embeddings: %w", err)
 	}
-	return nil
+	return keepNormRangesTx(ctx, tx, "", current)
 }
 
 // applyMessageCountDelta nudges index_generations.message_count by
@@ -1789,6 +1804,10 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	currentLengths, err := currentNormRangesTx(ctx, tx, "vec.")
+	if err != nil {
+		return 0, err
+	}
 	for i := range accelerators {
 		accelerator := &accelerators[i]
 		if _, err := tx.ExecContext(ctx, `DELETE FROM vec.`+accelerator.TableName+` WHERE rowid IN (
@@ -1857,6 +1876,9 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 			 WHERE e.generation_id = g.id
 		   )`); err != nil {
 		return 0, fmt.Errorf("repair generation message counts: %w", err)
+	}
+	if err := keepNormRangesTx(ctx, tx, "vec.", currentLengths); err != nil {
+		return 0, err
 	}
 	for i := range accelerators {
 		if err := syncReadyAcceleratorSchema(ctx, tx, &accelerators[i], "vec."); err != nil {

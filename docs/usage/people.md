@@ -268,6 +268,98 @@ are excluded. Search text and the curated person documents go to the configured
 embedding endpoint. `--limit` defaults to 20 and accepts 1–100; `--json` includes
 person IDs and scores.
 
+## Find who knows about a topic
+
+On unreleased `main`, find the people who wrote about a topic:
+
+```bash
+msgvault person who-knows "kubernetes networking"
+msgvault person who-knows "certificate rotation" --after 2026-01-01 --json
+```
+
+The command lists up to 10 saved people, then up to 5 unsaved contacts. Each
+entry shows a score split into its message part and its declared part, the
+number of matching messages the person wrote, and dated citations you can open
+with `msgvault show-message <id>`. Unsaved contacts are senders bound to no
+saved person; promote one with `msgvault person promote <participant-id>`.
+The topic is plain words. Search operators such as `from:` are refused.
+
+The search takes up to 100 messages that match the topic by keyword and as
+many that match it by meaning, and ranks up to 200 of them by both together.
+Setting `[vector.search] k_per_signal` below 100 lowers each pool's cap.
+A message counts when its cosine similarity to the topic reaches
+`--min-score` (default 0.5). On SQLite the
+vector index scores by distance, so the command computes cosine similarity
+from each hit's stored vectors, whatever their length. A message found only by
+keyword counts if its stored vector clears the same floor. A message without
+a stored vector does not count. Each counted message weighs its similarity
+times its recency, which halves every 180 days and stops at 0.1. Recency
+counts back from today, or from `--before` when that date is in the past, so
+an older window still favors its later messages. The message part of the
+score is `log(1 + total weight)`.
+
+A matching `ask_me_about` value you or an address book supplied adds 0.25 and
+is printed as `declared: ...`. For someone who wrote about the topic, a value
+matches when one side's words all appear in the other, so `kubernetes` boosts
+an author for `kubernetes networking`. A saved person with no matching
+messages is listed, as "declared, no messages", only when a value holds every
+word of the topic; `sales` does not answer `sales tax filing`. Matching
+compares whole words without regard to case, so `strasse` finds `Straße`.
+Declared values have no date, so `--after` and `--before` narrow only the
+messages, never the declared topics.
+
+Only the author earns credit. People copied on a message, meeting attendees,
+you, and automated senders get none. Addresses linked to one another, or bound
+to the same saved person, count as one sender, and any address linked to one
+of yours counts as you. A sender counts as automated when its address looks
+like `noreply@` or `notifications@`, or when the source marked the author as a
+bot or webhook, as Discord does, or the archived Slack message carries a
+`bot_id`. A Slack message whose stored payload can't be read still counts.
+Discord system messages, such as a channel rename or a new thread, don't count
+for the member they name. Meeting transcripts and calendar entries are not
+searched. Declared topics on your own profile, or on a profile bound to a
+Slack or Chatwoot bot, a Discord webhook or application, or a system address
+such as `noreply@`, are ignored too. In older archives, Slack bot users get
+this classification the next time a sync sees them. Two kinds of mail earn the weight
+of their best message only: list mail, and email from a sender you never wrote
+to, such as a vendor who sends many unanswered messages. A colleague you write
+to keeps every message. Chat has no direction, so a chat sender keeps every
+message even if you only read their channel.
+
+An empty result with no limits prints `No message about "..." cleared minimum similarity 0.50. Lower --min-score to widen the search.`,
+naming the `--min-score` in use. It means no message cleared that floor;
+people may still have written about the topic. When the search came up short,
+the output says how, under the results or alongside the empty result:
+
+- `The search hit its result limit, so more messages may match.` The result
+  pool was full, and a message left out of it could still clear `--min-score`.
+  Narrow with `--after` or `--before`. The SQLite vector index ranks by
+  distance rather than meaning, so msgvault works out what a left-out message
+  could score from the lengths of the stored vectors, which it records as it
+  writes them. A SQLite index built before msgvault recorded vector lengths,
+  or written to by an older msgvault since, reports this for every full pool
+  until you build a new one with `msgvault embeddings build --full-rebuild`.
+- `The vector index doesn't cover all your mail and chat yet, so some messages
+  weren't searched.` The `[vector.embed.scope]` settings leave out a message
+  type with authors, such as chat, or some accounts, or, when nobody matched,
+  some message is still waiting for its vector or msgvault couldn't count
+  them. Declared topics are still listed.
+  Check progress with `msgvault embeddings status`.
+- `Declared topics were searched only in part.` More than 5,000 declared values
+  exist, and only the first 5,000 were read.
+
+The 0.5 default is not calibrated for any real embedding model. If a topic
+worded unlike your mail finds nobody, lower `--min-score`; if unrelated people
+appear, raise it. Vector search must be ready, and the topic goes to the
+configured embedding endpoint once. Senders are read when you run the command,
+so newly synced mail counts once it is embedded, without an activity build. A citation's
+`sender_authenticated` is true when the source sets the sender, as chat does; an
+email From address is not a verified identity. The command does not create or
+edit profiles.
+
+The owner-only [HTTP endpoint](/docs/api-server/#find-who-knows-about-a-topic)
+provides the same result. See the [CLI options](/docs/cli-reference/#person-who-knows).
+
 ## Find files related to a person
 
 Use a saved person ID to find attachments across their linked identities:
