@@ -24,7 +24,7 @@ concurrency:
 jobs:
   sibling-pins:
     if: github.event.action != 'edited' || github.event.changes.base
-    name: Sibling pins on main
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base && 'PR metadata' || 'Sibling pins on main' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
