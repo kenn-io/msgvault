@@ -162,6 +162,7 @@ var topLevelCommandGroups = map[string]string{
 	"sync-chatwoot":          helpGroupSources,
 	"sync-circleback":        helpGroupSources,
 	"sync-discord":           helpGroupSources,
+	"sync-telegram":          helpGroupSources,
 	"sync-full":              helpGroupSources,
 	"sync-granola":           helpGroupSources,
 	"sync-inline":            helpGroupSources,

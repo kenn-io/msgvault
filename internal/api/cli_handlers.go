@@ -1836,6 +1836,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
+		"sync-telegram",
 		"sync-twilio":
 		return true
 	default:

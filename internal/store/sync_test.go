@@ -21,6 +21,18 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestTypedSyncStateLookupHonorsCancellation(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("telegram", "user999")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = st.GetLatestCheckpointedSyncByTypeContext(ctx, source.ID, "telegram-live")
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = st.GetLastSuccessfulSyncByTypeContext(ctx, source.ID, "telegram-live")
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 // TestScanSource_NullLastSyncAt_Valid verifies that a new source with NULL
 // last_sync_at is handled correctly (Valid=false).
 func TestScanSource_NullLastSyncAt_Valid(t *testing.T) {

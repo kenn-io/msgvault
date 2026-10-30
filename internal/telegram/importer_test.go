@@ -3,15 +3,18 @@ package telegram
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	jsontext "encoding/json/jsontext"
 	json "encoding/json/v2"
 
+	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
@@ -476,6 +479,183 @@ func TestImportReplyLinkResolvesWhenParentArrivesLater(t *testing.T) {
 		"the deferred pass links the reply once the parent is archived")
 }
 
+func TestImportDoesNotGuessLegacyDeferredReplyPeer(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	child := writeChatExport(t, t.TempDir(), 123, "personal_chat", "Synthetic", []map[string]any{{
+		"id": 2, "type": "message", "date_unixtime": "1610909810", "text": "child", "reply_to_message_id": 1,
+	}})
+	importRoot(t, st, child)
+	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE source_message_id = ?`), `{"referenced_message_id":"123:1","attachment_part_keys":[]}`, "123:2")
+	require.NoError(err)
+	parent := writeChatExport(t, t.TempDir(), 123, "personal_chat", "Synthetic", []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "unrelated parent",
+	}})
+	importRoot(t, st, parent)
+	var linked bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id IS NOT NULL FROM messages WHERE source_message_id = ?`), "123:2").Scan(&linked))
+	assert.False(linked)
+	crossChat := writeChatExport(t, t.TempDir(), 123, "personal_chat", "Synthetic", []map[string]any{{
+		"id": 2, "type": "message", "date_unixtime": "1610909810", "text": "child", "reply_to_message_id": 1, "reply_to_peer_id": "user456",
+	}})
+	importRoot(t, st, crossChat)
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id IS NOT NULL FROM messages WHERE source_message_id = ?`), "123:2").Scan(&linked))
+	assert.False(linked, "a conflicting typed peer cannot verify the old guess")
+	importRoot(t, st, child)
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id IS NOT NULL FROM messages WHERE source_message_id = ?`), "123:2").Scan(&linked))
+	assert.True(linked, "matching export verifies the legacy reply before recovery")
+}
+
+func TestImportDefersTypedUserReplyWhenLegacyGroupKeyCollides(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	legacyGroup, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic legacy group")
+	require.NoError(err)
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message:  &store.Message{SourceID: source.ID, ConversationID: legacyGroup, SourceMessageID: "123:1", MessageType: MessageType, SentAt: sql.NullTime{Time: time.Unix(1610909800, 0).UTC(), Valid: true}},
+		BodyText: sql.NullString{String: "unrelated legacy group parent", Valid: true},
+	})
+	require.NoError(err)
+
+	child := writeChatExport(t, t.TempDir(), 456, "personal_chat", "Synthetic user", []map[string]any{{
+		"id": 2, "type": "message", "date_unixtime": "1610909810", "text": "typed user reply",
+		"reply_to_message_id": 1, "reply_to_peer_id": "user123",
+	}})
+	importRoot(t, st, child)
+
+	var linked sql.NullInt64
+	var metadata string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id, metadata FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "456:2").Scan(&linked, &metadata))
+	assert.False(linked.Valid)
+	var recovery telegramMessageMetadata
+	require.NoError(json.Unmarshal([]byte(metadata), &recovery))
+	assert.Equal("123:1", recovery.ReferencedMessageID)
+	assert.False(recovery.ReplyPeerVerified)
+}
+
+func TestImportRecoversCaptionlessTypedUserReplyAfterLegacyGroupKeyRekey(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	legacyGroup, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic legacy group")
+	require.NoError(err)
+	groupTimes := []time.Time{time.Unix(1610909800, 0).UTC(), time.Unix(1610909810, 0).UTC()}
+	groupTexts := []string{"legacy group parent", "legacy group evidence"}
+	for i := range groupTimes {
+		_, err := st.PersistMessage(&store.MessagePersistData{
+			Message:  &store.Message{SourceID: source.ID, ConversationID: legacyGroup, SourceMessageID: fmt.Sprintf("123:%d", i+1), MessageType: MessageType, SentAt: sql.NullTime{Time: groupTimes[i], Valid: true}},
+			BodyText: sql.NullString{String: groupTexts[i], Valid: true},
+		})
+		require.NoError(err)
+	}
+
+	child := writeChatExport(t, t.TempDir(), 456, "personal_chat", "Synthetic user", []map[string]any{{
+		"id": 2, "type": "message", "date_unixtime": "1610909810", "text": "",
+		"reply_to_message_id": 1, "reply_to_peer_id": "user123",
+	}})
+	importRoot(t, st, child)
+
+	var childID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "456:2").Scan(&childID))
+	var archivedBody sql.NullString
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), childID).Scan(&archivedBody))
+	assert.False(archivedBody.Valid, "captionless reply is archived with a NULL body")
+
+	evidence := []store.TelegramExportKeyEvidence{
+		{MessageID: 1, SentAt: groupTimes[0], Text: groupTexts[0]},
+		{MessageID: 2, SentAt: groupTimes[1], Text: groupTexts[1]},
+	}
+	require.NoError(st.MigrateTelegramExportKeysContext(ctx, source.ID, []store.TelegramExportKeyChange{{
+		LegacyID: 123, MarkedID: -123, ConversationType: "group_chat", Evidence: evidence,
+	}}))
+
+	userChat := writeChatExport(t, t.TempDir(), 123, "personal_chat", "Synthetic user", []map[string]any{{
+		"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "typed user parent",
+	}})
+	importRoot(t, st, userChat)
+	importRoot(t, st, child)
+
+	var parentID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "123:1").Scan(&parentID))
+	var linked sql.NullInt64
+	var metadata string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id, metadata FROM messages WHERE id = ?`), childID).Scan(&linked, &metadata))
+	assert.Equal(sql.NullInt64{Int64: parentID, Valid: true}, linked, "verified captionless reply links to the typed user's parent")
+	var recovery telegramMessageMetadata
+	require.NoError(json.Unmarshal([]byte(metadata), &recovery))
+	assert.True(recovery.ReplyPeerVerified)
+}
+
+func TestImportDefersTypedUserReplyWhenAmbiguousDirectKeyCollides(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	legacyDirect, err := st.EnsureConversationWithType(source.ID, "1002147483649", "direct_chat", "Synthetic ambiguous direct")
+	require.NoError(err)
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message:  &store.Message{SourceID: source.ID, ConversationID: legacyDirect, SourceMessageID: "1002147483649:1", MessageType: MessageType, SentAt: sql.NullTime{Time: time.Unix(1610909800, 0).UTC(), Valid: true}},
+		BodyText: sql.NullString{String: "unrelated ambiguous direct parent", Valid: true},
+	})
+	require.NoError(err)
+
+	child := writeChatExport(t, t.TempDir(), 456, "personal_chat", "Synthetic user", []map[string]any{{
+		"id": 2, "type": "message", "date_unixtime": "1610909810", "text": "typed user reply",
+		"reply_to_message_id": 1, "reply_to_peer_id": "user1002147483649",
+	}})
+	importRoot(t, st, child)
+
+	var linked sql.NullInt64
+	var metadata string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id, metadata FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "456:2").Scan(&linked, &metadata))
+	assert.False(linked.Valid)
+	var recovery telegramMessageMetadata
+	require.NoError(json.Unmarshal([]byte(metadata), &recovery))
+	assert.Equal("1002147483649:1", recovery.ReferencedMessageID)
+	assert.False(recovery.ReplyPeerVerified)
+}
+
+func TestResolveDeferredRepliesSkipsArchiveOnlyMessages(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic group")
+	require.NoError(err)
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message:  &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "123:1", MessageType: MessageType},
+		BodyText: sql.NullString{String: "destination message", Valid: true},
+	})
+	require.NoError(err)
+	childID, err := st.PersistMessage(&store.MessagePersistData{
+		Message:  &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "123:2", MessageType: MessageType},
+		BodyText: sql.NullString{String: "archive-only reply", Valid: true},
+		Metadata: &sql.NullString{String: `{"referenced_message_id":"123:1","reply_peer_verified":true}`, Valid: true},
+	})
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO source_merge_archive_only_messages(message_id) VALUES (?)`), childID)
+	require.NoError(err)
+
+	require.NoError(resolveDeferredReplies(context.Background(), st, source.ID))
+	var linked sql.NullInt64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), childID).Scan(&linked))
+	assert.False(linked.Valid)
+}
+
 // TestImportZeroAddRetryResolvesDeferredReply pins the convergence pass
 // on every successful run: a retry that adds zero messages — the parent
 // committed on an earlier run whose checkpoint write failed — still
@@ -666,6 +846,11 @@ func TestImportEditedStateSetOnceOnFirstImport(t *testing.T) {
 		return flags
 	}
 	assert.Equal([]bool{false, true}, flagged())
+	var metadata string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT metadata FROM messages WHERE source_message_id = ?`), "7000000000000555555:2").Scan(&metadata))
+	var recovery telegramMessageMetadata
+	require.NoError(json.Unmarshal([]byte(metadata), &recovery))
+	assert.Equal(time.Unix(1610910799, 0).UTC(), recovery.EditedAt)
 
 	// A newer export removes the edit marker; the archived flag stays.
 	setChatMessages(t, root, "7000000000000555555", []map[string]any{plain, edited})
@@ -818,7 +1003,7 @@ func failSyncAt(t *testing.T, st *store.Store, dir string, completed ...int64) {
 	fingerprint := r.Fingerprint()
 	require.NoError(t, r.Close())
 	cursor, err := json.Marshal(telegramCheckpoint{
-		RootDir: dir, Fingerprint: fingerprint, CompletedChats: completed,
+		RootDir: dir, Fingerprint: fingerprint, CompletedChats: completed, CanonicalKeys: true,
 	}, json.Deterministic(true))
 	require.NoError(t, err)
 	syncID, err := st.StartSync(sourceID, syncType)
@@ -989,6 +1174,19 @@ func TestImportLimitThenRerunRestoresReplyLinks(t *testing.T) {
 	assert.True(linked, "the re-run links the skipped reply to its parent")
 }
 
+func assertFailedImportCheckpointKeepsChatIncomplete(t *testing.T, st *store.Store) {
+	t.Helper()
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(t, err)
+	failed, err := st.GetLatestCheckpointedSyncByType(source.ID, syncType)
+	require.NoError(t, err)
+	require.NotNil(t, failed)
+	require.True(t, failed.CursorBefore.Valid)
+	var checkpoint telegramCheckpoint
+	require.NoError(t, json.Unmarshal([]byte(failed.CursorBefore.String), &checkpoint))
+	assert.Empty(t, checkpoint.CompletedChats, "the failed chat stays out of the saved completion set")
+}
+
 // TestImportRetriesChatAfterDeferredAttachmentFailure re-pins the torn-write
 // repair regressions at the boundary the atomic design has: a deferred
 // attachment write fails after the messages committed, the chat is never
@@ -1001,7 +1199,12 @@ func TestImportRetriesChatAfterDeferredAttachmentFailure(t *testing.T) {
 
 	root := writeChatExport(t, t.TempDir(), fixturePersonalChatID, "personal_chat", "Media Chat", []map[string]any{
 		{
-			"id": 1, "type": "message", "date_unixtime": "1610909800",
+			"id": 1, "type": "message", "date_unixtime": "1610909790",
+			"from": "Alice Example", "from_id": "user7000000000000555555",
+			"text": "successful message before media",
+		},
+		{
+			"id": 2, "type": "message", "date_unixtime": "1610909800",
 			"from": "Alice Example", "from_id": "user7000000000000555555",
 			"photo": "photos/photo_1.jpg", "text": "",
 		},
@@ -1012,7 +1215,7 @@ func TestImportRetriesChatAfterDeferredAttachmentFailure(t *testing.T) {
 
 	remove := failAttachmentInserts(t, st)
 	_, err := Import(context.Background(), st, ImportOptions{
-		RootDir: root, AttachmentsDir: t.TempDir(),
+		RootDir: root, AttachmentsDir: t.TempDir(), CheckpointEvery: 1,
 	})
 	require.Error(err, "the deferred attachment failure fails the run")
 	assert.Contains(err.Error(), "store attachments")
@@ -1020,14 +1223,14 @@ func TestImportRetriesChatAfterDeferredAttachmentFailure(t *testing.T) {
 	var messages int
 	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE message_type = 'telegram'`).Scan(&messages))
-	assert.Equal(1, messages, "the message itself committed atomically")
+	assert.Equal(2, messages, "both messages committed atomically")
 
 	remove()
-	failSyncAt(t, st, root) // the failed run left the chat incomplete
+	assertFailedImportCheckpointKeepsChatIncomplete(t, st)
 	summary := importRoot(t, st, root)
-	assert.True(summary.WasResumed, "the failed run's checkpoint resumes")
-	assert.EqualValues(1, summary.MessagesSkipped, "the committed message is skipped")
-	path, hash := attachmentRow(t, st, "7000000000000555555:1")
+	assert.True(summary.WasResumed, "the real failed-run checkpoint resumes")
+	assert.EqualValues(2, summary.MessagesSkipped, "the committed messages are skipped")
+	path, hash := attachmentRow(t, st, "7000000000000555555:2")
 	assert.NotEmpty(path, "the retried chat stores the deferred attachment")
 	assert.NotEmpty(hash)
 }
@@ -1056,7 +1259,7 @@ func TestImportRetriesChatAfterDeferredReplyFailure(t *testing.T) {
 
 	remove := failReplyLinks(t, st)
 	_, err := Import(context.Background(), st, ImportOptions{
-		RootDir: root, AttachmentsDir: t.TempDir(),
+		RootDir: root, AttachmentsDir: t.TempDir(), CheckpointEvery: 1,
 	})
 	require.Error(err, "the deferred reply failure fails the run")
 	assert.Contains(err.Error(), "link reply")
@@ -1067,8 +1270,9 @@ func TestImportRetriesChatAfterDeferredReplyFailure(t *testing.T) {
 	assert.Equal(2, messages, "both messages committed atomically")
 
 	remove()
-	failSyncAt(t, st, root) // the failed run left the chat incomplete
-	importRoot(t, st, root)
+	assertFailedImportCheckpointKeepsChatIncomplete(t, st)
+	summary := importRoot(t, st, root)
+	assert.True(summary.WasResumed, "the real failed-run checkpoint resumes")
 
 	var parentSrc string
 	require.NoError(st.DB().QueryRow(`
@@ -1967,4 +2171,449 @@ func writeChatExport(t *testing.T, dir string, chatID int64, chatType, chatName 
 	require.NoError(t, os.MkdirAll(root, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "result.json"), b, 0o644))
 	return root
+}
+
+func TestImportMarksPositiveExportIDsAcrossPeerKinds(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "personal_chat", "Synthetic user", []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "from_id": "user123", "text": "direct"}})
+	doc := loadFullExport(t, root)
+	doc.Chats.List = append(doc.Chats.List,
+		fullExportChat{ID: 123, Type: "private_group", Name: "Synthetic group", Messages: []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "group"}}},
+		fullExportChat{ID: 123, Type: "public_channel", Name: "Synthetic channel", Messages: []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "channel"}}})
+	saveFullExport(t, root, doc)
+	importRoot(t, st, root)
+	for _, key := range []string{"123:1", "-123:1", "-1000000000123:1"} {
+		var count int
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), key).Scan(&count))
+		assert.Equal(t, 1, count, key)
+	}
+}
+
+func TestImportMigratesVerifiedLegacyGroupAndRecoversManifest(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_group", "Synthetic group", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one", "photo": "photos/a.jpg"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "synthetic two", "reply_to_message_id": 1},
+	})
+	require.NoError(os.MkdirAll(filepath.Join(root, "photos"), 0700))
+	require.NoError(os.WriteFile(filepath.Join(root, "photos", "a.jpg"), []byte("synthetic photo"), 0600))
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic group")
+	require.NoError(err)
+	when := time.Unix(1610909800, 0).UTC()
+	oldPart := syntheticAttachmentHash(123, 1, "photos/a.jpg")
+	for _, row := range []struct {
+		id   int64
+		text string
+		meta telegramMessageMetadata
+	}{
+		{1, "synthetic one", telegramMessageMetadata{AttachmentPartKeys: []string{oldPart}}},
+		{2, "synthetic two", telegramMessageMetadata{ReferencedMessageID: "123:1", AttachmentPartKeys: []string{}}},
+	} {
+		encoded, err := json.Marshal(row.meta)
+		require.NoError(err)
+		_, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: fmt.Sprintf("123:%d", row.id), MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}, Metadata: &sql.NullString{String: string(encoded), Valid: true}})
+		require.NoError(err)
+	}
+	summary := importRoot(t, st, root)
+	assert.EqualValues(0, summary.MessagesAdded)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND source_message_id IN (?, ?)`), conv, "-123:1", "-123:2").Scan(&count))
+	assert.Equal(2, count)
+	var part string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_part_key FROM attachments WHERE message_id = (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)`), source.ID, "-123:1").Scan(&part))
+	assert.Equal(oldPart, part)
+}
+
+func TestImportRefusesAmbiguousLegacyGroupWithoutChangingIt(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_group", "Synthetic group", []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "one"}})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic group")
+	require.NoError(err)
+	_, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: "123:1", MessageType: MessageType, SentAt: sql.NullTime{Time: time.Unix(1610909800, 0).UTC(), Valid: true}}, BodyText: sql.NullString{String: "one", Valid: true}})
+	require.NoError(err)
+	_, err = Import(context.Background(), st, ImportOptions{RootDir: root})
+	require.ErrorContains(err, "evidence")
+	var key string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_message_id FROM messages WHERE conversation_id = ?`), conv).Scan(&key))
+	assert.Equal(t, "123:1", key)
+}
+
+func TestImportReplaysLegacyCheckpointWithAmbiguousBareIDs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_group", "Synthetic group", []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic"}})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	export, err := OpenExport(root)
+	require.NoError(err)
+	fingerprint := export.Fingerprint()
+	require.NoError(export.Close())
+	prior, err := json.Marshal(telegramCheckpoint{RootDir: root, Fingerprint: fingerprint, CompletedChats: []int64{123}})
+	require.NoError(err)
+	syncID, err := st.StartSync(source.ID, syncType)
+	require.NoError(err)
+	require.NoError(st.UpdateSyncCheckpoint(syncID, &store.Checkpoint{PageToken: string(prior)}))
+	require.NoError(st.FailSync(syncID, "synthetic interruption"))
+	summary := importRoot(t, st, root)
+	assert.False(summary.WasResumed)
+	assert.EqualValues(1, summary.MessagesAdded)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-123:1").Scan(&count))
+	assert.Equal(1, count)
+}
+
+func TestImportRefusesDirectPeerCollidingWithUnresolvedLegacyGroup(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "personal_chat", "Synthetic user", []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "from_id": "user123", "text": "direct"}})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Legacy group")
+	require.NoError(err)
+	_, err = Import(context.Background(), st, ImportOptions{RootDir: root})
+	require.ErrorContains(err, "collision")
+	var kind string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_type FROM conversations WHERE id = ?`), conv).Scan(&kind))
+	assert.Equal(t, "group_chat", kind)
+}
+
+func TestImportRetypesVerifiedLegacyRepliesAsUserDialog(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "replies", "Synthetic replies", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "synthetic two"},
+	})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic replies")
+	require.NoError(err)
+	when := time.Unix(1610909800, 0).UTC()
+	for _, row := range []struct{ id, text string }{{"123:1", "synthetic one"}, {"123:2", "synthetic two"}} {
+		_, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: row.id, MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}})
+		require.NoError(err)
+	}
+	summary := importRoot(t, st, root)
+	assert.EqualValues(0, summary.MessagesAdded)
+	var kind string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_type FROM conversations WHERE id = ?`), conv).Scan(&kind))
+	assert.Equal("direct_chat", kind)
+}
+
+func TestImportSpecialUserDialogCanRepeat(t *testing.T) {
+	for _, kind := range []string{"replies", "verification_codes"} {
+		t.Run(kind, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := writeChatExport(t, t.TempDir(), 123, kind, "Synthetic", []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "from_id": "user123", "text": "synthetic"}})
+			first := importRoot(t, st, root)
+			second := importRoot(t, st, root)
+			assert.EqualValues(t, 1, first.MessagesAdded)
+			assert.EqualValues(t, 0, second.MessagesAdded)
+		})
+	}
+}
+
+func TestImportReusesReconciledShiftedHistory(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_supergroup", "Synthetic", []map[string]any{{"id": -999999999, "type": "message", "date_unixtime": "1610909800", "text": "synthetic"}})
+	first := importRoot(t, st, root)
+	require.EqualValues(1, first.MessagesAdded)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	revisionBefore, err := st.DerivedDataRevisionContext(context.Background())
+	require.NoError(err)
+	require.NoError(st.ReconcileTelegramShiftedHistoryContext(context.Background(), source.ID, -1000000000123, 789, 100))
+	revisionAfter, err := st.DerivedDataRevisionContext(context.Background())
+	require.NoError(err)
+	assert.Equal(revisionBefore+1, revisionAfter, "shifted-history rekey invalidates cached message shards")
+	second := importRoot(t, st, root)
+	assert.Zero(second.MessagesAdded)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
+	assert.Equal(1, count)
+}
+
+func TestImportRoutesShiftedMessagesToFormerConversationAfterLink(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	first := writeChatExport(t, t.TempDir(), 123, "private_supergroup", "Synthetic", []map[string]any{{
+		"id": -999999999, "type": "message", "date_unixtime": "1610909800", "text": "earlier shifted message",
+	}})
+	firstSummary := importRoot(t, st, first)
+	require.EqualValues(1, firstSummary.MessagesAdded)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	require.NoError(st.ReconcileTelegramShiftedHistoryContext(context.Background(), source.ID, -1000000000123, 789, 100))
+
+	updated := writeChatExport(t, t.TempDir(), 123, "private_supergroup", "Synthetic", []map[string]any{
+		{"id": -999999999, "type": "message", "date_unixtime": "1610909800", "text": "earlier shifted message"},
+		{"id": -999999998, "type": "message", "date_unixtime": "1610909810", "text": "later shifted message"},
+	})
+	updatedSummary := importRoot(t, st, updated)
+	require.EqualValues(1, updatedSummary.MessagesAdded)
+
+	var firstConversation, laterConversation int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-789:1").Scan(&firstConversation))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-789:2").Scan(&laterConversation))
+	assert.Equal(firstConversation, laterConversation)
+	var formerConversationKey string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_conversation_id FROM conversations WHERE id = ?`), laterConversation).Scan(&formerConversationKey))
+	assert.Equal("-789", formerConversationKey)
+}
+
+func TestImportRefusesAmbiguousMonoforumPersonalChat(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 1002147483649, "personal_chat", "Synthetic", []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic"}})
+	_, err := Import(context.Background(), st, ImportOptions{RootDir: root})
+	require.ErrorContains(t, err, "ambiguous")
+	var count int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Zero(t, count)
+}
+
+func TestImportReusesVerifiedAmbiguousUser(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 1002147483649, "personal_chat", "Synthetic", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "synthetic two"},
+	})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "1002147483649", "direct_chat", "Synthetic")
+	require.NoError(err)
+	when := time.Unix(1610909800, 0).UTC()
+	for _, row := range []struct{ id, text string }{{"1002147483649:1", "synthetic one"}, {"1002147483649:2", "synthetic two"}} {
+		_, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: row.id, MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}})
+		require.NoError(err)
+	}
+	evidence := []store.TelegramExportKeyEvidence{{MessageID: 1, SentAt: when, Text: "synthetic one"}, {MessageID: 2, SentAt: when, Text: "synthetic two"}}
+	require.NoError(st.VerifyTelegramAmbiguousUserContext(context.Background(), source.ID, 1002147483649, evidence))
+	summary := importRoot(t, st, root)
+	assert.Zero(t, summary.MessagesAdded)
+	different := writeChatExport(t, t.TempDir(), 1002147483649, "personal_chat", "Synthetic", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "different one"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "different two"},
+	})
+	_, err = Import(context.Background(), st, ImportOptions{RootDir: different})
+	require.ErrorContains(err, "evidence")
+}
+
+func TestImportReusesVerifiedMonoforumChannel(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	const peerID int64 = 1002147483649
+	root := writeChatExport(t, t.TempDir(), peerID, "personal_chat", "Synthetic", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "synthetic two"},
+	})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "1002147483649", "direct_chat", "Synthetic")
+	require.NoError(err)
+	when := time.Unix(1610909800, 0).UTC()
+	for _, row := range []struct{ id, text string }{{"1002147483649:1", "synthetic one"}, {"1002147483649:2", "synthetic two"}} {
+		_, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: row.id, MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}})
+		require.NoError(err)
+	}
+	marked, err := MarkedPeerID(&tg.PeerChannel{ChannelID: peerID})
+	require.NoError(err)
+	evidence := []store.TelegramExportKeyEvidence{{MessageID: 1, SentAt: when, Text: "synthetic one"}, {MessageID: 2, SentAt: when, Text: "synthetic two"}}
+	ctx := context.Background()
+	revisionBefore, err := st.DerivedDataRevisionContext(ctx)
+	require.NoError(err)
+	require.NoError(st.VerifyTelegramAmbiguousChannelContext(ctx, source.ID, peerID, marked, evidence, nil, false))
+	revisionAfter, err := st.DerivedDataRevisionContext(ctx)
+	require.NoError(err)
+	assert.Equal(revisionBefore+1, revisionAfter, "rekeying a populated conversation invalidates cached message shards")
+	summary := importRoot(t, st, root)
+	assert.Zero(summary.MessagesAdded)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
+	assert.Equal(2, count)
+}
+
+func TestImportRefusesAmbiguousSnapshotMatchingBothPeerKinds(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	const peerID int64 = 1002147483649
+	root := writeChatExport(t, t.TempDir(), peerID, "personal_chat", "Synthetic", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "synthetic two"},
+	})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	marked, err := MarkedPeerID(&tg.PeerChannel{ChannelID: peerID})
+	require.NoError(err)
+	require.NoError(st.EnsureTelegramTypedUserContext(ctx, source.ID, peerID, "Synthetic"))
+	require.NoError(st.EnsureTelegramTypedMonoforumContext(ctx, source.ID, marked, "Synthetic"))
+	when := time.Unix(1610909800, 0).UTC()
+	for _, peer := range []struct {
+		id   int64
+		kind string
+	}{{peerID, "direct_chat"}, {marked, "group_chat"}} {
+		conv, err := st.EnsureConversationWithType(source.ID, strconv.FormatInt(peer.id, 10), peer.kind, "Synthetic")
+		require.NoError(err)
+		for _, row := range []struct {
+			id   int
+			text string
+		}{{1, "synthetic one"}, {2, "synthetic two"}} {
+			_, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: fmt.Sprintf("%d:%d", peer.id, row.id), MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}})
+			require.NoError(err)
+		}
+	}
+	_, err = Import(ctx, st, ImportOptions{RootDir: root})
+	require.ErrorContains(err, "matches both")
+}
+
+func TestImportResolvesCrossChatReplyPeer(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_group", "Synthetic group", []map[string]any{{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "child", "reply_to_message_id": 1, "reply_to_peer_id": "user456"}})
+	doc := loadFullExport(t, root)
+	doc.Chats.List = append(doc.Chats.List, fullExportChat{ID: 456, Type: "personal_chat", Name: "Synthetic user", Messages: []map[string]any{{"id": 1, "type": "message", "date_unixtime": "1610909800", "from_id": "user456", "text": "parent"}}})
+	saveFullExport(t, root, doc)
+	importRoot(t, st, root)
+	var parentID, linkedID int64
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), "456:1").Scan(&parentID))
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "-123:2").Scan(&linkedID))
+	assert.Equal(t, parentID, linkedID)
+}
+
+func TestImportRefusesLegacyMigrationWithCrossChatReplies(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_group", "Synthetic group", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "synthetic two", "reply_to_message_id": 1, "reply_to_peer_id": "user456"},
+	})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic")
+	require.NoError(err)
+	when := time.Unix(1610909800, 0).UTC()
+	for _, row := range []struct{ id, text string }{{"123:1", "synthetic one"}, {"123:2", "synthetic two"}} {
+		_, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: row.id, MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}})
+		require.NoError(err)
+	}
+	_, err = Import(context.Background(), st, ImportOptions{RootDir: root})
+	require.ErrorContains(err, "cross-chat")
+	var key string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_conversation_id FROM conversations WHERE id = ?`), conv).Scan(&key))
+	assert.Equal(t, "123", key)
+}
+
+func TestImportRefusesUnverifiedLegacyReplyOutsideExport(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_group", "Synthetic group", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one"},
+		{"id": 3, "type": "message", "date_unixtime": "1610909800", "text": "synthetic three"},
+	})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic")
+	require.NoError(err)
+	when := time.Unix(1610909800, 0).UTC()
+	for _, row := range []struct{ id, text, meta string }{{"123:1", "synthetic one", `{}`}, {"123:3", "synthetic three", `{}`}, {"123:2", "old child", `{"referenced_message_id":"123:1"}`}} {
+		_, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: row.id, MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}, Metadata: &sql.NullString{String: row.meta, Valid: true}})
+		require.NoError(err)
+	}
+	_, err = Import(context.Background(), st, ImportOptions{RootDir: root})
+	require.ErrorContains(err, "reply")
+	var key string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_conversation_id FROM conversations WHERE id = ?`), conv).Scan(&key))
+	assert.Equal(t, "123", key)
+}
+
+func TestImportPreservesVerifiedLegacyReplyLink(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_group", "Synthetic", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "synthetic two", "reply_to_message_id": 1},
+	})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic")
+	require.NoError(err)
+	when := time.Unix(1610909800, 0).UTC()
+	for _, row := range []struct{ id, text string }{{"123:1", "synthetic one"}, {"123:2", "synthetic two"}} {
+		_, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: row.id, MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}})
+		require.NoError(err)
+	}
+	require.NoError(st.SetReplyTo(source.ID, "123:2", "123:1"))
+	importRoot(t, st, root)
+	var parentID, linkedID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-123:1").Scan(&parentID))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-123:2").Scan(&linkedID))
+	assert.Equal(t, parentID, linkedID)
+}
+
+func TestImportRefusesLegacyReplyFromDifferentMessageSnapshot(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := writeChatExport(t, t.TempDir(), 123, "private_group", "Synthetic", []map[string]any{
+		{"id": 1, "type": "message", "date_unixtime": "1610909800", "text": "synthetic one"},
+		{"id": 3, "type": "message", "date_unixtime": "1610909800", "text": "synthetic three"},
+		{"id": 2, "type": "message", "date_unixtime": "1610909800", "text": "changed child", "reply_to_message_id": 1},
+	})
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(7000000000000123456))
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "123", "group_chat", "Synthetic")
+	require.NoError(err)
+	when := time.Unix(1610909800, 0).UTC()
+	for _, row := range []struct{ id, text, meta string }{{"123:1", "synthetic one", `{}`}, {"123:3", "synthetic three", `{}`}, {"123:2", "old child", `{"referenced_message_id":"123:1"}`}} {
+		_, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: row.id, MessageType: MessageType, SentAt: sql.NullTime{Time: when, Valid: true}}, BodyText: sql.NullString{String: row.text, Valid: true}, Metadata: &sql.NullString{String: row.meta, Valid: true}})
+		require.NoError(err)
+	}
+	_, err = Import(context.Background(), st, ImportOptions{RootDir: root})
+	require.ErrorContains(err, "reply")
+	var key string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_conversation_id FROM conversations WHERE id = ?`), conv).Scan(&key))
+	assert.Equal(t, "123", key)
+}
+
+func TestImportContinuesPastUnverifiedAmbiguousChat(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	data := `{"personal_information":{"user_id":999,"first_name":"Synthetic"},"chats":{"list":[{"id":1002147483649,"type":"personal_chat","name":"Ambiguous","messages":[{"id":1,"type":"message","date_unixtime":"1610909800","text":"synthetic"}]},{"id":123,"type":"private_group","name":"Safe","messages":[{"id":2,"type":"message","date_unixtime":"1610909800","text":"synthetic"}]}]}}`
+	require.NoError(os.WriteFile(filepath.Join(root, "result.json"), []byte(data), 0600))
+	summary, err := Import(context.Background(), st, ImportOptions{RootDir: root})
+	require.ErrorContains(err, "sync-telegram")
+	require.NotNil(summary)
+	assert.EqualValues(1, summary.MessagesAdded)
+	var count int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Equal(1, count)
 }

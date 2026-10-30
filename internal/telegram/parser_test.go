@@ -137,21 +137,25 @@ func TestParsePreservesReplyEditedAndDocumentMetadata(t *testing.T) {
 			{"id": 3, "type": "message", "date_unixtime": "1610909950",
 			 "file": "documents/report_1.bin", "file_name": "Quarterly Report.pdf",
 			 "mime_type": "application/pdf", "media_type": "document", "text": ""},
-			{"id": 4, "type": "message", "date_unixtime": "1610909960", "text": "plain"}
+			{"id": 4, "type": "message", "date_unixtime": "1610909960", "text": "plain"},
+			{"id": 5, "type": "message", "date_unixtime": "1610909970",
+			 "edited": "2021-01-17T19:14:19:00", "text": "edited fallback"}
 		]
 	}`), 0o644))
 	_, chats := readChats(t, dir)
 	require.Len(chats, 1)
 	msgs := chats[0].Messages
-	require.Len(msgs, 4)
+	require.Len(msgs, 5)
 
 	assert.Zero(msgs[0].ReplyTo, "a non-reply carries no parent id")
 	assert.EqualValues(1, msgs[1].ReplyTo, "reply_to_message_id parses")
 	assert.False(msgs[0].Edited)
 	assert.True(msgs[1].Edited, "edited_unixtime marks the message edited")
+	assert.Equal(time.Unix(1610910799, 0).UTC(), msgs[1].EditedAt, "edited_unixtime supplies the edit timestamp")
 	assert.Equal("Quarterly Report.pdf", msgs[2].FileName, "official file_name parses")
 	assert.Equal("application/pdf", msgs[2].MimeType, "official mime_type parses")
 	assert.True(msgs[3].Edited == false && msgs[3].FileName == "", "plain message stays plain")
+	assert.Equal(time.Unix(1610910859, 0).UTC(), msgs[4].EditedAt, "edited supplies the timestamp when edited_unixtime is absent")
 }
 
 func TestParseIgnoresUnrelatedJSONFiles(t *testing.T) {

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-10-30"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -15,7 +15,7 @@ appear in full under Inherited Flags.
 
 | Task | Commands and guides |
 |---|---|
-| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
+| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [sync-telegram](#sync-telegram) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
@@ -1772,6 +1772,33 @@ msgvault import-slackdump --me U0123456789 --limit 100 /path/to/export.zip
 | `--limit` | `0` | Max messages imported per conversation (0 = no limit) |
 | `--max-media-mb` | configured/default limit | Max exported file size in MiB (0 = configured/default limit) |
 | `--no-default-identity` | `false` | Do not auto-confirm the workspace user ID as the source's "me" identity |
+
+---
+
+## sync-telegram
+
+Archive history for registered Telegram accounts. Run `msgvault add-telegram`
+first to sign in and save a session. With no account argument, the command
+syncs all active Telegram accounts. To select one, pass the exact `user…`
+identifier printed when it was registered.
+
+```bash
+msgvault sync-telegram
+msgvault sync-telegram user123456789 --chat -123456
+msgvault sync-telegram --full --after 2024-01-01
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--chat` | all enabled chats | Sync one marked Telegram chat ID |
+| `--include-channels` | `false` | Include broadcast channels |
+| `--full` | `false` | Re-fetch available history, including completed ranges |
+| `--after` | no time bound | Re-fetch history after this exclusive date or RFC3339 timestamp |
+| `--takeout` | `false` | Request a takeout session for the first backfill |
+
+Telegram may require takeout approval on another signed-in device. If it
+returns an approval delay, the command reports the wait; run it again after
+the delay.
 
 ---
 

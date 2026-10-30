@@ -14,6 +14,7 @@ func TestCLIRunCommandAllowedTelegramCommands(t *testing.T) {
 	for _, args := range [][]string{
 		{"import-telegram"},
 		{"import-telegram", "--me=482111", "/tmp/TelegramExport"},
+		{"sync-telegram", "--full"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			assert.True(t, cliRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)

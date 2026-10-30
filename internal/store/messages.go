@@ -919,15 +919,16 @@ func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
 		args = append(args, limit)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, source_message_id, metadata
-		FROM messages
-		WHERE source_id = ?
-		  AND message_type = ?
-		  AND id > ?
-		  AND reply_to_message_id IS NULL
-		  AND metadata IS NOT NULL
-		  AND CAST(metadata AS TEXT) LIKE '%"referenced_message_id"%'
-		ORDER BY id`+limitClause,
+		SELECT m.id, m.source_message_id, m.metadata
+		FROM messages m
+		WHERE m.source_id = ?
+		  AND m.message_type = ?
+		  AND m.id > ?
+		  AND m.reply_to_message_id IS NULL
+		  AND m.metadata IS NOT NULL
+		  AND CAST(m.metadata AS TEXT) LIKE '%"referenced_message_id"%'
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+		ORDER BY m.id`+limitClause,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved message replies: %w", err)

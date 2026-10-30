@@ -1472,7 +1472,12 @@ func (s *Store) GetLatestCheckpointedSyncContext(ctx context.Context, sourceID i
 // for one sync type since that type's last completion. Checkpoints created by
 // another importer for the same source are never considered resumable state.
 func (s *Store) GetLatestCheckpointedSyncByType(sourceID int64, syncType string) (*SyncRun, error) {
-	row := s.db.QueryRow(`
+	return s.GetLatestCheckpointedSyncByTypeContext(context.Background(), sourceID, syncType)
+}
+
+// GetLatestCheckpointedSyncByTypeContext honors cancellation during lookup.
+func (s *Store) GetLatestCheckpointedSyncByTypeContext(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
+	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,
 		       messages_processed, messages_added, messages_updated, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
@@ -1607,7 +1612,12 @@ func (s *Store) GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64
 // sync_type exactly equals syncType, the legacy empty value included; only
 // GetLastSuccessfulSync queries without a type filter.
 func (s *Store) GetLastSuccessfulSyncByType(sourceID int64, syncType string) (*SyncRun, error) {
-	return s.getLastSuccessfulSyncContext(context.Background(), sourceID, syncType, true)
+	return s.GetLastSuccessfulSyncByTypeContext(context.Background(), sourceID, syncType)
+}
+
+// GetLastSuccessfulSyncByTypeContext honors cancellation during lookup.
+func (s *Store) GetLastSuccessfulSyncByTypeContext(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
+	return s.getLastSuccessfulSyncContext(ctx, sourceID, syncType, true)
 }
 
 func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, syncType string, filterByType bool) (*SyncRun, error) {

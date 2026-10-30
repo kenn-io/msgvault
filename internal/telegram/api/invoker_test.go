@@ -30,10 +30,16 @@ func TestInvokerReadOnly(t *testing.T) {
 	underlying := &stubInvoker{}
 	invoker := NewInvoker(underlying, rate.Inf, 1, time.Minute)
 	require.NoError(invoker.Invoke(context.Background(), &tg.MessagesGetHistoryRequest{}, nil))
+	require.NoError(invoker.Invoke(context.Background(), &tg.ChannelsGetFullChannelRequest{}, nil))
+	require.NoError(invoker.Invoke(context.Background(), &tg.AccountFinishTakeoutSessionRequest{}, nil))
 	assert.Error(invoker.Invoke(context.Background(), &tg.MessagesSendMessageRequest{}, nil))
 	assert.Error(invoker.Invoke(context.Background(), &tg.InvokeWithTakeoutRequest{Query: &tg.MessagesSendMessageRequest{}}, nil))
+	require.NoError(invoker.Invoke(context.Background(), &tg.InvokeWithTakeoutRequest{Query: &tg.AccountFinishTakeoutSessionRequest{}}, nil))
 	require.NoError(invoker.Invoke(context.Background(), &tg.InvokeWithTakeoutRequest{Query: &tg.MessagesGetHistoryRequest{}}, nil))
-	assert.Equal(2, underlying.calls)
+	require.NoError(invoker.Invoke(context.Background(), &tg.InvokeWithTakeoutRequest{Query: &tg.InvokeWithMessagesRangeRequest{
+		Range: tg.MessageRange{MinID: 1, MaxID: 10}, Query: &tg.MessagesGetHistoryRequest{},
+	}}, nil))
+	assert.Equal(6, underlying.calls)
 }
 
 func TestInvokerFloodWaitCeilingAndCancellation(t *testing.T) {

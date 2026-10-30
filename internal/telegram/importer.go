@@ -16,6 +16,7 @@ import (
 
 	json "encoding/json/v2"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -32,6 +33,7 @@ type telegramCheckpoint struct {
 	RootDir        string  `json:"root_dir"`
 	Fingerprint    string  `json:"fingerprint"`
 	CompletedChats []int64 `json:"completed_chats"`
+	CanonicalKeys  bool    `json:"canonical_keys,omitempty"`
 }
 
 // ImportOptions configures Import.
@@ -91,9 +93,9 @@ type ImportSummary struct {
 // their chat; the next run — resumed or not — restores what an
 // interruption left behind, reading the message's archived recovery
 // state rather than the newer export's shape. After every successful
-// run, one bounded pass retries the source's still-NULL reply links, so
-// a child imported before its parent links once any later export
-// archives the parent.
+// run, one bounded pass retries verified, still-NULL reply links, so a
+// child imported before its parent links once a later export archives it.
+// Older references are verified against an overlapping export first.
 func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
 	start := time.Now()
 	summary := &ImportSummary{}
@@ -153,7 +155,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 		if prev != nil && prev.CursorBefore.Valid && prev.CursorBefore.String != "" {
 			var prior telegramCheckpoint
 			if err := json.Unmarshal([]byte(prev.CursorBefore.String), &prior); err == nil &&
-				prior.RootDir == absRoot && prior.Fingerprint == export.Fingerprint() {
+				prior.RootDir == absRoot && prior.Fingerprint == export.Fingerprint() && prior.CanonicalKeys {
 				for _, chatID := range prior.CompletedChats {
 					completed[chatID] = true
 				}
@@ -197,12 +199,45 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 		}
 	}()
 
+	// Legacy unmarked peer keys need kind evidence before any message writes.
+	legacy, err := st.HasLegacyTelegramConversationKeysContext(ctx, source.ID)
+	if err != nil {
+		syncErr = err
+		return nil, err
+	}
+	if legacy {
+		fingerprint := export.Fingerprint()
+		changes, err := exportKeyChanges(ctx, st, source.ID, export)
+		if err != nil {
+			syncErr = err
+			return nil, err
+		}
+		if err := export.Close(); err != nil {
+			syncErr = err
+			return nil, err
+		}
+		nextExport, err := OpenExport(absRoot)
+		if err != nil {
+			syncErr = err
+			return nil, err
+		}
+		export = nextExport
+		if export.Fingerprint() != fingerprint {
+			syncErr = errors.New("telegram: export changed during key migration")
+			return nil, syncErr
+		}
+		if err := st.MigrateTelegramExportKeysContext(ctx, source.ID, changes); err != nil {
+			syncErr = err
+			return nil, err
+		}
+	}
 	resolver := newParticipantResolver(st, source.ID)
 	ownerPID, err := resolver.ensureOwner(ctx, ownerID, ownerName)
 	if err != nil {
 		syncErr = err
 		return nil, err
 	}
+	var unresolvedPeers error
 	for {
 		if ctx.Err() != nil {
 			syncErr = ctx.Err()
@@ -214,6 +249,17 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 		chat, err := export.NextChat()
 		if errors.Is(err, io.EOF) {
 			break
+		}
+		if err != nil {
+			syncErr = err
+			return nil, err
+		}
+		chat.ID, err = normalizedImportID(ctx, st, source.ID, chat)
+		if errors.Is(err, errUnverifiedExportPeer) {
+			if unresolvedPeers == nil {
+				unresolvedPeers = err
+			}
+			continue
 		}
 		if err != nil {
 			syncErr = err
@@ -260,6 +306,10 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSu
 	refreshStats()
 	summary.ParticipantsResolved = resolver.resolvedCount()
 	summary.Duration = time.Since(start)
+	if unresolvedPeers != nil {
+		syncErr = unresolvedPeers
+		return summary, unresolvedPeers
+	}
 	return summary, nil
 }
 
@@ -286,8 +336,11 @@ type pendingReply struct {
 // adding keys beyond it. A nil AttachmentPartKeys marks rows persisted
 // before manifests were recorded; those keep the legacy restore rules.
 type telegramMessageMetadata struct {
-	ReferencedMessageID string   `json:"referenced_message_id,omitempty"`
-	AttachmentPartKeys  []string `json:"attachment_part_keys"`
+	ReferencedMessageID string    `json:"referenced_message_id,omitempty"`
+	ReplyPeerVerified   bool      `json:"reply_peer_verified,omitzero"`
+	AttachmentPartKeys  []string  `json:"attachment_part_keys"`
+	LegacyMediaChatID   int64     `json:"legacy_media_chat_id,omitzero"`
+	EditedAt            time.Time `json:"edited_at,omitzero"`
 }
 
 // telegramReplyPageSize bounds one keyset page of the deferred reply pass.
@@ -296,8 +349,8 @@ const telegramReplyPageSize = 500
 // resolveDeferredReplies links telegram replies whose parents were absent
 // when the child was archived and have since arrived in any export of the
 // source. Each child's recorded parent reference drives the lookup, and
-// only NULL links are filled, so a link an earlier import wrote is never
-// rewritten.
+// only verified references and NULL links are filled, so a link an earlier
+// import wrote is never rewritten.
 func resolveDeferredReplies(ctx context.Context, st *store.Store, sourceID int64) error {
 	afterID := int64(0)
 	for {
@@ -311,7 +364,7 @@ func resolveDeferredReplies(ctx context.Context, st *store.Store, sourceID int64
 			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
 				return fmt.Errorf("telegram: decode reply metadata for %s: %w", reply.SourceMessageID, err)
 			}
-			if metadata.ReferencedMessageID != "" {
+			if metadata.ReferencedMessageID != "" && metadata.ReplyPeerVerified {
 				if err := st.SetReplyToIfMissingContext(ctx, sourceID,
 					reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
 					return fmt.Errorf("telegram: resolve deferred reply %s: %w", reply.SourceMessageID, err)
@@ -354,6 +407,10 @@ func importChat(
 	if err != nil {
 		return fmt.Errorf("ensure conversation: %w", err)
 	}
+	historyLink, err := st.TelegramHistoryMigrationContext(ctx, sourceID, chat.ID)
+	if err != nil {
+		return fmt.Errorf("load Telegram history linkage: %w", err)
+	}
 	summary.ChatsProcessed++
 	if err := st.EnsureConversationParticipant(convID, ownerPID, "member"); err != nil {
 		return fmt.Errorf("ensure owner membership: %w", err)
@@ -363,7 +420,7 @@ func importChat(
 	// "to" recipient: the chat's other participant. The peer resolves
 	// before any message commits, so a chat whose peer cannot resolve
 	// fails whole instead of committing recipient-less messages.
-	direct := chat.Type == chatTypePersonalChat || chat.Type == chatTypeBotChat
+	direct := chat.Type == chatTypePersonalChat || chat.Type == chatTypeBotChat || chat.Type == chatTypeReplies || chat.Type == chatTypeVerificationCodes
 	var peerPID int64
 	var peerName string
 	if direct {
@@ -380,27 +437,38 @@ func importChat(
 	// completed chat is fully written: row, body, recipients, edited
 	// flag, search document, and recovery state in one transaction.
 	srcIDs := make([]string, 0, len(chat.Messages))
+	formerConversationPrefix := ""
+	if historyLink != nil {
+		formerConversationPrefix = strconv.FormatInt(-historyLink.FormerChatID, 10) + ":"
+	}
+	importsFormerHistory := false
 	for i := range chat.Messages {
 		if !chat.Messages[i].Service && !chat.Messages[i].Unsupported {
-			srcIDs = append(srcIDs, fmt.Sprintf("%d:%d", chat.ID, chat.Messages[i].ID))
+			key, err := store.TelegramHistoryMessageKey(chat.ID, chat.Messages[i].ID, historyLink)
+			if err != nil {
+				return err
+			}
+			importsFormerHistory = importsFormerHistory || (formerConversationPrefix != "" && strings.HasPrefix(key, formerConversationPrefix))
+			srcIDs = append(srcIDs, key)
 		}
 	}
 	archived, err := st.MessageMetadataBatchContext(ctx, sourceID, srcIDs)
 	if err != nil {
 		return fmt.Errorf("check existing messages: %w", err)
 	}
-
-	var replies []pendingReply
-	// replyOf records one new message's reply link for the post-chat
-	// pass; at first import the export is the archived snapshot.
-	replyOf := func(m *Message) {
-		if m.ReplyTo != 0 {
-			replies = append(replies, pendingReply{
-				childSrcID:  fmt.Sprintf("%d:%d", chat.ID, m.ID),
-				parentSrcID: fmt.Sprintf("%d:%d", chat.ID, m.ReplyTo),
-			})
+	formerConversationID := int64(0)
+	if importsFormerHistory {
+		formerConversationID, err = st.EnsureConversationWithType(sourceID, strconv.FormatInt(-historyLink.FormerChatID, 10), "group_chat", chat.Name)
+		if err != nil {
+			return fmt.Errorf("ensure Telegram former-group conversation: %w", err)
+		}
+		if err := st.EnsureConversationParticipant(formerConversationID, ownerPID, "member"); err != nil {
+			return fmt.Errorf("ensure former-group owner membership: %w", err)
 		}
 	}
+
+	var replies []pendingReply
+
 	for mi := range chat.Messages {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -418,7 +486,14 @@ func importChat(
 			continue
 		}
 
-		srcMsgID := fmt.Sprintf("%d:%d", chat.ID, m.ID)
+		srcMsgID, err := store.TelegramHistoryMessageKey(chat.ID, m.ID, historyLink)
+		if err != nil {
+			return err
+		}
+		messageConversationID := convID
+		if formerConversationID != 0 && strings.HasPrefix(srcMsgID, formerConversationPrefix) {
+			messageConversationID = formerConversationID
+		}
 		summary.MessagesProcessed++
 		candidates := attachmentCandidates(m)
 		if record, existed := archived[srcMsgID]; existed {
@@ -432,12 +507,24 @@ func importChat(
 					return fmt.Errorf("decode recovery state for %s: %w", srcMsgID, err)
 				}
 			}
+			if recovery.ReferencedMessageID != "" && !recovery.ReplyPeerVerified && m.ReplyTo != 0 {
+				parent, peerIdentitySafe, err := telegramReplySourceID(ctx, st, sourceID, chat.ID, m, historyLink)
+				if err != nil {
+					return fmt.Errorf("resolve Telegram reply peer for %s: %w", srcMsgID, err)
+				}
+				if peerIdentitySafe {
+					recovery.ReplyPeerVerified, err = st.VerifyTelegramReplyContext(ctx, sourceID, srcMsgID, parent, m.SentAt, m.Text)
+					if err != nil {
+						return err
+					}
+				}
+			}
 			// The archived reference is the only parent an existing
 			// message may resolve to: an overlapping export cannot move
 			// an unresolved reference to a different parent or turn an
 			// archived non-reply into a reply. The post-chat pass still
 			// fills only NULL links.
-			if recovery.ReferencedMessageID != "" {
+			if recovery.ReferencedMessageID != "" && recovery.ReplyPeerVerified {
 				replies = append(replies, pendingReply{
 					childSrcID:  srcMsgID,
 					parentSrcID: recovery.ReferencedMessageID,
@@ -475,7 +562,11 @@ func importChat(
 						restore = nil
 					}
 				}
-				wrote, err := storeAttachments(ctx, st, absRoot, chat.ID, m, messageID, restore, opts, logger, summary)
+				mediaChatID := chat.ID
+				if recovery.LegacyMediaChatID > 0 {
+					mediaChatID = recovery.LegacyMediaChatID
+				}
+				wrote, err := storeAttachments(ctx, st, absRoot, mediaChatID, m, messageID, restore, opts, logger, summary)
 				if err != nil {
 					return fmt.Errorf("re-ensure attachments for %s: %w", srcMsgID, err)
 				}
@@ -505,7 +596,7 @@ func importChat(
 			if pid != 0 {
 				senderID = sql.NullInt64{Int64: pid, Valid: true}
 				isFromMe = isOwner
-				if err := st.EnsureConversationParticipant(convID, pid, "member"); err != nil {
+				if err := st.EnsureConversationParticipant(messageConversationID, pid, "member"); err != nil {
 					return fmt.Errorf("ensure sender membership for %s: %w", srcMsgID, err)
 				}
 			}
@@ -514,10 +605,18 @@ func importChat(
 			summary.FromMeCount++
 		}
 
+		parentSourceID := ""
+		replyPeerVerified := false
+		if m.ReplyTo != 0 {
+			parentSourceID, replyPeerVerified, err = telegramReplySourceID(ctx, st, sourceID, chat.ID, m, historyLink)
+			if err != nil {
+				return fmt.Errorf("resolve Telegram reply peer for %s: %w", srcMsgID, err)
+			}
+		}
 		snippet := textutil.SnippetFromBody(m.Text)
 		data := &store.MessagePersistData{
 			Message: &store.Message{
-				ConversationID:  convID,
+				ConversationID:  messageConversationID,
 				SourceID:        sourceID,
 				SourceMessageID: srcMsgID,
 				MessageType:     MessageType,
@@ -554,8 +653,11 @@ func importChat(
 			meta.AttachmentPartKeys = append(meta.AttachmentPartKeys,
 				syntheticAttachmentHash(chat.ID, m.ID, cand.RelPath))
 		}
-		if m.ReplyTo != 0 {
-			meta.ReferencedMessageID = fmt.Sprintf("%d:%d", chat.ID, m.ReplyTo)
+		meta.ReferencedMessageID = parentSourceID
+		meta.ReplyPeerVerified = replyPeerVerified
+		meta.EditedAt = m.EditedAt
+		if m.RawJSON != "" {
+			data.RawMIME, data.RawFormat = []byte(m.RawJSON), "telegram_json"
 		}
 		encoded, err := json.Marshal(meta, json.Deterministic(true))
 		if err != nil {
@@ -572,7 +674,9 @@ func importChat(
 			return fmt.Errorf("persist message %s: %w", srcMsgID, err)
 		}
 		summary.MessagesAdded++
-		replyOf(m)
+		if parentSourceID != "" && replyPeerVerified {
+			replies = append(replies, pendingReply{childSrcID: srcMsgID, parentSrcID: parentSourceID})
+		}
 
 		// Attachments and their stats are deferred writes that follow the
 		// atomic commit. A failure fails the chat — it is never marked
@@ -696,9 +800,14 @@ func storeAttachments(
 			}
 		}
 		summary.AttachmentsFound++
-		storagePath, contentHash, size, err := storeAttachment(opts.AttachmentsDir, absRoot, cand.RelPath)
-		if err != nil {
-			logger.Warn("telegram: media path rejected", "path", cand.RelPath, "err", err)
+		var storagePath, contentHash string
+		var size int64
+		if cand.Live == nil {
+			var err error
+			storagePath, contentHash, size, err = storeAttachment(opts.AttachmentsDir, absRoot, cand.RelPath)
+			if err != nil {
+				logger.Warn("telegram: media path rejected", "path", cand.RelPath, "err", err)
+			}
 		}
 		role := store.AttachmentRoleStandalone
 		roleSource := store.AttachmentRoleSourceImporterSemantics
@@ -725,6 +834,23 @@ func storeAttachments(
 			Role:               role,
 			RoleSource:         roleSource,
 			SourcePartKey:      partKey,
+		}
+		if cand.Live != nil {
+			write.Metadata = cand.Live.Metadata
+			write.State = attachmentpolicy.StatePending
+			if cand.Live.SkipReason != "" {
+				write.State = attachmentpolicy.StateSkipped
+				write.SkipReason = cand.Live.SkipReason
+			}
+			if cand.Live.Failed {
+				write.State = attachmentpolicy.StateFailed
+				write.SkipReason = attachmentpolicy.SkipFetchFailure
+			}
+			if cand.Live.StoragePath != "" {
+				storagePath, contentHash, size = cand.Live.StoragePath, cand.Live.ContentHash, cand.Live.Size
+				write.StoragePath, write.ContentHash, write.Size = storagePath, contentHash, size
+				write.State = attachmentpolicy.StateStored
+			}
 		}
 		if storagePath == "" {
 			// No bytes now. Keep the hash empty so the append-only ensure
@@ -765,6 +891,7 @@ func saveCheckpoint(
 		RootDir:        absRoot,
 		Fingerprint:    fingerprint,
 		CompletedChats: chats,
+		CanonicalKeys:  true,
 	}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal telegram checkpoint: %w", err)

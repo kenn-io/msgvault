@@ -29,6 +29,7 @@ type attachmentCandidate struct {
 	MIMEType string
 	// MediaType labels the row (photo, video_file, sticker…).
 	MediaType string
+	Live      *LiveMedia
 }
 
 // mediaWarningMarkers are the parenthesized fragments Telegram Desktop
@@ -66,6 +67,13 @@ func isMediaPath(value string) bool {
 // attachment row and leaves the message's attachment flags unset.
 func attachmentCandidates(m *Message) []attachmentCandidate {
 	var out []attachmentCandidate
+	if m.LiveMedia != nil {
+		live := m.LiveMedia
+		out = append(out, attachmentCandidate{
+			RelPath: "api:" + live.SourceID, Filename: live.Filename,
+			MIMEType: live.MIMEType, MediaType: live.Kind, Live: live,
+		})
+	}
 	if m.Photo != "" && isMediaPath(m.Photo) {
 		out = append(out, attachmentCandidate{
 			RelPath: m.Photo, Filename: filepath.Base(m.Photo), MediaType: mediaTypeOr(m, "photo"),

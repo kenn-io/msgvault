@@ -43,14 +43,26 @@ func allowedRequest(input bin.Encoder, depth int, allowAuth bool) bool {
 	switch request := input.(type) {
 	case *tg.InvokeWithTakeoutRequest:
 		return request != nil && request.Query != nil && allowedRequest(request.Query, depth+1, false)
+	case *tg.InvokeWithMessagesRangeRequest:
+		if request == nil || request.Query == nil {
+			return false
+		}
+		switch request.Query.(type) {
+		case *tg.MessagesGetDialogsRequest, *tg.MessagesGetHistoryRequest:
+			return allowedRequest(request.Query, depth+1, false)
+		default:
+			return false
+		}
 	case *tg.AuthSendCodeRequest, *tg.AuthResendCodeRequest, *tg.AuthSignInRequest,
 		*tg.AuthCheckPasswordRequest, *tg.AuthExportLoginTokenRequest, *tg.AuthImportLoginTokenRequest,
 		*tg.AccountGetPasswordRequest:
 		return allowAuth && depth == 0
 	case *tg.AccountInitTakeoutSessionRequest:
 		return depth == 0
+	case *tg.AccountFinishTakeoutSessionRequest:
+		return depth <= 1
 	case *tg.UsersGetUsersRequest, *tg.UsersGetFullUserRequest,
-		*tg.MessagesGetDialogsRequest, *tg.MessagesGetHistoryRequest,
+		*tg.MessagesGetDialogsRequest, *tg.MessagesGetHistoryRequest, *tg.MessagesGetSplitRangesRequest, *tg.ChannelsGetFullChannelRequest,
 		*tg.UpdatesGetStateRequest, *tg.UpdatesGetDifferenceRequest, *tg.UpdatesGetChannelDifferenceRequest,
 		*tg.UploadGetFileRequest:
 		return true

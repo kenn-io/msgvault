@@ -293,6 +293,7 @@ type rawMessage struct {
 	Edited           string         `json:"edited"`
 	EditedUnixtime   string         `json:"edited_unixtime"`
 	ReplyToMessageID int64          `json:"reply_to_message_id"`
+	ReplyToPeerID    string         `json:"reply_to_peer_id"`
 	From             string         `json:"from"`
 	FromID           string         `json:"from_id"`
 	Text             jsontext.Value `json:"text"`
@@ -340,11 +341,17 @@ func buildMessage(m rawMessage) (*Message, error) {
 	if err != nil {
 		return nil, err
 	}
+	editedAt, err := parseExportTimeField("edited", m.EditedUnixtime, m.Edited)
+	if err != nil {
+		return nil, err
+	}
 	msg := &Message{
 		ID:          m.ID,
 		Service:     m.Type == "service",
 		SentAt:      sentAt,
+		EditedAt:    editedAt,
 		ReplyTo:     m.ReplyToMessageID,
+		ReplyPeerID: m.ReplyToPeerID,
 		Edited:      m.Edited != "" || m.EditedUnixtime != "",
 		FromName:    m.From,
 		FromID:      m.FromID,
@@ -429,10 +436,14 @@ func flattenText(raw jsontext.Value, entities []textEntity) string {
 // Desktop's extra colon-separated tail. A message with neither timestamp
 // keeps a zero time.
 func parseExportTime(unixtime, date string) (time.Time, error) {
+	return parseExportTimeField("date", unixtime, date)
+}
+
+func parseExportTimeField(field, unixtime, date string) (time.Time, error) {
 	if unixtime != "" {
 		sec, err := strconv.ParseInt(strings.TrimSpace(unixtime), 10, 64)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("telegram: parse date_unixtime %q: %w", unixtime, err)
+			return time.Time{}, fmt.Errorf("telegram: parse %s_unixtime %q: %w", field, unixtime, err)
 		}
 		return time.Unix(sec, 0).UTC(), nil
 	}

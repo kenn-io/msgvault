@@ -2,7 +2,11 @@
 // export into an msgvault archive.
 package telegram
 
-import "time"
+import (
+	"time"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+)
 
 // SourceType is the archive source type written by this importer.
 const SourceType = "telegram"
@@ -21,10 +25,9 @@ const (
 	chatTypeSavedMessages     = "saved_messages"
 	chatTypePrivateChannel    = "private_channel"
 	chatTypePublicChannel     = "public_channel"
-	// chatTypeReplies is the "Replies" pseudo-chat: the thread list where
-	// channel-post comments and discussion replies land. Its entries are
-	// group-style discussions, so ConvType maps it with the groups.
-	chatTypeReplies = "replies"
+	// Replies and verification-code dialogs are user peers in Telegram Desktop.
+	chatTypeReplies           = "replies"
+	chatTypeVerificationCodes = "verification_codes"
 )
 
 // Chat is one Telegram chat or channel from an export.
@@ -46,10 +49,9 @@ type Chat struct {
 // generic "chat".
 func (c *Chat) ConvType() string {
 	switch c.Type {
-	case chatTypePersonalChat, chatTypeBotChat, chatTypeSavedMessages:
+	case chatTypePersonalChat, chatTypeBotChat, chatTypeSavedMessages, chatTypeReplies, chatTypeVerificationCodes:
 		return "direct_chat"
-	case chatTypePrivateGroup, chatTypePrivateSupergroup, chatTypePublicSupergroup,
-		chatTypeReplies:
+	case chatTypePrivateGroup, chatTypePrivateSupergroup, chatTypePublicSupergroup:
 		return "group_chat"
 	case chatTypePrivateChannel, chatTypePublicChannel:
 		return "channel"
@@ -75,9 +77,16 @@ type Message struct {
 	// this message replies to inside the same chat, 0 when it is not a
 	// reply.
 	ReplyTo int64
+	// ReplyPeerID is the typed Desktop peer ID for a cross-chat reply.
+	// Empty means the current chat.
+	ReplyPeerID string
+	// ReplyMarkedPeerID is the canonical peer for a live API reply.
+	ReplyMarkedPeerID int64
 	// Edited reports that the export carried an edited or edited_unixtime
 	// field for this message.
-	Edited bool
+	Edited   bool
+	EditedAt time.Time
+	RawJSON  string
 	// FromName is the sender's display name ("from").
 	FromName string
 	// FromID is the sender's raw prefixed ID ("from_id"), e.g. "user482111".
@@ -100,4 +109,20 @@ type Message struct {
 	// FileName is the export's official file_name for a file message; empty
 	// when the export carries none.
 	FileName string
+	// LiveMedia identifies an API attachment without an export-relative path.
+	LiveMedia *LiveMedia
+}
+
+// LiveMedia describes one retrievable API attachment occurrence.
+type LiveMedia struct {
+	SourceID    string
+	Filename    string
+	MIMEType    string
+	Kind        string
+	Metadata    string
+	StoragePath string
+	ContentHash string
+	Size        int64
+	SkipReason  attachmentpolicy.SkipReason
+	Failed      bool
 }
