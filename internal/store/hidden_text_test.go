@@ -175,6 +175,51 @@ func TestInitSchemaBackfillsHiddenTextAcrossBatches(t *testing.T) {
 	assert.True(applied)
 }
 
+func TestHiddenTextBackfillCompletionRollsBackWithLedger(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("the failing ledger write is injected with a SQLite trigger")
+	}
+	ids := make([]int64, 0, 2)
+	for _, name := range []string{"committed-batch", "final-batch"} {
+		id := f.CreateMessage(name)
+		ids = append(ids, id)
+		_, err := f.Store.DB().Exec(`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (?, ?, ?)`,
+			id, "Archived text", `<div hidden>Hidden text</div>`)
+		require.NoError(err)
+	}
+	const migration = "messages_hidden_text_backfill_v1"
+	cursor := strconv.FormatInt(ids[0], 10)
+	_, err := f.Store.DB().Exec(`UPDATE messages SET hidden_text_present = 0`)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, migration)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(`INSERT INTO archive_metadata (key, value) VALUES ('hidden_text_backfill_cursor', ?)`, cursor)
+	require.NoError(err)
+	// The final batch's ledger write fails, so its flags and cursor removal must roll back with it.
+	_, err = f.Store.DB().Exec(`CREATE TRIGGER fail_hidden_text_ledger BEFORE INSERT ON applied_migrations
+		WHEN NEW.name = 'messages_hidden_text_backfill_v1' BEGIN SELECT RAISE(ABORT, 'ledger write failed'); END`)
+	require.NoError(err)
+
+	require.Error(f.Store.InitSchemaContext(t.Context()))
+	var saved string
+	require.NoError(f.Store.DB().QueryRow(`SELECT value FROM archive_metadata WHERE key = 'hidden_text_backfill_cursor'`).Scan(&saved))
+	assert.Equal(cursor, saved, "the cursor survives a failed completion")
+	var hidden bool
+	require.NoError(f.Store.DB().QueryRow(`SELECT hidden_text_present FROM messages WHERE id = ?`, ids[1]).Scan(&hidden))
+	assert.False(hidden, "the final batch rolls back with the ledger write")
+
+	_, err = f.Store.DB().Exec(`DROP TRIGGER fail_hidden_text_ledger`)
+	require.NoError(err)
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	require.NoError(f.Store.DB().QueryRow(`SELECT hidden_text_present FROM messages WHERE id = ?`, ids[1]).Scan(&hidden))
+	assert.True(hidden, "the retry finishes the walk")
+	applied, err := f.Store.IsMigrationApplied(migration)
+	require.NoError(err)
+	assert.True(applied)
+}
+
 func TestUpdateMessageDerivedTextHiddenTextPresent(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
