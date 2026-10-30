@@ -13,7 +13,7 @@
   import type { MessageViewMode } from '../../archive/types';
   import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
-  import { conversationTaskStatusKey, type TaskStatusLoader } from '../tasks/task-status';
+  import { conversationTaskStatusKey, type TaskStatusLoader, type ConversationTaskStatus } from '../tasks/task-status';
   import { reportError, reportAction, reportWhenVisible } from '../../telemetry/actions';
 
   type APIMessageDetail = GeneratedMessageDetail;
@@ -46,9 +46,14 @@
   const apiClient = untrack(() => client);
   const taskStatusController = new AbortController();
   let taskStatus: ReturnType<TaskStatusLoader> | undefined;
-  setContext<TaskStatusLoader>(conversationTaskStatusKey, () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).finally(() => {
-    taskStatus = undefined;
-  }));
+  let latestTaskStatus = $state<ConversationTaskStatus['latest']>();
+  setContext<ConversationTaskStatus>(conversationTaskStatusKey, {
+    load: () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).then(response => {
+      if (response.data) latestTaskStatus = response.data;
+      return response;
+    }).finally(() => { taskStatus = undefined; }),
+    get latest() { return latestTaskStatus; },
+  });
   onDestroy(() => taskStatusController.abort());
   let scroller = $state<HTMLElement>();
   let messages = $state<APIMessageDetail[]>([]);
