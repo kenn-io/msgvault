@@ -16,6 +16,7 @@ env:
 
 jobs:
   changes:
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
