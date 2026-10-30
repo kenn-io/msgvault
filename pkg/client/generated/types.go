@@ -11405,6 +11405,127 @@ func (p PersonFactClaimsResponse) Validate() error {
 	return errors
 }
 
+type PersonFactContest struct {
+	Claims             []PersonFactContestClaim   `json:"claims" validate:"required"`
+	Current            []PersonFactContestCurrent `json:"current" validate:"required"`
+	ResolutionRevision string                     `json:"resolution_revision" validate:"required"`
+	ResolvedAt         time.Time                  `json:"resolved_at" validate:"required"`
+	Target             TargetDescriptor           `json:"target"`
+}
+
+func (p PersonFactContest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Claims, "required"); err != nil {
+		errors = errors.Append("Claims", err)
+	}
+	for i, item := range p.Claims {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Claims[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Current, "required"); err != nil {
+		errors = errors.Append("Current", err)
+	}
+	for i, item := range p.Current {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Current[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ResolutionRevision, "required"); err != nil {
+		errors = errors.Append("ResolutionRevision", err)
+	}
+	if err := typesValidator.Var(p.ResolvedAt, "required"); err != nil {
+		errors = errors.Append("ResolvedAt", err)
+	}
+	if v, ok := any(p.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFactContestClaim struct {
+	ClaimKey   string               `json:"claim_key" validate:"required"`
+	Decision   PersonFactDecision   `json:"decision"`
+	Evidence   []PersonFactEvidence `json:"evidence" validate:"required"`
+	Relation   string               `json:"relation" validate:"required"`
+	ValidFrom  *time.Time           `json:"valid_from,omitempty"`
+	ValidUntil *time.Time           `json:"valid_until,omitempty"`
+	Value      string               `json:"value" validate:"required"`
+}
+
+func (p PersonFactContestClaim) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.ClaimKey, "required"); err != nil {
+		errors = errors.Append("ClaimKey", err)
+	}
+	if v, ok := any(p.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if err := typesValidator.Var(p.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
+	for i, item := range p.Evidence {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Evidence[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Relation, "required"); err != nil {
+		errors = errors.Append("Relation", err)
+	}
+	if err := typesValidator.Var(p.Value, "required"); err != nil {
+		errors = errors.Append("Value", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFactContestCurrent struct {
+	ActiveFrom time.Time `json:"active_from" validate:"required"`
+	Declared   bool      `json:"declared"`
+	Value      string    `json:"value" validate:"required"`
+}
+
+func (p PersonFactContestCurrent) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonFactContestsResponse struct {
+	Contests []PersonFactContest `json:"contests" validate:"required"`
+}
+
+func (p PersonFactContestsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Contests, "required"); err != nil {
+		errors = errors.Append("Contests", err)
+	}
+	for i, item := range p.Contests {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Contests[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonFactDecision struct {
 	Action            string                   `json:"action" validate:"required"`
 	ClaimKey          string                   `json:"claim_key" validate:"required"`

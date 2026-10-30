@@ -1130,6 +1130,11 @@ type ListPersonFactClaimsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonFactContestsQuery struct {
+	// IncludeSensitive Include sensitive targets
+	IncludeSensitive *bool `json:"include_sensitive,omitempty"`
+}
+
 type ListPersonFactDecisionsQuery struct {
 	// Target Exact target as kind:key:sha256:<64 lowercase hex characters>
 	Target *string `json:"target,omitempty"`

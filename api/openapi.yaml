@@ -11710,6 +11710,84 @@ components:
       required:
         - claims
       type: object
+    PersonFactContest:
+      additionalProperties: true
+      properties:
+        claims:
+          items:
+            $ref: "#/components/schemas/PersonFactContestClaim"
+          type: array
+        current:
+          items:
+            $ref: "#/components/schemas/PersonFactContestCurrent"
+          type: array
+        resolution_revision:
+          type: string
+        resolved_at:
+          format: date-time
+          type: string
+        target:
+          $ref: "#/components/schemas/TargetDescriptor"
+      required:
+        - target
+        - resolved_at
+        - resolution_revision
+        - current
+        - claims
+      type: object
+    PersonFactContestClaim:
+      additionalProperties: true
+      properties:
+        claim_key:
+          type: string
+        decision:
+          $ref: "#/components/schemas/PersonFactDecision"
+        evidence:
+          items:
+            $ref: "#/components/schemas/PersonFactEvidence"
+          type: array
+        relation:
+          type: string
+        valid_from:
+          format: date-time
+          type: string
+        valid_until:
+          format: date-time
+          type: string
+        value:
+          type: string
+      required:
+        - claim_key
+        - relation
+        - value
+        - decision
+        - evidence
+      type: object
+    PersonFactContestCurrent:
+      additionalProperties: true
+      properties:
+        active_from:
+          format: date-time
+          type: string
+        declared:
+          type: boolean
+        value:
+          type: string
+      required:
+        - value
+        - active_from
+        - declared
+      type: object
+    PersonFactContestsResponse:
+      additionalProperties: true
+      properties:
+        contests:
+          items:
+            $ref: "#/components/schemas/PersonFactContest"
+          type: array
+      required:
+        - contests
+      type: object
     PersonFactDecision:
       additionalProperties: true
       properties:
@@ -16644,7 +16722,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.27.0
+  version: 3.28.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -28404,6 +28482,58 @@ paths:
       security:
         - apiKey: []
       summary: List immutable person fact claims
+      tags:
+        - API
+  /api/v1/people/{id}/fact-contests:
+    get:
+      operationId: listPersonFactContests
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Include sensitive targets
+          in: query
+          name: include_sensitive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactContestsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List contested person facts
       tags:
         - API
   /api/v1/people/{id}/fact-decisions:
