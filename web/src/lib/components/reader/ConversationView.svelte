@@ -47,7 +47,7 @@
   const taskStatusController = new AbortController();
   let taskStatus: ReturnType<TaskStatusLoader> | undefined;
   setContext<TaskStatusLoader>(conversationTaskStatusKey, () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).then(
-    result => { if (!result.data || result.data.state === 'unreachable') taskStatus = undefined; return result; },
+    result => { if (!result.data || ['unreachable', 'not_found'].includes(result.data.state)) taskStatus = undefined; return result; },
     cause => { taskStatus = undefined; throw cause; },
   ));
   onDestroy(() => taskStatusController.abort());
