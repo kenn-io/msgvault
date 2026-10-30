@@ -243,7 +243,7 @@ describe('EverythingWorkspace', () => {
     expect(screen.getByText(/after:2025-01-01/)).toBeDefined();
     expect(screen.getByText(/label:important/)).toBeDefined();
 
-    const searchInput = screen.getByRole('searchbox', { name: 'Search everything' });
+    const searchInput = screen.getByRole('searchbox', { name: 'Search messages' });
     const refineButton = screen.getByRole('button', { name: 'Refine search' });
     await fireEvent.click(refineButton);
     expect(document.activeElement).toBe(searchInput);
@@ -2077,7 +2077,7 @@ describe('EverythingWorkspace', () => {
     await waitFor(() => expect(alphaRequests).toHaveLength(3));
     expect(state.current.activeRow).toBe('message:1200');
 
-    const search = screen.getByRole('searchbox', { name: 'Search everything' });
+    const search = screen.getByRole('searchbox', { name: 'Search messages' });
     await fireEvent.input(search, { target: { value: 'beta' } });
     await waitFor(() => expect(betaRequests.length).toBeGreaterThan(0));
     await new Promise((resolve) => setTimeout(resolve, 20));

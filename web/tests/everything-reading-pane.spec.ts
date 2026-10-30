@@ -128,7 +128,7 @@ test('recording reader restores history and focus', async ({ page }) => {
   await expect(reader).toHaveCount(0);
   await page.goBack();
   await expect(reader).toBeVisible();
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('quarterly');
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('quarterly');
   await expect(link).toBeVisible();
   await page.clock.fastForward(30_001);
   await reader.getByRole('button', { name: 'Close reading pane' }).click();
@@ -288,7 +288,7 @@ test('global command and Escape shortcuts stay suspended in editable controls', 
   });
 
   for (const locator of [
-    page.getByRole('searchbox', { name: 'Search everything' }),
+    page.getByRole('searchbox', { name: 'Search messages' }),
     page.locator('#shortcut-textarea'),
     page.locator('#shortcut-editable')
   ]) {
