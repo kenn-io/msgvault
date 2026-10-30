@@ -9,7 +9,7 @@ import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-sup
 import AppShell from '../shell/AppShell.svelte';
 
 const detail: MessageDetail = { id: 42, conversation_id: 8, message_type: 'meeting_transcript', subject: 'Archived review', sent_at: '2026-01-01T00:00:00Z', from: 'Example', to: [], body: 'Archived transcript body', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Archived' };
-const action = { meeting: { message_id: 42, conversation_id: 8, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', source_message_id: 'source-42', title: 'Action provenance title', occurred_at: detail.sent_at, archive_path: '/api/v1/messages/42' },
+const action = { meeting: { message_id: 42, conversation_id: 8, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', source_message_id: 'source-42', title: 'Action provenance title', occurred_at: detail.sent_at },
   action: { ordinal: 0, locator: 'action:0', origin: 'source', title: 'Prepare review', status: 'pending' } };
 
 async function metricsResponse(request: Request): Promise<Response> {
@@ -63,7 +63,7 @@ function groupNavigationClient() {
       const body = await request.json();
       const messageID = body.scope?.message_ids?.[0];
       const rows = messageID === 43
-        ? [{ ...action, meeting: { ...action.meeting, message_id: 43, archive_path: '/api/v1/messages/43' } }] : [action];
+        ? [{ ...action, meeting: { ...action.meeting, message_id: 43 } }] : [action];
       return Response.json(meetingActions({ rows, total_count: rows.length }));
     }
     if (url.pathname.endsWith('/messages/42')) return Response.json(detail);
