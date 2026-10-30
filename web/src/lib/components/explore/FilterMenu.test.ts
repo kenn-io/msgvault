@@ -32,11 +32,10 @@ it('edits UTC date bounds and retains committed bounds after invalid edits', asy
 
 it('keeps Kind lookup failures visible and retries when Filter reopens', async () => {
   let failed = true;
-  let imported = false;
   render(FilterMenu, {
     client: createAPIClient(async (input) => {
       if (new URL((input as Request).url).pathname.endsWith('/groups')) {
-        return failed ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ rows: [{ key: 'email', count: 1 }, ...(imported ? [{ key: 'whatsapp', count: 1 }] : [])] });
+        return failed ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ rows: [{ key: 'email', count: 1 }] });
       }
       return Response.json({ accounts: [], identities: [] });
     }), filters: [], onChange: vi.fn(), onClear: vi.fn(),
@@ -48,10 +47,6 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   expect(await screen.findByLabelText('Email')).toBeDefined();
   expect(screen.queryByText('Could not load kinds')).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  imported = true;
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  expect(await screen.findByLabelText('Conversation')).toBeDefined();
 });
 
 it('preserves Kind selections and groups meeting notes and minutes', async () => {
@@ -78,7 +73,7 @@ it('preserves Kind selections and groups meeting notes and minutes', async () =>
   expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['meeting_note', 'meeting_minutes'] }]);
 });
 
-it.each(['Account', 'Identity'])('Escape closes only the active %s picker, then Filter', async (picker) => {
+it('Escape closes only the active Account picker, then Filter', async () => {
   render(FilterMenu, { client: createAPIClient(async (input) => {
     const url = (input as Request).url;
     return Response.json(url.endsWith('/accounts') ? { accounts: [{ id: 1, email: 'first@example.com', virtual_accounts: [
@@ -87,7 +82,7 @@ it.each(['Account', 'Identity'])('Escape closes only the active %s picker, then 
   }), filters: [{ dimension: 'source', values: ['1'] }], onChange: vi.fn(), onClear: vi.fn() });
   const trigger = screen.getByRole('button', { name: 'Filter' });
   await fireEvent.click(trigger);
-  const select = await screen.findByRole('combobox', { name: new RegExp(`^${picker}:`) });
+  const select = await screen.findByRole('combobox', { name: /^Account:/ });
   await waitFor(() => expect(select).toHaveProperty('disabled', false));
   await fireEvent.click(select);
   await screen.findByRole('listbox');

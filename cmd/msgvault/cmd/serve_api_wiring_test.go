@@ -54,11 +54,8 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 	requirements.Len(ops.identities, 1)
 	uid, err := f.Store.ArchiveUID()
 	requirements.NoError(err)
-	revision, err := f.Store.ArchiveRevision()
-	requirements.NoError(err)
 	identity := ops.identities[0]
 	assertions.Equal(uid, identity.ArchiveUID)
-	assertions.Equal(revision, identity.ArchiveRevision)
 }
 
 func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {

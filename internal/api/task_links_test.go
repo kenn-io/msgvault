@@ -128,6 +128,10 @@ func TestTaskIdentityUsesExistingArchiveUIDCapability(t *testing.T) {
 	require.Len(ops.identities, 1)
 	assert.Equal(uid, ops.identities[0].ArchiveUID)
 	assert.Equal("1", ops.identities[0].ArchiveRevision)
+	assert.Equal(id, ops.identities[0].MessageID)
+	assert.Equal("gmail", ops.identities[0].SourceType)
+	assert.Equal("test@example.com", ops.identities[0].SourceIdentifier)
+	assert.Equal("uid-only-email", ops.identities[0].SourceMessageID)
 }
 
 func TestCreateTaskForEmail(t *testing.T) {
@@ -135,21 +139,17 @@ func TestCreateTaskForEmail(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ops := &fakeTaskLinkOperations{}
-	f := storetest.New(t)
-	id := f.CreateMessage("identity-email")
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "test-key"}}, Store: f.Store, Logger: testLogger(), TaskLinkOperations: ops})
-	uid, err := f.Store.ArchiveUID()
-	requirements.NoError(err)
+	srv := taskLinkServer(t, "email", ops)
 	body := []byte(`{"title":"Follow up","description":"Synthetic notes","priority":"high","labels":["mail","follow-up"],"added_at":"2026-07-19T01:02:03Z"}`)
 	for range 2 {
-		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tasks", id), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/42/tasks", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", "test-key")
 		req.Header.Set("X-Request-ID", "browser-request-1")
 		resp := httptest.NewRecorder()
 		srv.Router().ServeHTTP(resp, req)
 		requirements.Equal(http.StatusCreated, resp.Code, resp.Body.String())
-		assertions.NotContains(resp.Body.String(), uid)
+		assertions.NotContains(resp.Body.String(), "archive-a")
 	}
 	t.Run("stable server idempotency", func(t *testing.T) {
 		assertions := assert.New(t)
@@ -164,15 +164,6 @@ func TestCreateTaskForEmail(t *testing.T) {
 		assertions.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
 		assertions.Equal("high", ops.creates[0].Priority)
 		assertions.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
-	})
-	t.Run("resolved source identity", func(t *testing.T) {
-		assertions := assert.New(t)
-		for _, identity := range []tasklinks.MessageIdentity{ops.identities[0], ops.identities[1]} {
-			assertions.Equal(id, identity.MessageID)
-			assertions.Equal("gmail", identity.SourceType)
-			assertions.Equal("test@example.com", identity.SourceIdentifier)
-			assertions.Equal("identity-email", identity.SourceMessageID)
-		}
 	})
 }
 
