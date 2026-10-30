@@ -43,21 +43,8 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 const sourceRun = canonical.runs.find(run => run.kind === 'source_sync')!;
 const OPERATION_RUN = sourceRun.id;
 
-function documentVectorStatusResponse() {
-  return { enabled: true, configured: true, status: { coverage: { ready: 7, required: 9 } } };
-}
-
-function visualAttachmentStatusResponse() {
-  return {
-    current: 8, eligible: 10, retryable: 1, terminal: 0, unavailable: 1,
-    active_leases: 0, journal_lag: 2, reconciliation_complete: false
-  };
-}
-
 function operationAuthorityResponse(path: string): Response | undefined {
   if (path.endsWith('/documents/status/current')) return Response.json(documentStatus);
-  if (path.endsWith('/documents/vectors/status')) return Response.json(documentVectorStatusResponse());
-  if (path.endsWith('/multimodal/status')) return Response.json(visualAttachmentStatusResponse());
   return undefined;
 }
 
@@ -342,6 +329,7 @@ describe('AppShell', () => {
     }
     await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Light' }));
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Comfortable' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Use Settings defaults' }));
     expect(screen.queryByRole('menuitem', { name: 'Use Settings defaults' })).toBeNull();
     expect(document.documentElement.classList.contains('dark')).toBe(true);
@@ -2934,6 +2922,7 @@ it('preserves selected run filters in the URL and restores detail on remount', a
   state = new ExploreState(window);
   rendered = render(AppShell, { client, state });
   await screen.findByRole('region', { name: 'Operation run detail' });
+  expect(state.current.operationKind).toBe('source_sync');
   rendered.unmount(); state.destroy();
 });
 

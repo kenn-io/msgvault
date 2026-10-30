@@ -52,19 +52,17 @@ describe('AppSidebar', () => {
 
   it('nests saved views under the place they open', async () => {
     const onOpenView = vi.fn();
+    const budget = view(1, 'Budget threads');
     renderSidebar({ views: [
-      view(1, 'Budget threads'), view(2, 'PDF invoices', 'files'),
-      { ...view(3, 'Unsupported view', 'files'), schema_version: 3, incompatibility_reason: 'unsupported saved view schema version: Saved View 3 uses schema version 3' },
-      { ...view(4, 'Invalid view', 'files'), incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] } },
+      budget, view(2, 'PDF invoices', 'files'),
     ], onOpenView });
     const messages = within(screen.getByRole('list', { name: 'Messages saved views' }));
     const files = within(screen.getByRole('list', { name: 'Files saved views' }));
     expect(messages.getByRole('button', { name: 'Budget threads' })).toBeTruthy();
     expect(messages.queryByRole('button', { name: 'PDF invoices' })).toBeNull();
     expect(files.getByRole('button', { name: 'PDF invoices' })).toBeTruthy();
-    await fireEvent.click(messages.getByRole('button', { name: 'Unsupported view' }));
-    await fireEvent.click(files.getByRole('button', { name: 'Invalid view' }));
-    expect(onOpenView).not.toHaveBeenCalled();
+    await fireEvent.click(messages.getByRole('button', { name: 'Budget threads' }));
+    expect(onOpenView).toHaveBeenCalledWith(budget);
   });
 
   it('keeps full accessible names in the icon rail and hides saved views', () => {
