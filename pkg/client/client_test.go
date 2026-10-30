@@ -19,6 +19,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+var _ []generated.MessageDetail = generated.ConversationResponse{}.Messages
+
 func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 	want := `{
 		"query":"invoice",

@@ -3025,85 +3025,6 @@ func (c ContextPassage) Validate() error {
 	return errors
 }
 
-type ConversationMessage struct {
-	Attachments    []AttachmentInfo `json:"attachments" validate:"required"`
-	Bcc            []string         `json:"bcc,omitempty"`
-	Body           string           `json:"body" validate:"required"`
-	BodyHTML       *string          `json:"body_html,omitzero"`
-	BodyOmitted    *bool            `json:"body_omitted,omitempty"`
-	Cc             []string         `json:"cc,omitempty"`
-	ConversationID *int64           `json:"conversation_id,omitempty"`
-
-	// ConversationTitle Conversation title, when available.
-	ConversationTitle *string                   `json:"conversation_title,omitzero"`
-	DeletedAt         *string                   `json:"deleted_at,omitzero"`
-	From              string                    `json:"from" validate:"required"`
-	FromEmail         *string                   `json:"from_email,omitzero"`
-	FromName          *string                   `json:"from_name,omitzero"`
-	FromParticipantID *int64                    `json:"from_participant_id,omitempty"`
-	FromPhone         *string                   `json:"from_phone,omitzero"`
-	HasAttachments    bool                      `json:"has_attachments"`
-	ID                int64                     `json:"id"`
-	IsFromMe          *bool                     `json:"is_from_me,omitempty"`
-	Labels            []string                  `json:"labels" validate:"required"`
-	MessageType       *string                   `json:"message_type,omitzero"`
-	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
-	SentAt            string                    `json:"sent_at" validate:"required"`
-	SizeBytes         int64                     `json:"size_bytes"`
-	Snippet           string                    `json:"snippet" validate:"required"`
-	SourceID          *int64                    `json:"source_id,omitempty"`
-	SourceMessageID   *string                   `json:"source_message_id,omitzero"`
-	Subject           string                    `json:"subject" validate:"required"`
-	To                []string                  `json:"to" validate:"required"`
-	ToParticipants    []ConversationParticipant `json:"to_participants,omitempty"`
-}
-
-func (c ConversationMessage) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(c.Attachments, "required"); err != nil {
-		errors = errors.Append("Attachments", err)
-	}
-	for i, item := range c.Attachments {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Attachments[%d]", i), err)
-			}
-		}
-	}
-	if err := typesValidator.Var(c.Body, "required"); err != nil {
-		errors = errors.Append("Body", err)
-	}
-	if err := typesValidator.Var(c.From, "required"); err != nil {
-		errors = errors.Append("From", err)
-	}
-	if err := typesValidator.Var(c.Labels, "required"); err != nil {
-		errors = errors.Append("Labels", err)
-	}
-	if err := typesValidator.Var(c.SentAt, "required"); err != nil {
-		errors = errors.Append("SentAt", err)
-	}
-	if err := typesValidator.Var(c.Snippet, "required"); err != nil {
-		errors = errors.Append("Snippet", err)
-	}
-	if err := typesValidator.Var(c.Subject, "required"); err != nil {
-		errors = errors.Append("Subject", err)
-	}
-	if err := typesValidator.Var(c.To, "required"); err != nil {
-		errors = errors.Append("To", err)
-	}
-	for i, item := range c.ToParticipants {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("ToParticipants[%d]", i), err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
 type ConversationParticipant struct {
 	Display       string `json:"display" validate:"required"`
 	ParticipantID int64  `json:"participant_id"`
@@ -3114,12 +3035,12 @@ func (c ConversationParticipant) Validate() error {
 }
 
 type ConversationResponse struct {
-	AnchorID  int64                 `json:"anchor_id"`
-	HasAfter  bool                  `json:"has_after"`
-	HasBefore bool                  `json:"has_before"`
-	ID        int64                 `json:"id"`
-	Messages  []ConversationMessage `json:"messages" validate:"required"`
-	Total     int64                 `json:"total"`
+	AnchorID  int64           `json:"anchor_id"`
+	HasAfter  bool            `json:"has_after"`
+	HasBefore bool            `json:"has_before"`
+	ID        int64           `json:"id"`
+	Messages  []MessageDetail `json:"messages" validate:"required"`
+	Total     int64           `json:"total"`
 }
 
 func (c ConversationResponse) Validate() error {
@@ -7954,25 +7875,27 @@ type MessageDetail struct {
 	ConversationID *int64              `json:"conversation_id,omitempty"`
 
 	// ConversationTitle Conversation title, when available.
-	ConversationTitle *string  `json:"conversation_title,omitzero"`
-	DeletedAt         *string  `json:"deleted_at,omitzero"`
-	From              string   `json:"from" validate:"required"`
-	FromEmail         *string  `json:"from_email,omitzero"`
-	FromName          *string  `json:"from_name,omitzero"`
-	FromPhone         *string  `json:"from_phone,omitzero"`
-	HasAttachments    bool     `json:"has_attachments"`
-	ID                int64    `json:"id"`
-	IsFromMe          *bool    `json:"is_from_me,omitempty"`
-	Labels            []string `json:"labels" validate:"required"`
-	MessageType       *string  `json:"message_type,omitzero"`
-	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
-	SentAt            string   `json:"sent_at" validate:"required"`
-	SizeBytes         int64    `json:"size_bytes"`
-	Snippet           string   `json:"snippet" validate:"required"`
-	SourceID          *int64   `json:"source_id,omitempty"`
-	SourceMessageID   *string  `json:"source_message_id,omitzero"`
-	Subject           string   `json:"subject" validate:"required"`
-	To                []string `json:"to" validate:"required"`
+	ConversationTitle *string                   `json:"conversation_title,omitzero"`
+	DeletedAt         *string                   `json:"deleted_at,omitzero"`
+	From              string                    `json:"from" validate:"required"`
+	FromEmail         *string                   `json:"from_email,omitzero"`
+	FromName          *string                   `json:"from_name,omitzero"`
+	FromParticipantID *int64                    `json:"from_participant_id,omitempty"`
+	FromPhone         *string                   `json:"from_phone,omitzero"`
+	HasAttachments    bool                      `json:"has_attachments"`
+	ID                int64                     `json:"id"`
+	IsFromMe          *bool                     `json:"is_from_me,omitempty"`
+	Labels            []string                  `json:"labels" validate:"required"`
+	MessageType       *string                   `json:"message_type,omitzero"`
+	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
+	SentAt            string                    `json:"sent_at" validate:"required"`
+	SizeBytes         int64                     `json:"size_bytes"`
+	Snippet           string                    `json:"snippet" validate:"required"`
+	SourceID          *int64                    `json:"source_id,omitempty"`
+	SourceMessageID   *string                   `json:"source_message_id,omitzero"`
+	Subject           string                    `json:"subject" validate:"required"`
+	To                []string                  `json:"to" validate:"required"`
+	ToParticipants    []ConversationParticipant `json:"to_participants,omitempty"`
 }
 
 func (m MessageDetail) Validate() error {
@@ -8014,6 +7937,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.To, "required"); err != nil {
 		errors = errors.Append("To", err)
+	}
+	for i, item := range m.ToParticipants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ToParticipants[%d]", i), err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil

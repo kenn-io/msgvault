@@ -18,26 +18,18 @@ const (
 
 // ConversationResponse is a bounded chronological conversation window.
 type ConversationResponse struct {
-	ID        int64                 `json:"id"`
-	AnchorID  int64                 `json:"anchor_id"`
-	Messages  []ConversationMessage `json:"messages"`
-	HasBefore bool                  `json:"has_before"`
-	HasAfter  bool                  `json:"has_after"`
-	Total     int64                 `json:"total"`
+	ID        int64           `json:"id"`
+	AnchorID  int64           `json:"anchor_id"`
+	Messages  []MessageDetail `json:"messages"`
+	HasBefore bool            `json:"has_before"`
+	HasAfter  bool            `json:"has_after"`
+	Total     int64           `json:"total"`
 }
 
 // ConversationParticipant identifies the archived person behind a display label.
 type ConversationParticipant struct {
 	ParticipantID int64  `json:"participant_id"`
 	Display       string `json:"display"`
-}
-
-// ConversationMessage retains the identities used by this message's display labels.
-type ConversationMessage struct {
-	MessageDetail
-
-	FromParticipantID int64                     `json:"from_participant_id,omitempty"`
-	ToParticipants    []ConversationParticipant `json:"to_participants,omitempty"`
 }
 
 type conversationStore interface {
@@ -193,7 +185,7 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "conversation_anchor_not_found", "Anchor message is not in this conversation")
 		return
 	}
-	messages := make([]ConversationMessage, 0, len(window.Messages))
+	messages := make([]MessageDetail, 0, len(window.Messages))
 	for _, message := range window.Messages {
 		detail := MessageDetail{
 			RelatedMessageID: message.RelatedMessageID,
@@ -211,7 +203,9 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		for _, recipient := range message.ToParticipants {
 			participants = append(participants, ConversationParticipant{ParticipantID: recipient.ParticipantID, Display: recipient.Display})
 		}
-		messages = append(messages, ConversationMessage{MessageDetail: detail, FromParticipantID: message.FromParticipantID, ToParticipants: participants})
+		detail.FromParticipantID = message.FromParticipantID
+		detail.ToParticipants = participants
+		messages = append(messages, detail)
 	}
 	writeJSON(w, http.StatusOK, ConversationResponse{
 		ID:        conversationID,
