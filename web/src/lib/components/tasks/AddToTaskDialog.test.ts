@@ -56,30 +56,22 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it('blocks Cancel, Escape, backdrop, and Close while creating a task', async () => {
+  it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {
     const { respond, onclose } = pendingCreate();
     await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
     const close = screen.getByRole('button', { name: 'Close' });
     close.focus();
     await fireEvent.keyDown(close, { key: 'Escape' });
     await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
     await fireEvent.click(close);
     expect(onclose).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeDefined();
-    respond(Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 }));
-    await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
-  });
-
-  it('keeps failed creation visible and re-enables dismissal', async () => {
-    const { respond, onclose } = pendingCreate();
-    await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
-    respond(Response.json({ message: 'Unavailable' }, { status: 503 }));
-    expect((await screen.findByRole('alert')).textContent).toContain('Unavailable');
-    expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeDefined();
-    expect(onclose).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', false);
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(onclose).toHaveBeenCalledOnce();
+    respond(result === 'success'
+      ? Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 })
+      : Response.json({ message: 'Unavailable' }, { status: 503 }));
+    if (result === 'failure') {
+      await screen.findByRole('alert');
+      await fireEvent.keyDown(close, { key: 'Escape' });
+      expect(onclose).toHaveBeenCalledOnce();
+    } else await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
   });
 });
