@@ -15,6 +15,37 @@ const row = {
   message_count: 1, match: {}
 };
 
+for (const workspace of ['Sources', 'Staged deletions']) {
+  test(`${workspace} keeps long lists scrollable within the workspace`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 520 });
+    await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+    await page.route('**/api/v1/carddav/connections', route => route.fulfill({ json: { connections: [] } }));
+    await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: Array.from({ length: 30 }, (_, index) => ({
+      id: index + 1, source_type: 'gmail', identifier: `archive-${index + 1}@example.com`, display_name: `Archive ${index + 1}`,
+      last_sync_at: null, updated_at: row.occurred_at, active_sync: null, latest_sync: null, last_successful_sync: null,
+      can_sync: false, scheduled: false, sync_unavailable_reason: 'sync_not_configured', next_sync_at: null
+    })) } }));
+    const batches = Array.from({ length: 30 }, (_, index) => ({
+      id: `batch-${index + 1}`, status: 'pending', message_count: index + 1,
+      created_at: new Date(Date.UTC(2026, 6, 19, 10, index)).toISOString(), created_by: 'api'
+    }));
+    await page.route('**/api/v1/deletions', route => route.fulfill({ json: { manifests: batches } }));
+    await page.route('**/api/v1/deletions/batch-*', route => route.fulfill({ json: {
+      ...batches.find(batch => route.request().url().endsWith(`/${batch.id}`)), account: 'archive@example.com'
+    } }));
+    await page.goto(`/?workspace=${workspace === 'Sources' ? 'sources' : 'deletions'}`);
+    const table = page.getByRole('table', { name: workspace });
+    await expect(table.getByRole('row')).toHaveCount(31);
+    const lastRow = table.getByRole('row').last();
+    const scroller = table.locator('..');
+    await expect.poll(() => scroller.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0);
+    await scroller.hover();
+    await page.mouse.wheel(0, 5000);
+    await expect(lastRow).toBeInViewport();
+    if (workspace === 'Staged deletions') await expect(page.getByRole('button', { name: 'Copy msgvault delete-staged', exact: true })).toBeInViewport();
+  });
+}
+
 function syncRun(status: string, processed: number) {
   return {
     id: 9, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null,
@@ -122,7 +153,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   expect(sourceRequests.every((request) => request.accept !== 'text/event-stream')).toBe(true);
 
   await page.getByRole('button', { name: 'Invoices' }).click();
-  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('invoice');
+  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('invoice');
   await expect(page.getByRole('grid', { name: 'Messages results' })).toBeFocused();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
 });
