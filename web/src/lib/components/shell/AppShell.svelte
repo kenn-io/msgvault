@@ -1312,14 +1312,13 @@
           controller={relationshipsController}
           facet={exploreState.current.relationshipFacet}
           target={exploreState.current.relationshipTarget}
-          bind:reader={() => exploreState.current.relationshipReader, (relationshipReader) => replaceTransient({ relationshipReader })}
           showAll={exploreState.current.relationshipShowAll}
           filesOpen={exploreState.current.relationshipFiles}
           predicate={exploreState.predicate()}
           personFilePresentation={exploreState.current.personFilePresentation}
           personFileDirections={exploreState.current.personFileDirections}
           onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
-          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipReader: null, relationshipFiles: false })}
+          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
           onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
           onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
           onPersonFilePresentationChange={(personFilePresentation) =>
@@ -1337,7 +1336,6 @@
               scrollAnchor: null,
             })}
           onOpenEverything={() => commitWorkspace('everything')}
-          onOpenPerson={openRelationship}
           onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}

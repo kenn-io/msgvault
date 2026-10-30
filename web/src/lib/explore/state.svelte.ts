@@ -20,7 +20,6 @@ import type {
   IdentityReviewState,
   RelationshipReviewState,
   RelationshipFacet,
-  RelationshipReader,
   OperationKind,
   OperationLane,
   OperationStatusAuthority,
@@ -65,8 +64,7 @@ const TRANSIENT_HISTORY_FIELDS = [
   'columns',
   'columnWidths',
   'activeRow',
-  'scrollAnchor',
-  'relationshipReader'
+  'scrollAnchor'
 ] as const satisfies ReadonlyArray<keyof ExploreURLState>;
 const RESTORATION_INVALIDATING_FIELDS = new Set<keyof ExploreURLState>([
   'workspace',
@@ -179,7 +177,6 @@ export const defaultExploreURLState: ExploreURLState = {
   selectedIdentifier: null,
   relationshipFacet: 'people',
   relationshipTarget: null,
-  relationshipReader: null,
   relationshipShowAll: false,
   relationshipFiles: false,
   operationHistory: false,
@@ -392,25 +389,6 @@ function legacyRelationshipTarget(
   return null;
 }
 
-function relationshipReader(value: unknown, workspace: string, target: string | null): RelationshipReader | null {
-  if (!target || workspace !== 'relationships' || !isRecord(value) || value.target !== target || !isRecord(value.row)) return null;
-  const row = value.row;
-  if (!['key', 'kind', 'occurred_at', 'preview', 'title'].every(key => typeof row[key] === 'string') ||
-    typeof row.source_id !== 'number' || typeof row.message_count !== 'number' || typeof row.has_attachments !== 'boolean') return null;
-  return {
-    target,
-    row: { key: row.key as string, kind: row.kind as string, occurred_at: row.occurred_at as string,
-      preview: row.preview as string, title: row.title as string, source_id: row.source_id,
-      message_count: row.message_count, has_attachments: row.has_attachments,
-      ...(typeof row.conversation_id === 'number' ? { conversation_id: row.conversation_id } : {}),
-      ...(typeof row.anchor_message_id === 'number' ? { anchor_message_id: row.anchor_message_id } : {}),
-      ...(typeof row.first_at === 'string' ? { first_at: row.first_at } : {}) },
-    ...(typeof value.anchorId === 'number' ? { anchorId: value.anchorId } : {}),
-    ...(isRecord(value.bounds) && typeof value.bounds.start === 'string' && typeof value.bounds.end === 'string'
-      ? { bounds: { start: value.bounds.start, end: value.bounds.end } } : {}),
-  };
-}
-
 function normalize(value: unknown): ExploreURLState {
   if (!isRecord(value)) return freshDefaults();
   const {
@@ -537,7 +515,6 @@ function normalize(value: unknown): ExploreURLState {
     selectedIdentifier: typeof value.selectedIdentifier === 'string' ? value.selectedIdentifier : null,
     relationshipFacet,
     relationshipTarget,
-    relationshipReader: relationshipReader(value.relationshipReader, normalizedWorkspace, relationshipTarget),
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
     operationHistory: value.operationHistory === true || (value.operationHistory === undefined && value.workspace === 'operations' &&
@@ -598,8 +575,8 @@ const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<Expl
   settingsAuthority: ['settings'],
   settingsCategory: ['settings']
 };
-// Reader, keyboard focus, and scroll position live only in browser history.
-const SESSION_ONLY_FIELDS = new Set<keyof ExploreURLState>(['activeRow', 'scrollAnchor', 'relationshipReader']);
+// Keyboard focus and scroll position live only in browser history.
+const SESSION_ONLY_FIELDS = new Set<keyof ExploreURLState>(['activeRow', 'scrollAnchor']);
 
 function sharedDetails(state: ExploreURLState): Record<string, unknown> {
   return Object.fromEntries(Object.entries(state).filter(([key, value]) => {
@@ -626,11 +603,9 @@ export function serializeExploreURLState(state: ExploreURLState, baseSearch = ''
   return `?${parameters.toString()}`;
 }
 
-function historyEntry(search: string, state: ExploreURLState, index: number): { exploreSearch: string; exploreState: unknown; exploreIndex: number; relationshipReader: unknown } {
-  const { relationshipReader, ...exploreState } = state;
+function historyEntry(search: string, state: ExploreURLState, index: number): { exploreSearch: string; exploreState: unknown; exploreIndex: number } {
   // History entries must be structured-cloneable, so strip reactive proxies.
-  return JSON.parse(JSON.stringify({ exploreSearch: search, exploreState, exploreIndex: index,
-    relationshipReader: relationshipReader ? { version: 1, reader: relationshipReader } : null }));
+  return { exploreSearch: search, exploreState: JSON.parse(JSON.stringify(state)), exploreIndex: index };
 }
 
 export function parseExploreURLState(search: string): ExploreURLState {
@@ -644,7 +619,6 @@ export function parseExploreURLState(search: string): ExploreURLState {
   }
   return normalize({
     ...(isRecord(details) ? details : {}),
-    relationshipReader: null,
     ...(parameters.has('workspace') ? { workspace: parameters.get('workspace') } : {}),
     ...(parameters.has('mode') ? { searchMode: parameters.get('mode') } : {}),
   });
@@ -936,16 +910,10 @@ export class ExploreState {
 
   private readURLState(): ExploreURLState {
     const history = this.browser.history.state;
-    const historyState = isRecord(history) && isRecord(history.exploreState) ? history.exploreState : null;
-    const supportedHistory = historyState && history.exploreSearch === this.browser.location.search &&
-      (historyState.schemaVersion === undefined || historyState.schemaVersion === 1 ||
-        historyState.schemaVersion === defaultExploreURLState.schemaVersion);
-    const parsed = supportedHistory
-      ? normalize({ ...historyState, relationshipReader: null })
+    const parsed = isRecord(history) && history.exploreSearch === this.browser.location.search &&
+      isRecord(history.exploreState)
+      ? normalize(history.exploreState)
       : parseExploreURLState(this.browser.location.search);
-    const snapshot = supportedHistory ? history.relationshipReader : null;
-    parsed.relationshipReader = isRecord(snapshot) && snapshot.version === 1
-      ? relationshipReader(snapshot.reader, parsed.workspace, parsed.relationshipTarget) : null;
     parsed.searchMode = resolveInitialSearchMode(
       explicitSearchModeFromURL(this.browser.location.search),
       this.preferenceStorage,
@@ -1004,7 +972,6 @@ export class ExploreState {
     if (patchKeys.includes('workspace') || patchKeys.includes('presentation')) {
       keysToApply.push('workspace', 'presentation');
     }
-    if (patchKeys.includes('workspace') || patchKeys.includes('relationshipTarget')) keysToApply.push('relationshipReader');
     for (const key of keysToApply) {
       if (key in next) this.current[key] = next[key];
     }

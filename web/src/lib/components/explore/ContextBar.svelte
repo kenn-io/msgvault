@@ -96,7 +96,7 @@
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} onChange={onFiltersChange} />
+      <FilterMenu {client} {filters} onChange={onFiltersChange} onClear={onClearFilters} />
     {:else}
     <Button
       size="sm"

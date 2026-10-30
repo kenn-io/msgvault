@@ -3145,97 +3145,6 @@ components:
         - state
         - evidence
       type: object
-    ConversationMessage:
-      additionalProperties: true
-      properties:
-        attachments:
-          items:
-            $ref: "#/components/schemas/AttachmentInfo"
-          type: array
-        bcc:
-          items:
-            type: string
-          type: array
-        body:
-          type: string
-        body_html:
-          type: string
-        body_omitted:
-          type: boolean
-        cc:
-          items:
-            type: string
-          type: array
-        conversation_id:
-          format: int64
-          type: integer
-        conversation_title:
-          description: Conversation title, when available.
-          type: string
-        deleted_at:
-          type: string
-        from:
-          type: string
-        from_email:
-          type: string
-        from_name:
-          type: string
-        from_participant_id:
-          format: int64
-          type: integer
-        from_phone:
-          type: string
-        has_attachments:
-          type: boolean
-        id:
-          format: int64
-          type: integer
-        is_from_me:
-          type: boolean
-        labels:
-          items:
-            type: string
-          type: array
-        message_type:
-          type: string
-        related_message_id:
-          format: int64
-          type: integer
-        sent_at:
-          type: string
-        size_bytes:
-          format: int64
-          type: integer
-        snippet:
-          type: string
-        source_id:
-          format: int64
-          type: integer
-        source_message_id:
-          type: string
-        subject:
-          type: string
-        to:
-          items:
-            type: string
-          type: array
-        to_participants:
-          items:
-            $ref: "#/components/schemas/ConversationParticipant"
-          type: array
-      required:
-        - body
-        - attachments
-        - id
-        - subject
-        - from
-        - to
-        - sent_at
-        - snippet
-        - labels
-        - has_attachments
-        - size_bytes
-      type: object
     ConversationParticipant:
       additionalProperties: true
       properties:
@@ -3263,7 +3172,7 @@ components:
           type: integer
         messages:
           items:
-            $ref: "#/components/schemas/ConversationMessage"
+            $ref: "#/components/schemas/MessageDetail"
           type: array
         total:
           format: int64
@@ -8176,6 +8085,9 @@ components:
           type: string
         from_name:
           type: string
+        from_participant_id:
+          format: int64
+          type: integer
         from_phone:
           type: string
         has_attachments:
@@ -8211,6 +8123,10 @@ components:
         to:
           items:
             type: string
+          type: array
+        to_participants:
+          items:
+            $ref: "#/components/schemas/ConversationParticipant"
           type: array
       required:
         - body

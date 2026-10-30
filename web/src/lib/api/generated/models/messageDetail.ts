@@ -3,6 +3,7 @@
  */
 import type { AttachmentInfo } from "./attachmentInfo";
 import type { CalendarProjection } from "./calendarProjection";
+import type { ConversationParticipant } from "./conversationParticipant";
 
 export interface MessageDetail {
   attachments: AttachmentInfo[];
@@ -20,6 +21,7 @@ export interface MessageDetail {
   from: string;
   from_email?: string;
   from_name?: string;
+  from_participant_id?: number;
   from_phone?: string;
   has_attachments: boolean;
   id: number;
@@ -34,5 +36,6 @@ export interface MessageDetail {
   source_message_id?: string;
   subject: string;
   to: string[];
+  to_participants?: ConversationParticipant[];
   [key: string]: unknown;
 }

@@ -6,7 +6,7 @@ import FilterMenu from './FilterMenu.svelte';
 it('edits UTC date bounds and retains committed bounds after invalid edits', async () => {
   const onChange = vi.fn();
   const filters = [{ dimension: 'after' as const, values: ['2026-01-01T00:00:00.000Z'] }, { dimension: 'before' as const, values: ['2027-01-01T00:00:00.000Z'] }];
-  render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, onChange });
+  render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, onChange, onClear: vi.fn() });
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2026-01-01');
   expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe('2026-12-31');
@@ -39,7 +39,7 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
         return failed ? Response.json({ message: 'Unavailable' }, { status: 500 }) : Response.json({ rows: [{ key: 'email', count: 1 }, ...(imported ? [{ key: 'whatsapp', count: 1 }] : [])] });
       }
       return Response.json({ accounts: [], identities: [] });
-    }), filters: [], onChange: vi.fn(),
+    }), filters: [], onChange: vi.fn(), onClear: vi.fn(),
   });
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   expect(await screen.findByText('Could not load kinds')).toBeDefined();
@@ -61,7 +61,7 @@ it('preserves Kind selections and groups meeting notes and minutes', async () =>
     client: createAPIClient(async (input) => {
       if (new URL((input as Request).url).pathname.endsWith('/groups')) return Response.json({ rows: meetingsOnly ? [{ key: 'meeting_note' }, { key: 'meeting_minutes' }] : [{ key: 'whatsapp' }, { key: 'discord' }, { key: 'email' }] });
       return Response.json({ accounts: [], identities: [] });
-    }), filters: [{ dimension: 'message_type', values: ['whatsapp', 'restored-kind'] }], onChange,
+    }), filters: [{ dimension: 'message_type', values: ['whatsapp', 'restored-kind'] }], onChange, onClear: vi.fn(),
   });
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   await fireEvent.click(await screen.findByLabelText('Email'));
@@ -84,7 +84,7 @@ it.each(['Account', 'Identity'])('Escape closes only the active %s picker, then 
     return Response.json(url.endsWith('/accounts') ? { accounts: [{ id: 1, email: 'first@example.com', virtual_accounts: [
       { key: 'identity:1:alias', source_id: 1, account_address: 'alias@example.com', message_count: 3, source_deleted_count: 0 },
     ] }] } : url.includes('/identities') ? { identities: [{ identifier: 'alias@example.com' }] } : { rows: [] });
-  }), filters: [{ dimension: 'source', values: ['1'] }], onChange: vi.fn() });
+  }), filters: [{ dimension: 'source', values: ['1'] }], onChange: vi.fn(), onClear: vi.fn() });
   const trigger = screen.getByRole('button', { name: 'Filter' });
   await fireEvent.click(trigger);
   const select = await screen.findByRole('combobox', { name: new RegExp(`^${picker}:`) });
