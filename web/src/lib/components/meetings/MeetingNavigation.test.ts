@@ -19,7 +19,7 @@ async function metricsResponse(request: Request): Promise<Response> {
     : meetingMetrics());
 }
 
-function handler(detailResponse: () => Response | Promise<Response> = () => Response.json(detail), ordinary = false, withEmail = false) {
+function handler(detailResponse: () => Response | Promise<Response> = () => Response.json(detail), withEmail = false) {
   const requests: Request[] = [];
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
@@ -38,7 +38,7 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false });
     if (path.startsWith('/api/v1/people/') || path.startsWith('/api/v1/carddav/')) return Response.json({ error: 'not_found', message: 'Synthetic optional section unavailable.' }, { status: 404 });
     if (path.endsWith('/conversations/8')) return Response.json({ id: 8, messages: [{ ...detail, from_participant_id: 7, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }] }, ...(withEmail ? [{ ...detail, id: 43, message_type: 'email', subject: 'Meeting follow-up', body: 'Email evidence' }] : [])], anchor_id: 42, total: withEmail ? 2 : 1, has_before: false, has_after: false });
-    return Response.json({ rows: ordinary ? [{ key: 'message:42', kind: 'message', message_type: 'meeting_transcript', title: detail.subject, preview: 'Archived', occurred_at: detail.sent_at, conversation_id: 8, anchor_message_id: 42, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', message_count: 1, attachment_count: 0, attachment_size: 0, has_attachments: false, deleted_from_source: false, match: {} }] : [], total_count: ordinary ? 1 : 0, cache_revision: 'cache-1', search_provenance: {} });
+    return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
   });
   return { client, requests };
 }
@@ -87,7 +87,7 @@ function stateWithGroup(): ExploreState {
 
 describe('meeting archive reader navigation', () => {
   it('opens Tasks settings from email evidence in a meeting conversation', async () => {
-    const { client } = handler(undefined, false, true);
+    const { client } = handler(undefined, true);
     const state = stateWithMeetingFilter('archive-meeting:42');
     const view = render(AppShell, { client, state });
     try {

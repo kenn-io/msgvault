@@ -2,8 +2,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import FilterMenu from './FilterMenu.svelte';
+import AddToTaskDialog from '../tasks/AddToTaskDialog.svelte';
 
-it('shows UTC year bounds and edits only the changed boundary', async () => {
+it('edits UTC date bounds and leaves Filter open when the task dialog handles Escape', async () => {
   const onChange = vi.fn();
   const filters = [{ dimension: 'after' as const, values: ['2026-01-01T00:00:00.000Z'] }, { dimension: 'before' as const, values: ['2027-01-01T00:00:00.000Z'] }];
   render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, onChange });
@@ -28,6 +29,13 @@ it('shows UTC year bounds and edits only the changed boundary', async () => {
   expect(screen.queryByRole('alert')).toBeNull();
   await fireEvent.change(from, { target: { value: '' } });
   expect(onChange).toHaveBeenLastCalledWith([filters[1]]);
+  const taskDialog = render(AddToTaskDialog, {
+    client: createAPIClient(async () => Response.json({ state: 'disabled', complete: false, tasks: [] })),
+    messageId: 1, title: 'Synthetic', email: true, onclose: () => taskDialog.unmount(),
+  });
+  await fireEvent.keyDown(await screen.findByRole('dialog', { name: 'Add to task' }), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add to task' })).toBeNull());
+  expect(screen.getByRole('dialog', { name: 'Filter' })).toBeDefined();
 });
 
 it('keeps Kind lookup failures visible and retries when Filter reopens', async () => {
