@@ -161,6 +161,7 @@ func TestListMessageTasksRejectsCancelledIdentity(t *testing.T) {
 
 type cancelTaskArchiveIdentity struct {
 	*store.Store
+
 	cancel context.CancelFunc
 }
 
