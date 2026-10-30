@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telegram"
 )
@@ -88,8 +90,9 @@ func runAuthenticatedBackfill(ctx context.Context, st *store.Store, sourceID int
 	if err != nil {
 		return err
 	}
+	var backfillErr error
 	if options.Takeout {
-		return WithTakeout(ctx, client, func(ctx context.Context, takeout *tg.Client) error {
+		backfillErr = WithTakeout(ctx, client, func(ctx context.Context, takeout *tg.Client) error {
 			nativeRanges, err := takeout.MessagesGetSplitRanges(ctx)
 			if err != nil {
 				return fmt.Errorf("list Telegram takeout message ranges: %w", err)
@@ -111,8 +114,36 @@ func runAuthenticatedBackfill(ctx context.Context, st *store.Store, sourceID int
 			rangedDialogs = attachFormerGroups(rangedDialogs, formerGroups, ranges)
 			return backfillDialogsWithOptions(ctx, takeout, writer, state, rangedDialogs, observedAt, includeChannels, chatID, options, save)
 		})
+	} else {
+		backfillErr = backfillDialogsWithOptions(ctx, client, writer, state, dialogs, observedAt, includeChannels, chatID, options, save)
 	}
-	return backfillDialogsWithOptions(ctx, client, writer, state, dialogs, observedAt, includeChannels, chatID, options, save)
+	if backfillErr != nil {
+		return backfillErr
+	}
+	// Common updates share one account-wide cursor. A chat-filtered pass applies
+	// only the selected dialog against a private cursor copy, leaving other
+	// dialogs for the next unrestricted run.
+	if chatID == 0 {
+		if err := runCommonDifferences(ctx, st, sourceID, client, writer, state, dialogs, options.After, save); err != nil {
+			return err
+		}
+	} else {
+		if err := runSelectedCommonDifferences(ctx, st, sourceID, client, writer, state, dialogs, chatID, options.After, save); err != nil {
+			return err
+		}
+	}
+	for _, dialog := range dialogs {
+		if selectedDialog(dialog, includeChannels, chatID) && (dialog.Kind == "channel" || dialog.Kind == "supergroup") {
+			progress := state.Dialogs[strconv.FormatInt(dialog.ChatID, 10)]
+			if progress.Peer != nil && progress.Peer.InaccessibleSince != nil {
+				continue
+			}
+			if err := runChannelDifferences(ctx, st, sourceID, client, writer, state, dialog, options.After, save); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // BackfillDiscoveredDialogs captures the common baseline, refreshes the full
@@ -144,12 +175,79 @@ func backfillDialogsWithOptions(ctx context.Context, client *tg.Client, writer *
 		if err := writer.ResolveReplies(ctx); err != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("reconcile Telegram replies: %w", err))
 		}
+		retErr = errors.Join(retErr, writer.FlushConversationStats(context.WithoutCancel(ctx)))
 	}()
 	if err := RefreshCatalog(ctx, state, dialogs, observedAt, save); err != nil {
 		return err
 	}
 	if chatID != 0 && writer.RequiresShiftedHistoryRepair(chatID) {
 		return errors.New("requested Telegram dialog still has shifted history awaiting verified migration linkage")
+	}
+	// Capture each selected channel's update position before any history walk.
+	for _, dialog := range dialogs {
+		if chatID == 0 && (dialog.Inaccessible || dialog.UnsupportedReason != "") {
+			continue
+		}
+		if !selectedDialog(dialog, includeChannels, chatID) || (dialog.Kind != "channel" && dialog.Kind != "supergroup") {
+			continue
+		}
+		if writer.RequiresShiftedHistoryRepair(dialog.ChatID) {
+			continue
+		}
+		if dialog.Inaccessible || dialog.UnsupportedReason != "" {
+			return unsupportedDialogError(dialog)
+		}
+		key := strconv.FormatInt(dialog.ChatID, 10)
+		progress := state.Dialogs[key]
+		if progress.ChannelPTS != nil {
+			continue
+		}
+		if !dialog.HasObservedPTS {
+			return fmt.Errorf("Telegram channel %s has no safe initial update position", key)
+		}
+		pts := dialog.ObservedPTS
+		progress.ChannelPTS = &pts
+		if progress.Frontier != 0 || progress.History != nil {
+			since := observedAt.Add(-7 * 24 * time.Hour)
+			if options.After.After(since) {
+				since = options.After
+			}
+			if err := RescanDialogSince(ctx, client, writer, dialog, since); err != nil {
+				if tgerr.Is(err, "CHANNEL_PRIVATE") {
+					if err := recordChannelInaccessible(ctx, state, key, save); err != nil {
+						return err
+					}
+					continue
+				}
+				return fmt.Errorf("rescan Telegram channel %s: %w", key, err)
+			}
+			if err := writer.FlushConversationStats(ctx); err != nil {
+				return err
+			}
+			gapStart := since
+			if gapStart.After(observedAt) {
+				gapStart = observedAt
+			}
+			next, err := state.WithRecoveryGap(key, observedAt, gapStart)
+			if err != nil {
+				return err
+			}
+			next.Dialogs = make(map[string]telegram.DialogState, len(state.Dialogs))
+			for k, value := range state.Dialogs {
+				next.Dialogs[k] = value
+			}
+			next.Dialogs[key] = progress
+			next.Counts = writer.Counts()
+			if err := save(ctx, next); err != nil {
+				return fmt.Errorf("save Telegram channel recovery state: %w", err)
+			}
+			*state = *next
+			slog.Warn("Telegram channel update position was missing: recent messages were rescanned, but older edits and deletions may be missing")
+			continue
+		}
+		if err := saveDialogState(ctx, state, key, progress, save); err != nil {
+			return err
+		}
 	}
 	matched := chatID == 0
 	for _, dialog := range dialogs {
@@ -159,11 +257,7 @@ func backfillDialogsWithOptions(ctx context.Context, client *tg.Client, writer *
 		if chatID != 0 {
 			matched = true
 			if dialog.Inaccessible || dialog.UnsupportedReason != "" {
-				reason := dialog.UnsupportedReason
-				if reason == "" {
-					reason = "Telegram dialog is inaccessible"
-				}
-				return fmt.Errorf("Telegram dialog %s is unsupported: %s", strconv.FormatInt(dialog.ChatID, 10), reason)
+				return unsupportedDialogError(dialog)
 			}
 		}
 		if chatID == 0 && (dialog.Inaccessible || dialog.UnsupportedReason != "") {
@@ -176,6 +270,9 @@ func backfillDialogsWithOptions(ctx context.Context, client *tg.Client, writer *
 			continue
 		}
 		key := strconv.FormatInt(dialog.ChatID, 10)
+		if peer := state.Dialogs[key].Peer; peer != nil && peer.InaccessibleSince != nil {
+			continue
+		}
 		fullCompleted := false
 		for {
 			progress := state.Dialogs[key]
@@ -217,10 +314,38 @@ func backfillDialogsWithOptions(ctx context.Context, client *tg.Client, writer *
 				state.Counts = writer.Counts()
 				return saveDialogState(ctx, state, key, next, save)
 			}); err != nil {
+				if (dialog.Kind == "channel" || dialog.Kind == "supergroup") && tgerr.Is(err, "CHANNEL_PRIVATE") {
+					if err := recordChannelInaccessible(ctx, state, key, save); err != nil {
+						return err
+					}
+					break
+				}
 				return fmt.Errorf("backfill Telegram dialog %s: %w", key, err)
 			}
 			if wasFull && progress.History == nil && completedAfter.Equal(options.After) {
 				fullCompleted = true
+			}
+		}
+		if options.Full && dialog.TopMessage > 0 {
+			if peer := state.Dialogs[key].Peer; peer != nil && peer.InaccessibleSince != nil {
+				continue
+			}
+			since := observedAt.Add(-7 * 24 * time.Hour)
+			if options.After.After(since) {
+				since = options.After
+			}
+			if err := RescanDialogSince(ctx, client, writer, dialog, since); err != nil {
+				if (dialog.Kind == "channel" || dialog.Kind == "supergroup") && tgerr.Is(err, "CHANNEL_PRIVATE") {
+					if err := recordChannelInaccessible(ctx, state, key, save); err != nil {
+						return err
+					}
+					continue
+				}
+				return fmt.Errorf("rescan Telegram dialog %s: %w", key, err)
+			}
+			state.Counts = writer.Counts()
+			if err := save(ctx, state); err != nil {
+				return fmt.Errorf("save Telegram rescan state: %w", err)
 			}
 		}
 	}
@@ -228,6 +353,21 @@ func backfillDialogsWithOptions(ctx context.Context, client *tg.Client, writer *
 		return errors.New("requested Telegram dialog is unavailable")
 	}
 	return nil
+}
+
+func selectedDialog(dialog CatalogDialog, includeChannels bool, chatID int64) bool {
+	if chatID != 0 {
+		return dialog.ChatID == chatID
+	}
+	return dialog.EnabledByDefault || (includeChannels && dialog.Kind == "channel")
+}
+
+func unsupportedDialogError(dialog CatalogDialog) error {
+	reason := dialog.UnsupportedReason
+	if reason == "" && dialog.Inaccessible {
+		reason = "Telegram dialog is inaccessible"
+	}
+	return fmt.Errorf("Telegram dialog %s is unsupported: %s", strconv.FormatInt(dialog.ChatID, 10), reason)
 }
 
 func saveDialogState(ctx context.Context, state *telegram.SyncState, key string, dialog telegram.DialogState, save func(context.Context, *telegram.SyncState) error) error {

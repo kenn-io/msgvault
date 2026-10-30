@@ -343,6 +343,13 @@ type telegramMessageMetadata struct {
 	EditedAt            time.Time `json:"edited_at,omitzero"`
 }
 
+func telegramMediaChatID(chatID int64, recovery telegramMessageMetadata) int64 {
+	if recovery.LegacyMediaChatID > 0 {
+		return recovery.LegacyMediaChatID
+	}
+	return chatID
+}
+
 // telegramReplyPageSize bounds one keyset page of the deferred reply pass.
 const telegramReplyPageSize = 500
 
@@ -562,10 +569,7 @@ func importChat(
 						restore = nil
 					}
 				}
-				mediaChatID := chat.ID
-				if recovery.LegacyMediaChatID > 0 {
-					mediaChatID = recovery.LegacyMediaChatID
-				}
+				mediaChatID := telegramMediaChatID(chat.ID, recovery)
 				wrote, err := storeAttachments(ctx, st, absRoot, mediaChatID, m, messageID, restore, opts, logger, summary)
 				if err != nil {
 					return fmt.Errorf("re-ensure attachments for %s: %w", srcMsgID, err)

@@ -3,11 +3,13 @@ package telegram
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -123,4 +125,95 @@ func TestLiveWriterFlushesConversationStatsAfterCancellation(t *testing.T) {
 		SELECT c.message_count FROM conversations c JOIN messages m ON m.conversation_id = c.id
 		WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "-123:7").Scan(&count))
 	assert.Equal(t, 1, count)
+}
+
+func TestLiveWriterEditPersistsNewMediaManifestBeforeRecovery(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Owner")
+	require.NoError(err)
+	chat := Chat{ID: -123, Type: "private_group", Name: "Synthetic"}
+	sent := time.Unix(100, 0).UTC()
+	original := Message{ID: 7, SentAt: sent, Text: "before edit", RawJSON: `{}`,
+		LiveMedia: &LiveMedia{SourceID: "document:old", Filename: "old.bin", Kind: "document", Metadata: `{}`},
+	}
+	require.NoError(writer.Write(ctx, chat, original))
+
+	_, err = st.DB().Exec(`CREATE TRIGGER reject_live_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'synthetic attachment failure'); END`)
+	require.NoError(err)
+	edited := Message{ID: 7, SentAt: sent, Text: "after edit", Edited: true, EditedAt: time.Unix(200, 0).UTC(), RawJSON: `{"id":7}`,
+		LiveMedia: &LiveMedia{SourceID: "document:new", Filename: "new.bin", Kind: "document", Metadata: `{}`},
+	}
+	err = writer.WriteEdit(ctx, chat, edited)
+	require.ErrorContains(err, "synthetic attachment failure")
+	_, err = st.DB().Exec(`DROP TRIGGER reject_live_attachment`)
+	require.NoError(err)
+
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-123:7").Scan(&messageID))
+	var metadata string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT metadata FROM messages WHERE id = ?`), messageID).Scan(&metadata))
+	assert.Contains(metadata, syntheticAttachmentHash(chat.ID, edited.ID, "api:document:old"))
+	assert.Contains(metadata, syntheticAttachmentHash(chat.ID, edited.ID, "api:document:new"))
+
+	require.NoError(writer.WriteEdit(ctx, chat, edited))
+	var attachmentCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&attachmentCount))
+	assert.Equal(2, attachmentCount, "edit recovery preserves old media and adds the new occurrence")
+}
+
+func TestLiveWriterEditUsesMigratedMediaIdentity(t *testing.T) {
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, OwnerSourceIdentifier(999))
+	require.NoError(t, err)
+	legacyWriter, err := NewLiveWriter(ctx, st, source.ID, 999, "Owner")
+	require.NoError(t, err)
+
+	const legacyChatID int64 = 123
+	const canonicalChatID int64 = -1000000000123
+	const messageID int64 = 7
+	sentAt := time.Unix(100, 0).UTC()
+	legacyChat := Chat{ID: legacyChatID, Type: chatTypePrivateSupergroup, Name: "Synthetic"}
+	original := Message{
+		ID: messageID, SentAt: sentAt, Text: "before edit", RawJSON: `{}`,
+		LiveMedia: &LiveMedia{SourceID: "document:old", Filename: "old.bin", Kind: "document", Metadata: `{}`},
+	}
+	require.NoError(t, legacyWriter.Write(ctx, legacyChat, original))
+	secondEvidence := Message{ID: 8, SentAt: sentAt.Add(time.Second), Text: "migration evidence", RawJSON: `{}`}
+	require.NoError(t, legacyWriter.Write(ctx, legacyChat, secondEvidence))
+	require.NoError(t, st.MigrateTelegramExportKeysContext(ctx, source.ID, []store.TelegramExportKeyChange{{
+		LegacyID: legacyChatID, MarkedID: canonicalChatID, ConversationType: "group_chat",
+		Evidence: []store.TelegramExportKeyEvidence{
+			{MessageID: messageID, SentAt: sentAt, Text: original.Text},
+			{MessageID: secondEvidence.ID, SentAt: secondEvidence.SentAt, Text: secondEvidence.Text},
+		},
+	}}))
+
+	writer, err := NewLiveWriter(ctx, st, source.ID, 999, "Owner")
+	require.NoError(t, err)
+	edited := Message{
+		ID: messageID, SentAt: sentAt, Text: "after edit", Edited: true,
+		EditedAt: time.Unix(200, 0).UTC(), RawJSON: `{"id":7}`,
+		LiveMedia: &LiveMedia{SourceID: "document:new", Filename: "new.bin", Kind: "document", Metadata: `{}`},
+	}
+	require.NoError(t, writer.WriteEdit(ctx, Chat{ID: canonicalChatID, Type: chatTypePrivateSupergroup, Name: "Synthetic"}, edited))
+
+	var messageKey, metadata string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT source_message_id, metadata FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-1000000000123:7").Scan(&messageKey, &metadata))
+	assert.Equal(t, "-1000000000123:7", messageKey)
+	var recovery telegramMessageMetadata
+	require.NoError(t, json.Unmarshal([]byte(metadata), &recovery))
+	assert.Equal(t, legacyChatID, recovery.LegacyMediaChatID)
+	assert.Contains(t, recovery.AttachmentPartKeys, syntheticAttachmentHash(legacyChatID, messageID, "api:document:old"))
+	assert.Contains(t, recovery.AttachmentPartKeys, syntheticAttachmentHash(legacyChatID, messageID, "api:document:new"))
+
+	var attachmentCount int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, messageKey).Scan(&attachmentCount))
+	assert.Equal(t, 2, attachmentCount, "the edit recovery stores media under the retained legacy identity")
 }

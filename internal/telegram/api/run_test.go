@@ -10,6 +10,7 @@ import (
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"github.com/gotd/td/tgmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -232,7 +233,7 @@ func TestSelectedSupergroupFullBackfillArchivesFormerGroupHistory(t *testing.T) 
 	require.NoError(err)
 	writer, err := telegram.NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
 	require.NoError(err)
-	channel := CatalogDialog{ChatID: -1000000000123, NativeID: 123, Kind: "supergroup", AccessHash: 42, Title: "Synthetic group", TopMessage: 8, EnabledByDefault: true}
+	channel := CatalogDialog{ChatID: -1000000000123, NativeID: 123, Kind: "supergroup", AccessHash: 42, Title: "Synthetic group", TopMessage: 8, ObservedPTS: 10, HasObservedPTS: true, EnabledByDefault: true}
 	full := &tg.ChannelFull{ID: 123, ChatPhoto: &tg.PhotoEmpty{}}
 	full.SetMigratedFromChatID(456)
 	full.SetMigratedFromMaxID(2)
@@ -254,6 +255,26 @@ func TestSelectedSupergroupFullBackfillArchivesFormerGroupHistory(t *testing.T) 
 		request, ok := input.(*tg.MessagesGetHistoryRequest)
 		require.True(ok)
 		assert.Equal(&tg.InputPeerChannel{ChannelID: 123, AccessHash: 42}, request.Peer)
+	}).ThenResult(&tg.MessagesMessages{})
+	mock.ExpectFunc(func(input bin.Encoder) {
+		request, ok := input.(*tg.MessagesGetHistoryRequest)
+		require.True(ok)
+		assert.Equal(&tg.InputPeerChannel{ChannelID: 123, AccessHash: 42}, request.Peer)
+	}).ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 8, PeerID: &tg.PeerChannel{ChannelID: 123}, Date: 100, Message: "current history"}}})
+	mock.ExpectFunc(func(input bin.Encoder) {
+		request, ok := input.(*tg.MessagesGetHistoryRequest)
+		require.True(ok)
+		assert.Equal(&tg.InputPeerChannel{ChannelID: 123, AccessHash: 42}, request.Peer)
+	}).ThenResult(&tg.MessagesMessages{})
+	mock.ExpectFunc(func(input bin.Encoder) {
+		request, ok := input.(*tg.MessagesGetHistoryRequest)
+		require.True(ok)
+		assert.Equal(&tg.InputPeerChat{ChatID: 456}, request.Peer)
+	}).ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 2, PeerID: &tg.PeerChat{ChatID: 456}, Date: 90, Message: "former history"}}})
+	mock.ExpectFunc(func(input bin.Encoder) {
+		request, ok := input.(*tg.MessagesGetHistoryRequest)
+		require.True(ok)
+		assert.Equal(&tg.InputPeerChat{ChatID: 456}, request.Peer)
 	}).ThenResult(&tg.MessagesMessages{})
 	mock.ExpectFunc(func(input bin.Encoder) {
 		request, ok := input.(*tg.MessagesGetHistoryRequest)
@@ -384,6 +405,21 @@ func TestAuthenticatedFullBackfillArchivesEveryEnabledFormerGroup(t *testing.T) 
 						assert.Equal(item.peer, request.Peer)
 					}).ThenResult(result)
 				}
+				mock.ExpectFunc(func(input bin.Encoder) {
+					var request *tg.MessagesGetHistoryRequest
+					if takeout {
+						wrapped, ok := input.(*tg.InvokeWithTakeoutRequest)
+						require.True(ok)
+						assert.Equal(int64(42), wrapped.TakeoutID)
+						request, ok = wrapped.Query.(*tg.MessagesGetHistoryRequest)
+						require.True(ok)
+					} else {
+						var ok bool
+						request, ok = input.(*tg.MessagesGetHistoryRequest)
+						require.True(ok)
+					}
+					assert.Equal(item.peer, request.Peer)
+				}).ThenResult(&tg.MessagesMessages{})
 			}
 			if takeout {
 				mock.ExpectFunc(func(input bin.Encoder) {
@@ -392,6 +428,25 @@ func TestAuthenticatedFullBackfillArchivesEveryEnabledFormerGroup(t *testing.T) 
 					assert.Equal(int64(42), wrapped.TakeoutID)
 					assert.IsType(&tg.AccountFinishTakeoutSessionRequest{}, wrapped.Query)
 				}).ThenResult(&tg.BoolTrue{})
+			}
+			mock.ExpectFunc(func(input bin.Encoder) {
+				request, ok := input.(*tg.UpdatesGetDifferenceRequest)
+				require.True(ok)
+				assert.Equal(12, request.Pts)
+				assert.Equal(100, request.Date)
+			}).ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
+			for _, item := range []struct {
+				channelID int64
+				access    int64
+				pts       int
+			}{{123, 42, 10}, {124, 43, 11}} {
+				item := item
+				mock.ExpectFunc(func(input bin.Encoder) {
+					request, ok := input.(*tg.UpdatesGetChannelDifferenceRequest)
+					require.True(ok)
+					assert.Equal(&tg.InputChannel{ChannelID: item.channelID, AccessHash: item.access}, request.Channel)
+					assert.Equal(item.pts, request.Pts)
+				}).ThenResult(&tg.UpdatesChannelDifferenceEmpty{Pts: item.pts, Final: true})
 			}
 
 			state := telegram.NewSyncState()
@@ -424,6 +479,7 @@ func TestFullBackfillRewalksCompletedFrontierWithTimeBound(t *testing.T) {
 		&tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 101, Message: "new"},
 		&tg.Message{ID: 6, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "boundary"},
 	}})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
 	var sawFull bool
 	err = backfillDialogsWithOptions(ctx, tg.NewClient(mock), writer, state, []CatalogDialog{dialog}, time.Unix(200, 0), false, 0, HistoryOptions{Full: true, After: time.Unix(100, 0).UTC()}, func(_ context.Context, next *telegram.SyncState) error {
 		if progress := next.Dialogs["-123"].History; progress != nil {
@@ -446,6 +502,95 @@ func TestFullBackfillRewalksCompletedFrontierWithTimeBound(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestChannelBaselineIsSavedBeforeHistory(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := telegram.NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	dialog := CatalogDialog{ChatID: -1000000000123, NativeID: 123, Kind: "supergroup", TopMessage: 7, EnabledByDefault: true, HasObservedPTS: true, ObservedPTS: 20}
+	state := telegram.NewSyncState()
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	var baselineSaved bool
+	err = backfillDialogsWithOptions(ctx, tg.NewClient(mock), writer, state, []CatalogDialog{dialog}, time.Unix(200, 0), false, 0, HistoryOptions{}, func(_ context.Context, next *telegram.SyncState) error {
+		progress := next.Dialogs["-1000000000123"]
+		if progress.ChannelPTS != nil {
+			assert.Equal(t, 20, *progress.ChannelPTS)
+			baselineSaved = true
+		}
+		if progress.History != nil {
+			assert.True(t, baselineSaved)
+		}
+		return nil
+	})
+	require.NoError(err)
+	{
+		assert := assert.New(t)
+		assert.True(baselineSaved)
+	}
+	assert.True(t, mock.AllWereMet())
+}
+
+func TestChannelWithoutAppliedPositionRescansAndRecordsGap(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := telegram.NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	now := time.Unix(1000000, 0).UTC()
+	dialog := CatalogDialog{ChatID: -1000000000123, NativeID: 123, Kind: "supergroup", TopMessage: 7, EnabledByDefault: true, HasObservedPTS: true, ObservedPTS: 20}
+	state := telegram.NewSyncState()
+	state.Dialogs["-1000000000123"] = telegram.DialogState{Frontier: 7}
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 7, PeerID: &tg.PeerChannel{ChannelID: 123}, Date: int(now.Unix()), Message: "recovered"}}})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	err = backfillDialogsWithOptions(ctx, tg.NewClient(mock), writer, state, []CatalogDialog{dialog}, now, false, 0, HistoryOptions{}, func(_ context.Context, next *telegram.SyncState) error {
+		if next.Dialogs["-1000000000123"].ChannelPTS != nil {
+			assert.Equal(t, 1, next.Gaps["-1000000000123"].Count)
+		}
+		return nil
+	})
+	require.NoError(err)
+	{
+		assert := assert.New(t)
+		assert.Equal(20, *state.Dialogs["-1000000000123"].ChannelPTS)
+	}
+	assert.Equal(t, 1, state.Gaps["-1000000000123"].Count)
+	assert.True(t, mock.AllWereMet())
+}
+
+func TestChannelHistoryLossRetainsCursorAndContinues(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := telegram.NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	dialog := CatalogDialog{ChatID: -1000000000123, NativeID: 123, Kind: "supergroup", TopMessage: 7, EnabledByDefault: true, HasObservedPTS: true, ObservedPTS: 20}
+	state := telegram.NewSyncState()
+	pts := 10
+	state.Dialogs["-1000000000123"] = telegram.DialogState{ChannelPTS: &pts}
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenRPCErr(tgerr.New(400, "CHANNEL_PRIVATE"))
+	err = backfillDialogsWithOptions(ctx, tg.NewClient(mock), writer, state, []CatalogDialog{dialog}, time.Unix(200, 0), false, 0, HistoryOptions{}, func(context.Context, *telegram.SyncState) error { return nil })
+	require.NoError(err)
+	progress := state.Dialogs["-1000000000123"]
+	assert.Equal(10, *progress.ChannelPTS)
+	assert.NotNil(progress.History)
+	assert.NotNil(progress.Peer.InaccessibleSince)
+	assert.True(mock.AllWereMet())
+}
+
 func TestFullBackfillResumesWithoutRestartingCompletedScan(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -461,9 +606,46 @@ func TestFullBackfillResumesWithoutRestartingCompletedScan(t *testing.T) {
 	dialog := CatalogDialog{ChatID: -123, NativeID: 123, Kind: "group", TopMessage: 7, EnabledByDefault: true}
 	mock := tgmock.NewRequire(t)
 	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
 	err = backfillDialogsWithOptions(ctx, tg.NewClient(mock), writer, state, []CatalogDialog{dialog}, time.Unix(200, 0), false, 0, HistoryOptions{Full: true}, func(context.Context, *telegram.SyncState) error { return nil })
 	require.NoError(err)
 	assert.Nil(state.Dialogs["-123"].History)
+	assert.True(mock.AllWereMet())
+}
+
+func TestFullBackfillRescansRecentEdits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := telegram.NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	now := time.Unix(1000000, 0).UTC()
+	dialog := CatalogDialog{ChatID: -123, NativeID: 123, Kind: "group", TopMessage: 7, EnabledByDefault: true}
+	original := &tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: int(now.Unix()), Message: "original"}
+	require.NoError(ArchiveAPIMessageWithWriter(ctx, writer, dialog, original, nil, nil))
+	edited := &tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: int(now.Unix()), Message: "edited"}
+	edited.SetEditDate(int(now.Unix()) + 1)
+	mock := tgmock.NewRequire(t)
+	for range 2 {
+		mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{edited}})
+		mock.Expect().ThenResult(&tg.MessagesMessages{})
+	}
+	state := telegram.NewSyncState()
+	state.Dialogs["-123"] = telegram.DialogState{Frontier: 7}
+	err = backfillDialogsWithOptions(ctx, tg.NewClient(mock), writer, state, []CatalogDialog{dialog}, now, false, 0, HistoryOptions{Full: true}, func(context.Context, *telegram.SyncState) error { return nil })
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-123:7").Scan(&id))
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), id).Scan(&body))
+	assert.Equal("edited", body)
+	var isEdited bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_edited FROM messages WHERE id = ?`), id).Scan(&isEdited))
+	assert.True(isEdited, "full history applies edit evidence through the live edit path")
 	assert.True(mock.AllWereMet())
 }
 
@@ -483,6 +665,7 @@ func TestFullBackfillAppliesChangedTimeBoundAfterResume(t *testing.T) {
 	mock := tgmock.NewRequire(t)
 	mock.Expect().ThenResult(&tg.MessagesMessages{})
 	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 75, Message: "newly included"}}})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
 	mock.Expect().ThenResult(&tg.MessagesMessages{})
 	err = backfillDialogsWithOptions(ctx, tg.NewClient(mock), writer, state, []CatalogDialog{dialog}, time.Unix(200, 0), false, 0, HistoryOptions{Full: true, After: time.Unix(50, 0).UTC()}, func(context.Context, *telegram.SyncState) error { return nil })
 	require.NoError(err)
@@ -546,6 +729,7 @@ func TestAuthenticatedBackfillArchivesDiscoveredHistory(t *testing.T) {
 		assert.Equal(int64(42), wrapped.TakeoutID)
 		assert.IsType(&tg.AccountFinishTakeoutSessionRequest{}, wrapped.Query)
 	}).ThenResult(&tg.BoolTrue{})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
 	err = telegram.WithLiveSyncState(ctx, st, source.ID, func(ctx context.Context, scoped *store.Store, state *telegram.SyncState, save func(context.Context, *telegram.SyncState) error) error {
 		return RunAuthenticatedBackfillWithOptions(ctx, scoped, source.ID, tg.NewClient(mock), state, time.Unix(100, 0), false, 0, HistoryOptions{Takeout: true}, save)
 	})
@@ -554,6 +738,122 @@ func TestAuthenticatedBackfillArchivesDiscoveredHistory(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-123:7").Scan(&count))
 	assert.Equal(1, count)
+}
+
+func TestAuthenticatedSyncAppliesCommonChangesAfterHistory(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.UpdatesState{Pts: 10, Date: 100})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{Dialogs: []tg.DialogClass{&tg.Dialog{Peer: &tg.PeerChat{ChatID: 123}, TopMessage: 7}}, Chats: []tg.ChatClass{&tg.Chat{ID: 123, Title: "Synthetic", Photo: &tg.ChatPhotoEmpty{}}}})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{})
+	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "history"}}})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	edited := &tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "edited"}
+	edited.SetEditDate(101)
+	mock.Expect().ThenResult(&tg.UpdatesDifference{OtherUpdates: []tg.UpdateClass{&tg.UpdateEditMessage{Message: edited, Pts: 11, PtsCount: 1}}, State: tg.UpdatesState{Pts: 11, Date: 101}})
+	state := telegram.NewSyncState()
+	err = runAuthenticatedBackfill(ctx, st, source.ID, tg.NewClient(mock), &tg.User{ID: 999, FirstName: "Synthetic"}, state, time.Unix(200, 0), false, 0, HistoryOptions{}, func(context.Context, *telegram.SyncState) error { return nil })
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-123:7").Scan(&id))
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), id).Scan(&body))
+	assert.Equal("edited", body)
+	assert.Equal(11, state.Common.Pts)
+	assert.True(mock.AllWereMet())
+}
+
+func TestAuthenticatedChatFilterAppliesSelectedCommonChangesWithoutAdvancingCursor(t *testing.T) {
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(t, err)
+	for _, row := range []struct {
+		peer string
+		key  string
+		body string
+	}{
+		{peer: "-123", key: "-123:6", body: "selected before"},
+		{peer: "-456", key: "-456:8", body: "unselected before"},
+		{peer: "-123", key: "-123:9", body: "selected deletion target"},
+		{peer: "-456", key: "-456:9", body: "unselected deletion target"},
+	} {
+		conversation, err := st.EnsureConversationWithType(source.ID, row.peer, "group_chat", "Synthetic")
+		require.NoError(t, err)
+		_, err = st.PersistMessage(&store.MessagePersistData{
+			Message:  &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: row.key, MessageType: "telegram"},
+			BodyText: sql.NullString{String: row.body, Valid: true},
+		})
+		require.NoError(t, err)
+	}
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.UpdatesState{Pts: 10, Date: 100})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{
+		Dialogs: []tg.DialogClass{
+			&tg.Dialog{Peer: &tg.PeerChat{ChatID: 123}, TopMessage: 7},
+			&tg.Dialog{Peer: &tg.PeerChat{ChatID: 456}, TopMessage: 9},
+		},
+		Chats: []tg.ChatClass{
+			&tg.Chat{ID: 123, Title: "Selected synthetic", Photo: &tg.ChatPhotoEmpty{}},
+			&tg.Chat{ID: 456, Title: "Unselected synthetic", Photo: &tg.ChatPhotoEmpty{}},
+		},
+	})
+	mock.Expect().ThenResult(&tg.MessagesDialogs{})
+	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "selected history"}}})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	selectedEdit := &tg.Message{ID: 6, PeerID: &tg.PeerChat{ChatID: 123}, Date: 50, Message: "selected after"}
+	selectedEdit.SetEditDate(150)
+	unselectedEdit := &tg.Message{ID: 8, PeerID: &tg.PeerChat{ChatID: 456}, Date: 50, Message: "unselected after"}
+	unselectedEdit.SetEditDate(150)
+	mock.Expect().ThenResult(&tg.UpdatesDifference{
+		OtherUpdates: []tg.UpdateClass{
+			&tg.UpdateEditMessage{Message: selectedEdit, Pts: 11, PtsCount: 1},
+			&tg.UpdateEditMessage{Message: unselectedEdit, Pts: 12, PtsCount: 1},
+			&tg.UpdateDeleteMessages{Messages: []int{9}, Pts: 13, PtsCount: 1},
+		},
+		State: tg.UpdatesState{Pts: 13, Date: 151},
+	})
+	state := telegram.NewSyncState()
+	var savedCommonPositions []int
+	err = runAuthenticatedBackfill(ctx, st, source.ID, tg.NewClient(mock), &tg.User{ID: 999, FirstName: "Synthetic"}, state,
+		time.Unix(200, 0), false, -123, HistoryOptions{}, func(_ context.Context, next *telegram.SyncState) error {
+			if next.Common != nil {
+				savedCommonPositions = append(savedCommonPositions, next.Common.Pts)
+			}
+			return nil
+		})
+	require.NoError(t, err)
+	require.NotNil(t, state.Common)
+	assert.Equal(t, 10, state.Common.Pts)
+	assert.True(t, mock.AllWereMet())
+	for _, pts := range savedCommonPositions {
+		assert.Equal(t, 10, pts, "a chat-filtered run must not persist the account-wide common cursor")
+	}
+	for _, row := range []struct {
+		key      string
+		wantBody string
+		deleted  bool
+	}{
+		{key: "-123:6", wantBody: "selected after"},
+		{key: "-456:8", wantBody: "unselected before"},
+		{key: "-123:9", wantBody: "selected deletion target", deleted: true},
+		{key: "-456:9", wantBody: "unselected deletion target"},
+	} {
+		var messageID int64
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, row.key).Scan(&messageID))
+		var body string
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), messageID).Scan(&body))
+		assert.Equal(t, row.wantBody, body, row.key)
+		var deleted bool
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), messageID).Scan(&deleted))
+		assert.Equal(t, row.deleted, deleted, row.key)
+	}
 }
 
 func TestAuthenticatedBackfillRepairsLegacyUserBeforeWriting(t *testing.T) {
@@ -582,6 +882,7 @@ func TestAuthenticatedBackfillRepairsLegacyUserBeforeWriting(t *testing.T) {
 		mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 2, PeerID: &tg.PeerUser{UserID: peerID}, Date: 100, Message: "synthetic two"}, &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: peerID}, Date: 100, Message: "synthetic one"}}, Users: []tg.UserClass{peer}})
 		mock.Expect().ThenResult(&tg.MessagesMessages{})
 	}
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
 	err = telegram.WithLiveSyncState(ctx, st, source.ID, func(ctx context.Context, scoped *store.Store, state *telegram.SyncState, save func(context.Context, *telegram.SyncState) error) error {
 		return RunAuthenticatedBackfill(ctx, scoped, source.ID, tg.NewClient(mock), state, time.Unix(100, 0), false, 0, save)
 	})

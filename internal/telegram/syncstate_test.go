@@ -3,7 +3,9 @@ package telegram
 import (
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,4 +57,30 @@ func TestSyncStateRejectsOutOfRangeCommonPositions(t *testing.T) {
 		_, err := state.Marshal()
 		require.Error(t, err)
 	}
+}
+
+func TestSyncStateRecordsRecoveryGapsWithoutMutatingPriorState(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	state := NewSyncState()
+	now := time.Unix(200, 0).UTC()
+	since := time.Unix(100, 0).UTC()
+	next, err := state.WithRecoveryGap("common", now, since)
+	require.NoError(err)
+	assert.Empty(state.Gaps)
+	encoded, err := next.Marshal()
+	require.NoError(err)
+	loaded, err := LoadSyncState(encoded)
+	require.NoError(err)
+	assert.Equal(next.Gaps, loaded.Gaps)
+	updated, err := loaded.WithRecoveryGap("common", now.Add(time.Second), since.Add(time.Second))
+	require.NoError(err)
+	assert.Equal(1, loaded.Gaps["common"].Count)
+	assert.Equal(2, updated.Gaps["common"].Count)
+	assert.Equal(now, updated.Gaps["common"].FirstDetected)
+	_, err = updated.WithRecoveryGap("common", now, since)
+	require.Error(err)
+	_, err = state.WithRecoveryGap("456", now, since)
+	require.Error(err)
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gotd/td/constant"
 	"github.com/gotd/td/tg"
 )
 
@@ -36,9 +37,10 @@ type HistoryRange struct {
 
 // DialogState keeps completed history separate from any interrupted scan.
 type DialogState struct {
-	Frontier int              `json:"frontier,omitempty"`
-	History  *HistoryProgress `json:"history,omitempty"`
-	Peer     *DialogPeer      `json:"peer,omitempty"`
+	Frontier   int              `json:"frontier,omitempty"`
+	History    *HistoryProgress `json:"history,omitempty"`
+	Peer       *DialogPeer      `json:"peer,omitempty"`
+	ChannelPTS *int             `json:"channel_pts,omitempty"`
 }
 
 // DialogPeer preserves the catalog identity needed to resume a dialog.
@@ -68,7 +70,51 @@ type SyncState struct {
 	Version int                    `json:"version"`
 	Dialogs map[string]DialogState `json:"dialogs"`
 	Common  *CommonUpdateState     `json:"common,omitempty"`
+	Gaps    map[string]RecoveryGap `json:"gaps,omitempty"`
 	Counts  SyncCounts             `json:"-"`
+}
+
+// RecoveryGap records a bounded rescan that cannot prove older edits or
+// deletions. The key is "common" or the marked channel ID.
+type RecoveryGap struct {
+	FirstDetected time.Time `json:"first_detected"`
+	LastDetected  time.Time `json:"last_detected"`
+	WindowStart   time.Time `json:"window_start"`
+	Count         int       `json:"count"`
+}
+
+// WithRecoveryGap returns a copy so a failed save cannot publish the warning.
+func (s *SyncState) WithRecoveryGap(key string, detectedAt, windowStart time.Time) (*SyncState, error) {
+	if s == nil || !validRecoveryGapKey(key) || detectedAt.IsZero() || windowStart.IsZero() || windowStart.After(detectedAt) {
+		return nil, errors.New("invalid Telegram recovery gap")
+	}
+	next := *s
+	next.Gaps = make(map[string]RecoveryGap, len(s.Gaps)+1)
+	for k, gap := range s.Gaps {
+		next.Gaps[k] = gap
+	}
+	gap := next.Gaps[key]
+	if gap.Count > 0 && detectedAt.Before(gap.LastDetected) {
+		return nil, errors.New("Telegram recovery gap time moved backwards")
+	}
+	if gap.Count == math.MaxInt {
+		return nil, errors.New("Telegram recovery gap count overflow")
+	}
+	if gap.Count == 0 {
+		gap.FirstDetected = detectedAt.UTC()
+	}
+	gap.LastDetected, gap.WindowStart = detectedAt.UTC(), windowStart.UTC()
+	gap.Count++
+	next.Gaps[key] = gap
+	return &next, nil
+}
+
+func validRecoveryGapKey(key string) bool {
+	if key == "common" {
+		return true
+	}
+	id, err := strconv.ParseInt(key, 10, 64)
+	return err == nil && strconv.FormatInt(id, 10) == key && constant.TDLibPeerID(id).IsChannel()
 }
 
 // SyncCounts covers completed work in the current run, not inherited cursors.
@@ -120,6 +166,11 @@ func (s *SyncState) validate() error {
 	if c := s.Common; c != nil && (c.Pts < 0 || int64(c.Pts) > math.MaxInt32 || c.Qts < 0 || int64(c.Qts) > math.MaxInt32 || c.Date <= 0 || int64(c.Date) > math.MaxInt32 || c.Seq < 0 || int64(c.Seq) > math.MaxInt32) {
 		return errors.New("invalid Telegram update state")
 	}
+	for key, gap := range s.Gaps {
+		if !validRecoveryGapKey(key) || gap.Count <= 0 || gap.FirstDetected.IsZero() || gap.LastDetected.Before(gap.FirstDetected) || gap.WindowStart.IsZero() || gap.WindowStart.After(gap.LastDetected) {
+			return errors.New("invalid Telegram recovery gap")
+		}
+	}
 	for key, dialog := range s.Dialogs {
 		id, err := strconv.ParseInt(key, 10, 64)
 		if err != nil || id == 0 || strconv.FormatInt(id, 10) != key {
@@ -157,6 +208,9 @@ func (s *SyncState) validate() error {
 func (d DialogState) Validate() error {
 	if d.Frontier < 0 || int64(d.Frontier) > math.MaxInt32 {
 		return errors.New("invalid Telegram dialog state")
+	}
+	if d.ChannelPTS != nil && (*d.ChannelPTS < 0 || int64(*d.ChannelPTS) > math.MaxInt32) {
+		return errors.New("invalid Telegram channel pts")
 	}
 	if p := d.History; p != nil {
 		if p.Ceiling <= 0 || int64(p.Ceiling) > math.MaxInt32 || p.MinID < 0 || p.MinID >= p.Ceiling || p.Offset < 0 || p.Offset > p.Ceiling || (p.Offset != 0 && p.Offset <= p.MinID) || (p.Full && p.MinID != 0) || p.RangeIndex < 0 || (len(p.Ranges) == 0 && p.RangeIndex != 0) || (len(p.Ranges) > 0 && p.RangeIndex >= len(p.Ranges)) {

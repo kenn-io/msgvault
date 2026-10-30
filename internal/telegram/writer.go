@@ -193,6 +193,73 @@ func (w *LiveWriter) FlushConversationStats(ctx context.Context) error {
 	return nil
 }
 
+// WriteEdit applies live edit evidence while keeping Desktop imports append-only.
+// An edit for an unseen message is archived as its first observed snapshot.
+func (w *LiveWriter) WriteEdit(ctx context.Context, chat Chat, message Message) error {
+	return w.writeEdit(ctx, chat, message, false)
+}
+
+// WriteEditAuthoritative applies a Telegram-refreshed snapshot when edit dates
+// alone cannot order two different message bodies.
+func (w *LiveWriter) WriteEditAuthoritative(ctx context.Context, chat Chat, message Message) error {
+	return w.writeEdit(ctx, chat, message, true)
+}
+
+func (w *LiveWriter) writeEdit(ctx context.Context, chat Chat, message Message, authoritative bool) error {
+	if w == nil || chat.ID == 0 || message.ID <= 0 || message.SentAt.IsZero() || !message.Edited || message.EditedAt.IsZero() || message.RawJSON == "" {
+		return errors.New("invalid Telegram live edit")
+	}
+	key := fmt.Sprintf("%d:%d", chat.ID, message.ID)
+	existing, err := w.store.MessageMetadataBatchContext(ctx, w.sourceID, []string{key})
+	if err != nil {
+		return fmt.Errorf("find Telegram edit target: %w", err)
+	}
+	record, ok := existing[key]
+	if !ok {
+		return w.Write(ctx, chat, message)
+	}
+	mediaChatID := chat.ID
+	if record.Metadata.Valid && record.Metadata.String != "" {
+		var recovery telegramMessageMetadata
+		if err := json.Unmarshal([]byte(record.Metadata.String), &recovery); err != nil {
+			return fmt.Errorf("decode recovery state for %s: %w", key, err)
+		}
+		mediaChatID = telegramMediaChatID(chat.ID, recovery)
+	}
+	target, err := w.store.GetMessageRelationTarget(record.ID)
+	if err != nil {
+		return fmt.Errorf("find Telegram edit conversation: %w", err)
+	}
+	attachmentPartKeys := make([]string, 0)
+	for _, candidate := range attachmentCandidates(&message) {
+		attachmentPartKeys = append(attachmentPartKeys, syntheticAttachmentHash(mediaChatID, message.ID, candidate.RelPath))
+	}
+	var changed bool
+	if authoritative {
+		changed, err = w.store.ApplyTelegramEditAuthoritativeContext(ctx, w.sourceID, key, message.EditedAt, message.Text, []byte(message.RawJSON), attachmentPartKeys)
+	} else {
+		changed, err = w.store.ApplyTelegramEditContext(ctx, w.sourceID, key, message.EditedAt, message.Text, []byte(message.RawJSON), attachmentPartKeys)
+	}
+	if err != nil {
+		return err
+	}
+	// A replay can arrive after the edit row committed but before its
+	// manifest-listed attachments or conversation stats did. Reprocessing
+	// the archive record is idempotent and restores both.
+	w.dirtyConversations[target.ConversationID] = struct{}{}
+	if err := w.Write(ctx, chat, message); err != nil {
+		w.counts.Processed++
+		if changed {
+			w.counts.Updated++
+		}
+		return fmt.Errorf("recover Telegram edit attachments: %w", err)
+	}
+	if changed {
+		w.counts.Updated++
+	}
+	return nil
+}
+
 // ResolveReplies retries verified deferred links before a page checkpoint.
 func (w *LiveWriter) ResolveReplies(ctx context.Context) error {
 	if w == nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -27,9 +28,94 @@ func ArchiveAPIMessageWithWriter(ctx context.Context, writer *telegram.LiveWrite
 	if writer == nil {
 		return errors.New("missing Telegram live writer")
 	}
+	if msg == nil {
+		return errors.New("missing Telegram API message")
+	}
+	if _, edited := msg.GetEditDate(); edited {
+		return ApplyAPIEditAuthoritative(ctx, writer, dialog, msg, users, chats)
+	}
 	return archiveAPIMessage(ctx, writer.OwnerID(), dialog, msg, users, chats, func(chat telegram.Chat, message telegram.Message) error {
 		return writer.Write(ctx, chat, message)
 	})
+}
+
+// ApplyAPIEdit validates the typed peer before applying a live edit.
+func ApplyAPIEdit(ctx context.Context, writer *telegram.LiveWriter, dialog CatalogDialog, msg *tg.Message, users []tg.UserClass, chats []tg.ChatClass) error {
+	return applyAPIEdit(ctx, writer, dialog, msg, users, chats, false)
+}
+
+// ApplyAPIEditAuthoritative applies an edited message fetched as a current
+// history snapshot, which can resolve same-second edit ambiguity.
+func ApplyAPIEditAuthoritative(ctx context.Context, writer *telegram.LiveWriter, dialog CatalogDialog, msg *tg.Message, users []tg.UserClass, chats []tg.ChatClass) error {
+	return applyAPIEdit(ctx, writer, dialog, msg, users, chats, true)
+}
+
+func applyAPIEdit(ctx context.Context, writer *telegram.LiveWriter, dialog CatalogDialog, msg *tg.Message, users []tg.UserClass, chats []tg.ChatClass, authoritative bool) error {
+	if writer == nil || msg == nil {
+		return errors.New("invalid Telegram edit")
+	}
+	if editDate, ok := msg.GetEditDate(); !ok || editDate <= 0 {
+		return errors.New("Telegram edit has no edit timestamp")
+	}
+	return archiveAPIMessage(ctx, writer.OwnerID(), dialog, msg, users, chats, func(chat telegram.Chat, message telegram.Message) error {
+		if authoritative {
+			return writer.WriteEditAuthoritative(ctx, chat, message)
+		}
+		return writer.WriteEdit(ctx, chat, message)
+	})
+}
+
+// ApplyAPIEditWithClient retries a second-resolution timestamp conflict from
+// the current server message so an older update cannot replace a newer
+// archived snapshot or stall the update checkpoint.
+func ApplyAPIEditWithClient(ctx context.Context, client *tg.Client, writer *telegram.LiveWriter, dialog CatalogDialog, msg *tg.Message, users []tg.UserClass, chats []tg.ChatClass) error {
+	if client == nil {
+		return errors.New("missing Telegram client for edit refresh")
+	}
+	err := ApplyAPIEdit(ctx, writer, dialog, msg, users, chats)
+	if !errors.Is(err, store.ErrTelegramEditTimestampConflict) {
+		return err
+	}
+	current, currentUsers, currentChats, found, err := getTelegramMessage(ctx, client, dialog, msg.ID)
+	if err != nil {
+		return fmt.Errorf("refresh conflicting Telegram edit: %w", err)
+	}
+	if !found {
+		// Telegram no longer returns this message. Keep the archived snapshot;
+		// a deletion update can still mark it without replaying a stale edit.
+		return nil
+	}
+	return ApplyAPIEditAuthoritative(ctx, writer, dialog, current, currentUsers, currentChats)
+}
+
+func getTelegramMessage(ctx context.Context, client *tg.Client, dialog CatalogDialog, messageID int) (*tg.Message, []tg.UserClass, []tg.ChatClass, bool, error) {
+	if client == nil || messageID <= 0 {
+		return nil, nil, nil, false, errors.New("invalid Telegram message refresh")
+	}
+	if int64(messageID) > math.MaxInt32 {
+		return nil, nil, nil, false, errors.New("invalid Telegram message refresh ID")
+	}
+	offsetID := messageID + 1
+	if int64(messageID) == math.MaxInt32 {
+		offsetID = 0
+	}
+	page, err := GetHistoryPage(ctx, client, dialog, offsetID, messageID-1, messageID)
+	if err != nil {
+		return nil, nil, nil, false, fmt.Errorf("get Telegram message: %w", err)
+	}
+	for _, item := range page.Messages {
+		switch current := item.(type) {
+		case *tg.Message:
+			if current != nil && current.ID == messageID {
+				return current, page.Users, page.Chats, true, nil
+			}
+		case *tg.MessageEmpty:
+			if current != nil && current.ID == messageID {
+				return nil, page.Users, page.Chats, false, nil
+			}
+		}
+	}
+	return nil, page.Users, page.Chats, false, nil
 }
 
 func archiveAPIMessage(ctx context.Context, ownerID int64, dialog CatalogDialog, msg *tg.Message, users []tg.UserClass, chats []tg.ChatClass, write func(telegram.Chat, telegram.Message) error) error {

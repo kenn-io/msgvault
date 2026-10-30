@@ -76,6 +76,7 @@ func TestSyncTelegramSourceUsesSavedSessionAndArchivesHistory(t *testing.T) {
 	mock.Expect().ThenResult(&tg.MessagesDialogs{})
 	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "synthetic"}}})
 	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
 	connect := func(ctx context.Context, session *telegramapi.SessionStore, run func(context.Context, *tg.Client) error) error {
 		data, err := session.LoadSession(ctx)
 		require.NoError(t, err)
@@ -100,6 +101,8 @@ func TestSyncTelegramSourceUsesSavedSessionAndArchivesHistory(t *testing.T) {
 	mockAgain.Expect().ThenResult(&tg.MessagesDialogs{})
 	mockAgain.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "synthetic"}}})
 	mockAgain.Expect().ThenResult(&tg.MessagesMessages{})
+	mockAgain.Expect().ThenResult(&tg.MessagesMessages{})
+	mockAgain.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
 	connectAgain := func(ctx context.Context, _ *telegramapi.SessionStore, run func(context.Context, *tg.Client) error) error {
 		return run(ctx, tg.NewClient(mockAgain))
 	}
@@ -166,7 +169,9 @@ func TestSyncTelegramCommandArchivesSelectedChat(t *testing.T) {
 	mock.Expect().ThenResult(&tg.MessagesDialogs{})
 	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "synthetic"}}})
 	mock.Expect().ThenResult(&tg.MessagesMessages{})
+	mock.Expect().ThenResult(&tg.MessagesMessages{})
 	mock.Expect().ThenResult(&tg.BoolTrue{})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
 	cacheRefreshed := false
 	deps := telegramSyncDeps{
 		openStore: func() (*store.Store, func(), error) { return st, func() {}, nil },
@@ -192,6 +197,8 @@ func TestSyncTelegramCommandArchivesSelectedChat(t *testing.T) {
 	mockAgain.Expect().ThenResult(&tg.MessagesDialogs{})
 	mockAgain.Expect().ThenResult(&tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 7, PeerID: &tg.PeerChat{ChatID: 123}, Date: 100, Message: "synthetic"}, &tg.Message{ID: 6, PeerID: &tg.PeerChat{ChatID: 123}, Date: 75, Message: "older synthetic"}}})
 	mockAgain.Expect().ThenResult(&tg.MessagesMessages{})
+	mockAgain.Expect().ThenResult(&tg.MessagesMessages{})
+	mockAgain.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
 	deps.connect = func(ctx context.Context, _ *telegramapi.SessionStore, run func(context.Context, *tg.Client) error) error {
 		return run(ctx, tg.NewClient(mockAgain))
 	}
