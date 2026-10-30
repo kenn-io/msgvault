@@ -522,6 +522,11 @@ func (s *Store) MergeDuplicates(
 		}
 	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+		// Take the recipient lock before any message row, as recipient
+		// replacement and sweep admission do, to keep one lock order.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		preserved, err := duplicateMergePreservesHistory(ctx, tx, survivorID, duplicateIDs)
 		if err != nil {
 			return err
