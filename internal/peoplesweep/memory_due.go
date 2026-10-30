@@ -59,7 +59,7 @@ func (c MemoryConfig) Validate() error {
 type DueInput struct {
 	Now                 time.Time
 	Eligible            bool
-	Manual              bool // Tracking provenance, distinct from an owner request.
+	ManuallyTracked     bool // Tracking provenance, distinct from an owner request.
 	JournalGap          bool
 	ManualRequested     bool
 	Tier                int
@@ -74,13 +74,6 @@ type DueInput struct {
 	NewestEvidenceAt *time.Time
 }
 
-// CursorFamily identifies an enabled program/catalog pair and its readable lanes.
-type CursorFamily struct {
-	ProgramFingerprint string
-	CatalogFingerprint string
-	Lanes              []SourceClass
-}
-
 // DerivationDueAt returns the earliest permitted derivation time, or zero when
 // there is no trigger. Every non-zero result is at least in.Now.
 func DerivationDueAt(in DueInput, cfg MemoryConfig) time.Time {
@@ -90,7 +83,7 @@ func DerivationDueAt(in DueInput, cfg MemoryConfig) time.Time {
 	if in.ManualRequested {
 		return in.Now
 	}
-	interval, ok := cfg.intervalFor(in.Tier, in.Manual)
+	interval, ok := cfg.intervalFor(in.Tier, in.ManuallyTracked)
 	if !ok {
 		return time.Time{}
 	}
@@ -135,9 +128,9 @@ func DerivationDueAt(in DueInput, cfg MemoryConfig) time.Time {
 	return due
 }
 
-func (c MemoryConfig) intervalFor(tier int, manual bool) (time.Duration, bool) {
+func (c MemoryConfig) intervalFor(tier int, manuallyTracked bool) (time.Duration, bool) {
 	switch {
-	case manual || tier <= 1:
+	case manuallyTracked || tier <= 1:
 		return c.MinInterval, true
 	case tier == 2:
 		return c.Tier2Interval, true

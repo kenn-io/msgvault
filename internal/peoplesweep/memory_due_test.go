@@ -67,7 +67,7 @@ func TestDerivationDueAt(t *testing.T) {
 				in.Now = tc.now
 			}
 			in.Eligible = !tc.ineligible
-			in.Manual = !tc.automatic
+			in.ManuallyTracked = !tc.automatic
 			got := DerivationDueAt(in, cfg)
 			assert.Equal(t, tc.want, got)
 		})
@@ -81,7 +81,7 @@ func TestDerivationDueAtInvalidThresholdWithoutPendingEvidence(t *testing.T) {
 			enabled := true
 			cfg.Derive = &enabled
 			cfg.Threshold = threshold
-			in := DueInput{Now: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), Eligible: true, Manual: true}
+			in := DueInput{Now: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), Eligible: true, ManuallyTracked: true}
 			assert.Equal(t, time.Time{}, DerivationDueAt(in, cfg))
 		})
 	}
