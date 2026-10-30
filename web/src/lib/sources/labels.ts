@@ -1,6 +1,6 @@
 import type { ChipTone } from '@kenn-io/kit-ui';
 import type { SourceStatus } from '../api/generated/models';
-import { RUN_STATES, type RunState } from '../components/common/run-state';
+import { operationStateChip } from '../operations/labels';
 import { shellQuote } from '../settings/shell-quote';
 import { sentenceCase } from '../explore/labels';
 
@@ -28,11 +28,12 @@ export function syncRunning(source: StateSource): boolean {
 }
 
 /** The run state a source shows, or undefined when it has never synced. */
-export function sourceRunState(source: StateSource): RunState | undefined {
+export function sourceRunState(source: StateSource): string | undefined {
   const latest = source.latest_sync;
   if (syncRunning(source)) return 'running';
   if (source.scheduler_queued && (!latest || latest.status === 'cancelled')) return 'queued';
   if (!latest) return undefined;
+  if (latest.status === 'paused') return 'paused';
   if (latest.status === 'cancelled') return 'cancelled';
   if (latest.status === 'failed') return 'failed';
   if (latest.status === 'completed') return latest.errors_count > 0 ? 'partial' : 'succeeded';
@@ -42,22 +43,20 @@ export function sourceRunState(source: StateSource): RunState | undefined {
 export interface SourceFailure {
   /** One plain sentence. */
   reason: string;
-  /** A command that fixes it, shown with a copy button. */
-  command?: string;
 }
 
 /** The stored reason a source last failed. */
 export function sourceFailure(
   source: Pick<SourceStatus, 'latest_sync' | 'identifier' | 'source_type' | 'scheduler_last_error'>,
 ): SourceFailure | undefined {
-  const message = (source.latest_sync?.status === 'failed' ? source.latest_sync.error_message : null) || source.scheduler_last_error;
+  const message = source.latest_sync?.error_message || source.scheduler_last_error;
   return message ? { reason: message } : undefined;
 }
 
 /** The sync command for an account that has no schedule. Only mail-style identifiers have one. */
-export function syncCommand(source: Pick<SourceStatus, 'identifier' | 'sync_unavailable_reason'>): string | undefined {
+export function syncCommand(source: Pick<SourceStatus, 'identifier' | 'sync_unavailable_reason'>, shell: 'posix' | 'cmd' = 'posix'): string | undefined {
   if (source.sync_unavailable_reason !== 'sync_not_configured') return undefined;
-  return /^[^\s/@]+@[^\s/@]+$/.test(source.identifier) ? `msgvault sync ${shellQuote(source.identifier, 'posix')}` : undefined;
+  return /^[^\s/@]+@[^\s/@]+$/.test(source.identifier) ? `msgvault sync ${shellQuote(source.identifier, shell)}` : undefined;
 }
 
 /** Source types whose schedule, filters, and attachment rules live in the settings catalog. */
@@ -75,8 +74,8 @@ export function syncStatusChip(
 ): { label: string; tone: ChipTone } {
   const state = sourceRunState(source);
   if (!state) return { label: 'Never synced', tone: 'muted' };
-  const labels: Partial<Record<RunState, string>> = { running: 'Syncing', succeeded: 'Completed', partial: 'Completed with errors' };
-  return { label: labels[state] ?? RUN_STATES[state].label, tone: RUN_STATES[state].tone };
+  const labels: Record<string, string> = { running: 'Syncing', succeeded: 'Completed', partial: 'Completed with errors' };
+  return { label: labels[state] ?? operationStateChip(state).label, tone: operationStateChip(state).tone };
 }
 
 const SYNC_UNAVAILABLE: Readonly<Record<string, string>> = {

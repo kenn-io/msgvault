@@ -1,8 +1,7 @@
 import { tick } from 'svelte';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { chooseSelectOption } from '../../../test/kit-ui';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
 import { syncRunStatus } from '../../jobs/fixtures.test-support';
@@ -115,70 +114,17 @@ describe('SourcesWorkspace', () => {
     await waitFor(() => expect(screen.queryByText(/invalid_grant/)).toBeNull());
   });
 
-  it('saves a schedule through Save changes, turning the source on', async () => {
-    const patches: unknown[] = [];
-    const settings = [
-      { key: 'beeper.enabled', kind: 'boolean', value: { boolean: false }, group: 'sources', label: 'Scheduled Beeper sync' },
-      { key: 'beeper.schedule', kind: 'string', value: { string: '' }, group: 'sources', label: 'Beeper schedule',
-        validation: { format: 'cron' } }
-    ];
-    const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper' })],
-      (url, request) => {
-        if (url.pathname.endsWith('/settings') && request.method === 'GET') {
-          return Response.json({ settings, groups: [], pending_restart: false, person_enrichment_providers: [] },
-            { headers: { ETag: '"1"' } });
-        }
-        if (url.pathname.endsWith('/settings') && request.method === 'PATCH') {
-          return request.json().then((body) => {
-            patches.push(body);
-            return Response.json({ settings, groups: [], pending_restart: false }, { headers: { ETag: '"2"' } });
-          }) as unknown as Response;
-        }
-        return undefined;
-      });
-    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
+  it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
+    const onOpenSettings = vi.fn();
+    const settings = [{ key: 'beeper.media', kind: 'boolean', value: { boolean: true } }, { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 25 } }];
+    const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper', scheduled: true, schedule: '0 3 * * *' })], url => url.pathname.endsWith('/settings') ? Response.json({ settings }) : undefined);
+    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []), onOpenSettings });
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
-    await chooseSelectOption(await screen.findByRole('combobox', { name: 'Presets: Off' }), 'Every hour');
-    await fireEvent.click(screen.getByRole('button', { name: 'Details for Beeper' }));
-    expect(await screen.findByRole('dialog', { name: 'Discard changes?' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(patches).toHaveLength(1));
-    expect(patches[0]).toEqual({ updates: [
-      { key: 'beeper.enabled', value: { boolean: true } },
-      { key: 'beeper.schedule', value: { string: '0 * * * *' } }
-    ] });
-  });
-
-  it('keeps a schedule draft after a conflicting save and shows a required restart', async () => {
-    const settings = [
-      { key: 'beeper.enabled', kind: 'boolean', value: { boolean: true }, group: 'sources', label: 'Scheduled sync' },
-      { key: 'beeper.schedule', kind: 'string', value: { string: '0 3 * * *' }, group: 'sources', label: 'Schedule', validation: { format: 'cron' } },
-    ];
-    const patches: unknown[] = [];
-    const client = createCaptureClient(api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper' })], (url, request) => {
-      if (!url.pathname.endsWith('/settings')) return undefined;
-      if (request.method === 'GET') return Response.json({ settings, pending_restart: false }, { headers: { ETag: '"2"' } });
-      return request.json().then(body => {
-        patches.push(body);
-        return patches.length === 1 ? Response.json({ message: 'Offline' }, { status: 500 }) : patches.length === 2 ? Response.json({ message: 'Changed' }, { status: 412 }) : Response.json({ settings, pending_restart: true });
-      }) as unknown as Response;
-    }), []);
-    render(SourcesWorkspace, { client });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
-    await chooseSelectOption(await screen.findByRole('combobox', { name: 'Presets: Every day at 03:00' }), 'Every hour');
-    await fireEvent.click(await screen.findByRole('button', { name: 'Save changes' }));
-    await screen.findByText('Offline');
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Save changes' }));
-    await screen.findByText('The settings changed on disk. The latest are loaded. Review your changes and save again.');
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await screen.findByText('Restart msgvault to apply these changes.');
-    expect(patches).toEqual([
-      { updates: [{ key: 'beeper.schedule', value: { string: '0 * * * *' } }] },
-      { updates: [{ key: 'beeper.schedule', value: { string: '0 * * * *' } }] },
-      { updates: [{ key: 'beeper.schedule', value: { string: '0 * * * *' } }] },
-    ]);
+    await screen.findByText('25');
+    expect(screen.getByText('On')).toBeDefined();
+    expect(screen.getByText('At 03:00 every day')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit in Settings › Sources' }));
+    expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
   });
 
   it.each(['gmail', 'imap'])('shows config-only %s schedules and next sync without editable controls', async (source_type) => {
@@ -730,14 +676,17 @@ it('keeps queued, cancelled, partial, and unavailable source meanings', async ()
     source({ id: 2, display_name: 'Cancelled account', latest_sync: run('cancelled', 0), can_sync: false, sync_unavailable_reason: 'sync_not_configured' }),
     source({ id: 3, display_name: 'Imported account', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', latest_sync: run('completed', 3, { errors_count: 1, item_errors: [{ source_message_id: 'message-1', phase: 'fetch', created_at: '2026-07-19T10:00:00Z', error_message: 'Attachment unavailable' }] }) }),
     source({ id: 4, display_name: 'Unavailable account', can_sync: false, sync_unavailable_reason: 'scheduler_unavailable' }),
+    source({ id: 5, display_name: 'Paused account', source_type: 'omi', latest_sync: run('paused', 3, { error_message: 'Import paused at rate limit' }) }),
   ]), []) });
-  for (const label of ['Queued', 'Cancelled', 'Partial', 'Sync not set up', 'Imported file — nothing to sync', 'Scheduler unavailable']) expect(await screen.findByText(label)).toBeDefined();
+  for (const label of ['Paused', 'Queued', 'Cancelled', 'Partial', 'Sync not set up', 'Imported file — nothing to sync', 'Scheduler unavailable']) expect(await screen.findByText(label)).toBeDefined();
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
   expect(onOpenOperations).toHaveBeenCalledOnce();
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for Imported account' }));
   await fireEvent.click(await screen.findByText('1 item failed'));
   expect(screen.getByText('Attachment unavailable')).toBeDefined();
-
+  await fireEvent.click(screen.getByRole('button', { name: 'Details for Paused account' }));
+  await screen.findByText('Import paused at rate limit');
+  expect(within(screen.getByRole('region', { name: 'Runs' })).getByText('Paused')).toBeDefined();
 });
 
 

@@ -360,27 +360,16 @@ All three read the same records and see the same revisions.
 
 ## Sources and sync status
 
-Sources is a status workspace. Each row shows a source's name, readable type and
-identifier, schedule, status, last successful sync, and an action. The schedule
-reads as a sentence, with the cron expression in its tooltip.
+Sources lists Source, Status, Last good sync, and Sync now. Status shows Running, Succeeded, Partial, Failed, Paused, Queued, Cancelled, or Never synced. Contacts accounts appear in their own group. Sources stays available while contacts status loads, and contacts-only runs continue polling.
 
-The **Status** chip is **Syncing**, **Completed**, **Completed with errors**,
-**Failed**, or **Never synced**. A running sync also shows its processed, added,
-and error counts. Otherwise the time of the latest result appears under the
-chip, and the last successful sync has its own column. A latest result older
-than 24 hours adds "This result may be out of date." A failed status request
-remains an error rather than becoming an empty source list.
+Select a source to open its panel. Schedule, Next sync, and attachment rules show the current values. **Edit in Settings › Sources** opens the existing editor for settings shared by that source type. The panel also shows Runs, item errors, and **Sync now**. A latest run's error appears before a scheduler error. **Sync history** opens Past runs filtered to source sync.
 
-A source with a sync error message, item errors, or a scheduler error has
-**Show details for {name}**, which opens the run-level errors, item-level
-errors, and scheduler error. **Sync history** in the page header opens
-**Past runs** filtered to source sync.
+A contacts panel shows its repair reason and **Open Settings › Contacts** for sign-in recovery. That editor retains the selected OAuth app and provides commands for both shells. Mail sync instructions in the source panel also label POSIX and Command Prompt commands.
 
 **Sync now** is available only when that source reports the capability. When it
-is not, the Action column says why in words: "Imported file — nothing to sync",
+is not, the Sync now column says why in words: "Imported file — nothing to sync",
 "Sync in progress", "Scheduler unavailable", "Sync not set up", or "Sync
-unavailable". The daemon's reason code stays in the text's tooltip.
-Meeting-import sources show "On-demand API source" instead, because meetings
+unavailable". Meeting-import sources show "On demand" instead, because meetings
 arrive through the API rather than a sync. A `202
 Accepted` response means the daemon accepted the request, not that work has
 finished. While the page is visible, the UI polls source status with bounded

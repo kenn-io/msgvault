@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { DeletionsController } from '../../deletions/controller.svelte';
 import DeletionsWorkspace from './DeletionsWorkspace.svelte';
 
 function batch(id: string, status: string, count: number, created = '2026-07-19T10:00:00Z') {
@@ -40,7 +41,7 @@ afterEach(() => {
 
 describe('DeletionsWorkspace', () => {
   it('lists staged batches by date, count, account, and status, and ends with the delete command', async () => {
-    render(DeletionsWorkspace, { client: api([batch('b1', 'pending', 2)]) });
+    render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('b1', 'pending', 2)])) });
     expect(await screen.findByText('2 messages')).toBeDefined();
     expect(await screen.findByText('archive@example.com')).toBeDefined();
     expect(screen.getByText('Staged')).toBeDefined();
@@ -50,7 +51,7 @@ describe('DeletionsWorkspace', () => {
   });
 
   it('keeps cancelled batches behind a filter', async () => {
-    render(DeletionsWorkspace, { client: api([batch('b1', 'pending', 2), batch('b2', 'cancelled', 5)]) });
+    render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('b1', 'pending', 2), batch('b2', 'cancelled', 5)])) });
     await screen.findByText('2 messages');
     expect(screen.queryByText('5 messages')).toBeNull();
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
@@ -60,7 +61,7 @@ describe('DeletionsWorkspace', () => {
 
   it('waits for confirmation and immediately sends cancellation', async () => {
     const seen: Seen[] = [], onChanged = vi.fn();
-    render(DeletionsWorkspace, { client: api([batch('b1', 'pending', 2)], seen), onChanged });
+    render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('b1', 'pending', 2)], seen)), onChanged });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Cancel batch' }));
     expect(seen.filter(entry => entry.method === 'DELETE')).toEqual([]);
@@ -72,7 +73,7 @@ describe('DeletionsWorkspace', () => {
     expect(screen.queryByRole('button', { name: /^Open batch from/ })).toBeNull();
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
     await screen.findByRole('button', { name: /^Open batch from/ });
-    expect(seen.filter(entry => entry.method === 'GET' && entry.path === '/api/v1/deletions/b1')).toHaveLength(2);
+    expect(seen.filter(entry => entry.method === 'GET' && entry.path === '/api/v1/deletions/b1')).toHaveLength(1);
   });
 
   it('holds four account reads, then loads later displayed accounts', async () => {
@@ -85,7 +86,7 @@ describe('DeletionsWorkspace', () => {
       ids.push(path.split('/').at(-1)!);
       return new Promise<Response>(resolve => pending.push(resolve));
     });
-    render(DeletionsWorkspace, { client });
+    render(DeletionsWorkspace, { controller: new DeletionsController(client) });
     await waitFor(() => expect(ids).toEqual(['batch-0', 'batch-1', 'batch-2', 'batch-3']));
     pending[0](Response.json({}, { status: 500 }));
     await waitFor(() => expect(ids).toHaveLength(5));
@@ -93,7 +94,7 @@ describe('DeletionsWorkspace', () => {
     await screen.findByText('batch-4@example.com');
     expect(ids).not.toContain('batch-5');
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
-    await waitFor(() => expect(ids).toEqual(['batch-0', 'batch-1', 'batch-2', 'batch-3', 'batch-4', 'batch-0', 'batch-5']));
+    await waitFor(() => expect(ids).toEqual(['batch-0', 'batch-1', 'batch-2', 'batch-3', 'batch-4', 'batch-5']));
     pending.slice(5).forEach((resolve, i) => resolve(Response.json(detail(ids[i + 5], 'pending'))));
     await screen.findAllByText('archive@example.com');
   });
@@ -107,7 +108,7 @@ describe('DeletionsWorkspace', () => {
       if (request.method === 'DELETE') return ++deletes === 1 ? Response.json({ message: 'Busy' }, { status: 500 }) : Response.json({ id: 'b1', status: 'cancelled' });
       return Response.json(detail('b1', 'in_progress'));
     });
-    render(DeletionsWorkspace, { client, onChanged });
+    render(DeletionsWorkspace, { controller: new DeletionsController(client), onChanged });
     await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
     await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Cancel batch' }));
@@ -124,7 +125,7 @@ describe('DeletionsWorkspace', () => {
 
   it('offers no cancel once a batch is deleted', async () => {
     render(DeletionsWorkspace, {
-      client: api([batch('b1', 'completed', 2)], [], { b1: detail('b1', 'completed') })
+      controller: new DeletionsController(api([batch('b1', 'completed', 2)], [], { b1: detail('b1', 'completed') }))
     });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
     await screen.findByText('news@example.com');
@@ -132,36 +133,27 @@ describe('DeletionsWorkspace', () => {
   });
 });
 
-it('ignores a closed detail response after another batch opens', async () => {
-  const waiting: Array<(response: Response) => void> = [];
-  let reads = 0;
+it('keeps the selected batch when another account lookup finishes late', async () => {
+  let finish!: (response: Response) => void;
   const client = createAPIClient(async input => {
     const request = input as Request;
-    if (request.url.endsWith('/deletions')) return Response.json({ manifests: [batch('a', 'pending', 2), batch('b', 'pending', 3, '2026-07-20T10:00:00Z')] });
-    const id = request.url.split('/').at(-1)!;
-    if (++reads <= 2) return reads === 1 ? Response.json({}, { status: 500 }) : Response.json(detail(id, 'pending'));
-    return new Promise<Response>(resolve => waiting.push(resolve));
+    if (request.url.endsWith('/deletions')) return Response.json({ manifests: [batch('a', 'pending', 2), batch('b', 'pending', 3)] });
+    return request.url.endsWith('/a') ? new Promise(resolve => { finish = resolve; }) : Response.json(detail('b', 'pending', { description: 'Batch B review' }));
   });
-  render(DeletionsWorkspace, { client });
-  await waitFor(() => expect(reads).toBe(2));
-  const rows = screen.getAllByRole('button', { name: /^Open batch from/ });
+  render(DeletionsWorkspace, { controller: new DeletionsController(client) });
+  const rows = await screen.findAllByRole('button', { name: /^Open batch from/ });
   await fireEvent.click(rows[0]);
-  await waitFor(() => expect(waiting).toHaveLength(1));
   await fireEvent.click(rows[1]);
-  await fireEvent.click(rows[0]);
-  waiting[2](Response.json(detail('a', 'pending', { account: 'new@example.com' })));
-  await screen.findByText('new@example.com');
-  waiting[0](Response.json(detail('a', 'pending', { account: 'stale@example.com' })));
-  waiting[1](Response.json(detail('b', 'pending')));
-  await new Promise(resolve => setTimeout(resolve, 0));
-  expect(screen.queryByText('stale@example.com')).toBeNull();
+  await screen.findByText('Batch B review');
+  finish(Response.json(detail('a', 'pending', { description: 'Late batch A review' })));
+  await waitFor(() => expect(screen.queryByText('Late batch A review')).toBeNull());
+  expect(screen.getByText('Batch B review')).toBeDefined();
 });
 
-
 it('shows the review description and failed message IDs in batch details', async () => {
-  render(DeletionsWorkspace, { client: api([batch('failed', 'failed', 2)], [], {
+  render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('failed', 'failed', 2)], [], {
     failed: detail('failed', 'failed', { description: 'Old newsletter cleanup', execution: { failed_ids: ['message-a', 'message-b'], succeeded: 0, failed: 2 } })
-  }) });
+  })) });
   await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
   await screen.findByText('Old newsletter cleanup');
   expect(screen.getByText('message-a')).toBeDefined();

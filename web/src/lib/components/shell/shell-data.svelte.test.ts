@@ -217,52 +217,6 @@ it('restores the visible view and reports a failed delete', async () => {
 });
 
 
-it.each([
-  ['pending', '2020-01-01T00:00:00Z', true],
-  ['in_progress', '2020-01-01T00:00:00Z', true],
-  ['completed', '2026-10-22T12:00:00Z', true],
-  ['failed', '2026-10-22T11:59:59Z', false],
-  ['cancelled', '2026-10-28T12:00:00Z', true],
-  ['cancelled', '2026-10-01T12:00:00Z', false],
-])('shows the deletion sidebar entry for %s created at %s: %s', async (status, created_at, visible) => {
-  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-29T12:00:00Z'));
-  const data = new ShellData(createAPIClient(async input => {
-    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/deletions')) return Response.json({ manifests: [{ id: 'batch-1', status, created_at }] });
-    return Response.json({ saved_views: [] });
-  }));
-  try {
-    await data.refresh();
-    expect(data.deletionsStaged).toBe(visible);
-  } finally { data.stop(); vi.restoreAllMocks(); }
-});
-
-it('uses cached completion time for delayed batches and keeps visibility on failed reads', async () => {
-  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-29T12:00:00Z'));
-  const requests: string[] = [];
-  let failing = false;
-  const data = new ShellData(createAPIClient(async input => {
-    const path = new URL((input as Request).url).pathname;
-    requests.push(path);
-    if (failing) return Response.json({}, { status: 500 });
-    if (path === '/api/v1/deletions') return Response.json({ manifests: [{ id: 'delayed', status: 'completed', created_at: '2026-10-01T12:00:00Z' }, { id: 'old', status: 'completed', created_at: '2026-09-01T12:00:00Z' }] });
-    return Response.json({ execution: { completed_at: path.endsWith('/delayed') ? '2026-10-28T12:00:00Z' : '2026-09-02T12:00:00Z' } });
-  }));
-  try {
-    await data.refreshDeletions();
-    expect(data.deletionsStaged).toBe(true);
-    await data.refreshDeletions();
-    expect(requests.filter(path => path.endsWith('/delayed'))).toHaveLength(1);
-    failing = true;
-    await data.refreshDeletions();
-    expect(data.deletionsStaged).toBe(true);
-    failing = false;
-    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-05T12:00:00Z'));
-    await data.refreshDeletions();
-    expect(data.deletionsStaged).toBe(false);
-  } finally { data.stop(); vi.restoreAllMocks(); }
-});
-
 it('refreshes deletions and jobs on the timer without rereading saved views', async () => {
   vi.useFakeTimers();
   const { data, requests } = setup();
@@ -273,46 +227,4 @@ it('refreshes deletions and jobs on the timer without rereading saved views', as
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/saved-views')).toHaveLength(1);
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(2);
   } finally { data.stop(); vi.useRealTimers(); }
-});
-
-it('bounds older completion reads to four while a recent batch keeps navigation visible', async () => {
-  const pending: Array<(response: Response) => void> = [];
-  const data = new ShellData(createAPIClient(async input => {
-    if ((input as Request).url.endsWith('/saved-views')) return Response.json({ saved_views: [view(1, 'Budget')] });
-    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [
-      { id: 'recent', status: 'pending', created_at: '2020-01-01T00:00:00Z' },
-      ...Array.from({ length: 5 }, (_, i) => ({ id: `old-${i}`, status: 'completed', created_at: '2020-01-01T00:00:00Z' }))
-    ] });
-    return new Promise<Response>(resolve => pending.push(resolve));
-  }));
-  const refresh = data.refresh();
-  await vi.waitFor(() => expect(pending).toHaveLength(4));
-  expect(data.deletionsStaged).toBe(true);
-  await vi.waitFor(() => expect(data.views.map(view => view.name)).toEqual(['Budget']));
-  pending[0](Response.json({}));
-  await vi.waitFor(() => expect(pending).toHaveLength(5));
-  pending.slice(1).forEach(resolve => resolve(Response.json({})));
-  await refresh;
-  data.stop();
-});
-
-it('refreshes completion time after an old failed batch runs again', async () => {
-  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-29T12:00:00Z'));
-  let status = 'failed', reads = 0;
-  const data = new ShellData(createAPIClient(async input => {
-    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [{ id: 'retry', status, created_at: '2020-01-01T00:00:00Z' }] });
-    reads++;
-    return Response.json({ execution: { completed_at: status === 'failed' ? '2020-01-01T00:00:00Z' : '2026-10-29T11:59:00Z' } });
-  }));
-  try {
-    await data.refreshDeletions();
-    expect(data.deletionsStaged).toBe(false);
-    status = 'in_progress';
-    await data.refreshDeletions();
-    expect(data.deletionsStaged).toBe(true);
-    status = 'completed';
-    await data.refreshDeletions();
-    expect(data.deletionsStaged).toBe(true);
-    expect(reads).toBe(2);
-  } finally { data.stop(); vi.restoreAllMocks(); }
 });

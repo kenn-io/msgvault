@@ -6,7 +6,7 @@
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
   } from '../../api/generated/api/api';
-  import { Button, Table, TableHeaderCell } from '@kenn-io/kit-ui';
+  import { Button, Chip, Table, TableHeaderCell } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVConnectionResponse, SourceStatus } from '../../api/generated/models';
@@ -15,7 +15,7 @@
   import { formatDateTime } from '../../util/format';
   import Dialog from '../common/Dialog.svelte';
   import { EmptyState } from '@kenn-io/kit-ui';
-  import StatusChip from '../common/StatusChip.svelte';
+  import { operationStateChip } from '../../operations/labels';
   import PageHeader from '../shell/PageHeader.svelte';
   import CommandLine from './CommandLine.svelte';
   import ContactPanel from './ContactPanel.svelte';
@@ -47,7 +47,6 @@
 
   let sources = $state<Source[]>([]);
   let contacts = $state<CardDAVConnectionResponse[]>([]);
-  let panel = $state<SourcePanel>();
   let selected = $state<string>();
   let adding = $state(false);
   let loading = $state(true);
@@ -336,8 +335,7 @@
   }
   function toggle(key: string): void {
     const next = selected === key ? undefined : key;
-    if (panel) panel.requestClose(() => selected = next);
-    else selected = next;
+    selected = next;
   }
   function syncing(source: Source): boolean {
     return (
@@ -388,7 +386,7 @@
       {/snippet}
       {#each sources as source (source.id)}
         {@const key = `source:${source.id}`}
-        {@const state = sourceRunState(source)}
+        {@const chip = operationStateChip(sourceRunState(source) ?? 'Never synced')}
         <tr class:selected={selected === key} aria-selected={selected === key} onclick={() => toggle(key)}>
           <td>
             <div class="name">
@@ -404,7 +402,7 @@
               <span class="muted">{sourceTypeLabel(source.source_type)}</span>
             </div>
           </td>
-          <td><div class="name">{#if state}<StatusChip {state} />{:else}<span class="muted">Never synced</span>{/if}{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span>{/if}</div></td>
+          <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span>{/if}</div></td>
           <td>{@render lastGood(source.last_successful_sync?.completed_at)}</td>
           <td class="action">
             {#if source.can_sync || syncing(source)}
@@ -431,6 +429,7 @@
         {#each contacts as connection (connection.connection)}
           {@const key = `contacts:${connection.connection}`}
           {@const state = contactRunState(connection.status)}
+          {@const chip = operationStateChip(state ?? 'Never synced')}
           <tr class:selected={selected === key} aria-selected={selected === key} onclick={() => toggle(key)}>
             <td>
               <div class="name">
@@ -446,7 +445,7 @@
                 <span class="muted">Contacts</span>
               </div>
             </td>
-            <td>{#if state}<StatusChip {state} />{:else}<span class="muted">Never synced</span>{/if}</td>
+            <td><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip></td>
             <td>{@render lastGood(contactLastGood(connection.status))}</td>
             <td class="action">
               {#if contactCanSync(connection.status) || triggering === key}
@@ -476,13 +475,12 @@
 {#if selectedSource}
   {#key selectedSource.id}
     <SourcePanel
-      bind:this={panel}
       {client}
       source={selectedSource}
       syncing={syncing(selectedSource)}
       onSync={() => void syncNow(selectedSource)}
       onclose={() => (selected = undefined)}
-      onSaved={refresh}
+      onOpenSettings={() => onOpenSettings('sources')}
     />
   {/key}
 {:else if selectedContact}

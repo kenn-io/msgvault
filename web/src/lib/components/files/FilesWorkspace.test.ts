@@ -662,7 +662,7 @@ describe('FilesWorkspace', () => {
     const first = response();
     Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
     const second = response();
-    second.files[0] = { ...second.files[0]!, id: 8, key: 'file:8', filename: 'later.pdf' };
+    second.files[0] = { ...second.files[0]!, id: 8, key: 'file:8', filename: 'later.pdf', content_state: 'missing_blob', content_available: false };
     second.total_count = 2;
     const cursors: Array<string | undefined> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -679,10 +679,12 @@ describe('FilesWorkspace', () => {
 
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     await screen.findByRole('row', { name: /fixture.pdf/ });
+    expect(within(grid).getAllByRole('columnheader').map(header => header.textContent?.trim())).toEqual(['Date', 'Filename', 'Type', 'Size', 'People', 'Source', 'Message', 'Availability']);
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'PageDown' });
     await waitFor(() => expect(onActiveKey).toHaveBeenLastCalledWith('file:8'));
     expect(cursors).toEqual([undefined, 'page-2']);
+    expect(within(grid).getAllByRole('columnheader').map(header => header.textContent?.trim())).toEqual(['Date', 'Filename', 'Type', 'Size', 'People', 'Source', 'Message', 'Availability']);
 
     await fireEvent.keyDown(grid, { key: 'PageUp' });
     expect(onActiveKey).toHaveBeenLastCalledWith('file:7');

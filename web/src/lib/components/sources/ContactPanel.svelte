@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
+  import { Button, Chip } from '@kenn-io/kit-ui';
   import type { CardDAVConnectionResponse } from '../../api/generated/models';
   import { scheduleSummary } from '../../settings/cron';
   import { contactCanSync, contactFailure, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
   import { formatDateTime } from '../../util/format';
   import SidePanel from '../common/SidePanel.svelte';
-  import StatusChip from '../common/StatusChip.svelte';
-  import CommandLine from './CommandLine.svelte';
+  import { operationStateChip } from '../../operations/labels';
 
   let {
     connection,
@@ -23,7 +22,7 @@
   } = $props();
 
   const status = $derived(connection.status);
-  const state = $derived(contactRunState(status));
+  const chip = $derived(operationStateChip(contactRunState(status) ?? 'Never synced'));
   const failure = $derived(contactFailure(connection));
   const lastGood = $derived(contactLastGood(status));
   const latest = $derived(status.latest);
@@ -34,7 +33,7 @@
     <div class="summary">
       <span class="muted">Contacts{status.account?.base_url ? ` · ${status.account.base_url}` : ''}</span>
       <div class="status">
-        {#if state}<StatusChip {state} />{/if}
+        <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
         <span class="muted">
           {#if lastGood}Last good sync {formatDateTime(lastGood)}{:else}No good sync yet{/if}
         </span>
@@ -54,7 +53,7 @@
     {#if failure}
       <section class="block" aria-label="Failure">
         <p class="failure">{failure.reason}</p>
-        {#if failure.command}<CommandLine command={failure.command} />{/if}
+        <Button size="sm" label="Open Settings › Contacts" onclick={onOpenSettings} />
       </section>
     {/if}
 

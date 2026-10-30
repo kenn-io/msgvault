@@ -239,8 +239,7 @@
     const selected = mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family));
     return selected.length > 0 ? selected : visibleMIMEFamilies;
   });
-  const showAvailability = $derived(rows.some(row => row.content_state !== 'local_content'));
-  const columnCount = $derived(7 + (personScoped ? 1 : 0) + (showAvailability ? 1 : 0));
+  const columnCount = $derived(8 + (personScoped ? 1 : 0));
   // Flexible columns shrink to ellipsis; below MIN_TABLE_WIDTH the grid scrolls sideways instead.
   const columns = $derived(
     [
@@ -252,7 +251,7 @@
       'minmax(0, 1fr)',
       'minmax(0, 1fr)',
       'minmax(0, 1.3fr)',
-      ...(showAvailability ? ['120px'] : []),
+      '120px',
     ].join(' '),
   );
   const mediaRows = $derived(rows as PersonFileSearchRow[]);
@@ -919,7 +918,7 @@
           <span role="columnheader">People</span>
           <span role="columnheader">Source</span>
           <span role="columnheader">Message</span>
-          {#if showAvailability}<span role="columnheader">Availability</span>{/if}
+          <span role="columnheader">Availability</span>
         </div>
         <div class="table-body" role="rowgroup">
           {#if unavailable?.readiness === 'building'}
@@ -1017,7 +1016,7 @@
                         {row.containing_title || row.entry_key}
                       {/if}
                     </span>
-                    {#if showAvailability}<span role="gridcell">{availability(row)}</span>{/if}
+                    <span role="gridcell">{availability(row)}</span>
                   </div>
                 {/each}
               </div>
@@ -1161,6 +1160,7 @@
   .table-header,
   .data-row {
     display: grid;
+    align-items: center;
     min-width: 840px;
   }
   .table-header {

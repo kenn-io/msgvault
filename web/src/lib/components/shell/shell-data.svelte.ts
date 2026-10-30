@@ -1,21 +1,18 @@
 import {
   deleteSavedView,
   listSavedViews,
-  listDeletions,
-  getDeletion,
   patchSavedView,
 } from '../../api/generated/api/api';
 import type { APIClient } from '../../api/client';
 import { OperationsController } from '../../operations/controller.svelte';
 import { JobsStore } from '../../jobs/jobs.svelte';
-import type { DeletionManifestSummary, SavedView, PatchSavedViewRequest } from '../../api/generated/models';
+import type { SavedView, PatchSavedViewRequest } from '../../api/generated/models';
 import type { ExploreURLState } from '../../explore/models';
 import { supportsSavedViewSchema, exploreStateFromSavedView, type CanonicalState } from '../../saved-views/canonical';
 
+import { DeletionsController } from '../../deletions/controller.svelte';
+
 const REFRESH_MS = 30_000;
-export function batchIsRecent(batch: Pick<DeletionManifestSummary, 'status' | 'created_at'>, now: number, completedAt?: string | null): boolean {
-  return batch.status === 'pending' || batch.status === 'in_progress' || now - Date.parse(completedAt || batch.created_at) <= 7 * 24 * 60 * 60 * 1000;
-}
 export function viewIncompatibility(view: SavedView): string {
   if (!supportsSavedViewSchema(view.schema_version)) {
     return `This view uses schema version ${view.schema_version}. Automatic migration is not supported; remove it and save the current view again.`;
@@ -36,18 +33,17 @@ export class ShellData {
   }
   pending = $state<SavedView>();
   error = $state<string>();
-  deletionsStaged = $state(false);
+  readonly deletions: DeletionsController;
+  get deletionsStaged(): boolean { return this.deletions.visible; }
   readonly jobs: JobsStore;
 
   #client: APIClient;
   #timer: ReturnType<typeof setInterval> | undefined;
   #controller: AbortController | undefined;
-  #deletionsController?: AbortController;
-  #completed = new Map<string, string | null>();
-  #batchStatuses = new Map<string, string>();
 
   constructor(client: APIClient, operations = new OperationsController(client)) {
     this.#client = client;
+    this.deletions = new DeletionsController(client);
     this.jobs = new JobsStore(client, operations);
   }
 
@@ -62,7 +58,7 @@ export class ShellData {
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#timer = undefined;
     this.#controller?.abort();
-    this.#deletionsController?.abort();
+    this.deletions.destroy();
     this.jobs.dispose();
   }
 
@@ -70,7 +66,7 @@ export class ShellData {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     const client = { ...this.#client, signal: controller.signal };
-    const deletions = this.refreshDeletions();
+    const deletions = this.refreshDeletions(true);
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
     this.error = views ? undefined : "Couldn't load saved views.";
@@ -78,37 +74,7 @@ export class ShellData {
     await deletions;
   }
 
-  async refreshDeletions(): Promise<void> {
-    this.#deletionsController?.abort();
-    const controller = this.#deletionsController = new AbortController();
-    const client = { ...this.#client, signal: controller.signal };
-    try {
-      const { data } = await listDeletions(undefined, client);
-      if (!data || controller.signal.aborted) return;
-      const batches = data.manifests ?? [];
-      for (const batch of batches) {
-        if (this.#batchStatuses.get(batch.id) !== batch.status) this.#completed.delete(batch.id);
-        this.#batchStatuses.set(batch.id, batch.status);
-      }
-      const now = Date.now();
-      if (batches.some(batch => batchIsRecent(batch, now, this.#completed.get(batch.id)))) this.deletionsStaged = true;
-      const older = batches.filter(batch => !batchIsRecent(batch, now) && !this.#completed.has(batch.id));
-      let index = 0, failed = false;
-      await Promise.all(Array.from({ length: Math.min(4, older.length) }, async () => {
-        while (index < older.length && !controller.signal.aborted) {
-          const batch = older[index++];
-          try {
-            const { data } = await getDeletion({ id: batch.id }, client);
-            if (!data) failed = true;
-            else if (!controller.signal.aborted) this.#completed.set(batch.id, data.execution?.completed_at ?? null);
-          } catch { failed = true; }
-        }
-      }));
-      if (controller.signal.aborted) return;
-      const visible = batches.some(batch => batchIsRecent(batch, now, this.#completed.get(batch.id)));
-      if (visible || !failed) this.deletionsStaged = visible;
-    } catch { /* Keep the last known sidebar state on failed refresh. */ }
-  }
+  refreshDeletions(retry = false): Promise<void> { return this.deletions.refresh(retry); }
 
   async #loadViews(client: APIClient): Promise<SavedView[] | undefined> {
     try {
