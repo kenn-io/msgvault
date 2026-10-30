@@ -165,7 +165,7 @@ describe('ExploreSelectionBar', () => {
     expect(screen.getByRole('status').textContent).toBe('');
     expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
     expect(screen.queryByText('No items selected')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete from Gmail…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review deletion…' })).toBeNull();
   });
 
   it('offers deletion review for an explicit and then an all-matching selection', async () => {
@@ -184,11 +184,11 @@ describe('ExploreSelectionBar', () => {
     render(ExploreSelectionBar, { selection, totalCount: 50, allMatching, onReviewDeletion });
 
     expect(screen.getByRole('status').textContent).toContain('3 selected');
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete from Gmail…' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
     expect(onReviewDeletion).toHaveBeenLastCalledWith('explicit');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching items' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete from Gmail…' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
     expect(onReviewDeletion).toHaveBeenLastCalledWith('all_matching');
   });
 
@@ -204,7 +204,7 @@ describe('ExploreSelectionBar', () => {
       ]),
     });
 
-    const review = screen.getByRole('button', { name: 'Delete from Gmail…' }) as HTMLButtonElement;
+    const review = screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement;
     expect(review.disabled).toBe(true);
     const reason = screen.getByText('None of the selected items can be deleted from their source.');
     expect(review.getAttribute('aria-describedby')).toBe(reason.id);
@@ -216,7 +216,7 @@ describe('ExploreSelectionBar', () => {
     selection.selectVisible(['message:1']);
     render(ExploreSelectionBar, { selection, totalCount: 2, onReviewDeletion: vi.fn(), preflight: preflight() });
 
-    const review = screen.getByRole('button', { name: 'Delete from Gmail…' }) as HTMLButtonElement;
+    const review = screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement;
     expect(review.disabled).toBe(false);
     expect(review.getAttribute('aria-describedby')).toBeNull();
   });

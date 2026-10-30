@@ -674,7 +674,7 @@ export class ExploreState {
       return;
     }
     const commit = () => this.commitPopped(next, nextIndex);
-    if (this.current.workspace === 'settings' && next.workspace !== 'settings' && this.holdPop(nextIndex - this.historyIndex, commit)) return;
+    if (['settings', 'sources'].includes(this.current.workspace) && next.workspace !== this.current.workspace && this.holdPop(nextIndex - this.historyIndex, commit)) return;
     commit();
   };
 
@@ -954,7 +954,7 @@ export class ExploreState {
   holdNavigation(patch: Partial<ExploreURLState>, leave: () => void): boolean {
     this.pendingHeldLeaveRestore?.();
     this.cancelHeldLeave?.();
-    const held = this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
+    const held = ['settings', 'sources'].includes(this.current.workspace) && patch.workspace !== undefined && patch.workspace !== this.current.workspace &&
       (this.holdLeave?.(leave) ?? false);
     if (held) this.clearHeldOperationHistory(patch);
     return held;

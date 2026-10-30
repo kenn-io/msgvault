@@ -19,7 +19,7 @@ import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
   it.each([
-    ['Back', 'stay'], ['Back', 'leave'], ['click', 'stay'], ['click', 'leave']
+    ['Back', 'stay'], ['Back', 'leave'], ['click', 'leave']
   ] as const)('holds Back to an unindexed entry from dirty Settings, then handles %s and %s', async (navigation, outcome) => {
     window.history.replaceState(null, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
@@ -175,48 +175,34 @@ describe('Explore URL state', () => {
   });
 
   it.each([
-    ['back', 'leave'], ['back', 'stay'], ['forward', 'leave'], ['forward', 'stay'],
-    ['indexed Back across Past runs', 'leave'], ['indexed Back across Past runs', 'stay'],
-  ] as const)('holds browser %s from dirty Settings and handles %s', async (direction, outcome) => {
-    window.history.replaceState(null, '', '/?workspace=sources');
+    ['back', 'leave', 'settings'], ['back', 'stay', 'settings'], ['forward', 'leave', 'settings'], ['forward', 'stay', 'settings'],
+    ['back', 'leave', 'sources'], ['forward', 'stay', 'sources'],
+  ] as const)('holds browser %s from dirty Settings and handles %s', async (direction, outcome, workspace) => {
+    window.history.replaceState(null, '', '/?workspace=directory');
     const state = new ExploreState(window);
     try {
-      state.commitWorkspace('settings');
-      const pastRuns = direction === 'indexed Back across Past runs';
-      if (pastRuns) {
-        state.openOperationHistory({ operationKind: 'source_sync' });
-        state.commitNavigation({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
-      } else {
-        state.commitWorkspace('files');
-        window.history.back();
-        await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      }
-      const historyIndex = window.history.state.exploreIndex;
+      state.commitWorkspace(workspace);
+      state.commitWorkspace('files');
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       const historyLength = window.history.length;
       let leave!: () => void;
       state.holdLeave = (next) => { leave = next; return true; };
-      if (pastRuns) window.history.go(-3);
-      else window.history[direction]();
+      window.history[direction]();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      expect(state.current.workspace).toBe('settings');
-      await waitFor(() => expect(window.history.state.exploreIndex).toBe(historyIndex));
-      await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
-      expect(state.current.operationHistory).toBe(false);
+      expect(state.current.workspace).toBe(workspace);
+      await waitFor(() => expect(window.location.search).toBe(`?workspace=${workspace}&mode=full_text`));
       expect(window.history.length).toBe(historyLength);
       state.holdLeave = undefined;
       if (outcome === 'leave') {
         leave();
         await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-        expect(state.current.workspace).toBe(direction === 'forward' ? 'files' : 'sources');
-        expect(window.location.search).toBe(direction === 'forward' ? '?workspace=files&mode=full_text' : '?workspace=sources&mode=full_text');
+        expect(state.current.workspace).toBe(direction === 'back' ? 'directory' : 'files');
+        expect(window.location.search).toBe(direction === 'back' ? '?workspace=directory&mode=full_text' : '?workspace=files&mode=full_text');
         expect(window.history.length).toBe(historyLength);
-      } else if (pastRuns) {
-        expect(state.current.workspace).toBe('settings');
-        window.history.go(-3);
-        await waitFor(() => expect(state.current.workspace).toBe('sources'));
       } else {
         window.history[direction === 'back' ? 'forward' : 'back']();
-        await waitFor(() => expect(state.current.workspace).toBe(direction === 'back' ? 'files' : 'sources'));
+        await waitFor(() => expect(state.current.workspace).toBe(direction === 'back' ? 'files' : 'directory'));
       }
     } finally {
       state.destroy();
@@ -1243,7 +1229,7 @@ describe('ExploreState history ownership', () => {
     state.destroy();
   });
 
-  it('advances restoration epochs only for initial URL ownership and archive popstate', () => {
+  it('advances restoration epochs only for initial URL ownership and popstate', () => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
     const initialEpoch = state.restorationEpoch;
@@ -1256,7 +1242,6 @@ describe('ExploreState history ownership', () => {
     state.commitSearch('committed', 'full_text');
     expect(state.restorationEpoch).toBe(initialEpoch);
 
-    window.history.replaceState(null, '', '/');
     window.dispatchEvent(new PopStateEvent('popstate'));
     expect(state.restorationEpoch).toBe(initialEpoch + 1);
     expect(state.peekRestorationEpoch()).toBe(initialEpoch + 1);
@@ -1794,30 +1779,6 @@ describe('session-owned exploration selection', () => {
     ).toThrow('candidate snapshot');
   });
 
-});
-
-it('keeps archive state and restoration epoch when popping between Past runs', async () => {
-  window.history.replaceState(null, '', '/');
-  const state = new ExploreState(window);
-  try {
-    state.commitNavigation({ query: 'budget', activeRow: 'message:1', scrollAnchor: { key: 'message:1', offset: 12 } });
-    state.openOperationHistory({});
-    const firstRun = `op2.${'a'.repeat(32)}.firstRun`;
-    state.openOperationHistory({ operationRunID: firstRun });
-    state.openOperationHistory({ operationRunID: `op2.${'b'.repeat(32)}.secondRun` });
-    const current = state.current;
-    const archiveFields = Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith('operation')));
-    const epoch = state.restorationEpoch;
-    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.back();
-    await popped;
-    expect(state.current.operationRunID).toBe(firstRun);
-    expect(state.restorationEpoch).toBe(epoch);
-    expect(state.current).toBe(current);
-    expect(Object.fromEntries(Object.entries(state.current).filter(([key]) => !key.startsWith('operation')))).toEqual(archiveFields);
-  } finally {
-    state.destroy();
-  }
 });
 
 it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s after changing filters and detail', async action => {

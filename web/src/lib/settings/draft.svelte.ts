@@ -72,7 +72,7 @@ export class SettingsDraft {
     this.error = '';
   }
 
-  async load(keepDrafts = false): Promise<void> {
+  async load(keepDrafts = true): Promise<void> {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     this.loading = true;

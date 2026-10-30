@@ -19,7 +19,7 @@
 
 <script lang="ts">
   import { Button } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { getContext, onDestroy, onMount, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { SourceStatus } from '../../api/generated/models';
   import { scheduleSummary } from '../../settings/cron';
@@ -31,6 +31,7 @@
     sourceRunState,
     sourceTypeLabel,
     syncCommand,
+    syncUnavailableLabel,
   } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import SidePanel from '../common/SidePanel.svelte';
@@ -76,12 +77,28 @@
   });
   onDestroy(() => draft.destroy());
 
-  let confirmClose = $state(false);
-  let leave = $state<() => void>(() => onclose());
+  let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
+  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => void) | undefined>('msgvault:hold-settings-leave');
+  function holdLeave(leave: () => void, stay: (() => void) | undefined = undefined): boolean {
+    if (draft.saving) return true;
+    if (!draft.dirty) return false;
+    pendingLeave = { leave, stay };
+    return true;
+  }
+  registerLeave?.(holdLeave, () => pendingLeave = undefined);
+  onDestroy(() => registerLeave?.(undefined));
+  function stay(): void {
+    pendingLeave?.stay?.();
+    pendingLeave = undefined;
+  }
+  function discardAndLeave(): void {
+    const leave = pendingLeave?.leave;
+    pendingLeave = undefined;
+    draft.discard();
+    leave?.();
+  }
   export function requestClose(next: () => void = onclose): void {
-    leave = next;
-    if (draft.dirty) confirmClose = true;
-    else next();
+    if (!holdLeave(next)) next();
   }
   function close(): void { requestClose(); }
   function key(suffix: string): string {
@@ -146,6 +163,8 @@
   {/if}
 {/snippet}
 
+<svelte:window onbeforeunload={(event) => { if (draft.dirty) event.preventDefault(); }} />
+
 <SidePanel title={source.display_name || source.identifier} onclose={close} footer={draft.dirty ? footer : undefined}>
   <div class="panel">
     <div class="summary">
@@ -177,10 +196,10 @@
       </section>
     {/if}
 
-    {#if !source.can_sync && !schedule && command}
+    {#if !source.can_sync && !syncing}
       <section class="block" aria-label="Sync">
-        <span class="muted">Not scheduled</span>
-        <CommandLine {command} />
+        <span class="muted">{source.source_type === 'meeting_import' ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
+        {#if command}<CommandLine {command} />{/if}
       </section>
     {/if}
 
@@ -231,13 +250,7 @@
           {#each runs as run (run.id)}
             <li>
               <StatusChip
-                state={run.status === 'failed'
-                  ? 'failed'
-                  : run.status === 'running'
-                    ? 'running'
-                    : run.errors_count > 0
-                      ? 'partial'
-                      : 'succeeded'}
+                state={sourceRunState({ latest_sync: run, active_sync: null }) ?? 'succeeded'}
               />
               <time datetime={run.started_at} title={formatDateTime(run.started_at, 'long')}>
                 {formatDateTime(run.started_at)}
@@ -260,10 +273,10 @@
     {/if}
   </div>
 </SidePanel>
-{#if confirmClose}
-  <Dialog title="Discard changes?" onclose={() => confirmClose = false} primaryLabel="Discard changes" onprimary={() => leave()}>
+{#if pendingLeave}
+  <Dialog title="Discard changes?" onclose={stay} primaryLabel="Discard changes" onprimary={discardAndLeave}>
     <p>Unsaved source settings will be discarded.</p>
-    <Button label="Keep editing" onclick={() => confirmClose = false} />
+    <Button label="Keep editing" onclick={stay} />
   </Dialog>
 {/if}
 

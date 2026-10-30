@@ -11,7 +11,7 @@
   import type { APIClient } from '../../api/client';
   import type { CardDAVConnectionResponse, SourceStatus } from '../../api/generated/models';
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
-  import { sourceRunState, sourceTypeLabel, syncRunning } from '../../sources/labels';
+  import { sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import Dialog from '../common/Dialog.svelte';
   import { EmptyState } from '@kenn-io/kit-ui';
@@ -143,6 +143,7 @@
     if (disposed || document.hidden) return;
     if (
       !allowIdle &&
+      !contacts.some(contact => contact.status.active) &&
       !sources.some((source) => syncRunning(source) || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
       awaitingSourceID === undefined
     )
@@ -424,7 +425,7 @@
                 }}
               />
             {:else}
-              <span class="muted">Not scheduled</span>
+              <span class="muted">{isOnDemandSource(source) ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
             {/if}
           </td>
         </tr>
@@ -466,7 +467,7 @@
                   }}
                 />
               {:else}
-                <span class="muted">Not scheduled</span>
+                <span class="muted">{connection.status.active ? 'Sync in progress' : connection.status.available ? 'Account needs attention' : 'Contacts unavailable'}</span>
               {/if}
             </td>
           </tr>
