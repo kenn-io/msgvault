@@ -1274,7 +1274,7 @@
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory) => commitNavigation({ workspace: 'settings', settingsCategory })} onOpenOperations={() => openOperations('source_sync')} />
       {:else if exploreState.current.workspace === 'deletions'}
-        <DeletionsWorkspace {client} onChanged={() => void shellData.refresh()} />
+        <DeletionsWorkspace {client} onChanged={() => void shellData.refreshDeletions()} />
       {:else if exploreState.current.workspace === 'relationships'}
         <RelationshipsWorkspace
           {client}
@@ -1683,5 +1683,5 @@
 </style>
 
 {#if pendingDeletionReview}
-  <DeletionReview {client} selection={pendingDeletionReview} onclose={() => pendingDeletionReview = undefined} onStaged={() => { selection.clear(); void shellData.refresh(); }} />
+  <DeletionReview {client} selection={pendingDeletionReview} onclose={() => pendingDeletionReview = undefined} onStaged={() => { selection.clear(); void shellData.refreshDeletions(); }} />
 {/if}

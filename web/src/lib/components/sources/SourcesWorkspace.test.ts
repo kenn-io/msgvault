@@ -64,24 +64,6 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
-  it('lists one row per account with its status, last good sync, and Sync now', async () => {
-    const fetchFn = api([
-      source({ latest_sync: run('completed', 3), last_successful_sync: run('completed', 3) }),
-      source({ id: 2, identifier: 'b@example.com', display_name: 'Broken', can_sync: false,
-        sync_unavailable_reason: 'sync_not_configured', latest_sync: run('failed', 0, { error_message: 'boom' }) }),
-      source({ id: 3, identifier: 'c@example.com', display_name: 'New', can_sync: false })
-    ]);
-    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
-
-    expect(await screen.findByText('Archive')).toBeDefined();
-    expect(screen.getByText('Succeeded')).toBeDefined();
-    expect(screen.getByText('Failed')).toBeDefined();
-    expect(screen.getByText('Never synced')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Sync now Archive' })).toBeDefined();
-    expect(screen.getAllByText('Not scheduled')).toHaveLength(2);
-    expect(screen.queryByText(/Updated/)).toBeNull();
-  });
-
   it('starts a sync and shows Syncing until the run appears', async () => {
     let started = false;
     const fetchFn = api([source()], (url, request) => {
@@ -126,13 +108,11 @@ describe('SourcesWorkspace', () => {
     render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Alex' }));
-    expect(await screen.findByText('Gmail sign-in expired')).toBeDefined();
-    expect(screen.getByText('msgvault add-account archive@example.com')).toBeDefined();
+    expect(await screen.findByText('oauth2: token expired and refresh token is invalid (invalid_grant)')).toBeDefined();
     expect(screen.getByText('msgvault sync archive@example.com')).toBeDefined();
-    expect(screen.queryByText(/invalid_grant/)).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Alex' }));
-    await waitFor(() => expect(screen.queryByText('Gmail sign-in expired')).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/invalid_grant/)).toBeNull());
   });
 
   it('saves a schedule through Save changes, turning the source on', async () => {
@@ -181,12 +161,15 @@ describe('SourcesWorkspace', () => {
       if (request.method === 'GET') return Response.json({ settings, pending_restart: false }, { headers: { ETag: '"2"' } });
       return request.json().then(body => {
         patches.push(body);
-        return patches.length === 1 ? Response.json({ message: 'Changed' }, { status: 412 }) : Response.json({ settings, pending_restart: true });
+        return patches.length === 1 ? Response.json({ message: 'Offline' }, { status: 500 }) : patches.length === 2 ? Response.json({ message: 'Changed' }, { status: 412 }) : Response.json({ settings, pending_restart: true });
       }) as unknown as Response;
     }), []);
     render(SourcesWorkspace, { client });
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
     await chooseSelectOption(await screen.findByRole('combobox', { name: 'Presets: Every day at 03:00' }), 'Every hour');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save changes' }));
+    await screen.findByText('Offline');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Save changes' }));
     await screen.findByText('The configuration changed on disk. Review the latest values and save again.');
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -194,34 +177,8 @@ describe('SourcesWorkspace', () => {
     expect(patches).toEqual([
       { updates: [{ key: 'beeper.schedule', value: { string: '0 * * * *' } }] },
       { updates: [{ key: 'beeper.schedule', value: { string: '0 * * * *' } }] },
+      { updates: [{ key: 'beeper.schedule', value: { string: '0 * * * *' } }] },
     ]);
-  });
-
-  it('shows the next sync under the schedule in the source and contact panels', async () => {
-    const settings = [
-      { key: 'beeper.enabled', kind: 'boolean', value: { boolean: true }, group: 'sources', label: 'Scheduled Beeper sync' },
-      { key: 'beeper.schedule', kind: 'string', value: { string: '0 * * * *' }, group: 'sources', label: 'Beeper schedule',
-        validation: { format: 'cron' } }
-    ];
-    const scheduled = { ...contact, status: { ...contact.status, enabled: true, scheduled: true, schedule: '0 * * * *',
-      next_scheduled_at: '2026-07-19T12:00:00Z' } };
-    const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper',
-      scheduled: true, schedule: '0 * * * *', next_sync_at: '2026-07-19T11:00:00Z' })],
-      (url, request) => {
-        if (url.pathname.endsWith('/settings') && request.method === 'GET') {
-          return Response.json({ settings, groups: [], pending_restart: false, person_enrichment_providers: [] },
-            { headers: { ETag: '"1"' } });
-        }
-        return undefined;
-      }, [scheduled]);
-    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
-    const next = await screen.findByText(/Next sync/);
-    expect(next.querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Details for user-a' }));
-    await waitFor(() => expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T12:00:00Z'));
   });
 
   it.each(['gmail', 'imap'])('shows config-only %s schedules and next sync without editable controls', async (source_type) => {
@@ -764,4 +721,21 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
     rendered.unmount();
   });
+});
+
+it('keeps queued, cancelled, partial, and unavailable source meanings', async () => {
+  const onOpenOperations = vi.fn();
+  render(SourcesWorkspace, { onOpenOperations, client: createCaptureClient(api([
+    source({ id: 1, display_name: 'Queued account', scheduler_queued: true, can_sync: false }),
+    source({ id: 2, display_name: 'Cancelled account', latest_sync: run('cancelled', 0), can_sync: false, sync_unavailable_reason: 'sync_not_configured' }),
+    source({ id: 3, display_name: 'Imported account', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', latest_sync: run('completed', 3, { errors_count: 1, item_errors: [{ source_message_id: 'message-1', phase: 'fetch', created_at: '2026-07-19T10:00:00Z', error_message: 'Attachment unavailable' }] }) }),
+    source({ id: 4, display_name: 'Unavailable account', can_sync: false, sync_unavailable_reason: 'scheduler_unavailable' }),
+  ]), []) });
+  for (const label of ['Queued', 'Cancelled', 'Partial', 'Sync not set up', 'Imported file — nothing to sync', 'Scheduler unavailable']) expect(await screen.findByText(label)).toBeDefined();
+  await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
+  expect(onOpenOperations).toHaveBeenCalledOnce();
+  await fireEvent.click(await screen.findByRole('button', { name: 'Details for Imported account' }));
+  await fireEvent.click(await screen.findByText('1 item failed'));
+  expect(screen.getByText('Attachment unavailable')).toBeDefined();
+
 });

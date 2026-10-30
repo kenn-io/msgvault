@@ -55,6 +55,7 @@
   let confirmCancel = $state<Batch>();
   let cancelling = $state(false);
   let controller: AbortController | undefined;
+  let detailController: AbortController | undefined;
 
   const cancelledCount = $derived(batches.filter((batch) => batch.status === 'cancelled').length);
   const rows = $derived(
@@ -64,10 +65,11 @@
   );
 
   onMount(() => void load());
-  onDestroy(() => controller?.abort());
+  onDestroy(() => { controller?.abort(); detailController?.abort(); });
 
   async function load(): Promise<void> {
     controller?.abort();
+    detailController?.abort();
     loading = true;
     const current = (controller = new AbortController());
     try {
@@ -77,15 +79,23 @@
       });
       if (!data) throw new Error(messageFor(responseError, "Can't load staged deletions."));
       if (current.signal.aborted) return;
+      selectedID = detail = undefined;
       batches = data.manifests ?? [];
       error = '';
-      void loadAccounts(batches, current.signal);
     } catch (cause) {
       if (!current.signal.aborted) error = cause instanceof Error ? cause.message : "Can't load staged deletions.";
     } finally {
       if (controller === current) loading = false;
     }
   }
+
+  $effect(() => {
+    if (loading) return;
+    const list = rows;
+    const current = new AbortController();
+    void loadAccounts(list, current.signal);
+    return () => current.abort();
+  });
 
   async function loadAccounts(list: Batch[], signal: AbortSignal): Promise<void> {
     const found: Record<string, string> = {};
@@ -103,24 +113,27 @@
   }
 
   async function open(batch: Batch): Promise<void> {
+    detailController?.abort();
     if (selectedID === batch.id) {
       selectedID = detail = undefined;
       return;
     }
     selectedID = batch.id;
     detail = undefined;
+    const signal = (detailController = new AbortController()).signal;
     try {
-      const { data, error: responseError } = await generatedGetDeletion({ id: batch.id }, { ...client, signal: controller?.signal });
+      const { data, error: responseError } = await generatedGetDeletion({ id: batch.id }, { ...client, signal });
       if (!data) throw new Error(messageFor(responseError, "Can't open this batch."));
-      if (selectedID === batch.id) detail = data;
+      if (!signal.aborted && selectedID === batch.id) detail = data;
     } catch (cause) {
-      if (selectedID !== batch.id || controller?.signal.aborted) return;
+      if (selectedID !== batch.id || signal.aborted) return;
       error = cause instanceof Error ? cause.message : "Can't open this batch.";
       selectedID = undefined;
     }
   }
 
   function close(): void {
+    detailController?.abort();
     selectedID = detail = undefined;
   }
 
@@ -128,6 +141,7 @@
     if (!confirmCancel || cancelling) return;
     const batch = confirmCancel;
     cancelling = true;
+    error = '';
     try {
       const { data, error: responseError } = await generatedCancelDeletion({ id: batch.id }, client);
       if (!data) throw new Error(messageFor(responseError, "Can't cancel the batch."));
@@ -254,7 +268,7 @@
 
 {#if confirmCancel}
   <Dialog title="Cancel deletion batch?" onclose={() => { if (!cancelling) confirmCancel = undefined; }} primaryLabel={cancelling ? 'Cancelling…' : 'Cancel batch'} primaryDisabled={cancelling} onprimary={() => void cancelManifest()}>
-    <p>Cancel deletion of {count(confirmCancel.message_count)} from Gmail?</p>
+    <p>Cancel deletion of {count(confirmCancel.message_count)} from the source?</p>
     <Button label="Keep staged" disabled={cancelling} onclick={() => confirmCancel = undefined} />
     {#if error}<p role="alert">{error}</p>{/if}
   </Dialog>

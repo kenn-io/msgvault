@@ -185,12 +185,13 @@ describe('Explore URL state', () => {
   });
 
   it.each([
-    ['back', 'leave'], ['back', 'stay'], ['forward', 'leave'], ['forward', 'stay'],
-  ] as const)('holds browser %s from dirty Settings and handles %s', async (direction, outcome) => {
-    window.history.replaceState(null, '', '/?workspace=sources');
+    ['back', 'leave', 'settings'], ['back', 'stay', 'settings'], ['forward', 'leave', 'settings'], ['forward', 'stay', 'settings'],
+    ['back', 'leave', 'sources'], ['forward', 'stay', 'sources'],
+  ] as const)('holds browser %s from dirty Settings and handles %s', async (direction, outcome, workspace) => {
+    window.history.replaceState(null, '', '/?workspace=directory');
     const state = new ExploreState(window);
     try {
-      state.commitWorkspace('settings');
+      state.commitWorkspace(workspace);
       state.commitWorkspace('files');
       window.history.back();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
@@ -199,19 +200,19 @@ describe('Explore URL state', () => {
       state.holdLeave = (next) => { leave = next; return true; };
       window.history[direction]();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      expect(state.current.workspace).toBe('settings');
-      await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
+      expect(state.current.workspace).toBe(workspace);
+      await waitFor(() => expect(window.location.search).toBe(`?workspace=${workspace}&mode=full_text`));
       expect(window.history.length).toBe(historyLength);
       state.holdLeave = undefined;
       if (outcome === 'leave') {
         leave();
         await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-        expect(state.current.workspace).toBe(direction === 'back' ? 'sources' : 'files');
-        expect(window.location.search).toBe(direction === 'back' ? '?workspace=sources&mode=full_text' : '?workspace=files&mode=full_text');
+        expect(state.current.workspace).toBe(direction === 'back' ? 'directory' : 'files');
+        expect(window.location.search).toBe(direction === 'back' ? '?workspace=directory&mode=full_text' : '?workspace=files&mode=full_text');
         expect(window.history.length).toBe(historyLength);
       } else {
         window.history[direction === 'back' ? 'forward' : 'back']();
-        await waitFor(() => expect(state.current.workspace).toBe(direction === 'back' ? 'files' : 'sources'));
+        await waitFor(() => expect(state.current.workspace).toBe(direction === 'back' ? 'files' : 'directory'));
       }
     } finally {
       state.destroy();

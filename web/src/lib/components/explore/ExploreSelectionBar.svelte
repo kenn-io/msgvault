@@ -116,7 +116,7 @@
       <Button
         size="sm"
         surface="soft"
-        label="Delete from Gmail…"
+        label="Review deletion…"
         disabled={Boolean(stageReason)}
         ariaDescribedby={stageReason ? stageReasonID : undefined}
         onclick={() => onReviewDeletion(selection.mode === 'all_matching' ? 'all_matching' : 'explicit')}

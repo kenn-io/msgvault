@@ -22,7 +22,7 @@ export function sourceTypeLabel(code: string): string {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-type StateSource = Pick<SourceStatus, 'active_sync' | 'latest_sync'>;
+type StateSource = Pick<SourceStatus, 'active_sync' | 'latest_sync'> & Partial<Pick<SourceStatus, 'scheduler_queued'>>;
 
 export function syncRunning(source: StateSource): boolean {
   return Boolean(source.active_sync || source.latest_sync?.status === 'running');
@@ -32,7 +32,9 @@ export function syncRunning(source: StateSource): boolean {
 export function sourceRunState(source: StateSource): RunState | undefined {
   const latest = source.latest_sync;
   if (syncRunning(source)) return 'running';
+  if (source.scheduler_queued && (!latest || latest.status === 'cancelled')) return 'queued';
   if (!latest) return undefined;
+  if (latest.status === 'cancelled') return 'cancelled';
   if (latest.status === 'failed') return 'failed';
   if (latest.status === 'completed') return latest.errors_count > 0 ? 'partial' : 'succeeded';
   return undefined;
@@ -53,21 +55,12 @@ export interface SourceFailure {
   command?: string;
 }
 
-const SIGN_IN_EXPIRED = /invalid_grant|token expired|token has been expired or revoked|unauthorized_client/i;
-
-/** The plain reason a source last failed, with the command that fixes it when there is one. */
+/** The stored reason a source last failed. */
 export function sourceFailure(
   source: Pick<SourceStatus, 'latest_sync' | 'identifier' | 'source_type' | 'scheduler_last_error'>,
 ): SourceFailure | undefined {
-  const raw = source.latest_sync?.status === 'failed' ? source.latest_sync.error_message : null;
-  const message = raw || source.scheduler_last_error;
-  if (!message) return undefined;
-  if (SIGN_IN_EXPIRED.test(message)) {
-    const name = source.source_type === 'gmail' ? 'Gmail' : sourceTypeLabel(source.source_type) || 'Account';
-    return { reason: `${name} sign-in expired`, command: `msgvault add-account ${source.identifier}` };
-  }
-  const line = message.split('\n')[0]!.trim();
-  return { reason: line.length > 160 ? `${line.slice(0, 157)}...` : line };
+  const message = (source.latest_sync?.status === 'failed' ? source.latest_sync.error_message : null) || source.scheduler_last_error;
+  return message ? { reason: message } : undefined;
 }
 
 /** The sync command for an account that has no schedule. Only mail-style identifiers have one. */

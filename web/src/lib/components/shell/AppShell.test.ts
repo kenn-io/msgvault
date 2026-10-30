@@ -2712,14 +2712,14 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
-    expect(screen.queryByRole('button', { name: 'Delete from Gmail…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review deletion…' })).toBeNull();
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
     await waitFor(() => expect(preflights).toBe(1));
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete from Gmail…' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review deletion…' }));
 
-    expect(await screen.findByRole('dialog', { name: 'Delete from Gmail' })).toBeDefined();
+    expect(await screen.findByRole('dialog', { name: 'Review deletion' })).toBeDefined();
     expect(state.current.workspace).toBe('everything');
     await waitFor(() => expect(preflights).toBe(2));
     rendered.unmount();

@@ -69,7 +69,6 @@
   import { formatBytes } from '../../util/format';
   import { reportError, reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { visualReadiness } from '../../search/visual-ready.svelte';
-  import ContextBar from '../explore/ContextBar.svelte';
   import FileFilters from './FileFilters.svelte';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
@@ -871,9 +870,9 @@
   {#if toolbar}
     {@render toolbar(controls)}
   {:else}
-      <ContextBar {client} messages query="" searchMode="full_text" filters={[]} groupingChain={[]} countLabel="" onAddGroup={() => undefined} onRemoveGroup={() => undefined} onClearFilters={() => undefined} onFiltersChange={(filters) => predicate = { ...predicate, filters }}>
-        {#snippet filterExtra()}<FileFilters {filenameQuery} mimeFamilies={personScoped ? effectiveMIMEFamilies : mimeFamilies} available={visibleMIMEFamilies} keepOne={personScoped} onFilenameQueryChange={(value) => onFilenameQueryChange?.(value)} onMIMEFamiliesChange={(value) => onMIMEFamiliesChange?.(value)} />{/snippet}
-      </ContextBar>
+    <div class="embedded-filters">
+      <FileFilters {filenameQuery} mimeFamilies={personScoped ? effectiveMIMEFamilies : mimeFamilies} available={visibleMIMEFamilies} keepOne={personScoped} onFilenameQueryChange={(value) => onFilenameQueryChange?.(value)} onMIMEFamiliesChange={(value) => onMIMEFamiliesChange?.(value)} />
+    </div>
     {@render controls()}
   {/if}
 
@@ -1149,6 +1148,16 @@
     border-radius: var(--radius-md);
     background: var(--bg-surface);
   }
+  .embedded-filters { display: flex; flex-wrap: wrap; gap: var(--section-gap); }
+  .files-grid {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow: auto;
+    outline: none;
+  }
+  .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
   .table-header,
   .data-row {
     display: grid;
