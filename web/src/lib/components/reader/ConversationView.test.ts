@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -136,7 +136,7 @@ describe('ConversationView', () => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/tasks/status')) return Response.json({ state: configured ? 'ready' : 'disabled', message: 'Task integration is disabled.' });
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
-      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: configured ? 'ready' : 'disabled', complete: configured, tasks: configured ? [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] : [] }); }
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: configured ? 'ready' : 'disabled', complete: configured, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] }); }
       return Response.json({
         id: 7, anchor_id: 2, messages: [message(1), message(2)],
         has_before: false, has_after: false, total: 2
@@ -160,6 +160,11 @@ describe('ConversationView', () => {
     await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
+    for (const id of [1, 2]) {
+      const card = screen.getByRole('article', { name: `Message ${id}` });
+      expect(within(card).getByText(`Linked task ${id}`)).toBeDefined();
+      expect(within(card).getByRole('button', { name: `Unlink Linked task ${id}` })).toHaveProperty('disabled', true);
+    }
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
     view.unmount();
