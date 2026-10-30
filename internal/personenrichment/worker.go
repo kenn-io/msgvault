@@ -712,8 +712,9 @@ func (w *Worker) completeAttempt(
 	if current, err := w.requestStillCurrent(ctx, lease, profile, request); err != nil {
 		return fmt.Errorf("recheck person enrichment request before publication: %w", err)
 	} else if !current {
-		return w.work.MarkTerminal(ctx, lease.Token,
-			safeFailure(FailurePolicy, 0, result.RequestID, "enrichment identity changed before publication"))
+		return w.work.MarkTerminalWithCost(ctx, lease.Token,
+			safeFailure(FailurePolicy, 0, result.RequestID, "enrichment identity changed before publication"),
+			result.Cost)
 	}
 	verified := make([]ProviderPersonID, len(knownIDs))
 	for i, id := range knownIDs {

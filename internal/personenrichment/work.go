@@ -51,6 +51,9 @@ type WorkStore interface {
 	ScheduleRetry(ctx context.Context, token LeaseToken, retry RetryUpdate) error
 	MarkUncertainStart(ctx context.Context, token LeaseToken, failure SafeFailure) error
 	MarkTerminal(ctx context.Context, token LeaseToken, failure SafeFailure) error
+	// MarkTerminalWithCost ends an attempt whose provider call completed and
+	// reported a charge, recording that charge while discarding the result.
+	MarkTerminalWithCost(ctx context.Context, token LeaseToken, failure SafeFailure, cost Cost) error
 }
 
 type ClaimOptions struct {

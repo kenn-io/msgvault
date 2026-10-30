@@ -83,3 +83,61 @@ func TestConversationPolicyNameEvidencePreservesExactValueAndUnicode(t *testing.
 		})
 	}
 }
+
+// Withdrawing the only envelope behind generated name evidence must keep the
+// review page readable and must retire tokens issued while the name was shown.
+func TestConversationPolicyNameWithdrawalRetiresReviewToken(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	ctx := t.Context()
+	s := testutil.NewTestStore(t)
+	source, err := s.GetOrCreateSource("beeper", "name-withdrawal-token")
+	requirements.NoError(err)
+	room, err := s.EnsureConversation(source.ID, "room", "Only name support")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, source.ID, "room", conversationpolicy.Full))
+	left, err := s.EnsureParticipantByIdentifier("beeper", "withdraw-left", "Rae Example")
+	requirements.NoError(err)
+	right, err := s.EnsureParticipantByIdentifier("beeper", "withdraw-right", "Rae Example")
+	requirements.NoError(err)
+	ids := []int64{left, right}
+	policyNameEnvelope(t, s, source.ID, room, "name", ids, []string{"Rae Example", "Rae Example"})
+	var origin int64
+	for _, id := range ids {
+		observation, err := s.RecordContactObservationContext(ctx, id, store.ParticipantContactObservationInput{SourceID: &source.ID, ConversationID: &room, AddressKind: store.ContactAddressEmail, OriginalValue: "rae@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
+		requirements.NoError(err)
+		origin = observation.Observation.Envelope.ID
+	}
+	candidate, _, err := s.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: left, RightKind: store.IdentityMatchParticipant, RightID: right, Basis: store.IdentityMatchDisplayName, State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
+	requirements.NoError(err)
+	revision, err := s.ConversationPolicyRevision(ctx)
+	requirements.NoError(err)
+	_, err = s.AddIdentityMatchEvidenceContext(ctx, candidate.ID, store.IdentityMatchEvidenceInput{EvidenceKind: "display_name", Detail: new("Rae Example"), Source: store.ProvenanceArchiveObservation, SourceID: &source.ID, Admission: &store.IdentityMatchEvidenceAdmission{PolicyRevision: revision, ObservationID: origin}})
+	requirements.NoError(err)
+
+	reviewToken := func() string {
+		t.Helper()
+		listed, err := s.ListIdentityMatchReviewsContext(ctx, nil, 10, 0)
+		requirements.NoError(err)
+		for _, item := range listed {
+			if item.ID == candidate.ID {
+				return item.ReviewToken
+			}
+		}
+		requirements.FailNow("candidate missing from review page")
+		return ""
+	}
+	shown := reviewToken()
+	requirements.NotEmpty(shown)
+
+	policyNameEnvelope(t, s, source.ID, room, "name", ids, []string{"Other Example", "Other Example"})
+	withdrawn := reviewToken()
+	assertions.NotEqual(shown, withdrawn)
+	single, err := s.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	requirements.NoError(err)
+	assertions.Empty(single.Evidence)
+
+	_, _, err = s.DecideIdentityMatchReviewedContext(ctx, candidate.ID, shown, store.IdentityMatchStateAccepted, nil)
+	requirements.ErrorIs(err, store.ErrIdentityMatchReviewStale)
+}
