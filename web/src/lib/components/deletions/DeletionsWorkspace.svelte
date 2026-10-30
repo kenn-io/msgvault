@@ -18,16 +18,10 @@
 </script>
 
 <script lang="ts">
-  import {
-    cancelDeletion as generatedCancelDeletion,
-    getDeletion as generatedGetDeletion,
-    listDeletions as generatedListDeletions,
-  } from '../../api/generated/api/api';
   import { Button, Checkbox, Chip, CopyButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount } from 'svelte';
-  import type { APIClient } from '../../api/client';
+  import { onMount } from 'svelte';
+  import type { DeletionsController } from '../../deletions/controller.svelte';
   import type {
-    DeletionManifestDetail as GeneratedDeletionManifestDetail,
     DeletionManifestSummary as GeneratedDeletionManifestSummary,
   } from '../../api/generated/models';
   import { formatBytes, formatDateTime } from '../../util/format';
@@ -38,25 +32,16 @@
   import CommandLine from '../sources/CommandLine.svelte';
 
   type Batch = GeneratedDeletionManifestSummary;
-  type Detail = GeneratedDeletionManifestDetail;
   const DELETE_COMMAND = 'msgvault delete-staged';
-  // Account lookups share a small worker pool across the batch history.
-  const ACCOUNT_LOOKUPS = 4;
-
-  let { client, onChanged = () => undefined }: { client: APIClient; onChanged?: () => void } = $props();
-
-  let batches = $state<Batch[]>([]);
-  let accounts = $state<Record<string, string>>({});
-  const resolvedAccounts = new Set<string>();
+  let { controller, onChanged = () => undefined }: { controller: DeletionsController; onChanged?: () => void } = $props();
+  const batches = $derived(controller.batches);
+  const loading = $derived(controller.loading);
   let selectedID = $state<string>();
-  let detail = $state<Detail>();
   let showCancelled = $state(false);
-  let loading = $state(true);
   let error = $state('');
   let confirmCancel = $state<Batch>();
   let cancelling = $state(false);
-  let controller: AbortController | undefined;
-  let detailController: AbortController | undefined;
+  let detailGeneration = 0;
 
   const cancelledCount = $derived(batches.filter((batch) => batch.status === 'cancelled').length);
   const rows = $derived(
@@ -66,79 +51,20 @@
   );
 
   onMount(() => void load());
-  onDestroy(() => { controller?.abort(); detailController?.abort(); });
-
-  async function load(): Promise<void> {
-    controller?.abort();
-    detailController?.abort();
-    loading = true;
-    const current = (controller = new AbortController());
-    try {
-      const { data, error: responseError } = await generatedListDeletions(undefined, {
-        ...client,
-        signal: current.signal,
-      });
-      if (!data) throw new Error(messageFor(responseError, "Can't load staged deletions."));
-      if (current.signal.aborted) return;
-      selectedID = detail = undefined;
-      batches = data.manifests ?? [];
-      error = '';
-    } catch (cause) {
-      if (!current.signal.aborted) error = cause instanceof Error ? cause.message : "Can't load staged deletions.";
-    } finally {
-      if (controller === current) loading = false;
-    }
-  }
-
+  async function load(): Promise<void> { await controller.refresh(true); }
   $effect(() => {
-    if (loading) return;
-    const list = rows;
-    const current = new AbortController();
-    void loadAccounts(list, current.signal);
-    return () => current.abort();
+    if (!loading) void Promise.all(rows.map(batch => controller.getDetail(batch.id)));
   });
-
-  async function loadAccounts(list: Batch[], signal: AbortSignal): Promise<void> {
-    list = list.filter(batch => !resolvedAccounts.has(batch.id));
-    let index = 0;
-    await Promise.all(Array.from({ length: Math.min(ACCOUNT_LOOKUPS, list.length) }, async () => {
-      while (index < list.length && !signal.aborted) {
-        const batch = list[index++];
-        try {
-          const { data } = await generatedGetDeletion({ id: batch.id }, { ...client, signal });
-          if (data && !signal.aborted) {
-            resolvedAccounts.add(batch.id);
-            accounts = { ...accounts, [batch.id]: data.account ?? (data.summary?.accounts ?? []).join(', ') };
-          }
-        } catch { /* A row still opens when its account lookup fails. */ }
-      }
-    }));
-  }
-
+  const detail = $derived(selectedID ? controller.details[selectedID] : undefined);
   async function open(batch: Batch): Promise<void> {
-    detailController?.abort();
-    if (selectedID === batch.id) {
-      selectedID = detail = undefined;
-      return;
-    }
+    const generation = ++detailGeneration;
+    if (selectedID === batch.id) { selectedID = undefined; return; }
     selectedID = batch.id;
-    detail = undefined;
-    const signal = (detailController = new AbortController()).signal;
-    try {
-      const { data, error: responseError } = await generatedGetDeletion({ id: batch.id }, { ...client, signal });
-      if (!data) throw new Error(messageFor(responseError, "Can't open this batch."));
-      if (!signal.aborted && selectedID === batch.id) detail = data;
-    } catch (cause) {
-      if (selectedID !== batch.id || signal.aborted) return;
-      error = cause instanceof Error ? cause.message : "Can't open this batch.";
-      selectedID = undefined;
-    }
+    const data = await controller.getDetail(batch.id, true);
+    if (generation !== detailGeneration || controller.batches.find(current => current.id === batch.id)?.status !== batch.status) return;
+    if (!data) { error = "Can't open this batch."; selectedID = undefined; }
   }
-
-  function close(): void {
-    detailController?.abort();
-    selectedID = detail = undefined;
-  }
+  function close(): void { detailGeneration++; selectedID = undefined; }
 
   async function cancelManifest(): Promise<void> {
     if (!confirmCancel || cancelling) return;
@@ -146,10 +72,7 @@
     cancelling = true;
     error = '';
     try {
-      const { data, error: responseError } = await generatedCancelDeletion({ id: batch.id }, client);
-      if (!data) throw new Error(messageFor(responseError, "Can't cancel the batch."));
-      batches = batches.map((item) => item.id === data.id ? { ...item, status: data.status } : item);
-      if (detail?.id === data.id) detail = { ...detail, status: data.status };
+      await controller.cancel(batch.id);
       confirmCancel = undefined;
       onChanged();
     } catch (cause) {
@@ -157,11 +80,6 @@
     } finally { cancelling = false; }
   }
 
-  function messageFor(value: unknown, fallback: string): string {
-    return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
-      ? value.message
-      : fallback;
-  }
   function count(value: number): string {
     return `${value.toLocaleString()} ${value === 1 ? 'message' : 'messages'}`;
   }
@@ -176,7 +94,7 @@
       {/if}
     {/snippet}
   </PageHeader>
-  {#if error}<div class="notice" role="alert"><span>{error}</span><Button label="Retry" onclick={() => void load()} /></div>{/if}
+  {#if error || controller.error}<div class="notice" role="alert"><span>{error || controller.error}</span><Button label="Retry" onclick={() => { error = ''; void load(); }} /></div>{/if}
 
   {#if loading}
     <p class="muted" role="status">Loading…</p>
@@ -205,7 +123,7 @@
             >
           </td>
           <td>{count(batch.message_count)}</td>
-          <td>{accounts[batch.id] ?? ''}</td>
+          <td>{controller.details[batch.id]?.account ?? (controller.details[batch.id]?.summary?.accounts ?? []).join(', ')}</td>
           <td><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip></td>
         </tr>
       {/each}
