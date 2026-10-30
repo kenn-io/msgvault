@@ -23,7 +23,7 @@
   ]);
 </script>
 
-{#if quoteOpen}
+{#if quoteOpen || (!email && kata?.ready)}
   <KataEvidenceDialog {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} {onclose} oncreated={() => changed = true} />
 {:else}
   <Dialog title="Add to task" onclose={() => { if (!busy) onclose(); }}>
