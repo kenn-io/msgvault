@@ -52,7 +52,7 @@ test('page content sits one header gap below the divider, and full-width panes m
       return next!.getBoundingClientRect().top - divider;
     });
   }
-  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Directory', 'Settings'].includes(label) ? 0 : 8])));
+  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Settings'].includes(label) ? 0 : 8])));
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {
