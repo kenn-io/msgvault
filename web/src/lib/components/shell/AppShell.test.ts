@@ -2,7 +2,7 @@ import { documentStatus, lanes } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRawSnippet, getContext, tick } from 'svelte';
+import { createRawSnippet, getContext, mount, tick, unmount } from 'svelte';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
@@ -12,6 +12,7 @@ import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import AppShell from './AppShell.svelte';
 import { ShellData } from './shell-data.svelte';
+import SettingsWorkspace from '../settings/SettingsWorkspace.svelte';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
@@ -2960,4 +2961,73 @@ it.each([
   expect(state.current).toMatchObject(expected);
   push.mockRestore();
   rendered.unmount(); state.destroy();
+});
+
+it('keeps Stay focused when a saved view holds departure from dirty Settings', async () => {
+  window.history.replaceState(null, '', '/?workspace=settings');
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/settings')) return Response.json({
+      groups: [{ id: 'server', label: 'Server' }],
+      settings: [{ key: 'server.daemon_idle_timeout', group: 'server', kind: 'string',
+        label: 'Idle timeout', value: { string: '20m0s' }, restart_required: false }],
+      person_enrichment_providers: [], pending_restart: false,
+    }, { headers: { ETag: '"settings-1"' } });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [view(1, 'Budget threads')] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+    return Response.json(exploreResponse());
+  });
+  const settings = createRawSnippet(() => {
+    const registerLeave = getContext('msgvault:hold-settings-leave');
+    return { render: () => '<div></div>', setup: element => {
+      const component = mount(SettingsWorkspace, { target: element, props: { client, category: 'server' },
+        context: new Map([['msgvault:hold-settings-leave', registerLeave]]) });
+      return () => { void unmount(component); };
+    } };
+  });
+  const state = new ExploreState(window);
+  const rendered = render(AppShell, { client, state, settings });
+  try {
+    await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+    const stay = await screen.findByRole('button', { name: 'Stay' });
+    await tick();
+    expect(state.current.workspace).toBe('settings');
+    expect(document.activeElement).toBe(stay);
+  } finally {
+    rendered.unmount(); state.destroy();
+  }
+});
+
+it('reloads a failed source job when Sources is already open', async () => {
+  window.history.replaceState(null, '', '/?workspace=sources');
+  let failed = false;
+  let statusReads = 0;
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/sources/status')) {
+      statusReads += 1;
+      return Response.json({ sources: [sourceStatus(failed ? { scheduler_last_error: 'Scheduled sync failed' } : {})] });
+    }
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(window);
+  const rendered = render(AppShell, { client, state });
+  try {
+    await screen.findByRole('button', { name: 'Sync now Example archive' });
+    failed = true;
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Idle' }));
+    const job = await screen.findByRole('menuitem', { name: /Example archive/ });
+    const readsBeforeOpen = statusReads;
+    await fireEvent.click(job);
+    await waitFor(() => expect(statusReads).toBeGreaterThan(readsBeforeOpen));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Show details for Example archive' }));
+    await screen.findByText('Scheduler: Scheduled sync failed');
+    expect(state.current.workspace).toBe('sources');
+  } finally {
+    rendered.unmount(); state.destroy();
+  }
 });
