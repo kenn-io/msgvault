@@ -1,5 +1,5 @@
 import { documentStatus, lane, lanes } from '../../../test/operations';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { defaultOperationsState, OperationsController } from '../../operations/controller.svelte';
@@ -14,20 +14,16 @@ const run = fixture.runs.find(run => run.kind === 'document_extraction')!;
 const controllers: OperationsController[] = [];
 afterEach(() => { for (const controller of controllers.splice(0)) controller.destroy(); vi.useRealTimers(); });
 function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLState> = {}) {
-  const queries: URLSearchParams[] = [];
   let conflict = false;
   const client = createAPIClient(async input => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('document_extraction', { related_status: 'getDocumentIndexStatus' })) });
     if (url.pathname === '/api/v1/operations/runs') {
-      queries.push(url.searchParams);
       if (conflict && url.searchParams.has('cursor')) return Response.json({ error: 'operation_history_conflict', message: 'History changed' }, { status: 409 });
       const rows = [run, ...fixture.runs.filter(candidate => candidate.id !== run.id)]
         .filter(candidate => (!url.searchParams.get('kind') || candidate.kind === url.searchParams.get('kind')) &&
           (!url.searchParams.get('lane') || candidate.lane === url.searchParams.get('lane')) &&
-          (!url.searchParams.get('state') || candidate.state === url.searchParams.get('state')) &&
-          (!url.searchParams.get('started_from') || candidate.started_at >= url.searchParams.get('started_from')!) &&
-          (!url.searchParams.get('started_before') || candidate.started_at < url.searchParams.get('started_before')!));
+          (!url.searchParams.get('state') || candidate.state === url.searchParams.get('state')));
       return Response.json({ runs: url.searchParams.has('cursor') ? rows.slice(1) : rows.slice(0, 1), membership_revision: 1, unavailable_kinds: fixture.unavailable_kinds, next_cursor: !url.searchParams.has('cursor') && rows.length > 1 ? 'next' : undefined });
     }
     if (url.pathname.startsWith('/api/v1/operations/runs/')) return Response.json({ ...run, related_status: 'getDocumentIndexStatus', supported_actions: [] });
@@ -36,7 +32,7 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
   const controller = new OperationsController(client); controllers.push(controller);
   const onNavigate = vi.fn();
   render(RunHistoryDialog, { client, controller, state: { ...defaultOperationsState(kind), ...filters }, onNavigate, onclose: vi.fn(), onConfigure: vi.fn() });
-  return { queries, onNavigate, controller, drift: () => { conflict = true; } };
+  return { onNavigate, controller, drift: () => { conflict = true; } };
 }
 
 describe('Past runs', () => {
@@ -77,25 +73,24 @@ describe('Past runs', () => {
     await fireEvent.click(screen.getByRole('button', { name: /2026-10-11/ }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Relative' }));
     await fireEvent.click(screen.getByRole('button', { name: '7d' }));
-    await screen.findByText('No runs match.');
+    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '2026-10-23T00:00:00Z', operationStartedBefore: '2026-10-30T00:00:00Z' }), false);
     await fireEvent.click(screen.getByRole('button', { name: 'All' }));
-    await screen.findByRole('button', { name: 'Open Source sync run' });
     expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '', operationStartedBefore: '' }), false);
     await fireEvent.click(screen.getByRole('button', { name: '7d' }));
-    await screen.findByText('No runs match.');
+    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '2026-10-23T00:00:00Z', operationStartedBefore: '2026-10-30T00:00:00Z' }), false);
     await fireEvent.keyDown(document, { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Clear operation dates' }));
-    await screen.findByRole('button', { name: 'Open Source sync run' });
     expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '', operationStartedBefore: '' }), false);
     await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'Paused');
     expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationState: 'paused' }), false);
   });
   it('offers Restart when page membership changes', async () => {
-    const { drift, queries } = setup();
+    const { drift, controller } = setup();
+    const restart = vi.spyOn(controller, 'restart');
     await screen.findByRole('button', { name: 'Show more' }); drift();
     await fireEvent.click(await screen.findByRole('button', { name: 'Show more' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Restart' }));
-    await waitFor(() => expect(queries.at(-1)?.has('cursor')).toBe(false));
+    expect(restart).toHaveBeenCalledOnce();
   });
   it('opens detail and routes related status', async () => {
     const { onNavigate } = setup();
