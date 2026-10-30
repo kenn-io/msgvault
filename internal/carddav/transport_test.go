@@ -770,12 +770,6 @@ func TestClientHonorsRequestAndOperationTimeouts(t *testing.T) {
 	for _, name := range []string{"request", "operation"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			client := newFixtureClient(t, "http://127.0.0.1", "", "")
-			if name == "request" {
-				client.requestTimeout = 5 * time.Millisecond //nolint:kennlint // deadlinetest: the delayed response must outlast the request budget
-			} else {
-				client.operationTimeout = 5 * time.Millisecond //nolint:kennlint // deadlinetest: the delayed response must outlast the operation budget
-			}
 			synctest.Test(t, func(t *testing.T) {
 				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					time.Sleep(50 * time.Millisecond)
@@ -783,7 +777,13 @@ func TestClientHonorsRequestAndOperationTimeouts(t *testing.T) {
 				}))
 				transport, ok := server.Client().Transport.(*http.Transport)
 				require.True(t, ok)
+				client := newFixtureClient(t, "http://127.0.0.1", "", "")
 				client.dialContext = transport.DialContext
+				if name == "request" {
+					client.requestTimeout = 5 * time.Millisecond
+				} else {
+					client.operationTimeout = 5 * time.Millisecond
+				}
 				_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: "http://127.0.0.1"})
 				require.Error(t, err)
 			})
