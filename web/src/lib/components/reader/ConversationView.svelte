@@ -48,8 +48,11 @@
   let taskStatus: ReturnType<TaskStatusLoader> | undefined;
   let latestTaskStatus = $state<ConversationTaskStatus['latest']>();
   setContext<ConversationTaskStatus>(conversationTaskStatusKey, {
-    load: () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).then(response => {
-      if (response.data) latestTaskStatus = response.data;
+    load: () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).catch((cause): Awaited<ReturnType<TaskStatusLoader>> => ({
+      data: { state: 'unreachable', message: cause instanceof Error ? cause.message : 'Task integration status is unavailable.' },
+      response: Response.error(),
+    })).then(response => {
+      latestTaskStatus = response.data ?? { state: 'unreachable', message: response.error?.message ?? 'Task integration status is unavailable.' };
       return response;
     }).finally(() => { taskStatus = undefined; }),
     get latest() { return latestTaskStatus; },
