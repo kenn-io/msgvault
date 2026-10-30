@@ -194,14 +194,11 @@ describe('MessageCard', () => {
     render(MessageCard, {
       props: { client, message: detail({ messageType: 'meeting_transcript' }), expanded: true }
     });
-    const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-    try {
-      await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
-      await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
-      await expect(requests.find(request => request.url.endsWith('/context'))!.json()).resolves.toMatchObject({ message_ids: [42] });
-      await expect(requests.find(request => request.url.endsWith('/actions'))!.json()).resolves.toEqual({ scope: { message_ids: [42] }, limit: 200 });
-    } finally { download.mockRestore(); }
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+    await expect(requests.find(request => request.url.endsWith('/context'))!.json()).resolves.toMatchObject({ message_ids: [42] });
+    await expect(requests.find(request => request.url.endsWith('/actions'))!.json()).resolves.toEqual({ scope: { message_ids: [42] }, limit: 200 });
   });
 
   it('gates task and meeting actions by message type', async () => {

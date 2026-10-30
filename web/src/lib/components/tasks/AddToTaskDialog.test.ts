@@ -3,10 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
+import { chooseSelectOption } from '../../../test/kit-ui';
 import AddToTaskDialog from './AddToTaskDialog.svelte';
 
 describe('Add to task', () => {
-  it('opens Kata evidence directly for a non-email message when Kata is ready', async () => {
+  it.each([false, true])('opens Kata evidence for email=%s when Kata is ready', async (email) => {
     const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'example' }
       : { evidence: [] }));
@@ -15,9 +16,13 @@ describe('Add to task', () => {
     try {
       await waitFor(() => expect(readiness.ready).toBe(true));
       view = render(AddToTaskDialog, {
-        props: { client, messageId: 42, title: 'Follow up', email: false, onclose: vi.fn() },
+        props: { client, messageId: 42, title: 'Follow up', email, onclose: vi.fn() },
         context: new Map([[kataReadinessKey, readiness]])
       });
+      if (email) {
+        await chooseSelectOption(await screen.findByRole('combobox', { name: /^Provider:/ }), 'Kata');
+        await fireEvent.click(screen.getByRole('button', { name: 'Add quote to Kata…' }));
+      }
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
     } finally { view?.unmount(); readiness.dispose(); }
   });

@@ -70,7 +70,7 @@ describe('ConversationView', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
       id: 7, anchor_id: 2,
       messages: [
-        { ...message(2, 'whatsapp'), from: 'Archive owner', from_participant_id: 11, is_from_me: true },
+        { ...message(2, 'whatsapp'), from: '', from_participant_id: 11, is_from_me: true },
         { ...message(3, 'whatsapp'), from: 'Chat sender', from_participant_id: 22, to: ['Chat recipient'], to_participants: [{ display: 'Chat recipient', participant_id: 33 }] }
       ],
       has_before: false, has_after: false, total: 2
@@ -136,23 +136,7 @@ describe('ConversationView', () => {
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
   });
 
-  it('shows an unreachable Tasks notice once while keeping each expanded message task list', async () => {
-    const client = createCaptureClient(async (input) => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/tasks/status')) return Response.json({ state: 'unreachable', message: 'Task service is unreachable.' });
-      const tasks = /messages\/(\d+)\/tasks$/.exec(path);
-      if (tasks) return Response.json({ state: 'unreachable', complete: false, tasks: [{ id: `task-${tasks[1]}`, title: `Cached task ${tasks[1]}` }], outbound_metadata: {} });
-      return Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
-    }, telemetryEvents, telemetryRequests);
-    render(ConversationView, { client, conversationId: 7, anchorId: 2 });
-    await screen.findByText('Cached task 2');
-    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
-    expect(await screen.findByText('Cached task 1')).toBeDefined();
-    expect(screen.getByText('Cached task 2')).toBeDefined();
-    expect(screen.getAllByText('Task integration unreachable: Task service is unreachable.')).toHaveLength(1);
-  });
-
-  it('shares pending Tasks probes and setup while preserving cached links', async () => {
+  it.each(['disabled', 'unreachable'])('shares pending Tasks probes and one %s notice while preserving cached links', async (state) => {
     const lookedUp: number[] = [];
     let releaseStatus!: () => void;
     const statusPending = new Promise<void>(resolve => { releaseStatus = resolve; });
@@ -160,10 +144,10 @@ describe('ConversationView', () => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/tasks/status')) {
         await statusPending;
-        return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
+        return Response.json({ state, message: state === 'disabled' ? 'Task integration is disabled.' : 'Task service is unreachable.' });
       }
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
-      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: 'disabled', complete: false, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }], outbound_metadata: {} }); }
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state, complete: false, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }], outbound_metadata: {} }); }
       return Response.json({
         id: 7, anchor_id: 2, messages: [message(1), message(2)],
         has_before: false, has_after: false, total: 2
@@ -180,12 +164,13 @@ describe('ConversationView', () => {
 
     await waitFor(() => expect(lookedUp.sort()).toEqual([1, 2]));
     await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
+    if (state === 'disabled') await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
+    else expect(screen.getAllByText('Task integration unreachable: Task service is unreachable.')).toHaveLength(1);
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
     expect(await screen.findByText('Linked task 1')).toBeDefined();
     expect(await screen.findByText('Linked task 2')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
-    expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
+    if (state === 'disabled') expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
     expect(screen.getByText('Linked task 2')).toBeDefined();
     view.unmount();
   });
