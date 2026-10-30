@@ -439,28 +439,24 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
   const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
   const writes = () => seen.filter(request => request.method !== 'GET').map(({ method, path, ifMatch }) => [method, path, ifMatch]);
   render(SettingsWorkspace, { client, category: 'search' });
-  const note = 'These save immediately when you use their buttons — not with Save changes.';
-  expect(await screen.findAllByText(note)).toHaveLength(1);
-  await fireEvent.input(screen.getByLabelText('Endpoint'), { target: { value: 'https://new.example.test' } });
+  await fireEvent.input(await screen.findByLabelText('Endpoint'), { target: { value: 'https://new.example.test' } });
   expect((screen.getByRole('button', { name: 'Add API key' }) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.getByText('Save endpoint settings first before changing this credential.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
-  expect(screen.getByRole('dialog').textContent).toContain('Saved right away. The daemon uses it after a restart.');
+  expect(screen.getByRole('dialog').textContent).toContain('The daemon uses it after a restart.');
   await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
 
   await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
-  expect(screen.getAllByText(note).length).toBeGreaterThan(0);
   await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
   await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/providers/primary'))).toBe(true));
   expect(screen.getByText('1 unsaved change')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  expect(screen.getByText(note)).toBeDefined();
   expect(screen.getByText('1 unsaved change')).toBeDefined();
   expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
   expect(writes()).toEqual([

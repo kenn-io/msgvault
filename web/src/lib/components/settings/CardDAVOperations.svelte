@@ -82,7 +82,7 @@
   }
 </script>
 
-<SettingsSection title="CardDAV status" description="Runtime, credential, scheduler, and recent synchronization state.">
+<SettingsSection title="CardDAV status">
   <div class="section-state" aria-busy={controller.statusLoading}>
     {#if controller.statusLoading}<p class="working">
         <Spinner size={14} label="Loading CardDAV status" /> Loading CardDAV status…
@@ -180,10 +180,7 @@
   </div>
 </SettingsSection>
 
-<SettingsSection
-  title="Address books"
-  description="Choose which discovered books participate in synchronization, lookup, and publication."
->
+<SettingsSection title="Address books">
   <div class="section-state" aria-busy={controller.booksLoading}>
     <p class="helper">
       The archive has one write target across all CardDAV connections. Applying “Publish here” to a book
@@ -253,7 +250,7 @@
   </div>
 </SettingsSection>
 
-<SettingsSection title="Sync history" description="Recent manual and scheduled CardDAV runs.">
+<SettingsSection title="Sync history">
   <div class="section-state" aria-busy={controller.runsLoading || controller.runsPageLoading}>
     {#if controller.runsLoading}<p class="working">
         <Spinner size={14} label="Loading CardDAV sync history" /> Loading sync history…
