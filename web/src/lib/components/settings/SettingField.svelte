@@ -17,7 +17,7 @@
 </script>
 
 <script lang="ts">
-  import { SelectDropdown, TextInput, Toggle } from '@kenn-io/kit-ui';
+  import { NumberInput, SelectDropdown, TextInput, Toggle } from '@kenn-io/kit-ui';
   import { valueText, type SettingState } from '../../settings/catalog';
   import CronField from './CronField.svelte';
   import { HIDDEN_OPTIONS } from '../../settings/layout';
@@ -88,19 +88,15 @@
   {:else if setting.kind === 'integer' || setting.kind === 'number'}
     <label class="field" data-size="xs">
       <span class="kit-sr-only">{label}</span>
-      <input
-        type="number"
-        data-mono
-        value={text}
-        step={setting.kind === 'integer' ? '1' : 'any'}
+      <NumberInput
+        block
+        value={text === '' ? null : Number(text)}
+        step={setting.kind === 'integer' ? 1 : 0.01}
         min={off?.on_minimum ?? setting.validation?.minimum}
         max={setting.validation?.maximum}
         required={setting.validation?.required || off !== undefined}
-        aria-invalid={value === '' || undefined}
-        oninput={(event) => {
-          const raw = event.currentTarget.value;
-          onchange(raw === '' ? '' : Number(raw));
-        }}
+        invalid={value === ''}
+        oninput={(next) => onchange(next ?? '')}
       />
     </label>
   {:else}
@@ -149,23 +145,5 @@
   .off {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
-  }
-  input[type='number'] {
-    box-sizing: border-box;
-    width: 100%;
-    height: var(--control-height);
-    padding: 0 var(--space-3);
-    border: var(--border-width) solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font: inherit;
-    font-size: var(--font-size-sm);
-    transition: border-color var(--transition-fast) var(--transition-ease, ease);
-  }
-  input[type='number']:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 1px;
-    border-color: var(--accent-blue);
   }
 </style>
