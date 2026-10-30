@@ -102,6 +102,7 @@
     (selection.dimension === 'participant' || selection.dimension === 'domain'));
   const conversationRow = $derived(selection?.kind === 'entry' && selection.row.conversation_id &&
     selection.row.anchor_message_id ? selection.row : undefined);
+  const counterpartParticipantId = $derived(selection?.kind === 'entry' ? selection.row.counterpart_participant_id : undefined);
   const archiveMessage = $derived(selection?.kind === 'archive' ? selection.message : undefined);
   const conversationID = $derived(archiveMessage?.conversation_id ?? conversationRow?.conversation_id);
   // The thread opens immediately at the entry's own anchor; an explicit
@@ -201,6 +202,9 @@
       {/if}
     </div>
     <div class="pane-actions">
+      {#if onOpenPerson && counterpartParticipantId !== undefined}
+        <Button size="sm" surface="outline" label="Open person" onclick={() => { if (counterpartParticipantId !== undefined) onOpenPerson?.(counterpartParticipantId); }} />
+      {/if}
       <IconButton size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
         <X size={14} />
       </IconButton>

@@ -416,6 +416,8 @@ describe('RelationshipsWorkspace', () => {
       expect([request.searchParams.get('start'), request.searchParams.get('end')]).toEqual(['2026-07-19T00:00:00.000Z', '2026-07-20T00:00:00.000Z']);
       await fireEvent.click(within(pane).getByRole('button', { name: 'Close reading pane' }));
       expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
+      await view.rerender({ ...props, target: 'cluster:2' });
+      expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
     } finally { view.unmount(); props.controller.destroy(); }
   });
 

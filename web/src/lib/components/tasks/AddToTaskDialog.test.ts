@@ -21,7 +21,7 @@ describe('Add to task', () => {
     const readiness = new KataReadiness(client);
     const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Follow up', email: true, onclose, onchanged }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
-      await screen.findByRole('textbox', { name: 'Task title' });
+      await screen.findByRole('button', { name: 'Cancel' });
       expect(screen.getAllByRole('dialog')).toHaveLength(1);
       if (mode === 'kata-create') {
         await waitFor(() => expect(readiness.ready).toBe(true));
