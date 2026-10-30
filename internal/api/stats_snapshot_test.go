@@ -73,9 +73,9 @@ func TestHandleStatsReturnsStaleSnapshotWhenSlow(t *testing.T) {
 
 		started := time.Now()
 		second := getStatsResponse(t, srv)
-		assert.EqualValues(1, second.TotalMessages)
 		assert.Less(time.Since(started), time.Second, "the request wait must end before the background computation")
 		assert.True(second.Stale, "the previous snapshot is flagged stale")
+		assert.EqualValues(1, second.TotalMessages)
 		assert.False(second.AsOf.IsZero())
 	})
 }
@@ -134,7 +134,7 @@ func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map
 }
 
 // newSlowAccountsServer serves one account with one message behind slowCountsStore.
-func newSlowAccountsServer(t *testing.T, st *store.Store, release chan struct{}) (*Server, *slowCountsStore, int64) {
+func newSlowAccountsServer(t *testing.T, st *store.Store) (*Server, *slowCountsStore, int64) {
 	t.Helper()
 	require := require.New(t)
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
@@ -145,7 +145,7 @@ func newSlowAccountsServer(t *testing.T, st *store.Store, release chan struct{})
 		SourceID: src.ID, ConversationID: convID, SourceMessageID: "msg-1", MessageType: "email",
 	})
 	require.NoError(err)
-	slow := &slowCountsStore{Store: st, release: release}
+	slow := &slowCountsStore{Store: st, release: make(chan struct{})}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  slow,
@@ -160,14 +160,15 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		defer func() { assert.NoError(st.Close()) }()
-		srv, slow, _ := newSlowAccountsServer(t, st, make(chan struct{}))
+		srv, slow, _ := newSlowAccountsServer(t, st)
 		t.Cleanup(func() { close(slow.release) })
 		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
 		srv.statsSnapshotWait = 50 * time.Millisecond
 		getAccounts := func() cliAccountsResponse {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
 			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
-			require.Equal(http.StatusOK, w.Code, w.Body.String())
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 			var resp cliAccountsResponse
 			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
 			return resp
@@ -179,8 +180,8 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 
 		second := getAccounts()
 		require.Len(second.Accounts, 1)
-		assert.EqualValues(1, second.Accounts[0].MessageCount)
 		assert.True(second.Stale, "slow counts serve the previous snapshot")
+		assert.EqualValues(1, second.Accounts[0].MessageCount)
 		assert.False(second.AsOf.IsZero())
 	})
 }
@@ -191,7 +192,7 @@ func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		defer func() { assert.NoError(st.Close()) }()
-		srv, slow, sourceID := newSlowAccountsServer(t, st, make(chan struct{}))
+		srv, slow, sourceID := newSlowAccountsServer(t, st)
 		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
 		slow.calls.Store(1)
 		srv.statsSnapshotWait = 20 * time.Millisecond
@@ -232,7 +233,7 @@ func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
 func TestHandleCLIAccountsDelegatedCountsLive(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	srv, slow, sourceID := newSlowAccountsServer(t, testutil.NewTestStore(t), make(chan struct{}))
+	srv, slow, sourceID := newSlowAccountsServer(t, testutil.NewTestStore(t))
 	t.Cleanup(func() { close(slow.release) })
 	srv.cfg.Server.AgentAccess = true
 	srv.cfg.Server.APIKey = "owner"
@@ -282,7 +283,7 @@ func TestHandleCLIAccountsDelegatedCountErrors(t *testing.T) {
 	requirements := require.New(t)
 	for _, deleted := range []bool{false, true} {
 		for _, failure := range []error{context.Canceled, errors.New("synthetic count failure")} {
-			srv, slow, sourceID := newSlowAccountsServer(t, testutil.NewTestStore(t), make(chan struct{}))
+			srv, slow, sourceID := newSlowAccountsServer(t, testutil.NewTestStore(t))
 			source, err := slow.GetSourceByID(sourceID)
 			requirements.NoError(err)
 			srv.store = &failingDirectCountsStore{Store: slow.Store, deleted: deleted, err: failure}

@@ -185,15 +185,10 @@ func cardResponseRaw(href, etag, card string) string {
 		`<D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
 }
 
-func seededMutationService(t *testing.T, fixture *mutationFixture, servers ...*httptest.Server) (*Service, *store.Store, int64, store.CardDAVAddressBook) {
+func seededMutationService(t *testing.T, fixture *mutationFixture) (*Service, *store.Store, int64, store.CardDAVAddressBook) {
 	t.Helper()
-	var server *httptest.Server
-	if len(servers) > 0 {
-		server = servers[0]
-	} else {
-		server = httptest.NewServer(fixture.handler(t))
-		t.Cleanup(server.Close)
-	}
+	server := httptest.NewServer(fixture.handler(t))
+	t.Cleanup(server.Close)
 	service, st, book := newPullService(t, server, false)
 	var personID int64
 	err := st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
@@ -1043,7 +1038,12 @@ func setRetryGate(t *testing.T, st *store.Store, retryAfter time.Time) {
 
 func seededMutationServiceForServer(t *testing.T, server *httptest.Server) (*Service, *store.Store, int64, store.CardDAVAddressBook) {
 	t.Helper()
-	return seededMutationService(t, nil, server)
+	service, st, book := newPullService(t, server, false)
+	var personID int64
+	err := st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+		VALUES (?, ?) RETURNING id`), "person", "Alice Example").Scan(&personID)
+	require.NoError(t, err)
+	return service, st, personID, book
 }
 
 func addProjectedEmail(t *testing.T, st *store.Store, personID int64) {
