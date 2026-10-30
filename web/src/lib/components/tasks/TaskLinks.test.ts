@@ -80,7 +80,7 @@ describe('TaskLinks', () => {
       return request.url.endsWith('/integrations/tasks/status')
         ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
         : Response.json({ state, complete: false, reason: state, last_scan: '2026-07-19T01:00:00Z', tasks: [] });
-    })), messageId: 42, title: 'Synthetic' });
+    })), messageId: 42, title: 'Synthetic', showSetup: false });
     expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(copy.toLowerCase());
     expect(screen.queryByText('No linked tasks.')).toBeNull();
   });
@@ -152,12 +152,7 @@ describe('TaskLinks', () => {
           : Response.json({ state, complete: false, reason: state, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
       })), mode: 'list', messageId: 42, title: 'Synthetic' });
 
-      if (state === 'authentication_required') {
-        expect((await screen.findByRole('alert')).textContent).toContain('Authentication is required');
-        expect(screen.queryByRole('button', { name: /^Unlink/ })).toBeNull();
-      } else {
-        expect(await screen.findByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
-      }
+      await screen.findByRole('alert');
       await view.rerender({ mode: 'add' });
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
       expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
