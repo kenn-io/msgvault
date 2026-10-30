@@ -30,16 +30,16 @@ describe('source labels', () => {
   ])('names sync reason %j', (code, want) => expect(syncUnavailableLabel(code)).toBe(want));
 
   it('maps run states for rows and status tones for the job indicator', () => {
-    expect(sourceRunState({ scheduler_queued: true })).toBe('queued');
-    expect(sourceRunState({ latest_sync: run('cancelled') })).toBe('cancelled');
-    expect(sourceRunState({ latest_sync: run('completed', 2) })).toBe('partial');
-    expect(sourceRunState({ latest_sync: run('paused') })).toBe('paused');
+    expect(sourceRunState({ active_sync: null, latest_sync: null, scheduler_queued: true })).toBe('queued');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled') })).toBe('cancelled');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('completed', 2) })).toBe('partial');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('paused') })).toBe('paused');
     expect(sourceRunState({ active_sync: run('running'), latest_sync: run('completed') })).toBe('running');
-    expect(sourceRunState({ latest_sync: run('completed') })).toBe('succeeded');
-    expect(sourceRunState({ latest_sync: run('failed') })).toBe('failed');
-    expect(sourceRunState({ latest_sync: null })).toBeUndefined();
-    expect(syncStatusChip({ latest_sync: run('failed') }).tone).toBe('danger');
-    expect(syncStatusChip({ latest_sync: run('completed') }).tone).toBe('success');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('completed') })).toBe('succeeded');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('failed') })).toBe('failed');
+    expect(sourceRunState({ active_sync: null, latest_sync: null })).toBeUndefined();
+    expect(syncStatusChip({ active_sync: null, latest_sync: run('failed'), scheduler_queued: false }).tone).toBe('danger');
+    expect(syncStatusChip({ active_sync: null, latest_sync: run('completed'), scheduler_queued: false }).tone).toBe('success');
   });
 });
 
