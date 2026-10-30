@@ -86,6 +86,7 @@ export class DeletionsController {
     const status = this.batches.find(batch => batch.id === id)?.status;
     const controller = new AbortController();
     this.#controllers.set(id, controller);
+    let superseded = false;
     const request = new Promise<DeletionManifestDetail | undefined>(resolve => {
       this.#queue.push(() => {
         if (this.#disposed || controller.signal.aborted) { resolve(undefined); return; }
@@ -100,6 +101,7 @@ export class DeletionsController {
           stopped,
         ]).catch(() => undefined).then(data => {
           const current = !this.#disposed && this.#controllers.get(id) === controller && this.batches.find(batch => batch.id === id)?.status === status;
+          superseded = !this.#disposed && !current;
           if (current) {
             if (data && !controller.signal.aborted) {
               this.details = { ...this.details, [id]: data };
@@ -121,7 +123,7 @@ export class DeletionsController {
           if (this.#controllers.get(id) === controller) { this.#controllers.delete(id); this.#pending.delete(id); }
           this.#running--;
           this.#next();
-        }).then(resolve);
+        }).then(data => resolve(superseded ? this.getDetail(id, { retry: true }) : data));
       });
     });
     this.#pending.set(id, request);

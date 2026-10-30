@@ -177,3 +177,30 @@ it('publishes a staged batch before old retention hydration finishes and ignores
   expect(controller.batches.map(batch => batch.id)).toEqual(['old', 'staged']);
   controller.destroy();
 });
+
+it('waits for the current detail after a status refresh supersedes the first read, but leaves genuine failures alone', async () => {
+  let status = 'pending', activeReads = 0, failedReads = 0;
+  let finish!: (response: Response) => void;
+  const controller = new DeletionsController(createAPIClient(async input => {
+    const request = input as Request;
+    if (request.url.endsWith('/deletions')) return Response.json({ manifests: [batch('active', status), batch('broken', 'pending')] });
+    if (request.url.endsWith('/broken')) { failedReads++; return Response.json({}, { status: 503 }); }
+    if (++activeReads === 1) return new Promise<Response>(() => undefined);
+    return new Promise<Response>(resolve => { finish = resolve; });
+  }));
+  try {
+    await controller.refresh();
+    const opening = controller.getDetail('active', { fresh: true });
+    status = 'in_progress';
+    await controller.refresh();
+    const replacement = controller.getDetail('active');
+    const current = { ...batch('active', 'in_progress'), account: 'archive@example.com' };
+    finish(Response.json(current));
+    expect(await opening).toMatchObject(current);
+    expect(await replacement).toMatchObject(current);
+    expect(controller.details.active).toMatchObject(current);
+    expect(activeReads).toBe(2);
+    expect(await controller.getDetail('broken')).toBeUndefined();
+    expect(failedReads).toBe(1);
+  } finally { controller.destroy(); }
+});

@@ -229,3 +229,26 @@ it('updates the open panel when a successful focus refresh loads completed resul
     expect(within(panel).queryByRole('button', { name: 'Cancel batch' })).toBeNull();
   } finally { view.unmount(); controller.destroy(); }
 });
+
+it('keeps the selected batch while a focus refresh replaces its opening detail read', async () => {
+  let status = 'pending', reads = 0;
+  let finish!: (response: Response) => void;
+  const controller = new DeletionsController(createAPIClient(async input => {
+    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [batch('active', status)] });
+    if (++reads === 1) return new Promise<Response>(() => undefined);
+    return new Promise<Response>(resolve => { finish = resolve; });
+  }));
+  const view = render(DeletionsWorkspace, { controller });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
+    status = 'in_progress';
+    await controller.refresh();
+    await waitFor(() => expect(reads).toBe(2));
+    expect(screen.getByRole('row', { selected: true })).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+    finish(Response.json(detail('active', 'in_progress')));
+    const panel = await screen.findByRole('dialog', { name: /^Staged / });
+    expect(within(panel).getByText('Deleting')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+  } finally { view.unmount(); controller.destroy(); }
+});
