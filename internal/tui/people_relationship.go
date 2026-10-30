@@ -71,6 +71,12 @@ func (m *Model) beginPeopleRelationshipLoad() tea.Cmd {
 		return nil
 	}
 	m.peopleState.relationshipGeneration++
+	if m.peopleState.contact.ActivityCount == 0 {
+		m.peopleState.relationshipCalendar = nil
+		m.peopleState.relationshipLoading = false
+		m.peopleState.relationshipErr = nil
+		return nil
+	}
 	m.initializePeopleRelationshipYears(m.peopleState.contact)
 	if cached := m.cachedPeopleRelationshipCalendar(); cached != nil {
 		m.peopleState.relationshipCalendar = cached

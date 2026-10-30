@@ -96,6 +96,7 @@ func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
 		peopleRequest,
 		nil,
 		nil,
+		false,
 	)
 	requirementsForTest.NoError(err)
 	assert.Equal(t, wantPeople, gotPeople)
@@ -291,6 +292,7 @@ func TestIdentityActivityDeletionScopesMatchLegacyPeopleAndDomains(t *testing.T)
 			peopleRequest,
 			nil,
 			nil,
+			false,
 		)
 		requirementsForTest.NoError(err)
 		assert.Equal(t, wantPeople, gotPeople, deletion)

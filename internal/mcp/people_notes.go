@@ -271,15 +271,11 @@ func (h *handlers) prepareCuratedPeopleSearch(
 			if contactErr != nil || contact == nil {
 				continue
 			}
-			if summary.ID == 0 {
+			if summary.ID == 0 || (summary.ActivityCount == 0 && contact.ActivityCount > 0) {
 				summary = *contact
 			}
-			canonicalID := contact.ID
-			if contact.Cluster != nil {
-				canonicalID = contact.Cluster.CanonicalID
-			}
-			if personSummaryMatchesPeopleQuery(*contact, queryText) {
-				prepared.excludedIDs[canonicalID] = struct{}{}
+			if contact.ActivityCount > 0 && personSummaryMatchesPeopleQuery(*contact, queryText) {
+				prepared.excludedIDs[contact.CanonicalID()] = struct{}{}
 			}
 		}
 		if summary.ID == 0 && len(profile.ParticipantIDs) > 0 {

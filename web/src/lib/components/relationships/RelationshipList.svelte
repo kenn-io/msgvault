@@ -39,7 +39,7 @@
     key: string;
     target: string;
     label: string;
-    lastAt: string;
+    lastAt?: string;
     summary: string;
   }
 
@@ -351,7 +351,9 @@
               <div class="row-body">
                 <div class="row-main">
                   <Tooltip text={view.label}><span class="label" title={view.label}>{view.label}</span></Tooltip>
-                  <span class="last-at" data-mono>{compactDate(view.lastAt)}</span>
+                  {#if view.lastAt}
+                    <span class="last-at" data-mono>{compactDate(view.lastAt)}</span>
+                  {/if}
                 </div>
                 <span class="row-summary" data-mono>{view.summary}</span>
               </div>

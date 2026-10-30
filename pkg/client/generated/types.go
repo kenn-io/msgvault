@@ -13278,10 +13278,10 @@ type PersonSummary struct {
 	DisplayLabel                   string             `json:"display_label" validate:"required"`
 	DisplayName                    *string            `json:"display_name,omitzero"`
 	FileCount                      int64              `json:"file_count"`
-	FirstAt                        time.Time          `json:"first_at" validate:"required"`
+	FirstAt                        *time.Time         `json:"first_at,omitempty"`
 	ID                             int64              `json:"id"`
 	Identifiers                    []PersonIdentifier `json:"identifiers" validate:"required"`
-	LastAt                         time.Time          `json:"last_at" validate:"required"`
+	LastAt                         *time.Time         `json:"last_at,omitempty"`
 	MeetingCount                   int64              `json:"meeting_count"`
 	PartialLabel                   bool               `json:"partial_label"`
 	PeakRelationshipTemperature    int64              `json:"peak_relationship_temperature"`
@@ -13305,9 +13305,6 @@ func (p PersonSummary) Validate() error {
 	if err := typesValidator.Var(p.DisplayLabel, "required"); err != nil {
 		errors = errors.Append("DisplayLabel", err)
 	}
-	if err := typesValidator.Var(p.FirstAt, "required"); err != nil {
-		errors = errors.Append("FirstAt", err)
-	}
 	if err := typesValidator.Var(p.Identifiers, "required"); err != nil {
 		errors = errors.Append("Identifiers", err)
 	}
@@ -13317,9 +13314,6 @@ func (p PersonSummary) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Identifiers[%d]", i), err)
 			}
 		}
-	}
-	if err := typesValidator.Var(p.LastAt, "required"); err != nil {
-		errors = errors.Append("LastAt", err)
 	}
 	if p.Profile != nil {
 		if v, ok := any(p.Profile).(runtime.Validator); ok {

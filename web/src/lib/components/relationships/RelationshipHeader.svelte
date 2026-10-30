@@ -22,7 +22,7 @@
     detail: PersonSummary | DomainSummary | null;
     loading?: boolean;
     filesOpen: boolean;
-    missing?: boolean;
+    headerState?: 'missing' | 'no-mail' | 'normal';
     onFilesToggle: (value: boolean) => void;
     client: APIClient;
     onLinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
@@ -39,7 +39,7 @@
     detail,
     loading = false,
     filesOpen,
-    missing = false,
+    headerState = 'normal',
     onFilesToggle,
     client,
     onLinkParticipants,
@@ -305,7 +305,7 @@
 <header class="relationship-header" class:has-detail={Boolean(detail)} aria-label="Relationship detail">
   {#if !detail}
     <p class="header-empty" role="status">
-      {loading ? 'Loading relationship…' : missing ? 'No sent or received messages with this contact yet.' : 'Select a person or domain to see your shared history.'}
+      {loading ? 'Loading relationship…' : headerState === 'missing' ? 'Person not found.' : headerState === 'no-mail' ? 'No sent or received messages with this contact yet.' : 'Select a person or domain to see your shared history.'}
     </p>
   {:else}
     <div class="title-row">
@@ -354,8 +354,12 @@
       />
     </div>
     <p class="counts">
-      {detail.activity_count.toLocaleString()} items
-      {#if detail.activity_count > 0}
+      {#if headerState === 'no-mail'}
+        No sent or received messages with this contact yet.
+      {:else}
+        {detail.activity_count.toLocaleString()} items
+      {/if}
+      {#if detail.activity_count > 0 && detail.first_at && detail.last_at}
         · {formatDate(detail.first_at)} – {formatDate(detail.last_at)}
       {/if}
       {#if !isPersonDetail(detail)}
