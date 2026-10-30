@@ -133,3 +133,11 @@ export function providerUpdate(value: ProviderSetting): ProviderUpdate {
     max_requests_per_day: value.max_requests_per_day,
   };
 }
+
+export function readOnlyValue(setting: SettingState): string {
+  if (setting.kind === 'secret') return setting.secret?.configured ? setting.secret.hint || 'Set' : 'None';
+  const value = valueText(persistedValue(setting));
+  const off = setting.validation?.off;
+  if (off && value === (off.value ?? '')) return off.label;
+  return value || 'Not set';
+}

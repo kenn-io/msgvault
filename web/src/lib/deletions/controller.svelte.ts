@@ -18,6 +18,8 @@ export class DeletionsController {
   #client: APIClient;
   #timeout: number;
   #disposed = false;
+  #loaded = false;
+  #revision = 0;
   #list?: Promise<void>;
   #trailing?: Promise<void>;
   #retryRequested = false;
@@ -42,7 +44,7 @@ export class DeletionsController {
       });
     }
     if (retry) this.#failed.clear();
-    this.loading = true;
+    this.loading = !this.#loaded;
     const controller = this.#listController = new AbortController();
     this.#list = (async () => {
       try {
@@ -64,10 +66,13 @@ export class DeletionsController {
             this.details = details;
           }
         }
+        const revision = ++this.#revision;
         this.batches = next;
+        this.#loaded = true;
         this.error = '';
         this.loading = false;
-        await Promise.all([this.#retention(), ...activeDetails.map(id => this.getDetail(id))]);
+        void this.#retention(revision);
+        activeDetails.forEach(id => void this.getDetail(id));
       } catch { if (!controller.signal.aborted && !this.#disposed) this.error = "Can't load staged deletions."; }
       finally { this.loading = false; this.#list = undefined; }
     })();
@@ -121,21 +126,22 @@ export class DeletionsController {
 
   #next(): void { while (this.#running < 4 && this.#queue.length) this.#queue.shift()!(); }
 
-  async #retention(): Promise<void> {
+  async #retention(revision = this.#revision): Promise<void> {
     const now = Date.now();
     if (this.batches.some(batch => batchIsRecent(batch, now, this.details[batch.id]?.execution?.completed_at))) { this.visible = true; return; }
     const older = this.batches.filter(batch => terminal(batch.status));
     if (!older.length) { this.visible = false; return; }
     let index = 0, found = false, failed = false;
     await Promise.all(Array.from({ length: Math.min(4, older.length) }, async () => {
-      while (index < older.length && !found && !this.#disposed) {
+      while (index < older.length && !found && !this.#disposed && revision === this.#revision) {
         const batch = older[index++];
         const detail = await this.getDetail(batch.id);
+        if (revision !== this.#revision || this.#disposed) return;
         if (!detail) failed = true;
         else if (batchIsRecent(batch, now, detail.execution?.completed_at)) { found = true; this.visible = true; }
       }
     }));
-    if (!this.#disposed && (found || !failed)) this.visible = found;
+    if (!this.#disposed && revision === this.#revision && (found || !failed)) this.visible = found;
   }
 
   async cancel(id: string): Promise<void> {
@@ -144,6 +150,7 @@ export class DeletionsController {
     this.#controllers.get(id)?.abort();
     this.#controllers.delete(id);
     this.#pending.delete(id);
+    this.#revision++;
     this.batches = this.batches.map(batch => batch.id === id ? { ...batch, status: data.status } : batch);
     if (this.details[id]) this.details = { ...this.details, [id]: { ...this.details[id], status: data.status } };
     void this.#retention();

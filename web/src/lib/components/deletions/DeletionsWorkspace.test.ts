@@ -156,3 +156,27 @@ it('shows the review description and failed message IDs in batch details', async
   expect(screen.getByText('message-a')).toBeDefined();
   expect(screen.getByText('message-b')).toBeDefined();
 });
+
+it('keeps the table and open detail visible during background list reads', async () => {
+  let lists = 0, finish: (response: Response) => void;
+  const controller = new DeletionsController(createAPIClient(async input => {
+    if ((input as Request).url.endsWith('/deletions')) {
+      if (++lists === 1) return Response.json({ manifests: [batch('b1', 'pending')] });
+      return new Promise(resolve => finish = resolve);
+    }
+    return Response.json(detail('b1', 'pending'));
+  }));
+  const view = render(DeletionsWorkspace, { controller });
+  expect(screen.getByText('Loading…')).toBeDefined();
+  await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
+  await screen.findByText('reviewed explicit selection');
+  const table = screen.getByRole('table', { name: 'Staged deletions' });
+  const refresh = controller.refresh();
+  await waitFor(() => expect(lists).toBe(2));
+  expect(screen.getByRole('table', { name: 'Staged deletions' })).toBe(table);
+  expect(screen.queryByText('Loading…')).toBeNull();
+  expect(screen.getByText('reviewed explicit selection')).toBeDefined();
+  finish!(Response.json({ manifests: [batch('b1', 'pending')] }));
+  await refresh;
+  view.unmount(); controller.destroy();
+});
