@@ -105,9 +105,10 @@
       if (signal.aborted) return;
       if (!data) throw new Error();
       contacts = data.connections.filter((connection) => !connection.orphaned);
+      if (contacts.length) loading = false;
       contactsError = '';
     } catch {
-      if (!signal.aborted) contactsError = "Can't load contacts.";
+      if (!signal.aborted || signal.reason?.name === 'TimeoutError') contactsError = "Can't load contacts.";
     }
   }
   function stopPolling(clearAwaiting = true): void {
@@ -161,20 +162,17 @@
     if (sources.length === 0) loading = true;
     const requestGeneration = ++generation;
     controller?.abort();
-    const requestController = new AbortController();
-    controller = requestController;
+    const requestController = (controller = new AbortController());
     const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
+    const contactsLoad = loadContacts(signal);
     try {
-      const { data, error: responseError } = await generatedListSourceStatus(undefined, {
-        ...client,
-        signal,
-      });
+      const { data, error: responseError } = await generatedListSourceStatus(undefined, { ...client, signal });
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
       const next = data.sources ?? [];
       sources = next;
-      loading = false;
-      await loadContacts(signal);
+      if (next.length) loading = false;
+      await contactsLoad;
       if (requestGeneration !== generation || disposed) return;
       let nextDelay: number | undefined;
       let lockHoldPoll = false;
@@ -233,6 +231,7 @@
         schedulePoll(nextDelay, false, lockHoldPoll);
       }
     } catch (cause) {
+      await contactsLoad;
       if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
       if (signal.aborted && signal.reason?.name === 'TimeoutError') {
         statusError = 'Loading source status timed out. The server may be busy; retry in a moment.';

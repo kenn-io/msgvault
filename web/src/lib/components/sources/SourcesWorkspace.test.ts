@@ -356,7 +356,10 @@ describe('SourcesWorkspace', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
     const events: unknown[] = [], requests: Promise<void>[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/carddav/connections')) return Response.json({ connections: [] });
+      if (!path.endsWith('/sources/status')) return Response.json({}, { status: 404 });
       reads += 1;
       if (reads === 1) throw new Error('status endpoint unreachable');
       return Response.json({ sources: [source()] });
@@ -714,4 +717,58 @@ it('shows OAuth app repair instructions for contacts rather than assuming expiry
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for user-a' }));
   expect(screen.getByText(/Check the selected OAuth app's client settings/)).toBeDefined();
   expect(screen.getByRole('button', { name: 'Open Settings › Contacts' })).toBeDefined();
+});
+
+it('recovers a contacts-only load timeout without claiming the archive has no sources', async () => {
+  let contactsReads = 0;
+  const fetch = vi.fn<typeof globalThis.fetch>(async input => {
+    const request = input as Request;
+    if (request.url.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (request.url.endsWith('/carddav/connections')) {
+      if (++contactsReads > 1) return Response.json({ connections: [contact] });
+      return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
+    }
+    return Response.json({}, { status: 404 });
+  });
+  const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []), requestTimeoutMs: 20 });
+  try {
+    expect((await screen.findByRole('alert')).textContent).toMatch(/contacts/i);
+    expect(screen.queryByText('No sources yet')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+  } finally { view.unmount(); }
+});
+
+it('loads contacts and permits Sync now when mail source status fails', async () => {
+  const syncs: Request[] = [];
+  const fetch = api([], (url, request) => {
+    if (url.pathname.endsWith('/sources/status')) return Response.json({ message: 'Mail status unavailable' }, { status: 500 });
+    if (url.pathname.endsWith('/carddav/sync')) { syncs.push(request); return Response.json({ status: 'accepted' }); }
+    return undefined;
+  }, [contact]);
+  const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+  try {
+    expect((await screen.findByRole('alert')).textContent).toContain('Mail status unavailable');
+    expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync now user-a' }));
+    await waitFor(() => expect(syncs).toHaveLength(1));
+    await expect(syncs[0].clone().json()).resolves.toEqual({ full: false, connection: 'default' });
+  } finally { view.unmount(); }
+});
+
+it('publishes contacts while mail source status remains pending', async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async input => {
+    const request = input as Request;
+    if (request.url.endsWith('/sources/status')) {
+      return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
+    }
+    if (request.url.endsWith('/carddav/connections')) return Response.json({ connections: [contact] });
+    return Response.json({}, { status: 404 });
+  });
+  const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+  try {
+    expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+  } finally { view.unmount(); }
 });

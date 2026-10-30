@@ -135,7 +135,7 @@ export class DeletionsController {
     await Promise.all(Array.from({ length: Math.min(4, older.length) }, async () => {
       while (index < older.length && !found && !this.#disposed && revision === this.#revision) {
         const batch = older[index++];
-        const detail = await this.getDetail(batch.id);
+        const detail = await this.getDetail(batch.id, true);
         if (revision !== this.#revision || this.#disposed) return;
         if (!detail) failed = true;
         else if (batchIsRecent(batch, now, detail.execution?.completed_at)) { found = true; this.visible = true; }
