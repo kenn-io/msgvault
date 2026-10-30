@@ -14,6 +14,11 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// ErrFloodWaitLimit marks a wait the configured ceiling forbids.
+// It intentionally does not wrap Telegram's RPC error: gotd's downloader
+// otherwise sees the flood response and retries it beyond the ceiling.
+var ErrFloodWaitLimit = errors.New("Telegram flood wait exceeds configured limit")
+
 // Invoker restricts Telegram requests and applies rate and flood-wait limits.
 type Invoker struct {
 	next      tg.Invoker
@@ -89,7 +94,7 @@ func (i *Invoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Deco
 		err := i.next.Invoke(ctx, input, output)
 		for _, kind := range tgerr.FloodWaitErrors {
 			if rpc, ok := tgerr.AsType(err, kind); ok && (rpc.Argument < 0 || int64(rpc.Argument) > math.MaxInt64/int64(time.Second)) {
-				return fmt.Errorf("invalid Telegram flood wait: %w", err)
+				return fmt.Errorf("invalid Telegram flood wait: %w", ErrFloodWaitLimit)
 			}
 		}
 		delay, flood := tgerr.AsFloodWait(err)
@@ -97,7 +102,7 @@ func (i *Invoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Deco
 			return err
 		}
 		if delay > i.maxWait {
-			return fmt.Errorf("Telegram flood wait %s exceeds limit %s: %w", delay, i.maxWait, err)
+			return fmt.Errorf("Telegram flood wait %s exceeds limit %s: %w", delay, i.maxWait, ErrFloodWaitLimit)
 		}
 		timer := time.NewTimer(delay)
 		select {

@@ -109,3 +109,11 @@ func TestMediaProcessorAppliesKnownMembershipLimit(t *testing.T) {
 	assert.False(called)
 	assert.Equal(attachmentpolicy.SkipParticipantThreshold, media.SkipReason)
 }
+
+func TestArchiveMediaStopsOnFloodWaitLimit(t *testing.T) {
+	ref := &MediaReference{Location: &tg.InputDocumentFileLocation{ID: 101}, DCID: 1, Size: 9, Kind: "file"}
+	_, err := archiveMedia(context.Background(), ref, attachmentpolicy.Policy{MaxBytes: 20}, attachmentpolicy.Conversation{}, t.TempDir(), secureTempDir(t), func(context.Context, *MediaReference, string, int64) (*os.File, error) {
+		return nil, ErrFloodWaitLimit
+	})
+	require.ErrorIs(t, err, ErrFloodWaitLimit)
+}

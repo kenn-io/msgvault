@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,4 +41,37 @@ func TestTelegramMediaPolicyRejectsInvalidSettings(t *testing.T) {
 			require.ErrorContains(t, err, "telegram")
 		})
 	}
+}
+
+func TestTelegramRequestLimits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	defaults := NewDefaultConfig().Telegram
+	assert.Equal(2.0, defaults.RequestsPerSecond)
+	assert.Equal(5*time.Minute, defaults.MaxFloodWait)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[telegram]\nrequests_per_second = 0.5\nmax_flood_wait = \"12s\"\n"), 0600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	assert.Equal(0.5, cfg.Telegram.RequestsPerSecond)
+	assert.Equal(12*time.Second, cfg.Telegram.MaxFloodWait)
+	for _, setting := range []string{"requests_per_second = -1.0", "requests_per_second = 0.0", "max_flood_wait = \"-1s\""} {
+		require.NoError(os.WriteFile(path, []byte("[telegram]\n"+setting+"\n"), 0600))
+		_, err := Load(path, "")
+		require.ErrorContains(err, "telegram")
+	}
+}
+
+func TestTelegramPerAccountChannelSelection(t *testing.T) {
+	require := require.New(t)
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[telegram.accounts_config.user123]\nchannels = [-1000000000123]\n"), 0600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	assert.Equal(t, []int64{-1000000000123}, cfg.Telegram.AccountsConfig["user123"].Channels)
+	require.NoError(os.WriteFile(path, []byte("[telegram.accounts_config.user123]\nchannels = [123]\n"), 0600))
+	_, err = Load(path, "")
+	require.ErrorContains(err, "channel")
 }

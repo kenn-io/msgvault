@@ -56,6 +56,7 @@ import (
 	"go.kenn.io/msgvault/internal/syncerr"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/teams"
+	"go.kenn.io/msgvault/internal/telegram"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
@@ -4205,6 +4206,8 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			err = runScheduledTeamsSync(ctx, src, s, state)
 		case sourceTypeMSMail:
 			err = runScheduledMSMailSync(ctx, src, s, state)
+		case telegram.SourceType:
+			err = importTelegramSourceForScheduledRun(ctx, s, src, defaultTelegramSyncDeps(ctx))
 		case sourceTypeDiscord:
 			var discordSummary *discord.ImportSummary
 			discordSummary, err = importDiscordSourceForScheduledRun(
@@ -4290,7 +4293,7 @@ func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary
 
 // findScheduledSyncSources resolves ALL syncable source rows for a
 // scheduler identifier. Returns at most one row per syncable type
-// (gmail, imap, msmail, teams, discord), in that stable order. Non-syncable types
+// (gmail, imap, msmail, teams, discord, telegram), in that stable order. Non-syncable types
 // (mbox, apple-mail, etc.) are skipped.
 //
 // Returns an empty slice (not nil) when no active syncable source matches.
@@ -4310,7 +4313,7 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 	for _, src := range rows {
 		if src.MergedIntoSourceID != 0 {
 			switch src.SourceType {
-			case "", sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams, sourceTypeDiscord:
+			case "", sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams, sourceTypeDiscord, telegram.SourceType:
 				retiredMatch = true
 			}
 			continue
@@ -4320,18 +4323,17 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 			if _, dup := seen[src.SourceType]; !dup {
 				seen[src.SourceType] = src
 			}
-		case sourceTypeDiscord:
-			// Guild display names are not stable or unique. Scheduled Discord
-			// jobs must use the exact guild snowflake as their key.
+		case sourceTypeDiscord, telegram.SourceType:
+			// Display names are not stable or unique. These schedules use the exact identifier.
 			if src.Identifier == identifier {
 				seen[src.SourceType] = src
 			}
 		}
 	}
 
-	// Return in stable order: gmail, imap, msmail, teams, discord.
+	// Return in stable order: gmail, imap, msmail, teams, discord, telegram.
 	var result []*store.Source
-	for _, t := range []string{sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams, sourceTypeDiscord} {
+	for _, t := range []string{sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams, sourceTypeDiscord, telegram.SourceType} {
 		if src, ok := seen[t]; ok {
 			result = append(result, src)
 		}

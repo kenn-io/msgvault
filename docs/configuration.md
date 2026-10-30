@@ -832,6 +832,33 @@ source type, source identifier and provider room ID; duplicate keys are rejected
 All saved values are marked staged in this release. These commands do not purge
 messages or contact a provider.
 
+### `[telegram]`
+
+Set request limits and select broadcast channels for [Telegram sync](usage/telegram.md).
+These settings apply to the process making the requests: workstation login uses
+its local configuration, and scheduled sync uses the daemon's configuration.
+
+```toml
+[telegram]
+requests_per_second = 2.0
+max_flood_wait = "5m"
+media_max_participants = 20
+max_media_mb = 250
+
+[telegram.accounts_config.user123456789]
+channels = [-1000000000123]
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `requests_per_second` | `2.0` | Positive finite request rate, shared by reads and media downloads |
+| `max_flood_wait` | `5m` | Maximum single Telegram flood wait; `0s` stops on any positive wait |
+| `accounts_config.<account>.channels` | empty | Unique marked broadcast channel IDs to include for this account |
+
+Other `[telegram]` media keys and per-account overrides follow the shared
+[media policy](#media-policy). Broadcast channels not listed here can be
+included in a manual run with `--include-channels` or `--chat`.
+
 ### Media policy
 
 `[beeper]`, `[inline]`, `[slack]`, `[discord]`, `[telegram]`, and `[teams]` share one attachment

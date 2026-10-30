@@ -21,7 +21,7 @@ function run(status: string, processed: number, overrides: Record<string, unknow
   return {
     id: 9, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null,
     status, messages_processed: processed, messages_added: processed,
-    messages_updated: 0, errors_count: 0, error_message: null, ...overrides
+    messages_updated: 0, messages_deleted: 0, errors_count: 0, error_message: null, ...overrides
   };
 }
 
@@ -104,7 +104,7 @@ describe('SourcesWorkspace', () => {
 
   it('shows one status chip per latest result', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
-      source({ id: 1, display_name: 'Active', active_sync: run('running', 5) }),
+      source({ id: 1, display_name: 'Active', active_sync: run('running', 5, { messages_deleted: 2 }) }),
       source({ id: 2, identifier: 'b@example.com', display_name: 'Done',
         latest_sync: run('completed', 3, { completed_at: '2026-07-19T11:00:00Z' }) }),
       source({ id: 3, identifier: 'c@example.com', display_name: 'Partial',
@@ -118,6 +118,7 @@ describe('SourcesWorkspace', () => {
 
     expect(await screen.findByText('Syncing')).toBeDefined();
     expect(screen.getByText('5 processed')).toBeDefined();
+    expect(screen.getByText('2 deleted')).toBeDefined();
     for (const label of ['Completed', 'Completed with errors', 'Failed', 'Never synced']) {
       expect(screen.getByText(label)).toBeDefined();
     }

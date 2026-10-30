@@ -146,3 +146,24 @@ func TestAuthenticatedMediaBackfillIncludesVerifiedFormerGroup(t *testing.T) {
 	assert.Empty(t, pending)
 	assert.True(t, mock.AllWereMet())
 }
+
+func TestBackfillMediaStopsWhenRefreshExceedsFloodLimit(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	writer, err := telegram.NewLiveWriter(ctx, st, source.ID, 999, "Synthetic")
+	require.NoError(err)
+	ref := &MediaReference{Location: &tg.InputDocumentFileLocation{ID: 101}, DCID: 1, Size: 9, Kind: "file"}
+	live, err := ref.liveMedia()
+	require.NoError(err)
+	require.NoError(writer.Write(ctx, telegram.Chat{ID: -123, Type: "private_group"}, telegram.Message{ID: 7, SentAt: time.Unix(100, 0), RawJSON: `{}`, LiveMedia: live}))
+	options := MediaOptions{AttachmentsDir: t.TempDir(), TempDir: t.TempDir(), Policy: attachmentpolicy.Policy{MaxBytes: 20}, Download: func(context.Context, *MediaReference, string, int64) (*os.File, error) {
+		assert.Fail(t, "unexpected download")
+		return nil, nil
+	}}
+	_, err = backfillMedia(ctx, st, source.ID, tg.NewClient(&stubInvoker{err: ErrFloodWaitLimit}), []CatalogDialog{{ChatID: -123, NativeID: 123, Kind: "group"}}, options)
+	require.ErrorIs(err, ErrFloodWaitLimit)
+}

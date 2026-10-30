@@ -1771,6 +1771,7 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     messages_processed BIGINT DEFAULT 0,
     messages_added BIGINT DEFAULT 0,
     messages_updated BIGINT DEFAULT 0,
+    messages_deleted BIGINT NOT NULL DEFAULT 0,
     errors_count BIGINT DEFAULT 0,
 
     error_message TEXT,

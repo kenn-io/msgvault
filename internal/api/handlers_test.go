@@ -3706,6 +3706,8 @@ func TestHandleSourceStatus(t *testing.T) {
 		ErrorMessage:    "parse MIME: malformed header",
 	}), "RecordSyncRunItem error")
 
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sync_runs SET messages_deleted = ? WHERE id = ?`), 3, completedID)
+	require.NoError(err)
 	require.NoError(st.CompleteSync(completedID, "history-2"), "CompleteSync")
 
 	runningID, err := st.StartSync(gmail.ID, "incremental")
@@ -3747,6 +3749,7 @@ func TestHandleSourceStatus(t *testing.T) {
 	assert.Equal(completedID, got.LastSuccessfulSync.ID, "LastSuccessfulSync.ID")
 	assert.Equal(store.SyncStatusCompleted, got.LastSuccessfulSync.Status, "LastSuccessfulSync.Status")
 	assert.Equal(int64(10), got.LastSuccessfulSync.MessagesProcessed, "LastSuccessfulSync.MessagesProcessed")
+	assert.Equal(int64(3), got.LastSuccessfulSync.MessagesDeleted, "LastSuccessfulSync.MessagesDeleted")
 	assert.Equal(int64(1), got.LastSuccessfulSync.SkippedCount, "LastSuccessfulSync.SkippedCount")
 	require.Len(got.LastSuccessfulSync.ItemErrors, 1, "LastSuccessfulSync.ItemErrors")
 	assert.Equal("gmail-error", got.LastSuccessfulSync.ItemErrors[0].SourceMessageID, "LastSuccessfulSync.ItemErrors[0].SourceMessageID")

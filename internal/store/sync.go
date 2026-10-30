@@ -326,7 +326,7 @@ func scanSyncRun(sc scanner) (*SyncRun, error) {
 	var startedAt sql.NullTime
 	err := sc.Scan(
 		&run.ID, &run.SourceID, &startedAt, &run.CompletedAt, &run.Status,
-		&run.MessagesProcessed, &run.MessagesAdded, &run.MessagesUpdated, &run.ErrorsCount,
+		&run.MessagesProcessed, &run.MessagesAdded, &run.MessagesUpdated, &run.MessagesDeleted, &run.ErrorsCount,
 		&run.ErrorMessage, &run.CursorBefore, &run.CursorAfter, &run.RequestFingerprint,
 	)
 	if err != nil {
@@ -349,6 +349,7 @@ type SyncRun struct {
 	MessagesProcessed  int64
 	MessagesAdded      int64
 	MessagesUpdated    int64
+	MessagesDeleted    int64
 	ErrorsCount        int64
 	ErrorMessage       sql.NullString
 	CursorBefore       sql.NullString // Page token for resumption
@@ -774,7 +775,7 @@ func (s *Store) getSyncOperation(operationID string) (*SyncOperation, error) {
 	}
 	rows, err := s.db.Query(`
 		SELECT id, source_id, started_at, completed_at, status,
-		       messages_processed, messages_added, messages_updated, errors_count,
+		       messages_processed, messages_added, messages_updated, messages_deleted, errors_count,
 		       error_message, cursor_before, cursor_after
 		FROM sync_runs
 		WHERE operation_id = ?
@@ -790,7 +791,7 @@ func (s *Store) getSyncOperation(operationID string) (*SyncOperation, error) {
 		var startedAt sql.NullTime
 		if err := rows.Scan(
 			&run.ID, &run.SourceID, &startedAt, &run.CompletedAt, &run.Status,
-			&run.MessagesProcessed, &run.MessagesAdded, &run.MessagesUpdated, &run.ErrorsCount,
+			&run.MessagesProcessed, &run.MessagesAdded, &run.MessagesUpdated, &run.MessagesDeleted, &run.ErrorsCount,
 			&run.ErrorMessage, &run.CursorBefore, &run.CursorAfter,
 		); err != nil {
 			return nil, err
@@ -1394,7 +1395,7 @@ func (s *Store) GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*Syn
 func (s *Store) getActiveSyncContext(ctx context.Context, sourceID int64) (*SyncRun, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,
-		       messages_processed, messages_added, messages_updated, errors_count,
+		       messages_processed, messages_added, messages_updated, messages_deleted, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs
 		WHERE source_id = ? AND status = 'running'
@@ -1419,7 +1420,7 @@ func (s *Store) GetLatestSync(sourceID int64) (*SyncRun, error) {
 func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*SyncRun, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,
-		       messages_processed, messages_added, messages_updated, errors_count,
+		       messages_processed, messages_added, messages_updated, messages_deleted, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs
 		WHERE source_id = ? AND id <> ?
@@ -1446,7 +1447,7 @@ func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
 func (s *Store) GetLatestCheckpointedSyncContext(ctx context.Context, sourceID int64) (*SyncRun, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,
-		       messages_processed, messages_added, messages_updated, errors_count,
+		       messages_processed, messages_added, messages_updated, messages_deleted, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs sr
 		WHERE sr.source_id = ?
@@ -1479,7 +1480,7 @@ func (s *Store) GetLatestCheckpointedSyncByType(sourceID int64, syncType string)
 func (s *Store) GetLatestCheckpointedSyncByTypeContext(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,
-		       messages_processed, messages_added, messages_updated, errors_count,
+		       messages_processed, messages_added, messages_updated, messages_deleted, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs sr
 		WHERE sr.source_id = ?
@@ -1629,7 +1630,7 @@ func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64
 	}
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,
-		       messages_processed, messages_added, messages_updated, errors_count,
+		       messages_processed, messages_added, messages_updated, messages_deleted, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs
 		WHERE source_id = ? AND status = 'completed'`+whereType+`

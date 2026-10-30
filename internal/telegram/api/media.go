@@ -27,6 +27,7 @@ type mediaRPC struct {
 	*tg.Client
 	dcs     mediaDCs
 	limiter *rate.Limiter
+	maxWait time.Duration
 }
 
 func (r mediaRPC) CDN(ctx context.Context, dc int, max int64) (downloader.CDN, io.Closer, error) {
@@ -37,7 +38,7 @@ func (r mediaRPC) CDN(ctx context.Context, dc int, max int64) (downloader.CDN, i
 	if connection == nil {
 		return nil, nil, errors.New("missing Telegram CDN connection")
 	}
-	guarded := &Invoker{next: connection, limiter: r.limiter, maxWait: 5 * time.Minute}
+	guarded := &Invoker{next: connection, limiter: r.limiter, maxWait: r.maxWait}
 	return tg.NewClient(guarded), connection, nil
 }
 
@@ -47,11 +48,23 @@ func DownloadMediaFromDC(ctx context.Context, client *telegram.Client, ref *Medi
 	if client == nil {
 		return nil, errors.New("missing Telegram client")
 	}
-	return downloadMediaFromDC(ctx, client, ref, dir, maxBytes, limiter)
+	return DownloadMediaFromDCWithWait(ctx, client, ref, dir, maxBytes, limiter, 5*time.Minute)
+}
+
+// DownloadMediaFromDCWithWait applies the same flood-wait ceiling as sync reads.
+func DownloadMediaFromDCWithWait(ctx context.Context, client *telegram.Client, ref *MediaReference, dir string, maxBytes int64, limiter *rate.Limiter, maxWait time.Duration) (*os.File, error) {
+	if client == nil {
+		return nil, errors.New("missing Telegram client")
+	}
+	return downloadMediaFromDCWithWait(ctx, client, ref, dir, maxBytes, limiter, maxWait)
 }
 
 func downloadMediaFromDC(ctx context.Context, dcs mediaDCs, ref *MediaReference, dir string, maxBytes int64, limiter *rate.Limiter) (*os.File, error) {
-	if dcs == nil || ref == nil || ref.Location == nil || ref.DCID <= 0 || ref.Size < -1 || maxBytes <= 0 || limiter == nil {
+	return downloadMediaFromDCWithWait(ctx, dcs, ref, dir, maxBytes, limiter, 5*time.Minute)
+}
+
+func downloadMediaFromDCWithWait(ctx context.Context, dcs mediaDCs, ref *MediaReference, dir string, maxBytes int64, limiter *rate.Limiter, maxWait time.Duration) (*os.File, error) {
+	if dcs == nil || ref == nil || ref.Location == nil || ref.DCID <= 0 || ref.Size < -1 || maxBytes <= 0 || limiter == nil || maxWait < 0 {
 		return nil, errors.New("invalid Telegram media reference")
 	}
 	if ref.Size > maxBytes {
@@ -71,8 +84,8 @@ func downloadMediaFromDC(ctx context.Context, dcs mediaDCs, ref *MediaReference,
 		if connection == nil {
 			return nil, errors.New("missing Telegram media data center connection")
 		}
-		guarded := &Invoker{next: connection, limiter: limiter, maxWait: 5 * time.Minute}
-		rpc := mediaRPC{Client: tg.NewClient(guarded), dcs: dcs, limiter: limiter}
+		guarded := &Invoker{next: connection, limiter: limiter, maxWait: maxWait}
+		rpc := mediaRPC{Client: tg.NewClient(guarded), dcs: dcs, limiter: limiter, maxWait: maxWait}
 		builder := downloader.NewDownloader().WithAllowCDN(true).Download(rpc, ref.Location)
 		file, downloadErr := DownloadMedia(ctx, builder, dir, ref.Size, maxBytes)
 		if closeErr := connection.Close(); closeErr != nil {

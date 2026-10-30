@@ -85,3 +85,36 @@ func TestChannelDeletionRejectsOtherSourceTypes(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-1000000000123:7").Scan(&deleted))
 	assert.False(t, deleted)
 }
+
+func TestDeletionCountsAreDurableAndReplaySafe(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("telegram", "user999")
+	require.NoError(err)
+	for _, row := range []struct{ peer, kind, key string }{{"456", "direct_chat", "456:7"}, {"-1000000000123", "channel", "-1000000000123:7"}} {
+		conv, err := st.EnsureConversationWithType(source.ID, row.peer, row.kind, "Synthetic")
+		require.NoError(err)
+		_, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: row.key, MessageType: "telegram"}})
+		require.NoError(err)
+	}
+	err = telegram.WithLiveSyncState(ctx, st, source.ID, func(ctx context.Context, scoped *store.Store, state *telegram.SyncState, save func(context.Context, *telegram.SyncState) error) error {
+		common := []tg.UpdateClass{&tg.UpdateDeleteMessages{Messages: []int{7}}}
+		channel := []tg.UpdateClass{&tg.UpdateDeleteChannelMessages{ChannelID: 123, Messages: []int{7}}}
+		dialog := CatalogDialog{ChatID: -1000000000123, NativeID: 123, Kind: "channel"}
+		for range 2 {
+			if err := ApplyCommonDeletions(ctx, scoped, source.ID, common); err != nil {
+				return err
+			}
+			if err := ApplyChannelDeletions(ctx, scoped, source.ID, dialog, channel); err != nil {
+				return err
+			}
+		}
+		return save(ctx, state)
+	})
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSyncByTypeContext(ctx, source.ID, "sync-telegram")
+	require.NoError(err)
+	assert.Equal(t, int64(2), run.MessagesDeleted)
+}

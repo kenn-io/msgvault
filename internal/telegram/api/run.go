@@ -20,11 +20,12 @@ import (
 
 // HistoryOptions control a manual history scan. Scheduled runs use defaults.
 type HistoryOptions struct {
-	Full           bool
-	After          time.Time
-	Takeout        bool
-	MediaProcessor func(context.Context, telegram.Chat, *telegram.LiveMedia) error
-	Media          *MediaOptions
+	EnabledChannels []int64
+	Full            bool
+	After           time.Time
+	Takeout         bool
+	MediaProcessor  func(context.Context, telegram.Chat, *telegram.LiveMedia) error
+	Media           *MediaOptions
 }
 
 // MediaOptions configure attachment policy, content storage and downloader.
@@ -58,6 +59,13 @@ func RunAuthenticatedBackfillWithOptions(ctx context.Context, st *store.Store, s
 	if source == nil || source.SourceType != telegram.SourceType || source.Identifier != telegram.OwnerSourceIdentifier(owner.ID) {
 		return errors.New("Telegram account does not match archive source")
 	}
+	overlap, overlapErr := st.HasBeeperTelegramOwnerContext(ctx, owner.ID)
+	if overlapErr != nil {
+		return fmt.Errorf("check Telegram account overlap: %w", overlapErr)
+	}
+	if overlap {
+		slog.Warn("This Telegram account is also archived through Beeper; messages may be duplicated")
+	}
 	if options.Takeout {
 		_, err := st.GetLastSuccessfulSyncByTypeContext(ctx, sourceID, "sync-telegram")
 		if err == nil && !hasPendingTakeoutHistory(state) {
@@ -87,6 +95,10 @@ func runAuthenticatedBackfill(ctx context.Context, st *store.Store, sourceID int
 		return err
 	}
 	dialogs, err := ListDialogs(ctx, client)
+	if err != nil {
+		return err
+	}
+	dialogs, err = enableConfiguredChannels(dialogs, options.EnabledChannels)
 	if err != nil {
 		return err
 	}
@@ -131,6 +143,10 @@ func runAuthenticatedBackfill(ctx context.Context, st *store.Store, sourceID int
 				ranges[index] = telegram.HistoryRange{MinID: messageRange.MinID, MaxID: messageRange.MaxID}
 			}
 			rangedDialogs, err := ListDialogsForRanges(ctx, takeout, ranges)
+			if err != nil {
+				return err
+			}
+			rangedDialogs, err = enableConfiguredChannels(rangedDialogs, options.EnabledChannels)
 			if err != nil {
 				return err
 			}

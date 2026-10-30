@@ -415,3 +415,26 @@ func TestListDialogsRejectsMissingOrRepeatedAnchor(t *testing.T) {
 		require.ErrorContains(t, err, "did not advance")
 	})
 }
+
+func TestConfiguredChannelsEnableOnlySelectedBroadcasts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dialogs := []CatalogDialog{{ChatID: -1000000000123, Kind: "channel"}, {ChatID: -1000000000456, Kind: "channel"}, {ChatID: -123, Kind: "group", EnabledByDefault: true}}
+	selected, err := enableConfiguredChannels(dialogs, []int64{-1000000000123})
+	require.NoError(err)
+	assert.True(selected[0].EnabledByDefault)
+	assert.False(selected[1].EnabledByDefault)
+	assert.True(selected[2].EnabledByDefault)
+	assert.False(dialogs[0].EnabledByDefault)
+	_, err = enableConfiguredChannels(dialogs, []int64{-123})
+	require.Error(err)
+}
+
+func TestConfiguredSupergroupRemainsEnabled(t *testing.T) {
+	dialog := CatalogDialog{ChatID: -1000000000789, Kind: "supergroup", EnabledByDefault: true}
+	selected, err := enableConfiguredChannels([]CatalogDialog{dialog}, []int64{dialog.ChatID})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.True(t, selected[0].EnabledByDefault)
+}

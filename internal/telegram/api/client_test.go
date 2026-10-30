@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
@@ -45,4 +46,20 @@ func TestReadClientOptionsShareRateLimitAcrossInvokers(t *testing.T) {
 	require.Error(opts.Middlewares[0].Handle(second).Invoke(ctx, &tg.MessagesGetHistoryRequest{}, nil))
 	assert.Equal(1, first.calls)
 	assert.Zero(second.calls)
+}
+
+func TestReadClientOptionsUsesConfiguredFloodWaitCeiling(t *testing.T) {
+	opts := ReadClientOptionsWithLimits(NewSessionStore(secureTempDir(t), 123, "hash", 456), "test", rate.NewLimiter(rate.Inf, 1), time.Second)
+	next := &stubInvoker{err: tgerr.New(420, "FLOOD_WAIT_2")}
+	err := opts.Middlewares[0].Handle(next).Invoke(context.Background(), &tg.MessagesGetHistoryRequest{}, nil)
+	require.ErrorContains(t, err, "exceeds limit")
+	assert.Equal(t, 1, next.calls)
+}
+
+func TestLoginClientUsesConfiguredFloodWaitCeiling(t *testing.T) {
+	opts := ClientOptionsWithLimits(NewSessionStore(secureTempDir(t), 123, "hash", 456), "test", rate.NewLimiter(rate.Inf, 1), time.Second)
+	next := &stubInvoker{err: tgerr.New(420, "FLOOD_WAIT_2")}
+	err := opts.Middlewares[0].Handle(next).Invoke(context.Background(), &tg.AuthSendCodeRequest{}, nil)
+	require.ErrorIs(t, err, ErrFloodWaitLimit)
+	assert.Equal(t, 1, next.calls)
 }

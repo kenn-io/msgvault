@@ -83,6 +83,9 @@ func backfillMedia(ctx context.Context, st *store.Store, sourceID int64, client 
 					if ctx.Err() != nil {
 						return summary, ctx.Err()
 					}
+					if errors.Is(err, ErrFloodWaitLimit) {
+						return summary, err
+					}
 					summary.Failed++
 					slog.Warn("Telegram attachment reference could not be refreshed; it remains retryable")
 					continue

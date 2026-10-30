@@ -2021,6 +2021,7 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     messages_processed INTEGER DEFAULT 0,
     messages_added INTEGER DEFAULT 0,
     messages_updated INTEGER DEFAULT 0,
+    messages_deleted INTEGER NOT NULL DEFAULT 0,
     errors_count INTEGER DEFAULT 0,
 
     error_message TEXT,

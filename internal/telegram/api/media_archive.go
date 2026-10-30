@@ -75,6 +75,9 @@ func archiveMedia(ctx context.Context, ref *MediaReference, policy attachmentpol
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		if errors.Is(err, ErrFloodWaitLimit) {
+			return nil, err
+		}
 		if errors.Is(err, ErrMediaTooLarge) {
 			media.SkipReason = attachmentpolicy.SkipSizeCap
 			return media, nil

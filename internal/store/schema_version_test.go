@@ -218,6 +218,7 @@ var (
 		15: "571660ef3e1c045c57ada148b252d90acd7ef291458a7a46a1327b1034dde653",
 		16: "3dcaed00c87183b5322db11a6f785a825a647edab34e587a22f946d170477746",
 		17: "3dcaed00c87183b5322db11a6f785a825a647edab34e587a22f946d170477746",
+		18: "931f53168380fee1edfb5cf8783cc433ef2e1ea06b65043b4c32032050d6cf64",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -237,6 +238,7 @@ var (
 		15: "47f70765d8793d9fdbbe65b259829caffb39d737d386216820f3067d4771c244",
 		16: "8c852892940d0faa6e77a1a5106ea918e35724dc4caf7908434e58f5cb066470",
 		17: "8c852892940d0faa6e77a1a5106ea918e35724dc4caf7908434e58f5cb066470",
+		18: "f686f3ebe0ecfdc4c0a510eb8bd648be6a195c37fe4f480f9e9881fd18067606",
 	}
 )
 
@@ -399,4 +401,21 @@ func normalizeSQL(sql string) string {
 func TestNormalizeSQL(t *testing.T) {
 	assert.Equal(t, "CREATE TABLE t ( a TEXT DEFAULT ' -- x  ' );", normalizeSQL("-- note\r\nCREATE  TABLE t (\r\n  a TEXT DEFAULT ' -- x  ' -- trailing\r\n);\r\n"))
 	assert.NotEqual(t, normalizeSQL("SELECT ' '"), normalizeSQL("SELECT '  '"))
+}
+
+func TestSchemaVersionSyncDeletionCountUpgrade(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	_, err := st.DB().ExecContext(ctx, `ALTER TABLE sync_runs DROP COLUMN messages_deleted`)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '17' WHERE key = 'schema_version'`)
+	require.NoError(err)
+	require.Error(st.ValidateSchemaContext(ctx))
+	require.NoError(st.InitSchemaContext(ctx))
+	require.NoError(st.ValidateSchemaContext(ctx))
+	var count int
+	require.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_runs WHERE messages_deleted <> 0`).Scan(&count))
+	assert.Zero(t, count)
 }

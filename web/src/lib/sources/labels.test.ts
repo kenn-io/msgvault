@@ -3,7 +3,7 @@ import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from './labels'
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
-  messages_processed: 1, messages_added: 1, messages_updated: 0, errors_count: errors, error_message: null
+  messages_processed: 1, messages_added: 1, messages_updated: 0, messages_deleted: 0, errors_count: errors, error_message: null
 });
 
 describe('source labels', () => {

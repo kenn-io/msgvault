@@ -12,6 +12,14 @@ import (
 
 // ClientOptions supplies the session store and read-only request middleware.
 func ClientOptions(storage session.Storage, version string) telegram.Options {
+	return ClientOptionsWithLimits(storage, version, rate.NewLimiter(rate.Limit(2), 1), 5*time.Minute)
+}
+
+// ClientOptionsWithLimits applies a shared budget and ceiling during login.
+func ClientOptionsWithLimits(storage session.Storage, version string, limiter *rate.Limiter, maxWait time.Duration) telegram.Options {
+	if limiter == nil {
+		limiter = rate.NewLimiter(rate.Limit(2), 1)
+	}
 	return telegram.Options{
 		SessionStorage: storage,
 		Device:         telegram.DeviceConfig{DeviceModel: "msgvault", AppVersion: version},
@@ -19,7 +27,7 @@ func ClientOptions(storage session.Storage, version string) telegram.Options {
 			return transfer(context.WithValue(ctx, transferContextKey{}, true))
 		},
 		Middlewares: []telegram.Middleware{telegram.MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
-			return NewInvoker(next, rate.Limit(2), 1, 5*time.Minute).Invoke
+			return (&Invoker{next: next, limiter: limiter, maxWait: maxWait, allowAuth: true}).Invoke
 		})},
 	}
 }
@@ -31,12 +39,17 @@ func ReadClientOptions(storage session.Storage, version string) telegram.Options
 
 // ReadClientOptionsWithLimiter shares one rate budget with media connections.
 func ReadClientOptionsWithLimiter(storage session.Storage, version string, limiter *rate.Limiter) telegram.Options {
+	return ReadClientOptionsWithLimits(storage, version, limiter, 5*time.Minute)
+}
+
+// ReadClientOptionsWithLimits shares a request budget and flood-wait ceiling.
+func ReadClientOptionsWithLimits(storage session.Storage, version string, limiter *rate.Limiter, maxWait time.Duration) telegram.Options {
 	if limiter == nil {
 		limiter = rate.NewLimiter(rate.Limit(2), 1)
 	}
 	opts := ClientOptions(storage, version)
 	opts.Middlewares = []telegram.Middleware{telegram.MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
-		return (&Invoker{next: next, limiter: limiter, maxWait: 5 * time.Minute}).Invoke
+		return (&Invoker{next: next, limiter: limiter, maxWait: maxWait}).Invoke
 	})}
 	return opts
 }

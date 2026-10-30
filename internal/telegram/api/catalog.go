@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gotd/td/constant"
 	"github.com/gotd/td/tg"
 	"go.kenn.io/msgvault/internal/telegram"
 )
@@ -353,4 +354,26 @@ func dialogTopDate(chatID int64, messageID int, messages []tg.MessageClass) (int
 		}
 	}
 	return 0, false
+}
+
+// enableConfiguredChannels marks selected broadcast channels in a copy of the
+// discovered catalog. Absent channels remain absent rather than being inferred.
+func enableConfiguredChannels(dialogs []CatalogDialog, selected []int64) ([]CatalogDialog, error) {
+	wanted := make(map[int64]bool, len(selected))
+	for _, id := range selected {
+		if !constant.TDLibPeerID(id).IsChannel() || wanted[id] {
+			return nil, errors.New("invalid configured Telegram channel")
+		}
+		wanted[id] = true
+	}
+	result := append([]CatalogDialog(nil), dialogs...)
+	for i := range result {
+		if wanted[result[i].ChatID] {
+			if result[i].Kind != "channel" && result[i].Kind != "supergroup" {
+				return nil, fmt.Errorf("configured Telegram channel %d has an unexpected peer kind", result[i].ChatID)
+			}
+			result[i].EnabledByDefault = true
+		}
+	}
+	return result, nil
 }

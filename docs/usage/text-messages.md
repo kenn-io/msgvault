@@ -1,12 +1,13 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-10-30"
 title: Text Messages
-description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
+description: Import chats and texts from common exports, and browse synchronized Teams, Discord, and Telegram conversations in msgvault.
 ---
 
 Search old texts and chats alongside your email. Import a local export below,
 or connect [Beeper](/docs/usage/beeper/), [Slack](/docs/usage/slack/),
-[Microsoft Teams](/docs/usage/teams/), or [Discord](/docs/usage/discord/) for
+[Microsoft Teams](/docs/usage/teams/), [Discord](/docs/usage/discord/), or
+[Telegram](/docs/usage/telegram/) for
 ongoing sync.
 
 The [Web UI](/docs/web-ui/) groups chats into conversations in Everything;

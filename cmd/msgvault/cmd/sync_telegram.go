@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ type telegramSyncDeps struct {
 	tokensDir      func() string
 	attachmentsDir func() string
 	mediaPolicy    func(string) attachmentpolicy.Policy
+	channels       func(string) []int64
 	connect        telegramConnect
 	refreshCache   func() error
 }
@@ -53,6 +55,7 @@ func defaultTelegramSyncDeps(ctx context.Context) telegramSyncDeps {
 			return state.cfg.AttachmentsDir()
 		},
 		mediaPolicy: func(account string) attachmentpolicy.Policy { return state.cfg.Telegram.MediaPolicy(account) },
+		channels:    func(account string) []int64 { return state.cfg.Telegram.AccountsConfig[account].Channels },
 		connect:     connectTelegram,
 		refreshCache: func() error {
 			if state == nil || state.cfg == nil {
@@ -113,6 +116,9 @@ func newSyncTelegramLocalCmd(deps telegramSyncDeps) *cobra.Command {
 			for _, source := range sources {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Telegram account: %s\n", source.Identifier)
 				options := telegramapi.HistoryOptions{Full: full || afterValue != "", After: after, Takeout: takeout}
+				if deps.channels != nil {
+					options.EnabledChannels = deps.channels(source.Identifier)
+				}
 				if deps.attachmentsDir != nil {
 					policy := attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxParticipants: config.DefaultMediaMaxParticipants, MaxBytes: attachmentpolicy.DefaultChatMaxBytes}
 					if deps.mediaPolicy != nil {
@@ -143,13 +149,27 @@ type telegramConnect func(context.Context, *telegramapi.SessionStore, func(conte
 type telegramMediaTransportKey struct{}
 type telegramMediaDownload func(context.Context, *telegramapi.MediaReference, string, int64) (*os.File, error)
 
+func telegramRequestLimits(ctx context.Context) (*rate.Limiter, time.Duration, error) {
+	requestsPerSecond, maxWait := 2.0, 5*time.Minute
+	if state := invocationFromContext(ctx); state != nil && state.cfg != nil {
+		requestsPerSecond, maxWait = state.cfg.Telegram.RequestsPerSecond, state.cfg.Telegram.MaxFloodWait
+	}
+	if requestsPerSecond <= 0 || math.IsNaN(requestsPerSecond) || math.IsInf(requestsPerSecond, 0) || maxWait < 0 {
+		return nil, 0, errors.New("invalid Telegram request limits")
+	}
+	return rate.NewLimiter(rate.Limit(requestsPerSecond), 1), maxWait, nil
+}
+
 func connectTelegram(ctx context.Context, session *telegramapi.SessionStore, run func(context.Context, *tg.Client) error) error {
 	appID, appHash := session.ApplicationCredentials()
-	limiter := rate.NewLimiter(rate.Limit(2), 1)
-	client := gotd.NewClient(appID, appHash, telegramapi.ReadClientOptionsWithLimiter(session, Version, limiter))
+	limiter, maxWait, err := telegramRequestLimits(ctx)
+	if err != nil {
+		return err
+	}
+	client := gotd.NewClient(appID, appHash, telegramapi.ReadClientOptionsWithLimits(session, Version, limiter, maxWait))
 	return client.Run(ctx, func(ctx context.Context) error {
 		download := telegramMediaDownload(func(ctx context.Context, ref *telegramapi.MediaReference, dir string, maxBytes int64) (*os.File, error) {
-			return telegramapi.DownloadMediaFromDC(ctx, client, ref, dir, maxBytes, limiter)
+			return telegramapi.DownloadMediaFromDCWithWait(ctx, client, ref, dir, maxBytes, limiter, maxWait)
 		})
 		return run(context.WithValue(ctx, telegramMediaTransportKey{}, download), client.API())
 	})
@@ -185,6 +205,19 @@ func syncTelegramSource(ctx context.Context, st *store.Store, source *store.Sour
 			})
 		})
 	})
+}
+
+// importTelegramSourceForScheduledRun shares manual sync's lock, account
+// verification, cursor and media policy without rebuilding the cache itself.
+func importTelegramSourceForScheduledRun(ctx context.Context, st *store.Store, source *store.Source, deps telegramSyncDeps) error {
+	if source == nil || deps.tokensDir == nil || deps.attachmentsDir == nil || deps.mediaPolicy == nil {
+		return errors.New("Telegram scheduler configuration is unavailable")
+	}
+	options := telegramapi.HistoryOptions{Media: &telegramapi.MediaOptions{AttachmentsDir: deps.attachmentsDir(), TempDir: deps.tokensDir(), Policy: deps.mediaPolicy(source.Identifier)}}
+	if deps.channels != nil {
+		options.EnabledChannels = deps.channels(source.Identifier)
+	}
+	return syncTelegramSource(ctx, st, source, deps.tokensDir(), time.Now().UTC(), false, 0, options, deps.connect)
 }
 
 // resolveTelegramSyncSources selects exact registered identifiers and never

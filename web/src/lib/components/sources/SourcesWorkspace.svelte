@@ -393,6 +393,9 @@
               <Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip>
               {#if source.active_sync}
                 <strong>{source.active_sync.messages_processed.toLocaleString()} processed</strong>
+                {#if source.active_sync.messages_deleted > 0}
+                  <span>{source.active_sync.messages_deleted.toLocaleString()} deleted</span>
+                {/if}
                 <span
                   >{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()}
                   errors</span

@@ -3498,17 +3498,37 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 		return err
 	}
 	write := func(q querier) error {
-		_, err := q.Exec(fmt.Sprintf(`
+		result, err := q.Exec(fmt.Sprintf(`
 			UPDATE messages
 			SET deleted_from_source_at = %s
 			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
 		`, s.dialect.Now()), sourceID, sourceMessageID)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.recordDeletedCount(q, result)
 	}
 	if s.syncGeneration == nil {
 		return write(boundQuerier{ctx: ctx, q: s.db})
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+}
+
+// recordDeletedCount runs in the same transaction as a scoped tombstone.
+// Replaying an already deleted row changes zero rows and does not count twice.
+func (s *Store) recordDeletedCount(q querier, result sql.Result) error {
+	if s.syncGeneration == nil {
+		return nil
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	_, err = q.Exec(`UPDATE sync_runs SET messages_deleted = messages_deleted + ? WHERE id = ?`, count, s.syncGeneration.runID)
+	return err
 }
 
 // ClearMessageDeletedFromSource clears the upstream tombstone when a message

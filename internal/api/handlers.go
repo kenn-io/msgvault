@@ -150,6 +150,7 @@ type SyncRunStatus struct {
 	MessagesProcessed int64               `json:"messages_processed"`
 	MessagesAdded     int64               `json:"messages_added"`
 	MessagesUpdated   int64               `json:"messages_updated"`
+	MessagesDeleted   int64               `json:"messages_deleted"`
 	ErrorsCount       int64               `json:"errors_count"`
 	ErrorMessage      *string             `json:"error_message"`
 	SkippedCount      int64               `json:"skipped_count,omitzero"`
@@ -1724,6 +1725,7 @@ func syncRunStatus(run *store.SyncRun) *SyncRunStatus {
 		MessagesProcessed: run.MessagesProcessed,
 		MessagesAdded:     run.MessagesAdded,
 		MessagesUpdated:   run.MessagesUpdated,
+		MessagesDeleted:   run.MessagesDeleted,
 		ErrorsCount:       run.ErrorsCount,
 	}
 	if run.CompletedAt.Valid {

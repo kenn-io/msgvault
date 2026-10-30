@@ -195,8 +195,12 @@ func newAddTelegramCmdWithAuthenticate(authenticate func(context.Context, int, s
 }
 
 func authenticateTelegram(ctx context.Context, appID int, appHash string, qr bool, prompts *telegramPrompts, out io.Writer) (telegramCredentialPayload, error) {
+	limiter, maxWait, err := telegramRequestLimits(ctx)
+	if err != nil {
+		return telegramCredentialPayload{}, err
+	}
 	memory := &session.StorageMemory{}
-	opts := telegramapi.ClientOptions(memory, Version)
+	opts := telegramapi.ClientOptionsWithLimits(memory, Version, limiter, maxWait)
 	var loggedIn <-chan struct{}
 	if qr {
 		dispatcher := tg.NewUpdateDispatcher()
@@ -206,7 +210,7 @@ func authenticateTelegram(ctx context.Context, appID int, appHash string, qr boo
 	client := gotd.NewClient(appID, appHash, opts)
 	var result telegramCredentialPayload
 	var flowErr error
-	err := client.Run(ctx, func(ctx context.Context) error {
+	err = client.Run(ctx, func(ctx context.Context) error {
 		if qr {
 			_, flowErr = telegramapi.LoginQRWithPassword(ctx, client.API(), appID, appHash, loggedIn, func(_ context.Context, token qrlogin.Token) error { return printTelegramQR(out, token) }, qrlogin.Options{Migrate: client.MigrateTo}, prompts)
 		} else {

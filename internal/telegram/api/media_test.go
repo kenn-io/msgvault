@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	gotd "github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/downloader"
@@ -211,4 +212,14 @@ func TestDownloadMediaHonorsCancellationBeforeRequest(t *testing.T) {
 	file, err := DownloadMedia(ctx, builder, secureTempDir(t), -1, 10)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, file)
+}
+
+func TestDownloadMediaHonorsFloodWaitCeiling(t *testing.T) {
+	next := &stubInvoker{err: tgerr.New(420, "FLOOD_WAIT_2")}
+	dcs := &testMediaDCs{connections: map[int]*testMediaConnection{1: {Invoker: next}}}
+	ref := &MediaReference{DCID: 1, Size: 9, Location: &tg.InputDocumentFileLocation{ID: 123}}
+	file, err := downloadMediaFromDCWithWait(context.Background(), dcs, ref, secureTempDir(t), 20, rate.NewLimiter(rate.Inf, 1), time.Second)
+	require.ErrorContains(t, err, "exceeds limit")
+	assert.Nil(t, file)
+	assert.Equal(t, 1, next.calls)
 }

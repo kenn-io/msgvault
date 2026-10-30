@@ -1775,6 +1775,40 @@ msgvault import-slackdump --me U0123456789 --limit 100 /path/to/export.zip
 
 ---
 
+## add-telegram
+
+Sign in to a Telegram account and register it for live sync. Use your own
+Telegram API ID and hash. The command prompts on the invoking workstation;
+`--qr` uses a QR login instead of a phone code. A verified session is saved
+by the daemon over its authenticated secret channel.
+
+```bash
+msgvault add-telegram
+msgvault add-telegram --qr
+```
+
+See [Telegram](usage/telegram.md) for setup and account-safety details.
+
+---
+
+## backfill-telegram-media
+
+Retry missing Telegram attachment bytes in existing archived occurrences.
+The current account media policy applies; explicit limits override its size or
+participant cap for this run.
+
+```bash
+msgvault backfill-telegram-media [account]
+msgvault backfill-telegram-media user123456789 --max-media-mb 500
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-media-mb` | configured policy | Per-file limit in MiB; must be positive |
+| `--max-participants` | configured policy | Conversation member limit; `0` disables it |
+
+---
+
 ## sync-telegram
 
 Archive history for registered Telegram accounts. Run `msgvault add-telegram`

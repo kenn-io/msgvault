@@ -463,6 +463,95 @@ func TestAuthenticatedFullBackfillArchivesEveryEnabledFormerGroup(t *testing.T) 
 	}
 }
 
+func TestTakeoutBackfillEnablesConfiguredBroadcastChannelsInRangedCatalog(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(telegram.SourceType, telegram.OwnerSourceIdentifier(999))
+	require.NoError(err)
+	channel := &tg.Channel{ID: 123, Title: "Synthetic channel", Photo: &tg.ChatPhotoEmpty{}, Broadcast: true}
+	channel.SetAccessHash(42)
+	dialog := &tg.Dialog{Peer: &tg.PeerChannel{ChannelID: 123}, TopMessage: 1}
+	dialog.SetPts(10)
+	catalog := &tg.MessagesDialogs{Dialogs: []tg.DialogClass{dialog}, Chats: []tg.ChatClass{channel}}
+	range_ := tg.MessageRange{MinID: 1, MaxID: 100}
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.UpdatesState{Pts: 10, Date: 100})
+	mock.Expect().ThenResult(catalog)
+	mock.Expect().ThenResult(&tg.MessagesDialogs{})
+	mock.ExpectFunc(func(input bin.Encoder) {
+		_, ok := input.(*tg.AccountInitTakeoutSessionRequest)
+		require.True(ok)
+	}).ThenResult(&tg.AccountTakeout{ID: 42})
+	mock.ExpectFunc(func(input bin.Encoder) {
+		wrapped, ok := input.(*tg.InvokeWithTakeoutRequest)
+		require.True(ok)
+		assert.Equal(int64(42), wrapped.TakeoutID)
+		assert.IsType(&tg.MessagesGetSplitRangesRequest{}, wrapped.Query)
+	}).ThenResult(&tg.MessageRangeVector{Elems: []tg.MessageRange{range_}})
+	for _, folder := range []int{0, 1} {
+		wantFolder := folder
+		mock.ExpectFunc(func(input bin.Encoder) {
+			wrapped, ok := input.(*tg.InvokeWithTakeoutRequest)
+			require.True(ok)
+			assert.Equal(int64(42), wrapped.TakeoutID)
+			ranged, ok := wrapped.Query.(*tg.InvokeWithMessagesRangeRequest)
+			require.True(ok)
+			assert.Equal(range_, ranged.Range)
+			request, ok := ranged.Query.(*tg.MessagesGetDialogsRequest)
+			require.True(ok)
+			gotFolder, present := request.GetFolderID()
+			require.True(present)
+			assert.Equal(wantFolder, gotFolder)
+		}).ThenResult(func() *tg.MessagesDialogs {
+			if wantFolder == 1 {
+				return &tg.MessagesDialogs{}
+			}
+			return catalog
+		}())
+	}
+	for _, result := range []*tg.MessagesMessages{
+		{Messages: []tg.MessageClass{&tg.Message{ID: 1, PeerID: &tg.PeerChannel{ChannelID: 123}, Date: 100, Message: "takeout history"}}},
+		{},
+	} {
+		mock.ExpectFunc(func(input bin.Encoder) {
+			wrapped, ok := input.(*tg.InvokeWithTakeoutRequest)
+			require.True(ok)
+			assert.Equal(int64(42), wrapped.TakeoutID)
+			ranged, ok := wrapped.Query.(*tg.InvokeWithMessagesRangeRequest)
+			require.True(ok)
+			assert.Equal(range_, ranged.Range)
+			request, ok := ranged.Query.(*tg.MessagesGetHistoryRequest)
+			require.True(ok)
+			assert.Equal(&tg.InputPeerChannel{ChannelID: 123, AccessHash: 42}, request.Peer)
+		}).ThenResult(result)
+	}
+	mock.ExpectFunc(func(input bin.Encoder) {
+		wrapped, ok := input.(*tg.InvokeWithTakeoutRequest)
+		require.True(ok)
+		assert.Equal(int64(42), wrapped.TakeoutID)
+		assert.IsType(&tg.AccountFinishTakeoutSessionRequest{}, wrapped.Query)
+	}).ThenResult(&tg.BoolTrue{})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 100})
+	mock.ExpectFunc(func(input bin.Encoder) {
+		request, ok := input.(*tg.UpdatesGetChannelDifferenceRequest)
+		require.True(ok)
+		assert.Equal(&tg.InputChannel{ChannelID: 123, AccessHash: 42}, request.Channel)
+		assert.Equal(10, request.Pts)
+	}).ThenResult(&tg.UpdatesChannelDifferenceEmpty{Pts: 10, Final: true})
+
+	state := telegram.NewSyncState()
+	err = runAuthenticatedBackfill(ctx, st, source.ID, tg.NewClient(mock), &tg.User{ID: 999, FirstName: "Synthetic"}, state, time.Unix(200, 0), false, 0, HistoryOptions{Takeout: true, EnabledChannels: []int64{-1000000000123}}, func(context.Context, *telegram.SyncState) error { return nil })
+	require.NoError(err)
+	assert.Equal(1, state.Dialogs["-1000000000123"].Frontier)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "-1000000000123:1").Scan(&count))
+	assert.Equal(1, count)
+	assert.True(mock.AllWereMet())
+}
+
 func TestFullBackfillRewalksCompletedFrontierWithTimeBound(t *testing.T) {
 	require := require.New(t)
 

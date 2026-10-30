@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
+	"github.com/gotd/td/constant"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/cronexpr"
@@ -515,17 +516,26 @@ type MediaAccountConfig struct {
 
 // TelegramConfig holds provider-wide and per-account media download settings.
 type TelegramConfig struct {
-	Media                *bool                         `toml:"media"`
-	MediaScope           string                        `toml:"media_scope"`
-	MediaMaxParticipants int                           `toml:"media_max_participants"`
-	MaxMediaMB           int                           `toml:"max_media_mb"`
-	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
+	RequestsPerSecond    float64                          `toml:"requests_per_second"`
+	MaxFloodWait         time.Duration                    `toml:"max_flood_wait"`
+	Media                *bool                            `toml:"media"`
+	MediaScope           string                           `toml:"media_scope"`
+	MediaMaxParticipants int                              `toml:"media_max_participants"`
+	MaxMediaMB           int                              `toml:"max_media_mb"`
+	AccountsConfig       map[string]TelegramAccountConfig `toml:"accounts_config"`
+}
+
+// TelegramAccountConfig overrides media settings and selects broadcast channels.
+type TelegramAccountConfig struct {
+	Media      *bool   `toml:"media"`
+	MaxMediaMB int     `toml:"max_media_mb"`
+	Channels   []int64 `toml:"channels"`
 }
 
 // MediaPolicy resolves Telegram media settings for a registered account.
 func (t TelegramConfig) MediaPolicy(accountID string) attachmentpolicy.Policy {
 	account, ok := t.AccountsConfig[accountID]
-	return resolveMediaPolicy(t.Media, t.MediaScope, t.MediaMaxParticipants, t.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
+	return resolveMediaPolicy(t.Media, t.MediaScope, t.MediaMaxParticipants, t.MaxMediaMB, DefaultChatMaxMediaBytes, MediaAccountConfig{Media: account.Media, MaxMediaMB: account.MaxMediaMB}, ok)
 }
 
 // DiscordConfig holds provider-wide Discord import settings and optional
@@ -934,7 +944,7 @@ func NewDefaultConfig() *Config {
 		Slack:    SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Inline:   InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Discord:  DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Telegram: TelegramConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Telegram: TelegramConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, RequestsPerSecond: 2, MaxFloodWait: 5 * time.Minute},
 		Teams:    TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
@@ -1879,6 +1889,21 @@ func resolveMediaPolicy(
 }
 
 func (c *Config) validateMediaPolicies() error {
+	if c.Telegram.RequestsPerSecond <= 0 || math.IsNaN(c.Telegram.RequestsPerSecond) || math.IsInf(c.Telegram.RequestsPerSecond, 0) {
+		return errors.New("invalid [telegram] requests_per_second: must be positive and finite")
+	}
+	if c.Telegram.MaxFloodWait < 0 {
+		return errors.New("invalid [telegram] max_flood_wait: must be zero or positive")
+	}
+	for account, settings := range c.Telegram.AccountsConfig {
+		seen := make(map[int64]bool, len(settings.Channels))
+		for _, channel := range settings.Channels {
+			if !constant.TDLibPeerID(channel).IsChannel() || seen[channel] {
+				return fmt.Errorf("invalid [telegram] account %q channel: use unique marked channel IDs", account)
+			}
+			seen[channel] = true
+		}
+	}
 	providers := []struct {
 		name            string
 		policy          attachmentpolicy.Policy
@@ -1894,7 +1919,7 @@ func (c *Config) validateMediaPolicies() error {
 		{name: "discord", policy: c.Discord.MediaPolicy(""), providerMaxMB: c.Discord.MaxMediaMB,
 			accountMaxMedia: discordGuildMaximums(c.Discord.Guilds)},
 		{name: "telegram", policy: c.Telegram.MediaPolicy(""), providerMaxMB: c.Telegram.MaxMediaMB,
-			accountMaxMedia: mediaAccountMaximums(c.Telegram.AccountsConfig)},
+			accountMaxMedia: telegramAccountMaximums(c.Telegram.AccountsConfig)},
 		{name: "teams", policy: c.Teams.MediaPolicy(""), providerMaxMB: c.Teams.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Teams.AccountsConfig)},
 	}
@@ -1913,6 +1938,14 @@ func (c *Config) validateMediaPolicies() error {
 		}
 	}
 	return nil
+}
+
+func telegramAccountMaximums(accounts map[string]TelegramAccountConfig) map[string]int {
+	result := make(map[string]int, len(accounts))
+	for account, cfg := range accounts {
+		result[account] = cfg.MaxMediaMB
+	}
+	return result
 }
 
 func mediaAccountMaximums(accounts map[string]MediaAccountConfig) map[string]int {

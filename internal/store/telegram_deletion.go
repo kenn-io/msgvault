@@ -66,7 +66,10 @@ WHERE m.source_id = ? AND m.message_type = ? AND m.source_message_id LIKE ?
 		if len(matches) == 0 {
 			return nil
 		}
-		_, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL`, s.dialect.Now()), matches[0], sourceID)
-		return err
+		result, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL`, s.dialect.Now()), matches[0], sourceID)
+		if err != nil {
+			return err
+		}
+		return s.recordDeletedCount(boundQuerier{ctx: ctx, q: tx}, result)
 	})
 }
