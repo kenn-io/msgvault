@@ -626,9 +626,11 @@ export function serializeExploreURLState(state: ExploreURLState, baseSearch = ''
   return `?${parameters.toString()}`;
 }
 
-function historyEntry(search: string, state: ExploreURLState, index: number): { exploreSearch: string; exploreState: unknown; exploreIndex: number } {
+function historyEntry(search: string, state: ExploreURLState, index: number): { exploreSearch: string; exploreState: unknown; exploreIndex: number; relationshipReader: unknown } {
+  const { relationshipReader, ...exploreState } = state;
   // History entries must be structured-cloneable, so strip reactive proxies.
-  return { exploreSearch: search, exploreState: JSON.parse(JSON.stringify(state)), exploreIndex: index };
+  return JSON.parse(JSON.stringify({ exploreSearch: search, exploreState, exploreIndex: index,
+    relationshipReader: relationshipReader ? { version: 1, reader: relationshipReader } : null }));
 }
 
 export function parseExploreURLState(search: string): ExploreURLState {
@@ -934,12 +936,16 @@ export class ExploreState {
 
   private readURLState(): ExploreURLState {
     const history = this.browser.history.state;
-    const parsed = isRecord(history) && history.exploreSearch === this.browser.location.search &&
-      isRecord(history.exploreState) &&
-      (history.exploreState.schemaVersion === undefined || history.exploreState.schemaVersion === 1 ||
-        history.exploreState.schemaVersion === defaultExploreURLState.schemaVersion)
-      ? normalize(history.exploreState)
+    const historyState = isRecord(history) && isRecord(history.exploreState) ? history.exploreState : null;
+    const supportedHistory = historyState && history.exploreSearch === this.browser.location.search &&
+      (historyState.schemaVersion === undefined || historyState.schemaVersion === 1 ||
+        historyState.schemaVersion === defaultExploreURLState.schemaVersion);
+    const parsed = supportedHistory
+      ? normalize({ ...historyState, relationshipReader: null })
       : parseExploreURLState(this.browser.location.search);
+    const snapshot = supportedHistory ? history.relationshipReader : null;
+    parsed.relationshipReader = isRecord(snapshot) && snapshot.version === 1
+      ? relationshipReader(snapshot.reader, parsed.workspace, parsed.relationshipTarget) : null;
     parsed.searchMode = resolveInitialSearchMode(
       explicitSearchModeFromURL(this.browser.location.search),
       this.preferenceStorage,

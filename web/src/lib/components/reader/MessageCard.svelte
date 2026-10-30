@@ -16,6 +16,7 @@
   interface Props {
     message: ArchiveMessageDetail;
     expanded: boolean;
+    showTaskSetup?: boolean;
     /** The thread's current anchor — announced via aria-current and used by
      * the thread to scroll the card into view. */
     anchor?: boolean;
@@ -36,6 +37,7 @@
   let {
     message,
     expanded,
+    showTaskSetup = true,
     anchor = false,
     viewMode = 'html',
     sanitizationFailed = false,
@@ -119,7 +121,7 @@
 
     {#if client}
       {#if message.messageType === 'meeting_transcript'}<MeetingActions compact {client} request={{ scope: { message_ids: [message.id] }, limit: 200 }} {onOpenMeeting} />{/if}
-      <MessageTasks {client} messageId={message.id} title={message.subject} email={isEmailMessageType(message.messageType ?? '')} refresh={tasksRefresh} onsettings={onOpenSettings} />
+      <MessageTasks {client} messageId={message.id} title={message.subject} email={isEmailMessageType(message.messageType ?? '')} refresh={tasksRefresh} showSetup={showTaskSetup} onsettings={onOpenSettings} />
     {/if}
     {#if message.attachments.length > 0}
       <ul class="attachments" aria-label="Attachments">

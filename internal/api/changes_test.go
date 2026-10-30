@@ -1056,6 +1056,11 @@ func (stubArchiveIdentity) ArchiveUIDContext(context.Context) (string, error) {
 	return stubArchiveUID, nil
 }
 
+func (s stubArchiveIdentity) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
+	uid, err := s.ArchiveUIDContext(ctx)
+	return uid, "1", err
+}
+
 // stubChangedMessageLister answers the feed with a fixed page, so a handler test
 // can present a row no real store produces.
 type stubChangedMessageLister struct {
@@ -1225,6 +1230,11 @@ func (s *erroringArchiveIdentity) ArchiveUIDContext(context.Context) (string, er
 	return "", s.err
 }
 
+func (s *erroringArchiveIdentity) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
+	uid, err := s.ArchiveUIDContext(ctx)
+	return uid, "1", err
+}
+
 func (s *erroringArchiveIdentity) ListChangedMessages(
 	_ context.Context, _ store.ChangedMessagesCursor, _ int,
 ) (store.ChangedMessagePage, error) {
@@ -1282,6 +1292,11 @@ func (s *blockingArchiveIdentity) ArchiveUIDContext(ctx context.Context) (string
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
+}
+
+func (s *blockingArchiveIdentity) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
+	uid, err := s.ArchiveUIDContext(ctx)
+	return uid, "1", err
 }
 
 func (s *blockingArchiveIdentity) ListChangedMessages(
