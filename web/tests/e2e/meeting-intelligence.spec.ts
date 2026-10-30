@@ -158,10 +158,6 @@ test("production imports expose archived actions, duration evidence, and exact c
   await panel
     .getByRole("textbox", { name: "Assignee", exact: true })
     .fill("alex@example.com");
-  await expect(panel.getByText('Send the Circleback recap', { exact: true })).toBeVisible();
-  await expect(
-    panel.getByText("Publish the Notion recap", { exact: true }),
-  ).toHaveCount(0);
   const source = panel.getByRole("link", {
     name: "Circleback provider half hour",
     exact: true,
@@ -192,7 +188,13 @@ test("production imports expose archived actions, duration evidence, and exact c
   await page.goBack();
   await expect(reader).toHaveCount(0);
   await expect(panel).toBeFocused();
+  const assigneeResponse = page.waitForResponse(response => response.url().endsWith('/meetings/actions') && response.request().postDataJSON()?.assignee_email === 'alex@example.com');
   release();
+  await assigneeResponse;
+  await expect(panel.getByText('Send the Circleback recap', { exact: true })).toBeVisible();
+  await expect(
+    panel.getByText("Publish the Notion recap", { exact: true }),
+  ).toHaveCount(0);
   await expect(source).toBeVisible();
   await expect(panel).toBeFocused();
   await expect(

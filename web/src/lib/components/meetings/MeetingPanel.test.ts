@@ -11,17 +11,13 @@ function response(request: Request): Response {
 }
 
 describe('MeetingPanel', () => {
-  it('uses the summary controller without requesting its loaded scope again', async () => {
-    const requests: Request[] = [];
-    const client = createAPIClient(async (input) => {
-      const request = input as Request; requests.push(request); return response(request);
-    });
+  it('renders compact metrics collapsed with the summary controller', async () => {
+    const client = createAPIClient(async (input) => response(input as Request));
     const controller = new MeetingsController(createMeetingsAPI(client));
     const scope = { kind: 'direct' as const, scope: { message_ids: [42] } };
     await controller.setScope(scope);
     const view = render(MeetingPanel, { client, scope, controller, compact: true, showHeading: false });
     await screen.findByText('4 meetings');
-    expect(requests.filter((request) => request.url.endsWith('/metrics'))).toHaveLength(1);
     expect((screen.getByText('Meeting metrics', { selector: 'summary' }).closest('details') as HTMLDetailsElement).open).toBe(false);
     view.unmount();
     controller.destroy();

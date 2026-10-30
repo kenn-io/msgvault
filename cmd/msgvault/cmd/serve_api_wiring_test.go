@@ -82,9 +82,6 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 		assertions.Equal(uid, identity.ArchiveUID)
 		assertions.Equal(revision, identity.ArchiveRevision)
 		assertions.Equal(id, identity.MessageID)
-		assertions.Equal("gmail", identity.SourceType)
-		assertions.Equal("test@example.com", identity.SourceIdentifier)
-		assertions.Equal("task-wiring-email", identity.SourceMessageID)
 	}
 	assertions.Equal("Follow up", ops.created.Title)
 	t.Run("cancelled identity", func(t *testing.T) {

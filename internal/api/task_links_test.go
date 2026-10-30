@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type taskLinkMessageStore struct {
@@ -100,17 +101,21 @@ func TestCreateTaskForEmailDerivesStableServerIdempotency(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	ops := &fakeTaskLinkOperations{}
-	srv := taskLinkServer(t, "email", ops)
+	f := storetest.New(t)
+	id := f.CreateMessage("identity-email")
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "test-key"}}, Store: f.Store, Logger: testLogger(), TaskLinkOperations: ops})
+	uid, err := f.Store.ArchiveUID()
+	require.NoError(err)
 	body := []byte(`{"title":"Follow up","description":"Synthetic notes","priority":"high","labels":["mail","follow-up"],"added_at":"2026-07-19T01:02:03Z"}`)
 	for range 2 {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/42/tasks", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tasks", id), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", "test-key")
 		req.Header.Set("X-Request-ID", "browser-request-1")
 		resp := httptest.NewRecorder()
 		srv.Router().ServeHTTP(resp, req)
 		require.Equal(http.StatusCreated, resp.Code, resp.Body.String())
-		assert.NotContains(resp.Body.String(), "archive-a")
+		assert.NotContains(resp.Body.String(), uid)
 	}
 	require.Len(ops.createKeys, 2)
 	assert.Equal(ops.createKeys[0], ops.createKeys[1])
@@ -122,6 +127,11 @@ func TestCreateTaskForEmailDerivesStableServerIdempotency(t *testing.T) {
 	assert.Equal("2026-07-19T01:02:03Z", links[0].AddedAt)
 	assert.Equal("high", ops.creates[0].Priority)
 	assert.Equal([]string{"mail", "follow-up"}, ops.creates[0].Labels)
+	for _, identity := range ops.identities {
+		assert.Equal("gmail", identity.SourceType)
+		assert.Equal("test@example.com", identity.SourceIdentifier)
+		assert.Equal("identity-email", identity.SourceMessageID)
+	}
 }
 
 func TestCreateTaskRequiresBrowserRequestID(t *testing.T) {
