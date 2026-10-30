@@ -11,7 +11,7 @@
   import type { JobTarget } from '../../jobs/jobs';
   import { supportsSavedViewSchema, type CanonicalState } from '../../saved-views/canonical';
   import SyncStatusMenu from './SyncStatusMenu.svelte';
-  import { NAVIGATION_ITEMS, SETTINGS_ITEM, type NavigationItem } from './navigation';
+  import { DELETIONS_ITEM, NAVIGATION_ITEMS, SETTINGS_ITEM, type NavigationItem } from './navigation';
 
   interface Props {
     onPastRuns: () => void;
@@ -21,6 +21,7 @@
     jobs: JobsStore;
     onOpenJob: (target: JobTarget) => void;
     views?: SavedView[];
+    deletionsStaged?: boolean;
     viewsError?: string;
     onRetryViews?: () => void;
     onNavigate: (id: ExploreWorkspace) => void;
@@ -40,6 +41,7 @@
     jobs,
     onOpenJob,
     views = [],
+    deletionsStaged = false,
     viewsError = undefined,
     onRetryViews = undefined,
     onNavigate,
@@ -52,7 +54,7 @@
   }: Props = $props();
 
   const SettingsIcon = SETTINGS_ITEM.icon;
-  const items = NAVIGATION_ITEMS;
+  const items = $derived(deletionsStaged ? [...NAVIGATION_ITEMS, DELETIONS_ITEM] : NAVIGATION_ITEMS);
   const groupedViews = $derived.by(() => {
     const messages: SavedView[] = [];
     const files: SavedView[] = [];
