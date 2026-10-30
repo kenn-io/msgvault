@@ -17,13 +17,25 @@ it.each(['pending', 'in_progress', 'completed', 'failed'])('avoids retention det
   controller.destroy();
 });
 
-it('keeps cancelled-only history out of the sidebar without fetching details', async () => {
-  const fetch = vi.fn(async () => Response.json({ manifests: [batch('cancelled', 'cancelled', 2, '2026-10-29T10:00:00Z')] }));
+it('patches cancelled history locally and keeps it out of the sidebar without rereading details', async () => {
+  let cancelled = false, detailReads = 0;
+  const fetch = vi.fn<typeof globalThis.fetch>(async input => {
+    const request = input as Request;
+    if (request.method === 'DELETE') { cancelled = true; return Response.json({ id: 'cancelled', status: 'cancelled' }); }
+    const current = batch('cancelled', cancelled ? 'cancelled' : 'pending', 2, '2026-10-29T10:00:00Z');
+    if (request.url.endsWith('/deletions')) return Response.json({ manifests: [current] });
+    detailReads++;
+    return Response.json({ ...current, account: 'archive@example.com' });
+  });
   const controller = new DeletionsController(createAPIClient(fetch));
   await controller.refresh();
-  expect(controller.visible).toBe(false);
+  await controller.getDetail('cancelled');
+  await controller.cancel('cancelled');
   expect(controller.batches[0]?.status).toBe('cancelled');
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect((await controller.getDetail('cancelled'))?.status).toBe('cancelled');
+  await controller.refresh();
+  expect(controller.visible).toBe(false);
+  expect(detailReads).toBe(1);
   controller.destroy();
 });
 
@@ -55,7 +67,7 @@ it('shares four in-flight lookups with page consumers and stops retention work a
   controller.destroy();
 });
 
-it('caches a settled failed lookup until the page explicitly retries', async () => {
+it('caches failed page lookups and retries retention on the next polling refresh', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(now);
   let reads = 0;
   const controller = new DeletionsController(createAPIClient(async input => {
@@ -66,7 +78,8 @@ it('caches a settled failed lookup until the page explicitly retries', async () 
   await controller.getDetail('old');
   expect(await controller.getDetail('old')).toBeUndefined();
   expect(reads).toBe(1);
-  expect(await controller.getDetail('old', true)).toMatchObject({ id: 'old' });
+  await controller.refresh();
+  expect(await controller.getDetail('old')).toMatchObject({ id: 'old' });
   expect(reads).toBe(2);
   expect(controller.visible).toBe(true);
   controller.destroy();
@@ -161,24 +174,4 @@ it('publishes a staged batch before old retention hydration finishes and ignores
   expect(controller.visible).toBe(true);
   expect(controller.batches.map(batch => batch.id)).toEqual(['old', 'staged']);
   controller.destroy();
-});
-
-it('restores sidebar visibility on the next polling refresh after a transient retention failure', async () => {
-  vi.spyOn(Date, 'now').mockReturnValue(now);
-  let reads = 0;
-  const old = batch('old', 'completed', 2, '2020-01-01T00:00:00Z');
-  const controller = new DeletionsController(createAPIClient(async input => {
-    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [old] });
-    return ++reads === 1 ? Response.json({}, { status: 503 })
-      : Response.json({ ...old, execution: { completed_at: '2026-10-29T11:00:00Z' } });
-  }));
-  try {
-    await controller.refresh();
-    expect(await controller.getDetail('old')).toBeUndefined();
-    expect(controller.visible).toBe(false);
-    await controller.refresh();
-    await controller.getDetail('old');
-    expect(controller.visible).toBe(true);
-    expect(reads).toBe(2);
-  } finally { controller.destroy(); }
 });
