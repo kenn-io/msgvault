@@ -308,10 +308,9 @@
 </script>
 
 <main class="deletions" aria-label="Deletions">
-  <PageHeader
-    title="Deletions"
-    description="Deletions you've staged. Nothing is deleted until you run msgvault delete-staged."
-  />
+  <PageHeader title="Deletions">
+    {#snippet description()}Deletions you've staged. Nothing is deleted until you run <code>msgvault delete-staged</code>.{/snippet}
+  </PageHeader>
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
   <section class="selection-review" aria-label="Deletion selection">
