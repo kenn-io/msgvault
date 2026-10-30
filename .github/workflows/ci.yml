@@ -26,10 +26,13 @@ jobs:
           - goarch: amd64
             runner: ubuntu-24.04
             go_arch_name: amd64
+            job_timeout: 27
           - goarch: arm64
             runner: ubuntu-24.04-arm
             go_arch_name: arm64
+            job_timeout: 10
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.job_timeout }}
     container:
       image: ubuntu:26.04
     steps:
@@ -92,6 +95,7 @@ jobs:
 
   checks:
     runs-on: ubuntu-26.04
+    timeout-minutes: 37
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -134,6 +138,7 @@ jobs:
 
   test:
     runs-on: ubuntu-26.04
+    timeout-minutes: 38
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -178,6 +183,7 @@ jobs:
           - name: api
             package: ./internal/api
     runs-on: ubuntu-26.04
+    timeout-minutes: 19
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -200,6 +206,7 @@ jobs:
   test-macos-15:
     if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: macos-26
+    timeout-minutes: 79
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -221,6 +228,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-26.04
+    timeout-minutes: 33
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -314,6 +322,7 @@ jobs:
 
   web-e2e:
     runs-on: ubuntu-26.04
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -364,6 +373,7 @@ jobs:
   large-archive-benchmark:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -392,6 +402,7 @@ jobs:
 
   test-windows:
     runs-on: windows-2025
+    timeout-minutes: 47
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -474,6 +485,7 @@ jobs:
 
   lint-windows:
     runs-on: windows-2025
+    timeout-minutes: 64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -512,6 +524,7 @@ jobs:
 
   test-windows-slow-packages:
     runs-on: windows-2025
+    timeout-minutes: 19
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -560,20 +573,23 @@ jobs:
         include:
           # A 4-core runner is already saturated by one package's shards, so the
           # two slowest packages each split across 3 runners.
-          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 60m }
-          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 60m }
-          - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 60m }
-          - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 60m }
-          - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 60m }
-          - { name: store-3, package: ./internal/store, part: 3, parts: 3, timeout: 60m }
+          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 60m, job_timeout: 36 }
+          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 60m, job_timeout: 37 }
+          - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 60m, job_timeout: 58 }
+          - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 60m, job_timeout: 27 }
+          - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 60m, job_timeout: 28 }
+          - { name: store-3, package: ./internal/store, part: 3, parts: 3, timeout: 60m, job_timeout: 36 }
           - name: sync-vector-embed
+            job_timeout: 49
             package: ./internal/sync
             package2: ./internal/vector/embed
             timeout: 60m
           - name: vector-sqlite
+            job_timeout: 29
             package: ./internal/vector/sqlitevec
             timeout: 60m
     runs-on: windows-2025
+    timeout-minutes: ${{ matrix.job_timeout }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -665,6 +681,7 @@ jobs:
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
     runs-on: ubuntu-26.04
+    timeout-minutes: 85
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -714,6 +731,7 @@ jobs:
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
   test-postgres:
     runs-on: ubuntu-26.04
+    timeout-minutes: 54
     services:
       postgres:
         image: postgres:16
@@ -774,13 +792,17 @@ jobs:
       matrix:
         include:
           - name: cli
+            job_timeout: 24
             package: ./cmd/msgvault/cmd
           - name: store
+            job_timeout: 68
             package: ./internal/store
           - name: api
+            job_timeout: 30
             package: ./internal/api
             followups: true
     runs-on: ubuntu-26.04
+    timeout-minutes: ${{ matrix.job_timeout }}
     services:
       postgres:
         image: postgres:16
