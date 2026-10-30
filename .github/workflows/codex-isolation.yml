@@ -15,32 +15,7 @@ env:
   GOFLAGS: -trimpath
 
 jobs:
-  changes:
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-26.04
-    timeout-minutes: 5
-    permissions:
-      pull-requests: read
-    outputs:
-      groups: ${{ steps.changes.outputs.groups }}
-      all: ${{ steps.changes.outputs.all }}
-    steps:
-      - uses: kenn-io/actions/changes@92f255293f1cfcf6998d1b87d0c2c3bb700d01e6
-        id: changes
-        with:
-          # Keep the Go filter aligned with ci.yml.
-          filters: |
-            go:
-              - '!{web/**,docs/**,*.md}'
-              - 'docs/assets/**'
-              - 'docs/screenshots/**'
-              - 'web/src/lib/settings/cron-corpus.json'
-              - 'web/tests/e2e/fixtures/operations-public.json'
-              - 'web/tests/e2e/fixtures/operations-private-sentinels.json'
-
   pinned-artifact:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     # Ubuntu 22.04 permits the unprivileged user namespaces used by Bubblewrap.
     runs-on: ubuntu-26.04
     steps:
