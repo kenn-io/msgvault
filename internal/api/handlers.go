@@ -115,8 +115,20 @@ type SourceStatusResponse struct {
 	Sources []SourceStatus `json:"sources"`
 }
 
+// LineWebhookStatus describes inbound delivery, independent of processor ticks.
+type LineWebhookStatus struct {
+	Active         bool    `json:"active"`
+	LastReceivedAt *string `json:"last_received_at,omitempty"`
+	Pending        int64   `json:"pending"`
+	Failed         int64   `json:"failed"`
+	// InvalidSignatures counts rejected signatures since this daemon started.
+	InvalidSignatures uint64 `json:"invalid_signatures"`
+}
+
 // SourceStatus represents one source and its read-only sync status.
 type SourceStatus struct {
+	LineWebhook *LineWebhookStatus `json:"line_webhook,omitempty"`
+
 	ID                    int64          `json:"id"`
 	SourceType            string         `json:"source_type"`
 	Identifier            string         `json:"identifier"`
@@ -138,6 +150,7 @@ type SourceStatus struct {
 	SchedulerQueued    bool    `json:"scheduler_queued,omitempty"`
 	SchedulerPending   bool    `json:"scheduler_pending,omitempty"`
 	SchedulerStartedAt *string `json:"scheduler_started_at,omitempty"`
+	SchedulerLastRunAt *string `json:"scheduler_last_run_at,omitempty"`
 }
 
 // SyncRunStatus represents the API-visible details for a sync run.
@@ -1592,6 +1605,29 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		Identifier: source.Identifier,
 		UpdatedAt:  source.UpdatedAt.UTC().Format(time.RFC3339),
 	}
+	if source.SourceType == "line" {
+		webhook := &LineWebhookStatus{}
+		if reader, ok := s.store.(LineStatusStore); ok {
+			inbox, err := reader.LineInboxStatusContext(ctx, source.ID)
+			if err != nil {
+				return SourceStatus{}, fmt.Errorf("get LINE inbox status: %w", err)
+			}
+			webhook.Pending, webhook.Failed = inbox.Pending, inbox.Failed
+			if inbox.LastReceivedAt != nil {
+				webhook.LastReceivedAt = nullableTimePtr(*inbox.LastReceivedAt)
+			}
+		}
+		if s.lineWebhook != nil {
+			for _, active := range s.lineWebhook.ActiveChannels() {
+				if active.SourceID == source.ID && active.ChannelID == source.Identifier {
+					webhook.Active = true
+					break
+				}
+			}
+			webhook.InvalidSignatures = s.lineWebhook.InvalidSignatures(source.Identifier)
+		}
+		status.LineWebhook = webhook
+	}
 	if source.DisplayName.Valid {
 		status.DisplayName = new(source.DisplayName.String)
 	}
@@ -1678,6 +1714,10 @@ func (s *Server) applyGenericJobStatus(status *SourceStatus, jobName string) boo
 		status.Scheduled = true
 		status.Schedule = job.Schedule
 		status.SchedulerLastError = job.LastError
+		if !job.LastRun.IsZero() {
+			lastRun := job.LastRun.UTC().Format(time.RFC3339Nano)
+			status.SchedulerLastRunAt = &lastRun
+		}
 		if !job.NextRun.IsZero() {
 			status.NextSyncAt = nullableTimePtr(job.NextRun)
 		}

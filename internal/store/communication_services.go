@@ -495,6 +495,9 @@ func (s *Store) seedCommunicationServices(ctx context.Context) error {
 	if err := s.seedCommunicationServiceSet(ctx, communicationServicesSeedV1, seededCommunicationServices); err != nil {
 		return err
 	}
+	if err := s.migrateLineServiceScope(ctx); err != nil {
+		return err
+	}
 	// A separate data seed also reaches archives that already completed v1.
 	// INSERT OR IGNORE preserves an operator's existing Inline service edits.
 	return s.seedCommunicationServiceSet(ctx, "communication_services_inline_v1", []CommunicationServiceInput{{

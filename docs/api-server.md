@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-10-30"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -23,6 +23,51 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Submit a background backfill | [Historical import jobs](#historical-import-jobs) |
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
+| Receive LINE Official Account events | [LINE webhook](#line-webhook) |
+
+### LINE webhook {#line-webhook}
+
+Available on `main`: `POST /webhooks/line/<channel_id>` accepts events for an
+enabled LINE Official Account channel. This route is outside `/api/v1` and the
+generated public OpenAPI document. See [LINE setup](usage/line.md) for channel
+registration and a proxy that exposes only the webhook.
+
+The exact POST route authenticates the original request body with the channel
+secret and the base64 HMAC-SHA256 `x-line-signature` header, before decoding JSON.
+The envelope's `destination` must match the registered bot user ID. It does not
+require an API key, session cookie, or CSRF token. Other paths and methods,
+including suffixes and encoded-path variations, retain ordinary Host,
+authentication, same-origin, CSRF, and operation-gate protections. Server
+timeouts still apply. Requests through the documented keyless loopback proxy
+bypass the API IP rate limiter; the receiver applies its own concurrency bounds.
+
+The body limit is 1 MiB. Across configured channels, at most 16 requests can
+read or retain bodies at once. Excess requests receive `503` before their body
+is read. A separate limit admits at most eight authenticated requests to inbox
+processing. `events` must be an array; a signed empty array is a valid connection
+check. Each event needs a nonempty `type`, a positive integer
+`timestamp`, and a nonempty `webhookEventId` of at most 200 bytes that does not
+start with `_`. Message and edit events require `message.id` and `message.type`;
+unsend events require `unsend.messageId`. Unknown event types retain sanitized
+native evidence. Missing source identities are retained for the processor to
+handle, rather than merged into a shared anonymous direct chat.
+
+| Status | Meaning |
+|---|---|
+| `200` | Sanitized nonempty batch committed atomically, or valid signed empty check |
+| `400` | Malformed signed JSON, missing envelope/event fields, invalid event ID, or malformed message structure; no partial batch is stored |
+| `401` | Missing/invalid signature or a destination that differs from the registered bot |
+| `404` | Unknown or disabled channel on a mounted receiver; no configuration details in the body |
+| `413` | Request body exceeds 1 MiB |
+| `503` | Body-read or authenticated-ingress concurrency bound reached, or the inbox transaction failed; delivery can be retried |
+
+With no enabled channels, the route is not mounted and ordinary server
+protections apply. Valid batches remove `replyToken` and `markAsReadToken`
+recursively before persistence. Duplicate IDs are ignored per source. The
+receiver queues processing only after commit; no profile lookups or media
+requests delay acknowledgement. A `200` confirms receipt into the durable
+inbox, not completion of enrichment or downloads. See
+[retention](usage/line.md#privacy-and-retention) for inbox cleanup and unsends.
 
 ### Filename suggestions
 

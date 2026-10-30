@@ -584,6 +584,7 @@ type Config struct {
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
+	Line               []LineSource                    `toml:"line"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
@@ -1106,6 +1107,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "line" {
+			return nil, fmt.Errorf("unknown LINE config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1253,6 +1257,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
+	if err := cfg.validateLineSources(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validateChatwootSources(); err != nil {
 		return nil, err
 	}

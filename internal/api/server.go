@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -192,6 +193,13 @@ type ArchiveIdentifier interface {
 // one beside cmd.storeAPIAdapter in cmd/msgvault/cmd/serve.go.
 var _ ArchiveIdentifier = (*store.Store)(nil)
 
+// LineStatusStore supplies durable inbox metrics for push sources.
+type LineStatusStore interface {
+	LineInboxStatusContext(ctx context.Context, sourceID int64) (store.LineInboxStatus, error)
+}
+
+var _ LineStatusStore = (*store.Store)(nil)
+
 // SourceStatusStore defines the source/sync read operations used by the
 // source status endpoint.
 type SourceStatusStore interface {
@@ -255,6 +263,7 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	lineWebhook *line.Receiver
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -535,8 +544,10 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config *config.Config
-	Store  MessageStore
+	// LineWebhook is the immutable set of active signed webhook receivers.
+	LineWebhook *line.Receiver
+	Config      *config.Config
+	Store       MessageStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -642,6 +653,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
+		lineWebhook:            opts.LineWebhook,
 		cfg:                    opts.Config,
 		store:                  opts.Store,
 		savedViewStore:         opts.SavedViewStore,
@@ -788,6 +800,7 @@ func (s *Server) setupRouter() http.Handler {
 	h = operationGateMiddleware(s.operationGate, s.requestGateEligible)(h)
 	h = s.csrfMiddleware(h)
 	h = s.requestSecurityMiddleware(h)
+	h = s.lineWebhookMiddleware(h)
 	h = RateLimitMiddleware(s.rateLimiter, s.loopbackRateLimitExempt)(h)
 	h = CORSMiddleware(corsConfig)(h)
 	h = s.timeoutMiddleware(h)

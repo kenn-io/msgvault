@@ -21,3 +21,13 @@ func TestPlaudDaemonCLIAllowlist(t *testing.T) {
 		assert.True(cliRunCommandAllowed(args), "Twilio command must be runnable via daemon: %v", args)
 	}
 }
+
+func TestLineSchedulerJobAndAllowedCLI(t *testing.T) {
+	assert := assert.New(t)
+	name, ok := SchedulerJobNameForSource("line", "2000000001")
+	assert.True(ok)
+	assert.Equal("line:2000000001", name)
+	assert.True(isSourceSyncJobName(name))
+	assert.True(cliRunCommandAllowed([]string{"add-line", "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET"}))
+	assert.True(cliRunCommandAllowed([]string{"sync-line", "--channel-id", "2000000001"}))
+}

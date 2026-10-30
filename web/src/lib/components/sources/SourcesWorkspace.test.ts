@@ -26,6 +26,7 @@ function run(status: string, processed: number, overrides: Record<string, unknow
 }
 
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet. Refresh to check again.";
+const LINE_NO_WORK = 'No inbox work was due. Any retries will run automatically at their scheduled time.';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -33,6 +34,23 @@ afterEach(() => {
 });
 
 describe('SourcesWorkspace', () => {
+  it('shows LINE webhook delivery instead of a polling schedule', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
+      source_type: 'line', identifier: '2000000001', display_name: 'Example OA',
+      scheduled: true, schedule: '@every 30s', can_sync: true,
+      line_webhook: { active: true, pending: 2, failed: 1, invalid_signatures: 3,
+        last_received_at: '2026-07-19T10:00:00Z' }
+    })] }));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    expect(await screen.findByText('Push source · webhook')).toBeDefined();
+    expect(screen.getByText('Archives from webhook go-live.')).toBeDefined();
+    expect(screen.getByText('Receiver active')).toBeDefined();
+    expect(screen.getByText('2 pending · 1 failed')).toBeDefined();
+    expect(screen.getByText('3 invalid signatures since daemon start')).toBeDefined();
+    expect(screen.queryByText('@every 30s')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Process inbox Example OA' })).toBeDefined();
+  });
+
   it('reports each rejected click despite an unchanged stored run', async () => {
     const events: unknown[] = [];
     const client = createCaptureClient(async input => (input as Request).method === 'POST'
@@ -388,6 +406,29 @@ describe('SourcesWorkspace', () => {
     expect(reads).toBe(4);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(reads).toBe(4);
+    rendered.unmount();
+  });
+
+  it('acknowledges a completed LINE inbox pass with no due work', async () => {
+    let lastRunAt = '2026-10-30T19:00:00.000000001Z';
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'POST') {
+        lastRunAt = '2026-10-30T19:00:00.000000002Z';
+        return Response.json({ status: 'accepted', message: 'started' }, { status: 202 });
+      }
+      return Response.json({ sources: [source({
+        source_type: 'line', identifier: '2000000001', display_name: 'Example OA',
+        scheduled: true, can_sync: true, scheduler_last_run_at: lastRunAt,
+        line_webhook: { active: true, pending: 1, failed: 0, invalid_signatures: 0 }
+      })] });
+    });
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Process inbox Example OA' }));
+
+    expect(await screen.findByText(LINE_NO_WORK)).toBeDefined();
+    expect(screen.queryByText(NOT_OBSERVED)).toBeNull();
     rendered.unmount();
   });
 

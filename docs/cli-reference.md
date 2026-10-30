@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-28"
+last_edited: "2026-10-30"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1489,6 +1489,61 @@ Backfill re-fetches each selected source message that has pending attachments
 to obtain fresh signed CDN URLs. An incomplete attachment is unrecoverable if
 the source message has since been deleted. See
 [Discord](/docs/usage/discord/#attachment-backfill-and-limits).
+
+---
+
+## add-line
+
+Register a LINE Official Account Messaging API channel and save its `[[line]]`
+configuration. Available on `main`. Credentials come from the named environment
+variable on the daemon host; the secret is never a flag value.
+
+```bash
+msgvault add-line --channel-id 2000000001 --secret-env MSGVAULT_LINE_SECRET_EXAMPLE
+```
+
+| Flag | Default | Contract |
+|---|---|---|
+| `--channel-id` | required | Canonical positive decimal channel ID |
+| `--secret-env` | required | Environment-variable name holding the channel secret |
+| `--webhook-base-url` | omitted | Public HTTPS base URL; userinfo, query, and fragment are rejected; the webhook path is `/webhooks/line/<channel_id>` |
+
+The first invocation checks token credentials and bot identity, registers the
+archive source, and saves configuration. It requests a daemon restart and does
+not change LINE's webhook, even when a base URL is supplied. Restart the daemon
+or service with the secret variable in its environment, then repeat the command:
+
+```bash
+msgvault add-line --channel-id 2000000001 --secret-env MSGVAULT_LINE_SECRET_EXAMPLE \
+  --webhook-base-url https://archive.example.com
+```
+
+Remote webhook setup requires the running daemon's receiver to match the
+channel, archive source, bot identity, and secret-variable name. Disk
+configuration alone is insufficient. After activation, the idempotent command
+can set and test the URL. Without a base URL it prints the route and Console
+setup instructions. Enable **Use webhook** in LINE Developers Console and
+consider **Webhook redelivery**. See [LINE setup](usage/line.md).
+
+---
+
+## sync-line
+
+Process due work already in the LINE webhook inbox. Available on `main`. It
+retries eligible profile and media work through the daemon; it never fetches
+message history or bypasses a saved retry deadline.
+
+```bash
+msgvault sync-line
+msgvault sync-line --channel-id 2000000001
+```
+
+| Flag | Default | Contract |
+|---|---|---|
+| `--channel-id` | omitted | Restrict the pass to one configured channel |
+
+**Sync now** for a LINE source performs the same inbox-processing pass. See
+[delivery and retries](usage/line.md#delivery-and-retries).
 
 ---
 
@@ -4745,7 +4800,9 @@ msgvault merge-account --from-source-id 42 --into-source-id 43 --yes
 
 Both sources must have the same source type and be idle. Known conflicting
 Beeper networks are incompatible. Pending provider drafts on the historical
-source must finish first. The destination must not be retired; it may be
+source must finish first. A LINE source with pending or retrying webhook
+events cannot retire; stop remote delivery and let `sync-line` finish its inbox
+first. The destination must not be retired; it may be
 history-only. Cancel or finish staged deletions before merging, because
 batches targeting a retired source cannot execute. Restage them against the
 destination if needed.
