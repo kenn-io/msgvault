@@ -159,6 +159,7 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
+		defer func() { assert.NoError(st.Close()) }()
 		srv, slow, _ := newSlowAccountsServer(t, st, make(chan struct{}))
 		t.Cleanup(func() { close(slow.release) })
 		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
@@ -189,6 +190,7 @@ func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
+		defer func() { assert.NoError(st.Close()) }()
 		srv, slow, sourceID := newSlowAccountsServer(t, st, make(chan struct{}))
 		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
 		slow.calls.Store(1)
