@@ -42,19 +42,6 @@ afterEach(() => {
 });
 
 describe('DeletionReview', () => {
-  it('keeps a staged summary until Done after daemon acknowledgement', async () => {
-    const seen: Seen[] = [];
-    const onStaged = vi.fn(), onclose = vi.fn();
-    render(DeletionReview, { client: api(preflight(), seen), selection, onclose, onStaged });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
-    await waitFor(() => expect(onStaged).toHaveBeenCalledWith('batch-9'));
-    expect(onclose).not.toHaveBeenCalled();
-    expect(screen.getByText('Staged: Matched: 3 · Staged: 2 · Skipped: 1')).toBeDefined();
-    expect(screen.getByText('batch-9')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-    expect(onclose).toHaveBeenCalledOnce();
-    expect(seen.find(entry => entry.path === '/api/v1/deletions')?.body).toMatchObject({ selection, operation_token: 'token-1', dry_run: false });
-  });
 
   it('disables staging and says why when nothing qualifies', async () => {
     const review = preflight({
@@ -64,6 +51,7 @@ describe('DeletionReview', () => {
     render(DeletionReview, { client: api(review), selection, onclose: vi.fn() });
     const stage = await screen.findByRole('button', { name: 'Stage 0 messages' });
     expect((stage as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByText('No deletable messages.')).toBeDefined();
   });
 });
 
@@ -126,9 +114,10 @@ it('holds the review open through Escape while staging and handles the result on
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   await fireEvent.keyDown(document, { key: 'Escape' });
   expect(onclose).not.toHaveBeenCalled();
-  finish(Response.json({ id: 'batch-pending', message_count: 2, dry_run: false }, { status: 201 }));
+  finish(Response.json({ id: 'batch-pending', message_count: 2, matched_count: 3, dry_run: false }, { status: 201 }));
   await screen.findByText('batch-pending');
   expect(onStaged).toHaveBeenCalledExactlyOnceWith('batch-pending');
-  await fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.getByText('Staged: Matched: 3 · Staged: 2 · Skipped: 1')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
   expect(onclose).toHaveBeenCalledOnce();
 });

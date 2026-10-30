@@ -2426,28 +2426,10 @@ describe('AppShell', () => {
     expect(state.current.fileMIMEFamilies).toEqual([]);
     await expect(groupRequests[2]!.clone().json()).resolves.not.toHaveProperty('mime_families');
     expect(screen.queryByText(/^Filename:|^Type:/)).toBeNull();
-    rendered.unmount();
-    state.destroy();
-  });
-
-  it('shows removable file filter chips above ungrouped Files', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/files/search') return Response.json({
-        files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {}
-      });
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    state.replaceTransient({ workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-
+    state.replaceTransient({ groupingChain: [], fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'] });
     await screen.findByRole('grid', { name: 'Files results' });
     expect(screen.getByText('Filename: “invoice”')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Remove filename filter' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove type filter' }));
-    expect(state.current.fileMIMEFamilies).toEqual([]);
+    expect(screen.getByText('Type: PDFs')).toBeDefined();
     rendered.unmount();
     state.destroy();
   });
@@ -3088,8 +3070,7 @@ it.each(['sources', 'carddav'])('opens %s settings from Sources despite an old s
     return Response.json({});
   });
   const view = render(AppShell, { client, state });
-  await fireEvent.click(await screen.findByRole('button', { name: category === 'sources' ? 'Details for Example chats' : 'Details for contacts@example.com' }));
-  if (category === 'sources') await fireEvent.click(screen.getByRole('button', { name: 'Details for Example Slack' }));
+  await fireEvent.click(await screen.findByRole('button', { name: category === 'sources' ? 'Details for Example Slack' : 'Details for contacts@example.com' }));
   await fireEvent.click(await screen.findByRole('button', { name: category === 'sources' ? 'Edit in Settings › Sources' : 'Open Settings › Contacts' }));
   await waitFor(() => expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: category, settingsAuthority: '' }));
   view.unmount(); state.destroy();

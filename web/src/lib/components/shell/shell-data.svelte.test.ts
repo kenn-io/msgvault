@@ -217,7 +217,7 @@ it('restores the visible view and reports a failed delete', async () => {
 });
 
 
-it('refreshes deletions and jobs on the timer without rereading saved views', async () => {
+it('refreshes deletions on the timer without rereading saved views', async () => {
   vi.useFakeTimers();
   const { data, requests } = setup();
   try {

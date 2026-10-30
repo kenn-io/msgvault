@@ -232,6 +232,7 @@ describe('FilesWorkspace', () => {
 
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     expect(screen.getAllByRole('grid')).toHaveLength(1);
+    expect(within(grid).getAllByRole('columnheader').map(header => header.textContent?.trim())).toEqual(['Date', 'Filename', 'Type', 'Size', 'People', 'Source', 'Message', 'Availability']);
     expect(grid.contains(screen.getByRole('columnheader', { name: 'Filename' }))).toBe(true);
     expect(grid.contains(await screen.findByRole('row', { name: /fixture.pdf/ }))).toBe(true);
   });
@@ -679,12 +680,10 @@ describe('FilesWorkspace', () => {
 
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     await screen.findByRole('row', { name: /fixture.pdf/ });
-    expect(within(grid).getAllByRole('columnheader').map(header => header.textContent?.trim())).toEqual(['Date', 'Filename', 'Type', 'Size', 'People', 'Source', 'Message', 'Availability']);
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'PageDown' });
     await waitFor(() => expect(onActiveKey).toHaveBeenLastCalledWith('file:8'));
     expect(cursors).toEqual([undefined, 'page-2']);
-    expect(within(grid).getAllByRole('columnheader').map(header => header.textContent?.trim())).toEqual(['Date', 'Filename', 'Type', 'Size', 'People', 'Source', 'Message', 'Availability']);
 
     await fireEvent.keyDown(grid, { key: 'PageUp' });
     expect(onActiveKey).toHaveBeenLastCalledWith('file:7');
@@ -1263,11 +1262,6 @@ describe('FilesWorkspace', () => {
     });
   });
 });
-
-function describedBy(element: HTMLElement): string | undefined {
-  const id = element.getAttribute('aria-describedby');
-  return id ? document.getElementById(id)?.textContent?.trim() : undefined;
-}
 
 it('keeps embedded identity and relationship scope when filename and type change', async () => {
   const bodies: Record<string, unknown>[] = [];

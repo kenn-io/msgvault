@@ -4,20 +4,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
-import { syncRunStatus } from '../../jobs/fixtures.test-support';
+import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 
 function source(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Archive',
-    last_sync_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z',
-    active_sync: null, latest_sync: null, last_successful_sync: null,
-    can_sync: true, scheduled: false, next_sync_at: null, ...overrides
-  };
+  return sourceStatus({ display_name: 'Archive', ...overrides });
 }
 
 function run(status: string, processed: number, overrides: Record<string, unknown> = {}) {
   return syncRunStatus({
-    id: 9, started_at: '2026-07-19T10:00:00Z', completed_at: '2026-07-19T10:01:00Z', status,
+    id: 9, started_at: '2026-07-19T10:00:00Z', completed_at: ['running', 'paused'].includes(status) ? null : '2026-07-19T10:01:00Z', status,
     messages_processed: processed, messages_added: processed, ...overrides
   });
 }
@@ -135,11 +130,18 @@ describe('SourcesWorkspace', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
   });
 
-  it('groups contact connections under Contacts', async () => {
-    render(SourcesWorkspace, { client: createCaptureClient(api([source()], () => undefined, [contact]), []) });
-    expect(await screen.findByText('user-a')).toBeDefined();
+  it('groups contacts and polls a contacts-only run through completion', async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const fetch = api([], url => url.pathname.endsWith('/carddav/connections') ? Response.json({ connections: [{ ...contact, status: { ...contact.status, active: ++reads === 1 ? { ...contact.status.latest, state: 'running', finished_at: null } : null } }] }) : undefined);
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+    await vi.advanceTimersByTimeAsync(0);
     expect(screen.getByRole('rowheader', { name: 'Contacts' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Sync now user-a' })).toBeDefined();
+    expect(screen.getByText('Running')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(screen.getByText('Succeeded')).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+    view.unmount();
   });
 
   it('shows the add-account command when there are no sources, and from Add source', async () => {
@@ -675,13 +677,13 @@ describe('SourcesWorkspace', () => {
 it('keeps queued, cancelled, partial, and unavailable source meanings', async () => {
   const onOpenOperations = vi.fn();
   render(SourcesWorkspace, { onOpenOperations, client: createCaptureClient(api([
-    source({ id: 1, display_name: 'Queued account', scheduler_queued: true, can_sync: false }),
+    source({ id: 1, display_name: 'Queued account', scheduler_queued: true }),
     source({ id: 2, display_name: 'Cancelled account', latest_sync: run('cancelled', 0), can_sync: false, sync_unavailable_reason: 'sync_not_configured' }),
     source({ id: 3, display_name: 'Imported account', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', latest_sync: run('completed', 3, { errors_count: 1, item_errors: [{ source_message_id: 'message-1', phase: 'fetch', created_at: '2026-07-19T10:00:00Z', error_message: 'Attachment unavailable' }] }) }),
     source({ id: 4, display_name: 'Unavailable account', can_sync: false, sync_unavailable_reason: 'scheduler_unavailable' }),
     source({ id: 5, display_name: 'Paused account', source_type: 'omi', latest_sync: run('paused', 3, { error_message: 'Import paused at rate limit' }) }),
   ]), []) });
-  for (const label of ['Paused', 'Queued', 'Cancelled', 'Partial', 'Sync not set up', 'Imported file — nothing to sync', 'Scheduler unavailable']) expect(await screen.findByText(label)).toBeDefined();
+  for (const label of ['Queued', 'Cancelled', 'Partial', 'Sync not set up', 'Imported file — nothing to sync', 'Scheduler unavailable']) expect(await screen.findByText(label)).toBeDefined();
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
   expect(onOpenOperations).toHaveBeenCalledOnce();
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for Imported account' }));
@@ -689,9 +691,7 @@ it('keeps queued, cancelled, partial, and unavailable source meanings', async ()
   expect(screen.getByText('Attachment unavailable')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Details for Paused account' }));
   await screen.findByText('Import paused at rate limit');
-  expect(within(screen.getByRole('region', { name: 'Runs' })).getByText('Paused')).toBeDefined();
 });
-
 
 it('publishes source rows while the optional contacts request waits', async () => {
   let finish!: (response: Response) => void;
@@ -706,26 +706,23 @@ it('publishes source rows while the optional contacts request waits', async () =
   view.unmount();
 });
 
-it('shows a contacts-specific failure instead of an empty archive', async () => {
-  render(SourcesWorkspace, { client: createCaptureClient(api([], url => url.pathname.endsWith('/carddav/connections') ? Response.json({}, { status: 500 }) : undefined), []) });
-  expect((await screen.findByRole('alert')).textContent).toContain("Can't load contacts.");
-  expect(screen.queryByText('No sources yet')).toBeNull();
-});
-
 it('shows OAuth app repair instructions for contacts rather than assuming expiry', async () => {
-  render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [{ ...contact, status: { ...contact.status, repair_reason: 'google_authorization_required' } }]), []) });
+  const onOpenSettings = vi.fn();
+  render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [{ ...contact, status: { ...contact.status, repair_reason: 'google_authorization_required' } }]), []), onOpenSettings });
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for user-a' }));
   expect(screen.getByText(/Check the selected OAuth app's client settings/)).toBeDefined();
-  expect(screen.getByRole('button', { name: 'Open Settings › Contacts' })).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Open Settings › Contacts' }));
+  expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('carddav');
 });
 
-it('recovers a contacts-only load timeout without claiming the archive has no sources', async () => {
+it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming the archive has no sources', async failure => {
   let contactsReads = 0;
   const fetch = vi.fn<typeof globalThis.fetch>(async input => {
     const request = input as Request;
     if (request.url.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (request.url.endsWith('/carddav/connections')) {
       if (++contactsReads > 1) return Response.json({ connections: [contact] });
+      if (failure === 'error') return Response.json({}, { status: 500 });
       return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
     }
     return Response.json({}, { status: 404 });

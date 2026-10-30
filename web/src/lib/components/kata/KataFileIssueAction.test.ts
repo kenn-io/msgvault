@@ -100,7 +100,7 @@ describe('KataFileIssueAction', () => {
     await fireEvent.input(screen.getByLabelText('Search this file'), { target: { value: 'ship' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     const use = await screen.findByRole('button', { name: 'Use quote 1' });
-    expect(screen.queryByRole('button', { name: 'Use passage 2' }), 'a filename-only match is not a passage').toBeNull();
+    expect(screen.queryByRole('button', { name: 'Use quote 2' }), 'a filename-only match is not a passage').toBeNull();
     await fireEvent.click(use);
     await waitFor(() => expect(requests.some((request) => new URL(request.url).pathname.endsWith('/evidence/prepare'))).toBe(true));
     const prepare = requests.find((request) => new URL(request.url).pathname.endsWith('/evidence/prepare'))!;

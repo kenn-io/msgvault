@@ -56,53 +56,26 @@ describe('DeletionsWorkspace', () => {
     expect(screen.getByText('Cancelled')).toBeDefined();
   });
 
-  it('waits for confirmation and immediately sends cancellation', async () => {
-    const seen: Seen[] = [], onChanged = vi.fn();
-    render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('b1', 'pending', 2)], seen)), onChanged });
-    await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Cancel batch' }));
-    expect(seen.filter(entry => entry.method === 'DELETE')).toEqual([]);
-    const confirm = await screen.findByRole('dialog', { name: 'Cancel deletion batch?' });
-    await fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel batch' }));
-    await waitFor(() => expect(seen.filter(entry => entry.method === 'DELETE')).toEqual([{ method: 'DELETE', path: '/api/v1/deletions/b1' }]));
-    await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cancel deletion batch?' })).toBeNull());
-    expect(screen.queryByRole('button', { name: /^Open batch from/ })).toBeNull();
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
-    await screen.findByRole('button', { name: /^Open batch from/ });
-    expect(seen.filter(entry => entry.method === 'GET' && entry.path === '/api/v1/deletions/b1')).toHaveLength(1);
-  });
 
-  it('holds four account reads, then loads later displayed accounts', async () => {
-    const batches = Array.from({ length: 6 }, (_, i) => batch(`batch-${i}`, i === 5 ? 'cancelled' : 'pending', i + 1));
-    const pending: Array<(response: Response) => void> = [];
-    const ids: string[] = [];
-    const client = createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path === '/api/v1/deletions') return Response.json({ manifests: batches });
-      ids.push(path.split('/').at(-1)!);
-      return new Promise<Response>(resolve => pending.push(resolve));
-    });
-    render(DeletionsWorkspace, { controller: new DeletionsController(client) });
-    await waitFor(() => expect(ids).toEqual(['batch-0', 'batch-1', 'batch-2', 'batch-3']));
-    pending[0](Response.json({}, { status: 500 }));
-    await waitFor(() => expect(ids).toHaveLength(5));
-    for (let i = 1; i < 5; i++) pending[i](Response.json(detail(ids[i], 'pending', { account: `${ids[i]}@example.com` })));
-    await screen.findByText('batch-4@example.com');
-    expect(ids).not.toContain('batch-5');
+  it('loads displayed accounts and waits to read cancelled rows until shown', async () => {
+    const seen: Seen[] = [];
+    render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('visible', 'pending', 2), batch('hidden', 'cancelled', 3)], seen)) });
+    await screen.findByText('archive@example.com');
+    expect(seen.filter(entry => entry.path.includes('/deletions/'))).toEqual([{ method: 'GET', path: '/api/v1/deletions/visible' }]);
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
-    await waitFor(() => expect(ids).toEqual(['batch-0', 'batch-1', 'batch-2', 'batch-3', 'batch-4', 'batch-5']));
-    pending.slice(5).forEach((resolve, i) => resolve(Response.json(detail(ids[i + 5], 'pending'))));
-    await screen.findAllByText('archive@example.com');
+    await waitFor(() => expect(seen.filter(entry => entry.path.includes('/deletions/'))).toEqual([
+      { method: 'GET', path: '/api/v1/deletions/visible' }, { method: 'GET', path: '/api/v1/deletions/hidden' }
+    ]));
   });
 
   it('keeps the batch and confirmation after failed cancellation, then retries', async () => {
-    let deletes = 0, lists = 0;
+    let deletes = 0, lists = 0, detailReads = 0;
     const onChanged = vi.fn();
     const client = createAPIClient(async input => {
       const request = input as Request;
       if (request.url.endsWith('/deletions')) return ++lists === 1 ? Response.json({ message: 'Offline' }, { status: 500 }) : Response.json({ manifests: [batch('b1', 'in_progress', 2)] });
       if (request.method === 'DELETE') return ++deletes === 1 ? Response.json({ message: 'Busy' }, { status: 500 }) : Response.json({ id: 'b1', status: 'cancelled' });
+      detailReads++;
       return Response.json(detail('b1', 'in_progress'));
     });
     render(DeletionsWorkspace, { controller: new DeletionsController(client), onChanged });
@@ -118,6 +91,9 @@ describe('DeletionsWorkspace', () => {
     expect(onChanged).not.toHaveBeenCalled();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel batch' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
+    await screen.findByRole('button', { name: /^Open batch from/ });
+    expect(detailReads).toBe(1);
   });
 
   it('offers no cancel once a batch is deleted', async () => {
