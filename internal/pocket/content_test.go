@@ -11,9 +11,10 @@ import (
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
-// The REST docs leave these interiors unspecified. These fixtures exercise
-// compatibility with the documented webhook shapes, not a captured REST account.
-const recordingFixture = `{"id":"rec-a","title":"Planning","recording_at":"2026-09-01T10:00:00Z","created_at":"2026-09-02T10:00:00Z","duration":60,"recorded_by":{"email":"owner@example.com","user_id":"user-a"},"transcript":[{"speaker":"Speaker One","text":"Decide roadmap","start":1.25,"end":3}],"summarizations":{"sum-a":{"processingStatus":"completed","updatedAt":"2026-09-02T10:00:00Z","v2":{"summary":{"markdown":"Roadmap decision"},"actionItems":{"actionItems":[{"id":"task-a","title":"Publish roadmap","status":"TODO","isCompleted":false,"is_completed":false,"dueDate":"2026-09-10"}]}}}}}`
+// Transcripts follow the REST OpenAPI schema. The REST docs leave
+// summarization interiors unspecified, so those follow the documented webhook
+// shapes. These fixtures are synthetic, not a captured REST account.
+const recordingFixture = `{"id":"rec-a","title":"Planning","recording_at":"2026-09-01T10:00:00Z","created_at":"2026-09-02T10:00:00Z","duration":60,"recorded_by":{"email":"owner@example.com","user_id":"user-a"},"transcript":{"segments":[{"speaker":"SPEAKER_00","speakerName":"Speaker One","text":"Decide roadmap","start":1.25,"end":3}]},"summarizations":{"sum-a":{"processingStatus":"completed","updatedAt":"2026-09-02T10:00:00Z","v2":{"summary":{"markdown":"Roadmap decision"},"actionItems":{"actionItems":[{"id":"task-a","title":"Publish roadmap","status":"TODO","isCompleted":false,"is_completed":false,"dueDate":"2026-09-10"}]}}}}}`
 
 func TestPocketContent(t *testing.T) {
 	assertions := assert.New(t)
@@ -33,6 +34,25 @@ func TestPocketContent(t *testing.T) {
 	assertions.Equal(1, rec.StartedAt.Day())
 }
 
+func TestPocketContentKeepsOriginalTextAndResolvedSpeakers(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	rec, err := DecodeRecording([]byte(`{"id":"r","transcript":{"segments":[
+		{"speaker":"SPEAKER_00","speakerName":"Avery Example","text":"Hello everyone","originalText":"Hola a todos","start":0,"end":2},
+		{"speaker":"SPEAKER_01","text":"Thanks","start":2,"end":3},
+		{"speaker":"SPEAKER_00","speakerName":"Avery Example","text":"Next item","start":3,"end":4}
+	]}}`))
+	requirements.NoError(err)
+	content, err := Normalize(rec)
+	requirements.NoError(err)
+	requirements.Len(content.Transcript.Segments, 3)
+	assertions.Equal("Avery Example", content.Transcript.Segments[0].Speaker)
+	assertions.Equal("Hola a todos", content.Transcript.Segments[0].Text)
+	assertions.Equal("SPEAKER_01", content.Transcript.Segments[1].Speaker)
+	assertions.Equal("Thanks", content.Transcript.Segments[1].Text)
+	assertions.Equal([]meetingcontent.Participant{{Name: "Avery Example", Role: "speaker"}}, content.SourceParticipants)
+}
+
 func TestPocketContentAvailability(t *testing.T) {
 	for _, tt := range []struct {
 		name, fields        string
@@ -40,8 +60,8 @@ func TestPocketContentAvailability(t *testing.T) {
 		actions             meetingcontent.Coverage
 	}{
 		{"missing", ``, meetingcontent.StateUnavailable, meetingcontent.StateUnavailable, meetingcontent.CoverageUnavailable},
-		{"empty", `,"transcript":[],"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":""},"actionItems":{"actionItems":[]}}}}`, meetingcontent.StateEmpty, meetingcontent.StateEmpty, meetingcontent.CoverageAvailable},
-		{"failed transcript", `,"transcript":[],"transcript_error":"processing failed"`, meetingcontent.StateUnavailable, meetingcontent.StateUnavailable, meetingcontent.CoverageUnavailable},
+		{"empty", `,"transcript":{"segments":[]},"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":""},"actionItems":{"actionItems":[]}}}}`, meetingcontent.StateEmpty, meetingcontent.StateEmpty, meetingcontent.CoverageAvailable},
+		{"failed transcript", `,"transcript":{"segments":[]},"transcript_error":"processing failed"`, meetingcontent.StateUnavailable, meetingcontent.StateUnavailable, meetingcontent.CoverageUnavailable},
 		{"pending placeholders", `,"summarizations":{"a":{"processingStatus":"processing","v2":{"summary":{"markdown":""},"actionItems":{"actionItems":[]}}}}`, meetingcontent.StateUnavailable, meetingcontent.StateUnavailable, meetingcontent.CoverageUnavailable},
 		{"missing actions", `,"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"Notes"}}}}`, meetingcontent.StateUnavailable, meetingcontent.StateAvailable, meetingcontent.CoverageUnavailable},
 	} {
@@ -60,7 +80,7 @@ func TestPocketContentAvailability(t *testing.T) {
 }
 
 func TestPocketContentRejectsMalformedSections(t *testing.T) {
-	for _, fields := range []string{`"transcript":{}`, `"duration":-1`, `"recording_at":"bad"`, `"summarizations":[]`, `"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"x"},"actionItems":{"actionItems":[{"title":"x","status":"TODO","isCompleted":true}]}}}}`} {
+	for _, fields := range []string{`"transcript":{}`, `"transcript":[]`, `"duration":-1`, `"recording_at":"bad"`, `"summarizations":[]`, `"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"x"},"actionItems":{"actionItems":[{"title":"x","status":"TODO","isCompleted":true}]}}}}`} {
 		rec, err := DecodeRecording([]byte(`{"id":"r",` + fields + `}`))
 		if err == nil {
 			_, err = Normalize(rec)
@@ -101,7 +121,7 @@ func FuzzPocketTranscriptOffsets(f *testing.F) {
 		f.Add(n)
 	}
 	f.Fuzz(func(t *testing.T, offset float64) {
-		raw := fmt.Sprintf(`{"id":"r","transcript":[{"text":"x","start":%s}]}`, strconv.FormatFloat(offset, 'g', -1, 64))
+		raw := fmt.Sprintf(`{"id":"r","transcript":{"segments":[{"text":"x","start":%s}]}}`, strconv.FormatFloat(offset, 'g', -1, 64))
 		rec, err := DecodeRecording([]byte(raw))
 		var content meetingcontent.Content
 		if err == nil {

@@ -47,6 +47,7 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/plaud"
+	"go.kenn.io/msgvault/internal/pocket"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -662,7 +663,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledPocketSources() {
 		source := src
-		jobName, _ := api.SchedulerJobNameForSource("pocket", source.Identifier)
+		jobName, _ := api.SchedulerJobNameForSource(pocket.SourceType, source.Identifier)
 		if err := sched.AddJob(scheduler.Job{
 			Name: jobName, Schedule: source.Schedule,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {

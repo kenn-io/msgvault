@@ -132,7 +132,7 @@ func TestPocketImportLastSyncAt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			imp, st, src := testArchive(t, testRecording(t, recordingFixture), testRecording(t, `{"id":"rec-b","created_at":"2026-08-01T10:00:00Z","transcript":[]}`))
+			imp, st, src := testArchive(t, testRecording(t, recordingFixture), testRecording(t, `{"id":"rec-b","created_at":"2026-08-01T10:00:00Z","transcript":{"segments":[]}}`))
 			registered, err := st.GetSourceByTypeAndIdentifier(SourceType, "personal")
 			requirements.NoError(err)
 			if tt.previousSync {
@@ -173,21 +173,21 @@ func TestPocketImportPreservesUnavailableAndClearsAuthoritativeEmpty(t *testing.
 	imp, st, src := testArchive(t, testRecording(t, recordingFixture))
 	first, err := imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
-	src.records[0] = testRecording(t, `{"id":"rec-a","duration":60,"transcript":[],"transcript_error":"processing failed","summarizations":{"a":{"processingStatus":"processing","v2":{"summary":{"markdown":""},"actionItems":{"actionItems":[]}}}}}`)
+	src.records[0] = testRecording(t, `{"id":"rec-a","duration":60,"transcript":{"segments":[]},"transcript_error":"processing failed","summarizations":{"a":{"processingStatus":"processing","v2":{"summary":{"markdown":""},"actionItems":{"actionItems":[]}}}}}`)
 	_, err = imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
 	_, content := archivedContent(t, st, first.SourceID, "rec-a")
 	assertions.Equal("Roadmap decision", content.Summary.Text)
 	requirements.Len(content.Transcript.Segments, 1)
 	requirements.Len(content.Actions, 1)
-	src.records[0] = testRecording(t, `{"id":"rec-a","transcript":[],"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"New summary"}}}}}`)
+	src.records[0] = testRecording(t, `{"id":"rec-a","transcript":{"segments":[]},"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"New summary"}}}}}`)
 	_, err = imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
 	_, content = archivedContent(t, st, first.SourceID, "rec-a")
 	assertions.Equal("New summary", content.Summary.Text)
 	assertions.Equal(meetingcontent.StateEmpty, content.Transcript.State)
 	requirements.Len(content.Actions, 1)
-	src.records[0] = testRecording(t, `{"id":"rec-a","transcript":[],"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":""},"actionItems":{"actionItems":[]}}}}}`)
+	src.records[0] = testRecording(t, `{"id":"rec-a","transcript":{"segments":[]},"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":""},"actionItems":{"actionItems":[]}}}}}`)
 	_, err = imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
 	_, content = archivedContent(t, st, first.SourceID, "rec-a")
@@ -228,9 +228,9 @@ func TestPocketImportFillsPartialDetailFromListMetadata(t *testing.T) {
 	assertions.Equal("Planning", initial.Subject)
 	assertions.Equal("owner@example.com", initial.FromEmail)
 
-	listMetadata := testRecording(t, `{"id":"rec-a","title":"Updated list title","recording_at":"2026-09-05T10:00:00Z","duration":120,"recorded_by":{"email":"owner@example.com","user_id":"user-a","display_name":"Updated organizer"},"transcript":[]}`)
+	listMetadata := testRecording(t, `{"id":"rec-a","title":"Updated list title","recording_at":"2026-09-05T10:00:00Z","duration":120,"recorded_by":{"email":"owner@example.com","user_id":"user-a","display_name":"Updated organizer"},"transcript":{"segments":[]}}`)
 	src.records[0] = listMetadata
-	src.details["rec-a"] = testRecording(t, `{"id":"rec-a","transcript":[]}`)
+	src.details["rec-a"] = testRecording(t, `{"id":"rec-a","transcript":{"segments":[]}}`)
 	opts := archiveOptions()
 	opts.StartedAfter = listMetadata.StartedAt.Add(-time.Minute)
 	updated, err := imp.Import(t.Context(), opts)
@@ -295,9 +295,9 @@ func TestPocketImportPreservesOwnerWhenLaterRecordingOmitsIt(t *testing.T) {
 func TestPocketImportUpdatesOrganizerFromListingWhenDetailOmitsIt(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	listing := testRecording(t, `{"id":"rec-a","title":"Planning","recording_at":"2026-09-01T10:00:00Z","duration":60,"recorded_by":{"email":"owner@example.com","user_id":"user-a","display_name":"Organizer One"},"transcript":[]}`)
+	listing := testRecording(t, `{"id":"rec-a","title":"Planning","recording_at":"2026-09-01T10:00:00Z","duration":60,"recorded_by":{"email":"owner@example.com","user_id":"user-a","display_name":"Organizer One"},"transcript":{"segments":[]}}`)
 	imp, st, src := testArchive(t, listing)
-	src.details = map[string]Recording{"rec-a": testRecording(t, `{"id":"rec-a","transcript":[]}`)}
+	src.details = map[string]Recording{"rec-a": testRecording(t, `{"id":"rec-a","transcript":{"segments":[]}}`)}
 	first, err := imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
 	id, _ := archivedContent(t, st, first.SourceID, "rec-a")
@@ -305,7 +305,7 @@ func TestPocketImportUpdatesOrganizerFromListingWhenDetailOmitsIt(t *testing.T) 
 	requirements.NoError(err)
 	assertions.Equal("Organizer One", initial.FromName)
 
-	src.records[0] = testRecording(t, `{"id":"rec-a","title":"Planning","recording_at":"2026-09-01T10:00:00Z","duration":60,"recorded_by":{"email":"owner@example.com","user_id":"user-a","display_name":"Organizer Two"},"transcript":[]}`)
+	src.records[0] = testRecording(t, `{"id":"rec-a","title":"Planning","recording_at":"2026-09-01T10:00:00Z","duration":60,"recorded_by":{"email":"owner@example.com","user_id":"user-a","display_name":"Organizer Two"},"transcript":{"segments":[]}}`)
 	updated, err := imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
 	assertions.Equal(int64(1), updated.MeetingsUpdated)
@@ -330,7 +330,7 @@ func TestPocketImportPreservesRecordingDateWhenLaterResponseHasOnlyCreationDate(
 	wantStartedAt := time.Date(2026, time.September, 1, 10, 0, 0, 0, time.UTC)
 	assertions.True(wantStartedAt.Equal(initial.SentAt))
 
-	src.records[0] = testRecording(t, `{"id":"rec-a","created_at":"2026-09-10T10:00:00Z","transcript":[]}`)
+	src.records[0] = testRecording(t, `{"id":"rec-a","created_at":"2026-09-10T10:00:00Z","transcript":{"segments":[]}}`)
 	updated, err := imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
 	assertions.Equal(int64(1), updated.MeetingsUpdated)
@@ -348,8 +348,8 @@ func TestPocketImportAfterFilterUsesReconciledStartedAt(t *testing.T) {
 	id, _ := archivedContent(t, st, first.SourceID, "rec-a")
 	src.read = nil
 
-	src.records[0] = testRecording(t, `{"id":"rec-a","title":"Updated list title","created_at":"2026-09-10T10:00:00Z","transcript":[]}`)
-	src.details = map[string]Recording{"rec-a": testRecording(t, `{"id":"rec-a","created_at":"2026-09-10T10:00:00Z","transcript":[],"summarizations":{"sum-b":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"Out-of-window update"}}}}}`)}
+	src.records[0] = testRecording(t, `{"id":"rec-a","title":"Updated list title","created_at":"2026-09-10T10:00:00Z","transcript":{"segments":[]}}`)
+	src.details = map[string]Recording{"rec-a": testRecording(t, `{"id":"rec-a","created_at":"2026-09-10T10:00:00Z","transcript":{"segments":[]},"summarizations":{"sum-b":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"Out-of-window update"}}}}}`)}
 	opts := archiveOptions()
 	opts.StartedAfter = time.Date(2026, time.September, 5, 0, 0, 0, 0, time.UTC)
 	updated, err := imp.Import(t.Context(), opts)
@@ -376,12 +376,12 @@ func TestPocketImportAfterFilterRecoversDatesFromDetailsAndArchive(t *testing.T)
 	existingID, _ := archivedContent(t, st, first.SourceID, "rec-a")
 	src.read = nil
 	src.records = []Recording{
-		testRecording(t, `{"id":"rec-a","title":"Updated listing title","transcript":[]}`),
-		testRecording(t, `{"id":"rec-b","title":"New listing title","transcript":[]}`),
+		testRecording(t, `{"id":"rec-a","title":"Updated listing title","transcript":{"segments":[]}}`),
+		testRecording(t, `{"id":"rec-b","title":"New listing title","transcript":{"segments":[]}}`),
 	}
 	src.details = map[string]Recording{
-		"rec-a": testRecording(t, `{"id":"rec-a","transcript":[],"summarizations":{"new":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"Updated archived summary"}}}}}`),
-		"rec-b": testRecording(t, `{"id":"rec-b","recording_at":"2026-09-07T10:00:00Z","transcript":[],"summarizations":{"new":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"New detail summary"}}}}}`),
+		"rec-a": testRecording(t, `{"id":"rec-a","transcript":{"segments":[]},"summarizations":{"new":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"Updated archived summary"}}}}}`),
+		"rec-b": testRecording(t, `{"id":"rec-b","recording_at":"2026-09-07T10:00:00Z","transcript":{"segments":[]},"summarizations":{"new":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"New detail summary"}}}}}`),
 	}
 	opts := archiveOptions()
 	opts.StartedAfter = time.Date(2026, time.September, 5, 0, 0, 0, 0, time.UTC)
@@ -428,7 +428,7 @@ func TestPocketImportRotatesFailedRecordsAcrossSuccessfulRuns(t *testing.T) {
 	requirements := require.New(t)
 	var records []Recording
 	for i := range 3 {
-		records = append(records, testRecording(t, fmt.Sprintf(`{"id":"rec-%d","recording_at":"2026-09-%02dT10:00:00Z","transcript":[]}`, i, 3-i)))
+		records = append(records, testRecording(t, fmt.Sprintf(`{"id":"rec-%d","recording_at":"2026-09-%02dT10:00:00Z","transcript":{"segments":[]}}`, i, 3-i)))
 	}
 	imp, st, src := testArchive(t, records...)
 	src.fail["rec-0"] = errors.New("synthetic contract failure")
@@ -456,7 +456,7 @@ func TestPocketImportRotatesFailedRecordsAcrossSuccessfulRuns(t *testing.T) {
 func TestPocketImportPartialFailurePreservesCommittedDataAndCheckpoint(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	imp, st, src := testArchive(t, testRecording(t, recordingFixture), testRecording(t, `{"id":"rec-b","created_at":"2026-08-01T10:00:00Z","transcript":[]}`))
+	imp, st, src := testArchive(t, testRecording(t, recordingFixture), testRecording(t, `{"id":"rec-b","created_at":"2026-08-01T10:00:00Z","transcript":{"segments":[]}}`))
 	first, err := imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
 	last, err := st.GetLastSuccessfulSync(first.SourceID)
@@ -464,7 +464,7 @@ func TestPocketImportPartialFailurePreservesCommittedDataAndCheckpoint(t *testin
 	src.records[0] = testRecording(t, strings.ReplaceAll(recordingFixture, "Roadmap decision", "Partial update"))
 	src.fail["rec-b"] = errors.New("synthetic failure")
 	partial, err := imp.Import(t.Context(), archiveOptions())
-	requirements.Error(err)
+	requirements.ErrorContains(err, "pocket recording rec-b: synthetic failure")
 	assertions.Equal(int64(1), partial.MeetingsUpdated)
 	_, content := archivedContent(t, st, first.SourceID, "rec-a")
 	assertions.Equal("Partial update", content.Summary.Text)
@@ -474,6 +474,8 @@ func TestPocketImportPartialFailurePreservesCommittedDataAndCheckpoint(t *testin
 	checkpoint, err := st.GetLatestCheckpointedSyncByType(first.SourceID, SourceType)
 	requirements.NoError(err)
 	assertions.NotEmpty(checkpoint.CursorBefore.String)
+	// Sync status shows this message, so it must name the failing recording.
+	assertions.Contains(checkpoint.ErrorMessage.String, "pocket recording rec-b: synthetic failure")
 	before := checkpoint.CursorBefore.String
 	src.listErr = errors.New("enumeration failed")
 	_, err = imp.Import(t.Context(), archiveOptions())
@@ -506,7 +508,7 @@ func TestPocketImportOwnerMetadataAndPagination(t *testing.T) {
 }
 
 func TestPocketEvidenceBudget(t *testing.T) {
-	rec := testRecording(t, `{"id":"r","transcript":[]}`)
+	rec := testRecording(t, `{"id":"r","transcript":{"segments":[]}}`)
 	_, err := makeSnapshot(1, Account{Email: "owner@example.com", UserID: "u"}, rec, meetingcontent.Content{Summary: meetingcontent.Section{State: meetingcontent.StateAvailable, Text: strings.Repeat("x", maxEvidenceBytes)}})
 	require.Error(t, err)
 }
@@ -514,7 +516,7 @@ func TestPocketEvidenceBudget(t *testing.T) {
 func TestPocketEvidenceRejectsUnknownVersion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	rec := testRecording(t, `{"id":"rec-a","transcript":[]}`)
+	rec := testRecording(t, `{"id":"rec-a","transcript":{"segments":[]}}`)
 	content, err := Normalize(rec)
 	requirements.NoError(err)
 	snapshot, err := makeSnapshot(1, Account{Email: "owner@example.com", UserID: "user-a"}, rec, content)
@@ -535,7 +537,7 @@ func TestPocketEvidenceRejectsUnknownVersion(t *testing.T) {
 func TestPocketImportCancellationAndStateRepair(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	imp, st, src := testArchive(t, testRecording(t, recordingFixture), testRecording(t, `{"id":"rec-b","created_at":"2026-08-01T10:00:00Z","transcript":[]}`))
+	imp, st, src := testArchive(t, testRecording(t, recordingFixture), testRecording(t, `{"id":"rec-b","created_at":"2026-08-01T10:00:00Z","transcript":{"segments":[]}}`))
 	ctx, cancel := context.WithCancel(t.Context())
 	src.onRead = func(id string) {
 		if id == "rec-b" {
@@ -570,7 +572,7 @@ func TestPocketImportCancellationAndStateRepair(t *testing.T) {
 func TestPocketImportFullFilteredTraversalKeepsFairness(t *testing.T) {
 	var records []Recording
 	for n := range 3 {
-		records = append(records, testRecording(t, fmt.Sprintf(`{"id":"r-%d","created_at":"2026-09-%02dT10:00:00Z","transcript":[]}`, n, 3-n)))
+		records = append(records, testRecording(t, fmt.Sprintf(`{"id":"r-%d","created_at":"2026-09-%02dT10:00:00Z","transcript":{"segments":[]}}`, n, 3-n)))
 	}
 	imp, _, src := testArchive(t, records...)
 	opts := archiveOptions()
@@ -584,8 +586,31 @@ func TestPocketImportFullFilteredTraversalKeepsFairness(t *testing.T) {
 	assert.Equal(t, []string{"r-0", "r-1", "r-2"}, src.read)
 }
 
+func TestPocketImportAfterSkipsListedRecordingsBeforeCutoff(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	imp, st, src := testArchive(t,
+		testRecording(t, `{"id":"old","recording_at":"2026-08-01T10:00:00Z","transcript":{"segments":[]}}`),
+		testRecording(t, `{"id":"new","recording_at":"2026-09-10T10:00:00Z","transcript":{"segments":[]}}`),
+	)
+	opts := archiveOptions()
+	opts.Full = true
+	opts.Limit = 1
+	opts.StartedAfter = time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+	sum, err := imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	// The out-of-window recording neither costs a detail fetch nor uses the limit.
+	assertions.Equal([]string{"new"}, src.read)
+	assertions.Equal(int64(1), sum.MeetingsProcessed)
+	assertions.Equal(int64(1), sum.MeetingsAdded)
+	existing, err := st.MessageExistsBatch(sum.SourceID, []string{"old", "new"})
+	requirements.NoError(err)
+	assertions.Zero(existing["old"])
+	assertions.NotZero(existing["new"])
+}
+
 func TestPocketImportDoesNotInventOrganizer(t *testing.T) {
-	imp, st, _ := testArchive(t, testRecording(t, `{"id":"r","transcript":[{"speaker":"Speaker 1","text":"Hello","start":0}]}`))
+	imp, st, _ := testArchive(t, testRecording(t, `{"id":"r","transcript":{"segments":[{"speaker":"SPEAKER_00","text":"Hello","start":0}]}}`))
 	sum, err := imp.Import(t.Context(), archiveOptions())
 	require.NoError(t, err)
 	id, _ := archivedContent(t, st, sum.SourceID, "r")

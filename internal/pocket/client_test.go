@@ -2,9 +2,11 @@ package pocket
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -28,7 +30,7 @@ func TestPocketRESTClient(t *testing.T) {
 		case "/public/recordings/rec-a":
 			assertions.Equal("true", r.URL.Query().Get("include_transcript"))
 			assertions.Equal("true", r.URL.Query().Get("include_summarizations"))
-			_, _ = fmt.Fprint(w, `{"success":true,"data":{"id":"rec-a","transcript":[{"speaker":"Speaker One","text":"Decide roadmap","start":0,"end":3}],"duration":60}}`)
+			_, _ = fmt.Fprint(w, `{"success":true,"data":{"id":"rec-a","transcript":{"segments":[{"speaker":"SPEAKER_00","speakerName":"Speaker One","text":"Decide roadmap","start":0,"end":3}]},"duration":60}}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -81,6 +83,25 @@ func TestPocketClientRetryAndCancellation(t *testing.T) {
 			assertions.ErrorIs(err, context.Canceled)
 		})
 	}
+}
+
+func TestPocketClientKeepsNetworkFailureCause(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv := httptest.NewServer(http.NotFoundHandler())
+	addr := srv.URL
+	srv.Close()
+	client := NewClient(addr, addr, "pk_synthetic")
+	_, err := client.ListRecordings(t.Context(), 1)
+	requirements.Error(err)
+	_, ok := errors.AsType[*url.Error](err)
+	assertions.True(ok, "REST error lost its network cause: %v", err)
+	assertions.NotContains(err.Error(), "pk_synthetic")
+	_, err = client.CurrentAccount(t.Context())
+	requirements.Error(err)
+	_, ok = errors.AsType[*url.Error](err)
+	assertions.True(ok, "MCP error lost its network cause: %v", err)
+	assertions.NotContains(err.Error(), "pk_synthetic")
 }
 
 func TestPocketCurrentAccountRejectsUnconfirmedIdentity(t *testing.T) {

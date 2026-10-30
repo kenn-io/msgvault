@@ -45,23 +45,42 @@ func Normalize(rec Recording) (meetingcontent.Content, error) {
 		return content, sectionError("recording")
 	}
 	if present(wire.Transcript) && strings.TrimSpace(wire.TranscriptError) == "" {
-		var segments []struct {
-			Speaker string   `json:"speaker"`
-			Text    string   `json:"text"`
-			Start   *float64 `json:"start"`
-			End     *float64 `json:"end"`
+		// The REST schema wraps segments in an object. speaker is a raw
+		// diarization label such as SPEAKER_00; speakerName is present only
+		// when Pocket resolved that label. text is translated when a
+		// translation exists, so the archive keeps originalText.
+		var wireTranscript struct {
+			Segments []struct {
+				Speaker      string   `json:"speaker"`
+				SpeakerName  string   `json:"speakerName"`
+				Text         string   `json:"text"`
+				OriginalText string   `json:"originalText"`
+				Start        *float64 `json:"start"`
+				End          *float64 `json:"end"`
+			} `json:"segments"`
 		}
-		if json.Unmarshal(wire.Transcript, &segments) != nil || segments == nil {
+		if json.Unmarshal(wire.Transcript, &wireTranscript) != nil || wireTranscript.Segments == nil {
 			return content, sectionError("transcript")
 		}
+		segments := wireTranscript.Segments
 		transcript := meetingcontent.Transcript{State: meetingcontent.StateEmpty, Segments: []meetingcontent.Segment{}}
 		seen := map[string]bool{}
 		for _, item := range segments {
-			if strings.TrimSpace(item.Text) == "" || invalidSeconds(item.Start) || invalidSeconds(item.End) || item.Start != nil && item.End != nil && *item.End < *item.Start {
+			text := item.OriginalText
+			if strings.TrimSpace(text) == "" {
+				text = item.Text
+			}
+			if strings.TrimSpace(text) == "" || invalidSeconds(item.Start) || invalidSeconds(item.End) || item.Start != nil && item.End != nil && *item.End < *item.Start {
 				return content, sectionError("transcript segment")
 			}
-			transcript.Segments = append(transcript.Segments, meetingcontent.Segment{Speaker: strings.TrimSpace(item.Speaker), Text: item.Text, OffsetSeconds: item.Start})
-			if name := strings.TrimSpace(item.Speaker); name != "" && !seen[name] {
+			name := strings.TrimSpace(item.SpeakerName)
+			speaker := name
+			if speaker == "" {
+				speaker = strings.TrimSpace(item.Speaker)
+			}
+			transcript.Segments = append(transcript.Segments, meetingcontent.Segment{Speaker: speaker, Text: text, OffsetSeconds: item.Start})
+			// Unresolved diarization labels are not people.
+			if name != "" && !seen[name] {
 				content.SourceParticipants = append(content.SourceParticipants, meetingcontent.Participant{Name: name, Role: "speaker"})
 				seen[name] = true
 			}

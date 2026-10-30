@@ -1052,7 +1052,7 @@ older meetings. Edits update the same archived message.
 | Flag | Default | Purpose |
 |---|---|---|
 | `--limit` | `0` | Maximum detail fetches in this run; zero means unlimited; negative values fail |
-| `--after` | Unset | Include meetings dated on or after this UTC date (`YYYY-MM-DD`); implies `--full` |
+| `--after` | Unset | Include meetings dated on or after this UTC date (`YYYY-MM-DD`); implies `--full`. Recordings listed with an earlier recording date skip detail fetches |
 | `--full` | `false` | Repair derived projections and invalid sync state; preserve valid attempt order |
 | `--build-cache` | `false` | Request analytics cache refresh after sync |
 | `--no-build-cache` | `false` | Skip analytics cache refresh after sync |

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"strings"
 	"time"
 
@@ -45,12 +46,12 @@ func (c *Client) CurrentAccount(ctx context.Context) (Account, error) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "msgvault", Version: "dev"}, nil)
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: c.mcpURL, HTTPClient: &httpClient, DisableStandaloneSSE: true}, nil)
 	if err != nil {
-		return Account{}, accountRequestError(ctx)
+		return Account{}, accountRequestError(ctx, err)
 	}
 	defer func() { _ = session.Close() }()
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_account_info", Arguments: map[string]any{}})
 	if err != nil || result == nil || result.IsError {
-		return Account{}, accountRequestError(ctx)
+		return Account{}, accountRequestError(ctx, err)
 	}
 	var raw []byte
 	if result.StructuredContent != nil {
@@ -85,9 +86,14 @@ func (c *Client) CurrentAccount(ctx context.Context) (Account, error) {
 	return normalizedAccount(account)
 }
 
-func accountRequestError(ctx context.Context) error {
+func accountRequestError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	// Keep network causes. Other MCP errors can carry server-provided text,
+	// so they keep the generic credential hint instead.
+	if urlErr, ok := errors.AsType[*url.Error](err); ok {
+		return fmt.Errorf("pocket account verification failed: %w", urlErr)
 	}
 	return errors.New("pocket account verification failed; check API key and MCP access")
 }

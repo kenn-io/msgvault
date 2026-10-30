@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/plaud"
+	"go.kenn.io/msgvault/internal/pocket"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/twilio"
@@ -133,7 +134,7 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// Store identifier == config Identifier (see
 		// internal/circleback/importer.go GetOrCreateSource call).
 		return "circleback:" + identifier, true
-	case "pocket":
+	case pocket.SourceType:
 		return "pocket:" + identifier, true
 	case notionmeetings.SourceType:
 		return "notion-meetings:" + identifier, true

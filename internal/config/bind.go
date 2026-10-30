@@ -12,7 +12,7 @@ func (c *Config) BindAddressSource() string {
 	if c.bindSource != "" {
 		return c.bindSource
 	}
-	return DefaultCardDAVConnection
+	return "default"
 }
 
 // ResolveBindAddress resolves an interface selector to one usable address.

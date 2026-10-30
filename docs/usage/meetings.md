@@ -852,14 +852,20 @@ or repair a run. Missing, pending, or failed transcript and summary processing
 retains prior usable sections. A successfully completed empty section clears
 that section. Source disappearance never deletes archived evidence.
 
-The transcript and summarization parser supports the shapes documented in
-[Pocket's webhook examples](https://docs.heypocketai.com/docs/api/webhooks):
-speaker/text/start/end segments, and completed
-`v2.summary` and `v2.actionItems` packages. The [REST detail reference](https://docs.heypocketai.com/docs/api/recordings/get-recording-details)
-leaves those content fields unspecified. Tests use synthetic examples, not captured live
-REST responses; live shape compatibility and plan entitlement remain unverified.
-An incompatible non-null shape fails its recording without replacing existing
-evidence. API responses and combined archived evidence are limited to 64 MiB.
+Transcripts follow the `transcript.segments` schema in the
+[REST detail reference](https://docs.heypocketai.com/docs/api/recordings/get-recording-details).
+msgvault archives each segment's original-language text, not a translation.
+Segments show Pocket's resolved speaker name when one exists. Otherwise they
+show the raw label, such as `SPEAKER_00`. Only resolved names become meeting
+participants.
+
+The REST reference leaves summarizations unspecified. msgvault parses completed
+`v2.summary` and `v2.actionItems` packages in the shapes shown in
+[Pocket's webhook examples](https://docs.heypocketai.com/docs/api/webhooks).
+Tests use synthetic responses, not captured live accounts, so live summary
+compatibility and plan entitlement remain unverified. An incompatible non-null
+shape fails its recording without replacing existing evidence. API responses
+and combined archived evidence are limited to 64 MiB.
 
 Recording audio, source task updates, and fabricated speaker identities are
 not included. Names without email addresses remain speaker labels. The source

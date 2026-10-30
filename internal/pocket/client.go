@@ -57,13 +57,14 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			return nil, errors.New("pocket request failed")
+			// The key travels in a header, so the wrapped URL error cannot expose it.
+			return nil, fmt.Errorf("pocket request failed: %w", err)
 		}
 		if res.StatusCode == http.StatusOK {
 			raw, err := io.ReadAll(io.LimitReader(res.Body, maxEvidenceBytes+1))
 			_ = res.Body.Close()
 			if err != nil {
-				return nil, errors.New("pocket response read failed")
+				return nil, fmt.Errorf("read pocket response: %w", err)
 			}
 			if len(raw) > maxEvidenceBytes {
 				return nil, fmt.Errorf("%w: response exceeds 64 MiB", ErrContract)
@@ -80,7 +81,10 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 			}
 			continue
 		}
-		return nil, fmt.Errorf("pocket request rejected (HTTP %d); check API key and account access", res.StatusCode)
+		if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("pocket request rejected (HTTP %d); check API key and account access", res.StatusCode)
+		}
+		return nil, fmt.Errorf("pocket request rejected (HTTP %d)", res.StatusCode)
 	}
 	return nil, errors.New("pocket request exhausted five attempts")
 }

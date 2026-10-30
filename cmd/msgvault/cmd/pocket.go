@@ -228,17 +228,18 @@ func finishPocketImport(ctx context.Context, sum *pocket.ImportSummary, importEr
 
 func runConfiguredPocketSync(ctx context.Context, st *store.Store, src config.PocketSource) error {
 	if _, err := st.GetSourceByTypeAndIdentifier(pocket.SourceType, src.Identifier); err != nil {
-		return fmt.Errorf("register Pocket with add-pocket first: %w", err)
+		return recordSyncAttempt(ctx, pocket.SourceType, src.Identifier, fmt.Errorf("register Pocket with add-pocket first: %w", err))
 	}
 	email, err := src.EffectiveAccountEmail()
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, pocket.SourceType, src.Identifier, err)
 	}
 	client, err := pocketClient(src)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, pocket.SourceType, src.Identifier, err)
 	}
 	sum, err := pocket.NewImporter(st, client).Import(ctx, pocket.ImportOptions{Identifier: src.Identifier, AccountEmail: email})
+	_ = recordSyncAttempt(ctx, pocket.SourceType, src.Identifier, err)
 	return finishPocketImport(ctx, sum, err, func(refreshCtx context.Context) error {
 		return rebuildCacheAfterScheduledSync(refreshCtx, "pocket:"+src.Identifier)
 	})

@@ -49,7 +49,7 @@ func RegisterSource(st *store.Store, identifier string, account Account) (*store
 	if err != nil {
 		return nil, err
 	}
-	if err = st.BindMeetingSourceIdentity(src.ID, account.Email, account.UserID); err != nil {
+	if err = st.BindMeetingSourceIdentity(src.ID, SourceType, account.Email, account.UserID); err != nil {
 		return nil, err
 	}
 	if err = st.UpdateSourceDisplayName(src.ID, identifier); err != nil {
@@ -248,7 +248,7 @@ func (i *Importer) Import(ctx context.Context, opts ImportOptions) (summary *Imp
 	}
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, scoped.FailSyncWithCheckpoint(runID, "Pocket sync failed; retry sync-pocket", cp))
+			err = errors.Join(err, scoped.FailSyncWithCheckpoint(runID, err.Error(), cp))
 		}
 	}()
 	// Save the previous valid traversal before discovery, so an incomplete
@@ -288,6 +288,12 @@ func (i *Importer) Import(ctx context.Context, opts ImportOptions) (summary *Imp
 		if err = ctx.Err(); err != nil {
 			return summary, err
 		}
+		// A listed recording date is the meeting date, so a recording dated
+		// before the cutoff needs no detail fetch. Listings with only a creation
+		// date still fetch details, which may carry the recording date.
+		if !opts.StartedAfter.IsZero() && strings.TrimSpace(metadata.RecordedAt) != "" && metadata.StartedAt.Before(opts.StartedAfter) {
+			continue
+		}
 		if state.Sequence == math.MaxInt64 {
 			return summary, errors.New("pocket attempt sequence exhausted")
 		}
@@ -324,7 +330,7 @@ func (i *Importer) Import(ctx context.Context, opts ImportOptions) (summary *Imp
 		}
 		if readErr != nil {
 			summary.Errors++
-			failures = append(failures, readErr)
+			failures = append(failures, fmt.Errorf("pocket recording %s: %w", metadata.ID, readErr))
 		}
 		if err = checkpoint(); err != nil {
 			return summary, errors.Join(err, errors.Join(failures...))

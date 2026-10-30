@@ -2165,24 +2165,27 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 	return email, true
 }
 
+// defaultMeetingSourceIdentifier names the single unlabeled meeting source.
+const defaultMeetingSourceIdentifier = "default"
+
 // applyMeetingSourceDefaults normalizes native meeting-source entries: a
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Omi) == 1 && c.Omi[0].Identifier == "" {
-		c.Omi[0].Identifier = DefaultCardDAVConnection
+		c.Omi[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
-		c.Plaud[0].Identifier = DefaultCardDAVConnection
+		c.Plaud[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twenty) == 1 && c.Twenty[0].Identifier == "" {
-		c.Twenty[0].Identifier = DefaultCardDAVConnection
+		c.Twenty[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	for i := range c.Pocket {
 		c.Pocket[i].Identifier = strings.TrimSpace(c.Pocket[i].Identifier)
 	}
 	if len(c.Pocket) == 1 && c.Pocket[0].Identifier == "" {
-		c.Pocket[0].Identifier = DefaultCardDAVConnection
+		c.Pocket[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	for i := range c.Pocket {
 		if c.Pocket[i].APIKeyEnv == "" {
@@ -2190,19 +2193,19 @@ func (c *Config) applyMeetingSourceDefaults() {
 		}
 	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
-		c.Granola[0].Identifier = DefaultCardDAVConnection
+		c.Granola[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
-		c.Circleback[0].Identifier = DefaultCardDAVConnection
+		c.Circleback[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
-		c.NotionMeetings[0].Identifier = DefaultCardDAVConnection
+		c.NotionMeetings[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
-		c.Muesli[0].Identifier = DefaultCardDAVConnection
+		c.Muesli[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
-		c.Twilio[0].Identifier = DefaultCardDAVConnection
+		c.Twilio[0].Identifier = defaultMeetingSourceIdentifier
 	}
 }
 

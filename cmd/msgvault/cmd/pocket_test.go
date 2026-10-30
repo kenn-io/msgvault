@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/pocket"
+	"go.kenn.io/msgvault/internal/telemetry"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestPocketSourceResolution(t *testing.T) {
@@ -123,4 +125,23 @@ func TestPocketPartialFailureRefreshesWithoutCancellation(t *testing.T) {
 	err = finishPocketImport(ctx, &pocket.ImportSummary{}, errors.New("before writes"), func(context.Context) error { called = true; return nil })
 	requirements.Error(err)
 	assertions.False(called)
+}
+
+func TestScheduledPocketSyncRecordsFailure(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	t.Setenv("POCKET_TEST_KEY", "")
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(pocket.SourceType, "personal")
+	requirements.NoError(err)
+	state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+	var sources []any
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assertions.Equal(telemetry.EventSyncFailed, event)
+		sources = append(sources, props["sync_source"])
+		return nil
+	}}
+	src := config.PocketSource{Identifier: "personal", AccountEmail: "owner@example.com", APIKeyEnv: "POCKET_TEST_KEY"}
+	requirements.Error(runConfiguredPocketSync(withInvocation(t.Context(), state), st, src))
+	assertions.Equal([]any{pocket.SourceType}, sources)
 }

@@ -9,9 +9,9 @@ import (
 	"strings"
 )
 
-// BindMeetingSourceIdentity claims an unbound source once. The stable
-// provider account ID prevents another subject reusing the source's label.
-func (s *Store) BindMeetingSourceIdentity(sourceID int64, email, userID string) error {
+// BindMeetingSourceIdentity claims an unbound source of sourceType once. The
+// stable provider account ID prevents another subject reusing the source's label.
+func (s *Store) BindMeetingSourceIdentity(sourceID int64, sourceType, email, userID string) error {
 	email = strings.ToLower(strings.TrimSpace(email))
 	a, err := mail.ParseAddress(email)
 	if err != nil || a.Address != email || a.Name != "" || strings.TrimSpace(userID) == "" {
@@ -21,12 +21,12 @@ func (s *Store) BindMeetingSourceIdentity(sourceID int64, email, userID string) 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(fmt.Sprintf(`UPDATE sources SET sync_config = %s WHERE id = ? AND source_type = 'pocket' AND sync_config IS NULL`, s.dialect.JSONBindExpr()), string(raw), sourceID)
+	_, err = s.db.Exec(fmt.Sprintf(`UPDATE sources SET sync_config = %s WHERE id = ? AND source_type = ? AND sync_config IS NULL`, s.dialect.JSONBindExpr()), string(raw), sourceID, sourceType)
 	if err != nil {
 		return fmt.Errorf("bind meeting source identity: %w", err)
 	}
 	var saved sql.NullString
-	if err = s.db.QueryRow(`SELECT sync_config FROM sources WHERE id = ? AND source_type = 'pocket'`, sourceID).Scan(&saved); err != nil {
+	if err = s.db.QueryRow(`SELECT sync_config FROM sources WHERE id = ? AND source_type = ?`, sourceID, sourceType).Scan(&saved); err != nil {
 		return fmt.Errorf("read meeting source identity: %w", err)
 	}
 	var owner struct {
