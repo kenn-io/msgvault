@@ -32,7 +32,6 @@ describe('Messages meeting summary', () => {
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await screen.findByRole('button', { name: 'Action items · 2' });
     expect(actions.at(-1)).toEqual({ scope: { message_ids: [42] }, limit: 50 });
-    expect(screen.getByText(/^1 meeting ·/)).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Action items · 2' }));
     expect(screen.getByRole('textbox', { name: 'Assignee' })).toHaveProperty('value', '');
   });

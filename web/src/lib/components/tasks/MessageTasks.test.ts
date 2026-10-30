@@ -11,7 +11,7 @@ describe('Message task list', () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       requests.push(request);
-      return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title }] });
+      return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title }], outbound_metadata: {} });
     });
     const view = render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Review notes')).toBeDefined();
