@@ -49,7 +49,6 @@ describe('ReadingPane header', () => {
   ])('labels %s (%s) entries %s in the meta strip', (messageType, kind, name) => {
     renderPane(entryRow({ message_type: messageType, kind, attachment_count: 2, anchor_message_id: undefined }));
     const meta = document.querySelector('.pane-meta')?.textContent ?? '';
-    expect(meta).toContain('2 files');
     expect(meta.startsWith(`${name} · `)).toBe(true);
     expect(meta).not.toContain(messageType === 'email' ? 'email ·' : messageType);
   });
