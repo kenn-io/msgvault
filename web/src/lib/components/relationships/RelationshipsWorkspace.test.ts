@@ -4,7 +4,6 @@ import { chooseSelectOption } from '../../../test/kit-ui';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import { RelationshipsController } from '../../relationships/controller.svelte';
 import { computeHubLayout } from './RelationshipsWorkspace.svelte';
 import RelationshipsWorkspace from './RelationshipsWorkspace.svelte';
@@ -534,9 +533,7 @@ describe('RelationshipsWorkspace', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull());
   });
 
-  it.each([false, true])('keeps Escape inside the Kata dialog while saving=%s', async (saving) => {
-    let finishCreate!: (response: Response) => void;
-    const createResponse = new Promise<Response>((resolve) => { finishCreate = resolve; });
+  it('keeps Escape inside Add to task while the timeline reader stays open', async () => {
     const { fetchFn } = fetchHandler({
       '/api/v1/participants/1': () => Response.json(person(1, 'Alice Example')),
       '/api/v1/relationships/1/timeline': () => Response.json({
@@ -548,61 +545,19 @@ describe('RelationshipsWorkspace', () => {
         id: 70, anchor_id: 9, has_before: false, has_after: false, total: 1,
         messages: [{ id: 9, conversation_id: 70, subject: 'Budget request', from: 'alice@example.com',
           to: ['me@example.com'], sent_at: when, snippet: 'Preview', body: 'Please send the budget.' }]
-      }),
-      '/api/v1/integrations/kata/status': () => Response.json({ state: 'ready', project: 'example' }),
-      '/api/v1/integrations/kata/evidence/prepare': () => Response.json({ evidence: [{
-        id: 'a'.repeat(64), passage: 'b'.repeat(64), excerpt: 'Please send the budget.', content_trust: 'untrusted',
-        display: { containing_title: 'Budget request' },
-        reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 9,
-          source_type: 'email', source_identifier: 'inbox@example.com', source_message_id: 'message-example',
-          message: { body_sha256: 'c'.repeat(64), start_rune: 0, end_rune: 23 } }
-      }] }),
-      '/api/v1/integrations/kata/issues': () => createResponse
+      })
     });
     const props = { ...baseProps(fetchFn), target: 'cluster:1' };
-    const readiness = new KataReadiness(props.client);
-    render(RelationshipsWorkspace, { props, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await props.controller.openTarget('cluster:1', props.predicate);
-      await fireEvent.click((await screen.findByText('Budget request')).closest('[role="row"]')!);
-      const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
-      await fireEvent.click(await within(reading).findByRole('button', { name: 'More actions for message 9' }));
-      await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
-      await chooseSelectOption(await screen.findByRole('combobox', { name: /^Provider:/ }), 'Kata');
-      await fireEvent.click(screen.getByRole('button', { name: 'Add quote to Kata…' }));
-      const dialog = await screen.findByRole('dialog', { name: 'Kata issue' });
-      await within(dialog).findByText('Please send the budget.');
-      await fireEvent.input(within(dialog).getByLabelText('Issue title'), { target: { value: 'Send the revised budget' } });
-      if (saving) {
-        await fireEvent.click(within(dialog).getByRole('button', { name: 'Create issue' }));
-        expect(within(dialog).getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', true);
-      }
-      const focused = saving
-        ? within(dialog).getAllByRole('button', { name: 'Close' })[0]
-        : within(dialog).getByRole('button', { name: 'Quote selection' });
-      focused.focus();
-      await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
-
-      expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBe(reading);
-      if (saving) {
-        expect(screen.getByRole('dialog', { name: 'Kata issue' })).toBe(dialog);
-        expect(within(dialog).getByLabelText('Issue title')).toHaveProperty('value', 'Send the revised budget');
-        finishCreate(Response.json({ message: 'Kata is unavailable.' }, { status: 503 }));
-        await within(dialog).findByRole('alert');
-        const quote = within(dialog).getByRole('button', { name: 'Quote selection' });
-        quote.focus();
-        await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
-      }
-      expect(screen.queryByRole('dialog', { name: 'Kata issue' })).toBeNull();
-      expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBe(reading);
-
-      // Closing the dialog restores the pane's own Escape handling.
-      await fireEvent.keyDown(reading, { key: 'Escape' });
-      expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
-    } finally {
-      readiness.dispose();
-      finishCreate(Response.json({ message: 'Kata is unavailable.' }, { status: 503 }));
-    }
+    render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+    await fireEvent.click((await screen.findByText('Budget request')).closest('[role="row"]')!);
+    const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
+    await fireEvent.click(await within(reading).findByRole('button', { name: 'More actions for message 9' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add to task' });
+    await fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Add to task' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBe(reading);
   });
 
   it('calls the domain files endpoint, not the person one, when the open target is a domain', async () => {

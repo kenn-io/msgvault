@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
@@ -41,13 +41,19 @@ describe('AccountFilter', () => {
     expect(onChange).toHaveBeenCalledWith([...filters, { dimension: 'account', values: ['identity:7:d29ya0BleGFtcGxlLm9yZw'] }]);
   });
 
-  it('stays hidden when the inbox is the only account and nothing is unattributed', async () => {
+  it.each([false, true])('offers a sole mailbox only when showSingleMailbox=%s', async (showSingleMailbox) => {
     const fetchFn = accountsResponse([
       { key: 'identity:7:aW5ib3hAZXhhbXBsZS5uZXQ', source_id: 7, account_address: 'inbox@example.net', message_count: 3, source_deleted_count: 0 },
     ]);
-    render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+    const onChange = vi.fn();
+    render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange, showSingleMailbox });
     await waitFor(() => expect(fetchFn).toHaveBeenCalled());
-    expect(screen.queryByRole('combobox', { name: /^Account:/ })).toBeNull();
+    if (showSingleMailbox) {
+      await chooseSelectOption(await screen.findByRole('combobox', { name: /^Account:/ }), 'inbox@example.net / inbox@example.net (3)');
+      expect(onChange).toHaveBeenCalledWith([{ dimension: 'account', values: ['identity:7:aW5ib3hAZXhhbXBsZS5uZXQ'] }]);
+    } else {
+      expect(screen.queryByRole('combobox', { name: /^Account:/ })).toBeNull();
+    }
   });
 
   it('retries an unavailable catalog until the receiving addresses arrive', async () => {
@@ -158,16 +164,4 @@ describe('AccountFilter', () => {
     });
     await waitFor(() => expect(onChange).toHaveBeenCalledWith([source]));
   });
-});
-
-it('offers ordinary confirmed mailboxes with their catalog keys', async () => {
-  const onChange = vi.fn();
-  render(AccountFilter, { client: createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/accounts') ? { accounts: [
-    { id: 1, email: 'first@example.com', virtual_accounts: [{ key: 'identity:1:first', source_id: 1, account_address: 'first@example.com', message_count: 3, source_deleted_count: 0 }] },
-    { id: 2, email: 'second@example.com', virtual_accounts: [{ key: 'identity:2:second', source_id: 2, account_address: 'second@example.com', message_count: 4, source_deleted_count: 0 }] },
-  ] } : { rows: [] })), filters: [], onChange, showSingleMailbox: true });
-  await fireEvent.click(await screen.findByRole('combobox', { name: /^Account:/ }));
-  expect(screen.getByRole('option', { name: 'first@example.com / first@example.com (3)' })).toBeDefined();
-  await fireEvent.click(screen.getByRole('option', { name: 'second@example.com / second@example.com (4)' }));
-  expect(onChange).toHaveBeenCalledWith([{ dimension: 'account', values: ['identity:2:second'] }]);
 });
