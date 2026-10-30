@@ -2,7 +2,7 @@ import type { OperationLaneStatus, OperationRunSummary, SourceStatus, SyncRunSta
 import { lane } from '../../test/operations';
 import canonical from '../../../tests/e2e/fixtures/operations-public.json';
 
-const failedRuns = [...canonical.job_runs, ...canonical.runs.filter(run => run.state === 'failed')] as OperationRunSummary[];
+const failedRuns = canonical.job_runs as OperationRunSummary[];
 
 export function jobRun(kind: OperationRunSummary['kind']): OperationRunSummary {
   return structuredClone(failedRuns.find(run => run.kind === kind)!);
@@ -10,7 +10,7 @@ export function jobRun(kind: OperationRunSummary['kind']): OperationRunSummary {
 
 export function jobLane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
   const latest = jobRun(kind);
-  return lane(kind, { ...(kind === 'carddav_sync' ? { supported_actions: ['carddav_sync'] } : {}), latest, ...extra });
+  return lane(kind, { latest, ...extra });
 }
 
 export function sourceStatus(extra: Partial<SourceStatus> = {}): SourceStatus {

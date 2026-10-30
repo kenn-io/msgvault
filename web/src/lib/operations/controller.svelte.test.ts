@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import type { SyncResult } from '../api/generated/models';
@@ -545,7 +545,6 @@ describe('OperationsController', () => {
 });
 
 describe('OperationsController.refreshStatus', () => {
-  afterEach(() => vi.useRealTimers());
 
   function pagedDaemon(status: () => Response | Promise<Response>) {
     const paths: string[] = [];
