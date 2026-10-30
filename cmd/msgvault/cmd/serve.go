@@ -2035,10 +2035,6 @@ func (a *storeAPIAdapter) ArchiveUIDContext(ctx context.Context) (string, error)
 	return a.store.ArchiveUIDContext(ctx)
 }
 
-func (a *storeAPIAdapter) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
-	return a.store.ArchiveIdentityContext(ctx)
-}
-
 func (a *storeAPIAdapter) ActiveOperationTokenKey(ctx context.Context) (store.OperationTokenKey, error) {
 	return a.store.ActiveOperationTokenKey(ctx)
 }

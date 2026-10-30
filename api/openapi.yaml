@@ -8086,6 +8086,7 @@ components:
         from_name:
           type: string
         from_participant_id:
+          description: Sender participant ID, populated for conversation windows.
           format: int64
           type: integer
         from_phone:
@@ -8125,6 +8126,7 @@ components:
             type: string
           type: array
         to_participants:
+          description: Recipient participants, populated for conversation windows.
           items:
             $ref: "#/components/schemas/ConversationParticipant"
           type: array
