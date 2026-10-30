@@ -64,7 +64,6 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport({
     results: Array.from({ length: 20 }, (_, index) => recordingSearchHit({ containing_title: `Recording ${index + 1}` }))
   }) }));
-  await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'recording', search_provenance: {} } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
   const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
@@ -97,8 +96,7 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   await recordings.evaluate(element => { element.scrollTop = element.scrollHeight; });
   await expect(recordings.getByRole('link', { name: 'Recording 20', exact: true })).toBeInViewport();
   await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeInViewport();
-  await page.getByRole('button', { name: 'Files', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Show as: Files' }).click();
+  await page.getByRole('combobox', { name: 'Show as: Table' }).click();
   await page.getByRole('option', { name: 'Timeline', exact: true }).click();
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
   await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);

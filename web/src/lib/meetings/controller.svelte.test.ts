@@ -20,7 +20,7 @@ const explore: MeetingPanelScope = { kind: 'explore', explore: { predicate: { qu
 ] }, cache_revision: 'cache-1', search_provenance: { lexical_index_revision: 'lex-1', vector_generation: 2 }, candidate_snapshot_id: 'candidate-1' } };
 
 describe('MeetingsController', () => {
-  it('loads metrics and actions under the exact generated scope and defaults to all source statuses', async () => {
+  it('loads the exact scope and retains metrics when action filters change', async () => {
     const transport = api();
     const controller = new MeetingsController(transport);
     await controller.setScope(explore);
@@ -28,6 +28,8 @@ describe('MeetingsController', () => {
     expect(transport.actions).toHaveBeenCalledWith({ explore: explore.explore, limit: 50 }, expect.any(AbortSignal));
     expect(controller.metrics?.totals.total_known_seconds).toBe(6000);
     expect(controller.actions?.coverage).toEqual(meetingActions().coverage);
+    await controller.setFilters({ status: 'pending', assigneeEmail: 'person@example.test' });
+    expect(transport.metrics).toHaveBeenCalledTimes(1);
   });
 
   it('clears previous values and cursor, aborts both requests, and ignores ignored-abort fulfillment', async () => {
@@ -83,7 +85,6 @@ describe('MeetingsController', () => {
     await controller.loadMore();
     await controller.setFilters({ status: 'pending', assigneeEmail: ' Person@Example.test ' });
     expect(vi.mocked(transport.actions).mock.lastCall![0]).toEqual({ scope: { person_id: 7 }, limit: 50, status: 'pending', assignee_email: 'person@example.test' });
-    expect(transport.metrics).toHaveBeenCalledTimes(1);
   });
 
   it('reconciles repeated stable action keys with newer evidence while retaining distinct actions', async () => {
