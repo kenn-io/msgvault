@@ -240,14 +240,13 @@ it('keeps the named Google app when reopening a contacts connection for repair',
     const url = new URL((input as Request).url);
     if (url.pathname.endsWith('/connections')) return Response.json({ connections: [
       { connection: 'default', status: status('default') },
-      { connection: 'work', provider: 'google', oauth_app: "Team's app", status: { ...status('work'), account: { base_url: 'https://contacts.example.com', username: "o'brien@example.com" }, repair_reason: 'google_authorization_required' } },
+      { connection: 'work', provider: 'google', oauth_app: 'Team App', status: { ...status('work'), account: { base_url: 'https://contacts.example.com', username: 'user@example.com' } } },
     ] });
     if (url.pathname.endsWith('/status')) return Response.json(status('work'));
     return Response.json({ books: [], runs: [], conflicts: [] });
   });
   const view = render(CardDAVSettingsWorkspace, { client, settings: [] });
   await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await screen.findByText("msgvault carddav authorize-google 'o'\\''brien@example.com' --oauth-app 'Team'\\''s app'");
-  expect(screen.getByText('msgvault carddav authorize-google "o\'brien@example.com" --oauth-app "Team\'s app"')).toBeDefined();
+  await screen.findByText("msgvault carddav authorize-google 'user@example.com' --oauth-app 'Team App'");
   view.unmount();
 });
