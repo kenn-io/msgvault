@@ -116,7 +116,7 @@ describe('CardDAVConflicts', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Use address book version' }));
     await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
-    const accountControl = screen.getByRole('button', { name: 'Save CardDAV account' });
+    const accountControl = screen.getByRole('button', { name: 'Test CardDAV connection' });
     accountControl.focus();
     expect(document.activeElement).toBe(accountControl);
     available = false;

@@ -409,12 +409,14 @@ test.describe('designed archived mail', () => {
     } }));
   });
 
-  test('archived mail follows live themes, original colors, and scrollbar palette', async ({ page }) => {
+  test('archived mail keeps theme colors and an 8px arrowless scrollbar', async ({ page }) => {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await expect(page.locator('html')).toHaveClass(/dark/);
     await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
     const content = page.locator('iframe[title="Message body"]').contentFrame();
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+    let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
+    await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
@@ -439,6 +441,8 @@ test.describe('designed archived mail', () => {
     // Change the actual shell theme while the same email remains open.
     await setKitTheme(page, 'light');
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
+    appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
+    await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await setKitTheme(page, 'dark');

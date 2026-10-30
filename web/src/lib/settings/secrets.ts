@@ -12,3 +12,10 @@ export function maskSecret(value: string): string {
   if (chars.length < HINT_MINIMUM_LENGTH) return '';
   return `${chars.slice(0, 3).join('')}…${chars.slice(-3).join('')}`;
 }
+
+/** Show a pending replacement or removal before the saved secret state. */
+export function pendingSecret(saved: { configured: boolean; hint?: string } | undefined, pending: { action: 'set'; value: string } | { action: 'clear' } | undefined): { configured: boolean; hint: string } {
+  if (pending?.action === 'set') return { configured: true, hint: maskSecret(pending.value) };
+  if (pending?.action === 'clear') return { configured: false, hint: '' };
+  return { configured: saved?.configured ?? false, hint: saved?.hint ?? '' };
+}

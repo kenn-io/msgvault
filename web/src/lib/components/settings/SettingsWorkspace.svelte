@@ -1,97 +1,73 @@
-<script lang="ts" module>
-  const optionLabels: Readonly<Record<string, string>> = {
-    openai: 'OpenAI-compatible',
-    'voyage-contextual': 'Voyage contextual',
-    duckdb: 'DuckDB',
-    sql: 'SQL',
-    'sqlite-vec': 'sqlite-vec',
-    pgvector: 'pgvector',
-  };
-
-  function optionLabel(value: string): string {
-    if (Object.hasOwn(optionLabels, value)) return optionLabels[value];
-    if (value === '') return 'Default';
-    const words = value.replaceAll('_', ' ');
-    return words.charAt(0).toUpperCase() + words.slice(1);
-  }
-
-  const hostManagedNote = 'Host-managed values are set in config.toml on the daemon host.';
-  const OWN_SAVE_NOTE = 'These save immediately when you use their buttons — not with Save changes.';
-  const APPEARANCE_NOTE =
-    'Choose “Use daemon theme” and Temporary density “Auto” in the Display menu to return this tab to these saved values.';
-</script>
-
 <script lang="ts">
   import {
+    getEmbeddingStatus as generatedGetEmbeddingStatus,
+    getOperationStatus as generatedGetOperationStatus,
     getSettings as generatedGetSettings,
+    getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
-  import {
-    Button,
-    Card,
-    Chip,
-    Notice,
-    NumberInput,
-    SelectDropdown,
-    SettingsLayout,
-    SettingsSection,
-    TextInput,
-    Toggle,
-    type SettingsCategory,
-  } from '@kenn-io/kit-ui';
-  import LockIcon from '@lucide/svelte/icons/lock';
-  import RotateCwIcon from '@lucide/svelte/icons/rotate-cw';
-  import ZapIcon from '@lucide/svelte/icons/zap';
-  import { onMount, tick, untrack } from 'svelte';
+  import { Notice, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
+    EmbeddingStatus,
     PersonEnrichmentProviderSetting as GeneratedPersonEnrichmentProviderSetting,
     ProviderCredentialResponse as GeneratedProviderCredentialResponse,
     SettingUpdate as GeneratedSettingUpdate,
     SettingsResponse as GeneratedSettingsResponse,
+    OperationLaneStatus,
+    Status as VisualStatus,
   } from '../../api/generated/models';
-  import type { CardDAVSettingsRequest, SettingsNavigationTarget } from '../../carddav/navigation';
+  import { createExploreAPI } from '../../explore/api';
+  import { settingsNavigationTarget, type CardDAVSettingsRequest, type SettingsNavigationTarget } from '../../carddav/navigation';
   import type { SavedAppearance } from '../../theme/preferences.svelte';
+  import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
+  import { runOperationAction } from '../../operations/actions';
+  import { pendingSecret } from '../../settings/secrets';
+  import type { SearchCoverageValue } from '../../search/modes';
+  import {
+    isChange,
+    isIncompleteNumber,
+    persistedValue,
+    typedValue,
+    valueText,
+    type SettingState,
+    type SettingGroupState,
+  } from '../../settings/catalog';
+  import { overviewRows, type OverviewAction } from '../../settings/overview';
+  import {
+    LABELS,
+    OPTION_LABELS,
+    RAIL,
+    layoutCategory,
+    type Block,
+    type CategoryID,
+  } from '../../settings/layout';
+  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import PageHeader from '../shell/PageHeader.svelte';
   import CardDAVSettingsWorkspace from './CardDAVSettingsWorkspace.svelte';
   import PeopleInferenceSettings from './PeopleInferenceSettings.svelte';
-  import CronField from './CronField.svelte';
   import PersonEnrichmentProviderCard from './PersonEnrichmentProviderCard.svelte';
   import PersonEnrichmentProviderCreator from './PersonEnrichmentProviderCreator.svelte';
-  import ProviderCredentialControl from './ProviderCredentialControl.svelte';
   import SecretField from './SecretField.svelte';
-  import { maskSecret } from '../../settings/secrets';
-  import {
-    groupSettings,
-    hasHostManaged,
-    restartPosture,
-    type RestartPosture,
-    type SettingGroupState,
-    type SettingState,
-    type SettingValue,
-    type SettingsGroup,
-    type SettingsSection as SettingsSectionState,
-  } from '../../settings/catalog';
-  type SecretUpdate =
-    | {
-        action: 'set';
-        value: string;
-      }
-    | {
-        action: 'clear';
-      };
+  import ProviderCredentialControl from './ProviderCredentialControl.svelte';
+  import SettingField from './SettingField.svelte';
+  import SettingsOverview from './SettingsOverview.svelte';
+
+  type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
   type SettingUpdate = GeneratedSettingUpdate;
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
   type CredentialResponse = GeneratedProviderCredentialResponse;
   type SettingsDocument = GeneratedSettingsResponse;
-  type SettingOff = NonNullable<NonNullable<SettingState['validation']>['off']>;
+
   let {
     client,
     plainHTTPWarning = false,
     cardDAVRequest = undefined,
     navigationTarget = undefined,
-    category = 'browser',
+    category = 'overview',
     onCategoryChange = () => undefined,
+    onSources = () => undefined,
     onCardDAVRequestConsumed = () => undefined,
     onAppearanceSaved = () => undefined,
   }: {
@@ -100,10 +76,12 @@
     cardDAVRequest?: CardDAVSettingsRequest;
     navigationTarget?: SettingsNavigationTarget;
     category?: string;
+    onSources?: () => void;
     onCategoryChange?: (categoryID: string) => void;
     onCardDAVRequestConsumed?: (key: number) => void;
     onAppearanceSaved?: (saved: SavedAppearance) => void;
   } = $props();
+
   let settings = $state<SettingState[]>([]);
   let groups = $state<SettingGroupState[]>([]);
   let providers = $state<ProviderSetting[]>([]);
@@ -111,57 +89,148 @@
   let credentialETag = $state('');
   let drafts = $state<Record<string, unknown>>({});
   let secretUpdates = $state<Record<string, SecretUpdate>>({});
+  const inference = new PeopleInferenceController(untrack(() => client), () => loadSettings(true));
+  onDestroy(() => inference.destroy());
   let pendingRestart = $state(false);
   let loading = $state(true);
+  let loaded = $state(false);
   let saving = $state(false);
   let error = $state('');
+  let buildError = $state('');
   let activeCategory = $state(untrack(() => category));
   let root = $state<HTMLElement>();
+  let embeddingStatus = $state<EmbeddingStatus>();
+  let visualStatus = $state<VisualStatus>();
+  let lanes = $state<OperationLaneStatus[]>();
+  let coverage = $state<Pick<SearchCoverageValue, 'status' | 'actions'>>();
+  let statusSettled = $state(false);
+  let building = $state<Record<string, boolean>>({});
   let consumedCategoryRequestKey: number | undefined;
   let focusedNavigationSettingKey: string | undefined;
-  const settingsGroups = $derived(groupSettings(settings, groups));
-  const categories: SettingsCategory[] = $derived([
-    ...settingsGroups.map((group) => ({ id: group.id, label: group.label })),
-    { id: 'carddav', label: 'CardDAV account' },
-    { id: 'people', label: 'People sweep' },
-  ]);
-  const resolvedCategory = $derived(
-    categories.some((candidate) => candidate.id === activeCategory) ? activeCategory : 'browser',
-  );
+
+  const categories: SettingsCategory[] = RAIL.map(({ id, label }) => ({ id, label }));
+  const label = $derived(categories.find((candidate) => candidate.id === activeCategory)?.label ?? '');
+  const layout = $derived(layoutCategory(activeCategory as CategoryID, settings, groups));
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
+  const draftNeedsRestart = $derived(settings.some(setting => setting.restart_required && isDirty(setting.key)));
+  let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
+  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => void) | undefined>('msgvault:hold-settings-leave');
+  registerLeave?.(
+    (leave, stay) => dirtyCount > 0 && !saving && (pendingLeave = { leave, stay }, true),
+    () => { pendingLeave = undefined; }
+  );
+  onDestroy(() => registerLeave?.(undefined));
+  function focusStay(node: HTMLElement) {
+    node.querySelector('button')?.focus();
+  }
+  function stay() {
+    pendingLeave?.stay?.();
+    pendingLeave = undefined;
+  }
+  function discardAndLeave() {
+    const leave = pendingLeave?.leave;
+    pendingLeave = undefined;
+    discardChanges();
+    leave?.();
+  }
   // An emptied number field is a draft in progress, not a value: it keeps the
   // row on, cannot be saved, and never stands in for the off value.
-  const incompleteDrafts = $derived(
-    Object.entries(drafts).filter(([key, value]) =>
-      isIncompleteNumber(settings.find((candidate) => candidate.key === key), value),
-    ).length,
-  );
+  const incompleteDrafts = $derived(Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length);
+  const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus, coverage));
+
   onMount(() => {
     void loadSettings(false);
   });
-  // A parent re-render that leaves the category unchanged must not undo a
-  // category chosen or requested locally.
+
   let followedCategory = untrack(() => category);
   $effect(() => {
     if (category === followedCategory) return;
     followedCategory = category;
     activeCategory = category;
   });
+  // Any navigation while a leave is pending cancels it. A rail click stays
+  // first, so an unindexed held entry gets Settings back before the push.
+  $effect(() => {
+    void [category, navigationTarget];
+    untrack(() => { pendingLeave = undefined; });
+  });
   function selectCategory(categoryID: string): void {
-    activeCategory = categoryID;
-    onCategoryChange(categoryID);
+    stay();
+    onCategoryChange(activeCategory = categoryID);
   }
+
+  // Overview owns feature status and index actions. Status reloads when a build starts or ends.
+  let statusRevision = $state(0);
+  $effect(() => {
+    if (activeCategory !== 'overview') return;
+    void [statusRevision, Object.keys(building)];
+    const controller = new AbortController();
+    void createExploreAPI(client).coverage([], controller.signal)
+      .catch(() => coverage ?? { status: 'unavailable' as const, actions: [] })
+      .then(value => { if (!controller.signal.aborted) coverage = value; });
+    void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
+      .then(({ data, response }) => {
+        if (!controller.signal.aborted) embeddingStatus = response.ok ? data : undefined;
+      })
+      .catch(() => undefined);
+    void generatedGetVisualAttachmentStatus({ ...client, signal: controller.signal })
+      .then(({ data, response }) => {
+        if (!controller.signal.aborted) visualStatus = response.ok ? data : undefined;
+      })
+      .catch(() => undefined);
+    void generatedGetOperationStatus({ ...client, signal: controller.signal })
+      .then(({ data, response }) => {
+        if (controller.signal.aborted) return;
+        lanes = response.ok ? data?.lanes : undefined;
+        statusSettled = true;
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) { lanes = undefined; statusSettled = true; }
+      });
+    return () => controller.abort();
+  });
+
+  async function build(id: string, run: () => Promise<void>): Promise<void> {
+    if (building[id]) return;
+    building[id] = true;
+    buildError = '';
+    try {
+      await run();
+    } catch (cause) {
+      buildError = cause instanceof Error ? cause.message : "Can't build the index.";
+    } finally {
+      delete building[id];
+    }
+  }
+
+  async function focusSetting(categoryID: string | undefined, settingKey: string | undefined): Promise<void> {
+    if (categoryID) selectCategory(categoryID);
+    await tick();
+    const field = settingKey
+      ? root?.querySelector<HTMLElement>(`[data-setting-key="${settingKey}"]`)
+      : root?.querySelector<HTMLElement>('#settings-category-heading');
+    field?.closest('details')?.setAttribute('open', '');
+    field?.focus();
+  }
+  function setUp(action: Extract<OverviewAction, { kind: 'settings' }>): void {
+    const target = settingsNavigationTarget(action.target.settingsAuthority);
+    void focusSetting(target?.categoryID ?? action.target.settingsCategory, target?.settingKey);
+  }
+  function startFeature(action: Extract<OverviewAction, { kind: 'start' }>): void {
+    void build(action.id, async () => {
+      if (action.id === 'messages') return createExploreAPI(client).runCoverageAction('build_index', 'initializing');
+      const result = await runOperationAction(action.id, client);
+      if (result.outcome !== 'succeeded') throw new Error(result.message);
+    });
+  }
+
   $effect(() => {
     const target = navigationTarget;
     if (target) {
       activeCategory = target.categoryID;
-      if (loading) return;
-      if (target.settingKey === focusedNavigationSettingKey) return;
-      const settingKey = target.settingKey;
-      void tick().then(() => root?.querySelector<HTMLElement>(
-        `[data-setting-key="${settingKey}"]`
-      )?.focus());
-      focusedNavigationSettingKey = settingKey;
+      if (loading || target.settingKey === focusedNavigationSettingKey) return;
+      void focusSetting(undefined, target.settingKey);
+      focusedNavigationSettingKey = target.settingKey;
       return;
     }
     focusedNavigationSettingKey = undefined;
@@ -176,40 +245,38 @@
       onCardDAVRequestConsumed(request.key);
     }
   });
+
   async function loadSettings(retainDrafts: boolean) {
     if (!retainDrafts) loading = true;
     try {
       const { data: document, error: responseError, response } = await generatedGetSettings(client);
-      if (!document) throw new Error(apiErrorMessage(responseError, 'Unable to load settings.'));
+      if (!document) throw new Error(apiErrorMessage(responseError, "Can't load settings."));
+      loaded = true;
       settings = document.settings;
-      groups = document.groups ?? [];
+      groups = document.groups;
       providers = document.person_enrichment_providers ?? [];
       pendingRestart = document.pending_restart;
       etag = response.headers.get('ETag') ?? '';
+      inference.updateConfigRevision(etag);
       credentialETag = response.headers.get('Credential-ETag') ?? document.credential_etag ?? '';
       if (retainDrafts) pruneSettledDrafts();
       else discardChanges();
+      error = '';
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to load settings.';
+      error = cause instanceof Error ? cause.message : "Can't load settings.";
     } finally {
       loading = false;
     }
   }
-  function currentValue(setting: SettingState): unknown {
-    if (Object.hasOwn(drafts, setting.key)) return drafts[setting.key];
-    const value = setting.value;
-    if (!value) return undefined;
-    if ('string' in value) return value.string;
-    if ('integer' in value) return value.integer;
-    if ('number' in value) return value.number;
-    if ('boolean' in value) return value.boolean;
-    return value.strings;
+  function find(key: string): SettingState | undefined {
+    return settings.find((candidate) => candidate.key === key);
   }
-  // A draft that equals the persisted value is not a change: the row stays
-  // clean, Save stays disabled, and no no-op PATCH can mark a restart pending.
+  function currentValue(setting: SettingState): unknown {
+    return Object.hasOwn(drafts, setting.key) ? drafts[setting.key] : persistedValue(setting);
+  }
   function setDraft(key: string, value: unknown) {
-    const setting = settings.find((candidate) => candidate.key === key);
-    if (setting && !isIncompleteNumber(setting, value) && sameValue(typedValue(setting, value), setting.value)) {
+    const setting = find(key);
+    if (setting && !isChange(setting, value)) {
       const next = { ...drafts };
       delete next[key];
       drafts = next;
@@ -217,51 +284,23 @@
     }
     drafts = { ...drafts, [key]: value };
   }
-  // An emptied number input is unfinished, never a value: Number('') is 0,
-  // which would otherwise match a stored zero and drop the draft.
-  function isIncompleteNumber(setting: SettingState | undefined, value: unknown): boolean {
-    return value === '' && (setting?.kind === 'integer' || setting?.kind === 'number');
-  }
-  function sameValue(draft: SettingValue, persisted: SettingValue | undefined): boolean {
-    return persisted !== undefined && JSON.stringify(draft) === JSON.stringify(persisted);
-  }
   // After a reload that keeps local edits, drop the ones the daemon already
   // holds: a draft equal to the new persisted value, or a clear for a secret
   // that is no longer configured.
   function pruneSettledDrafts() {
-    const nextDrafts = { ...drafts };
-    for (const [key, value] of Object.entries(nextDrafts)) {
-      const setting = settings.find((candidate) => candidate.key === key);
-      if (setting && !isIncompleteNumber(setting, value) && sameValue(typedValue(setting, value), setting.value)) {
-        delete nextDrafts[key];
-      }
-    }
-    drafts = nextDrafts;
-    const nextSecrets = { ...secretUpdates };
-    for (const [key, update] of Object.entries(nextSecrets)) {
-      const setting = settings.find((candidate) => candidate.key === key);
-      if (update.action === 'clear' && setting && !setting.secret?.configured) delete nextSecrets[key];
-    }
-    secretUpdates = nextSecrets;
+    drafts = Object.fromEntries(Object.entries(drafts).filter(([key, value]) => isChange(find(key), value)));
+    secretUpdates = Object.fromEntries(Object.entries(secretUpdates).filter(([key, update]) => update.action === 'set' || find(key)?.secret?.configured));
   }
-  // A new key waits with the other drafts until Save changes; the row shows
-  // its masked hint meanwhile. Clearing drops a waiting key, and stages the
-  // removal of a stored one.
-  function setSecret(key: string, value: string) {
-    secretUpdates = { ...secretUpdates, [key]: { action: 'set', value } };
+  function setSecret(setting: SettingState, value: string) {
+    secretUpdates = { ...secretUpdates, [setting.key]: { action: 'set', value } };
   }
-  function clearSecret(key: string) {
+  // Clearing drops a key that is still waiting, and stages the removal of a stored one.
+  function clearSecret(setting: SettingState) {
+    const configured = setting.secret?.configured;
     const next = { ...secretUpdates };
-    delete next[key];
-    const configured = settings.find((candidate) => candidate.key === key)?.secret?.configured;
-    if (configured) next[key] = { action: 'clear' };
+    delete next[setting.key];
+    if (configured) next[setting.key] = { action: 'clear' };
     secretUpdates = next;
-  }
-  function secretShown(setting: SettingState): { configured: boolean; hint: string } {
-    const update = secretUpdates[setting.key];
-    if (update?.action === 'set') return { configured: true, hint: maskSecret(update.value) };
-    if (update?.action === 'clear') return { configured: false, hint: '' };
-    return { configured: setting.secret?.configured ?? false, hint: setting.secret?.hint ?? '' };
   }
   function discardChanges() {
     drafts = {};
@@ -277,12 +316,10 @@
     discardChanges();
     void focusCategoryHeading();
   }
-  function isCredentialControl(setting: SettingState): boolean {
-    return setting.kind === 'secret' && Boolean(setting.credential_id) && !isReadOnly(setting);
-  }
   function isDirty(key: string): boolean {
-    return Object.hasOwn(drafts, key) || Object.hasOwn(secretUpdates, key);
+    return key in drafts || key in secretUpdates;
   }
+
   const APPEARANCE_FIELDS: Readonly<Record<string, keyof SavedAppearance>> = {
     'web.theme': 'theme',
     'web.density': 'density',
@@ -297,20 +334,15 @@
     }
     return Object.keys(result).length > 0 ? result : undefined;
   }
+
   async function saveSettings() {
+    if (saving || inference.busy || dirtyCount === 0) return;
     const updates: SettingUpdate[] = [
       ...Object.entries(drafts)
-        .filter(([key]) => !settings.find((setting) => setting.key === key)?.read_only)
-        .map(([key, value]) => ({
-          key,
-          value: typedValue(
-            settings.find((setting) => setting.key === key),
-            value,
-          ),
-        })),
+        .filter(([key]) => !find(key)?.read_only)
+        .map(([key, value]) => ({ key, value: typedValue(find(key), value) })),
       ...Object.entries(secretUpdates).map(([key, secret]) => ({ key, secret })),
     ];
-    if (updates.length === 0) return;
     saving = true;
     error = '';
     try {
@@ -318,139 +350,40 @@
         data: result,
         error: responseError,
         response,
-      } = await generatedPatchSettings(
-        { updates },
-        {
-          ...client,
-          headers: { 'If-Match': etag },
-        },
-      );
+      } = await generatedPatchSettings({ updates }, { ...client, headers: { 'If-Match': etag } });
       if (response.status === 412) {
         await loadSettings(true);
-        error =
-          'The configuration changed on disk. Latest settings were loaded; review your local changes and save again.';
+        error = 'The settings changed on disk. The latest are loaded. Review your changes and save again.';
         if (dirtyCount === 0) void focusCategoryHeading();
         return;
       }
       if (!result) {
-        error = apiErrorMessage(responseError, 'Unable to save settings.');
+        error = apiErrorMessage(responseError, "Can't save settings.");
         return;
       }
       settings = result.settings;
-      groups = result.groups ?? groups;
       providers = result.person_enrichment_providers ?? providers;
       pendingRestart = result.pending_restart;
       etag = response.headers.get('ETag') ?? etag;
+      inference.updateConfigRevision(etag);
       credentialETag = response.headers.get('Credential-ETag') ?? result.credential_etag ?? credentialETag;
       discardChanges();
       void focusCategoryHeading();
       const appearance = savedAppearance(result.settings, new Set(updates.map(({ key }) => key)));
       if (appearance) onAppearanceSaved(appearance);
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to save settings.';
+      error = cause instanceof Error ? cause.message : "Can't save settings.";
     } finally {
+      statusRevision += 1;
       saving = false;
     }
   }
   function apiErrorMessage(responseError: unknown, fallback: string): string {
     if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {
-      const message = (
-        responseError as {
-          message?: unknown;
-        }
-      ).message;
+      const message = (responseError as { message?: unknown }).message;
       if (typeof message === 'string' && message) return message;
     }
     return fallback;
-  }
-  function numberFieldValue(setting: SettingState): number | null {
-    const value = currentValue(setting);
-    if (value === '' || value == null) return null;
-    const parsed = typeof value === 'number' ? value : Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  // Integer settings step by 1 and reject a decimal point. A float setting
-  // needs a fractional step, or NumberInput treats the field as an integer.
-  function numberFieldStep(setting: SettingState): number {
-    return setting.kind === 'integer' ? 1 : 0.1;
-  }
-  function stringValue(setting: SettingState): string {
-    const value = currentValue(setting);
-    if (Array.isArray(value)) return value.join(', ');
-    return value == null ? '' : String(value);
-  }
-  function optionValues(setting: SettingState): string[] {
-    return setting.options ?? [];
-  }
-  function settingLabel(setting: SettingState): string {
-    return setting.label || humanizeKey(setting.key);
-  }
-  function isReadOnly(setting: SettingState): boolean {
-    return Boolean(setting.read_only) || hostManagedKeys.has(setting.key);
-  }
-  function readOnlyValue(setting: SettingState): string {
-    if (setting.kind === 'secret') {
-      if (!setting.secret?.configured) return 'None';
-      return setting.secret.hint || '••••••••';
-    }
-    const off = setting.validation?.off;
-    if (off && stringValue(setting) === (off.value ?? '')) return off.label;
-    return stringValue(setting) || 'Not set';
-  }
-  // A setting with an off value renders as a switch beside its control:
-  // off stores the daemon's off value, on starts from the suggested value.
-  function isSwitchedOff(setting: SettingState, off: SettingOff | undefined): boolean {
-    return off !== undefined && stringValue(setting) === (off.value ?? '');
-  }
-  function switchSetting(setting: SettingState, off: SettingOff, on: boolean) {
-    const numeric = setting.kind === 'integer' || setting.kind === 'number';
-    if (!on) {
-      setDraft(setting.key, numeric ? Number(off.value ?? '') : (off.value ?? ''));
-      return;
-    }
-    if (numeric) {
-      const suggested = off.suggest === undefined || off.suggest === '' ? Number.NaN : Number(off.suggest);
-      setDraft(
-        setting.key,
-        Number.isNaN(suggested) ? (off.on_minimum ?? setting.validation?.minimum ?? 1) : suggested,
-      );
-      return;
-    }
-    setDraft(setting.key, off.suggest ?? '');
-  }
-  function postureText(posture: RestartPosture): string {
-    switch (posture) {
-      case 'live':
-        return 'Saved changes apply right away — no restart needed.';
-      case 'restart':
-        return 'Saved changes apply after the daemon restarts.';
-      case 'mixed':
-        return 'Most saved changes apply after the daemon restarts. Rows that differ are marked.';
-      default:
-        return 'Set in config.toml on the daemon host.';
-    }
-  }
-  // In a category where most rows share one posture, only the exceptions
-  // carry a chip. Every current category is uniform, so this stays quiet.
-  function rowFlag(setting: SettingState, group: SettingsGroup): string {
-    if (isReadOnly(setting) || restartPosture(group.settings) !== 'mixed') return '';
-    const editable = group.settings.filter((candidate) => !candidate.read_only);
-    const needsRestart = editable.filter((candidate) => candidate.restart_required).length;
-    const mostNeedRestart = needsRestart * 2 >= editable.length;
-    if (mostNeedRestart) return setting.restart_required ? '' : 'Applies right away';
-    return setting.restart_required ? 'Needs restart' : '';
-  }
-  function sectionDescription(section: SettingsSectionState): string {
-    return [section.description, hasHostManaged(section.settings) ? hostManagedNote : '']
-      .filter(Boolean)
-      .join(' ');
-  }
-  function credentialDisabledReason(credentialID: string): string {
-    const endpointKey = credentialEndpointKeys[credentialID];
-    if (endpointKey && Object.hasOwn(drafts, endpointKey)) {
-      return 'Save endpoint settings first before changing this credential.';
-    }
-    return '';
   }
   function credentialSaved(response: CredentialResponse, nextETag: string) {
     credentialETag = nextETag;
@@ -462,244 +395,211 @@
       provider.credential_id === response.credential_id ? { ...provider, credential: response.state } : provider,
     );
   }
-  async function credentialConflict() {
-    await loadSettings(true);
+  function credentialDisabledReason(credentialID: string): string {
+    return Object.hasOwn(drafts, `${credentialID}.endpoint`) ? 'Save endpoint settings first before changing this credential.' : '';
   }
   function providerSaved(document: SettingsDocument, nextETag: string) {
     settings = document.settings;
-    groups = document.groups ?? groups;
     providers = document.person_enrichment_providers ?? providers;
     pendingRestart = document.pending_restart;
     etag = nextETag;
+    inference.updateConfigRevision(etag);
     credentialETag = document.credential_etag || credentialETag;
   }
-  async function providerConflict() {
-    await loadSettings(true);
-  }
-  function typedValue(setting: SettingState | undefined, value: unknown): SettingValue {
-    switch (setting?.kind) {
-      case 'boolean':
-        return { boolean: Boolean(value) };
-      case 'integer':
-        return { integer: Number(value) };
-      case 'number':
-        return { number: Number(value) };
-      case 'string_array':
-        return { strings: Array.isArray(value) ? value.map(String) : [] };
-      default:
-        return { string: String(value ?? '') };
-    }
+  function rowLabel(setting: SettingState): string {
+    if (Object.hasOwn(LABELS, setting.key)) return LABELS[setting.key]!;
+    return setting.label || humanizeKey(setting.key);
   }
   function humanizeKey(key: string): string {
-    const tail = key.split('.').at(-1) ?? key;
-    const words = tail.replaceAll('_', ' ');
+    const words = (key.split('.').at(-1) ?? key).replaceAll('_', ' ');
     return words.charAt(0).toUpperCase() + words.slice(1);
   }
-  const hostManagedKeys = new Set([
-    'server.bind_addr',
-    'server.api_port',
-    'server.api_key',
-    'server.allow_insecure',
-    'server.trusted_proxies',
-    'vector.backend',
-    'vector.db_path',
-    'vector.skip_extension_create',
-    'vector.embeddings.api_key_env',
-    'vector.multimodal.api_key_env',
-    'vector.multimodal.capabilities_file',
-  ]);
-  const credentialEndpointKeys: Readonly<Record<string, string>> = {
-    'vector.embeddings': 'vector.embeddings.endpoint',
-    'vector.multimodal': 'vector.multimodal.endpoint',
-  };
+  function readOnlyValue(setting: SettingState): string {
+    if (setting.kind === 'secret') return setting.secret?.configured ? setting.secret.hint || 'Set' : 'None';
+    const value = valueText(persistedValue(setting));
+    const off = setting.validation?.off;
+    if (off && value === (off.value ?? '')) return off.label;
+    return value || 'Not set';
+  }
+  // Rows that only matter once something else is on stay out of the way until then.
+  function visible(setting: SettingState): boolean {
+    if (setting.key.startsWith('vector.people.') && setting.key !== 'vector.people.enabled') {
+      return isDirty(setting.key) || Boolean(currentValue(find('vector.people.enabled') ?? setting));
+    }
+    return true;
+  }
+  function rowFields(row: string | readonly string[]): SettingState[] {
+    return (typeof row === 'string' ? [row] : [...row])
+      .map(find)
+      .filter((setting): setting is SettingState => setting !== undefined && !setting.read_only && visible(setting));
+  }
+  function isSwitch(setting: SettingState): boolean {
+    return setting.kind === 'boolean' && !(setting.options && setting.options.length > 0);
+  }
 </script>
 
+<svelte:window onbeforeunload={(event) => { if (dirtyCount > 0) event.preventDefault(); }} />
+
 {#snippet settingsFooter()}
-  <span class="unsaved" role="status">
-    {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : ''}`}
-  </span>
-  <Button label="Discard" disabled={saving} onclick={discard} />
-  <Button
-    disabled={saving || incompleteDrafts > 0}
-    tone="info"
-    surface="solid"
-    label={saving ? 'Saving…' : 'Save changes'}
-    onclick={() => void saveSettings()}
-  />
+  {#if pendingLeave}
+    <span class="unsaved" role="status">Leave Settings and discard {dirtyCount} unsaved {dirtyCount === 1 ? 'change' : 'changes'}?</span>
+    <span use:focusStay>
+      <Button label="Stay" tone="neutral" surface="outline" onclick={stay} />
+    </span>
+    <Button label="Discard and leave" tone="info" surface="solid" onclick={discardAndLeave} />
+  {:else}
+    <span class="unsaved" role="status">
+      {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : draftNeedsRestart ? '.' : ''}`}
+      {#if draftNeedsRestart}<span>Restart msgvault to apply these changes.</span>{/if}
+    </span>
+    <Button label="Discard" disabled={saving} onclick={discard} />
+    <Button
+      disabled={saving || inference.busy || incompleteDrafts > 0}
+      tone="info"
+      surface="solid"
+      label={saving ? 'Saving…' : 'Save changes'}
+      onclick={() => void saveSettings()}
+    />
+  {/if}
 {/snippet}
 
-{#snippet row(setting: SettingState, group: SettingsGroup)}
-  {@const label = settingLabel(setting)}
-  {@const flag = rowFlag(setting, group)}
-  {@const readOnly = isReadOnly(setting)}
-  {@const hint = readOnly ? '' : (setting.validation?.hint ?? '')}
-  {@const off = readOnly ? undefined : setting.validation?.off}
-  {@const switchedOff = isSwitchedOff(setting, off)}
+<!-- One setting: a switch, a key, or a labelled field. -->
+{#snippet control(setting: SettingState)}
+  {@const text = rowLabel(setting)}
+  {@const on = Boolean(currentValue(setting))}
   <div
-    class="row"
-    class:row--changed={isDirty(setting.key)}
-    class:row--host={readOnly}
+    class="setting"
+    class:setting--switch={isSwitch(setting)}
+    class:setting--changed={isDirty(setting.key)}
     data-setting-key={setting.key}
     tabindex="-1"
   >
-    <div class="row__text">
-      <span class="row__label">
-        {label}{#if isDirty(setting.key)}<span class="kit-sr-only"> (unsaved)</span>{/if}
-      </span>
-      {#if setting.description}<span class="row__hint">{setting.description}</span>{/if}
-    </div>
-
-    <div class="row__control">
-      <div class="row__widgets">
-        {#if readOnly}
-          {@const value = readOnlyValue(setting)}
-          {#if value === 'Not set' || value === 'None'}
-            <span class="row__value row__value--unset">{value}</span>
+    {#if isSwitch(setting)}
+      <Toggle ariaLabel={text} checked={on} onchange={(checked) => setDraft(setting.key, checked)} />
+      <span class="setting__label">{text}</span>
+    {:else}
+      <span class="setting__label">{text}</span>
+      <div class="setting__control">
+        {#if setting.kind === 'secret'}
+          {@const shown = pendingSecret(setting.secret, secretUpdates[setting.key])}
+          {#if setting.credential_id}
+            <ProviderCredentialControl
+              {client}
+              credentialID={setting.credential_id}
+              label={text}
+              credentialState={setting.secret}
+              {credentialETag}
+              disabledReason={credentialDisabledReason(setting.credential_id)}
+              restartRequired={Boolean(setting.restart_required)}
+              onSaved={credentialSaved}
+              onConflict={() => loadSettings(true)}
+            />
           {:else}
-            <span class="row__value" data-mono>{value}</span>
-          {/if}
-          <Chip size="xs" tone="muted" uppercase={false}>Host-managed</Chip>
-        {:else if setting.kind === 'secret' && setting.credential_id}
-          <ProviderCredentialControl
-            {client}
-            credentialID={setting.credential_id}
-            {label}
-            credentialState={setting.secret}
-            {credentialETag}
-            disabledReason={credentialDisabledReason(setting.credential_id)}
-            restartRequired={Boolean(setting.restart_required)}
-            onSaved={credentialSaved}
-            onConflict={credentialConflict}
-          />
-        {:else if setting.kind === 'secret'}
-          {@const shown = secretShown(setting)}
           <SecretField
-            {label}
+            label={text}
             configured={shown.configured}
             hint={shown.hint}
             source={setting.secret?.source}
-            applyNote="Applied when you save changes."
+            disabled={setting.secret?.source === 'environment'}
             onreplace={(value) => {
-              setSecret(setting.key, value);
+              setSecret(setting, value);
               return true;
             }}
-            onclear={shown.configured ? () => clearSecret(setting.key) : undefined}
+            onclear={shown.configured
+              ? () => clearSecret(setting)
+              : undefined}
           />
-        {:else if optionValues(setting).length > 0}
-          <label class="row__field" data-size="md">
-            <span class="kit-sr-only">{label}</span>
-            <SelectDropdown
-              value={stringValue(setting)}
-              title={label}
-              options={optionValues(setting).map((option) => ({
-                value: option,
-                label: optionLabel(option),
-              }))}
-              onchange={(value) => setDraft(setting.key, value)}
-            />
-          </label>
-        {:else if setting.kind === 'boolean'}
-          <Toggle
-            ariaLabel={label}
-            checked={Boolean(currentValue(setting))}
-            onchange={(checked) => setDraft(setting.key, checked)}
-          />
+          {/if}
         {:else}
-          {#if off}
-            <Toggle
-              ariaLabel={`Set ${label}`}
-              checked={!switchedOff}
-              onchange={(on) => switchSetting(setting, off, on)}
-            />
-          {/if}
-          {#if off && switchedOff}
-            <span class="row__value row__value--off">{off.label}</span>
-          {:else if setting.validation?.format === 'cron'}
-            <div class="row__field" data-size="cron">
-              <CronField
-                {label}
-                value={stringValue(setting)}
-                required={setting.validation?.required}
-                oninput={(value) => setDraft(setting.key, value)}
-              />
-            </div>
-          {:else if setting.kind === 'integer' || setting.kind === 'number'}
-            <label class="row__field" data-size="xs" data-mono>
-              <span class="kit-sr-only">{label}</span>
-              <NumberInput
-                block
-                value={numberFieldValue(setting)}
-                step={numberFieldStep(setting)}
-                min={off?.on_minimum ?? setting.validation?.minimum}
-                max={setting.validation?.maximum}
-                required={setting.validation?.required || off !== undefined}
-                invalid={drafts[setting.key] === ''}
-                oninput={(value) => setDraft(setting.key, value === null ? '' : value)}
-              />
-            </label>
-          {:else}
-            <label class="row__field" data-size={off ? 'sm' : 'lg'}>
-              <span class="kit-sr-only">{label}</span>
-              <TextInput
-                value={stringValue(setting)}
-                block
-                oninput={(value) =>
-                  setDraft(
-                    setting.key,
-                    setting.kind === 'string_array'
-                      ? value
-                          .split(',')
-                          .map((item) => item.trim())
-                          .filter(Boolean)
-                      : value,
-                  )}
-              />
-            </label>
-          {/if}
-        {/if}
-        {#if flag}
-          <Chip size="xs" tone={flag === 'Needs restart' ? 'warning' : 'info'} uppercase={false}>{flag}</Chip>
+          <SettingField
+            {setting}
+            label={text}
+            value={currentValue(setting)}
+            optionLabels={OPTION_LABELS[setting.key]}
+            onchange={(value) => setDraft(setting.key, value)}
+          />
         {/if}
       </div>
-      {#if hint && !switchedOff}<small class="row__format">{hint}</small>{/if}
-    </div>
+      {#if setting.validation?.hint}<small class="setting__hint">{setting.validation.hint}</small>{/if}
+    {/if}
+    {#if isDirty(setting.key)}<span class="kit-sr-only"> (unsaved)</span>{/if}
   </div>
+{/snippet}
+
+{#snippet blocks(list: readonly Block[])}
+  {#each list as block, index (index)}
+    {#if block.description || block.rows.some(row => rowFields(row).length > 0)}
+    <section class="block" aria-label={block.title}>
+      {#if block.title}
+        <div class="block__head">
+          <h3>{block.title}</h3>
+          {#if block.description}<p class="setting__hint">{block.description}</p>{/if}
+        </div>
+      {/if}
+      <div class="rows">
+      {#each block.rows as row, rowIndex (rowIndex)}
+        {@const fields = rowFields(row)}
+        {#if fields.length > 0}
+          <div class="row">
+            <div class="fields" class:fields--pair={fields.length > 1}>
+              {#each fields as setting (setting.key)}{@render control(setting)}{/each}
+            </div>
+            <!-- An untitled block's description belongs to the switch that leads it. -->
+            {#if rowIndex === 0 && !block.title && block.description}<p class="setting__hint">{block.description}</p>{/if}
+          </div>
+        {/if}
+      {/each}
+      </div>
+    </section>
+    {/if}
+  {/each}
 {/snippet}
 
 <main class="settings" bind:this={root} aria-label="Settings">
   <div class="settings-header">
-    <PageHeader title="Settings" description="How this daemon and the web app behave." />
+    <PageHeader title="Settings">
+      {#snippet actions()}
+        {#if activeCategory === 'overview'}
+          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" onclick={() => (statusRevision += 1)}><RefreshCwIcon size={16} /></IconButton></span>
+        {/if}
+      {/snippet}
+    </PageHeader>
   </div>
   {#if loading}
-    <p class="state" role="status">Loading settings…</p>
+    <p class="state" role="status">Loading…</p>
+  {:else if !loaded}
+    <EmptyState title="Can't load settings"><Button label="Retry" onclick={() => void loadSettings(false)} /></EmptyState>
   {:else}
     <SettingsLayout
       {categories}
-      bind:active={() => resolvedCategory, selectCategory}
+      bind:active={() => activeCategory, selectCategory}
       title=""
-      footer={resolvedCategory === 'carddav' || resolvedCategory === 'people' || dirtyCount === 0
-        ? undefined
-        : settingsFooter}
+      footer={pendingLeave || dirtyCount > 0 ? settingsFooter : undefined}
     >
       {#snippet panel(activeId)}
         <div class="notices">
-          {#if plainHTTPWarning}
-            <Notice
-              tone="warning"
-              message="This browser session uses plain HTTP, so its cookie cannot use the Secure flag. Prefer HTTPS for remote access."
-            />
+          {#if plainHTTPWarning && activeId === 'server'}
+            <Notice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
+          {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
           {#if pendingRestart}
-            <p class="notice notice--pending" role="status">
-              <strong>Saved.</strong> Restart the daemon to apply these changes.
-            </p>
+            <p class="notice notice--pending" role="status">Saved. Restart msgvault to apply these changes.</p>
           {/if}
         </div>
 
-        {#if activeId === 'carddav'}
-          <h2 class="kit-sr-only">CardDAV settings</h2>
-          <p class="own-save">{OWN_SAVE_NOTE}</p>
+        <h2 id="settings-category-heading" tabindex="-1">{label}</h2>
+
+        <fieldset class="settings-fields" disabled={saving}>
+        {#if activeId === 'overview'}
+          {#if !statusSettled}
+            <p class="state" role="status">Loading…</p>
+          {:else if !lanes}
+            <EmptyState title="Can't load status"><Button label="Retry" onclick={() => (statusRevision += 1)} /></EmptyState>
+          {:else}
+            <SettingsOverview {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
+          {/if}
+        {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
             {client}
             {settings}
@@ -707,67 +607,13 @@
             {onCardDAVRequestConsumed}
             onSettingsRefresh={() => loadSettings(true)}
           />
-        {:else if activeId === 'people'}
-          <p class="own-save">{OWN_SAVE_NOTE}</p>
-          <PeopleInferenceSettings {client} />
         {:else}
-          {#each settingsGroups.filter((candidate) => candidate.id === activeId) as group (group.id)}
-            {@const posture = restartPosture(group.settings)}
-            <header class="category">
-              <h2 id="settings-category-heading" tabindex="-1">{group.label}</h2>
-              {#if group.description}<p>{group.description}</p>{/if}
-              <p class="posture" data-posture={posture}>
-                {#if posture === 'live'}
-                  <ZapIcon size={12} aria-hidden="true" />
-                {:else if posture === 'none'}
-                  <LockIcon size={12} aria-hidden="true" />
-                {:else}
-                  <RotateCwIcon size={12} aria-hidden="true" />
-                {/if}
-                {postureText(posture)}
-              </p>
-              {#if group.id === 'browser'}<p class="posture-note">{APPEARANCE_NOTE}</p>{/if}
-            </header>
+          {@render blocks(layout.blocks)}
 
-            {#if group.sections.length > 0}
-              {#each group.sections as section (section.id)}
-                <SettingsSection title={section.label} description={sectionDescription(section) || undefined}>
-                  {@const firstOwnSave = section.settings.find(isCredentialControl)?.key}
-                  {#each section.settings as setting (setting.key)}
-                    {#if setting.key === firstOwnSave}<p class="own-save">{OWN_SAVE_NOTE}</p>{/if}
-                    {@render row(setting, group)}
-                  {/each}
-                </SettingsSection>
-              {/each}
-            {:else}
-              <Card padding="sm">
-                {@const firstOwnSave = group.settings.find(isCredentialControl)?.key}
-                <div class="rows">
-                  {#each group.settings as setting (setting.key)}
-                    {#if setting.key === firstOwnSave}<p class="own-save">{OWN_SAVE_NOTE}</p>{/if}
-                    {@render row(setting, group)}
-                  {/each}
-                </div>
-              </Card>
-            {/if}
-
-            {#if group.id === 'enrichment'}
-              <p class="posture posture--providers" data-posture="live">
-                <ZapIcon size={12} aria-hidden="true" />
-                Provider API keys apply right away.
-              </p>
-              <p class="own-save">{OWN_SAVE_NOTE}</p>
+          {#if activeId === 'enrichment'}
+            <section class="block" aria-label="Providers">
+              <h3>Providers</h3>
               <div class="provider-list">
-                {#each ['exa', 'sixtyfour'] as kind}
-                  <PersonEnrichmentProviderCreator
-                    {client}
-                    kind={kind as ProviderSetting['kind']}
-                    existingNames={providers.map((provider) => provider.name)}
-                    configETag={etag}
-                    onSaved={providerSaved}
-                    onConflict={providerConflict}
-                  />
-                {/each}
                 {#each providers as provider (provider.name)}
                   <PersonEnrichmentProviderCard
                     {client}
@@ -775,21 +621,71 @@
                     configETag={etag}
                     {credentialETag}
                     onSaved={providerSaved}
-                    onConfigConflict={providerConflict}
+                    onConfigConflict={() => loadSettings(true)}
                     onCredentialSaved={credentialSaved}
-                    onCredentialConflict={credentialConflict}
+                    onCredentialConflict={() => loadSettings(true)}
                   />
                 {/each}
+                <div class="provider-add">
+                  {#each ['exa', 'sixtyfour'] as kind (kind)}
+                    <PersonEnrichmentProviderCreator
+                      {client}
+                      kind={kind as ProviderSetting['kind']}
+                      existingNames={providers.map((provider) => provider.name)}
+                      configETag={etag}
+                      onSaved={providerSaved}
+                      onConflict={() => loadSettings(true)}
+                    />
+                  {/each}
+                </div>
               </div>
-            {/if}
-          {/each}
+            </section>
+            <PeopleInferenceSettings {client} controller={inference} />
+          {/if}
+
+          {#if layout.advanced.length > 0 || layout.config.length > 0}
+          <div class="disclosures">
+          {#if layout.advanced.length > 0}
+            <details class="disclosure">
+              <summary>Advanced</summary>
+              <div class="fields fields--list">
+                {#each layout.advanced as setting (setting.key)}{@render control(setting)}{/each}
+              </div>
+            </details>
+          {/if}
+
+          {#if layout.config.length > 0}
+            <details class="disclosure">
+              <summary>Set in config.toml</summary>
+              <dl class="config">
+                {#each layout.config as setting (setting.key)}
+                  <div data-setting-key={setting.key}>
+                    <dt>{rowLabel(setting)}</dt>
+                    <dd data-mono>{readOnlyValue(setting)}</dd>
+                  </div>
+                {/each}
+              </dl>
+            </details>
+          {/if}
+          </div>
+          {/if}
         {/if}
+        </fieldset>
       {/snippet}
     </SettingsLayout>
   {/if}
 </main>
 
 <style>
+  .settings-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-7);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
   .settings {
     display: flex;
     flex: 1;
@@ -797,6 +693,7 @@
     min-height: 0;
     width: 100%;
     background: var(--bg-surface);
+    line-height: 1.45;
   }
   .settings-header {
     --page-header-gap: 0px;
@@ -805,22 +702,22 @@
   .settings :global(.kit-settings) {
     background: var(--bg-surface);
   }
+  .settings :global(.kit-settings__panel),
+  .settings :global(.kit-settings__footer) {
+    padding: var(--pane-pad-y) var(--pane-pad-x);
+  }
+  @media (max-width: 760px) {
+    /* Title, category tabs, and fields share one left edge. */
+    .settings-header {
+      padding-inline: var(--pane-pad-x);
+    }
+    .settings :global(.kit-settings__sidebar) {
+      padding-inline: calc(var(--pane-pad-x) - var(--space-4));
+    }
+  }
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {
     color: color-mix(in srgb, var(--accent-blue) 92%, var(--text-primary));
-  }
-  .settings :global(.kit-settings__panel),
-  .settings :global(.kit-settings-section__header),
-  .settings :global(.kit-settings-section__body) {
-    padding: var(--pane-pad-y) var(--pane-pad-x);
-  }
-  .settings :global(.kit-settings__footer) {
-    padding: var(--pane-pad-y) var(--pane-pad-x);
-    gap: var(--control-gap);
-  }
-  /* Section titles sit one step above row labels so the two levels read apart. */
-  .settings :global(.kit-settings-section__title) {
-    font-size: var(--font-size-lg);
   }
   .state {
     padding: var(--space-6);
@@ -832,11 +729,11 @@
   }
   .notices {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--field-gap);
   }
   .notices :global(.kit-notice) {
     padding: var(--pane-pad-y) var(--pane-pad-x);
-    gap: var(--space-3);
+    gap: var(--control-gap);
   }
   .notice {
     margin: 0;
@@ -846,9 +743,7 @@
     background: var(--status-warning-bg);
     color: var(--status-warning-ink);
     font-size: var(--font-size-sm);
-  }
-  .notice strong {
-    font-weight: 650;
+    line-height: 1.45;
   }
   .notice--error {
     border-color: var(--status-error-ink);
@@ -856,180 +751,142 @@
     color: var(--status-error-ink);
   }
 
-  .category {
-    display: grid;
-    gap: var(--space-1);
-  }
-  .category h2 {
+  h2 {
     margin: 0;
+    line-height: 1.2;
     font-size: var(--font-size-xl);
-    font-weight: 650;
+    font-weight: var(--font-weight-semibold);
     letter-spacing: -0.01em;
   }
-  .category p {
+  h3 {
     margin: 0;
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-    line-height: 1.45;
-  }
-  .posture {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin: var(--space-2) 0 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-  .posture--providers {
-    margin: 0;
-  }
-  .category .posture-note {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-  .own-save {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-  .posture :global(svg) {
-    flex-shrink: 0;
-  }
-  .posture[data-posture='live'] :global(svg) {
-    color: var(--accent-green);
-  }
-  .posture[data-posture='restart'] :global(svg),
-  .posture[data-posture='mixed'] :global(svg) {
-    color: var(--accent-amber);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
   }
 
-  .rows {
-    display: flex;
-    flex-direction: column;
-    gap: var(--section-gap);
-  }
-  .row {
+  .block {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-6);
-    align-items: center;
-    border-radius: var(--radius-sm);
-  }
-  .row:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 6px;
-  }
-  .row__text {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-5);
     min-width: 0;
   }
-  .row__label {
+  .block__head,
+  .row {
+    display: grid;
+    gap: var(--control-gap);
+    min-width: 0;
+  }
+  .rows,
+  .fields {
+    display: grid;
+    gap: var(--section-gap);
+    min-width: 0;
+  }
+  .fields--pair {
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: var(--section-gap);
+    align-items: start;
+  }
+  .fields--list {
+    gap: var(--section-gap);
+    margin-top: var(--field-gap);
+  }
+
+  /* A switch sits first, then its label and status. Other settings put the
+     label above the field. */
+  .setting {
+    display: grid;
+    gap: var(--control-gap);
+    min-width: 0;
+    border-radius: var(--radius-sm);
+  }
+  .setting:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 4px;
+  }
+  .setting--switch {
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    justify-content: start;
+    gap: var(--control-gap);
+  }
+  .setting__label {
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+  }
+  .setting--switch .setting__label {
+    /* Centering the line box leaves the letters looking high beside the switch. */
+    position: relative;
+    top: 1px;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
-    font-weight: 500;
   }
-  .row--host .row__label {
-    color: var(--text-secondary);
-  }
-  .row--changed .row__label::after {
+  .setting--changed .setting__label::after {
     content: '';
     display: inline-block;
     width: 6px;
     height: 6px;
-    margin-left: 8px;
+    margin-left: var(--space-4);
     border-radius: 50%;
     background: var(--accent-amber);
     vertical-align: middle;
   }
-  .row__hint {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    line-height: 1.45;
-  }
-  .row__control {
-    display: grid;
-    justify-items: end;
-    gap: var(--space-1);
-    max-width: 30rem;
-  }
-  .row__widgets {
+  .setting__control {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
-    gap: var(--space-3);
+    gap: var(--control-gap);
     min-width: 0;
   }
-  .row__field {
-    display: block;
-    min-width: 0;
-  }
-  .row__field[data-size='xs'] {
-    width: 6.5rem;
-  }
-  /* Values beside a switch are short sizes or durations such as 512MiB. */
-  .row__field[data-size='sm'] {
-    width: 9rem;
-  }
-  .row__field[data-size='md'] {
-    width: 13rem;
-  }
-  .row__field[data-size='lg'] {
-    width: 15rem;
-  }
-  /* A schedule is one line: presets, the expression when custom, and the
-     zone. Cron text is short, so the line fits without wrapping. */
-  .row__field[data-size='cron'] {
-    width: 100%;
-    max-width: 30rem;
-  }
-  .row__format {
+  .setting__hint {
+    margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-    line-height: 1.4;
-    text-align: right;
+    line-height: 1.45;
   }
-  .row__value {
-    color: var(--text-primary);
+
+  .disclosures {
+    display: grid;
+    gap: var(--field-gap);
+  }
+  .disclosure[open] {
+    padding-bottom: var(--space-5);
+  }
+  .disclosure summary {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+  .config {
+    display: grid;
+    gap: var(--field-gap);
+    margin: var(--field-gap) 0 0;
+  }
+  .config div {
+    display: grid;
+    grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+    gap: var(--section-gap);
     font-size: var(--font-size-sm);
   }
-  .row__value--unset,
-  .row__value--off {
-    color: var(--text-muted);
+  .config dt {
+    color: var(--text-secondary);
+  }
+  .config dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-primary);
   }
   .provider-list {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--field-gap);
+  }
+  .provider-add {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--control-gap);
   }
   .unsaved {
     margin-right: auto;
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
-  }
-  :global(.confirmation) {
-    margin-right: auto;
-  }
-
-  @media (max-width: 640px) {
-    .row {
-      grid-template-columns: 1fr;
-      gap: var(--space-3);
-    }
-    .row__control {
-      justify-items: start;
-      max-width: none;
-    }
-    .row__widgets {
-      justify-content: flex-start;
-      flex-wrap: wrap;
-    }
-    .row__format {
-      text-align: left;
-    }
-    .row__field[data-size] {
-      width: 100%;
-      max-width: 20rem;
-    }
+    line-height: 1.45;
   }
 </style>

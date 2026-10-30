@@ -28,8 +28,9 @@ export async function mockArchiveLayout(page: Page) {
   await page.route('**/api/v1/settings', (route) => route.fulfill({
     headers: { ETag: '"synthetic-settings"' },
     json: {
-      groups: [{ id: 'browser', label: 'Appearance', description: 'How the web app looks.' }],
+      groups: [{ id: 'browser', label: 'Appearance', description: 'How the web app looks.' }, { id: 'archive', label: 'Archive' }],
       settings: [
+        { key: 'activity.timezone', group: 'archive', label: 'Timezone', kind: 'string', value: { string: 'UTC' }, validation: { hint: 'UTC or an IANA name such as America/New_York.', required: true }, restart_required: true },
         { key: 'web.theme', group: 'browser', label: 'Theme', description: 'Light, dark, or follow the system.', kind: 'string', value: { string: 'system' }, options: ['system', 'light', 'dark'], restart_required: true },
         { key: 'web.density', group: 'browser', label: 'Density', description: 'Spacing of tables and toolbars.', kind: 'string', value: { string: 'compact' }, options: ['compact', 'comfortable'], restart_required: true }
       ],

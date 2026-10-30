@@ -63,7 +63,7 @@ export const OPERATION_SETUP: Readonly<Partial<Record<OperationKind, OperationSe
     kind: 'settings', target: { settingsCategory: 'search', settingsAuthority: 'visual_attachments' }
   },
   person_enrichment: { kind: 'settings', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
-  person_sweep: { kind: 'settings', target: { settingsCategory: 'people', settingsAuthority: '' } },
+  person_sweep: { kind: 'settings', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
   document_extraction: DOCUMENT_INDEX_SETUP,
   document_embedding: DOCUMENT_SEARCH_SETUP
 };

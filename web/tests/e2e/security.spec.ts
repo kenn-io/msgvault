@@ -144,8 +144,9 @@ test('daemon API key stays host-managed and never crosses the browser settings w
 	await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
 	await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await page.getByRole('button', { name: 'Server', exact: true }).click();
+	await page.getByText('Set in config.toml', { exact: true }).click();
 	await expect(page.getByText('dae…key')).toBeVisible();
-	await expect(page.getByText('Host-managed values are set in config.toml on the daemon host.')).toBeVisible();
 	await expect(page.getByLabel('New API key')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: /^(Add|Replace) API key$/ })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
