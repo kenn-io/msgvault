@@ -478,6 +478,9 @@ func (b *Backend) activateGeneration(
 	if n == 0 {
 		return b.activateGateError(ctx, tx, gen, force)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_checkpoints WHERE generation_id IN (SELECT id FROM index_generations WHERE state = 'retired')`); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit activate generation %d: %w", gen, err)
 	}
@@ -600,6 +603,9 @@ func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID,
 		return fmt.Errorf("delete retired generation %d person embeddings: %w", gen, err)
 	}
 	// Scan-and-fill has no per-generation queue to reap.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_checkpoints WHERE generation_id = $1`, int64(gen)); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit retire generation %d: %w", gen, err)
 	}

@@ -470,6 +470,51 @@ func (s *Store) RenewDocumentVectorChunkClaim(
 	return leaseUntil, nil
 }
 
+// ReleaseDocumentVectorChunkClaim makes unfinished work immediately available
+// to another pass and refunds claims that were never submitted.
+func (s *Store) ReleaseDocumentVectorChunkClaim(
+	ctx context.Context, generationID int64, token, owner string, fence int64, submitted bool, now time.Time,
+) error {
+	if err := validateDocumentVectorClaimReference(generationID, token, owner, fence, now); err != nil {
+		return err
+	}
+	now = normalizeDocumentVectorTime(now)
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		state, currentTarget, err := s.lockDocumentVectorGeneration(q, generationID)
+		if err != nil {
+			return err
+		}
+		// Retirement blocks publication, while the outstanding owner can still
+		// release its fenced lease and preserve submitted-attempt accounting.
+		if state != DocumentVectorGenerationRetired && (state != DocumentVectorGenerationBuilding || !currentTarget) {
+			return ErrDocumentVectorInvalidGenerationState
+		}
+		refund := 0
+		if !submitted {
+			refund = 1
+		}
+		result, err := q.Exec(`
+			UPDATE document_vector_publications
+			SET lease_owner = NULL, lease_until = NULL,
+			    attempt_count = attempt_count - ?, updated_at = ?
+			WHERE generation_id = ? AND token = ? AND state = 'pending'
+			  AND lease_owner = ? AND lease_fence = ?`,
+			refund, s.dialect.TimestampParam(now), generationID, token, owner, fence)
+		if err != nil {
+			return fmt.Errorf("release document vector chunk claim: %w", err)
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read document vector claim release result: %w", err)
+		}
+		if updated != 1 {
+			return ErrDocumentVectorClaimLost
+		}
+		return nil
+	})
+}
+
 func (s *Store) CommitDocumentVectorPublication(
 	ctx context.Context,
 	generationID int64,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/search"
 )
 
@@ -15,6 +16,50 @@ type GenerationID int64
 // inputs. Providers may partially complete only a leading document prefix.
 type DocumentInput struct {
 	Chunks []string
+}
+
+// DocumentEmbedder embeds documents in one or more provider requests and
+// returns the completed leading document prefix with any error.
+type DocumentEmbedder interface {
+	EmbedDocuments(ctx context.Context, documents []DocumentInput) ([][][]float32, error)
+}
+
+// DocumentRequestEmbedder reports each packed request before dispatch and after completion.
+type DocumentRequestEmbedder interface {
+	DocumentEmbedder
+	EmbedDocumentRequests(ctx context.Context, documents []DocumentInput, started func(first, count int), completed DocumentRequestFunc) error
+}
+
+// DocumentRequestFunc receives one completed provider request: the index of
+// its first document and its documents' vectors. An error stops the requests
+// that remain.
+type DocumentRequestFunc func(first int, vectors [][][]float32) error
+
+// EmbedDocumentRequests calls started before dispatch, then passes each response to completed
+// before the next request is sent, so the caller can save it first. A
+// provider that does not expose its requests reports its completed prefix once.
+func EmbedDocumentRequests(
+	ctx context.Context, embedder DocumentEmbedder, documents []DocumentInput, started func(first, count int), completed DocumentRequestFunc,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if jobctx.PreemptionRequested(ctx) {
+		return jobctx.ErrYieldedToWaiter
+	}
+	if requests, ok := embedder.(DocumentRequestEmbedder); ok {
+		return requests.EmbedDocumentRequests(ctx, documents, started, completed)
+	}
+	if started != nil {
+		started(0, len(documents))
+	}
+	vectors, err := embedder.EmbedDocuments(ctx, documents)
+	if len(vectors) > 0 {
+		if completedErr := completed(0, vectors); completedErr != nil {
+			return errors.Join(completedErr, err)
+		}
+	}
+	return err
 }
 
 // SourceBasis identifies the source text used for chunk offsets.
@@ -324,6 +369,8 @@ type Stats struct {
 
 // Backend is the minimum contract a vector store must implement.
 type Backend interface {
+	EmbeddingCheckpoints() EmbeddingCheckpoints
+
 	// CreateGeneration starts (or resumes) a building generation.
 	// fingerprint is stored verbatim on the row; pass
 	// Config.GenerationFingerprint() so a later config change (model,

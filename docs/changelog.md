@@ -40,6 +40,13 @@ All notable changes to msgvault, grouped by release.
   their detected audio MIME type and use shared Docbank audio delivery under
   `all_sources_upload_consent`; the audio path currently accepts up to 1 GiB.
 
+- Automatic message, person, and document indexing yields to queued syncs after
+  one minute and ends each pass after five minutes. It saves completed provider
+  requests before resuming behind waiting work.
+- Sources and CardDAV show when a waiting sync entered the queue. CardDAV tracks
+  scheduled syncs while its page is visible and refreshes address books and
+  history after completion, including runs that finished while hidden.
+
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.
