@@ -2544,6 +2544,23 @@ and `scheduler_started_at`. Compare queued state and the last successful sync
 to detect a source that is waiting too long. Health's `operation.label` names
 the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
+Each finished sync run also reports `outcome`: `completed`, `unmeasured`, or
+`failed`. Running, cancelled, and paused runs omit it. A run is `unmeasured`
+when it could not show that it read a live source, so "0 new messages" must
+not be read as "nothing happened". `reason` names the cause:
+
+- `fda_denied`: macOS Full Disk Access is missing.
+- `source_missing`: the source database does not exist.
+- `writer_not_running`: WhatsApp for Mac was closed and the run added and
+  updated nothing.
+
+`last_successful_sync` skips unmeasured runs, so it shows when the source was
+last read while it could change. `read_started_at` is when the run began
+reading, and `source_mtime` is the newest modification time of the source
+database or its write-ahead log, so it shows how old the data was.
+`writer_alive` is set only for the WhatsApp Mac source when the daemon runs on
+macOS and could check for the WhatsApp process.
+
 ---
 
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
