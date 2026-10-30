@@ -226,14 +226,12 @@ func TestTaskMessageLookupErrorClassification(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name      string
-		identity  bool
 		storeErr  error
 		wantCode  int
 		wantError string
 	}{
 		{name: "wrapped not found", storeErr: fmt.Errorf("message 42: %w", store.ErrMessageNotFound), wantCode: http.StatusNotFound, wantError: "not_found"},
 		{name: "deadline exceeded", storeErr: context.DeadlineExceeded, wantCode: http.StatusServiceUnavailable, wantError: "query_timeout"},
-		{name: "canceled during identity", identity: true, wantCode: http.StatusServiceUnavailable, wantError: "identity_unavailable"},
 		{name: "canceled", storeErr: context.Canceled, wantCode: http.StatusServiceUnavailable, wantError: "query_canceled"},
 		{name: "storage failure", storeErr: errors.New("disk I/O error"), wantCode: http.StatusInternalServerError, wantError: "internal_error"},
 	} {
@@ -243,26 +241,12 @@ func TestTaskMessageLookupErrorClassification(t *testing.T) {
 			buf := &bytes.Buffer{}
 			logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 			srv := taskLinkServerWithStore(t, &taskLinkMessageStore{mockStore: &mockStore{}, err: tc.storeErr}, logger, &fakeTaskLinkOperations{})
-			ctx := t.Context()
-			messageID := int64(42)
-			if tc.identity {
-				f := storetest.New(t)
-				messageID = f.CreateMessage("cancelled-identity")
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				defer cancel()
-				srv = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{Store: f.Store, cancel: cancel}, Logger: logger, TaskLinkOperations: &fakeTaskLinkOperations{}})
-			}
 			for _, endpoint := range []struct{ method, path, body string }{
 				{http.MethodGet, "/api/v1/messages/42/tasks", ""},
 				{http.MethodPost, "/api/v1/messages/42/tasks", `{"task_id":"task-1","added_at":"2026-07-19T01:02:03Z"}`},
 				{http.MethodDelete, "/api/v1/messages/42/tasks/task-1", ""},
 			} {
-				if tc.identity && endpoint.method != http.MethodGet {
-					continue
-				}
-				path := strings.Replace(endpoint.path, "/42/", fmt.Sprintf("/%d/", messageID), 1)
-				req := httptest.NewRequestWithContext(ctx, endpoint.method, path, strings.NewReader(endpoint.body))
+				req := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(endpoint.body))
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("X-Api-Key", "test-key")
 				req.Header.Set("X-Request-ID", "browser-request-1")
@@ -279,6 +263,24 @@ func TestTaskMessageLookupErrorClassification(t *testing.T) {
 			}
 		})
 	}
+	t.Run("canceled during identity", func(t *testing.T) {
+		require := require.New(t)
+		f := storetest.New(t)
+		id := f.CreateMessage("cancelled-identity")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{Store: f.Store, cancel: cancel},
+			Logger: testLogger(), TaskLinkOperations: &fakeTaskLinkOperations{},
+		})
+		request := httptest.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/tasks", id), nil)
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+		var got ErrorResponse
+		require.NoError(json.Unmarshal(response.Body.Bytes(), &got))
+		require.Equal("identity_unavailable", got.Error)
+	})
 }
 
 func TestTaskLinkAPIsRejectNonEmailConcreteRows(t *testing.T) {
