@@ -1,6 +1,5 @@
 import type { CardDAVConnectionResponse } from '../api/generated/models';
 import { cardDAVRepairCopy } from '../carddav/account-settings';
-import type { SourceFailure } from './labels';
 
 type Status = CardDAVConnectionResponse['status'];
 
@@ -28,11 +27,11 @@ export function contactLabel(connection: CardDAVConnectionResponse): string {
 }
 
 /** The repair reason shown before opening Contacts settings. */
-export function contactFailure(connection: CardDAVConnectionResponse): SourceFailure | undefined {
+export function contactFailure(connection: CardDAVConnectionResponse): string | undefined {
   const { status } = connection;
-  if (status.repair_reason) return { reason: cardDAVRepairCopy[status.repair_reason] };
+  if (status.repair_reason) return cardDAVRepairCopy[status.repair_reason];
   if ((status.latest?.state === 'failed' || status.latest?.state === 'partial') && status.latest.error_message) {
-    return { reason: status.latest.error_message.split('\n')[0]!.trim() };
+    return status.latest.error_message.split('\n')[0]!.trim();
   }
   return undefined;
 }

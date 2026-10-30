@@ -2,7 +2,6 @@
   import { reportError } from '../../telemetry/actions';
   import {
     listCardDAVConnections as generatedListCardDAVConnections,
-    syncCardDAV as generatedSyncCardDAV,
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
   } from '../../api/generated/api/api';
@@ -10,6 +9,8 @@
   import { onDestroy, onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVConnectionResponse, SourceStatus } from '../../api/generated/models';
+  import { CardDAVController } from '../../carddav/controller.svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
   import { sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
@@ -46,10 +47,18 @@
   } = $props();
 
   let sources = $state<Source[]>([]);
-  let contacts = $state<CardDAVConnectionResponse[]>([]);
+  let connections = $state<CardDAVConnectionResponse[]>([]);
+  const contactControllers = new SvelteMap<string, CardDAVController>();
+  const contacts = $derived(connections.map(connection => ({
+    ...connection,
+    status: contactControllers.get(connection.connection)?.status ?? connection.status,
+  })));
+  let contactsLoading = $state(true);
+  let contactsRequest: AbortController | undefined;
   let selected = $state<string>();
   let adding = $state(false);
   let loading = $state(true);
+  const initialLoading = $derived((loading || contactsLoading) && !sources.length && !contacts.length);
   let lockStatusStale = $state(false);
   let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
   let statusError = $state('');
@@ -85,30 +94,62 @@
       if (document.hidden) {
         stopPolling();
         loading = false;
+        contactsRequest?.abort();
+        contactsLoading = false;
       } else {
         pollDelay = MIN_POLL_MS;
-        void load();
+        refresh();
       }
     };
     document.addEventListener('visibilitychange', visibilityChanged);
-    void load();
+    refresh();
     return () => document.removeEventListener('visibilitychange', visibilityChanged);
   });
   onDestroy(() => {
     disposed = true;
     stopPolling();
+    contactsRequest?.abort();
+    for (const controller of contactControllers.values()) controller.destroy();
   });
 
-  async function loadContacts(signal: AbortSignal): Promise<void> {
+  async function loadContacts(): Promise<void> {
+    if (disposed || document.hidden) {
+      contactsLoading = false;
+      return;
+    }
+    if (!connections.length) contactsLoading = true;
+    contactsRequest?.abort();
+    const request = contactsRequest = new AbortController();
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
       const { data } = await generatedListCardDAVConnections({ ...client, signal });
-      if (signal.aborted) return;
+      if (signal.aborted || disposed) return;
       if (!data) throw new Error();
-      contacts = data.connections.filter((connection) => !connection.orphaned);
-      if (contacts.length) loading = false;
+      connections = data.connections.filter((connection) => !connection.orphaned);
+      const names = new Set(connections.map(connection => connection.connection));
+      for (const [name, controller] of contactControllers) {
+        if (!names.has(name)) {
+          controller.destroy();
+          contactControllers.delete(name);
+        }
+      }
+      for (const connection of connections) {
+        let controller = contactControllers.get(connection.connection);
+        if (!controller) {
+          controller = new CardDAVController(client, document, connection.connection);
+          controller.status = connection.status;
+          contactControllers.set(connection.connection, controller);
+        }
+        void controller.retryStatus();
+      }
       contactsError = '';
     } catch {
-      if (!signal.aborted || signal.reason?.name === 'TimeoutError') contactsError = "Can't load contacts.";
+      if (!request.signal.aborted && !disposed) contactsError = "Can't load contacts.";
+    } finally {
+      if (contactsRequest === request) {
+        contactsRequest = undefined;
+        contactsLoading = false;
+      }
     }
   }
   function stopPolling(clearAwaiting = true): void {
@@ -141,7 +182,6 @@
     if (disposed || document.hidden) return;
     if (
       !allowIdle &&
-      !contacts.some(contact => contact.status.active) &&
       !sources.some((source) => syncRunning(source) || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
       awaitingSourceID === undefined
     )
@@ -159,12 +199,11 @@
       loading = false;
       return;
     }
-    if (sources.length === 0 && contacts.length === 0) loading = true;
+    if (!sources.length) loading = true;
     const requestGeneration = ++generation;
     controller?.abort();
     const requestController = (controller = new AbortController());
     const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
-    const contactsLoad = loadContacts(signal);
     try {
       const { data, error: responseError } = await generatedListSourceStatus(undefined, { ...client, signal });
       if (requestGeneration !== generation || disposed) return;
@@ -172,8 +211,6 @@
       const next = data.sources ?? [];
       sources = next;
       if (next.length) loading = false;
-      await contactsLoad;
-      if (requestGeneration !== generation || disposed) return;
       let nextDelay: number | undefined;
       let lockHoldPoll = false;
       let advanced = false;
@@ -207,7 +244,7 @@
           pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         }
       }
-      const hasActiveSync = next.some(syncRunning) || contacts.some(contact => contact.status.active);
+      const hasActiveSync = next.some(syncRunning);
       const hasLockHold = next.some(schedulerHoldsSyncLock);
       if (hasActiveSync) {
         lockHoldPolls = 0;
@@ -231,14 +268,13 @@
         schedulePoll(nextDelay, false, lockHoldPoll);
       }
     } catch (cause) {
-      await contactsLoad;
       if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
       if (signal.aborted && signal.reason?.name === 'TimeoutError') {
         statusError = 'Loading source status timed out. The server may be busy; retry in a moment.';
       } else {
         statusError = cause instanceof Error ? cause.message : 'Unable to load source status.';
       }
-      if (!hasLoadedStatus && !contacts.some(contact => contact.status.active)) return;
+      if (!hasLoadedStatus) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
         !sources.some(syncRunning) && awaitingSourceID === undefined) {
         lockStatusStale = true;
@@ -304,21 +340,14 @@
     }
   }
   async function syncContacts(connection: CardDAVConnectionResponse): Promise<void> {
-    if (triggering || !contactCanSync(connection.status)) return;
-    triggering = `contacts:${connection.connection}`;
-    triggerError = '';
-    try {
-      const { data, error: responseError } = await generatedSyncCardDAV(
-        { full: false, connection: connection.connection },
-        client,
-      );
-      if (!data) throw new Error(messageFor(responseError, "Can't sync contacts."));
-    } catch (cause) {
-      if (!disposed) triggerError = cause instanceof Error ? cause.message : "Can't sync contacts.";
-    } finally {
-      triggering = undefined;
-      if (!disposed) { refresh(); onStatusChange(); }
-    }
+    await contactControllers.get(connection.connection)?.sync();
+    if (!disposed) onStatusChange();
+  }
+  function staleLastResult(source: Source): boolean {
+    const resultAt = source.latest_sync?.completed_at ?? source.latest_sync?.started_at;
+    if (!resultAt) return false;
+    const timestamp = Date.parse(resultAt);
+    return Number.isFinite(timestamp) && Date.now() - timestamp > 24 * 60 * 60 * 1000;
   }
   function label(source: Source): string {
     return source.display_name || source.identifier;
@@ -335,6 +364,7 @@
     statusError = '';
     pollDelay = MIN_POLL_MS;
     void load();
+    void loadContacts();
   }
   function toggle(key: string): void {
     const next = selected === key ? undefined : key;
@@ -377,9 +407,9 @@
       <span>{triggerError}</span>
       <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
     </div>{/if}
-  {#if loading}<p class="muted" role="status">Loading…</p>
+  {#if initialLoading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
-    {#if !statusError && !contactsError}<EmptyState title="No sources yet" /><CommandLine command={ADD_SOURCE_COMMAND} />{/if}
+    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" /><CommandLine command={ADD_SOURCE_COMMAND} />{/if}
   {:else}
     <Table ariaLabel="Sources" zebra={false} class="source-table" unsorted>
       {#snippet header()}
@@ -406,7 +436,7 @@
               <span class="muted">{sourceTypeLabel(source.source_type)}</span>
             </div>
           </td>
-          <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span>{/if}</div></td>
+          <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}</div></td>
           <td>{@render lastGood(source.last_successful_sync?.completed_at)}</td>
           <td class="action">
             {#if source.can_sync || syncing(source)}
@@ -432,6 +462,7 @@
         <tr class="group"><th scope="rowgroup" colspan="4">Contacts</th></tr>
         {#each contacts as connection (connection.connection)}
           {@const key = `contacts:${connection.connection}`}
+          {@const controller = contactControllers.get(connection.connection)!}
           {@const state = contactRunState(connection.status)}
           {@const chip = operationStateChip(state ?? 'Never synced')}
           <tr class:selected={selected === key} aria-selected={selected === key} onclick={() => toggle(key)}>
@@ -449,17 +480,21 @@
                 <span class="muted">Contacts</span>
               </div>
             </td>
-            <td><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip></td>
+            <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
+              {#if controller.statusError}<span class="muted" role="alert">{controller.statusError}</span><Button size="sm" label="Retry" onclick={() => void controller.retryStatus()} />{/if}
+              {#if controller.syncError}<span class="muted" role="alert">{controller.syncError}</span>{/if}
+              {#if controller.syncStatus}<span class="muted" role="status">{controller.syncStatus}</span>{/if}
+            </div></td>
             <td>{@render lastGood(contactLastGood(connection.status))}</td>
             <td class="action">
-              {#if contactCanSync(connection.status) || triggering === key}
+              {#if contactCanSync(connection.status) || controller.syncPending}
                 <Button
                   size="sm"
                   tone="info"
                   surface="soft"
-                  label={triggering === key ? 'Syncing…' : 'Sync now'}
+                  label={controller.syncPending ? 'Syncing…' : 'Sync now'}
                   ariaLabel={`Sync now ${contactLabel(connection)}`}
-                  disabled={Boolean(triggering)}
+                  disabled={!controller.canSync}
                   onclick={(event) => {
                     event.stopPropagation();
                     void syncContacts(connection);
@@ -490,7 +525,7 @@
 {:else if selectedContact}
   <ContactPanel
     connection={selectedContact}
-    syncing={triggering === selected}
+    controller={contactControllers.get(selectedContact.connection)!}
     onSync={() => void syncContacts(selectedContact)}
     onclose={() => (selected = undefined)}
     onOpenSettings={() => onOpenSettings('carddav')}
