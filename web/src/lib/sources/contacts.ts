@@ -31,7 +31,7 @@ export function contactLabel(connection: CardDAVConnectionResponse): string {
 export function contactFailure(connection: CardDAVConnectionResponse): SourceFailure | undefined {
   const { status } = connection;
   if (status.repair_reason) return { reason: cardDAVRepairCopy[status.repair_reason] };
-  if (status.latest?.state === 'failed' && status.latest.error_message) {
+  if ((status.latest?.state === 'failed' || status.latest?.state === 'partial') && status.latest.error_message) {
     return { reason: status.latest.error_message.split('\n')[0]!.trim() };
   }
   return undefined;

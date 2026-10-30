@@ -112,18 +112,32 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
   });
 
-  it('groups contacts and polls a contacts-only run through completion', async () => {
+  it.each(['ready', 'failed'])('keeps contacts visible while polling %s mail status through completion', async mail => {
     vi.useFakeTimers();
-    let reads = 0;
-    const fetch = api([], url => url.pathname.endsWith('/carddav/connections') ? Response.json({ connections: [{ ...contact, status: { ...contact.status, active: ++reads === 1 ? { ...contact.status.latest, state: 'running', finished_at: null } : null } }] }) : undefined);
+    let reads = 0, finish!: (response: Response) => void;
+    const fetch = vi.fn<typeof globalThis.fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/sources/status')) return mail === 'ready' ? Response.json({ sources: [] }) : Response.json({ message: 'Mail status unavailable' }, { status: 500 });
+      if (path.endsWith('/carddav/connections')) {
+        if (++reads === 1) return Response.json({ connections: [{ ...contact, status: { ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null } } }] });
+        return new Promise<Response>(resolve => { finish = resolve; });
+      }
+      return Response.json({}, { status: 404 });
+    });
     const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByRole('rowheader', { name: 'Contacts' })).toBeDefined();
-    expect(screen.getByText('Running')).toBeDefined();
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(screen.getByText('Succeeded')).toBeDefined();
-    expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
-    view.unmount();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      const table = screen.getByRole('table', { name: 'Sources' });
+      expect(within(table).getByText('Running')).toBeDefined();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(reads).toBe(2);
+      expect(screen.getByRole('table', { name: 'Sources' })).toBe(table);
+      expect(screen.queryByText('Loading…')).toBeNull();
+      finish(Response.json({ connections: [contact] }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(within(table).getByText('Succeeded')).toBeDefined();
+      expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+    } finally { view.unmount(); }
   });
 
   it('shows the add-account command when there are no sources, and from Add source', async () => {
@@ -684,11 +698,21 @@ it('publishes source rows while the optional contacts request waits', async () =
   view.unmount();
 });
 
+it.each(['failed', 'partial'])('shows the latest contacts %s error in the account panel', async state => {
+  const connection = { ...contact, status: { ...contact.status, latest: { ...contact.status.latest, state, error_code: 'upstream_failed', error_message: 'CardDAV server request failed.' } } };
+  const view = render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [connection]), []) });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for user-a' }));
+    expect(within(screen.getByRole('region', { name: 'Failure' })).getByText('CardDAV server request failed.')).toBeDefined();
+  } finally { view.unmount(); }
+});
+
 it('shows OAuth app repair instructions for contacts rather than assuming expiry', async () => {
   const onOpenSettings = vi.fn();
-  render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [{ ...contact, status: { ...contact.status, repair_reason: 'google_authorization_required' } }]), []), onOpenSettings });
+  render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [{ ...contact, status: { ...contact.status, repair_reason: 'google_authorization_required', latest: { ...contact.status.latest, state: 'partial', error_code: 'upstream_failed', error_message: 'CardDAV server request failed.' } } }]), []), onOpenSettings });
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for user-a' }));
   expect(screen.getByRole('region', { name: 'Failure' })).toBeDefined();
+  expect(screen.queryByText('CardDAV server request failed.')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Open Settings › Contacts' }));
   expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('carddav');
 });

@@ -159,7 +159,7 @@
       loading = false;
       return;
     }
-    if (sources.length === 0) loading = true;
+    if (sources.length === 0 && contacts.length === 0) loading = true;
     const requestGeneration = ++generation;
     controller?.abort();
     const requestController = (controller = new AbortController());
@@ -238,7 +238,7 @@
       } else {
         statusError = cause instanceof Error ? cause.message : 'Unable to load source status.';
       }
-      if (!hasLoadedStatus) return;
+      if (!hasLoadedStatus && !contacts.some(contact => contact.status.active)) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
         !sources.some(syncRunning) && awaitingSourceID === undefined) {
         lockStatusStale = true;
