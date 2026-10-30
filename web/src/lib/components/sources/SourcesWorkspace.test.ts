@@ -64,7 +64,7 @@ describe('SourcesWorkspace', () => {
 
   it('reports each rejected click despite an unchanged stored run', async () => {
     const events: unknown[] = [];
-    const fetchFn = api([source({ latest_sync: run('failed', 0) }), source({ id: 2, display_name: 'Waiting', identifier: 'waiting@example.com', can_sync: false, scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: run('completed', 5) })], (_url, request) =>
+    const fetchFn = api([source({ latest_sync: run('failed', 0) }), source({ id: 2, display_name: 'Waiting', identifier: 'waiting@example.com', can_sync: false, scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: run('completed', 5) }), source({ id: 3, display_name: 'Executing', identifier: 'executing@example.com', scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z', active_sync: null, latest_sync: run('completed', 5) })], (_url, request) =>
       request.method === 'POST' ? Response.json({ message: 'Credentials unavailable' }, { status: 500 }) : undefined
     );
     render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
@@ -72,6 +72,14 @@ describe('SourcesWorkspace', () => {
     const queued = screen.getByRole('row', { name: /Waiting/ });
     expect(within(queued).getByText('Queued')).toBeDefined();
     expect(within(queued).getByText('Sync queued')).toBeDefined();
+    const executing = screen.getByRole('row', { name: /Executing/ });
+    expect(within(executing).getByText('Running')).toBeDefined();
+    expect(within(executing).getByText('Syncing…')).toBeDefined();
+    await fireEvent.click(within(executing).getByRole('button', { name: 'Details for Executing' }));
+    const panel = screen.getByRole('dialog', { name: 'Executing' });
+    expect(within(panel).getByText('Running')).toBeDefined();
+    expect(within(panel).queryByText('Sync queued')).toBeNull();
+    await fireEvent.click(within(executing).getByRole('button', { name: 'Details for Executing' }));
     expect(events).toEqual([]);
     for (const count of [1, 2]) {
       await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
