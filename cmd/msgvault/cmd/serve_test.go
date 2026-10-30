@@ -392,7 +392,7 @@ func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.FailNow("runServe returned before listener-start barrier", "error: %v", err)
-	case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the listener-start barrier keeps runServe from returning
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the listener-start barrier keeps runServe from returning
 	}
 
 	close(release)
@@ -821,14 +821,14 @@ func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 				return
 			}
 		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls runServe's real TCP listener
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls runServe's real TCP listener
 	}
 	require.FailNow(t, "serve health endpoint did not become ready")
 }
 
 func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 	t.Helper()
-	client := &http.Client{Timeout: 100 * time.Millisecond}
+	client := &http.Client{Timeout: 2 * time.Second}
 	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
 	deadline := time.Now().Add(serveLifecycleTestTimeout)
 	for time.Now().Before(deadline) {
@@ -845,7 +845,7 @@ func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 				return
 			}
 		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls runServe's real TCP listener
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls runServe's real TCP listener
 	}
 	require.FailNow(t, "serve health endpoint did not become ready")
 }

@@ -2,7 +2,7 @@ export const ARCHIVED_CONTENT_CHANNEL = 'msgvault-archived-content';
 export const MAX_ARCHIVED_SCROLL_DELTA = 10_000;
 export const MAX_ARCHIVED_FRAME_HEIGHT = 65_536;
 
-// The frame's executable and styling surface is exactly two same-origin
+// The frame's executable and styling surface is three same-origin
 // static assets. Everything the frame needs beyond archived HTML travels as
 // data attributes on <html>: the message-scoped bridge nonce, the validated
 // shell origin messages are pinned to, and the rendering mode/scheme the
@@ -15,6 +15,7 @@ export const MAX_ARCHIVED_FRAME_HEIGHT = 65_536;
 // blocked by the inherited policy; same-origin URLs satisfy both.
 export const ARCHIVED_FRAME_SCRIPT_PATH = '/archived-frame.js';
 export const ARCHIVED_FRAME_STYLE_PATH = '/archived-frame.css';
+export const ARCHIVED_FRAME_SCROLLBAR_PATH = '/scrollbar.css';
 
 export type FrameColorScheme = 'light' | 'dark';
 
@@ -68,6 +69,7 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
   const origin = exactHTTPOrigin(options.targetOrigin);
   const bridgeURL = `${origin}${ARCHIVED_FRAME_SCRIPT_PATH}`;
   const styleURL = `${origin}${ARCHIVED_FRAME_STYLE_PATH}`;
+  const scrollbarURL = `${origin}${ARCHIVED_FRAME_SCROLLBAR_PATH}`;
   const csp = [
     "default-src 'none'",
     "connect-src 'none'",
@@ -79,13 +81,13 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
     'img-src data:',
     "media-src 'none'",
     "font-src data:",
-    // Stylesheet elements stay pinned to the exact same-origin asset; style
+    // Stylesheet elements stay pinned to the exact same-origin assets; style
     // attributes are allowed because they only ever carry declarations that
     // survived the sanitizer's inline-style allowlist (no url()/position/
     // expression surface). Browsers without -elem/-attr support fall back to
     // the strict style-src and simply render designed mail colorless.
-    `style-src ${escapeAttribute(styleURL)}`,
-    `style-src-elem ${escapeAttribute(styleURL)}`,
+    `style-src ${escapeAttribute(styleURL)} ${escapeAttribute(scrollbarURL)}`,
+    `style-src-elem ${escapeAttribute(styleURL)} ${escapeAttribute(scrollbarURL)}`,
     "style-src-attr 'unsafe-inline'",
     `script-src ${escapeAttribute(bridgeURL)}`,
     "object-src 'none'",
@@ -105,6 +107,7 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(csp)}">` +
     '<meta name="referrer" content="no-referrer">' +
     `<link rel="stylesheet" href="${escapeAttribute(styleURL)}">` +
+    `<link rel="stylesheet" href="${escapeAttribute(scrollbarURL)}">` +
     `</head><body>${encodedBody(options.html)}` +
     `<script src="${escapeAttribute(bridgeURL)}"></script></body></html>`;
 }

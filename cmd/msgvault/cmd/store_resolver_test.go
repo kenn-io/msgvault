@@ -1202,7 +1202,7 @@ func TestProbeLocalDaemonAuthRespectsParentDeadline(t *testing.T) {
 	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint("secret"))
 	c := lifecycleTestConfig(t.TempDir())
 	c.Server.APIKey = "secret"
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the health handler blocks until the request ends
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the health handler blocks until the request ends
 	t.Cleanup(cancel)
 
 	err := probeLocalDaemonAuth(ctx, rt, c)
@@ -1393,7 +1393,7 @@ func TestWaitForUsableBackgroundRuntimeWaitsWhileChildInitializing(t *testing.T)
 	require.NoError(err, "write runtime record")
 
 	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
-		context.Background(), dataDir, config.DaemonAutoRestartNewer, 750*time.Millisecond,
+		context.Background(), dataDir, config.DaemonAutoRestartNewer, 750*time.Millisecond, //nolint:kennlint // deadlinetest: the wait must expire while the live child has no usable endpoint
 	)
 	require.NoError(err, "wait should reach the timeout path without error")
 	assert.Nil(rt, "initializing child is not yet usable")

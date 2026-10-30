@@ -1,10 +1,7 @@
 name: Frontend shell commands
 
 on:
-  pull_request:
-    paths:
-      - 'web/**'
-      - '.github/workflows/frontend-shell.yml'
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -15,9 +12,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' && github.ref) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   windows-shell:
     runs-on: windows-2025
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: step-security/setup-bun@v2.1.3

@@ -2,16 +2,19 @@ name: Workflow validation
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/**"
+  workflow_call:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' && github.ref) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   actionlint:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: step-security/jactionlint@v2.2.0

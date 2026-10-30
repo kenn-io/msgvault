@@ -261,7 +261,7 @@
 {/if}
 
 <style>
-  .review-centre { display: grid; gap: var(--space-5); padding: var(--space-5) var(--page-gutter) var(--space-4); }
+  .review-centre { --page-header-parent-gap: var(--space-5); display: grid; gap: var(--space-5); padding: var(--space-5) var(--page-gutter) var(--space-4); }
   .review-toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   h2, p { margin: 0; }
   .identity-review { display: grid; gap: var(--space-4); }

@@ -912,7 +912,25 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 |---|---|---|
 | `rate_limit_qps` | `5` | Scales Gmail's local quota-unit refill rate: `5` allows 250 units/second; `3` allows 150. Gmail values above `5` are capped at `5`. Also sets Microsoft Teams Graph requests/second, without that cap, so lowering it slows Teams imports too. Reduce it if Gmail reports quota errors; Google's [project quotas](https://developers.google.com/workspace/gmail/api/reference/quota) can be lower than this local budget. |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
+| `imap_skip_folders` | `{}` | Per-IMAP-account folders excluded from scheduled syncs and manual syncs without folder flags |
 | `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
+
+To skip folders on every sync, key `imap_skip_folders` by the exact `ACCOUNT`
+identifier printed by `msgvault list-accounts`:
+
+```toml
+[sync]
+imap_skip_folders = { "imaps://user@example.com@imap.example.com:993" = ["Trash", "Junk"] }
+```
+
+Folder names match exactly and case-insensitively. Use the full name for nested
+folders, with no wildcards. Restart the daemon after editing the file.
+Either `--folder` or `--skip-folder` replaces the saved filter for one run.
+Sync warns when an account key matches no stored IMAP source or a folder name
+matches no selectable mailbox. Unmatched folders stay configured and will be
+excluded if created later. Blank saved folder names prevent daemon startup.
+See [IMAP folder filtering](usage/imap.md#what-filtering-changes) for the effects
+on archive membership, deletion tracking, cursor advancement, and `gc`.
 
 Remote image archiving is **off by default**. Enabling it contacts
 sender-controlled servers and can activate tracking pixels or disclose the

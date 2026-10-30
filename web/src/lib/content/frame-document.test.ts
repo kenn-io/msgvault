@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildFrameDocument } from './frame-document';
+import { ARCHIVED_FRAME_SCROLLBAR_PATH, buildFrameDocument } from './frame-document';
 
 describe('buildFrameDocument', () => {
   it('denies network and authorizes only the same-origin bridge and stylesheet', async () => {
@@ -14,8 +14,9 @@ describe('buildFrameDocument', () => {
     expect(document).toContain("connect-src 'none'");
     expect(document).toContain("media-src 'none'");
     expect(document).toContain('script-src https://archive.example/archived-frame.js');
-    expect(document).toContain('style-src https://archive.example/archived-frame.css');
-    expect(document).toContain('style-src-elem https://archive.example/archived-frame.css');
+    expect(document).toContain(`style-src https://archive.example/archived-frame.css https://archive.example${ARCHIVED_FRAME_SCROLLBAR_PATH}`);
+    expect(document).toContain(`style-src-elem https://archive.example/archived-frame.css https://archive.example${ARCHIVED_FRAME_SCROLLBAR_PATH}`);
+    expect(document).toContain(`<link rel="stylesheet" href="https://archive.example${ARCHIVED_FRAME_SCROLLBAR_PATH}">`);
     // Only style attributes get the inline allowance — they carry nothing but
     // declarations that survived the sanitizer's inline-style allowlist.
     expect(document).toContain("style-src-attr 'unsafe-inline'");

@@ -726,7 +726,7 @@
   {/if}
 
   {#if meetingScope}
-    <div class="meeting-overview" data-scroll>
+    <div class="meeting-overview">
       <MeetingPanel {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>

@@ -26,10 +26,15 @@ jobs:
           - goarch: amd64
             runner: ubuntu-24.04
             go_arch_name: amd64
+            job_timeout: 27
+            test_timeout: 5m
           - goarch: arm64
             runner: ubuntu-24.04-arm
             go_arch_name: arm64
+            job_timeout: 13
+            test_timeout: 5m
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.job_timeout }}
     container:
       image: ubuntu:26.04
     steps:
@@ -88,10 +93,11 @@ jobs:
           echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
 
       - name: Test built CLI on a synthetic archive
-        run: make test-cli-e2e MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
+        run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
   checks:
     runs-on: ubuntu-26.04
+    timeout-minutes: 37
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -134,6 +140,7 @@ jobs:
 
   test:
     runs-on: ubuntu-26.04
+    timeout-minutes: 38
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -152,10 +159,10 @@ jobs:
 
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
-        run: make test-unsharded
+        run: make test-unsharded TEST_TIMEOUT=17m
 
       - name: Test build without vector backends
-        run: go test -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
+        run: go test -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -173,11 +180,18 @@ jobs:
         include:
           - name: cli
             package: ./cmd/msgvault/cmd
+            job_timeout: 22
+            test_timeout: 15m
           - name: store
             package: ./internal/store
+            job_timeout: 17
+            test_timeout: 10m
           - name: api
             package: ./internal/api
+            job_timeout: 13
+            test_timeout: 5m
     runs-on: ubuntu-26.04
+    timeout-minutes: ${{ matrix.job_timeout }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -195,11 +209,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}"
 
   test-macos-15:
     if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: macos-26
+    timeout-minutes: 79
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -214,13 +229,14 @@ jobs:
           group: macos
 
       - name: Test
-        run: make test
+        run: make test TEST_TIMEOUT=39m
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
 
   frontend:
     runs-on: ubuntu-26.04
+    timeout-minutes: 33
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -314,6 +330,7 @@ jobs:
 
   web-e2e:
     runs-on: ubuntu-26.04
+    timeout-minutes: 31
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -364,6 +381,8 @@ jobs:
   large-archive-benchmark:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
+    # The sparse benchmark sample is warm; allow for measured macOS query compilation.
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -392,6 +411,7 @@ jobs:
 
   test-windows:
     runs-on: windows-2025
+    timeout-minutes: 47
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -474,6 +494,7 @@ jobs:
 
   lint-windows:
     runs-on: windows-2025
+    timeout-minutes: 64
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -512,6 +533,7 @@ jobs:
 
   test-windows-slow-packages:
     runs-on: windows-2025
+    timeout-minutes: 21
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -540,7 +562,7 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
-          $output = go test -v -timeout 60m -tags "fts5 sqlite_vec" `
+          $output = go test -v -timeout 9m -tags "fts5 sqlite_vec" `
             ./internal/api `
             ./internal/importer `
             ./scripts 2>&1
@@ -560,20 +582,23 @@ jobs:
         include:
           # A 4-core runner is already saturated by one package's shards, so the
           # two slowest packages each split across 3 runners.
-          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 60m }
-          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 60m }
-          - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 60m }
-          - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 60m }
-          - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 60m }
-          - { name: store-3, package: ./internal/store, part: 3, parts: 3, timeout: 60m }
+          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 36m, job_timeout: 45 }
+          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 45 }
+          - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 36m, job_timeout: 64 }
+          - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 30m, job_timeout: 38 }
+          - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 30m, job_timeout: 38 }
+          - { name: store-3, package: ./internal/store, part: 3, parts: 3, timeout: 30m, job_timeout: 58 }
           - name: sync-vector-embed
+            job_timeout: 66
             package: ./internal/sync
             package2: ./internal/vector/embed
-            timeout: 60m
+            timeout: 40m
           - name: vector-sqlite
+            job_timeout: 30
             package: ./internal/vector/sqlitevec
-            timeout: 60m
+            timeout: 9m
     runs-on: windows-2025
+    timeout-minutes: ${{ matrix.job_timeout }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -616,8 +641,9 @@ jobs:
           }
 
   test-windows-pack-restore:
+    if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -665,6 +691,7 @@ jobs:
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
     runs-on: ubuntu-26.04
+    timeout-minutes: 109
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -708,12 +735,13 @@ jobs:
       # binaries open connections to the one service container at once. See
       # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
   test-postgres:
     runs-on: ubuntu-26.04
+    timeout-minutes: 55
     services:
       postgres:
         image: postgres:16
@@ -753,13 +781,12 @@ jobs:
       # against a pgvector/pgvector image. That is why this runs test-pg-shipped
       # (BUILD_TAGS) and not test-pg (PG_TEST_TAGS, which include pgvector).
       #
-      # The target carries the same 60m timeout as `make test`:
-      # the heavy DuckDB packages can exceed go test's 10m per-package default
-      # on a contended runner.
+      # Heavy DuckDB packages can exceed go test's 10m per-package default
+      # on a contended runner. Leave time for stack output inside the job cap.
       # The three largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped-unsharded
+        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -774,13 +801,20 @@ jobs:
       matrix:
         include:
           - name: cli
+            job_timeout: 36
+            test_timeout: 18m
             package: ./cmd/msgvault/cmd
           - name: store
+            job_timeout: 84
+            test_timeout: 71m
             package: ./internal/store
           - name: api
+            job_timeout: 30
+            test_timeout: 8m
             package: ./internal/api
             followups: true
     runs-on: ubuntu-26.04
+    timeout-minutes: ${{ matrix.job_timeout }}
     services:
       postgres:
         image: postgres:16
@@ -818,15 +852,15 @@ jobs:
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
         id: postgres-shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}"
 
       - name: Test PostgreSQL library without CGO
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
-        run: make test-pg-nocgo
+        run: make test-pg-nocgo TEST_TIMEOUT=5m
 
       # Run store concurrency tests after the API package test, away from the store package shard.
       # Five repetitions catch intermittent lost updates and uniqueness races.
       - name: Concurrency tests (-count=5)
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
         run: |
-          go test -tags fts5 -count=5 -run 'Concurrent' ./internal/store
+          go test -timeout 7m -tags fts5 -count=5 -run 'Concurrent' ./internal/store

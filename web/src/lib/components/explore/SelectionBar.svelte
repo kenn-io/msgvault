@@ -172,12 +172,11 @@
 <style>
   .selection-bar {
     display: flex;
-    min-height: 36px;
     flex: 0 0 auto;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-3) var(--space-4);
-    padding: var(--space-1) var(--space-4);
+    gap: var(--control-gap) var(--field-gap);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border-top: 1px solid var(--border-default);
     background: var(--bg-surface);
     color: var(--text-muted);
@@ -194,7 +193,7 @@
     flex-basis: 100%;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-3) var(--space-4);
+    gap: var(--control-gap) var(--field-gap);
   }
 
   .menu-item-text {

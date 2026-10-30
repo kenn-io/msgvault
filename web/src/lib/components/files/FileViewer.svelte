@@ -311,7 +311,7 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
-    padding: var(--space-5);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     background: var(--bg-inset);
   }
   .preview img {
@@ -346,7 +346,7 @@
   }
   .state-message,
   .error {
-    padding: var(--space-5);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
     color: var(--text-secondary);

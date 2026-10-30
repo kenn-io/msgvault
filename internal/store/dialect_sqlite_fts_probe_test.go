@@ -24,6 +24,9 @@ func newFTSProbeDB(tb testing.TB, columnsizeZero bool) *sql.DB {
 		options = ", columnsize=0"
 	}
 	_, err = db.Exec("CREATE VIRTUAL TABLE messages_fts USING fts5(text" + options + ")")
+	if err != nil && strings.Contains(err.Error(), "no such module: fts5") {
+		tb.Skip("FTS5 not available")
+	}
 	req.NoError(err)
 	return db
 }
@@ -111,23 +114,47 @@ func TestSQLiteFTSProbeErrors(t *testing.T) {
 }
 
 func TestSQLiteFTSProbeQueryPlan(t *testing.T) {
-	assert := assert.New(t)
-	req := require.New(t)
-	db := newFTSProbeDB(t, false)
-	rows, err := db.Query("EXPLAIN QUERY PLAN " + sqliteFTSNeedsBackfillDocsizeSQL)
-	req.NoError(err)
-	defer func() { req.NoError(rows.Close()) }()
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		req.NoError(rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
+	for _, batch := range []bool{false, true} {
+		name := "completeness"
+		if batch {
+			name = "missing_batch"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			req := require.New(t)
+			db := newFTSProbeDB(t, false)
+			query := sqliteFTSNeedsBackfillDocsizeSQL
+			var args []any
+			if batch {
+				_, err := db.Exec(`ALTER TABLE messages ADD COLUMN subject TEXT;
+					ALTER TABLE messages ADD COLUMN message_type TEXT;
+					ALTER TABLE messages ADD COLUMN sender_id INTEGER;
+					CREATE TABLE message_bodies (message_id INTEGER PRIMARY KEY, body_text TEXT);
+					CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, phone_number TEXT);
+					CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT);
+					DROP TABLE messages_fts;
+					CREATE VIRTUAL TABLE messages_fts USING fts5(message_id UNINDEXED, subject, body, from_addr, to_addr, cc_addr)`)
+				req.NoError(err)
+				query, err = (&SQLiteDialect{}).FTSBackfillMissingBatchSQL(t.Context(), db)
+				req.NoError(err)
+				args = []any{1, 5001}
+			}
+			rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+			req.NoError(err)
+			defer func() { req.NoError(rows.Close()) }()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				req.NoError(rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			req.NoError(rows.Err())
+			plan := strings.Join(details, "\n")
+			assert.Contains(plan, "SEARCH d USING INTEGER PRIMARY KEY (rowid=?)")
+			assert.NotContains(plan, "VIRTUAL TABLE")
+		})
 	}
-	req.NoError(rows.Err())
-	plan := strings.Join(details, "\n")
-	assert.Contains(plan, "SEARCH d USING INTEGER PRIMARY KEY (rowid=?)")
-	assert.NotContains(plan, "VIRTUAL TABLE")
 }
 
 func FuzzSQLiteFTSProbePresence(f *testing.F) {

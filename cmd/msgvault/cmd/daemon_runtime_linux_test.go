@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -148,30 +149,30 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	if mode == "" {
 		t.Skip("only runs inside the PID namespace helper")
 	}
-	require := require.New(t)
+	requirements := require.New(t)
 	assert := assert.New(t)
-	require.Equal(2, os.Getpid(), "helper runs as namespace PID 2 behind Bubblewrap's init")
+	requirements.Equal(2, os.Getpid(), "helper runs as namespace PID 2 behind Bubblewrap's init")
 	dataDir := os.Getenv("MSGVAULT_TEST_PIDNS_DATA_DIR")
 	store := daemonRuntimeStore(dataDir)
 	path, err := store.Path(os.Getpid())
-	require.NoError(err)
+	requirements.NoError(err)
 	if mode != "crash" {
 		previous, err := store.Read(path)
-		require.NoError(err)
-		require.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(previous), "exercise Foreign, rather than Unknown or Gone")
-		require.True(daemon.ProcessAlive(previous.PID), "foreign PID collides with a live local process")
+		requirements.NoError(err)
+		requirements.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(previous), "exercise Foreign, rather than Unknown or Gone")
+		requirements.True(daemon.ProcessAlive(previous.PID), "foreign PID collides with a live local process")
 	}
 	if mode == "list" {
 		records, err := store.List()
-		require.NoError(err)
+		requirements.NoError(err)
 		for _, rec := range records {
 			if rec.PID != os.Getpid() {
-				require.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(rec))
-				require.False(daemon.ProcessAlive(rec.PID), "host producer's PID is absent inside the sandbox")
+				requirements.Equal(daemon.ProcessScopeForeign, daemon.RuntimeProcessScope(rec))
+				requirements.False(daemon.ProcessAlive(rec.PID), "host producer's PID is absent inside the sandbox")
 			}
 		}
 		records, err = listLiveDaemonRuntimeRecords(dataDir)
-		require.NoError(err)
+		requirements.NoError(err)
 		assert.Empty(records, "listing skips both foreign records")
 		return
 	}
@@ -182,15 +183,17 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	}
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
 	if mode == "restart" {
-		_, launchLock, err := waitForUsableBackgroundRuntimeOrLaunchLock(t.Context(), dataDir, cfg.Server.DaemonAutoRestart, 500*time.Millisecond)
-		require.NoError(err)
-		require.NotNil(launchLock, "a dead sibling must allow CLI auto-start")
-		require.NoError(launchLock.Unlock())
+		synctest.Test(t, func(t *testing.T) {
+			_, launchLock, err := waitForUsableBackgroundRuntimeOrLaunchLock(t.Context(), dataDir, cfg.Server.DaemonAutoRestart, 500*time.Millisecond)
+			require.NoError(t, err)
+			require.NotNil(t, launchLock, "a dead sibling must allow CLI auto-start")
+			require.NoError(t, launchLock.Unlock())
+		})
 	}
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	owner, err := claimServeOwnership(ctx, cfg, "127.0.0.1", 8123, "v-test")
-	require.NoError(err, "serve starts over the dead sibling record")
+	requirements.NoError(err, "serve starts over the dead sibling record")
 	if mode == "restart" {
-		t.Cleanup(func() { require.NoError(owner.Close()) })
+		t.Cleanup(func() { requirements.NoError(owner.Close()) })
 	}
 }

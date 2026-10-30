@@ -279,7 +279,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- the thread scroller is
      a keyboard-scrollable reading surface and the focus target Escape
      returns to from inside an archived content frame. -->
-<section class="conversation-view" aria-label="Conversation thread" tabindex="0" data-scroll bind:this={scroller}>
+<section class="conversation-view" aria-label="Conversation thread" tabindex="0" bind:this={scroller}>
   {#if loading && messages.length === 0}
     <p role="status">Loading conversation…</p>
   {:else if error}
@@ -341,7 +341,7 @@
   .conversation-view > [role='status'],
   .conversation-view > [role='alert'] {
     margin: 0;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }

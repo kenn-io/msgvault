@@ -740,7 +740,7 @@
                 </SettingsSection>
               {/each}
             {:else}
-              <Card padding="md">
+              <Card padding="sm">
                 {@const firstOwnSave = group.settings.find(isCredentialControl)?.key}
                 <div class="rows">
                   {#each group.settings as setting (setting.key)}
@@ -799,7 +799,8 @@
     background: var(--bg-surface);
   }
   .settings-header {
-    padding: var(--space-5) var(--page-gutter) var(--space-4);
+    --page-header-gap: 0px;
+    padding: var(--space-5) var(--page-gutter) var(--field-gap);
   }
   .settings :global(.kit-settings) {
     background: var(--bg-surface);
@@ -807,6 +808,15 @@
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {
     color: color-mix(in srgb, var(--accent-blue) 92%, var(--text-primary));
+  }
+  .settings :global(.kit-settings__panel),
+  .settings :global(.kit-settings-section__header),
+  .settings :global(.kit-settings-section__body) {
+    padding: var(--pane-pad-y) var(--pane-pad-x);
+  }
+  .settings :global(.kit-settings__footer) {
+    padding: var(--pane-pad-y) var(--pane-pad-x);
+    gap: var(--control-gap);
   }
   /* Section titles sit one step above row labels so the two levels read apart. */
   .settings :global(.kit-settings-section__title) {
@@ -825,12 +835,12 @@
     gap: var(--space-3);
   }
   .notices :global(.kit-notice) {
-    padding: var(--space-3) var(--space-4);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     gap: var(--space-3);
   }
   .notice {
     margin: 0;
-    padding: 0.75rem 1rem;
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--status-warning-ink);
     border-radius: var(--radius-md);
     background: var(--status-warning-bg);
@@ -896,7 +906,7 @@
   .rows {
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
+    gap: var(--section-gap);
   }
   .row {
     display: grid;

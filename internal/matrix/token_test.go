@@ -45,7 +45,7 @@ func TestCredentialLifecycleLockSerializesCallers(t *testing.T) {
 	select {
 	case err := <-secondDone:
 		require.FailNow("second lifecycle operation bypassed lock", "error: %v", err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // absence check: the first operation holds the lifecycle lock
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the first operation holds the lifecycle lock
 		assert.False(secondEntered.Load())
 	}
 	close(releaseFirst)

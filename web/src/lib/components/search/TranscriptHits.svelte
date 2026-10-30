@@ -168,7 +168,7 @@
   </li>
 {/snippet}
 
-<section class="transcript-hits" aria-label="Media search" tabindex="-1" data-recording-hits data-scroll>
+<section class="transcript-hits" aria-label="Media search" tabindex="-1" data-recording-hits>
   <section aria-label="Recordings">
     <header>
       <h2>Recordings{#if result && admitted && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
