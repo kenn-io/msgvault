@@ -138,7 +138,12 @@ func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
 				if err := st.SetConversationPolicyOverride(cmd.Context(), sourceID, args[1], tier); err != nil {
 					return err
 				}
-				if _, err = fmt.Fprintln(cmd.OutOrStdout(), "Conversation override enforced; analytics rebuild scheduled when enabled."); err != nil {
+				status := "Conversation override enforced; analytics rebuild scheduled when enabled."
+				if cleanupErr := cleanupConversationPolicyRuntime(cmd.Context(), st); cleanupErr != nil {
+					status += " Derived cleanup pending; the daemon retries each minute."
+					loggerFromContext(cmd.Context()).Warn("conversation policy derived cleanup pending", "error", cleanupErr)
+				}
+				if _, err = fmt.Fprintln(cmd.OutOrStdout(), status); err != nil {
 					return fmt.Errorf("write conversation policy result: %w", err)
 				}
 				return nil

@@ -267,6 +267,39 @@ func TestConversationPolicyBootstrapLimitsAndPrecedence(t *testing.T) {
 	}
 }
 
+func TestConversationPolicyTransitionWorkAndCleanupRevision(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	s := testutil.NewTestStore(t)
+	_, policyErr := s.ConfigureConversationPolicy(t.Context(), conversationpolicy.RecommendedSettings(), time.Now())
+	require.NoError(t, policyErr)
+	src, err := s.GetOrCreateSource("beeper", "work")
+	requirements.NoError(err)
+	id, err := s.EnsureConversation(src.ID, "room", "Room")
+	requirements.NoError(err)
+	message, err := s.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: id, SourceMessageID: "message", MessageType: "beeper"})
+	requirements.NoError(err)
+	s.DB().SetMaxOpenConns(1)
+	revision, err := s.ConversationPolicyRevision(t.Context())
+	requirements.NoError(err)
+	requirements.ErrorIs(s.CheckConversationPolicyWork(t.Context(), revision, []int64{message}), store.ErrConversationPolicyStale)
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Full))
+	latest, err := s.ConversationPolicyRevision(t.Context())
+	requirements.NoError(err)
+	requirements.ErrorIs(s.CheckConversationPolicyWork(t.Context(), revision, []int64{message}), store.ErrConversationPolicyStale)
+	requirements.NoError(s.CheckConversationPolicyWork(t.Context(), latest, []int64{message}))
+	target, pending, err := s.ConversationPolicyCleanupPending(t.Context())
+	requirements.NoError(err)
+	assertions.True(pending)
+	ack, err := s.AcknowledgeConversationPolicyCleanup(t.Context(), target-1)
+	requirements.NoError(err)
+	assertions.False(ack, "an earlier cleanup pass cannot acknowledge the current target")
+	ack, err = s.AcknowledgeConversationPolicyCleanup(t.Context(), target)
+	requirements.NoError(err)
+	assertions.True(ack)
+}
+
 func TestConversationPolicyTransitionPreservesArchiveContent(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

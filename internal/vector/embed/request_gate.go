@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"time"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // ErrEmbeddingProviderRedirect classifies redirects rejected by a gated
@@ -35,7 +37,7 @@ func (t beforeRequestTransport) RoundTrip(request *http.Request) (*http.Response
 }
 
 func newHTTPClient(timeout time.Duration, before BeforeRequestFunc, rejectRedirects bool) *http.Client {
-	client := &http.Client{Timeout: timeout, Transport: embeddingMeasuredTransport{base: http.DefaultTransport}}
+	client := &http.Client{Timeout: timeout, Transport: beforeRequestTransport{base: embeddingMeasuredTransport{base: http.DefaultTransport}, before: store.CheckConversationPolicyAdmission}}
 	if before != nil {
 		client.Transport = beforeRequestTransport{
 			base: client.Transport, before: before,

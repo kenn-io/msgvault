@@ -32,7 +32,8 @@ func currentConversationPolicySettingsSource(state *invocation) func() (conversa
 	}
 }
 
-// Configuration/expiry failures block consumers.
+// Configuration/expiry failures block consumers. A cleanup failure can be
+// retried because the committed policy already fences reads and publications.
 func initializeConversationPolicy(ctx context.Context, st *store.Store, cfg *config.Config, now time.Time) error {
 	if cfg == nil {
 		return errors.New("conversation policy configuration is unavailable")
@@ -47,13 +48,28 @@ func initializeConversationPolicySettings(ctx context.Context, st *store.Store, 
 	if _, err := st.ExpireConversationPolicy(ctx, now); err != nil {
 		return fmt.Errorf("expire conversation policy: %w", err)
 	}
+	if err := cleanupConversationPolicyRuntime(ctx, st); err != nil {
+		loggerFromContext(ctx).Warn("conversation policy derived cleanup pending", "error", err)
+	}
 	return nil
 }
 
 func refreshConversationPolicyRuntime(ctx context.Context, st *store.Store, settings conversationpolicy.Settings, now time.Time) error {
 	_, configureErr := st.ConfigureConversationPolicy(ctx, settings, now)
 	_, expireErr := st.ExpireConversationPolicy(ctx, now)
-	return errors.Join(configureErr, expireErr)
+	return errors.Join(configureErr, expireErr, cleanupConversationPolicyRuntime(ctx, st))
+}
+
+func cleanupConversationPolicyRuntime(ctx context.Context, st *store.Store) error {
+	_, pending, err := st.ConversationPolicyCleanupPending(ctx)
+	if err != nil || !pending {
+		return err
+	}
+	lanes, closeLanes, err := openConversationPolicyCleanupLanes(ctx, st)
+	if err != nil {
+		return err
+	}
+	return errors.Join(reconcileConversationPolicyCleanup(ctx, st, lanes), closeLanes())
 }
 
 func refreshConversationPolicyFromSource(ctx context.Context, st *store.Store, source func() (conversationpolicy.Settings, error), now time.Time) error {
@@ -65,15 +81,16 @@ func refreshConversationPolicyFromSource(ctx context.Context, st *store.Store, s
 		stored, readErr := st.ConversationPolicySettingsContext(ctx)
 		if readErr != nil {
 			_, expiryErr := st.ExpireConversationPolicy(ctx, now)
-			return errors.Join(reloadErr, readErr, expiryErr)
+			return errors.Join(reloadErr, readErr, expiryErr, cleanupConversationPolicyRuntime(ctx, st))
 		}
 		if !conversationPolicyRefreshDue(ctx, st, stored, now) {
-			return reloadErr
+			return errors.Join(reloadErr, cleanupConversationPolicyRuntime(ctx, st))
 		}
 		return errors.Join(reloadErr, refreshConversationPolicyRuntime(ctx, st, stored, now))
 	}
 	if !conversationPolicyRefreshDue(ctx, st, settings, now) {
-		return nil
+		// An idle tick still retries cleanup that an earlier pass left pending.
+		return cleanupConversationPolicyRuntime(ctx, st)
 	}
 	return refreshConversationPolicyRuntime(ctx, st, settings, now)
 }

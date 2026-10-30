@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 
 const (
 	conversationPolicySettingsKey       = "conversation_policy_settings"
+	conversationPolicyCleanupKey        = "conversation_policy_cleanup_revision"
+	conversationPolicyCleanedKey        = "conversation_policy_cleaned_revision"
 	conversationPolicyActivityExpiryKey = "conversation_policy_activity_expiry_checked_at"
 	conversationPolicyRoomBatchSize     = 256
 )
@@ -450,6 +453,9 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 		if err != nil {
 			return result, err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1 WHERE conversation_id=?`, c.row.ConversationID); err != nil {
+			return result, err
+		}
 		if err := s.enqueueConversationActivityProjectionTx(ctx, tx, c.row.ConversationID); err != nil {
 			return result, fmt.Errorf("queue activity for policy conversation %d: %w", c.row.ConversationID, err)
 		}
@@ -475,7 +481,48 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 				return result, err
 			}
 		}
+		if _, err = tx.ExecContext(ctx, advanceConversationPolicyCleanupSQL); err != nil {
+			return result, err
+		}
 	}
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(value AS BIGINT)),0) FROM archive_metadata WHERE key='conversation_policy_revision'`).Scan(&result.Revision)
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	if len(result.ChangedConversationIDs) > 0 {
+		lifecycle, captureErr := s.captureConversationPolicyRoomsTx(ctx, tx, result.ChangedConversationIDs)
+		if captureErr != nil {
+			return result, captureErr
+		}
+		if err = s.invalidateContextualParticipantMessagesTx(ctx, tx, lifecycle.participants); err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+// ConversationPolicyCleanupRevision returns the durable reconciliation target.
+func (s *Store) ConversationPolicyCleanupRevision(ctx context.Context) (int64, error) {
+	return readArchiveMetadataRevisionContext(ctx, s.db, conversationPolicyCleanupKey, "conversation-policy cleanup")
+}
+
+// AcknowledgeConversationPolicyCleanup acknowledges only the exact completed pass.
+func (s *Store) AcknowledgeConversationPolicyCleanup(ctx context.Context, expected int64) (bool, error) {
+	acknowledged := false
+	err := s.withConversationPolicyWrite(ctx, func(tx *loggedTx) error {
+		var current int64
+		err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(value AS BIGINT)),0) FROM archive_metadata WHERE key='conversation_policy_cleanup_revision'`).Scan(&current)
+		if err != nil {
+			return err
+		}
+		if current != expected {
+			return nil
+		}
+		if err = s.setConversationPolicyMetadataTx(ctx, tx, conversationPolicyCleanedKey, strconv.FormatInt(expected, 10)); err != nil {
+			return err
+		}
+		acknowledged = true
+		return nil
+	})
+	return acknowledged, err
 }

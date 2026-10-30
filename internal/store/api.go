@@ -427,7 +427,7 @@ func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int6
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.id IN (%s) AND %s
-	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get message summaries: %w", err)

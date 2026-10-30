@@ -1417,6 +1417,10 @@ CREATE TABLE IF NOT EXISTS messages (
     -- (new rows default to NULL). See schema.sql for the full contract.
     embed_gen BIGINT,
 
+    -- Per-message input revision stored independently from embed_gen so a
+    -- rebuild in another generation does not hide a current active vector.
+    embedding_revision BIGINT NOT NULL DEFAULT 0,
+
     -- Content-change watermark; see content_columns.go and schema.sql for the
     -- rationale. Stamped by the triggers EnsureTriggers creates, never by
     -- application writes.

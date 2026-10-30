@@ -565,6 +565,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		// Same database handle as the main store: pgvector embeddings
 		// live alongside messages, so there is no separate vectors.db.
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
+			PolicyStore: mainStore,
 			DB:          mainDB,
 			Dimension:   vecCfg.Embeddings.Dimension,
 			BuildScope:  vecCfg.Embed.Scope.BuildScope(),
@@ -596,6 +597,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
+			PolicyStore:     mainStore,
 			Path:            vecPath,
 			MainPath:        mainPath,
 			Dimension:       vecCfg.Embeddings.Dimension,
@@ -806,6 +808,10 @@ func newVisualRuntime(
 		return nil, errors.New("selected vector backend has no visual lane")
 	}
 	if building, err := mainStore.BuildingVisualGeneration(ctx); err == nil && building.Fingerprint != fingerprint {
+		// Revoke publication authority before enumerating tokens for deletion.
+		if err := mainStore.RetireVisualGeneration(ctx, building.ID); err != nil {
+			return nil, err
+		}
 		tokens, tokenErr := mainStore.ListVisualGenerationTokens(ctx, building.ID)
 		if tokenErr != nil {
 			return nil, tokenErr
@@ -817,9 +823,6 @@ func newVisualRuntime(
 		if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
 			return nil, err
 		}
-		if err := mainStore.RetireVisualGeneration(ctx, building.ID); err != nil {
-			return nil, err
-		}
 		// The abandoned generation is never revisited; a consumer left
 		// registered under its fingerprint would pin journal pruning forever.
 		if err := mainStore.UnregisterAttachmentChangeConsumer(ctx, "visual/"+building.Fingerprint); err != nil {
@@ -828,34 +831,37 @@ func newVisualRuntime(
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	// A retired generation for this fingerprint may still reference backend
-	// vectors if its retirement cleanup crashed or failed; Ensure refuses to
+	// A retired generation may still reference backend vectors if its
+	// retirement cleanup crashed or failed, including an abandoned generation
+	// for an older fingerprint that nothing else revisits. Ensure refuses to
 	// restart over live references, so delete those vectors and purge the
-	// ledger first.
+	// ledger first. An abandoned generation's consumer would otherwise pin
+	// attachment-journal pruning forever.
 	retired, err := mainStore.ListRetiredVisualGenerations(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, retiredGeneration := range retired {
-		if retiredGeneration.Fingerprint != fingerprint {
-			continue
-		}
 		tokens, err := mainStore.ListVisualGenerationTokens(ctx, retiredGeneration.ID)
 		if err != nil {
 			return nil, err
 		}
-		if len(tokens) == 0 {
-			continue
+		if len(tokens) > 0 {
+			vectorTokens := make([]visual.VectorToken, len(tokens))
+			for index, token := range tokens {
+				vectorTokens[index] = visual.VectorToken(token)
+			}
+			if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
+				return nil, err
+			}
+			if err := mainStore.PurgeRetiredVisualGeneration(ctx, retiredGeneration.ID); err != nil {
+				return nil, err
+			}
 		}
-		vectorTokens := make([]visual.VectorToken, len(tokens))
-		for index, token := range tokens {
-			vectorTokens[index] = visual.VectorToken(token)
-		}
-		if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
-			return nil, err
-		}
-		if err := mainStore.PurgeRetiredVisualGeneration(ctx, retiredGeneration.ID); err != nil {
-			return nil, err
+		if retiredGeneration.Fingerprint != fingerprint {
+			if err := mainStore.UnregisterAttachmentChangeConsumer(ctx, "visual/"+retiredGeneration.Fingerprint); err != nil {
+				return nil, err
+			}
 		}
 	}
 	generation, err := mainStore.EnsureVisualGeneration(ctx, store.VisualGenerationSpec{

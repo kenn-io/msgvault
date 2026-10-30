@@ -194,8 +194,10 @@ func (s *Store) checkpointDocumentVectorBuild(ctx context.Context, generationID 
 	if now.IsZero() {
 		return errors.New("document vector build checkpoint time is required")
 	}
-	var lifecycleErr error
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	var lifecycleErr, policyErr error
+	// Usage is recorded even when policy work went stale: the provider calls
+	// already happened. Only the resumable cursor needs current authority.
+	err := s.withConversationPolicyLocked(ctx, nil, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		state, currentTarget, found, err := s.lockDocumentVectorGenerationIfExists(q, generationID)
 		if err != nil {
@@ -232,6 +234,13 @@ func (s *Store) checkpointDocumentVectorBuild(ctx context.Context, generationID 
 			lifecycleErr = ErrDocumentVectorInvalidGenerationState
 			return nil
 		}
+		if err := s.CheckConversationPolicyPublicationTx(ctx, tx.Tx, nil); err != nil {
+			if !errors.Is(err, ErrConversationPolicyStale) {
+				return err
+			}
+			policyErr = err
+			return nil
+		}
 		if exhausted {
 			if _, err := q.Exec(`DELETE FROM document_vector_build_progress WHERE generation_id = ?`, generationID); err != nil {
 				return fmt.Errorf("reset document vector build cursor: %w", err)
@@ -250,7 +259,7 @@ func (s *Store) checkpointDocumentVectorBuild(ctx context.Context, generationID 
 	if err != nil {
 		return err
 	}
-	return lifecycleErr
+	return errors.Join(lifecycleErr, policyErr)
 }
 
 func (s *Store) GetDocumentVectorBuildCursor(ctx context.Context, generationID int64) (int64, error) {
