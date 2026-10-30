@@ -27,6 +27,7 @@ jobs:
       - uses: kenn-io/actions/changes@92f255293f1cfcf6998d1b87d0c2c3bb700d01e6
         id: changes
         with:
+          # Keep the Go filter aligned with ci.yml.
           filters: |
             go:
               - '!{web/**,docs/**,*.md}'
