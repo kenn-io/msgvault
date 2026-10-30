@@ -132,9 +132,14 @@ describe('ConversationView', () => {
   it('expands messages without refetching, shares Tasks status and setup, preserves cached links, and refreshes on remount', async () => {
     const lookedUp: number[] = [];
     let configured = false;
+    let releaseStatus!: () => void;
+    const statusPending = new Promise<void>(resolve => { releaseStatus = resolve; });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/tasks/status')) return Response.json({ state: configured ? 'ready' : 'disabled', message: 'Task integration is disabled.' });
+      if (path.endsWith('/tasks/status')) {
+        await statusPending;
+        return Response.json({ state: configured ? 'ready' : 'disabled', message: 'Task integration is disabled.' });
+      }
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
       if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: configured ? 'ready' : 'disabled', complete: configured, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] }); }
       return Response.json({
@@ -150,6 +155,7 @@ describe('ConversationView', () => {
 
     await screen.findByRole('article', { name: 'Message 2' });
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    releaseStatus();
 
     // Both stay expanded — a real thread, not a single-open stack.
     expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
@@ -174,15 +180,15 @@ describe('ConversationView', () => {
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(2);
   });
 
-  it('retries a rejected shared Tasks status when another message expands', async () => {
+  it('retries rejected and unreachable Tasks status so recovered creation is available', async () => {
     let statusCalls = 0;
     const client = createCaptureClient(async (input) => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/tasks/status')) {
         if (++statusCalls === 1) throw new Error('Synthetic connection failed');
-        return Response.json({ state: 'ready' });
+        return Response.json({ state: statusCalls === 2 ? 'unreachable' : 'ready' });
       }
-      if (path.endsWith('/messages/1/tasks')) return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Recovered linked task' }] });
+      if (path.endsWith('/messages/1/tasks')) return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Recovered linked task' }], outbound_metadata: {} });
       return Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
     }, telemetryEvents, telemetryRequests);
     render(ConversationView, { client, conversationId: 7, anchorId: 2 });
@@ -190,6 +196,10 @@ describe('ConversationView', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
     expect(await screen.findByText('Recovered linked task')).toBeDefined();
     expect(statusCalls).toBe(2);
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 1' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+    expect(await screen.findByRole('textbox', { name: 'Task title' })).toBeDefined();
+    expect(statusCalls).toBe(3);
   });
 
   it('collapses an expanded message back to its one-line card', async () => {
