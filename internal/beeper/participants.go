@@ -80,12 +80,16 @@ func (r *participantResolver) resolveUserForPolicy(ctx context.Context, u *User,
 	if u == nil || u.ID == "" {
 		return 0, nil
 	}
-	// Legacy namespace adoption and bare attribution remain archival normalization.
-	// No fetched profile name is written on this path before live rich admission.
-	if _, err := r.resolveID(u.ID, ""); err != nil {
+	// Legacy namespace adoption remains archival normalization. Do not create a
+	// bare participant first: rich resolution binds the identifier itself, and
+	// a premature bare row would only be merged away, with archive-wide work
+	// under the policy and identity locks. The fallback below still creates a
+	// bare participant when admission fails.
+	identifier := r.identifierForUser(u.ID)
+	if _, err := r.adoptLegacyIdentifier(u.ID, identifier); err != nil {
 		return 0, err
 	}
-	identity := store.ConversationParticipantIdentity{IdentifierType: participantIdentifierType, IdentifierValue: r.identifierForUser(u.ID), DisplayName: u.FullName}
+	identity := store.ConversationParticipantIdentity{IdentifierType: participantIdentifierType, IdentifierValue: identifier, DisplayName: u.FullName}
 	if strings.HasPrefix(u.PhoneNumber, "+") {
 		identity.Phone = u.PhoneNumber
 	} else if strings.Contains(u.Email, "@") {

@@ -1173,6 +1173,11 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 		return err
 	}
 	return s.withTx(func(tx *loggedTx) error {
+		// Take the recipient lock before any message row, as recipient
+		// replacement and sweep admission do, to keep one lock order.
+		if err := s.lockRecipientContextInvalidationTxContext(context.Background(), tx); err != nil {
+			return err
+		}
 		var newID int64
 		err := tx.QueryRow(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,

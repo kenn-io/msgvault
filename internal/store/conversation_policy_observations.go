@@ -435,11 +435,12 @@ func nativeParticipantIdentifierHistoryWhere(identifier string) string {
 // Exact native and curated name observations remain independent support; a
 // sender or roster ID alone cannot attest to the name stored on its shared row.
 // Curated profile names are read separately from this fallback.
+// Observations store trimmed names; participant rows keep the raw value.
 func FullParticipantNameWhere(id, value string) string {
 	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(
  SELECT 1 FROM participant_contact_observations name_observation
  WHERE name_observation.participant_id=` + id + ` AND name_observation.address_kind='display_name'
- AND name_observation.normalized_value=` + value + `
+ AND name_observation.normalized_value=TRIM(` + value + `)
  AND name_observation.active_until IS NULL AND name_observation.superseded_at IS NULL
  AND ` + FullObservationWhere("name_observation") + `) OR EXISTS(
  SELECT 1 FROM message_recipients name_recipient JOIN messages name_message ON name_message.id=name_recipient.message_id
