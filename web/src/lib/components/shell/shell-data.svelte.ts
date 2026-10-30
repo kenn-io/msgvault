@@ -44,6 +44,7 @@ export class ShellData {
   #controller: AbortController | undefined;
   #deletionsController?: AbortController;
   #completed = new Map<string, string | null>();
+  #batchStatuses = new Map<string, string>();
 
   constructor(client: APIClient, operations = new OperationsController(client)) {
     this.#client = client;
@@ -85,6 +86,10 @@ export class ShellData {
       const { data } = await listDeletions(undefined, client);
       if (!data || controller.signal.aborted) return;
       const batches = data.manifests ?? [];
+      for (const batch of batches) {
+        if (this.#batchStatuses.get(batch.id) !== batch.status) this.#completed.delete(batch.id);
+        this.#batchStatuses.set(batch.id, batch.status);
+      }
       const now = Date.now();
       if (batches.some(batch => batchIsRecent(batch, now, this.#completed.get(batch.id)))) this.deletionsStaged = true;
       const older = batches.filter(batch => !batchIsRecent(batch, now) && !this.#completed.has(batch.id));

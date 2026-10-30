@@ -33,7 +33,7 @@ window, so neighbouring passages overlap. The text in the
 preview is exactly what the issue quotes. To quote less, select part of the
 passage and choose **Quote selection**; **Whole passage** goes back.
 
-To quote a file, open it and choose **Create Kata issue from file**, search for
+To quote a file, open it and choose **Add to task…**, search for
 a passage, and pick one; the dialog then pages and narrows it like a message.
 This needs text that document indexing has already extracted.
 

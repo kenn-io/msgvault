@@ -1,4 +1,5 @@
 import { getSettings, patchSettings } from '../api/generated/api/api';
+import type { SettingsResponse, SettingUpdate } from '../api/generated/models';
 import type { APIClient } from '../api/client';
 import {
   isChange,
@@ -26,11 +27,7 @@ export function scalarUpdates(settings: SettingState[], drafts: Record<string, u
   return Object.entries(drafts).filter(([key]) => !settings.find(setting => setting.key === key)?.read_only).map(([key, value]) => ({ key, value: typedValue(settings.find(setting => setting.key === key), value) }));
 }
 
-/**
- * Loads the settings catalog and saves edits to a few keys through the same
- * Save changes model as the Settings page. A panel creates one, calls `load`,
- * reads values with `value`, edits with `set`, and saves with `save`.
- */
+/** Loads the settings catalog and keeps edits until the daemon accepts them. */
 export class SettingsDraft {
   settings = $state<SettingState[]>([]);
   drafts = $state<Record<string, unknown>>({});
@@ -38,7 +35,10 @@ export class SettingsDraft {
   saving = $state(false);
   pendingRestart = $state(false);
   error = $state('');
-  #etag = '';
+  etag = $state('');
+  credentialETag = $state('');
+  document = $state<SettingsResponse>();
+  conflicted = false;
   #client: APIClient;
   #controller?: AbortController;
 
@@ -72,63 +72,72 @@ export class SettingsDraft {
     this.error = '';
   }
 
-  async load(keepDrafts = true): Promise<void> {
+  async load(keepDrafts = true): Promise<boolean> {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
-    this.loading = true;
+    if (!keepDrafts) this.loading = true;
     try {
-      const { data, response } = await getSettings({ ...this.#client, signal: controller.signal });
-      if (controller.signal.aborted) return;
-      if (!data) throw new Error('Unable to load settings.');
-      this.settings = data.settings;
-      this.#etag = response.headers.get('ETag') ?? '';
+      const { data, response, error } = await getSettings({ ...this.#client, signal: controller.signal });
+      if (controller.signal.aborted) return false;
+      if (!data) throw new Error(errorMessage(error, "Can't load settings."));
+      this.accept(data, response.headers);
       this.drafts = keepDrafts ? Object.fromEntries(Object.entries(this.drafts).filter(([key, value]) => isChange(this.find(key), value))) : {};
-      this.pendingRestart = data.pending_restart;
       this.error = '';
+      return true;
     } catch (cause) {
-      if (!controller.signal.aborted) this.error = cause instanceof Error ? cause.message : 'Unable to load settings.';
+      if (!controller.signal.aborted) this.error = cause instanceof Error ? cause.message : "Can't load settings.";
+      return false;
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }
   }
 
   /** Resolves true when the daemon accepted every change. */
-  async save(): Promise<boolean> {
-    const updates = scalarUpdates(this.settings, this.drafts);
+  async save(extra: SettingUpdate[] = []): Promise<boolean> {
+    const updates = [...scalarUpdates(this.settings, this.drafts), ...extra];
     if (updates.length === 0 || this.incomplete) return false;
+    this.conflicted = false;
     this.saving = true;
     this.error = '';
     try {
       const { data, response, error } = await patchSettings(
         { updates },
-        { ...this.#client, headers: { 'If-Match': this.#etag } },
+        { ...this.#client, headers: { 'If-Match': this.etag } },
       );
       if (response.status === 412) {
         await this.load(true);
-        this.error = 'The configuration changed on disk. Review the latest values and save again.';
+        this.conflicted = true;
+        this.error = 'The settings changed on disk. The latest are loaded. Review your changes and save again.';
         return false;
       }
       if (!data) {
-        this.error =
-          typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string'
-            ? error.message
-            : 'Unable to save settings.';
+        this.error = errorMessage(error, "Can't save settings.");
         return false;
       }
-      this.settings = data.settings;
-      this.pendingRestart = data.pending_restart;
-      this.#etag = response.headers.get('ETag') ?? this.#etag;
+      this.accept(data, response.headers);
       this.drafts = {};
       return true;
     } catch (cause) {
-      this.error = cause instanceof Error ? cause.message : 'Unable to save settings.';
+      this.error = cause instanceof Error ? cause.message : "Can't save settings.";
       return false;
     } finally {
       this.saving = false;
     }
   }
 
+  private accept(data: SettingsResponse, headers: Headers): void {
+    this.document = data;
+    this.settings = data.settings;
+    this.pendingRestart = data.pending_restart;
+    this.etag = headers.get('ETag') ?? this.etag;
+    this.credentialETag = headers.get('Credential-ETag') ?? data.credential_etag ?? this.credentialETag;
+  }
+
   destroy(): void {
     this.#controller?.abort();
   }
+}
+
+function errorMessage(value: unknown, fallback: string): string {
+  return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string' && value.message ? value.message : fallback;
 }
