@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from 'svelte';
-  import { conversationTaskStatusKey, type TaskStatusLoader } from './task-status';
+  import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
   import { createBrowserRequestID } from '../../api/request-id';
   import {
     createOrLinkMessageTask as generatedCreateOrLinkMessageTask,
@@ -41,17 +41,19 @@
     title: string;
     onsettings?: () => void;
   } = $props();
-  const conversationStatus = getContext<TaskStatusLoader | undefined>(conversationTaskStatusKey);
+  const conversationStatus = getContext<ConversationTaskStatus | undefined>(conversationTaskStatusKey);
   let action = $state('create');
   let loading = $state(true);
-  let integrationState = $state('loading');
-  let integrationMessage = $state('');
+  let localStatus = $state<{ state: string; project?: string; message?: string }>({ state: 'loading' });
+  const status = $derived(conversationStatus?.latest ?? localStatus);
+  const integrationState = $derived(status.state);
+  const integrationMessage = $derived(status.message ?? 'Task integration status is unavailable.');
+  const project = $derived(status.project ?? '');
   let indexState = $state('loading');
   let complete = $state(false);
   let reason = $state('');
   let lastScan = $state('');
   let tasks = $state<Task[]>([]);
-  let project = $state('');
   let searchQuery = $state('');
   let searchResults = $state<Task[]>([]);
   let searching = $state(false);
@@ -76,14 +78,12 @@
   });
   function resetForSelection(): void {
     loading = true;
-    integrationState = 'loading';
-    integrationMessage = '';
+    localStatus = { state: 'loading' };
     indexState = 'loading';
     complete = false;
     reason = '';
     lastScan = '';
     tasks = [];
-    project = '';
     searchQuery = '';
     searchResults = [];
     searching = false;
@@ -99,14 +99,12 @@
     activeController = controller;
     resetForSelection();
     try {
-      const status = await (conversationStatus?.() ?? generatedGetTaskIntegrationStatus({
+      const status = await (conversationStatus?.load() ?? generatedGetTaskIntegrationStatus({
         ...client,
         signal: controller.signal,
       }));
       if (currentGeneration !== generation || controller.signal.aborted) return;
-      project = status.data?.project ?? '';
-      integrationState = status.data?.state ?? 'unavailable';
-      integrationMessage = status.data?.message ?? 'Task integration status is unavailable.';
+      localStatus = status.data ?? { state: 'unavailable' };
       // The reverse-index response is independently authoritative and may
       // contain a safe last-good snapshot even when the live integration is down.
       const { data, error: responseError } = await generatedListMessageTasks(
@@ -269,7 +267,7 @@
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded && showSetup}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
+    {#if degraded && (showSetup || integrationState === 'ready')}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
         <p>{stateMessage}</p>
         <Button size="sm" surface="soft" label={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onclick={onsettings} />
       </div>{/if}
