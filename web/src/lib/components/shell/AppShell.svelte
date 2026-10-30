@@ -1276,7 +1276,7 @@
           operationsController
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory) => commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' })} onOpenOperations={() => openOperations('source_sync')} />
+        <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions(true)} />
       {:else if exploreState.current.workspace === 'relationships'}

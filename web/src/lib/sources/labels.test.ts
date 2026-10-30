@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
+import { sourceFailure, sourceMailbox, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -29,22 +29,27 @@ describe('source labels', () => {
     [undefined, 'Sync unavailable']
   ])('names sync reason %j', (code, want) => expect(syncUnavailableLabel(code)).toBe(want));
 
-  it('maps run states for rows and status tones for the job indicator', () => {
-    expect(sourceRunState({ active_sync: null, latest_sync: null, scheduler_queued: true })).toBe('queued');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled'), scheduler_queued: true })).toBe('queued');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('failed'), scheduler_queued: true })).toBe('failed');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('completed'), scheduler_queued: true })).toBe('queued');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('completed'), scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z' })).toBe('running');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('running'), scheduler_queued: true })).toBe('running');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('completed', 2), scheduler_queued: true })).toBe('partial');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled') })).toBe('cancelled');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('completed', 2) })).toBe('partial');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('paused') })).toBe('paused');
-    expect(sourceRunState({ active_sync: run('running'), latest_sync: run('completed') })).toBe('running');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('completed') })).toBe('succeeded');
-    expect(sourceRunState({ active_sync: null, latest_sync: run('failed') })).toBe('failed');
-    expect(sourceRunState({ active_sync: null, latest_sync: null })).toBeUndefined();
-  });
+  it.each([
+    [{ active_sync: null, latest_sync: null, scheduler_queued: true }, 'queued'],
+    [{ active_sync: null, latest_sync: run('cancelled'), scheduler_queued: true }, 'queued'],
+    [{ active_sync: null, latest_sync: run('failed'), scheduler_queued: true }, 'failed'],
+    [{ active_sync: null, latest_sync: run('completed'), scheduler_queued: true }, 'queued'],
+    [{ active_sync: null, latest_sync: run('completed'), scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z' }, 'running'],
+    [{ active_sync: null, latest_sync: run('running'), scheduler_queued: true }, 'running'],
+    [{ active_sync: null, latest_sync: run('completed', 2), scheduler_queued: true }, 'partial'],
+    [{ active_sync: null, latest_sync: run('cancelled') }, 'cancelled'],
+    [{ active_sync: null, latest_sync: run('completed', 2) }, 'partial'],
+    [{ active_sync: null, latest_sync: run('paused') }, 'paused'],
+    [{ active_sync: run('running'), latest_sync: run('completed') }, 'running'],
+    [{ active_sync: null, latest_sync: run('completed') }, 'succeeded'],
+    [{ active_sync: null, latest_sync: run('failed') }, 'failed'],
+    [{ active_sync: null, latest_sync: null }, undefined],
+  ])('maps source run state %#', (source, want) => expect(sourceRunState(source)).toBe(want));
+
+  it.each([
+    ['imaps://work%40example.com@imap.example.com', 'work@example.com'],
+    ['imaps://home%40example.com@imap.example.com', 'home@example.com']
+  ])('identifies mailbox %s', (identifier, want) => expect(sourceMailbox(identifier)).toBe(want));
 });
 
 it('prefers the run error over the scheduler error', () => {

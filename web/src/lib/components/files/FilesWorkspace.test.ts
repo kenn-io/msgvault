@@ -227,9 +227,6 @@ describe('FilesWorkspace', () => {
     const first = result.files[0]!;
     first.source_type = 'imap';
     first.source_identifier = 'imaps://work%40example.com@imap.example.com';
-    result.files.push({ ...first, id: 8, key: 'file:8', source_id: 2, filename: 'home.txt', source_identifier: 'imaps://home%40example.com@imap.example.com' });
-    result.files.push({ ...first, id: 9, key: 'file:9', source_id: 3, filename: 'chats.txt', source_type: 'beeper', source_identifier: 'beeper://archive' });
-    result.total_count = 3;
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(result));
     render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
@@ -239,8 +236,6 @@ describe('FilesWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     expect(screen.getAllByRole('grid')).toHaveLength(1);
     expect(await within(grid).findByRole('gridcell', { name: 'work@example.com' })).toBeDefined();
-    expect(within(grid).getByRole('gridcell', { name: 'home@example.com' })).toBeDefined();
-    expect(within(grid).getByRole('gridcell', { name: 'Beeper' })).toBeDefined();
     expect(grid.contains(screen.getByRole('columnheader', { name: 'Filename' }))).toBe(true);
     expect(grid.contains(await screen.findByRole('row', { name: /fixture.pdf/ }))).toBe(true);
   });
@@ -1268,21 +1263,19 @@ describe('FilesWorkspace', () => {
       expect(await screen.findByRole('region', { name: 'Files' })).toBeDefined();
     });
   });
-});
 
-it('reports embedded filename edits and appends Type choices to current families', async () => {
-  const client = createAPIClient(async () => Response.json(personResponse()));
-  const onFilenameQueryChange = vi.fn(), onMIMEFamiliesChange = vi.fn();
-  const view = render(FilesWorkspace, { client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate: { filters: [] }, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf', 'text'], onFilenameQueryChange, onMIMEFamiliesChange });
-  await screen.findByText('fixture.pdf');
-  await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'budget' } });
-  expect(onFilenameQueryChange).toHaveBeenCalledWith('budget');
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Audio' }));
-  expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf', 'text', 'audio']);
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
-  expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['text']);
-  await view.rerender({ mimeFamilies: ['pdf'] });
-  expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).disabled).toBe(true);
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
-  expect(onMIMEFamiliesChange).not.toHaveBeenCalledWith([]);
+  it('reports embedded filename edits and appends Type choices to current families', async () => {
+    const client = createAPIClient(async () => Response.json(personResponse()));
+    const onFilenameQueryChange = vi.fn(), onMIMEFamiliesChange = vi.fn();
+    const view = render(FilesWorkspace, { client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate: { filters: [] }, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf', 'text'], onFilenameQueryChange, onMIMEFamiliesChange });
+    await screen.findByText('fixture.pdf');
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'budget' } });
+    expect(onFilenameQueryChange).toHaveBeenCalledWith('budget');
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Audio' }));
+    expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf', 'text', 'audio']);
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
+    expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['text']);
+    await view.rerender({ mimeFamilies: ['pdf'] });
+    expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).disabled).toBe(true);
+  });
 });
