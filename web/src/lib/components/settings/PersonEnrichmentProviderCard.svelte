@@ -1,6 +1,6 @@
 <script lang="ts">
   import { putSettingsPersonEnrichmentProvider as generatedPutSettingsPersonEnrichmentProvider } from '../../api/generated/api/api';
-  import { Button, Chip, Toggle } from '@kenn-io/kit-ui';
+  import { Button, Chip, NumberInput, Toggle } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -85,7 +85,7 @@
   function setString(field: keyof ProviderSetting, value: string) {
     edit({ ...draft, [field]: value });
   }
-  function setNumber(field: keyof ProviderSetting, value: string) {
+  function setNumber(field: keyof ProviderSetting, value: number | null) {
     edit({ ...draft, [field]: Number(value) });
   }
   function setList(field: 'allowed_identifiers' | 'target_keys', value: string) {
@@ -171,11 +171,11 @@
         </label>
         <label>
           Results per request
-          <input
-            type="number"
-            min="1"
+          <NumberInput
+            block
+            min={1}
             value={draft.num_results ?? 1}
-            oninput={(event) => setNumber('num_results', event.currentTarget.value)}
+            oninput={(value) => setNumber('num_results', value)}
           />
         </label>
       {/if}
@@ -245,29 +245,29 @@
       {/if}
       <label>
         Retries
-        <input
-          type="number"
-          min="0"
+        <NumberInput
+          block
+          min={0}
           value={draft.max_retries}
-          oninput={(event) => setNumber('max_retries', event.currentTarget.value)}
+          oninput={(value) => setNumber('max_retries', value)}
         />
       </label>
       <label>
         Requests per run
-        <input
-          type="number"
-          min="1"
+        <NumberInput
+          block
+          min={1}
           value={draft.max_requests_per_run}
-          oninput={(event) => setNumber('max_requests_per_run', event.currentTarget.value)}
+          oninput={(value) => setNumber('max_requests_per_run', value)}
         />
       </label>
       <label>
         Requests per day
-        <input
-          type="number"
-          min="1"
+        <NumberInput
+          block
+          min={1}
           value={draft.max_requests_per_day}
-          oninput={(event) => setNumber('max_requests_per_day', event.currentTarget.value)}
+          oninput={(value) => setNumber('max_requests_per_day', value)}
         />
       </label>
       <div class="sensitive-targets">
