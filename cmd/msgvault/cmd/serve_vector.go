@@ -831,34 +831,37 @@ func newVisualRuntime(
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	// A retired generation for this fingerprint may still reference backend
-	// vectors if its retirement cleanup crashed or failed; Ensure refuses to
+	// A retired generation may still reference backend vectors if its
+	// retirement cleanup crashed or failed, including an abandoned generation
+	// for an older fingerprint that nothing else revisits. Ensure refuses to
 	// restart over live references, so delete those vectors and purge the
-	// ledger first.
+	// ledger first. An abandoned generation's consumer would otherwise pin
+	// attachment-journal pruning forever.
 	retired, err := mainStore.ListRetiredVisualGenerations(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, retiredGeneration := range retired {
-		if retiredGeneration.Fingerprint != fingerprint {
-			continue
-		}
 		tokens, err := mainStore.ListVisualGenerationTokens(ctx, retiredGeneration.ID)
 		if err != nil {
 			return nil, err
 		}
-		if len(tokens) == 0 {
-			continue
+		if len(tokens) > 0 {
+			vectorTokens := make([]visual.VectorToken, len(tokens))
+			for index, token := range tokens {
+				vectorTokens[index] = visual.VectorToken(token)
+			}
+			if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
+				return nil, err
+			}
+			if err := mainStore.PurgeRetiredVisualGeneration(ctx, retiredGeneration.ID); err != nil {
+				return nil, err
+			}
 		}
-		vectorTokens := make([]visual.VectorToken, len(tokens))
-		for index, token := range tokens {
-			vectorTokens[index] = visual.VectorToken(token)
-		}
-		if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
-			return nil, err
-		}
-		if err := mainStore.PurgeRetiredVisualGeneration(ctx, retiredGeneration.ID); err != nil {
-			return nil, err
+		if retiredGeneration.Fingerprint != fingerprint {
+			if err := mainStore.UnregisterAttachmentChangeConsumer(ctx, "visual/"+retiredGeneration.Fingerprint); err != nil {
+				return nil, err
+			}
 		}
 	}
 	generation, err := mainStore.EnsureVisualGeneration(ctx, store.VisualGenerationSpec{

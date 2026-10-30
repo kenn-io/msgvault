@@ -73,3 +73,35 @@ func seedVisualCleanupPublication(t *testing.T, f *storetest.Fixture, backend *s
 	require.NoError(t, f.Store.CommitVisualPublication(ctx, claim, token))
 	return generation, owner, token
 }
+
+// Retirement can commit while deleting the abandoned generation's vectors
+// fails. A later start has a new fingerprint, so it must still finish the old
+// generation's cleanup and release its journal consumer.
+func TestVisualRuntimeFinishesRetiredGenerationCleanupForOldFingerprint(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite native runtime fixture")
+	f := storetest.New(t)
+	ctx := t.Context()
+	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: filepath.Join(t.TempDir(), "vectors.db"), MainDB: f.Store.DB(), PolicyStore: f.Store, Dimension: 4})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = backend.Close() })
+	generation, _, _ := seedVisualCleanupPublication(t, f, backend)
+	// Simulate the failed earlier start: retired, vectors and consumer left.
+	require.NoError(t, f.Store.RetireVisualGeneration(ctx, generation.ID))
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Vector.Multimodal.Enabled = true
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: voyage.DefaultModel, Dimension: 1024, Media: media.Policy{MaxBytes: 20 << 20, MaxPixels: 16_000_000, AllowStill: true, AllowVideo: true}})
+	require.NoError(t, err)
+	manifest, err := voyagetest.SyntheticManifest(policy, voyage.CapabilityQueryText)
+	require.NoError(t, err)
+	cfg.Vector.Multimodal.CapabilitiesFile = filepath.Join(t.TempDir(), "capabilities.json")
+	require.NoError(t, writeVisualCapabilityManifest(cfg.Vector.Multimodal.CapabilitiesFile, manifest))
+	ctx = testInvocationContext(ctx, cfg, invocationOptions{})
+	_, err = newVisualRuntime(ctx, cfg.Vector, f.Store, backend, unavailableVisualCredentialOpener{}, visualRuntimeCredential{APIKey: "synthetic-test-key"})
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, backend.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM visual_vectors`).Scan(&count))
+	assert.Zero(t, count, "the abandoned generation's vectors are deleted")
+	_, err = f.Store.GetAttachmentChangeConsumer(ctx, "visual/abandoned")
+	assert.Error(t, err, "the abandoned consumer no longer pins journal pruning")
+}

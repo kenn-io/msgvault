@@ -153,16 +153,28 @@ func TestDocumentColdPolicyHTTPRetryChecksExactPendingInput(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotNil(claim)
 	ctx = store.WithConversationPolicyDocumentTokens(ctx, generation.ID, []string{claim.Token})
+	// A replacement extraction for the same document publishes during the
+	// first HTTP attempt, superseding the head the pending input came from.
+	var hash string
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT canonical_blob_hash FROM document_extraction_heads WHERE profile_id=? LIMIT 1`), generation.TargetExtractionProfileID).Scan(&hash))
+	replacement, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "extraction-replacement", ProfileID: generation.TargetExtractionProfileID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "replacement-worker", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	requirements.NoError(err)
+	publication := publicationFor(t, replacement, "replacement document text", strings.Repeat("e", 64))
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		_, updateErr := f.Store.DB().ExecContext(r.Context(), f.Store.Rebind(`UPDATE document_chunks SET checksum=? WHERE id=?`), strings.Repeat("e", 64), claim.ChunkID)
-		assert.NoError(t, updateErr)
+		if requests.Add(1) == 1 {
+			assert.NoError(t, f.Store.PublishDocumentExtraction(r.Context(), publication))
+		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 	provider := embed.NewVoyageClient(embed.VoyageConfig{Endpoint: server.URL, Model: "synthetic", Dimension: 768, MaxRetries: 2})
 	_, err = provider.EmbedDocuments(ctx, []vector.DocumentInput{{Chunks: []string{"synthetic document"}}})
 	requirements.ErrorIs(err, store.ErrConversationPolicyStale)
-	assertions.Equal(int64(1), requests.Load(), "changed checksum prevents retry even without a global revision change")
+	assertions.Equal(int64(1), requests.Load(), "a superseded extraction prevents retry even without a global revision change")
 }
