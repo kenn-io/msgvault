@@ -289,8 +289,10 @@ vector index scores by distance, so the command computes cosine similarity
 from each hit's stored vectors, whatever their length. A message found only by
 keyword counts if its stored vector clears the same floor. A message without
 a stored vector does not count. Each counted message weighs its similarity
-times its recency, which halves every 180 days and stops at 0.1. The message
-part of the score is `log(1 + total weight)`.
+times its recency, which halves every 180 days and stops at 0.1. Recency
+counts back from today, or from `--before` when that date is in the past, so
+an older window still favors its later messages. The message part of the
+score is `log(1 + total weight)`.
 
 A matching `ask_me_about` value you or an address book supplied adds 0.25 and
 is printed as `declared: ...`. For someone who wrote about the topic, a value

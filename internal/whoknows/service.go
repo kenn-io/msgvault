@@ -106,6 +106,12 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	if s.Now != nil {
 		now = s.Now().UTC()
 	}
+	// A window that ends in the past measures recency from its end. From
+	// today, every message older than about 20 months sits at the recency
+	// floor, so an older window could not favor its later messages.
+	if p.Before != nil && p.Before.Before(now) {
+		now = p.Before.UTC()
+	}
 	out.People, out.UnsavedContacts = Rank(candidates, p, now)
 	if !partial && len(out.People) == 0 && len(out.UnsavedContacts) == 0 {
 		partial = s.unembedded(ctx, found.generation, types)

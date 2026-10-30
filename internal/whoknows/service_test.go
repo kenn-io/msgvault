@@ -421,6 +421,27 @@ func TestFindBoundsListMailAndOneWayEmailSenders(t *testing.T) {
 	assert.Greater(scores[otherPerson], scores[editorPerson])
 }
 
+// A window that ends in the past weighs recency from its end, so the later
+// of two old messages still counts more.
+func TestFindMeasuresRecencyFromAPastWindowEnd(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newServiceFixture(t)
+	const windowEndDaysAgo = 1000
+	ana, anaPerson := f.saved("ana@example.net")
+	ben, benPerson := f.saved("ben@example.net")
+	f.message("late", ana, windowEndDaysAgo+10, .6)
+	f.message("early", ben, windowEndDaysAgo+400, .9)
+	before := serviceNow.AddDate(0, 0, -windowEndDaysAgo)
+
+	got, err := f.service.Find(t.Context(), whoknows.Request{Topic: "kubernetes networking", Before: &before})
+	require.NoError(err)
+	require.Len(got.People, 2)
+	assert.Equal([]int64{anaPerson, benPerson}, []int64{got.People[0].PersonID, got.People[1].PersonID},
+		"from today both messages sit at the recency floor and the closer match would win")
+	assert.InDelta(math.Log1p(.6*math.Exp2(-10.0/180)), got.People[0].MessageScore, 1e-9)
+}
+
 func TestFindSkipsSearchOnBadInputAndPropagatesSearchErrors(t *testing.T) {
 	f := newServiceFixture(t)
 	_, err := f.service.Find(t.Context(), whoknows.Request{Topic: "from:ana networking"})
