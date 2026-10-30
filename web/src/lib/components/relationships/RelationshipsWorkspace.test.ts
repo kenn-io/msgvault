@@ -507,10 +507,10 @@ describe('RelationshipsWorkspace', () => {
     const row = (await screen.findByText('report.pdf')).closest('[role="row"]')!;
     await fireEvent.click(row);
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open containing item' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open message' }));
     expect(onOpenFileItem).toHaveBeenCalledWith('message:42');
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open containing conversation' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open conversation' }));
     expect(onOpenFileConversation).toHaveBeenCalledWith('message:42', 42, 70);
   });
 
