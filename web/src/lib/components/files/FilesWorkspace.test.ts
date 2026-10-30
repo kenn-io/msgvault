@@ -1,13 +1,23 @@
+import type { ComponentProps } from 'svelte';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
+import { visualReadinessKey } from '../../search/visual-ready.svelte';
+import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import FilesWorkspace from './FilesWorkspace.svelte';
 
 const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents);
+
+function renderReady(props: ComponentProps<typeof FilesWorkspace>) {
+  const readiness = new IntegrationReadiness(async () => true);
+  const view = render(FilesWorkspace, { props, context: new Map([[visualReadinessKey, readiness]]) });
+  readiness.ready;
+  return view;
+}
 
 function response() {
   return {
@@ -55,9 +65,9 @@ describe('FilesWorkspace', () => {
   it('reports each rejected image selection once as a search failure', async () => {
     const events = telemetryEvents;
     const client = createAPIClient(async () => Response.json(response()));
-    render(FilesWorkspace, { client, predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
+    renderReady({ client, predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
     await screen.findByText('fixture.pdf');
-    await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+    await fireEvent.click(await screen.findByRole('switch', { name: 'Visual search' }));
     await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
     const file = new File(['synthetic'], 'query.png', { type: 'image/png' });
     Object.defineProperty(file, 'size', { value: 21 * 1024 * 1024 });
@@ -74,7 +84,7 @@ describe('FilesWorkspace', () => {
       return Response.json(kind === 'nonempty' ? response() : { ...response(), files: [], total_count: 0 });
     });
     const client = createAPIClient(fetchFn);
-    const rendered = render(FilesWorkspace, {
+    const rendered = renderReady({
       client,
       predicate: { query: kind === 'image' || kind === 'visual' ? '' : 'missing', search_mode: 'full_text', filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' },
@@ -82,7 +92,7 @@ describe('FilesWorkspace', () => {
     });
     await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
     if (kind === 'visual') {
-      await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+      await fireEvent.click(await screen.findByRole('switch', { name: 'Visual search' }));
       const query = screen.getByRole('searchbox', { name: 'Search attachment pixels' });
       await fireEvent.input(query, { target: { value: 'blue sky' } });
       await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
@@ -90,7 +100,7 @@ describe('FilesWorkspace', () => {
       await fireEvent.keyDown(query, { key: 'Enter' });
     }
     if (kind === 'image') {
-      await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+      await fireEvent.click(await screen.findByRole('switch', { name: 'Visual search' }));
       await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [new File(['synthetic'], 'query.png', { type: 'image/png' })] } });
       await waitFor(() => expect(events.some((event) => event.event === 'search_empty')).toBe(true));
     }
@@ -114,7 +124,7 @@ describe('FilesWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const daily = vi.spyOn(startTelemetryReporting(client), 'reportDaily');
-    const rendered = render(FilesWorkspace, {
+    const rendered = renderReady({
       client, predicate: { query: kind === 'text' || kind === 'combined' ? 'needle' : '', search_mode: 'full_text', filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' },
     });
@@ -134,7 +144,7 @@ describe('FilesWorkspace', () => {
       stopTelemetryReporting(client);
       return;
     }
-    await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+    await fireEvent.click(await screen.findByRole('switch', { name: 'Visual search' }));
     await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
     if (kind === 'combined') await waitFor(() => expect(daily.mock.calls.map(([key]) => key)).toEqual(['search_run:text', 'search_run:text']));
     events.length = 0;
@@ -181,7 +191,7 @@ describe('FilesWorkspace', () => {
       rendered: 'Synthetic cache unavailable.'
     }
   ])('reports an honest row count for the $state state', async ({ fetchFn, expected, rendered }) => {
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -200,7 +210,7 @@ describe('FilesWorkspace', () => {
         message: 'This query needs more memory or temporary disk space.',
       }, { status: 503 })
       : Response.json(response());
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -215,7 +225,7 @@ describe('FilesWorkspace', () => {
 
   it('owns headers and virtual rows in one focusable grid', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(response()));
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -237,7 +247,7 @@ describe('FilesWorkspace', () => {
       }, { status: 503 });
       return Response.json(response());
     });
-    const rendered = render(FilesWorkspace, {
+    const rendered = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -278,7 +288,7 @@ describe('FilesWorkspace', () => {
       return Response.json(first);
     });
     const onRestorationComplete = vi.fn();
-    const rendered = render(FilesWorkspace, {
+    const rendered = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
       activeKey: 'file:900', restorationEpoch: 11, onRestorationComplete
@@ -303,7 +313,7 @@ describe('FilesWorkspace', () => {
       error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
       readiness: 'building', recovery_action: ''
     }, { status: 503 }));
-    const rendered = render(FilesWorkspace, {
+    const rendered = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -329,7 +339,7 @@ describe('FilesWorkspace', () => {
       return Response.json(response());
     });
     const onSortChange = vi.fn();
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn),
       predicate: {
         query: 'quarterly', search_mode: 'full_text',
@@ -362,7 +372,7 @@ describe('FilesWorkspace', () => {
       requests.push(request);
       return Response.json(personResponse());
     });
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 },
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -385,7 +395,7 @@ describe('FilesWorkspace', () => {
       requests.push(request);
       return Response.json(personResponse());
     });
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       // The production union gains this explicit durable-person scope. The
       // cast lets this regression prove the current fallback is unsafe.
@@ -406,7 +416,7 @@ describe('FilesWorkspace', () => {
       requests.push(request);
       return Response.json(personResponse());
     });
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 },
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -449,7 +459,7 @@ describe('FilesWorkspace', () => {
       const body = await request.clone().json() as { mime_families?: string[] };
       return Response.json(body.mime_families?.includes('image') ? mediaResult : personResponse());
     });
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 },
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -466,13 +476,13 @@ describe('FilesWorkspace', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open photo.png' }));
     expect(await screen.findByRole('dialog', { name: 'View photo.png' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Open containing item' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Open message' })).toBeDefined();
   });
 
   it('observes the grid and header when a Media view becomes Files', async () => {
     const records = installResizeObservers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 }, personPresentation: 'media',
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -493,7 +503,7 @@ describe('FilesWorkspace', () => {
   it('disconnects the old observer and observes replacement elements across a Files transition', async () => {
     const records = installResizeObservers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 }, personPresentation: 'files',
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -549,7 +559,7 @@ describe('FilesWorkspace', () => {
       initialCalls += 1;
       return Response.json(initialCalls === 1 ? first : reloaded);
     });
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       identityScope: { kind: 'person', id: 1 }, personPresentation: 'media',
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -570,7 +580,7 @@ describe('FilesWorkspace', () => {
   it('does not open the active file when Enter activates a focused sort control', async () => {
     const onSortChange = vi.fn();
     const onSelectedKey = vi.fn();
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(response()))),
       predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' },
@@ -624,7 +634,7 @@ describe('FilesWorkspace', () => {
     });
     const onRestorationComplete = vi.fn();
 
-    const { container } = render(FilesWorkspace, {
+    const { container } = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
       activeKey: 'file:900', restorationEpoch: 7, onRestorationComplete
@@ -662,7 +672,7 @@ describe('FilesWorkspace', () => {
       return Response.json(body.cursor === 'page-2' ? second : first);
     });
     const onActiveKey = vi.fn();
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, onActiveKey
     });
@@ -690,7 +700,7 @@ describe('FilesWorkspace', () => {
     const onOpenItem = vi.fn();
     const onOpenConversation = vi.fn();
     const onSelectedKey = vi.fn();
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, onOpenItem, onOpenConversation, onSelectedKey
     });
@@ -701,9 +711,9 @@ describe('FilesWorkspace', () => {
     await fireEvent.keyDown(grid, { key: 'Enter' });
     expect(onSelectedKey).toHaveBeenCalledWith('file:7');
     expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Open containing item' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledWith('message:11');
-    await fireEvent.click(screen.getByRole('button', { name: 'Open containing conversation' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
     expect(onOpenConversation).toHaveBeenCalledWith('message:11', 11, 21);
     await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
   });
@@ -717,7 +727,7 @@ describe('FilesWorkspace', () => {
         size_bytes: 2048, content_state: 'missing_blob', content_available: false
       });
     });
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -739,7 +749,7 @@ describe('FilesWorkspace', () => {
       });
       return Response.json(first);
     });
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -749,7 +759,7 @@ describe('FilesWorkspace', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.getByText('Opening file…')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Open containing item' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open message' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Download fixture.pdf' })).toBeNull();
   });
 
@@ -770,7 +780,7 @@ describe('FilesWorkspace', () => {
       const body = await request.clone().json() as { cursor?: string };
       return Response.json(body.cursor ? second : first);
     });
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -799,7 +809,7 @@ describe('FilesWorkspace', () => {
         ? { files: [], total_count: 0, cache_revision: 'cache-other', search_provenance: {} }
         : response());
     });
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -829,7 +839,7 @@ describe('FilesWorkspace', () => {
         ? { files: [], total_count: 0, cache_revision: 'cache-other', search_provenance: {} }
         : response());
     });
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -856,7 +866,7 @@ describe('FilesWorkspace', () => {
       });
       return Response.json(response());
     });
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
     });
@@ -873,7 +883,7 @@ describe('FilesWorkspace', () => {
   it('restores ascending date sort and toggles it back to descending', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(response()));
     const onSortChange = vi.fn();
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'asc' }, onSortChange
     });
@@ -902,7 +912,7 @@ describe('FilesWorkspace', () => {
       if (cursorCalls === 1) throw new TypeError('temporary network failure');
       return Response.json(second);
     });
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -934,7 +944,7 @@ describe('FilesWorkspace', () => {
       }, { status: 503 });
       return Response.json(second);
     });
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -977,7 +987,7 @@ describe('FilesWorkspace', () => {
         initialCalls += 1;
         return Response.json(initialCalls === 1 ? first : reloaded);
       });
-      render(FilesWorkspace, {
+      renderReady({
         client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
         sort: { field: 'occurred_at', direction: 'desc' }
       });
@@ -1027,7 +1037,7 @@ describe('FilesWorkspace', () => {
       return Response.json(second);
     });
     const onRestorationComplete = vi.fn();
-    const { container } = render(FilesWorkspace, {
+    const { container } = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
       activeKey: 'file:900', restorationEpoch: 7, onRestorationComplete
@@ -1078,7 +1088,7 @@ describe('FilesWorkspace', () => {
       return Response.json(initialCalls === 1 ? first : reloadedFirst);
     });
     const onRestorationComplete = vi.fn();
-    const { container } = render(FilesWorkspace, {
+    const { container } = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
       activeKey: 'file:900', restorationEpoch: 9, onRestorationComplete
@@ -1120,7 +1130,7 @@ describe('FilesWorkspace', () => {
       initialCalls += 1;
       return Response.json(initialCalls === 1 ? first : reloaded);
     });
-    render(FilesWorkspace, {
+    renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -1152,7 +1162,7 @@ describe('FilesWorkspace', () => {
       if (body.cursor) return new Promise<Response>((_, reject) => { rejectCursor = reject; });
       return Response.json(body.filename_query ? fresh : first);
     });
-    const view = render(FilesWorkspace, {
+    const view = renderReady({
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
@@ -1174,40 +1184,30 @@ describe('FilesWorkspace', () => {
   describe('controls and rows', () => {
     function renderFiles(props: Record<string, unknown> = {}) {
       const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
-      return render(FilesWorkspace, {
+      return renderReady({
         client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
         sort: { field: 'occurred_at', direction: 'desc' }, ...props
       });
     }
 
     async function typeMenuItems(): Promise<string[]> {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Type' }));
-      const labels = ['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other'];
-      return labels.filter((label) => screen.queryByRole('button', { name: label }) !== null);
+      await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+      return ['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other'].filter(label => screen.queryByRole('checkbox', { name: label }) !== null);
     }
 
-    it('filters by type from a Type menu that says which types are included', async () => {
+    it('filters by type from the shared Filter menu', async () => {
       const onMIMEFamiliesChange = vi.fn();
       renderFiles({ onMIMEFamiliesChange });
-      await screen.findByText('fixture.pdf');
-
-      expect(screen.queryByRole('checkbox', { name: 'pdf' })).toBeNull();
-      expect(await typeMenuItems())
-        .toEqual(['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other']);
-      expect(screen.getByRole('button', { name: 'Type' }).textContent).toContain('All types');
-      const pdfs = screen.getByRole('button', { name: 'PDFs' });
-      expect(describedBy(pdfs)).toBeUndefined();
-      expect(describedBy(screen.getByRole('button', { name: 'Images' }))).toBeUndefined();
-      await fireEvent.click(pdfs);
+      expect(await typeMenuItems()).toEqual(['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other']);
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
       expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf']);
     });
 
-    it('marks selected types as included', async () => {
+    it('marks selected file types', async () => {
       renderFiles({ mimeFamilies: ['pdf'] });
       await typeMenuItems();
-      expect(screen.getByRole('button', { name: 'Type' }).textContent).not.toContain('All types');
-      expect(describedBy(screen.getByRole('button', { name: 'PDFs' }))).toBe('Included');
-      expect(describedBy(screen.getByRole('button', { name: 'Images' }))).toBe('Not included');
+      expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(true);
+      expect((screen.getByRole('checkbox', { name: 'Images' }) as HTMLInputElement).checked).toBe(false);
     });
 
     it.each([
@@ -1224,7 +1224,7 @@ describe('FilesWorkspace', () => {
         ...base,
         files: [{ ...base.files[0]!, content_state: 'missing_blob', search_explain: { rrf: 0.0123 } }]
       }));
-      render(FilesWorkspace, {
+      renderReady({
         client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
         sort: { field: 'occurred_at', direction: 'desc' }
       });

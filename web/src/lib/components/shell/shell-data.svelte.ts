@@ -1,16 +1,20 @@
 import {
   deleteSavedView,
   listSavedViews,
+  listDeletions,
   patchSavedView,
 } from '../../api/generated/api/api';
 import type { APIClient } from '../../api/client';
 import { OperationsController } from '../../operations/controller.svelte';
 import { JobsStore } from '../../jobs/jobs.svelte';
-import type { SavedView, PatchSavedViewRequest } from '../../api/generated/models';
+import type { DeletionManifestSummary, SavedView, PatchSavedViewRequest } from '../../api/generated/models';
 import type { ExploreURLState } from '../../explore/models';
 import { supportsSavedViewSchema, exploreStateFromSavedView, type CanonicalState } from '../../saved-views/canonical';
 
 const REFRESH_MS = 30_000;
+export function batchIsRecent(batch: Pick<DeletionManifestSummary, 'status' | 'created_at'>, now: number): boolean {
+  return batch.status === 'pending' || batch.status === 'in_progress' || now - Date.parse(batch.created_at) <= 7 * 24 * 60 * 60 * 1000;
+}
 export function viewIncompatibility(view: SavedView): string {
   if (!supportsSavedViewSchema(view.schema_version)) {
     return `This view uses schema version ${view.schema_version}. Automatic migration is not supported; remove it and save the current view again.`;
@@ -31,6 +35,7 @@ export class ShellData {
   }
   pending = $state<SavedView>();
   error = $state<string>();
+  deletionsStaged = $state(false);
   readonly jobs: JobsStore;
 
   #client: APIClient;
@@ -45,7 +50,7 @@ export class ShellData {
   /** Jobs poll while visible; saved views refresh on entry, focus, and writes. */
   start(): void {
     this.#timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') void this.jobs.refresh();
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') { void this.refresh(); void this.jobs.refresh(); }
     }, REFRESH_MS);
   }
 
@@ -60,8 +65,9 @@ export class ShellData {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     const client = { ...this.#client, signal: controller.signal };
-    const views = await this.#loadViews(client);
+    const [views, staged] = await Promise.all([this.#loadViews(client), listDeletions(undefined, client).catch(() => undefined)]);
     if (controller.signal.aborted) return;
+    if (staged?.data) this.deletionsStaged = (staged.data.manifests ?? []).some(batch => batchIsRecent(batch, Date.now()));
     this.error = views ? undefined : "Couldn't load saved views.";
     if (views) this.#ordered = views;
   }
