@@ -3,11 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { DeletionsController } from '../../deletions/controller.svelte';
+import { batch } from '../../deletions/fixtures.test-support';
 import DeletionsWorkspace from './DeletionsWorkspace.svelte';
-
-function batch(id: string, status: string, count: number, created = '2026-07-19T10:00:00Z') {
-  return { id, status, created_at: created, created_by: 'api', description: 'reviewed explicit selection', message_count: count };
-}
 
 function detail(id: string, status: string, overrides: Record<string, unknown> = {}) {
   return {

@@ -7,7 +7,7 @@ export const visualReadinessKey = Symbol('visual-readiness');
 export function provideVisualReadiness(client: APIClient): IntegrationReadiness {
   const readiness = new IntegrationReadiness(async signal => {
     const { data, response } = await getVisualAttachmentStatus({ ...client, signal });
-    return response.ok && data ? true : undefined;
+    return response.ok && data?.generation?.state === 'active' && data.generation.consented ? true : undefined;
   });
   onDestroy(() => readiness.dispose());
   return setContext(visualReadinessKey, readiness);

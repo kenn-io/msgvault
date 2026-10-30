@@ -702,3 +702,9 @@ it('publishes source rows while the optional contacts request waits', async () =
   await screen.findByRole('rowheader', { name: 'Contacts' });
   view.unmount();
 });
+
+it('shows a contacts-specific failure instead of an empty archive', async () => {
+  render(SourcesWorkspace, { client: createCaptureClient(api([], url => url.pathname.endsWith('/carddav/connections') ? Response.json({}, { status: 500 }) : undefined), []) });
+  expect((await screen.findByRole('alert')).textContent).toContain("Can't load contacts.");
+  expect(screen.queryByText('No sources yet')).toBeNull();
+});

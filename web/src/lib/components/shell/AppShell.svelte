@@ -1623,6 +1623,10 @@
   />
 {/if}
 
+{#if pendingDeletionReview}
+  <DeletionReview {client} selection={pendingDeletionReview} onclose={() => pendingDeletionReview = undefined} onStaged={() => { selection.clear(); void shellData.refreshDeletions(); }} />
+{/if}
+
 <style>
   .archive-navigation-status { padding: var(--control-gap) var(--pane-pad-x); color: var(--text-secondary); }
 
@@ -1681,7 +1685,3 @@
     padding: var(--space-5) var(--page-gutter) var(--field-gap);
   }
 </style>
-
-{#if pendingDeletionReview}
-  <DeletionReview {client} selection={pendingDeletionReview} onclose={() => pendingDeletionReview = undefined} onStaged={() => { selection.clear(); void shellData.refreshDeletions(); }} />
-{/if}

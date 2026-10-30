@@ -71,7 +71,7 @@
         {#if source.can_sync}<Button size="sm" tone="info" surface="soft" label={syncing ? 'Syncing…' : 'Sync now'} disabled={syncing} onclick={onSync} />{/if}
       </div>
     </div>
-    {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure.reason}</p></section>{/if}
+    {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure.reason}</p>{#if source.scheduler_last_error && source.scheduler_last_error !== failure.reason}<p class="failure">{source.scheduler_last_error}</p>{/if}</section>{/if}
     {#if !source.can_sync && !syncing}
       <section class="block" aria-label="Sync">
         <span class="muted">{source.source_type === 'meeting_import' ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>

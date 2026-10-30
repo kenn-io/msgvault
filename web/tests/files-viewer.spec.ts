@@ -284,11 +284,11 @@ function tinyPDF(text: string): Buffer {
 }
 
 test('Files owns both scroll axes and rechecks visual setup when revisited', async ({ page, baseURL }) => {
-  let configured = false, visualReads = 0, pages = 0;
+  let generation = { state: 'building', consented: true }, visualReads = 0, pages = 0;
   await page.route('**/api/v1/settings', route => route.fulfill({ json: { settings: [], pending_restart: false } }));
   await page.route('**/api/v1/multimodal/status', route => {
     visualReads++;
-    return route.fulfill({ status: configured ? 200 : 503, json: configured ? { current: 0 } : { message: 'Not configured' } });
+    return route.fulfill({ json: { current: 0, generation } });
   });
   await prepare(page, baseURL, file('scroll-1.txt', 'text/plain', 'text'), Buffer.from('Synthetic preview'));
   await page.route('**/api/v1/files/search', route => {
@@ -299,8 +299,16 @@ test('Files owns both scroll axes and rechecks visual setup when revisited', asy
       total_count: 75, next_cursor: offset ? undefined : 'page-2', cache_revision: 'cache-scroll', search_provenance: {}
     } });
   });
+  await expect.poll(() => visualReads).toBeGreaterThan(0);
+  await expect(page.getByRole('switch', { name: 'Visual search' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Sources', exact: true }).click();
-  configured = true;
+  generation = { state: 'active', consented: false };
+  const before = visualReads;
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
+  await expect.poll(() => visualReads).toBeGreaterThan(before);
+  await expect(page.getByRole('switch', { name: 'Visual search' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Sources', exact: true }).click();
+  generation = { state: 'active', consented: true };
   await page.getByRole('button', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('switch', { name: 'Visual search' })).toBeVisible();
   expect(visualReads).toBeGreaterThanOrEqual(2);

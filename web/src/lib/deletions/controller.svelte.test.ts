@@ -2,13 +2,14 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../api/client';
 import { DeletionsController } from './controller.svelte';
 
+import { batch } from './fixtures.test-support';
+
 const now = Date.parse('2026-10-29T12:00:00Z');
-const batch = (id: string, status: string, created_at = '2020-01-01T00:00:00Z') => ({ id, status, created_at, message_count: 2, description: '', created_by: 'api' });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it.each(['pending', 'in_progress', 'completed', 'failed'])('avoids retention detail reads when %s already keeps the sidebar visible', async status => {
   vi.spyOn(Date, 'now').mockReturnValue(now);
-  const fetch = vi.fn(async () => Response.json({ manifests: [batch('visible', status, '2026-10-29T10:00:00Z'), batch('old', 'completed')] }));
+  const fetch = vi.fn(async () => Response.json({ manifests: [batch('visible', status, 2, '2026-10-29T10:00:00Z'), batch('old', 'completed')] }));
   const controller = new DeletionsController(createAPIClient(fetch));
   await controller.refresh();
   expect(controller.visible).toBe(true);
@@ -17,7 +18,7 @@ it.each(['pending', 'in_progress', 'completed', 'failed'])('avoids retention det
 });
 
 it('keeps cancelled-only history out of the sidebar without fetching details', async () => {
-  const fetch = vi.fn(async () => Response.json({ manifests: [batch('cancelled', 'cancelled', '2026-10-29T10:00:00Z')] }));
+  const fetch = vi.fn(async () => Response.json({ manifests: [batch('cancelled', 'cancelled', 2, '2026-10-29T10:00:00Z')] }));
   const controller = new DeletionsController(createAPIClient(fetch));
   await controller.refresh();
   expect(controller.visible).toBe(false);
@@ -108,4 +109,35 @@ it('releases timed-out detail slots and aborts owned requests on teardown', asyn
   controller.destroy();
   await Promise.all(pending);
   expect(signals[4].aborted).toBe(true);
+});
+
+it('queues a fresh list after a write while an older list is pending', async () => {
+  let finish: (response: Response) => void;
+  const fetch = vi.fn<typeof globalThis.fetch>().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockImplementationOnce(async () => Response.json({ manifests: [batch('staged', 'pending')] }));
+  const controller = new DeletionsController(createAPIClient(fetch));
+  const poll = controller.refresh();
+  const afterStage = controller.refresh(true);
+  finish!(Response.json({ manifests: [] }));
+  await Promise.all([poll, afterStage]);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(controller.batches.map(batch => batch.id)).toEqual(['staged']);
+  expect(controller.visible).toBe(true);
+  controller.destroy();
+});
+
+it('refreshes execution progress while the batch remains in progress', async () => {
+  let deleted = 0, reads = 0;
+  const controller = new DeletionsController(createAPIClient(async input => {
+    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [batch('active', 'in_progress')] });
+    reads++;
+    return Response.json({ ...batch('active', 'in_progress'), execution: { succeeded: deleted } });
+  }));
+  await controller.refresh();
+  await controller.getDetail('active');
+  deleted = 100;
+  await controller.refresh();
+  expect((await controller.getDetail('active'))?.execution?.succeeded).toBe(100);
+  expect(reads).toBe(2);
+  controller.destroy();
 });

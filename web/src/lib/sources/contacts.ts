@@ -7,7 +7,7 @@ type Status = CardDAVConnectionResponse['status'];
 export function contactRunState(status: Status): string | undefined {
   if (status.active) return 'running';
   const state = status.latest?.state;
-  if (state === 'succeeded' || state === 'partial' || state === 'failed') return state;
+  if (state === 'succeeded' || state === 'partial' || state === 'failed' || state === 'cancelled') return state;
   return undefined;
 }
 
