@@ -19,6 +19,8 @@ export class DeletionsController {
   #timeout: number;
   #disposed = false;
   #list?: Promise<void>;
+  #trailing?: Promise<void>;
+  #retryRequested = false;
   #listController?: AbortController;
   #failed = new Set<string>();
   #pending = new Map<string, Promise<DeletionManifestDetail | undefined>>();
@@ -30,7 +32,15 @@ export class DeletionsController {
 
   refresh(retry = false): Promise<void> {
     if (this.#disposed) return Promise.resolve();
-    if (this.#list) return this.#list;
+    if (this.#list) {
+      this.#retryRequested ||= retry;
+      return this.#trailing ??= this.#list.then(() => {
+        const retry = this.#retryRequested;
+        this.#retryRequested = false;
+        this.#trailing = undefined;
+        return this.refresh(retry);
+      });
+    }
     if (retry) this.#failed.clear();
     this.loading = true;
     const controller = this.#listController = new AbortController();
@@ -41,9 +51,11 @@ export class DeletionsController {
         if (!data) { this.error = "Can't load staged deletions."; return; }
         const next = data.manifests ?? [];
         const previous = new Map(this.batches.map(batch => [batch.id, batch]));
+        const activeDetails: string[] = [];
         for (const batch of next) {
           const old = previous.get(batch.id);
-          if (old && old.status !== batch.status) {
+          if (old && (old.status !== batch.status || (batch.status === 'in_progress' && this.details[batch.id]))) {
+            if (batch.status === 'in_progress' && this.details[batch.id]) activeDetails.push(batch.id);
             this.#controllers.get(batch.id)?.abort();
             this.#pending.delete(batch.id);
             this.#failed.delete(batch.id);
@@ -55,7 +67,7 @@ export class DeletionsController {
         this.batches = next;
         this.error = '';
         this.loading = false;
-        await this.#retention();
+        await Promise.all([this.#retention(), ...activeDetails.map(id => this.getDetail(id))]);
       } catch { if (!controller.signal.aborted && !this.#disposed) this.error = "Can't load staged deletions."; }
       finally { this.loading = false; this.#list = undefined; }
     })();

@@ -53,6 +53,7 @@
   let lockStatusStale = $state(false);
   let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
   let statusError = $state('');
+  let contactsError = $state('');
   let triggerError = $state('');
   let triggering = $state<string>();
   $effect(() => {
@@ -101,9 +102,12 @@
   async function loadContacts(signal: AbortSignal): Promise<void> {
     try {
       const { data } = await generatedListCardDAVConnections({ ...client, signal });
-      if (data && !signal.aborted) contacts = data.connections.filter((connection) => !connection.orphaned);
+      if (signal.aborted) return;
+      if (!data) throw new Error();
+      contacts = data.connections.filter((connection) => !connection.orphaned);
+      contactsError = '';
     } catch {
-      // Contacts are an extra group; the sources still list without them.
+      if (!signal.aborted) contactsError = "Can't load contacts.";
     }
   }
   function stopPolling(clearAwaiting = true): void {
@@ -367,6 +371,7 @@
       <span>{statusError}</span>
       <Button size="sm" surface="soft" label="Retry" onclick={refresh} />
     </div>{/if}
+  {#if contactsError}<div class="notice notice--error" role="alert"><span>{contactsError}</span><Button size="sm" label="Retry" onclick={refresh} /></div>{/if}
   {#if lockStatusStale}<div class="notice" role="status"><span>Automatic refresh paused. Source status may be stale.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if triggerError}<div class="notice notice--error" role="alert">
@@ -375,7 +380,7 @@
     </div>{/if}
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
-    {#if !statusError}<EmptyState title="No sources yet" /><CommandLine command={ADD_SOURCE_COMMAND} />{/if}
+    {#if !statusError && !contactsError}<EmptyState title="No sources yet" /><CommandLine command={ADD_SOURCE_COMMAND} />{/if}
   {:else}
     <Table ariaLabel="Sources" zebra={false} class="source-table" unsorted>
       {#snippet header()}
