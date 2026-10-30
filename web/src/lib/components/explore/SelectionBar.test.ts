@@ -10,9 +10,9 @@ import type {
 } from '../../api/generated/models';
 import { ExploreSelectionState } from '../../explore/state.svelte';
 import { predicateFingerprint } from '../../explore/selection';
-import ExploreSelectionBar from './ExploreSelectionBar.svelte';
+import SelectionBar from './SelectionBar.svelte';
 
-describe('ExploreSelectionBar', () => {
+describe('SelectionBar', () => {
   const preflight = (
     unavailable_actions: GeneratedExploreUnavailableAction[] = [],
   ): GeneratedExplorePreflightResponse => ({
@@ -30,7 +30,7 @@ describe('ExploreSelectionBar', () => {
   it('announces explicit selection and clears it', async () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
-    render(ExploreSelectionBar, { selection, totalCount: 8 });
+    render(SelectionBar, { selection, totalCount: 8 });
 
     expect(screen.getByRole('status').textContent).toContain('2 selected');
     await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
@@ -39,7 +39,7 @@ describe('ExploreSelectionBar', () => {
 
   it('announces the first selection through a live region that exists before it', async () => {
     const selection = new ExploreSelectionState();
-    render(ExploreSelectionBar, { selection, totalCount: 8 });
+    render(SelectionBar, { selection, totalCount: 8 });
     const status = screen.getByRole('status');
     expect(status.textContent).toBe('');
 
@@ -54,7 +54,7 @@ describe('ExploreSelectionBar', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1']);
     const onClear = vi.fn(() => expect(selection.count).toBe(0));
-    render(ExploreSelectionBar, { selection, totalCount: 8, onClear });
+    render(SelectionBar, { selection, totalCount: 8, onClear });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
 
@@ -74,7 +74,7 @@ describe('ExploreSelectionBar', () => {
       predicateFingerprint: predicateFingerprint({ query: 'synthetic', search_mode: 'full_text' }),
       resultGeneration: 1,
     });
-    render(ExploreSelectionBar, { selection, totalCount: 50000 });
+    render(SelectionBar, { selection, totalCount: 50000 });
 
     expect(screen.getByRole('status').textContent).toContain('All 50,000 matching items selected');
   });
@@ -82,7 +82,7 @@ describe('ExploreSelectionBar', () => {
   it('promotes visible selection to a pinned all-matching selection', async () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
-    render(ExploreSelectionBar, {
+    render(SelectionBar, {
       selection,
       totalCount: 50,
       allMatching: {
@@ -105,7 +105,7 @@ describe('ExploreSelectionBar', () => {
   it('shows executable actions only when preflight supplies a target and a handler', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
-    render(ExploreSelectionBar, { selection, totalCount: 2, preflight: preflight(), onExport: () => undefined });
+    render(SelectionBar, { selection, totalCount: 2, preflight: preflight(), onExport: () => undefined });
 
     expect(screen.getByRole('button', { name: 'Export selection' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Open selection in source' })).toBeNull();
@@ -114,7 +114,7 @@ describe('ExploreSelectionBar', () => {
   it('shows preflight-supplied per-action reasons without inferring support from rows', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
-    render(ExploreSelectionBar, {
+    render(SelectionBar, {
       selection,
       totalCount: 2,
       preflight: preflight([
@@ -130,7 +130,7 @@ describe('ExploreSelectionBar', () => {
   it('lists a disabled open-in-source item with a plain reason and no raw code', async () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1']);
-    render(ExploreSelectionBar, {
+    render(SelectionBar, {
       selection,
       totalCount: 2,
       preflight: preflight([{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }]),
@@ -150,7 +150,7 @@ describe('ExploreSelectionBar', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1']);
     const onOpenInSource = vi.fn();
-    render(ExploreSelectionBar, { selection, totalCount: 2, preflight: preflight(), onOpenInSource });
+    render(SelectionBar, { selection, totalCount: 2, preflight: preflight(), onOpenInSource });
 
     await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Open selection in source' }));
@@ -160,7 +160,7 @@ describe('ExploreSelectionBar', () => {
 
   it('renders nothing while nothing is selected', () => {
     const selection = new ExploreSelectionState();
-    render(ExploreSelectionBar, { selection, totalCount: 8 });
+    render(SelectionBar, { selection, totalCount: 8 });
 
     expect(screen.getByRole('status').textContent).toBe('');
     expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
@@ -181,7 +181,7 @@ describe('ExploreSelectionBar', () => {
       predicateFingerprint: predicateFingerprint({ query: 'synthetic', search_mode: 'full_text' }),
       resultGeneration: 1,
     };
-    render(ExploreSelectionBar, { selection, totalCount: 50, allMatching, onReviewDeletion });
+    render(SelectionBar, { selection, totalCount: 50, allMatching, onReviewDeletion });
 
     expect(screen.getByRole('status').textContent).toContain('3 selected');
     await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
@@ -195,7 +195,7 @@ describe('ExploreSelectionBar', () => {
   it('disables Review for deletion with the staging reason as a sentence', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1']);
-    render(ExploreSelectionBar, {
+    render(SelectionBar, {
       selection,
       totalCount: 2,
       onReviewDeletion: vi.fn(),
@@ -214,7 +214,7 @@ describe('ExploreSelectionBar', () => {
   it('keeps Review for deletion enabled when staging is available', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1']);
-    render(ExploreSelectionBar, { selection, totalCount: 2, onReviewDeletion: vi.fn(), preflight: preflight() });
+    render(SelectionBar, { selection, totalCount: 2, onReviewDeletion: vi.fn(), preflight: preflight() });
 
     const review = screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement;
     expect(review.disabled).toBe(false);
@@ -231,7 +231,7 @@ describe('ExploreSelectionBar', () => {
       cache_revision: 'cache-1',
       search_provenance: {},
     };
-    render(ExploreSelectionBar, {
+    render(SelectionBar, {
       selection,
       totalCount: 2,
       preflight: preflight([
@@ -258,7 +258,7 @@ describe('ExploreSelectionBar', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(rowKeys);
     const fetchFn = vi.fn<typeof fetch>();
-    render(ExploreSelectionBar, {
+    render(SelectionBar, {
       selection,
       totalCount: rowKeys.length,
       client: createAPIClient(fetchFn),
@@ -289,7 +289,7 @@ describe('ExploreSelectionBar', () => {
     const renderBar = (canExportMeetings?: boolean) => {
       const selection = new ExploreSelectionState();
       selection.selectVisible(['message:1']);
-      render(ExploreSelectionBar, {
+      render(SelectionBar, {
         selection,
         totalCount: 2,
         client: createAPIClient(vi.fn<typeof fetch>()),

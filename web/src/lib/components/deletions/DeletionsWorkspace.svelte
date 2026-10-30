@@ -47,6 +47,7 @@
 
   let batches = $state<Batch[]>([]);
   let accounts = $state<Record<string, string>>({});
+  const resolvedAccounts = new Set<string>();
   let selectedID = $state<string>();
   let detail = $state<Detail>();
   let showCancelled = $state(false);
@@ -98,18 +99,20 @@
   });
 
   async function loadAccounts(list: Batch[], signal: AbortSignal): Promise<void> {
-    const found: Record<string, string> = {};
+    list = list.filter(batch => !resolvedAccounts.has(batch.id));
     let index = 0;
     await Promise.all(Array.from({ length: Math.min(ACCOUNT_LOOKUPS, list.length) }, async () => {
       while (index < list.length && !signal.aborted) {
         const batch = list[index++];
         try {
           const { data } = await generatedGetDeletion({ id: batch.id }, { ...client, signal });
-          if (data?.account) found[batch.id] = data.account;
+          if (data && !signal.aborted) {
+            resolvedAccounts.add(batch.id);
+            accounts = { ...accounts, [batch.id]: data.account ?? (data.summary?.accounts ?? []).join(', ') };
+          }
         } catch { /* A row still opens when its account lookup fails. */ }
       }
     }));
-    if (!signal.aborted) accounts = found;
   }
 
   async function open(batch: Batch): Promise<void> {
@@ -235,6 +238,7 @@
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
         <span class="muted">{detail.account || (detail.summary?.accounts ?? []).join(', ')}</span>
       </div>
+      {#if detail.description}<p>{detail.description}</p>{/if}
       <section class="block" aria-label="Messages">
         <h3>{count(detail.message_count)}</h3>
         {#if detail.summary}
@@ -254,6 +258,12 @@
         <span class="muted">
           {detail.execution.succeeded.toLocaleString()} deleted · {detail.execution.failed.toLocaleString()} failed
         </span>
+        {#if detail.execution.failed_ids?.length}
+          <section class="block" aria-label="Failed message IDs">
+            <h3>Failed message IDs</h3>
+            {#each detail.execution.failed_ids as id}<code>{id}</code>{/each}
+          </section>
+        {/if}
       {/if}
       <div class="id">
         <span class="muted">Batch ID</span>

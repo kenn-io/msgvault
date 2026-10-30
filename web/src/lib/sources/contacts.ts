@@ -1,6 +1,7 @@
 import type { CardDAVConnectionResponse } from '../api/generated/models';
 import type { RunState } from '../components/common/run-state';
 import type { SourceFailure } from './labels';
+import { shellQuote } from '../settings/shell-quote';
 
 type Status = CardDAVConnectionResponse['status'];
 
@@ -30,10 +31,11 @@ export function contactLabel(connection: CardDAVConnectionResponse): string {
 /** The plain reason contacts last failed, with the command that fixes it when there is one. */
 export function contactFailure(connection: CardDAVConnectionResponse): SourceFailure | undefined {
   const { status } = connection;
-  const user = status.account?.username || 'you@example.com';
+  const user = shellQuote(status.account?.username || 'you@example.com', 'posix');
+  const app = connection.oauth_app ? ` --oauth-app ${shellQuote(connection.oauth_app, 'posix')}` : '';
   switch (status.repair_reason) {
     case 'google_authorization_required':
-      return { reason: 'Google Contacts sign-in expired', command: `msgvault carddav authorize-google ${user}` };
+      return { reason: 'Google Contacts sign-in expired', command: `msgvault carddav authorize-google ${user}${app}` };
     case 'microsoft_authorization_required':
       return { reason: 'Microsoft contacts sign-in expired', command: `msgvault carddav authorize-microsoft ${user}` };
     case 'account_missing':

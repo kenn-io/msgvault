@@ -121,8 +121,8 @@ toolbar. Select the chip's remove button, such as **Remove search** or **Remove
 Person filter**, to drop it. **Save view…** in the page header saves the current
 context; see [Saved views](#saved-views).
 
-Selecting rows opens a selection bar. **Review for deletion…** opens the
-[Deletions](#deletions) workspace. The button is disabled when the daemon
+Selecting rows opens a selection bar. **Review deletion…** opens a review dialog over Messages; see
+[Deletions](#deletions). The button is disabled when the daemon
 reports that staging is unavailable for the selection, and the bar states the
 reason beside it, for example "None of the selected items can be deleted from
 their source." Export and **Open selection in source** explain their
@@ -221,7 +221,7 @@ true` for daemon startup to build a stale cache. With `analytics.engine =
 ## Files and containing context
 
 Files is the single file view. It is a searchable table of attachment date,
-filename, type, size, person or domain, source, containing item, and content
+filename, type, size, person or domain, source, Message, and content
 availability. Archived images and PDFs open in application-controlled viewers.
 Metadata-only, missing, unsupported, and previewable content remain distinct.
 From a file, navigate to its containing item and then its email or chat
@@ -421,33 +421,11 @@ Old Operations links with a run, status, or history filter open Past runs over S
 
 ## Deletions
 
-Messages supports explicit row selection and select-all-matching for the
-current query and filters. **Review for deletion…** in the selection bar, or `d`
-and `D`, opens the Deletions workspace. The daemon first preflights the
-selection and reports any unavailable action before the UI offers a separate
-staging confirmation. The workspace lists, inspects, and cancels manifests; it
-cannot execute deletion against a provider. Use the explicit
-`msgvault delete-staged` CLI workflow for that final operation.
+Messages supports individual row selection and select-all-matching for the current query and filters. **Review deletion…** in the selection bar, or `d` and `D`, opens a review dialog over Messages. The daemon preflights the selection before enabling staging.
 
-Without a selection, the workspace says "Nothing selected for deletion" and
-points back to Messages. With one, the **Review selection** panel shows the
-item count and estimated size, how many items can be staged and how many will be
-skipped, and when the review expires, as a relative time such as "in 8 minutes"
-with the exact time in a tooltip. When the daemon reports that staging is
-unavailable, the panel gives the reason as a sentence and disables **Stage
-deletion…**. **Dry run** reports matched, staged, and skipped counts without
-staging anything. **Stage deletion…** opens a confirmation, and only its red
-**Confirm stage deletion** button creates the manifest. Staging covers Gmail and
-Microsoft Graph mail only and does not execute deletion. Arriving from
-Messages runs the review at once and, when staging is available, opens the
-confirmation.
+The dialog shows the selected count and estimated size, eligible and skipped counts, exclusions, and review expiration. Semantic search reviews warn that they cover active messages only. **Dry run** reports matched, staged, and skipped counts without creating a batch. **Stage N messages** creates the batch and leaves a success summary with its ID. **Done** returns to Messages. Staging supports Gmail and Microsoft Graph mail; use `msgvault delete-staged` to execute deletion.
 
-The manifests table lists ID, Description, Items, Status, and Created. Status is
-Pending, In progress, Completed, Failed, or Cancelled. **Inspect** opens a
-manifest's detail beside the table, or below it at 900 pixels wide or narrower;
-**Close manifest detail** closes it. **Cancel** appears for Pending and In
-progress manifests and asks for **Confirm cancel manifest**. With no manifests,
-the workspace says "No staged deletions".
+The Deletions workspace lists batches by creation date, message count, account, and status. Select a row to inspect its description, summary, execution counts, and failed message IDs. **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches. With no batches, the workspace says "Nothing staged". The sidebar entry remains visible for active batches and for seven days after execution finishes.
 
 ## Keyboard controls
 
