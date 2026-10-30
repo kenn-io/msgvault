@@ -296,7 +296,6 @@
       aria-busy={loading || loadingMore}
       aria-rowcount={totalCount ?? undefined}
       tabindex="0"
-      data-scroll
       bind:this={gridElement}
       onkeydown={handleKeydown}
       onscroll={handleScroll}

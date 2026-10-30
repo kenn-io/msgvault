@@ -15,9 +15,16 @@ on:
 permissions:
   contents: read
 
+# Text edits skip sibling-pin work without cancelling code validation.
+# Base changes still rerun the check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || (github.event_name == 'pull_request' && github.ref) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   sibling-pins:
-    name: Sibling pins on main
+    if: github.event.action != 'edited' || github.event.changes.base
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base && 'PR metadata' || 'Sibling pins on main' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:

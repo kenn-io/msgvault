@@ -412,7 +412,7 @@ func TestBeeperMediaStepTimeout(t *testing.T) {
 	server := httptest.NewServer(docbank)
 	defer server.Close()
 	submitter := world.submitter(t, server, "destination-timeout")
-	submitter.actionTimeout = 100 * time.Millisecond
+	submitter.actionTimeout = 100 * time.Millisecond //nolint:kennlint // deadlinetest: the stalled media step must expire so the next queue item can run
 
 	runPasses(t, submitter, 1)
 	rows := occurrenceRows(t, world.st, "destination-timeout")
@@ -633,7 +633,7 @@ func TestBeeperMediaLargeUpload(t *testing.T) {
 	server := httptest.NewServer(docbank)
 	defer server.Close()
 	submitter := world.submitter(t, server, "destination-large")
-	submitter.actionTimeout = 50 * time.Millisecond
+	submitter.actionTimeout = 50 * time.Millisecond //nolint:kennlint // deadlinetest: the fixed upload budget must expire before the size allowance is enabled
 	submitter.uploadRate = 0
 
 	// Without a size allowance the transfer outlives the fixed deadline.

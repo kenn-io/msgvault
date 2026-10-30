@@ -513,7 +513,7 @@
     gap: var(--space-1);
   }
   .details {
-    padding: var(--space-2) var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
   }
   .details p,
   .details ul {
@@ -537,7 +537,7 @@
     font-size: var(--font-size-sm);
   }
   .notice {
-    padding: var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-subtle);

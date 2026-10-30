@@ -52,6 +52,20 @@ async function openCalendar(page: Page, firstAt: string | Promise<string> = pers
   await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
 }
 
+test('calendar heading clears the graph and uses the touch type scale', async ({ page }) => {
+  await openCalendar(page);
+  const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+  const geometry = await calendar.evaluate((element) => {
+    const heading = element.querySelector('.calendar-heading')!.getBoundingClientRect();
+    const graphs = element.querySelector('.calendar-graphs')!.getBoundingClientRect();
+    return { gap: graphs.top - heading.bottom,
+      title: getComputedStyle(element.querySelector('h2')!).fontSize,
+      month: getComputedStyle(element.querySelector('.month-row')!).fontSize,
+      weekday: getComputedStyle(element.querySelector('.weekday-labels')!).fontSize };
+  });
+  expect(geometry).toEqual({ gap: 16, title: '15px', month: '14px', weekday: '12px' });
+});
+
 test('calendar fills its card at medium and narrow widths without clipping edge tooltips', async ({ page }) => {
   await openCalendar(page);
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });

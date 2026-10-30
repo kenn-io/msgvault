@@ -162,17 +162,17 @@
   header p, .empty, small { color: var(--text-muted); font-size: var(--font-size-sm); }
   .controls { grid-auto-flow: column; align-items: end; }
   .controls label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .projection { position: relative; min-height: 7rem; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
+  .projection { position: relative; min-height: 7rem; overflow: auto; padding: var(--pane-pad-y) var(--pane-pad-x); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
   .projection:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
   svg { min-width: 100%; max-height: 24rem; }
   line { stroke: var(--border-strong); stroke-width: 1.5; }
   circle { fill: var(--bg-surface); stroke: var(--accent-blue); stroke-width: 2; }
-  text { fill: var(--text-primary); font: var(--font-size-sm) var(--font-family); }
+  text { fill: var(--text-primary); font: var(--font-size-sm) var(--font-sans); }
   .loading { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg-surface) 72%, transparent); }
-  .network-error { justify-items: start; padding: var(--space-3); border-radius: var(--radius-sm); background: var(--bg-inset); color: var(--text-danger); }
-  .truncated { padding: var(--space-3); border-radius: var(--radius-sm); background: var(--bg-warning); color: var(--text-primary); }
+  .network-error { justify-items: start; padding: var(--pane-pad-y) var(--pane-pad-x); border-radius: var(--radius-sm); background: var(--bg-inset); color: var(--text-danger); }
+  .truncated { padding: var(--pane-pad-y) var(--pane-pad-x); border-radius: var(--radius-sm); background: var(--bg-warning); color: var(--text-primary); }
   .connection-list, .hop-group > ul { list-style: none; padding: 0; }
-  .hop-group, .root-only { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+  .hop-group, .root-only { padding: var(--pane-pad-y) var(--pane-pad-x); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
   .connection { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .connection small { margin-left: auto; }
   @media (max-width: 640px) { header { grid-template-columns: 1fr; } .controls { grid-auto-flow: row; justify-items: start; } }

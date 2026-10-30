@@ -118,13 +118,27 @@ msgvault sync-full you@example.com \
 
 That example scans `INBOX` and `Archive`.
 
+To skip folders on every scheduled and manual sync, set
+[`sync.imap_skip_folders`](../configuration.md#sync) in `config.toml` and restart
+the daemon. Copy the exact `ACCOUNT` identifier from `msgvault list-accounts`:
+
+```toml
+[sync]
+imap_skip_folders = { "imaps://user@example.com@imap.example.com:993" = ["Trash", "Junk"] }
+```
+
+Either folder flag replaces the saved filter for that run. With this example,
+`--folder Trash` scans Trash, and `--skip-folder Archive` skips Archive while
+allowing Trash and Junk.
+
 ## Matching Rules
 
 - Folder names are matched exactly, without wildcards or prefix matching.
 - Matching is case-insensitive.
 - Nested folders use the full name shown by `list-folders`, such as
   `Projects/Alpha`.
-- With no folder flags, msgvault scans every selectable folder.
+- With no folder flags, msgvault applies the account's saved exclusions and
+  stored folder allow list, if configured.
 - Folder flags apply to one command invocation. Repeat them in later commands
   when you want the same filter.
 - If a command syncs several account types, folder flags affect only its IMAP
@@ -139,7 +153,13 @@ the local archive.
 An email can appear in more than one IMAP folder. During a filtered scan,
 msgvault keeps the stable identity and folder labels learned by earlier,
 broader scans while adding information from the selected folders. A later sync
-without folder flags scans the complete account again.
+with no folder filters scans the complete account again. Filtered scans preserve
+existing archive membership and leave messages' source-deleted status unchanged.
+Saved exclusions pause deletion tracking even in the folders still being scanned,
+and pause folder cursor advancement. Expunged messages keep their prior deletion
+markers. Messages previously marked present remain ineligible for `gc` until
+you remove the exclusions and a complete sync resumes tracking. Changed mailboxes
+can be listed again on later runs while exclusions remain active.
 
 Folder filtering works the same whether the CLI uses a local daemon or a
 configured remote msgvault server.

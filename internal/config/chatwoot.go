@@ -27,6 +27,7 @@ type ChatwootSource struct {
 	SelfAgentIDs           []int64 `toml:"self_agent_ids"`
 	IncludePrivate         *bool   `toml:"include_private"`
 	Media                  *bool   `toml:"media"`
+	RecordingMaxBytes      int64   `toml:"recording_max_bytes"`
 	MaxMediaMB             int64   `toml:"max_media_mb"`
 	ReconcileIntervalHours int     `toml:"reconcile_interval_hours"`
 }
@@ -35,6 +36,13 @@ func (s ChatwootSource) PrivateIncluded() bool { return s.IncludePrivate != nil 
 func (s ChatwootSource) MediaPolicy() attachmentpolicy.Policy {
 	return resolveMediaPolicy(nil, "", 0, int(s.MaxMediaMB), attachmentpolicy.DefaultChatMaxBytes, MediaAccountConfig{Media: s.Media}, true)
 }
+func (s ChatwootSource) EffectiveRecordingMaxBytes() int64 {
+	if s.RecordingMaxBytes > 0 {
+		return s.RecordingMaxBytes
+	}
+	return chatwoot.DefaultRecordingMaxBytes
+}
+
 func (s ChatwootSource) ReconcileInterval() time.Duration {
 	if s.ReconcileIntervalHours == 0 {
 		return 24 * time.Hour
@@ -96,6 +104,9 @@ func (c *Config) validateChatwootSources() error {
 		}
 		if !envutil.ValidName(src.APIKeyEnv) {
 			return fmt.Errorf("chatwoot[%d].api_key_env must name an environment variable", i)
+		}
+		if src.RecordingMaxBytes < 0 || src.RecordingMaxBytes == math.MaxInt64 {
+			return fmt.Errorf("chatwoot[%d].recording_max_bytes must be nonnegative and below MaxInt64", i)
 		}
 		if src.MaxMediaMB < 0 || src.MaxMediaMB > math.MaxInt64/(1<<20) {
 			return fmt.Errorf("chatwoot[%d].max_media_mb must be a nonnegative representable MiB limit", i)

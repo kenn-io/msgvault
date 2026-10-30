@@ -54,7 +54,7 @@ func TestDocumentVectorOperationLockSerializesWriters(t *testing.T) {
 	select {
 	case <-secondEntered:
 		requirements.FailNow("second document-vector writer entered while the first held the lock")
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // absence check: the first writer holds the operation lock
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the first writer holds the operation lock
 	}
 	close(releaseFirst)
 	requirements.NoError(<-firstDone)

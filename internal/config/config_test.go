@@ -2512,6 +2512,20 @@ api_key = "owner-secret"
 	})
 }
 
+func TestLoadIMAPSkipFoldersRejectsBlank(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `[sync]
+imap_skip_folders = { "imap://user@example.com" = ["Trash", " \t "] }
+`
+	require.NoError(os.WriteFile(path, []byte(content), 0o600))
+	_, err := Load(path, "")
+	require.ErrorContains(err, `sync.imap_skip_folders["imap://user@example.com"] contains a blank folder name`)
+	cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
+	require.NoError(err)
+	require.ErrorContains(cfg.DaemonConfigError(), "contains a blank folder name")
+}
+
 func TestLoadTrustedIMAPSentMailboxesPerSource(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

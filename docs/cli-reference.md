@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-10-28"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -821,6 +821,31 @@ where the listing is intentionally incomplete. Gmail source-deletion
 reconciliation happens only during the complete mailbox recovery described
 under [`sync`](#sync).
 
+### Gmail Spam and Trash coverage
+
+Gmail full sync includes messages in Spam and Trash. A full sync with a Gmail
+`--query`, `--after`, `--before`, or `--limit` is still scoped by those options.
+To discover historical Spam and Trash messages omitted by an earlier full sync,
+run a complete full sync for the account with none of those options:
+
+```bash
+msgvault sync-full account@example.com
+```
+
+An idle incremental sync cannot discover older omitted messages unless Gmail
+reports a new history event for them. The full listing resumes from its saved
+checkpoint when the request scope matches; after this coverage change, an older
+narrower checkpoint restarts from the first page. Previously archived messages
+are not duplicated. Gmail can return only messages that still exist in the
+mailbox; permanently deleted messages cannot be backfilled.
+
+At the current 500-ID page size, a listing of N matching messages needs roughly
+`ceil(N / 500)` Gmail list requests. Each newly discovered message also needs one
+RAW-message fetch; retries can add requests. Previously archived messages still
+appear in the listing but are not downloaded again. Actual quota use, transfer,
+storage, and first-full duration depend on mailbox size, newly discovered mail,
+and retries. Plan for additional API use and storage on large accounts.
+
 ---
 
 ## sync
@@ -862,6 +887,23 @@ the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
 absence.
+
+Recovery saves its phase and the history cursor captured before enumeration.
+After an interruption, `sync` or an unfiltered `sync-full` resumes that recovery.
+An interrupted presence inventory is collected again before reconciling absence.
+Once the catch-up phase is durably checkpointed, retries consume History from
+the saved cursor without repeating the full listings. An interruption between
+the reconciliation commit and that checkpoint repeats reconciliation safely.
+The source cursor advances only after catch-up succeeds. If the saved recovery
+cursor also expires, msgvault starts a new complete recovery; one invocation
+attempts at most one such restart.
+Like an ordinary sync, recovery records per-message fetch and ingest
+errors without stopping, so one failing message cannot hold the account in
+recovery. Fetches that fail during catch-up are retried by the next `sync`.
+
+While recovery is pending, a Gmail `sync-full` with query, date, or limit
+filters is rejected. Finish the complete recovery first. `--noresume` restarts
+the complete recovery from a fresh cursor.
 
 Source deletion updates archive metadata rather than deleting local message or
 raw MIME data. Search excludes source-deleted messages by default; use
@@ -1806,6 +1848,11 @@ msgvault sync-slack --private-channels=false --dms=false --group-dms=false
 | `--maintenance` | `false` | Repair edits/reaction changes on recent messages (ignored by default after capture) |
 | `--no-media` | `false` | Skip file downloads for this run (files become pending markers; `backfill-slack-media` fetches them later) |
 
+When a file download fails, the summary shows the error count and the first
+media error, including the Slack file ID. Each failed attachment retains its
+reason in `attachments.attachment_metadata.fetch_error`; the sync run item
+also records the error.
+
 ---
 
 ## backfill-slack-media
@@ -1819,6 +1866,10 @@ already-downloaded ones are never re-fetched. Files hosted outside
 msgvault backfill-slack-media
 msgvault backfill-slack-media T0123456789
 ```
+
+The summary shows the error count and first media error when downloads fail.
+Failed files remain eligible for retry. A successful retry clears the previous
+failure detail from the attachment row.
 
 ---
 

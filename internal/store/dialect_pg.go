@@ -541,6 +541,13 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 	WHERE m.id = src.id`
 }
 
+func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql.DB) (string, error) {
+	return d.FTSBackfillBatchSQL() + fmt.Sprintf(
+		" AND (m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM %d)",
+		CurrentFTSIndexingVersion,
+	), nil
+}
+
 // FTSAvailable reports whether tsvector search is available.
 // PostgreSQL always supports tsvector — check that the column exists.
 func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, error) {
@@ -597,11 +604,6 @@ func (d *PostgreSQLDialect) FTSNeedsBackfillQuick(ctx context.Context, db *sql.D
 	return exists
 }
 
-// FTSClearSQL returns the SQL to clear all tsvector data.
-func (d *PostgreSQLDialect) FTSClearSQL() string {
-	return "UPDATE messages SET search_fts = NULL"
-}
-
 // SchemaFTS returns "" for PostgreSQL — the tsvector column is part of the
 // main schema_pg.sql, not a separate file.
 func (d *PostgreSQLDialect) SchemaFTS() string {
@@ -615,9 +617,8 @@ func (d *PostgreSQLDialect) SchemaFTS() string {
 // as the SQLite path covers a malformed shadow table.
 //
 // Runs on the querier so RebuildFTS can route it through the maintenance
-// transaction: the full-table `UPDATE messages SET search_fts = NULL` here
-// has the same cost as FTSClearSQL (which is already hatched), and the GIN
-// rebuild over a populated table can likewise exceed the pool-wide 30s
+// transaction: the full-table `UPDATE messages SET search_fts = NULL` and
+// GIN rebuild over a populated table can exceed the pool-wide 30s
 // statement_timeout on a large archive (finding S1).
 func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQuerier) error {
 	if _, err := q.ExecContext(ctx, "DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {

@@ -1,0 +1,16 @@
+name: Frontend shell commands
+
+on:
+  pull_request:
+    paths:
+      - 'web/**'
+      - '.github/workflows/frontend-shell.yml'
+      - '.github/workflows/frontend-shell-pr.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    cache-mode: read
+    uses: ./.github/workflows/frontend-shell.yml

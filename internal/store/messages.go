@@ -3890,17 +3890,16 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 	})
 }
 
-// BackfillFTS populates the FTS table from existing message data.
+// BackfillFTS fills missing search entries from existing message data on SQLite.
+// PostgreSQL also refreshes entries with an old indexing version.
 // Processes in batches to avoid blocking for minutes on large archives.
 // The progress callback (if non-nil) is called after each batch with
 // (position in ID range, total ID range). Each batch is committed
 // independently so partial progress is preserved if interrupted.
 // Returns the number of rows inserted. No-op if FTS5 is not available.
 //
-// BackfillFTS clears FTS rows with DELETE before inserting. If the FTS5
-// shadow tables are themselves malformed, that DELETE will either fail or
-// leave corruption in place — callers recovering from shadow-table
-// corruption should use RebuildFTS instead.
+// Existing entries remain searchable while missing entries are filled. Callers
+// recovering from malformed FTS5 shadow tables should use RebuildFTS instead.
 func (s *Store) BackfillFTS(progress func(done, total int64)) (int64, error) {
 	return s.BackfillFTSContext(context.Background(), progress)
 }
@@ -3922,21 +3921,15 @@ func (s *Store) BackfillFTSContext(
 		return 0, nil
 	}
 
-	// runMaintenance disables the pool-wide 30s statement_timeout for the
-	// clear: FTSClearSQL is a full-table tsvector rewrite that exceeds 30s on
-	// a large archive (finding S1). No-op timeout reset on SQLite.
-	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		_, err := tx.ExecContext(ctx, s.dialect.FTSClearSQL())
-		return err
-	}); err != nil {
-		return 0, fmt.Errorf("clear FTS: %w", err)
+	batchSQL, err := s.dialect.FTSBackfillMissingBatchSQL(ctx, s.db.DB)
+	if err != nil {
+		return 0, err
 	}
-
-	return s.backfillFTSRangeContext(ctx, minID, maxID, progress)
+	return s.backfillFTSRangeContext(ctx, batchSQL, minID, maxID, progress)
 }
 
 // RebuildFTS fully recreates the FTS index from the underlying message
-// tables. Unlike BackfillFTS (DELETE + INSERT), this drops and recreates
+// tables. Unlike BackfillFTS, this drops and recreates
 // the FTS table itself so malformed FTS5 shadow tables are fully replaced.
 //
 // Ignores the cached fts5Available flag: a corrupt shadow table causes the
@@ -3954,8 +3947,8 @@ func (s *Store) RebuildFTSContext(
 ) (int64, error) {
 	// runMaintenance disables the pool-wide 30s statement_timeout for the
 	// schema teardown/rebuild. On PG, FTSRebuildSchema runs a full-table
-	// `UPDATE messages SET search_fts = NULL` (identical cost to the hatched
-	// FTSClearSQL) plus a GIN rebuild over a populated table — both can exceed
+	// `UPDATE messages SET search_fts = NULL` plus a GIN rebuild over a
+	// populated table — both can exceed
 	// 30s on a large archive and would cancel the rebuild-fts recovery command
 	// with SQLSTATE 57014 (finding S1). On SQLite the reset SQL is "" so this
 	// is an ordinary transaction around the DROP/CREATE of messages_fts.
@@ -3974,7 +3967,7 @@ func (s *Store) RebuildFTSContext(
 		return 0, nil
 	}
 
-	indexed, err := s.backfillFTSRangeContext(ctx, minID, maxID, progress)
+	indexed, err := s.backfillFTSRangeContext(ctx, s.dialect.FTSBackfillBatchSQL(), minID, maxID, progress)
 	if err != nil {
 		return indexed, err
 	}
@@ -3995,12 +3988,12 @@ func (s *Store) messageIDRangeContext(ctx context.Context) (int64, int64, error)
 	return minID, maxID, nil
 }
 
-// backfillFTSRange inserts FTS rows for all messages with id in [minID, maxID],
-// in batches. Shared between BackfillFTS (DELETE+fill) and RebuildFTS
-// (DROP+CREATE+fill). Each batch is committed independently so partial
-// progress is preserved if interrupted.
+// backfillFTSRangeContext indexes messages with id in [minID, maxID] in batches
+// using the supplied full or missing-only query. Each batch is committed
+// independently so partial progress is preserved if interrupted.
 func (s *Store) backfillFTSRangeContext(
 	ctx context.Context,
+	batchSQL string,
 	minID, maxID int64,
 	progress func(done, total int64),
 ) (int64, error) {
@@ -4011,19 +4004,19 @@ func (s *Store) backfillFTSRangeContext(
 
 	for cursor <= maxID {
 		batchEnd := cursor + batchSize
-		n, err := s.backfillFTSBatchContext(ctx, cursor, batchEnd)
+		n, err := s.backfillFTSBatchContext(ctx, batchSQL, cursor, batchEnd)
 		if err != nil {
 			// Only the specific PG tsvector-overflow error (a single
 			// pathological row whose body exceeds PostgreSQL's tsvector
 			// limit) is recoverable by retrying the batch row by row and
 			// skipping the offending row(s). EVERY OTHER error (dead
 			// connection, a non-size SQLSTATE, etc.) is systemic — it would
-			// hit every row and silently clear-then-skip the whole archive —
+			// hit every row and silently skip the whole archive —
 			// so it must ABORT and propagate, not be masked as success.
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
 			}
-			n, err = s.backfillFTSRowByRowContext(ctx, cursor, batchEnd)
+			n, err = s.backfillFTSRowByRowContext(ctx, batchSQL, cursor, batchEnd)
 			if err != nil {
 				return indexed, err
 			}
@@ -4056,11 +4049,12 @@ func (s *Store) backfillFTSRangeContext(
 // SQLite), so the PG-syntax empty-tsvector literal is safe.
 func (s *Store) backfillFTSRowByRowContext(
 	ctx context.Context,
+	batchSQL string,
 	fromID, toID int64,
 ) (int64, error) {
 	var indexed int64
 	for id := fromID; id < toID; id++ {
-		n, err := s.backfillFTSBatchContext(ctx, id, id+1)
+		n, err := s.backfillFTSBatchContext(ctx, batchSQL, id, id+1)
 		if err != nil {
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
@@ -4098,6 +4092,7 @@ func (s *Store) backfillFTSRowByRowContext(
 // semantics. No-op timeout reset on SQLite.
 func (s *Store) backfillFTSBatchContext(
 	ctx context.Context,
+	batchSQL string,
 	fromID, toID int64,
 ) (int64, error) {
 	if s.backfillFTSBatchErrHook != nil {
@@ -4107,7 +4102,7 @@ func (s *Store) backfillFTSBatchContext(
 	}
 	var affected int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		result, err := tx.ExecContext(ctx, s.dialect.FTSBackfillBatchSQL(), fromID, toID)
+		result, err := tx.ExecContext(ctx, batchSQL, fromID, toID)
 		if err != nil {
 			return err
 		}

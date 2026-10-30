@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
+	"time"
 )
 
 func TestLegacyPendingCreateRequiresExactApproval(t *testing.T) {
@@ -169,6 +170,7 @@ func TestLegacyPendingCanonicalSuccessDoesNotApproveNewInference(t *testing.T) {
 	assert := assert.New(t)
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, _ := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.PublishPerson(t.Context(), personID))
 	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_publications SET approved_body_sha256=NULL, approved_inference_revision=NULL, approved_mutation_revision=NULL WHERE person_id=?`), personID)
 	require.NoError(err)
@@ -425,6 +427,7 @@ func TestCancelAbsentPendingCreateAfterPullMaterializedMapping(t *testing.T) {
 	assert := assert.New(t)
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, book := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.PublishPerson(t.Context(), personID))
 	pending, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.NoError(err)

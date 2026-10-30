@@ -926,7 +926,7 @@ func TestBuildCache_WaitsForCacheLockHolders(t *testing.T) {
 			select {
 			case <-done:
 				require.FailNow("buildCache must wait for the cache lock holder")
-			case <-time.After(150 * time.Millisecond): //nolint:kennlint // absence check: the held cache lock keeps buildCache waiting
+			case <-time.After(150 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the held cache lock keeps buildCache waiting
 			}
 
 			require.NoError(holder.Unlock(), "release cache lock")
