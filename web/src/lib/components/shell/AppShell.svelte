@@ -284,6 +284,7 @@
     replaceCommittedNavigation({ settingsCategory: 'carddav' });
   }
   let historyDialog = $state<{ restoreFocus: () => Promise<void> }>();
+  let sourcesPage = $state<{ refresh: () => void }>();
   const runHistory = $derived(exploreState.current.operationHistory
     ? { operationLane: exploreState.current.operationLane, operationKind: exploreState.current.operationKind, operationState: exploreState.current.operationState, operationStartedFrom: exploreState.current.operationStartedFrom, operationStartedBefore: exploreState.current.operationStartedBefore, operationRunID: exploreState.current.operationRunID, operationStatus: exploreState.current.operationStatus }
     : undefined);
@@ -317,9 +318,9 @@
   function openOperationAuthority(target: RelatedOperationStatus): void {
     if (target === 'listSourceStatus' || target === 'getCardDAVStatus') {
       announceOperation(target === 'listSourceStatus' ? 'Opening source status.' : 'Opening CardDAV settings.');
-      commitNavigation({ ...defaultOperationsState(), operationHistory: false,
-        workspace: target === 'listSourceStatus' ? 'sources' : 'settings',
+      commitNavigation({ ...defaultOperationsState(), operationHistory: false, workspace: target === 'listSourceStatus' ? 'sources' : 'settings',
         ...(target === 'getCardDAVStatus' ? { settingsCategory: 'carddav', settingsAuthority: '' } : {}) });
+      if (target === 'listSourceStatus') sourcesPage?.refresh();
       return;
     }
     const statusTargets: Record<
@@ -696,10 +697,9 @@
   async function openSavedView(state: Partial<ExploreURLState>): Promise<void> {
     selection.clear();
     commitNavigation(state);
+    if (exploreState.current.workspace === 'settings') return;
     await tick();
-    const grid = focusableResultsGrid();
-    if (grid) grid.focus();
-    else searchInput?.focus();
+    (focusableResultsGrid() ?? searchInput)?.focus();
   }
   $effect(() => {
     const attachmentID = selectedAttachmentID;
@@ -1316,7 +1316,7 @@
           () => void shellData.jobs.refresh(true)
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenOperations={() => openOperations('source_sync')} />
+        <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenOperations={() => openOperations('source_sync')} />
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace
           {client}
