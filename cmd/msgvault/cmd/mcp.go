@@ -183,6 +183,7 @@ const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
+const sendReplyMinAPISchemaVersion = "3.28.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
 // Draft tools are the floor, so an older daemon fails instead of serving an empty msgvault.
@@ -199,7 +200,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		return mcpserver.ServeOptions{}, fmt.Errorf("MCP draft tools require daemon API schema %s or newer (daemon reports %q); upgrade the daemon", draftsMinAPISchemaVersion, schemaVersion)
 	}
 	opts := mcpserver.ServeOptions{
-		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
+		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommandsForSchema(true, schemaVersion), DelegatedOnly: true,
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
 		grant, err := st.AgentTokenSelf(ctx)
@@ -357,7 +358,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.IdentityScoring = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
-		opts.DraftCommands = mcpDraftCommands(false)
+		opts.DraftCommands = mcpDraftCommandsForSchema(false, schemaVersion)
 	}
 
 	return opts

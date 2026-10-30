@@ -647,9 +647,11 @@ provider checks, retention, retry behavior, and recovery limits.
 
 ### Local chat drafts
 
-Slack, Teams, and Discord conversations get drafts that live only in msgvault.
-They never appear in the provider's composer and no command makes a provider
-request.
+Slack, Teams, Discord, and Threads conversations get drafts that live only in
+msgvault. Draft commands never publish or create a provider composer entry.
+Threads drafts require an archived parent in the same conversation. The shared
+[send-reply command](#send-reply) publishes through the source-specific
+sender after explicit source opt-in.
 
 ```bash
 msgvault draft-compose --conversation <conversation-id> --body <text> [--reply-to <message-id>] [--json]
@@ -681,6 +683,74 @@ when available. The command reports the address, display name, primary and
 default flags, verification status, and whether the
 address is a confirmed msgvault identity. Delegated agent tokens cannot run
 this command. It does not require `[[gmail.drafts]]` and never changes Gmail.
+
+---
+
+## add-threads
+
+On unreleased `main`, connect your own Threads account through your selected daemon:
+
+```bash
+msgvault add-threads --app-id <threads-app-id> --redirect-uri <registered-https-uri> [--allow-send]
+```
+
+The CLI reads the app secret from a masked prompt or
+`MSGVAULT_THREADS_APP_SECRET`, prints the browser authorization URL and requires
+the full returned callback URL. The daemon verifies and stores the credential
+before registering the source. The printed `threads:<app-id>:<owner-id>` is the
+exact identifier for manual and scheduled reads. `--allow-send` requests
+`threads_content_publish` and `threads_manage_replies` in addition to the default
+`threads_basic` and `threads_read_replies`; it does not enable publication.
+Owner access and a protected daemon transport are required.
+[Threads setup](usage/threads.md#connect-your-account) covers callbacks and access limits.
+
+## sync-threads
+
+```bash
+msgvault sync-threads <threads:app-id:owner-id> [--after <RFC3339> | --full | --post <media-id>] [--json]
+```
+
+The identifier must match one registered Threads source. `--after` is an inclusive
+history floor for own-post/own-reply discovery. Already archived own roots remain
+in rolling conversation sweeps even below a raised floor. `--full` starts or
+resumes a full epoch. `--post` requires an
+archived verified own root and preserves source-wide coverage. Manual runs have
+at most 1,000 HTTP attempts and ten minutes; scheduled runs have 200 attempts.
+Pause and resume preserve committed pages. JSON includes mode, requested floor,
+oldest observed time, sweep position/boundary, pending work, unavailable/incomplete
+counts and `history_complete`. The latter describes available pagination, not
+historical completeness. See [coverage and scheduling](usage/threads.md#read-now-or-on-a-schedule).
+
+## send-reply
+
+```bash
+msgvault send-reply --draft <chat-draft-id> --revision <n> [--adopt-media-id <media-id>] [--json]
+msgvault send-reply <archived-message-id> --body <text> [--json]
+msgvault send-reply <archived-message-id> --quota [--json]
+```
+
+On unreleased `main`, `send-reply` dispatches by source type; this release adds
+the Threads sender. The archived message or local draft determines the source.
+Threads sends require the owner, `[[threads.sends]]` for that source, verified
+scopes, and an archived parent under your own post. Use a positional archived
+message ID with `--body` for a direct send, or `--draft` with `--revision` to
+publish a reviewed local draft. A direct send is pinned to a local draft before
+provider work; repeating the same direct request resumes that durable send.
+Text must be nonblank UTF-8, contain no NUL and use at most 500
+bytes; draft creation remains uncapped. `--adopt-media-id` is available only for
+a draft with an uncertain prior send. `--quota` reads the source's reply quota.
+Delegated tokens cannot use the Threads sender.
+
+JSON separates `status`, `remote_status`, and `local_status`, with `draft_id`,
+`body_bytes`, optional exact string `container_id`/`media_id`, `archive_complete`,
+`message_id`, `candidates`, and `error_category`. Incomplete/rejected actions exit
+nonzero while retaining their structured result. A missing stream completion
+never proves a remote failure. Repeating the same draft and revision resumes
+pre-publication processing or repairs known-success local state. It never
+repeats a publish after the durable barrier. `--adopt-media-id` requires explicit
+ownership/text/root/parent proof for an existing uncertain attempt.
+[Send recovery](usage/threads.md#inspect-and-recover-an-interrupted-send) owns the
+status table and actions.
 
 ---
 
@@ -4362,7 +4432,7 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
-Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. These draft tools never send. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner. On unreleased `main`, the owner tool `send_reply` sends a direct reply to an archived message or publishes a reviewed local draft after client confirmation; the archived message or draft determines the source. This release registers the Threads sender; see [Threads](usage/threads.md#publish-a-reviewed-reply).
 
 With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 

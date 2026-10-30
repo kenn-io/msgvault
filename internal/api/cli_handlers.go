@@ -1445,10 +1445,13 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	if name == clirun.EnvThreadsOAuth {
+		return len(args) > 0 && args[0] == "add-threads"
+	}
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
-	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
+	if IsCLIRunSendReply(args) || IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
@@ -1690,6 +1693,10 @@ const cliRunPersonCommand = "person"
 const cliRunStatusSubcommand = "status"
 
 func cliRunCommandAllowed(args []string) bool {
+	if IsCLIRunSendReply(args) {
+		_, err := ParseCLIRunSendReply(CLIRunRequest{Args: args})
+		return err == nil
+	}
 	if len(args) == 0 {
 		return false
 	}
@@ -1762,6 +1769,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-plaud",
 		"add-twenty",
 		"add-discord",
+		"add-threads",
 		"add-granola",
 		"add-omi",
 		"add-imap",
@@ -1822,7 +1830,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-chatwoot",
 		"sync-plaud",
 		"sync-twenty",
-		"sync-discord",
+		"sync-discord", "sync-threads",
 		"sync-granola",
 		"sync-inline",
 		"sync-muesli",

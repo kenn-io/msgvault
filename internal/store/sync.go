@@ -1362,7 +1362,12 @@ func (s *Store) InterruptSyncWithCheckpoint(ctx context.Context, syncID int64, s
 
 // PauseSyncWithCheckpoint finishes a resumable pass without recording a failure.
 func (s *Store) PauseSyncWithCheckpoint(syncID int64, cp *Checkpoint) error {
-	return s.finishSyncWithCheckpoint(context.Background(), syncID, SyncStatusPaused, "", cp)
+	return s.PauseSyncWithCheckpointContext(context.Background(), syncID, cp)
+}
+
+// PauseSyncWithCheckpointContext honors cancellation during pause finalization.
+func (s *Store) PauseSyncWithCheckpointContext(ctx context.Context, syncID int64, cp *Checkpoint) error {
+	return s.finishSyncWithCheckpoint(ctx, syncID, SyncStatusPaused, "", cp)
 }
 
 func (s *Store) finishSyncWithCheckpoint(ctx context.Context, syncID int64, status, errMsg string, cp *Checkpoint) error {
@@ -1872,7 +1877,7 @@ func (s *Store) UpdateSourceDisplayNameContext(
 	})
 }
 
-// UpdateSourceSyncConfig updates the JSON sync configuration for an IMAP source.
+// UpdateSourceSyncConfig updates the JSON sync configuration for a source.
 // The sync_config column is JSONB on PG; the dialect supplies the
 // appropriate placeholder cast (?::JSONB on PG, bare ? on SQLite).
 //
@@ -1880,7 +1885,11 @@ func (s *Store) UpdateSourceDisplayNameContext(
 // change to that mailbox re-derives the source's events in the same
 // transaction.
 func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error {
-	ctx := context.Background()
+	return s.UpdateSourceSyncConfigContext(context.Background(), sourceID, configJSON)
+}
+
+// UpdateSourceSyncConfigContext honors cancellation during source configuration changes.
+func (s *Store) UpdateSourceSyncConfigContext(ctx context.Context, sourceID int64, configJSON string) error {
 	newConfig := sql.NullString{String: configJSON, Valid: true}
 	// The source lock orders this write against every derivation of the
 	// source's events, so the comparison below sees the config they used.
