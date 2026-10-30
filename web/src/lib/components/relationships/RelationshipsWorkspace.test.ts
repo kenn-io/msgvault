@@ -259,7 +259,7 @@ describe('RelationshipsWorkspace', () => {
     expect(await screen.findByText('Subject')).toBeDefined();
   });
 
-  it('single-clicking a timeline row opens the conversation thread in the reading pane', async () => {
+  it.each([null, 'cluster:2'])('clears a clicked timeline reader when the target becomes %s', async (destination) => {
     const { fetchFn } = fetchHandler({
       '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
       '/api/v1/relationships/1/timeline': async () => Response.json({
@@ -276,7 +276,7 @@ describe('RelationshipsWorkspace', () => {
       })
     });
     const props = { ...baseProps(fetchFn), target: 'cluster:1' };
-    render(RelationshipsWorkspace, { props });
+    const view = render(RelationshipsWorkspace, { props });
     await props.controller.openTarget('cluster:1', props.predicate);
 
     await fireEvent.click((await screen.findByText('Subject line')).closest('[role="row"]')!);
@@ -284,6 +284,8 @@ describe('RelationshipsWorkspace', () => {
     // The anchor message renders expanded immediately — actual content, not metadata.
     expect(await within(reading).findByText('Full message body text')).toBeDefined();
     expect(within(reading).getByRole('button', { name: 'Collapse message 9 from alice@example.com' })).toBeDefined();
+    await view.rerender({ target: destination });
+    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
   });
 
   it('opens a chat_burst directly into the conversation window bounded to the local day', async () => {
@@ -402,7 +404,7 @@ describe('RelationshipsWorkspace', () => {
     }
   });
 
-  it.each([null, 'cluster:2', 'close'])('restores a bounded reader and clears it through %s', async (destination) => {
+  it('restores a bounded reader and closes it', async () => {
     const { fetchFn } = fetchHandler({
       '/api/v1/conversations/70': async () => Response.json({ id: 70, anchor_id: 10, has_before: false, has_after: false, total: 1, messages: [{ id: 10, from: 'Example sender', subject: 'Saved subject', body: 'Saved message body', sent_at: when, to: [], labels: [], attachments: [] }] }),
     });
@@ -414,8 +416,7 @@ describe('RelationshipsWorkspace', () => {
       const request = fetchFn.mock.calls.map(([input]) => new URL((input as Request).url)).find(url => url.pathname.endsWith('/conversations/70'))!;
       expect(request.searchParams.get('anchor')).toBe('10');
       expect([request.searchParams.get('start'), request.searchParams.get('end')]).toEqual(['2026-07-19T00:00:00.000Z', '2026-07-20T00:00:00.000Z']);
-      if (destination === 'close') await fireEvent.click(within(pane).getByRole('button', { name: 'Close reading pane' }));
-      else await view.rerender({ ...props, target: destination });
+      await fireEvent.click(within(pane).getByRole('button', { name: 'Close reading pane' }));
       expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
     } finally { view.unmount(); props.controller.destroy(); }
   });
