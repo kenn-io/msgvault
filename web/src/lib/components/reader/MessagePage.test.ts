@@ -31,7 +31,7 @@ it('passes exact person navigation from the message reader', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (input) => {
     const path = new URL((input as Request).url).pathname;
     if (path === '/api/v1/messages/2') return Response.json({ id: 2, conversation_id: 7, from: 'Same name', to: ['Same name'], subject: 'Follow up', body: 'Loaded body' });
-    if (path === '/api/v1/conversations/7') return Response.json({ id: 7, anchor_id: 2, messages: [{ id: 2, conversation_id: 7, message_type: 'email', from: 'Same name', from_participant_id: 11, to: [], subject: 'Follow up', body: 'Loaded body' }], has_before: false, has_after: false, total: 1 });
+    if (path === '/api/v1/conversations/7') return Response.json({ id: 7, anchor_id: 2, messages: [{ id: 2, conversation_id: 7, message_type: 'email', from: 'Same name', from_participant_id: 11, to: ['Same name'], subject: 'Follow up', body: 'Loaded body' }], has_before: false, has_after: false, total: 1 });
     if (path.endsWith('/tasks/status')) return Response.json({ state: 'disabled', message: 'Set up Tasks' });
     if (path.endsWith('/kata/status')) return Response.json({ state: 'disabled' });
     return Response.json({ recordings: [], ...disabledTaskLookup(2) });
