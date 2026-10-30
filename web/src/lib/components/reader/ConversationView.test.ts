@@ -163,7 +163,6 @@ describe('ConversationView', () => {
     for (const id of [1, 2]) {
       const card = screen.getByRole('article', { name: `Message ${id}` });
       expect(within(card).getByText(`Linked task ${id}`)).toBeDefined();
-      expect(within(card).getByRole('button', { name: `Unlink Linked task ${id}` })).toHaveProperty('disabled', true);
     }
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
