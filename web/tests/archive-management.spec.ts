@@ -179,3 +179,31 @@ test('read-only source settings open their editor and contact-only runs finish',
   await page.getByRole('button', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Files', exact: true })).toBeVisible();
 });
+
+test('Sources keeps rows through a contacts failure and preserves independent diagnostics', async ({ page }) => {
+  let contactsFailed = true;
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback' } }));
+  await page.route('**/api/v1/deletions', route => route.fulfill({ json: { manifests: [] } }));
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [{
+    id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Example archive',
+    active_sync: null, latest_sync: { ...syncRun('failed', 0), error_message: 'Run authentication failed' },
+    scheduler_last_error: 'Scheduler configuration invalid', last_successful_sync: null, can_sync: true
+  }] } }));
+  await page.route('**/api/v1/carddav/connections', route => route.fulfill({ status: contactsFailed ? 500 : 200, json: contactsFailed ? { message: 'Unavailable' } : { connections: [{ connection: 'default', status: {
+    configured: true, available: true, credential_configured: true, account: { username: 'contacts@example.com' }, latest: { state: 'cancelled', started_at: '2026-10-29T10:00:00Z' }
+  } }] } }));
+  await page.goto('/?workspace=sources');
+  await expect(page.getByRole('button', { name: 'Details for Example archive' })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText("Can't load contacts.");
+  await page.getByRole('button', { name: 'Details for Example archive' }).click();
+  await expect(page.getByText('Run authentication failed')).toBeVisible();
+  await expect(page.getByText('Scheduler configuration invalid')).toBeVisible();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  contactsFailed = false;
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('table', { name: 'Sources' }).getByText('Cancelled')).toBeVisible();
+  expect(errors).toEqual([]);
+});

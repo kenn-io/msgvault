@@ -9,7 +9,7 @@
   import { kataReadiness } from '../../kata/kata-ready.svelte';
   import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import Dialog from '../common/Dialog.svelte';
-  import AddToTaskDialog from '../tasks/AddToTaskDialog.svelte';
+  import KataEvidenceDialog from './KataEvidenceDialog.svelte';
 
   let { client, attachmentID, messageID, filename }: {
     client: APIClient; attachmentID: number; messageID: number; filename: string;
@@ -79,7 +79,7 @@
   </Dialog>
 {/if}
 {#if open && selected}
-  <AddToTaskDialog {client} selector={selected} messageId={messageID} title={`Follow up on ${filename}`} email={false} onclose={close} />
+  <KataEvidenceDialog {client} selector={selected} defaultTitle={`Follow up on ${filename}`} onclose={close} />
 {/if}
 
 <style>
