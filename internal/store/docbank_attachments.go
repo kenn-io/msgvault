@@ -484,7 +484,7 @@ func (s *Store) RecordDocbankAttachmentRetry(
 	_, err := s.db.ExecContext(ctx, s.Rebind(`
 		UPDATE docbank_attachment_deliveries SET reason = ?, next_action_at = ?
 		WHERE destination_key = ? AND content_hash = ? AND state = 'sending'`),
-		reason, s.timestampValue(time.Now().UTC().Add(beeperMediaRetryDelay)), destination, d.ContentHash)
+		reason, s.timestampValue(time.Now().UTC().Add(BeeperMediaRetryDelay)), destination, d.ContentHash)
 	if err != nil {
 		return fmt.Errorf("record attachment mirror retry: %w", err)
 	}
