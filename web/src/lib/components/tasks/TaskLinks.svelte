@@ -269,7 +269,7 @@
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded && (showSetup || integrationState !== 'disabled')}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
+    {#if degraded && showSetup}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
         <p>{stateMessage}</p>
         <Button size="sm" surface="soft" label={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onclick={onsettings} />
       </div>{/if}

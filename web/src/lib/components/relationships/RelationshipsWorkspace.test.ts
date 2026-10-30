@@ -260,6 +260,7 @@ describe('RelationshipsWorkspace', () => {
   });
 
   it('single-clicking a timeline row opens the conversation thread in the reading pane', async () => {
+    const onOpenPerson = vi.fn();
     const { fetchFn } = fetchHandler({
       '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
       '/api/v1/relationships/1/timeline': async () => Response.json({
@@ -270,12 +271,12 @@ describe('RelationshipsWorkspace', () => {
       '/api/v1/conversations/70': async () => Response.json({
         id: 70, anchor_id: 9, has_before: false, has_after: false, total: 1,
         messages: [{
-          id: 9, conversation_id: 70, subject: 'Subject line', from: 'alice@example.com',
+          id: 9, conversation_id: 70, subject: 'Subject line', from: 'alice@example.com', from_participant_id: 4,
           to: ['me@example.com'], sent_at: when, snippet: 'Preview text', body: 'Full message body text'
         }]
       })
     });
-    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    const props = { ...baseProps(fetchFn), target: 'cluster:1', onOpenPerson };
     render(RelationshipsWorkspace, { props });
     await props.controller.openTarget('cluster:1', props.predicate);
 
@@ -284,6 +285,8 @@ describe('RelationshipsWorkspace', () => {
     // The anchor message renders expanded immediately — actual content, not metadata.
     expect(await within(reading).findByText('Full message body text')).toBeDefined();
     expect(within(reading).getByRole('button', { name: 'Collapse message 9 from alice@example.com' })).toBeDefined();
+    await fireEvent.click(within(reading).getByRole('button', { name: 'alice@example.com' }));
+    expect(onOpenPerson).toHaveBeenCalledWith(4);
   });
 
   it('opens a chat_burst directly into the conversation window bounded to the local day', async () => {
