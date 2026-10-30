@@ -50,7 +50,7 @@
   import type { APIClient } from '../../api/client';
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
-  import { sourceTypeLabel } from '../../sources/labels';
+  import { sourceMailbox, sourceTypeLabel } from '../../sources/labels';
   import { analyticalAuthority } from '../../explore/authority';
   import { FILE_FAMILY_LABELS, fileTypeLabel } from '../../explore/labels';
   import type {
@@ -136,6 +136,7 @@
     onPersonPresentationChange?: (presentation: 'media' | 'files') => void;
     onPersonDirectionsChange?: (directions: PersonFileDirection[]) => void;
     onRestorationComplete?: (epoch: number) => void;
+    onConfigureVisualSearch?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
@@ -166,6 +167,7 @@
     onPersonPresentationChange = undefined,
     onPersonDirectionsChange = undefined,
     onRestorationComplete = undefined,
+    onConfigureVisualSearch = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
   }: Props = $props();
@@ -838,7 +840,7 @@
         />
       </div>
     {/if}
-    {#if visual?.ready}<Toggle bind:checked={hostedVisualSearch} label="Visual search" />{/if}
+    {#if visual?.ready}<Toggle bind:checked={hostedVisualSearch} label="Visual search" />{:else if onConfigureVisualSearch}<span>Visual search · <Button size="sm" label="Set up" onclick={onConfigureVisualSearch} /></span>{/if}
     {#if hostedVisualSearch}
       <label>
         Visual query
@@ -1002,7 +1004,7 @@
                     <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
                     {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
                     <span role="gridcell">{people(row)}</span>
-                    <span role="gridcell">{row.source_identifier.includes('://') ? sourceTypeLabel(row.source_type) : row.source_identifier}</span>
+                    <span role="gridcell">{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
                     <span role="gridcell">
                       {#if onOpenItem}
                         {@const openItem = onOpenItem}

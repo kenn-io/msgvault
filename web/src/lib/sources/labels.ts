@@ -1,6 +1,4 @@
-import type { ChipTone } from '@kenn-io/kit-ui';
 import type { SourceStatus } from '../api/generated/models';
-import { operationStateChip } from '../operations/labels';
 import { shellQuote } from '../settings/shell-quote';
 import { sentenceCase } from '../explore/labels';
 
@@ -30,8 +28,8 @@ export function syncRunning(source: StateSource): boolean {
 /** The run state a source shows, or undefined when it has never synced. */
 export function sourceRunState(source: StateSource): string | undefined {
   const latest = source.latest_sync;
-  if (syncRunning(source)) return 'running';
-  if (source.scheduler_queued && (!latest || latest.status === 'cancelled')) return 'queued';
+  if (source.active_sync || (!source.scheduler_queued && syncRunning(source))) return 'running';
+  if (source.scheduler_queued && latest?.status !== 'failed' && !(latest?.status === 'completed' && latest.errors_count > 0)) return 'queued';
   if (!latest) return undefined;
   if (latest.status === 'paused') return 'paused';
   if (latest.status === 'cancelled') return 'cancelled';
@@ -40,17 +38,12 @@ export function sourceRunState(source: StateSource): string | undefined {
   return undefined;
 }
 
-export interface SourceFailure {
-  /** One plain sentence. */
-  reason: string;
-}
-
 /** The stored reason a source last failed. */
 export function sourceFailure(
-  source: Pick<SourceStatus, 'latest_sync' | 'identifier' | 'source_type' | 'scheduler_last_error'>,
-): SourceFailure | undefined {
+  source: Pick<SourceStatus, 'latest_sync' | 'scheduler_last_error'>,
+): string | undefined {
   const message = source.latest_sync?.error_message || source.scheduler_last_error;
-  return message ? { reason: message } : undefined;
+  return message || undefined;
 }
 
 /** The sync command for an account that has no schedule. Only mail-style identifiers have one. */
@@ -69,15 +62,6 @@ export const SOURCE_SETTING_PREFIX: Readonly<Record<string, string>> = {
 };
 
 
-export function syncStatusChip(
-  source: Pick<SourceStatus, 'active_sync' | 'latest_sync' | 'scheduler_queued'>
-): { label: string; tone: ChipTone } {
-  const state = sourceRunState(source);
-  if (!state) return { label: 'Never synced', tone: 'muted' };
-  const labels: Record<string, string> = { running: 'Syncing', succeeded: 'Completed', partial: 'Completed with errors' };
-  return { label: labels[state] ?? operationStateChip(state).label, tone: operationStateChip(state).tone };
-}
-
 const SYNC_UNAVAILABLE: Readonly<Record<string, string>> = {
   source_not_schedulable: 'Imported file — nothing to sync',
   sync_already_running: 'Sync in progress',
@@ -88,4 +72,18 @@ const SYNC_UNAVAILABLE: Readonly<Record<string, string>> = {
 
 export function syncUnavailableLabel(code: string | undefined): string {
   return code !== undefined && Object.hasOwn(SYNC_UNAVAILABLE, code) ? SYNC_UNAVAILABLE[code]! : 'Sync unavailable';
+}
+
+// The username of an "imaps://user@host" identifier, or the identifier.
+export function sourceMailbox(identifier: string): string {
+  const scheme = identifier.indexOf('://');
+  if (scheme < 0) return identifier.toLowerCase();
+  const rest = identifier.slice(scheme + 3);
+  const at = rest.lastIndexOf('@');
+  if (at <= 0) return identifier.toLowerCase();
+  try {
+    return decodeURIComponent(rest.slice(0, at)).toLowerCase();
+  } catch {
+    return rest.slice(0, at).toLowerCase();
+  }
 }

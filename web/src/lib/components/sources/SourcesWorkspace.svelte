@@ -374,9 +374,7 @@
     return (
       triggering === source.identifier ||
       awaitingSourceID === source.id ||
-      syncRunning(source) ||
-      source.scheduler_queued === true ||
-      source.sync_unavailable_reason === 'sync_already_running'
+      syncRunning(source)
     );
   }
 </script>
@@ -444,7 +442,7 @@
                 size="sm"
                 tone="info"
                 surface="soft"
-                label={syncing(source) ? 'Syncing…' : 'Sync now'}
+                label={source.scheduler_queued && !source.active_sync ? 'Sync queued' : syncRunning(source) ? 'Syncing…' : syncing(source) ? 'Starting…' : 'Sync now'}
                 ariaLabel={`Sync now ${label(source)}`}
                 disabled={Boolean(triggering) || syncing(source)}
                 onclick={(event) => {
@@ -453,7 +451,7 @@
                 }}
               />
             {:else}
-              <span class="muted">{isOnDemandSource(source) ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
+              <span class="muted">{source.scheduler_queued && !source.active_sync ? 'Sync queued' : isOnDemandSource(source) ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
             {/if}
           </td>
         </tr>
@@ -482,6 +480,7 @@
             </td>
             <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
               {#if controller.statusError}<span class="muted" role="alert">{controller.statusError}</span><Button size="sm" label="Retry" onclick={() => void controller.retryStatus()} />{/if}
+              {#if controller.syncUnknown}<span class="muted" role="alert">Sync state unknown.</span><Button size="sm" label="Retry CardDAV sync state" disabled={controller.syncPending} onclick={() => void controller.retrySyncState()} />{/if}
               {#if controller.syncError}<span class="muted" role="alert">{controller.syncError}</span>{/if}
               {#if controller.syncStatus}<span class="muted" role="status">{controller.syncStatus}</span>{/if}
             </div></td>
