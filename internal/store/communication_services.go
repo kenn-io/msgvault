@@ -497,10 +497,13 @@ func (s *Store) seedCommunicationServices(ctx context.Context) error {
 	}
 	// A separate data seed also reaches archives that already completed v1.
 	// INSERT OR IGNORE preserves an operator's existing Inline service edits.
-	return s.seedCommunicationServiceSet(ctx, "communication_services_inline_v1", []CommunicationServiceInput{{
+	if err := s.seedCommunicationServiceSet(ctx, "communication_services_inline_v1", []CommunicationServiceInput{{
 		Slug: "inline", DisplayLabel: "Inline", ScopePolicy: ScopePolicyRequired,
 		DefaultScopeKind: new("server"), Normalization: NormalizationNone, NormalizationVersion: 1,
-	}})
+	}}); err != nil {
+		return err
+	}
+	return s.seedThreadsService(ctx)
 }
 
 func (s *Store) seedCommunicationServiceSet(ctx context.Context, seedName string, inputs []CommunicationServiceInput) error {

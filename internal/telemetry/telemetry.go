@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/syncerr"
+	"go.kenn.io/msgvault/internal/threads"
 	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
 	"maunium.net/go/mautrix"
@@ -64,7 +65,7 @@ const (
 var actionProperties = map[string]map[string][]string{
 	EventSearchEmpty:   {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventErrorShown:    {propertySurface: {"web", "tui"}, "kind": {"search", "message", "sync", "other"}},
-	EventSyncFailed:    {"sync_source": {"gmail", "imap", "msmail", "teams", "discord", "beeper", "matrix", "slack", "carddav", "chatwoot", "synctech_sms", "gcal", "omi", "granola", "plaud", "circleback", "notion_meetings", "twilio", "twenty", "muesli"}, "reason": {"auth", "network", "rate_limited", "other"}},
+	EventSyncFailed:    {"sync_source": {"gmail", "imap", "msmail", "teams", "discord", "threads", "beeper", "matrix", "slack", "carddav", "chatwoot", "synctech_sms", "gcal", "omi", "granola", "plaud", "circleback", "notion_meetings", "twilio", "twenty", "muesli"}, "reason": {"auth", "network", "rate_limited", "other"}},
 	EventSearchRun:     {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventMessageOpened: {propertySurface: {"web", "tui", "cli"}},
 	EventSyncFinished:  {propertySurface: {"web", "cli"}},
@@ -190,6 +191,21 @@ func (s *SyncFailures) Record(ctx context.Context, sourceType, identifier string
 }
 
 func reason(err error) string {
+	if errors.Is(err, threads.ErrReauthorizationRequired) {
+		return "auth"
+	}
+	if api, ok := errors.AsType[*threads.APIError](err); ok {
+		if api.CredentialInvalid() {
+			return "auth"
+		}
+		if api.StatusCode == 429 || api.Code == 4 || api.Code == 17 || api.Code == 32 || api.Code == 613 {
+			return "rate_limited"
+		}
+	}
+	if pause, ok := errors.AsType[*threads.PauseError](err); ok && (pause.Reason == "high_usage" || pause.Reason == "retry_after") {
+		return "rate_limited"
+	}
+
 	status := 0
 	if e, ok := errors.AsType[*gmail.StatusError](err); ok {
 		status = e.StatusCode

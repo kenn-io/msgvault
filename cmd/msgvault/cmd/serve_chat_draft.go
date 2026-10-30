@@ -67,6 +67,8 @@ func chatDraftStoreError(err error, grant *agentgrant.Grant) error {
 		return draftReplyError("invalid_destination", err)
 	case errors.Is(err, store.ErrChatDraftUnsupportedSource):
 		return draftReplyError("unsupported_source", err)
+	case errors.Is(err, store.ErrChatDraftClaimed):
+		return draftReplyError("draft_claimed", err)
 	case errors.Is(err, store.ErrChatDraftRevisionConflict):
 		return draftReplyError("revision_mismatch", err)
 	default:

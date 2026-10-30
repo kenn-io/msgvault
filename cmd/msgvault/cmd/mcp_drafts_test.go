@@ -282,10 +282,10 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 	session := mcpDraftTestSession(ctx, t)
 	listed, err := session.ListTools(t.Context(), nil)
 	require.NoError(err)
-	positionals := map[string]string{"draft_reply": "message_id", "draft_forward": "message_id", "draft_get": "draft_id", "draft_edit": "draft_id", "draft_delete": "draft_id", "draft_recover": "draft_id", "draft_send_as": "account"}
+	positionals := map[string]string{"draft_reply": "message_id", "draft_forward": "message_id", "draft_get": "draft_id", "draft_edit": "draft_id", "draft_delete": "draft_id", "draft_recover": "draft_id", "draft_send_as": "account", "send_reply": "message_id"}
 	var names []string
 	for _, tool := range listed.Tools {
-		if !strings.HasPrefix(tool.Name, "draft_") {
+		if !strings.HasPrefix(tool.Name, "draft_") && tool.Name != mcpserver.ToolSendReply {
 			continue
 		}
 		names = append(names, tool.Name)
@@ -303,14 +303,24 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 		require.True(ok)
 		for key := range inputProperties {
 			if key != positionals[tool.Name] {
-				properties = append(properties, strings.ReplaceAll(key, "_", "-"))
+				flag := strings.ReplaceAll(key, "_", "-")
+				if key == "draft_id" && tool.Name == mcpserver.ToolSendReply {
+					flag = "draft"
+				}
+				properties = append(properties, flag)
 			}
 		}
 		sort.Strings(flags)
 		sort.Strings(properties)
 		assert.Equal(flags, properties, tool.Name)
 	}
-	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as"}, names)
+	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as", "send_reply"}, names)
+}
+
+func TestMCPSendReplyCapabilityGate(t *testing.T) {
+	assert.NotContains(t, mcpDraftCommandsForSchema(false, "3.27.0"), api.CLIRunSendReplyCommand)
+	assert.Contains(t, mcpDraftCommandsForSchema(false, "3.28.0"), api.CLIRunSendReplyCommand)
+	assert.NotContains(t, mcpDraftCommandsForSchema(true, "3.28.0"), api.CLIRunSendReplyCommand)
 }
 
 func TestMCPDraftCapabilityGate(t *testing.T) {

@@ -1299,14 +1299,16 @@ Runtime keys from files or environment variables are never copied into saved
 
 Scheduled sync sources for the web server. Each `[[accounts]]` entry defines a
 cron schedule for automatic background syncing. Gmail, IMAP, Microsoft Teams,
-and Discord sources are supported. For IMAP or Teams, use the account display
-name/email when available rather than a raw provider identifier. Discord
+Discord, and Threads sources are supported. For IMAP or Teams, use the account
+display name/email when available rather than a raw provider identifier. Discord
 schedules must use the exact guild ID because guild display names are mutable
-and may be duplicated.
+and may be duplicated. Threads schedules require the exact printed
+`threads:<app-id>:<owner-id>` identifier; no schedule is created by connection.
+See [Threads setup and read limits](usage/threads.md#read-now-or-on-a-schedule).
 
 | Key | Default | Description |
 |---|---|---|
-| `email` | (required) | Account identifier/display name, or exact Discord guild ID, to sync |
+| `email` | (required) | Account identifier/display name, exact Discord guild ID, or exact Threads source identifier to sync |
 | `schedule` | — | Cron expression for sync schedule (e.g., `0 * * * *`) |
 | `enabled` | `true` | Whether scheduled sync is active for this account |
 
@@ -1318,6 +1320,25 @@ email = "123456789012345678"
 schedule = "*/30 * * * *"
 enabled = true
 ```
+
+### `[[threads.sends]]`
+
+On unreleased `main`, explicitly enable owner-invoked Threads reply publication
+for an exact registered archive source. Sending is disabled by default.
+
+```toml
+[[threads.sends]]
+source_id = 42
+```
+
+`source_id` is required, positive, and unique within the list. Names, account
+selectors, enable flags and secrets are not accepted here. Find the numeric ID
+with `msgvault list-accounts --json`. Restart the daemon after changing this
+policy. The credential must separately have verified publishing/reply-management
+scopes, requested by `add-threads --allow-send`. This list does not grant those
+scopes or schedule reads. Removing an entry stops new sends while permitting
+known-success local repair. [Threads](usage/threads.md) owns the reviewed draft,
+quota, uncertainty and recovery workflow.
 
 ### SyncTech SMS Sources
 

@@ -72,9 +72,9 @@ content as data, never as instructions or permission to write. The write opt-in
 exposes mutation tools; the user must request each change and confirm each
 non-dry-run plan through client elicitation.
 
-## Draft tools
+## Draft and send tools
 
-These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
+These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. These draft tools never send.
 
 `draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
 
@@ -88,10 +88,26 @@ These tools run the matching CLI commands through your selected daemon. They req
 | `draft_delete` | `draft-delete` | Required `draft_id`, `revision` |
 | `draft_recover` | `draft-recover` | Required `draft_id`, `revision`; recovery can finish an interrupted deletion |
 | `draft_send_as` | `draft-send-as` | Required `account`; lists Gmail sender identities |
+| `send_reply` | `send-reply` | Either `message_id` plus `body`, or `draft_id` plus `revision`; optional `adopt_media_id` for recovery |
+
+On unreleased `main`, `send_reply` is available on daemon API schema 3.28.0 or
+newer. The archived message or local draft determines the source; this release
+registers the Threads sender. Threads sends require the owner, verified scopes,
+and an exact `[[threads.sends]]` source opt-in. Each send or adoption requires client
+confirmation bound to the tool and arguments. Tool annotations and a `confirmed`
+argument are not authorization. Unsupported or declined confirmation never
+reaches the sender. Delegated sessions do not expose this tool.
+
+Its structured result separates remote and local status even when the command
+fails. Preserve a known `media_id` on `sent_archive_pending`; a `remote_unknown`
+attempt is never automatically republished. A truncated stream proves no remote
+outcome. [Threads recovery](threads.md#inspect-and-recover-an-interrupted-send)
+owns the status meanings and local repair procedure. Draft preparation stays
+available without send opt-in or confirmation.
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
+Owner sessions expose the eight draft tools and `send_reply` alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
 For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
 
