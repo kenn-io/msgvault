@@ -64,6 +64,23 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
+  it('shows LINE webhook delivery instead of a polling schedule', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
+      source_type: 'line', identifier: '2000000001', display_name: 'Example OA',
+      scheduled: true, schedule: '@every 30s', can_sync: true,
+      line_webhook: { active: true, pending: 2, failed: 1, invalid_signatures: 3,
+        last_received_at: '2026-07-19T10:00:00Z' }
+    })] }));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    expect(await screen.findByText('Push source · webhook')).toBeDefined();
+    expect(screen.getByText('Archives from webhook go-live.')).toBeDefined();
+    expect(screen.getByText('Receiver active')).toBeDefined();
+    expect(screen.getByText('2 pending · 1 failed')).toBeDefined();
+    expect(screen.getByText('3 invalid signatures since daemon start')).toBeDefined();
+    expect(screen.queryByText('@every 30s')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Process inbox Example OA' })).toBeDefined();
+  });
+
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,

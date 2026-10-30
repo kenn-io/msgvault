@@ -8,6 +8,10 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func TestLineMessageTypeUsesChatLabel(t *testing.T) {
+	assert.Equal(t, "Message type: chat message", messageTypeLabel("line"))
+}
+
 func TestAssembleDocumentOrdersBoundedContextThenMedia(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -143,6 +143,15 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 		if from.MergedIntoSourceID != 0 || into.MergedIntoSourceID != 0 {
 			return ErrSourceRetired
 		}
+		if from.SourceType == "line" {
+			var pending bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM line_webhook_events WHERE source_id=? AND state IN ('pending','retry'))`, req.FromSourceID).Scan(&pending); err != nil {
+				return fmt.Errorf("check LINE inbox before merge: %w", err)
+			}
+			if pending {
+				return invalidSourceMerge("sources with pending LINE webhook work cannot be merged; process the inbox with sync-line first")
+			}
+		}
 		// Active provider receipts and local chat drafts remain bound to their
 		// source. Discarded provider receipts are retained as audit evidence and
 		// do not block retirement unless an operation is still unresolved.

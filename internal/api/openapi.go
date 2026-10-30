@@ -400,6 +400,7 @@ import (
 // 3.43.0 adds receiver-reported sender authentication to single-message reads.
 // 3.44.0 adds owner-only open-loop routes and done, snooze, and reopen decisions.
 // 3.45.0 adds sender labels to message and file search rows.
+// 3.45.0 adds optional LINE webhook delivery status to source status.
 const APISchemaVersion = "3.45.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

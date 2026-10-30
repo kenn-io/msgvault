@@ -41,6 +41,7 @@ nav = [
     {"Beeper" = "usage/beeper.md"},
     {"Inline" = "usage/inline.md"},
     {"Chatwoot" = "guides/chatwoot.md"},
+    {"LINE Official Account" = "usage/line.md"},
     {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},

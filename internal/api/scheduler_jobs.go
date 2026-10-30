@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -114,101 +115,5 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return WhatsAppAppleJobName(identifier), true
 	case "apple_messages":
 		return IMessageJobName, true
-	case chatwoot.SourceType:
-		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
-		if !ok {
-			return "", false
-		}
-		return ChatwootJobNameForAccount(baseURL, accountID)
-	case synctechsms.SourceType:
-		// Store identifier == config OwnerPhone (see
-		// internal/synctechsms/importer.go GetOrCreateSource call).
-		return "synctech-sms:" + identifier, true
-	case gcal.SourceType:
-		// Store identifier is "<accountEmail>/<calendarID>" (one store
-		// source per calendar; see internal/calsync/calsync.go
-		// sourceIdentifier). One scheduler job syncs every calendar for an
-		// account, so the job name is keyed on the account-email prefix.
-		email, _, found := strings.Cut(identifier, "/")
-		if !found || email == "" {
-			return "", false
-		}
-		return gcalJobName(email), true
-	case omi.SourceType:
-		return "omi:" + identifier, true
-	case granola.SourceType:
-		// Store identifier == config Identifier (see
-		// internal/granola/importer.go GetOrCreateSource call).
-		return "granola:" + identifier, true
-	case plaud.SourceType:
-		return "plaud:" + identifier, true
-	case circleback.SourceType:
-		// Store identifier == config Identifier (see
-		// internal/circleback/importer.go GetOrCreateSource call).
-		return "circleback:" + identifier, true
-	case pocket.SourceType:
-		return "pocket:" + identifier, true
-	case notionmeetings.SourceType:
-		return "notion-meetings:" + identifier, true
-	case twilio.SourceType:
-		return "twilio:" + identifier, true
-	case twenty.SourceType:
-		return "twenty:" + identifier, true
-	case muesli.SourceType:
-		// Store identifier == config Identifier (see
-		// internal/muesli/importer.go GetSourceByTypeAndIdentifier call).
-		return "muesli:" + identifier, true
-	case sourceTypeBeeper:
-		// One scheduler job syncs every beeper source (see
-		// internal/beeper/importer.go GetOrCreateSource, one store source
-		// per beeper AccountID, all driven by the singleton "beeper" job).
-		return BeeperJobName, true
-	case sourceTypeInline:
-		return InlineJobName, true
-	case sourceTypeMatrix:
-		return MatrixJobName, true
-	case sourceTypeSlack:
-		// One configured Slack workspace maps to one store source and one
-		// singleton daemon job.
-		return SlackJobName, true
-	default:
-		return "", false
-	}
-}
-
-// isSourceSyncJobName reports whether a generic scheduler job syncs a source.
-func isSourceSyncJobName(name string) bool {
-	kind, _, _ := strings.Cut(name, ":")
-	if kind == CardDAVJobName {
-		return true
-	}
-	_, ok := SchedulerJobNameForSource(strings.ReplaceAll(kind, "-", "_"), "source/calendar")
-	return ok
-}
-
-// gcalJobName builds the scheduler job name for a gcal account from its
-// normalized account email. Both SchedulerJobNameForSource (deriving the
-// email from a calendar's store identifier) and GCalJobNameForAccountEmail
-// (the registration-side entry point used by serve.go, which only has the
-// account email) route through this single builder so the two can't drift.
-func gcalJobName(normalizedEmail string) string {
-	return "gcal:" + normalizedEmail
-}
-
-// GCalJobNameForAccountEmail returns the scheduler job name for the gcal
-// account with the given (already normalized) email. serve.go registers one
-// job per configured [[gcal]] account — covering every calendar under that
-// account — under this exact name.
-func GCalJobNameForAccountEmail(normalizedEmail string) string {
-	return gcalJobName(normalizedEmail)
-}
-
-// ChatwootJobNameForAccount groups every registered inbox of one account under
-// the same stable job, independently of the local configuration label.
-func ChatwootJobNameForAccount(baseURL string, accountID int64) (string, bool) {
-	canonical, err := chatwoot.CanonicalURL(baseURL)
-	if err != nil || accountID <= 0 {
-		return "", false
-	}
-	return fmt.Sprintf("chatwoot:%s/accounts/%d", canonical, accountID), true
-}
+	case line.SourceType:
+		return "line:" + identifier, identifier != ""
