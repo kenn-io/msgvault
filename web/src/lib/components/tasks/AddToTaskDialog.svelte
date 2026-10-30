@@ -29,9 +29,10 @@
   <Dialog title="Add to task" onclose={() => { if (!busy) onclose(); }}>
     <div class="task-dialog">
       {#if options.length > 1}<SelectDropdown title="Provider" disabled={busy} options={options} value={provider} onchange={(value) => provider = value} />{/if}
-      {#if provider === 'tasks' && email}
+      {#if email}<div hidden={provider !== 'tasks'}>
         <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={() => { changed = true; onclose(); }} />
-      {:else}
+      </div>{/if}
+      {#if provider !== 'tasks'}
         <Button label="Add quote to Kata…" onclick={() => quoteOpen = true} />
       {/if}
     </div>
