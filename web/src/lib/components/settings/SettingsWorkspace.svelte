@@ -59,7 +59,6 @@
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
   type CredentialResponse = GeneratedProviderCredentialResponse;
   type SettingsDocument = GeneratedSettingsResponse;
-  const OWN_SAVE_NOTE = 'These save immediately when you use their buttons — not with Save changes.';
 
   let {
     client,
@@ -499,7 +498,6 @@
             hint={shown.hint}
             source={setting.secret?.source}
             disabled={setting.secret?.source === 'environment'}
-            applyNote="Applied when you save changes."
             onreplace={(value) => {
               setSecret(setting, value);
               return true;
@@ -529,14 +527,21 @@
   {#each list as block, index (index)}
     {#if block.description || block.rows.some(row => rowFields(row).length > 0)}
     <section class="block" aria-label={block.title}>
-      {#if block.title}<h3>{block.title}</h3>{/if}
-      {#if block.description}<p class="setting__hint">{block.description}</p>{/if}
+      {#if block.title}
+        <div class="block__head">
+          <h3>{block.title}</h3>
+          {#if block.description}<p class="setting__hint">{block.description}</p>{/if}
+        </div>
+      {/if}
       {#each block.rows as row, rowIndex (rowIndex)}
         {@const fields = rowFields(row)}
-        {#if fields.some(setting => setting.kind === 'secret' && setting.credential_id)}<p class="own-save">{OWN_SAVE_NOTE}</p>{/if}
         {#if fields.length > 0}
-          <div class="fields" class:fields--pair={fields.length > 1}>
-            {#each fields as setting (setting.key)}{@render control(setting)}{/each}
+          <div class="row">
+            <div class="fields" class:fields--pair={fields.length > 1}>
+              {#each fields as setting (setting.key)}{@render control(setting)}{/each}
+            </div>
+            <!-- An untitled block's description belongs to the switch that leads it. -->
+            {#if rowIndex === 0 && !block.title && block.description}<p class="setting__hint">{block.description}</p>{/if}
           </div>
         {/if}
       {/each}
@@ -590,7 +595,6 @@
             <SettingsOverview {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'carddav'}
-          <p class="own-save">{OWN_SAVE_NOTE}</p>
           <CardDAVSettingsWorkspace
             {client}
             {settings}
@@ -604,7 +608,6 @@
           {#if activeId === 'enrichment'}
             <section class="block" aria-label="Providers">
               <h3>Providers</h3>
-              <p class="own-save">{OWN_SAVE_NOTE}</p>
               <div class="provider-list">
                 {#each providers as provider (provider.name)}
                   <PersonEnrichmentProviderCard
@@ -668,7 +671,7 @@
   .settings-fields {
     display: flex;
     flex-direction: column;
-    gap: var(--space-7);
+    gap: var(--space-8);
     min-width: 0;
     margin: 0;
     padding: 0;
@@ -681,6 +684,7 @@
     min-height: 0;
     width: 100%;
     background: var(--bg-surface);
+    line-height: 1.45;
   }
   .settings-header {
     --page-header-gap: 0px;
@@ -743,7 +747,13 @@
 
   .block {
     display: grid;
-    gap: var(--field-gap);
+    gap: var(--section-gap);
+    min-width: 0;
+  }
+  .block__head,
+  .row {
+    display: grid;
+    gap: var(--control-gap);
     min-width: 0;
   }
   .fields {
@@ -753,7 +763,7 @@
   }
   .fields--pair {
     grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-    gap: var(--field-gap) var(--section-gap);
+    gap: var(--section-gap);
     align-items: start;
   }
   .fields--list {
@@ -805,6 +815,7 @@
     min-width: 0;
   }
   .setting__hint {
+    margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
     line-height: 1.45;
@@ -842,12 +853,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--control-gap);
-  }
-  .own-save {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    line-height: 1.45;
   }
   .unsaved {
     margin-right: auto;
