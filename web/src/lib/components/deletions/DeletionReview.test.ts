@@ -36,9 +36,9 @@ it('disables staging and says why when nothing qualifies', async () => {
     unavailable_actions: [{ action: 'stage_deletion', reason: 'no_deletable_messages' }]
   });
   render(DeletionReview, { client: api(review), selection, onclose: vi.fn() });
+  expect(await screen.findByText('No deletable messages.')).toBeDefined();
   const stage = await screen.findByRole('button', { name: 'Stage 0 messages' });
   expect((stage as HTMLButtonElement).disabled).toBe(true);
-  expect(await screen.findByText('No deletable messages.')).toBeDefined();
 });
 
 it('keeps all-matching exclusions and its token through failed preview and staging retries', async () => {

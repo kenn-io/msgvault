@@ -54,6 +54,61 @@ function syncRun(status: string, processed: number) {
   };
 }
 
+for (const failure of ['mail sync', 'contacts sync', 'contacts status']) {
+  test(`Sources keeps ${failure} errors and recovery visible in the narrow panel`, async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 860 });
+    let reject = true, attempts = 0, sourceReads = 0;
+    const status = { configured: true, available: true, credential_configured: true, enabled: false, scheduled: false, schedule: '',
+      account: { base_url: 'https://contacts.example.com/', username: 'contacts@example.com' }, active: null, latest: null, latest_successful: null };
+    await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+    await page.route('**/api/v1/settings', route => route.fulfill({ json: { settings: [] } }));
+    await page.route('**/api/v1/sources/status', route => {
+      sourceReads += 1;
+      const active = failure === 'mail sync' && attempts === 2 ? syncRun('running', 5) : null;
+      return route.fulfill({ json: { sources: [{ id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Archive',
+        last_sync_at: null, updated_at: row.occurred_at, active_sync: active, latest_sync: active, last_successful_sync: null,
+        can_sync: !active, scheduled: false, next_sync_at: null }] } });
+    });
+    await page.route('**/api/v1/carddav/connections', route => route.fulfill({ json: { connections: [{ connection: 'default', orphaned: false, status }] } }));
+    await page.route('**/api/v1/carddav/status**', route => route.fulfill(failure === 'contacts status' && reject ? { status: 500, json: {} } : { json: status }));
+    await page.route('**/api/v1/carddav/books**', route => route.fulfill({ json: { books: [] } }));
+    await page.route('**/api/v1/carddav/runs**', route => route.fulfill({ json: { runs: [] } }));
+    await page.route('**/api/v1/carddav/sync', route => {
+      attempts += 1;
+      return route.fulfill(reject ? { status: 400, json: {} } : { json: { status: 'succeeded' } });
+    });
+    await page.route('**/api/v1/sync/archive%40example.com**', route => {
+      attempts += 1;
+      return route.fulfill(reject ? { status: 500, json: { message: 'Source sync rejected' } } : { status: 202, json: { status: 'accepted' } });
+    });
+    await page.goto('/?workspace=sources');
+    const label = failure === 'mail sync' ? 'Archive' : 'contacts@example.com';
+    await page.getByRole('button', { name: `Details for ${label}`, exact: true }).click();
+    const panel = page.getByRole('dialog', { name: label, exact: true });
+    if (failure !== 'contacts status') await panel.getByRole('button', { name: 'Sync now', exact: true }).click();
+    const message = failure === 'mail sync' ? 'Source sync rejected' : failure === 'contacts sync' ? 'Unable to start CardDAV sync.' : 'Unable to load CardDAV status.';
+    const alert = panel.getByRole('alert').filter({ hasText: message });
+    await expect(alert).toBeInViewport();
+    reject = false;
+    if (failure === 'contacts status') {
+      await panel.getByRole('button', { name: 'Retry status', exact: true }).click();
+      await expect(alert).toHaveCount(0);
+      await expect(panel.getByRole('button', { name: 'Sync now', exact: true })).toBeEnabled();
+    } else {
+      if (failure === 'mail sync') {
+        const before = sourceReads;
+        await panel.getByRole('button', { name: 'Refresh', exact: true }).click();
+        await expect.poll(() => sourceReads).toBeGreaterThan(before);
+      }
+      await panel.getByRole('button', { name: 'Sync now', exact: true }).click();
+      await expect.poll(() => attempts).toBe(2);
+      await expect(alert).toHaveCount(0);
+      if (failure === 'mail sync') await expect(panel.getByText('Running', { exact: true }).first()).toBeInViewport();
+      else await expect(panel.getByRole('button', { name: 'Sync now', exact: true })).toBeEnabled();
+    }
+  });
+}
+
 test('archive management workspaces preserve reviewed authority and daemon job boundaries', async ({ page }) => {
   const preflights: unknown[] = [];
   let staged = false;

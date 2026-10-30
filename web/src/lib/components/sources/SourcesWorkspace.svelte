@@ -64,6 +64,7 @@
   let statusError = $state('');
   let contactsError = $state('');
   let triggerError = $state('');
+  let triggerErrorSourceID = $state<number>();
   let triggering = $state<string>();
   $effect(() => {
     if (triggerError) return reportError(() => client, () => 'sync');
@@ -308,6 +309,7 @@
     if (!source.can_sync || triggering) return;
     triggering = source.identifier;
     triggerError = '';
+    triggerErrorSourceID = source.id;
     const signal = AbortSignal.timeout(requestTimeoutMs);
     try {
       const {
@@ -516,6 +518,8 @@
       {client}
       source={selectedSource}
       syncing={syncing(selectedSource)}
+      triggerError={triggerErrorSourceID === selectedSource.id ? triggerError : ''}
+      onRefresh={refresh}
       onSync={() => void syncNow(selectedSource)}
       onclose={() => (selected = undefined)}
       onOpenSettings={() => onOpenSettings('sources')}

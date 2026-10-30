@@ -51,6 +51,15 @@
       </div>
     </div>
 
+    {#if controller.statusError}
+      <section class="block" role="alert">
+        <p class="failure">{controller.statusError}</p>
+        <Button size="sm" label="Retry status" disabled={controller.statusLoading} onclick={() => void controller.retryStatus()} />
+      </section>
+    {/if}
+    {#if controller.syncError}
+      <p class="failure" role="alert">{controller.syncError}</p>
+    {/if}
     {#if controller.syncUnknown}
       <section class="block" aria-label="Sync state" role="alert">
         <p class="failure">Sync state unknown.</p>
