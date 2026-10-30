@@ -86,6 +86,26 @@ describe('TaskLinks', () => {
     expect(later.container.querySelector('h2')).toBeNull();
   });
 
+  it('keeps a later empty card hidden while its lookup waits after shared status is unreachable', async () => {
+    let finish!: (response: Response) => void;
+    const lookup = new Promise<Response>(resolve => { finish = resolve; });
+    const fetchFn = vi.fn<typeof fetch>(async () => lookup);
+    const status = { state: 'unreachable' as const, message: 'Task service is unreachable.' };
+    const shared: ConversationTaskStatus = { latest: status, load: async () => ({ data: status, response: Response.json(status) }) };
+    render(TaskLinks, {
+      props: { client: createAPIClient(fetchFn), messageId: 43, title: 'Later email', showSetup: false },
+      context: new Map([[conversationTaskStatusKey, shared]]),
+    });
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+    finish(Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }));
+    await waitFor(() => expect(fetchFn.mock.settledResults[0]?.type).toBe('fulfilled'));
+    await tick();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+  });
+
   it('shows loading, linked tasks, and honest partial authority', async () => {
     let resolve!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>((input) => {
