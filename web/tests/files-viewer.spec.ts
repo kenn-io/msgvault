@@ -102,7 +102,9 @@ test('Escape closes an authenticated image once, suspends background shortcuts, 
   const contentCookie = await prepare(page, baseURL, file('pixel.png', 'image/png', 'image'), png);
 
   const grid = page.getByRole('grid', { name: 'Files results' });
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('searchbox', { name: 'Filter filename' }).fill('pixel');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await grid.focus();
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
   await page.keyboard.press('Home');
@@ -117,7 +119,7 @@ test('Escape closes an authenticated image once, suspends background shortcuts, 
   await expect(page.getByRole('img', { name: 'Preview pixel.png' })).toBeVisible();
   expect(contentCookie()).toContain('msgvault_session=browser-fixture-session');
   await page.keyboard.press('f');
-  await expect(page.getByRole('button', { name: 'Filters' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
   await page.evaluate(() => {
     (window as unknown as { previewEscapePrevented?: boolean }).previewEscapePrevented = false;
     window.addEventListener('keydown', (event) => {
@@ -195,7 +197,7 @@ test('opening a containing conversation and one Back restores the exact Files UR
   await page.keyboard.press('Enter');
   const filesURL = page.url();
 
-  await page.getByRole('button', { name: 'Open containing conversation' }).click();
+  await page.getByRole('button', { name: 'Open conversation' }).click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Containing item' });
   await expect(reading).toBeVisible();
   await expect(reading.getByRole('region', { name: 'Conversation thread' })).toBeVisible();
@@ -239,7 +241,7 @@ test('real PDF renders in-app and Escape closes with shortcut isolation and exac
   await expect(preview.locator('.pdf-text')).toContainText('Fixture preview text');
   await expect(page.locator('iframe, embed, object')).toHaveCount(0);
   await page.keyboard.press('f');
-  await expect(page.getByRole('button', { name: 'Filters' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
   await page.evaluate(() => {
     (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented = false;
     window.addEventListener('keydown', (event) => {

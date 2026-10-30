@@ -29,18 +29,18 @@ describe('KataFileIssueAction', () => {
     startTelemetryReporting(client);
     stop = () => stopTelemetryReporting(client);
     render(KataFileIssueAction, { props: { client, attachmentID: 12, messageID: 42, filename: 'transcript.txt' }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Create Kata issue from file' }));
-    await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'dismissed' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add to task…' }));
+    await fireEvent.input(screen.getByLabelText('Search this file'), { target: { value: 'dismissed' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await waitFor(() => expect(release).toBeDefined());
     await fireEvent.keyDown(window, { key: 'Escape' });
     await act(async () => { release(Response.json({ results: [] })); });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(telemetryRequests).toHaveLength(0);
-    await fireEvent.click(screen.getByRole('button', { name: 'Create Kata issue from file' }));
-    await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'missing' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
-    await screen.findByText('No indexed passage in this file matches.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add to task…' }));
+    await fireEvent.input(screen.getByLabelText('Search this file'), { target: { value: 'missing' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText('No matches.');
     await waitFor(() => expect(telemetryRequests).toHaveLength(2));
     const events = await Promise.all(telemetryRequests.map((request) => request.json()));
     expect(events).toEqual(expect.arrayContaining([
@@ -58,14 +58,14 @@ describe('KataFileIssueAction', () => {
       return Response.json({ message: 'Search unavailable' }, { status: 500 });
     }, events, requests);
     const view = render(KataFileIssueAction, { props: { client, attachmentID: 12, messageID: 42, filename: 'transcript.txt' }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Create Kata issue from file' }));
-    await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'needle' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add to task…' }));
+    await fireEvent.input(screen.getByLabelText('Search this file'), { target: { value: 'needle' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Search unavailable');
     if (action !== 'visible') {
       if (action === 'unmount') view.unmount();
       else if (action === 'close') await fireEvent.keyDown(window, { key: 'Escape' });
-      else await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
+      else await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
       if (action === 'replace') await screen.findByRole('alert');
       visibility.mockReturnValue('visible');
       await fireEvent(window, new Event('focus'));
@@ -75,7 +75,7 @@ describe('KataFileIssueAction', () => {
     }
     await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }]));
     await fireEvent.keyDown(window, { key: 'Escape' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create Kata issue from file' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add to task…' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Search unavailable');
     await Promise.all(requests);
     expect(events).toHaveLength(1);
@@ -96,10 +96,10 @@ describe('KataFileIssueAction', () => {
       return Response.json({ evidence: [] });
     }));
     render(KataFileIssueAction, { props: { client, attachmentID: 12, messageID: 42, filename: 'transcript.txt' }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Create Kata issue from file' }));
-    await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'ship' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
-    const use = await screen.findByRole('button', { name: 'Use passage 1' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add to task…' }));
+    await fireEvent.input(screen.getByLabelText('Search this file'), { target: { value: 'ship' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const use = await screen.findByRole('button', { name: 'Use quote 1' });
     expect(screen.queryByRole('button', { name: 'Use passage 2' }), 'a filename-only match is not a passage').toBeNull();
     await fireEvent.click(use);
     await waitFor(() => expect(requests.some((request) => new URL(request.url).pathname.endsWith('/evidence/prepare'))).toBe(true));
