@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { admitsMediaQuery, attachmentScopeNotice, refusedMediaSearchNotice } from '../../search/media-query';
+  import { admitsMediaQuery, refusedMediaSearchNotice } from '../../search/media-query';
   import { Button, Chip } from '@kenn-io/kit-ui';
   import FileText from '@lucide/svelte/icons/file-text';
   import FileVolume from '@lucide/svelte/icons/file-volume';
@@ -212,7 +212,7 @@
   {#if result?.attachments}
     <section class="attachments" aria-label="Attachments">
       <h2>Attachments{#if !result.attachments.error}<span class="count">{result.attachments.results.length}</span>{/if}</h2>
-      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.error === 'media_search_scope_limit' ? attachmentScopeNotice(participantID) : result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
+      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
       <ol>
         {#each result.attachments.results as hit, index (index)}
           {@render resultRow(hit, index, undefined)}

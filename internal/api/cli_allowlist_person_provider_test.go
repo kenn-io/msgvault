@@ -162,7 +162,6 @@ func TestCLIAllowlistPersonSweepForwardsExactCredentialOnly(t *testing.T) {
 		CredentialEnv: "PEOPLE_SWEEP_KEY",
 	})
 	srv.cfg.Vector.Embeddings.APIKeyEnv = "EMBEDDINGS_KEY"
-	srv.cfg.Attachments.Documents.APIKeyEnv = "DOCUMENT_KEY"
 
 	checks.True(srv.cliRunEnvAllowedForCommand(
 		[]string{"person", "sweep", "run"}, "PEOPLE_SWEEP_KEY"))

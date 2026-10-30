@@ -86,7 +86,7 @@ func TestOpenRemoteStoreAcceptsCompatibleNewerMinorSchema(t *testing.T) {
 	healthRequests, testCtx := remoteSchemaStub(t, func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok", "api_schema_version": "3.1.0",
+			"status": "ok", "api_schema_version": "4.1.0",
 		})
 	})
 
@@ -181,7 +181,7 @@ func TestDaemonRuntimeCompatibilityRejectsLegacyRecordWithoutSchemaVersion(t *te
 	require.ErrorContains(daemonRuntimeCompatibilityError(previousMajor),
 		`daemon API schema version "1.44.0" is incompatible`)
 
-	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "3.1.0"}
+	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "4.1.0"}
 	require.NoError(daemonRuntimeCompatibilityError(newerMinor))
 
 	previousSchema := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "2.35.0"}
@@ -232,35 +232,17 @@ func agentDelegatedSchemaStub(t *testing.T, sessionResponse string, health func(
 // calls verifyRemoteAPISchemaVersion when the probe is enabled, and accepts a
 // matching schema version.
 func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
-	for _, tc := range []struct {
-		version, minimum string
-		refused          bool
-	}{
-		{"3.0.0", daemonclient.AgentReadMinAPISchemaVersion, true},
-		{"3.8.0", daemonclient.AgentReadMinAPISchemaVersion, true},
-		{api.APISchemaVersion, daemonclient.AgentReadMinAPISchemaVersion, false},
-		{"3.0.0", "", false},
-	} {
-		t.Run(tc.version+"/"+tc.minimum, func(t *testing.T) {
-			require := require.New(t)
-			checks := assert.New(t)
-			healthRequests, ctx := agentDelegatedSchemaStub(t, `{"auth_mode":"delegated"}`, func(w http.ResponseWriter) {
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version})
-			})
-			client, info, err := OpenHTTPStore(ctx, tc.minimum)
-			checks.Equal(int32(1), healthRequests.Load(), "one authenticated health probe")
-			if tc.refused {
-				require.ErrorContains(err, "upgrade the daemon and issue a read grant")
-				checks.Contains(err.Error(), daemonclient.AgentReadMinAPISchemaVersion)
-				checks.Nil(client)
-				return
-			}
-			require.NoError(err)
-			t.Cleanup(func() { _ = client.Close() })
-			checks.Equal(HTTPStoreAgentDelegated, info.Kind)
-		})
-	}
+	require := require.New(t)
+	checks := assert.New(t)
+	healthRequests, ctx := agentDelegatedSchemaStub(t, `{"auth_mode":"delegated"}`, func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion})
+	})
+	client, info, err := OpenHTTPStore(ctx, daemonclient.AgentReadMinAPISchemaVersion)
+	checks.Equal(int32(1), healthRequests.Load(), "one authenticated health probe")
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	checks.Equal(HTTPStoreAgentDelegated, info.Kind)
 }
 
 // TestOpenAgentDelegatedStoreRejectsMismatchedSchema verifies that

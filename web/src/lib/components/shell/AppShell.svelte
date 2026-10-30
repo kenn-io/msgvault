@@ -336,8 +336,6 @@
       Exclude<RelatedOperationStatus, 'listSourceStatus' | 'getCardDAVStatus'>,
       string
     > = {
-      getDocumentIndexStatus: 'Opening live document index status.',
-      getDocumentVectorStatus: 'Opening live document vector status.',
       getVisualAttachmentStatus: 'Opening live visual attachment status.'
     };
     announceOperation(statusTargets[target]);

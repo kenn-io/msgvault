@@ -22,7 +22,7 @@ import type {
 
 const PAGE_LIMIT = 25;
 const LANE_ORDER: readonly OperationLane[] = [
-  'messages', 'person_facts', 'contacts', 'documents', 'visual_attachments'
+  'messages', 'person_facts', 'contacts', 'visual_attachments'
 ];
 const HISTORY_CONFLICT = 'Operation history changed. Restart from the first page.';
 

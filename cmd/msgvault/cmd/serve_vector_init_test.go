@@ -28,7 +28,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
-	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/personsearch"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -217,157 +216,6 @@ func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
 		"ready status must never precede person engine installation")
 	h.CloseFeatures(testDiscardLogger())
 	assertions.True(closed, "CloseFeatures must close the opened backend")
-}
-
-type registeredDocumentVectorJobCapture struct {
-	calls        int
-	job          func(context.Context) error
-	schedule     string
-	runAfterSync bool
-}
-
-func (c *registeredDocumentVectorJobCapture) SetDocumentVectorJob(
-	job func(context.Context) error, schedule string, runAfterSync bool,
-) error {
-	c.calls++
-	c.job = job
-	c.schedule = schedule
-	c.runAfterSync = runAfterSync
-	return nil
-}
-
-type startupDocumentSearchLedger struct{}
-
-func (startupDocumentSearchLedger) SearchDocuments(context.Context, store.DocumentSearchRequest) (store.DocumentSearchResponse, error) {
-	return store.DocumentSearchResponse{}, nil
-}
-
-func (startupDocumentSearchLedger) GetDocumentIndexRevision(context.Context) (int64, error) {
-	return 1, nil
-}
-
-func (startupDocumentSearchLedger) GetActiveDocumentVectorGeneration(context.Context) (*store.DocumentVectorGeneration, error) {
-	return &store.DocumentVectorGeneration{
-		ID:          1,
-		Fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Dimension:   3, TargetExtractionProfileID: "profile-a",
-	}, nil
-}
-
-func (startupDocumentSearchLedger) GetDocumentVectorTargetProfileID(context.Context) (string, error) {
-	return "profile-a", nil
-}
-
-func (startupDocumentSearchLedger) ResolveDocumentVectorSearchOccurrences(
-	context.Context, int64, []store.DocumentVectorSearchHit, store.DocumentSearchRequest, int,
-) ([]store.DocumentSearchResult, bool, error) {
-	return nil, false, nil
-}
-
-type startupDocumentSemanticClient struct{}
-
-func (startupDocumentSemanticClient) EmbedQuery(context.Context, string) ([]float32, error) {
-	return []float32{1, 0, 0}, nil
-}
-
-func (startupDocumentSemanticClient) EmbedDocuments(context.Context, []vector.DocumentInput) ([][][]float32, error) {
-	return nil, nil
-}
-
-type startupDocumentBackend struct{}
-
-func (startupDocumentBackend) PutUnpublished(context.Context, vectordocument.GenerationID, int, []vectordocument.Embedding) error {
-	return nil
-}
-
-func (startupDocumentBackend) DeleteTokens(context.Context, vectordocument.GenerationID, []string) error {
-	return nil
-}
-
-func (startupDocumentBackend) Search(context.Context, vectordocument.GenerationID, int, []float32, int) ([]vectordocument.Hit, error) {
-	return nil, nil
-}
-
-func (startupDocumentBackend) SearchPage(context.Context, vectordocument.GenerationID, int, []float32, string, int) (vectordocument.HitPage, error) {
-	return vectordocument.HitPage{Exhausted: true}, nil
-}
-
-func TestRegisterDocumentVectorJobRequiresDocumentEmbeddingsAndBackend(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	c := config.NewDefaultConfig()
-	c.Vector.Embed.Schedule.Cron = "*/7 * * * *"
-	c.Vector.Embed.Schedule.RunAfterSync = true
-	testCtx := withTestConfig(t, c)
-	state := invocationFromContext(testCtx)
-	state.logger = testDiscardLogger()
-	available := &vectorFeatures{DocumentBackend: startupDocumentBackend{}, Cfg: c.Vector}
-
-	disabled := &registeredDocumentVectorJobCapture{}
-	requirements.NoError(registerDocumentVectorJob(disabled, available, nil, state))
-	assertions.Zero(disabled.calls)
-
-	c.Attachments.Documents.Index.Embeddings.Enabled = true
-	capture := &registeredDocumentVectorJobCapture{}
-	requirements.NoError(registerDocumentVectorJob(capture, available, nil, state))
-	assertions.Equal(1, capture.calls)
-	assertions.NotNil(capture.job)
-	assertions.Equal("*/7 * * * *", capture.schedule)
-	assertions.True(capture.runAfterSync)
-
-	for name, features := range map[string]*vectorFeatures{
-		"disabled":    nil,
-		"nil backend": {Cfg: c.Vector},
-	} {
-		t.Run(name, func(t *testing.T) {
-			unregistered := &registeredDocumentVectorJobCapture{}
-			testState := invocationFromContext(withTestConfig(t, c))
-			testState.logger = testDiscardLogger()
-			require.NoError(t, registerDocumentVectorJob(unregistered, features, nil, testState))
-			assert.Zero(t, unregistered.calls)
-		})
-	}
-}
-
-func TestStartVectorInitInstallsOnlyConsentedDocumentSearch(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		service     *vectordocument.SearchService
-		wantStatus  int
-		wantPayload string
-	}{
-		{name: "unconsented", wantStatus: http.StatusServiceUnavailable, wantPayload: "semantic_search_unavailable"},
-		{name: "consented", service: vectordocument.NewSearchService(vectordocument.SearchDeps{
-			Ledger: startupDocumentSearchLedger{}, Embedder: startupDocumentSemanticClient{}, Backend: startupDocumentBackend{},
-		}), wantStatus: http.StatusOK, wantPayload: `"effective_mode":"semantic"`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			c := config.NewDefaultConfig()
-			c.Vector.Enabled = true
-			testCtx := withTestConfig(t, c)
-			overrideSetupVectorFeatures(t, func(context.Context, *store.Store, string, bool) (*vectorFeatures, error) {
-				return &vectorFeatures{
-					Backend: &fakeCmdVectorBackend{}, DocumentSearch: test.service,
-					DocumentBackend: startupDocumentBackend{}, SemanticClient: startupDocumentSemanticClient{},
-					Cfg: c.Vector, Close: func() error { return nil },
-				}, nil
-			})
-			mainStore := testutil.NewTestStore(t)
-			srv := api.NewServerWithOptions(api.ServerOptions{
-				Config: c, Store: &storeAPIAdapter{store: mainStore}, Logger: slog.New(slog.DiscardHandler),
-				VectorStatus: api.VectorStatusInitializing,
-			})
-			h := startVectorInit(testCtx, mainStore, "/tmp/msgvault.db", nil, srv, scheduler.New(nil))
-			require.True(t, h.WaitTimeout(5*time.Second))
-
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=bounded&mode=semantic&candidate_limit=10", nil)
-			response := httptest.NewRecorder()
-			srv.Router().ServeHTTP(response, request)
-			assert.Equal(t, test.wantStatus, response.Code, response.Body.String())
-			assert.Contains(t, response.Body.String(), test.wantPayload)
-			h.CloseFeatures(testDiscardLogger())
-		})
-	}
 }
 
 func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
@@ -746,7 +594,7 @@ func TestVisualOperationRecordsOnePartialPassAndReusesTerminalRequest(t *testing
 
 	err := runVisualOperation(t.Context(), vf, scope, execute)
 	require.ErrorIs(err, wantErr)
-	runs := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	runs := visualOperationRuns(t, st)
 	require.Len(runs, 1)
 	assert.Equal(operations.StatePartial, runs[0].State)
 	assert.Equal([]operations.PublicCounter{
@@ -758,7 +606,7 @@ func TestVisualOperationRecordsOnePartialPassAndReusesTerminalRequest(t *testing
 	require.NoError(runVisualOperation(t.Context(), vf, scope, execute),
 		"partial replay intentionally reports the useful completed outcome")
 	assert.Equal(1, executions, "a terminal request-owned invocation must not execute again")
-	assert.Len(operationRunsForKind(t, st, operations.KindVisualEmbedding), 1)
+	assert.Len(visualOperationRuns(t, st), 1)
 }
 
 func TestVisualOperationTerminalReplayPreservesFixedNonSuccess(t *testing.T) {
@@ -837,7 +685,7 @@ func TestScheduledVisualPassRecordsPreflightFailure(t *testing.T) {
 
 	err = runVisualPass(t.Context(), vf, scope)
 	require.ErrorIs(err, wantErr)
-	runs := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	runs := visualOperationRuns(t, st)
 	require.Len(runs, 1)
 	assert.Equal(operations.StateFailed, runs[0].State)
 	require.NotNil(runs[0].Trigger)
@@ -889,24 +737,24 @@ func TestVisualHTTPProductionRegistrationRecordsBuildResumeAndRetryPasses(t *tes
 	response := serveVisualOperationRequest(t, router, "/api/v1/multimodal/build",
 		`{"consent":true}`)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	require.Len(operationRunsForKind(t, st, operations.KindVisualEmbedding), 1)
+	require.Len(visualOperationRuns(t, st), 1)
 	assert.Equal(1, scopeChecks)
 
 	response = serveVisualOperationRequest(t, router, "/api/v1/multimodal/build",
 		`{"consent":true}`)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	require.Len(operationRunsForKind(t, st, operations.KindVisualEmbedding), 1,
+	require.Len(visualOperationRuns(t, st), 1,
 		"terminal replay of the same request/action must reuse the existing row")
 	assert.Equal(1, scopeChecks, "terminal replay must not re-execute the visual pass")
 
 	response = serveVisualOperationRequest(t, router, "/api/v1/multimodal/run", "")
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	require.Len(operationRunsForKind(t, st, operations.KindVisualEmbedding), 2)
+	require.Len(visualOperationRuns(t, st), 2)
 
 	response = serveVisualOperationRequest(t, router, "/api/v1/multimodal/retry",
 		`{"message_id":`+privateMessageID+`,"blob_hash":"`+privateBlobHash+`"}`)
 	require.Equal(http.StatusBadGateway, response.Code, response.Body.String())
-	runs := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	runs := visualOperationRuns(t, st)
 	require.Len(runs, 3, "build, resume, and retry own distinct action-scoped rows")
 	assert.Equal(3, scopeChecks)
 	assert.ElementsMatch([]operations.State{
@@ -948,7 +796,7 @@ func TestRegisterVisualJobSkipsUnconsentedScheduledPassWithoutRow(t *testing.T) 
 	require.NoError(registerVisualJob(sched, vf, c))
 
 	require.NoError(sched.TriggerJob("multimodal-attachments"))
-	assert.Empty(operationRunsForKind(t, st, operations.KindVisualEmbedding),
+	assert.Empty(visualOperationRuns(t, st),
 		"the outer consent gate skips before runVisualPass owns a row")
 	_, err = st.GetAttachmentChangeConsumer(testCtx, "visual-test/scheduled-unconsented")
 	assert.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing,
@@ -1010,7 +858,7 @@ func TestRegisterVisualJobGenerationStateGateSkipsBeforePass(t *testing.T) {
 			} else {
 				require.NoError(triggerErr)
 			}
-			assert.Empty(operationRunsForKind(t, st, operations.KindVisualEmbedding),
+			assert.Empty(visualOperationRuns(t, st),
 				"an unavailable generation must return before runVisualPass owns a row")
 			_, err = st.GetAttachmentChangeConsumer(t.Context(), consumerKey)
 			require.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing,
@@ -1048,7 +896,7 @@ func TestRegisterVisualJobRecordsLaterPostActivationMaintenancePass(t *testing.T
 	activated, err := st.GetVisualGeneration(testCtx, generation.ID)
 	require.NoError(err)
 	require.Equal(store.VisualGenerationActive, activated.State)
-	firstRuns := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	firstRuns := visualOperationRuns(t, st)
 	require.Len(firstRuns, 1)
 
 	require.NoError(sched.TriggerJob("multimodal-attachments"))
@@ -1056,7 +904,7 @@ func TestRegisterVisualJobRecordsLaterPostActivationMaintenancePass(t *testing.T
 	require.NoError(err)
 	assert.Equal(store.VisualGenerationActive, afterMaintenance.State,
 		"post-activation maintenance must preserve the active generation")
-	runs := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	runs := visualOperationRuns(t, st)
 	require.Len(runs, 2, "a later maintenance callback owns a fresh scheduled row")
 	assert.NotEqual(runs[0].ID, runs[1].ID)
 	for _, run := range runs {

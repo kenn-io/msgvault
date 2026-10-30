@@ -24,22 +24,19 @@ const (
 type Kind string
 
 const (
-	KindSourceSync         Kind = "source_sync"
-	KindPersonSweep        Kind = "person_sweep"
-	KindCardDAVSync        Kind = "carddav_sync"
-	KindMessageEmbedding   Kind = "message_embedding"
-	KindPersonEmbedding    Kind = "person_embedding"
-	KindDocumentExtraction Kind = "document_extraction"
-	KindDocumentEmbedding  Kind = "document_embedding"
-	KindVisualEmbedding    Kind = "visual_embedding"
-	KindPersonEnrichment   Kind = "person_enrichment"
+	KindSourceSync       Kind = "source_sync"
+	KindPersonSweep      Kind = "person_sweep"
+	KindCardDAVSync      Kind = "carddav_sync"
+	KindMessageEmbedding Kind = "message_embedding"
+	KindPersonEmbedding  Kind = "person_embedding"
+	KindVisualEmbedding  Kind = "visual_embedding"
+	KindPersonEnrichment Kind = "person_enrichment"
 )
 
 func (k Kind) Validate() error {
 	switch k {
 	case KindSourceSync, KindPersonSweep, KindCardDAVSync, KindMessageEmbedding,
-		KindPersonEmbedding, KindDocumentExtraction, KindDocumentEmbedding,
-		KindVisualEmbedding, KindPersonEnrichment:
+		KindPersonEmbedding, KindVisualEmbedding, KindPersonEnrichment:
 		return nil
 	default:
 		return fmt.Errorf("invalid operation kind %q", k)
@@ -52,13 +49,12 @@ const (
 	LaneMessages          Lane = "messages"
 	LanePersonFacts       Lane = "person_facts"
 	LaneContacts          Lane = "contacts"
-	LaneDocuments         Lane = "documents"
 	LaneVisualAttachments Lane = "visual_attachments"
 )
 
 func (l Lane) Validate() error {
 	switch l {
-	case LaneMessages, LanePersonFacts, LaneContacts, LaneDocuments, LaneVisualAttachments:
+	case LaneMessages, LanePersonFacts, LaneContacts, LaneVisualAttachments:
 		return nil
 	default:
 		return fmt.Errorf("invalid operation lane %q", l)
@@ -138,17 +134,14 @@ func (a ActionID) Validate() error {
 type RelatedStatusID string
 
 const (
-	RelatedStatusSource         RelatedStatusID = "listSourceStatus"
-	RelatedStatusDocumentIndex  RelatedStatusID = "getDocumentIndexStatus"
-	RelatedStatusDocumentVector RelatedStatusID = "getDocumentVectorStatus"
-	RelatedStatusVisual         RelatedStatusID = "getVisualAttachmentStatus"
-	RelatedStatusCardDAV        RelatedStatusID = "getCardDAVStatus"
+	RelatedStatusSource  RelatedStatusID = "listSourceStatus"
+	RelatedStatusVisual  RelatedStatusID = "getVisualAttachmentStatus"
+	RelatedStatusCardDAV RelatedStatusID = "getCardDAVStatus"
 )
 
 func (r RelatedStatusID) Validate() error {
 	switch r {
-	case RelatedStatusSource, RelatedStatusDocumentIndex, RelatedStatusDocumentVector,
-		RelatedStatusVisual, RelatedStatusCardDAV:
+	case RelatedStatusSource, RelatedStatusVisual, RelatedStatusCardDAV:
 		return nil
 	default:
 		return fmt.Errorf("invalid operation related status %q", r)
@@ -164,8 +157,6 @@ type LaneDefinition struct {
 
 var laneRegistry = []LaneDefinition{
 	{Kind: KindCardDAVSync, Lane: LaneContacts, HistoryAvailability: HistoryAvailable},
-	{Kind: KindDocumentEmbedding, Lane: LaneDocuments, HistoryAvailability: HistoryUnavailable, UnavailableCode: "document_embedding_history_unavailable"},
-	{Kind: KindDocumentExtraction, Lane: LaneDocuments, HistoryAvailability: HistoryUnavailable, UnavailableCode: "document_extraction_history_unavailable"},
 	{Kind: KindMessageEmbedding, Lane: LaneMessages, HistoryAvailability: HistoryUnavailable, UnavailableCode: "message_embedding_history_unavailable"},
 	{Kind: KindPersonEmbedding, Lane: LanePersonFacts, HistoryAvailability: HistoryUnavailable, UnavailableCode: "person_embedding_history_unavailable"},
 	{Kind: KindPersonEnrichment, Lane: LanePersonFacts, HistoryAvailability: HistoryUnavailable, UnavailableCode: "person_enrichment_history_unavailable"},
@@ -269,7 +260,7 @@ func (id StableID) Validate() error {
 func stableIDTypeForKind(kind Kind) (StableIDType, bool) {
 	switch kind {
 	case KindSourceSync, KindCardDAVSync, KindMessageEmbedding, KindPersonEmbedding,
-		KindDocumentExtraction, KindDocumentEmbedding, KindVisualEmbedding, KindPersonEnrichment:
+		KindVisualEmbedding, KindPersonEnrichment:
 		return StableIDInt64, true
 	case KindPersonSweep:
 		return StableIDText, true
@@ -336,15 +327,13 @@ const (
 	CounterUnitWrites      CounterUnit = "writes"
 	CounterUnitBooks       CounterUnit = "books"
 	CounterUnitContacts    CounterUnit = "contacts"
-	CounterUnitDocuments   CounterUnit = "documents"
-	CounterUnitChunks      CounterUnit = "chunks"
 	CounterUnitAttachments CounterUnit = "attachments"
 )
 
 func (u CounterUnit) Validate() error {
 	switch u {
 	case CounterUnitMessages, CounterUnitPeople, CounterUnitWrites, CounterUnitBooks, CounterUnitContacts,
-		CounterUnitDocuments, CounterUnitChunks, CounterUnitAttachments:
+		CounterUnitAttachments:
 		return nil
 	default:
 		return fmt.Errorf("invalid operation counter unit %q", u)
@@ -403,16 +392,6 @@ var counterUnitsByKind = map[Kind]map[CounterName]CounterUnit{
 		CounterSucceeded: CounterUnitPeople,
 		CounterFailed:    CounterUnitPeople,
 		CounterTruncated: CounterUnitPeople,
-	},
-	KindDocumentExtraction: {
-		CounterAttempted: CounterUnitDocuments,
-		CounterSucceeded: CounterUnitDocuments,
-		CounterFailed:    CounterUnitDocuments,
-	},
-	KindDocumentEmbedding: {
-		CounterAttempted: CounterUnitChunks,
-		CounterSucceeded: CounterUnitChunks,
-		CounterFailed:    CounterUnitChunks,
 	},
 	KindVisualEmbedding: {
 		CounterAttempted: CounterUnitAttachments,
@@ -575,8 +554,7 @@ func ValidateInvocationPublicError(kind Kind, publicError *PublicError) error {
 		return err
 	}
 	switch kind {
-	case KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
-		KindDocumentEmbedding, KindVisualEmbedding, KindPersonEnrichment:
+	case KindMessageEmbedding, KindPersonEmbedding, KindVisualEmbedding, KindPersonEnrichment:
 	default:
 		return fmt.Errorf("operation kind %q has no invocation public errors", kind)
 	}
@@ -907,8 +885,7 @@ func validateRunStateAndError(
 		default:
 			return fmt.Errorf("CardDAV sync does not support operation state %q", state)
 		}
-	case KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
-		KindDocumentEmbedding, KindVisualEmbedding, KindPersonEnrichment:
+	case KindMessageEmbedding, KindPersonEmbedding, KindVisualEmbedding, KindPersonEnrichment:
 		return validateInvocationRunState(kind, state, counters, publicError)
 	default:
 		return fmt.Errorf("operation kind %q has no durable run validation", kind)

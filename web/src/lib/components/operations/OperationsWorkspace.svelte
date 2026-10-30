@@ -114,8 +114,6 @@
 
   function configuredRelatedStatus(authority: OperationsURLState['operationStatus']): boolean | undefined {
     const kindByAuthority: Partial<Record<OperationStatusAuthority, OperationKind>> = {
-      getDocumentIndexStatus: 'document_extraction',
-      getDocumentVectorStatus: 'document_embedding',
       getVisualAttachmentStatus: 'visual_embedding'
     };
     const kind = authority ? kindByAuthority[authority] : undefined;
@@ -132,8 +130,7 @@
   }
 
   function navigateStatus(target: RelatedStatus, button: HTMLButtonElement): void {
-    if (target === 'getDocumentIndexStatus' || target === 'getDocumentVectorStatus' ||
-      target === 'getVisualAttachmentStatus') {
+    if (target === 'getVisualAttachmentStatus') {
       const buttons = Array.from(root?.querySelectorAll<HTMLButtonElement>('button') ?? []);
       const targetButtons = buttons.filter((candidate) => candidate.ariaLabel === relatedStatusButton(target));
       statusFocus = {

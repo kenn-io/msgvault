@@ -34,18 +34,18 @@ func TestBrowserOperationFixtureUsesProductionPublicProjection(t *testing.T) {
 	require.NoError(t, err)
 	var fixture OperationRunsResponse
 	require.NoError(t, json.Unmarshal(raw, &fixture))
-	require.Len(t, fixture.Runs, 5)
+	require.Len(t, fixture.Runs, 4)
 
 	archive := &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID}
 	codec := operationTokenCodec{
 		keyring: archive,
 		random:  bytes.NewReader(bytes.Repeat([]byte{0x24}, operationTokenNonceBytes*len(fixture.Runs))),
 	}
-	for index, browserRun := range fixture.Runs {
+	for _, browserRun := range fixture.Runs {
 		t.Run(string(browserRun.Kind), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			run := browserFixtureRun(t, index, browserRun)
+			run := browserFixtureRun(t, browserRun)
 			require.NoError(run.Validate())
 
 			projected, err := operationRunSummary(t.Context(), codec, run, operationTestArchiveUID)
@@ -89,7 +89,7 @@ func (s browserOperationPrivateSentinels) numericDatabaseID(t *testing.T) int64 
 	return id
 }
 
-func browserFixtureRun(t *testing.T, index int, summary OperationRunSummary) operations.Run {
+func browserFixtureRun(t *testing.T, summary OperationRunSummary) operations.Run {
 	t.Helper()
 
 	var (
@@ -99,7 +99,7 @@ func browserFixtureRun(t *testing.T, index int, summary OperationRunSummary) ope
 	if summary.Kind == operations.KindPersonSweep {
 		id, err = operations.NewTextID(summary.Kind, "browser-person-sweep")
 	} else {
-		id, err = operations.NewInt64ID(summary.Kind, int64(index+101))
+		id, err = operations.NewInt64ID(summary.Kind, map[operations.Kind]int64{operations.KindSourceSync: 101, operations.KindCardDAVSync: 102, operations.KindVisualEmbedding: 104}[summary.Kind])
 	}
 	require.NoError(t, err)
 

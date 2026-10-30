@@ -22,10 +22,8 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/savedview"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
-	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -143,7 +141,6 @@ type handlers struct {
 	hybridSearcher       HybridSearcher
 	similarSearcher      SimilarSearcher
 	dataDir              string
-	documentSearcher     DocumentSearcher
 	mediaSearcher        MediaSearcher
 	personFileSearcher   PersonFileSearcher
 	peopleBackend        peoplebrowser.Backend
@@ -328,13 +325,6 @@ func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest)
 		return toolErrorResult("visual_search_failed: " + err.Error()), nil
 	}
 	return jsonResult(response)
-}
-
-// DocumentSearcher runs the dedicated extracted-document retrieval contract.
-// Daemon-backed MCP supplies an HTTP client implementation, keeping this MCP
-// process out of the archive database.
-type DocumentSearcher interface {
-	SearchDocuments(ctx context.Context, request store.DocumentSearchRequest) (store.DocumentSearchResponse, error)
 }
 
 type PersonFileSearcher interface {
@@ -791,122 +781,6 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 
 func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string) (*toolResult, error) {
 	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state})
-}
-
-func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {
-	args := req.GetArguments()
-	queryText, _ := args[toolArgQuery].(string)
-	if strings.TrimSpace(queryText) == "" {
-		return toolErrorResult("query parameter is required"), nil
-	}
-	if h.documentSearcher == nil {
-		return toolErrorResult("document_search_unavailable: document attachment search is not configured"), nil
-	}
-	sourceIDs, err := positiveInt64ArrayArg(args, "source_ids")
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	messageTypes, err := stringArrayArg(args, "message_types")
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	attachmentID, err := positiveInt64Arg(args, toolArgAttachmentID)
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	messageID, err := positiveInt64Arg(args, toolArgMessageID)
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	personID, err := positiveInt64Arg(args, toolArgPersonID)
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	participantID, err := positiveInt64Arg(args, toolArgParticipantID)
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	if personID > 0 && participantID > 0 {
-		return toolErrorResult("person_id and participant_id are mutually exclusive"), nil
-	}
-	rawDirections, err := stringArrayArg(args, "directions")
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	if len(rawDirections) > 0 && personID == 0 && participantID == 0 {
-		return toolErrorResult("directions require person_id or participant_id"), nil
-	}
-	var directions []personscope.Direction
-	if len(rawDirections) > 0 {
-		directions = make([]personscope.Direction, len(rawDirections))
-		for i, raw := range rawDirections {
-			directions[i] = personscope.Direction(raw)
-		}
-		if _, _, err := personresolver.NormalizeDirections(directions); err != nil {
-			return toolErrorResult(err.Error()), nil
-		}
-	}
-	after, err := getDateArg(args, toolArgAfter)
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	before, err := getDateArg(args, toolArgBefore)
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	if after != nil && before != nil && !after.Before(*before) {
-		return toolErrorResult("invalid date range: after must be before before"), nil
-	}
-	limit := 20
-	if _, found := args[toolArgLimit]; found {
-		parsedLimit, parseErr := positiveInt64Arg(args, toolArgLimit)
-		if parseErr != nil {
-			return toolErrorResult(parseErr.Error()), nil
-		}
-		if parsedLimit > 100 {
-			return toolErrorResult("limit must be an integer between 1 and 100"), nil
-		}
-		limit = int(parsedLimit)
-	}
-	cursor, _ := args[toolArgCursor].(string)
-	mode, _ := args[toolArgMode].(string)
-	parsedMode := vectordocument.SearchModeAuto
-	if mode != "" {
-		parsed, parseErr := vectordocument.ParseSearchMode(mode)
-		if parseErr != nil {
-			return toolErrorResult(parseErr.Error()), nil
-		}
-		parsedMode = parsed
-		mode = string(parsed)
-	}
-	candidateLimit := 0
-	if _, found := args["candidate_limit"]; found {
-		parsed, parseErr := positiveInt64Arg(args, "candidate_limit")
-		if parseErr != nil {
-			return toolErrorResult(parseErr.Error()), nil
-		}
-		maxCandidateLimit := store.MaxLexicalDocumentSearchCandidateLimit
-		if parsedMode == vectordocument.SearchModeSemantic || parsedMode == vectordocument.SearchModeHybrid {
-			maxCandidateLimit = store.MaxDocumentSearchCandidateLimit
-		}
-		if parsed > int64(maxCandidateLimit) {
-			return toolErrorResult(fmt.Sprintf(
-				"candidate_limit must be an integer between 1 and %d for this mode", maxCandidateLimit,
-			)), nil
-		}
-		candidateLimit = int(parsed)
-	}
-	response, err := h.documentSearcher.SearchDocuments(ctx, store.DocumentSearchRequest{
-		Query: queryText, SourceIDs: sourceIDs, MessageTypes: messageTypes,
-		AttachmentID: attachmentID, MessageID: messageID,
-		PersonID: personID, ParticipantID: participantID, Directions: directions,
-		After: after, Before: before, PageSize: limit, Cursor: cursor,
-		SearchMode: mode, CandidateLimit: candidateLimit,
-	})
-	if err != nil {
-		return toolErrorResult(fmt.Sprintf("document search failed: %v", err)), nil
-	}
-	return jsonResult(response)
 }
 
 // searchMessageBodies searches message bodies by keyword, vector, or hybrid.

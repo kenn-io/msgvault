@@ -27,10 +27,8 @@ func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector
 	var result kataevidence.SourceRecord
 	result.Reference = kataevidence.Reference{Version: kataevidence.Version, Kind: selector.Kind, ArchiveUID: uid, MessageID: selector.MessageID}
 	ref := &result.Reference
-	// A file cites only what document search can find, which leaves out
-	// messages deleted at their source. A message cites its stored body text,
-	// or the raw MIME text the reader falls back to without one.
-	if err := s.kataMessageSource(ctx, ref, &result.Display, selector.Kind == "document_chunk"); err != nil {
+	// A message cites its stored body text or the raw MIME fallback.
+	if err := s.kataMessageSource(ctx, ref, &result.Display); err != nil {
 		return result, err
 	}
 	switch selector.Kind {
@@ -50,40 +48,6 @@ func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector
 		}
 		digest := sha256.Sum256([]byte(result.Text))
 		ref.Message = &kataevidence.MessageReference{BodySHA256: hex.EncodeToString(digest[:])}
-	case "document_chunk":
-		ref.AttachmentID = selector.AttachmentID
-		hash, err := s.kataOccurrence(ctx, ref, &result.Display)
-		if err != nil {
-			return result, err
-		}
-		// Read only the cited chunk, from its own extraction, so a citation keeps
-		// working after the attachment is reprocessed.
-		var manifest, chunkText, chunkChecksum sql.NullString
-		var version sql.NullInt64
-		err = s.db.QueryRowContext(ctx, s.Rebind(`
-			SELECT e.manifest_checksum, e.normalization_version, c.text, c.checksum
-			FROM document_extractions e
-			LEFT JOIN document_chunks c ON c.extraction_id=e.id AND c.chunk_key=?
-			WHERE e.id=? AND e.canonical_blob_hash=? AND e.state='ready'
-		`), selector.ChunkKey, selector.ExtractionID, hash).Scan(&manifest, &version, &chunkText, &chunkChecksum)
-		if errors.Is(err, sql.ErrNoRows) {
-			return result, kataevidence.ErrUnavailable
-		}
-		if err != nil {
-			return result, fmt.Errorf("read Kata document chunk: %w", err)
-		}
-		if !version.Valid || !manifest.Valid || manifest.String == "" {
-			return result, kataevidence.ErrUnprocessed
-		}
-		if !chunkText.Valid || !chunkChecksum.Valid || chunkChecksum.String == "" {
-			return result, kataevidence.ErrUnavailable
-		}
-		ref.DocumentChunk = &kataevidence.DocumentReference{
-			CanonicalBlobHash: hash, ExtractionID: selector.ExtractionID, ManifestChecksum: manifest.String,
-			ChunkKey: selector.ChunkKey, ChunkChecksum: chunkChecksum.String,
-		}
-		result.Text = chunkText.String
-		return result, nil
 	default:
 		return result, kataevidence.ErrUnsupported
 	}
@@ -101,7 +65,7 @@ func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID 
 	}
 	ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "message", ArchiveUID: uid, MessageID: messageID}
 	var display kataevidence.Display
-	if err := s.kataMessageSource(ctx, &ref, &display, false); err != nil {
+	if err := s.kataMessageSource(ctx, &ref, &display); err != nil {
 		return nil, err
 	}
 	if attachmentID == 0 {
@@ -109,12 +73,14 @@ func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID 
 	}
 	ref.AttachmentID = attachmentID
 	var refs []kataevidence.Reference
-	file := ref
-	file.Kind = "document_chunk"
-	if _, err := s.kataOccurrence(ctx, &file, &display); err == nil {
+	var partKey string
+	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(source_part_key,'') FROM attachments WHERE id=? AND message_id=?`), attachmentID, messageID).Scan(&partKey)
+	if err == nil {
+		file := ref
+		file.Kind, file.OccurrenceKey = "document_chunk", legacyDocumentOccurrenceKey(messageID, partKey, attachmentID)
 		refs = append(refs, file)
-	} else if !errors.Is(err, kataevidence.ErrUnavailable) {
-		return nil, err
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("read Kata attachment: %w", err)
 	}
 	// Historical deliveries follow the source tuple regardless of current bytes or eligibility.
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`
@@ -142,6 +108,17 @@ func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID 
 		return nil, kataevidence.ErrUnavailable
 	}
 	return refs, nil
+}
+
+// legacyDocumentOccurrenceKey preserves the digest stored in existing Kata
+// citations. Its encoding must stay unchanged after the document index retires.
+func legacyDocumentOccurrenceKey(messageID int64, sourcePartKey string, attachmentID int64) string {
+	identity := fmt.Sprintf("unstable\x00%d\x00%d", messageID, attachmentID)
+	if sourcePartKey != "" {
+		identity = fmt.Sprintf("stable\x00%d\x00%s", messageID, sourcePartKey)
+	}
+	digest := sha256.Sum256([]byte(identity))
+	return "dococc_" + hex.EncodeToString(digest[:])
 }
 
 // KataDocbankBinding reads the one retained delivery of an attachment to
@@ -186,14 +163,14 @@ func (s *Store) KataDocbankBinding(ctx context.Context, destination string, atta
 }
 
 // kataMessageSource fills ref's source tuple and display from its message.
-func (s *Store) kataMessageSource(ctx context.Context, ref *kataevidence.Reference, display *kataevidence.Display, hideDeletedFromSource bool) error {
+func (s *Store) kataMessageSource(ctx context.Context, ref *kataevidence.Reference, display *kataevidence.Display) error {
 	var occurred nullableTimestamp
 	var sourceMessageID sql.NullString
 	err := s.db.QueryRowContext(ctx, s.Rebind(`
 		SELECT src.source_type, src.identifier, m.source_message_id,
 		       COALESCE(m.subject,''), COALESCE(m.sent_at,m.received_at,m.internal_date)
 		FROM messages m JOIN sources src ON src.id=m.source_id
-		WHERE m.id=? AND `+LiveMessagesWhere("m", hideDeletedFromSource)), ref.MessageID).Scan(
+		WHERE m.id=? AND `+LiveMessagesWhere("m", false)), ref.MessageID).Scan(
 		&ref.SourceType, &ref.SourceIdentifier, &sourceMessageID, &display.ContainingTitle, &occurred)
 	if errors.Is(err, sql.ErrNoRows) {
 		return kataevidence.ErrUnavailable
@@ -212,31 +189,13 @@ func (s *Store) kataMessageSource(ctx context.Context, ref *kataevidence.Referen
 	return nil
 }
 
-// kataOccurrence fills ref's occurrence key and display filename for its
-// attachment on its message, and returns the file's canonical blob hash.
-func (s *Store) kataOccurrence(ctx context.Context, ref *kataevidence.Reference, display *kataevidence.Display) (string, error) {
-	var hash string
-	err := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT o.occurrence_key,o.canonical_blob_hash,COALESCE(a.filename,'')
-		FROM document_occurrences o JOIN attachments a ON a.id=o.attachment_id
-		WHERE o.attachment_id=? AND o.message_id=? AND a.message_id=o.message_id
-		  AND (a.content_hash=o.canonical_blob_hash OR
-		       (COALESCE(a.content_hash,'')='' AND a.storage_path=SUBSTR(o.canonical_blob_hash,1,2)||'/'||o.canonical_blob_hash))
-		  AND a.attachment_role=o.attachment_role
-	`), ref.AttachmentID, ref.MessageID).Scan(&ref.OccurrenceKey, &hash, &display.Filename)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", kataevidence.ErrUnavailable
-	}
-	if err != nil {
-		return "", fmt.Errorf("read Kata document occurrence: %w", err)
-	}
-	return hash, nil
-}
-
 // ReadKataEvidenceSource requires both the original occurrence and exact
 // representation. Numeric row reuse never authorizes a different source tuple.
 // A source whose text changed still returns its display with ErrChanged.
 func (s *Store) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Reference) (kataevidence.SourceRecord, error) {
+	if ref.Kind == "document_chunk" {
+		return kataevidence.SourceRecord{}, kataevidence.ErrUnavailable
+	}
 	var empty kataevidence.SourceRecord
 	uid, err := s.ArchiveUIDContext(ctx)
 	if err != nil {
@@ -246,9 +205,6 @@ func (s *Store) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Ref
 		return empty, kataevidence.ErrUnavailable
 	}
 	selector := kataevidence.Selector{Kind: ref.Kind, MessageID: ref.MessageID, AttachmentID: ref.AttachmentID}
-	if ref.DocumentChunk != nil {
-		selector.ExtractionID, selector.ChunkKey = ref.DocumentChunk.ExtractionID, ref.DocumentChunk.ChunkKey
-	}
 	record, err := s.loadKataEvidenceSource(ctx, uid, selector)
 	if err != nil {
 		return empty, err
@@ -265,15 +221,6 @@ func (s *Store) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Ref
 			return empty, kataevidence.ErrInvalidReference
 		}
 		if !strings.EqualFold(ref.Message.BodySHA256, actual.Message.BodySHA256) {
-			return kataevidence.SourceRecord{Display: record.Display}, kataevidence.ErrChanged
-		}
-	case "document_chunk":
-		if ref.DocumentChunk == nil || actual.DocumentChunk == nil {
-			return empty, kataevidence.ErrInvalidReference
-		}
-		want, got := ref.DocumentChunk, actual.DocumentChunk
-		if !strings.EqualFold(want.CanonicalBlobHash, got.CanonicalBlobHash) ||
-			!strings.EqualFold(want.ManifestChecksum, got.ManifestChecksum) || !strings.EqualFold(want.ChunkChecksum, got.ChunkChecksum) {
 			return kataevidence.SourceRecord{Display: record.Display}, kataevidence.ErrChanged
 		}
 	default:

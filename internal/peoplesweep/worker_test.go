@@ -55,17 +55,6 @@ func TestPersonFactSourceCursorsEncodeReconciliationRange(t *testing.T) {
 	checks.Equal(sourceKeyCursorCoordinate{Bound: "inclusive", SourceKey: "\u03bb/\u96ea\n\"quoted\""}, end)
 }
 
-func TestPersonFactSourceCursorsEncodeBackstopRange(t *testing.T) {
-	key := CursorKey{PersonID: 7, SourceLane: SourceDocumentText,
-		ProgramFingerprint: "program", CatalogFingerprint: "catalog"}
-	got, _, err := PersonFactSourceCursors([]GenerationCursor{{
-		Key: key, Mode: GenerationCursorBackstop, ReconcileToKey: "0009", BackstopUpperKey: "0009",
-	}})
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "person-sweep/v1/document_text/backstop", got[0].Lane)
-}
-
 func TestPersonFactSourceCursorsRejectInvalidRanges(t *testing.T) {
 	key := CursorKey{PersonID: 7, SourceLane: SourceConversationText,
 		ProgramFingerprint: "program", CatalogFingerprint: "catalog"}
@@ -248,9 +237,6 @@ func (workerFailureSource) SearchPersonSweepMessages(context.Context, ContextReq
 func (workerFailureSource) HydratePersonSweepMessages(context.Context, int64, []int64, int64) ([]EvidenceItem, error) {
 	return nil, nil
 }
-func (workerFailureSource) SearchPersonSweepDocuments(context.Context, DocumentContextRequest) ([]EvidenceItem, error) {
-	return nil, nil
-}
 
 type workerFailureCatalog struct{ catalog personfacts.Catalog }
 
@@ -384,9 +370,6 @@ func (s *workerProductionSource) SearchPersonSweepMessages(_ context.Context, re
 	return append([]EvidenceItem(nil), s.context...), nil
 }
 func (*workerProductionSource) HydratePersonSweepMessages(context.Context, int64, []int64, int64) ([]EvidenceItem, error) {
-	return nil, nil
-}
-func (*workerProductionSource) SearchPersonSweepDocuments(context.Context, DocumentContextRequest) ([]EvidenceItem, error) {
 	return nil, nil
 }
 

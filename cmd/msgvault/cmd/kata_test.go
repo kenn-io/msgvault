@@ -221,8 +221,6 @@ func TestKataContextLabelsPassagesWithoutDisplay(t *testing.T) {
 	assert.Equal(t, "\t\t\n\navailable\tmessage 4\n  [é界🙂 send the revised budget]\n\navailable\tattachment 9 of message 4: voice.wav\n\nunreachable\tDocbank unreachable; retry later\n\nchanged\tattachment 9 of message 4\n  saved quote: Send the budget\n\nchanged\tmessage 4: Budget\n\nunavailable\tattachment in this or another archive\n\nunavailable\tmessage in this or another archive\n", out.String())
 }
 
-// The daemon adapter carries a Docbank transcript citation from prepare
-// through the issue and back to the file lookup and context read.
 func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -330,15 +328,12 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 
 	// A file cited as extracted text and as a Docbank transcript is found by both, once
 	// each, oldest first.
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO document_occurrences(occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source)
-		SELECT 'doc-occurrence',a.id,a.message_id,m.source_id,a.content_hash,a.attachment_role,'test' FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.id=?`), attachmentID)
-	require.NoError(err)
 	encodedRef, err := json.Marshal(window.Evidence[0].Reference)
 	require.NoError(err)
 	var transcriptRef kataevidence.Reference
 	require.NoError(json.Unmarshal(encodedRef, &transcriptRef))
 	chunkRef := transcriptRef
-	chunkRef.Kind, chunkRef.OccurrenceKey, chunkRef.DocbankRendition = "document_chunk", "doc-occurrence", nil
+	chunkRef.Kind, chunkRef.OccurrenceKey, chunkRef.DocbankRendition = "document_chunk", "dococc_73e834d2f900e92d8989bb4c23542fc865f9099e29189122d154715e3edeace0", nil
 	chunkRef.DocumentChunk = &kataevidence.DocumentReference{CanonicalBlobHash: hash, ExtractionID: "extraction", ManifestChecksum: hash, ChunkKey: "chunk", ChunkChecksum: hash, StartRune: 0, EndRune: 10}
 	metadata := func(refs ...kataevidence.Reference) map[string]any {
 		entries := make([]kataissues.Entry, 0, len(refs))
@@ -362,6 +357,7 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	}
 	assert.Equal(int32(1), metadataScans.Load())
 	assert.Equal([]string{created.Issue.UID, chunkOnly.UID, both.UID}, uids)
+
 	revoked.Store(true)
 	create := newKataCmd()
 	create.SetArgs([]string{"create", "--idempotency-key", "revoked"})

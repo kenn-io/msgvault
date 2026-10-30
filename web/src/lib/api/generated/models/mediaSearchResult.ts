@@ -8,7 +8,7 @@ export interface MediaSearchResult {
   containing_title?: string;
   conversation_id: number;
   end_ms?: number;
-  /** Plain transcript excerpt without search highlight markers */
+  /** Plain text excerpt without search highlight markers */
   excerpt: string;
   filename?: string;
   message_id: number;

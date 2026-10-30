@@ -23,7 +23,6 @@ nav = [
     {"Terminal UI" = "usage/tui.md"},
     {"Searching" = "usage/searching.md"},
     {"Semantic and Visual Search" = "usage/vector-search.md"},
-    {"Document Attachment Indexing" = "usage/document-indexing.md"},
     {"Recommended Configuration" = "usage/recommended-configuration.md"},
     {"Analytics and Stats" = "usage/analytics.md"},
     {"SQL Queries" = "usage/querying.md"},
