@@ -68,10 +68,12 @@ func TestHandleStatsReturnsStaleSnapshotWhenSlow(t *testing.T) {
 		srv.statsSnapshotWait = 50 * time.Millisecond
 
 		first := getStatsResponse(t, srv)
+		assert.EqualValues(1, first.TotalMessages)
 		assert.False(first.Stale)
 
 		started := time.Now()
 		second := getStatsResponse(t, srv)
+		assert.EqualValues(1, second.TotalMessages)
 		assert.Less(time.Since(started), time.Second, "the request wait must end before the background computation")
 		assert.True(second.Stale, "the previous snapshot is flagged stale")
 		assert.False(second.AsOf.IsZero())
@@ -154,10 +156,12 @@ func newSlowAccountsServer(t *testing.T) (*Server, *slowCountsStore, int64) {
 }
 
 func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
+	srv, slow, _ := newSlowAccountsServer(t)
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		srv, slow, _ := newSlowAccountsServer(t)
+		// The blocked refresh must use a channel owned by this virtual clock.
+		slow.release = make(chan struct{})
 		t.Cleanup(func() { close(slow.release) })
 		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
 		srv.statsSnapshotWait = 50 * time.Millisecond
@@ -171,10 +175,12 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 		}
 		first := getAccounts()
 		require.Len(first.Accounts, 1)
+		assert.EqualValues(1, first.Accounts[0].MessageCount)
 		assert.False(first.Stale)
 
 		second := getAccounts()
 		require.Len(second.Accounts, 1)
+		assert.EqualValues(1, second.Accounts[0].MessageCount)
 		assert.True(second.Stale, "slow counts serve the previous snapshot")
 		assert.False(second.AsOf.IsZero())
 	})
