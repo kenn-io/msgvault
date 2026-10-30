@@ -15445,6 +15445,9 @@ components:
         messages_added:
           format: int64
           type: integer
+        messages_deleted:
+          format: int64
+          type: integer
         messages_processed:
           format: int64
           type: integer
@@ -15470,6 +15473,7 @@ components:
         - messages_processed
         - messages_added
         - messages_updated
+        - messages_deleted
         - errors_count
         - error_message
       type: object

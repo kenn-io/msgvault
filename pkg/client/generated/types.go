@@ -15577,6 +15577,7 @@ type SyncRunStatus struct {
 	ID                int64               `json:"id"`
 	ItemErrors        []SyncRunItemStatus `json:"item_errors,omitempty"`
 	MessagesAdded     int64               `json:"messages_added"`
+	MessagesDeleted   int64               `json:"messages_deleted"`
 	MessagesProcessed int64               `json:"messages_processed"`
 	MessagesUpdated   int64               `json:"messages_updated"`
 	SkippedCount      *int64              `json:"skipped_count,omitempty"`

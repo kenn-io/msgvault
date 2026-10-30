@@ -12,6 +12,7 @@ export interface SyncRunStatus {
   id: number;
   item_errors?: SyncRunItemStatus[];
   messages_added: number;
+  messages_deleted: number;
   messages_processed: number;
   messages_updated: number;
   skipped_count?: number;
