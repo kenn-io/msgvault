@@ -35,13 +35,12 @@ jobs:
               - '!{web/**,docs/**,*.md}'
               - 'docs/assets/**'
               - 'docs/screenshots/**'
+              - 'cmd/msgvault/cmd/quickstart.md'
               - 'web/src/lib/settings/cron-corpus.json'
-              - 'web/tests/**'
-              - 'web/{package.json,bun.lock,*.config.*,tsconfig.json}'
+              - 'web/tests/e2e/fixtures/operations-public.json'
+              - 'web/tests/e2e/fixtures/operations-private-sentinels.json'
             frontend:
               - '!{docs/**,*.md}'
-              - 'docs/assets/**'
-              - 'docs/screenshots/**'
 
   release-linux-smoke:
     needs: changes
@@ -254,7 +253,7 @@ jobs:
 
   frontend:
     needs: changes
-    if: &web-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
+    if: &web-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
