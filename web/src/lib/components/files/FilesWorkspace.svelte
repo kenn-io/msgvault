@@ -871,10 +871,12 @@
   {#if toolbar}
     {@render toolbar(controls)}
   {:else}
-    <div class="embedded-filters">
-      <FileFilters {filenameQuery} mimeFamilies={personScoped ? effectiveMIMEFamilies : mimeFamilies} available={visibleMIMEFamilies} keepOne={personScoped} onFilenameQueryChange={(value) => onFilenameQueryChange?.(value)} onMIMEFamiliesChange={(value) => onMIMEFamiliesChange?.(value)} />
+    <div class="embedded-controls">
+      <div class="embedded-filters">
+        <FileFilters {filenameQuery} mimeFamilies={personScoped ? effectiveMIMEFamilies : mimeFamilies} available={visibleMIMEFamilies} keepOne={personScoped} onFilenameQueryChange={(value) => onFilenameQueryChange?.(value)} onMIMEFamiliesChange={(value) => onMIMEFamiliesChange?.(value)} />
+      </div>
+      {@render controls()}
     </div>
-    {@render controls()}
   {/if}
 
 
@@ -1104,6 +1106,7 @@
   }
   .workspace-header {
     display: flex;
+    flex: none;
     align-items: baseline;
     justify-content: space-between;
   }
@@ -1141,13 +1144,20 @@
   }
   .files-table {
     display: flex;
-    min-height: 0;
-    flex: 1;
+    min-height: 102px;
+    flex: 1 0 102px;
     flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
+  }
+  .embedded-controls {
+    display: grid;
+    min-height: 0;
+    flex: 0 1 auto;
+    gap: var(--space-4);
+    overflow: auto;
   }
   .embedded-filters { display: flex; flex-wrap: wrap; gap: var(--section-gap); }
   .files-grid {

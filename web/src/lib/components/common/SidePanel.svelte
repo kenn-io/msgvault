@@ -22,7 +22,7 @@
 <div class="side-panel">
   <DetailDrawer ariaLabel={title} width="min(440px, 100vw)" closeOnOverlayClick={false} {onclose} {footer}>
     {#snippet header()}
-      <span class="side-panel__title">{title}</span>
+      <h2 class="side-panel__title">{title}</h2>
       <IconButton size="sm" ariaLabel="Close" title="Close (Esc)" onclick={onclose}>
         <X size={14} strokeWidth={2} aria-hidden="true" />
       </IconButton>
@@ -43,6 +43,7 @@
   }
 
   .side-panel__title {
+    margin: 0;
     min-width: 0;
     flex: 1;
     overflow: hidden;

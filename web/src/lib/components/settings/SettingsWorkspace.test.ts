@@ -454,6 +454,10 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
   await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
   await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
   await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.input(screen.getByLabelText('Results per request'), { target: { value: '3' } });
+  await fireEvent.input(screen.getByLabelText('Retries'), { target: { value: '0' } });
+  await fireEvent.input(screen.getByLabelText('Requests per run'), { target: { value: '12' } });
+  await fireEvent.input(screen.getByLabelText('Requests per day'), { target: { value: '120' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/providers/primary'))).toBe(true));
   expect(screen.getByText('1 unsaved change')).toBeDefined();
@@ -464,7 +468,9 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
     ['PUT', '/api/v1/settings/provider-credentials/vector.embeddings', '"credential-a"'],
     ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s1"']
   ]);
-  expect(seen.find(request => request.path.endsWith('/providers/primary'))?.body).toMatchObject({ endpoint: 'https://changed.example.test' });
+  expect(seen.find(request => request.path.endsWith('/providers/primary'))?.body).toMatchObject({
+    endpoint: 'https://changed.example.test', num_results: 3, max_retries: 0, max_requests_per_run: 12, max_requests_per_day: 120
+  });
 });
 
 it('starts the visual index from Overview and refreshes its row', async () => {

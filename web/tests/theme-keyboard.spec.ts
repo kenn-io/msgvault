@@ -84,7 +84,7 @@ test('one registry drives selection, searchable help, palette, and editable susp
   await expect(renderedRow).toHaveAttribute('aria-selected', 'false');
   await expect(grid).toBeFocused();
 
-  const search = page.getByRole('searchbox', { name: 'Search messages' });
+  const search = page.getByRole('searchbox', { name: 'Search everything' });
   await search.focus();
   await page.keyboard.press('Shift+A');
   await expect(renderedRow).toHaveAttribute('aria-selected', 'false');
@@ -241,12 +241,12 @@ function measureRenderedContrast(
   return (values[0]! + 0.05) / (values[1]! + 0.05);
 }
 
-test('Deletions keeps the global search shortcut available', async ({ page }) => {
+test('Staged deletions keeps the global search shortcut available', async ({ page }) => {
   await page.route('**/api/v1/deletions', route => route.fulfill({ json: { manifests: [] } }));
-  await selectWorkspace(page, 'Deletions');
-  await expect(page.getByRole('heading', { name: 'Deletions', exact: true })).toBeVisible();
+  await selectWorkspace(page, 'Staged deletions');
+  await expect(page.getByRole('heading', { name: 'Staged deletions', exact: true })).toBeVisible();
   await page.keyboard.press('/');
-  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toBeFocused();
+  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toBeFocused();
 });
 
 test('truncated people and filenames disclose full labels on hover', async ({ page }) => {

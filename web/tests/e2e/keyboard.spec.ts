@@ -124,7 +124,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await page.keyboard.press('Enter');
   await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
   await page.keyboard.press('/');
-  const search = page.getByRole('searchbox', { name: 'Search messages' });
+  const search = page.getByRole('searchbox', { name: 'Search everything' });
   await expect(search).toBeFocused();
   await page.keyboard.type('synthetic');
   await tabTo(page, 'Full text');

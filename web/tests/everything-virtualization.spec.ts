@@ -178,7 +178,7 @@ test('committed searches survive transient typing across real back and forward t
 
   const explore = encodeURIComponent(JSON.stringify({ workspace: 'everything' }));
   await page.goto(`/?feature=preview&explore=${explore}`);
-  const search = page.getByRole('searchbox', { name: 'Search messages' });
+  const search = page.getByRole('searchbox', { name: 'Search everything' });
   await search.fill('alpha');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(search).toHaveValue('alpha');
