@@ -128,7 +128,7 @@
   {saving}
   {disabledReason}
   {error}
-  applyNote={restartRequired ? 'Saved right away. The daemon uses it after a restart.' : 'Applies right away.'}
+  applyNote={restartRequired ? 'The daemon uses it after a restart.' : ''}
   clearLabel={`Clear stored ${sentenceLabel(label)}`}
   onreplace={saveCredential}
   onclear={credentialState?.source === 'stored' ? () => void clearCredential() : undefined}
