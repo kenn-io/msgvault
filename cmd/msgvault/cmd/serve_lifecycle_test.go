@@ -854,23 +854,21 @@ func TestStopLiveDaemonsReturnsRuntimeListError(t *testing.T) {
 }
 
 func TestWaitForBackgroundServeReadyReturnsRuntimeListError(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
+	assert := assert.New(t)
 
-		dataDir := runtimeDataDirFile(t)
+	dataDir := runtimeDataDirFile(t)
 
-		rt, ready, err := waitForBackgroundServeReady(
-			context.Background(),
-			dataDir,
-			nil,
-			time.Millisecond,
-		)
+	rt, ready, err := waitForBackgroundServeReady(
+		context.Background(),
+		dataDir,
+		nil,
+		time.Second,
+	)
 
-		require.Error(t, err, "wait should surface runtime-store failures")
-		assert.Contains(err.Error(), "list daemon runtimes", "runtime list error")
-		assert.False(ready, "ready")
-		assert.Nil(rt, "runtime")
-	})
+	require.Error(t, err, "wait should surface runtime-store failures")
+	assert.Contains(err.Error(), "list daemon runtimes", "runtime list error")
+	assert.False(ready, "ready")
+	assert.Nil(rt, "runtime")
 }
 
 func TestWaitForDaemonRuntimeCancelsDuringProbe(t *testing.T) {
