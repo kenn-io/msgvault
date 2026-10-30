@@ -1,5 +1,8 @@
 import { taskCreationClient, taskOutboundMetadata } from './fixtures.test-support';
 import { tick } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
+import { getTaskIntegrationStatus } from '../../api/generated/api/api';
+import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -47,6 +50,40 @@ describe('TaskLinks', () => {
     const initial = await creates[0].json();
     expect(await creates[1].json()).toEqual(initial);
     expect(initial.added_at).toBeTruthy();
+  });
+
+  it('hides earlier cached titles when another card reports authentication required', async () => {
+    let probes = 0;
+    const client = createAPIClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) return Response.json(++probes === 1
+        ? { state: 'ready', project: 'example' }
+        : { state: 'authentication_required', message: 'Task service authentication is required.' });
+      return Response.json(path.endsWith('/messages/42/tasks')
+        ? { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Earlier cached task' }], outbound_metadata: {} }
+        : { state: 'authentication_required', complete: false, tasks: [], outbound_metadata: {} });
+    });
+    const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
+    const shared: ConversationTaskStatus = {
+      load: async () => {
+        const response = await getTaskIntegrationStatus(client);
+        statuses.set('latest', response.data);
+        return response;
+      },
+      get latest() { return statuses.get('latest'); },
+    };
+    const context = new Map([[conversationTaskStatusKey, shared]]);
+    const owner = render(TaskLinks, { props: { client, messageId: 42, title: 'First email' }, context });
+    expect(await screen.findByText('Earlier cached task')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink Earlier cached task' })).toHaveProperty('disabled', false);
+    const later = render(TaskLinks, { props: { client, messageId: 43, title: 'Second email', showSetup: false }, context });
+    await waitFor(() => expect(later.container.querySelector('[role="status"]')).toBeNull());
+    await screen.findByText('Task integration authentication_required: Task service authentication is required.');
+    expect(screen.queryByText('Earlier cached task')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Unlink/ })).toBeNull();
+    expect(owner.container.querySelector('[role="alert"]')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Open Settings' })).toHaveLength(1);
+    expect(later.container.querySelector('h2')).toBeNull();
   });
 
   it('shows loading, linked tasks, and honest partial authority', async () => {
@@ -98,7 +135,7 @@ describe('TaskLinks', () => {
     expect(screen.getByRole('alert').textContent).toContain('unavailable');
   });
 
-  it.each(['disabled', 'not_found', 'authentication_required', 'unreachable', 'incompatible', 'wrong_project'])(
+  it.each(['disabled', 'not_found', 'unreachable', 'incompatible', 'wrong_project'])(
     'keeps cached tasks visible but disables mutations when integration status is %s',
     async (integrationState) => {
       const requests: Request[] = [];
