@@ -8,6 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -75,9 +76,11 @@ func (s *Server) personTierRequest(w http.ResponseWriter) (PersonTierStore, stor
 		writeError(w, http.StatusServiceUnavailable, "person_tiers_unavailable", "Person tiers are unavailable")
 		return nil, store.PersonTierOptions{}, false
 	}
+	// A lenient load records a misspelled [people.tiers] key instead of
+	// failing; refuse it rather than answer with the default it hides.
 	cfg, err := s.currentPersonTierConfig()
 	if err == nil {
-		err = cfg.People.Tiers.Validate()
+		err = cfg.PeopleTiersError()
 	}
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "person_tiers_config_invalid", err.Error())
@@ -106,9 +109,12 @@ func (s *Server) currentPersonTierConfig() (*config.Config, error) {
 }
 
 func (s *Server) writePersonTierError(w http.ResponseWriter, err error) {
-	if errors.Is(err, store.ErrPersonTierRebuilding) {
+	switch {
+	case errors.Is(err, store.ErrPersonTierRebuilding):
 		writeError(w, http.StatusConflict, "activity_projection_rebuilding", err.Error())
-		return
+	case errors.Is(err, persontiers.ErrInvalidConfig):
+		writeError(w, http.StatusServiceUnavailable, "person_tiers_config_invalid", err.Error())
+	default:
+		s.writePersonError(w, err)
 	}
-	s.writePersonError(w, err)
 }
