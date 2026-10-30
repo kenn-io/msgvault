@@ -155,26 +155,28 @@ func newSlowAccountsServer(t *testing.T) (*Server, *slowCountsStore, int64) {
 
 func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 		srv, slow, _ := newSlowAccountsServer(t)
 		t.Cleanup(func() { close(slow.release) })
-		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
 		srv.statsSnapshotWait = 50 * time.Millisecond
 		getAccounts := func() cliAccountsResponse {
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			var resp cliAccountsResponse
-			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
 			return resp
 		}
 		first := getAccounts()
-		require.Len(t, first.Accounts, 1)
-		assert.False(t, first.Stale)
+		require.Len(first.Accounts, 1)
+		assert.False(first.Stale)
 
 		second := getAccounts()
-		require.Len(t, second.Accounts, 1)
-		assert.True(t, second.Stale, "slow counts serve the previous snapshot")
-		assert.False(t, second.AsOf.IsZero())
+		require.Len(second.Accounts, 1)
+		assert.True(second.Stale, "slow counts serve the previous snapshot")
+		assert.False(second.AsOf.IsZero())
 	})
 }
 
