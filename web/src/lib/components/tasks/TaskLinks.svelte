@@ -262,14 +262,14 @@
   );
 </script>
 
-{#if showSetup || integrationState !== 'disabled'}
+{#if showSetup || integrationState !== 'disabled' || tasks.length > 0}
 <section class="task-links" aria-label="Linked tasks">
   {#if mode !== 'add' && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
+    {#if degraded && (showSetup || integrationState !== 'disabled')}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
         <p>{stateMessage}</p>
         <Button size="sm" surface="soft" label={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onclick={onsettings} />
       </div>{/if}
