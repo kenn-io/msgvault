@@ -60,6 +60,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.route('**/api/v1/deletions/batch-1', route => {
     if (route.request().method() === 'DELETE') {
       cancellations.push(route.request().url());
+      batch.status = 'cancelled';
       return route.fulfill({ json: { id: 'batch-1', status: 'cancelled' } });
     }
     return route.fulfill({ json: { ...batch, account: 'archive@example.com' } });
@@ -153,7 +154,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
 });
 
-test('dirty source settings hold navigation and contact-only runs finish', async ({ page }) => {
+test('read-only source settings open their editor and contact-only runs finish', async ({ page }) => {
   let contactsReads = 0;
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback' } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} } }));
@@ -173,19 +174,8 @@ test('dirty source settings hold navigation and contact-only runs finish', async
   await expect(page.getByText('Succeeded', { exact: true })).toBeVisible();
   expect(contactsReads).toBeGreaterThanOrEqual(2);
   await page.getByRole('button', { name: 'Details for Example chats' }).click();
-  await page.getByRole('combobox', { name: 'Presets: Every day at 03:00' }).click();
-  await page.getByRole('option', { name: 'Every hour', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit in Settings › Sources' }).click();
+  await expect(page.getByRole('heading', { name: 'Sources', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Files', exact: true }).click();
-  const discard = page.getByRole('dialog', { name: 'Discard changes?' });
-  await expect(discard).toBeVisible();
-
-  await discard.getByRole('button', { name: 'Keep editing' }).click();
-  await expect(page.getByRole('combobox', { name: 'Presets: Every hour' })).toBeVisible();
-  await page.goBack();
-  await expect(discard).toBeVisible();
-  await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
-  await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
-  await page.goForward();
-  await page.getByRole('button', { name: 'Details for Example chats' }).click();
-  await expect(page.getByRole('combobox', { name: 'Presets: Every day at 03:00' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Files', exact: true })).toBeVisible();
 });
