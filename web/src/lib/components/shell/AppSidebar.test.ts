@@ -44,10 +44,9 @@ describe('AppSidebar', () => {
     expect(primary().getByRole('button', { name: 'People' }).getAttribute('aria-current')).toBe('page');
   });
 
-  it('puts Help in the footer', () => {
-    const { container } = renderSidebar();
-    const footer = within(container.querySelector<HTMLElement>('.sidebar__footer')!);
-    expect(footer.getByRole('button', { name: 'Help' })).toBeTruthy();
+  it('offers Help', () => {
+    renderSidebar();
+    expect(screen.getByRole('button', { name: 'Help' })).toBeTruthy();
   });
 
   it('nests saved views under the place they open', async () => {

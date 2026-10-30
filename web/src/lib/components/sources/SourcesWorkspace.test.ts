@@ -12,7 +12,7 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, 
 function source(overrides: Record<string, unknown> = {}) {
   return sourceStatus({
     display_name: 'Archive', last_sync_at: '2026-07-19T10:00:00Z',
-    updated_at: '2026-07-19T10:00:00Z', can_sync: true, ...overrides
+    updated_at: '2026-07-19T10:00:00Z', ...overrides
   });
 }
 
