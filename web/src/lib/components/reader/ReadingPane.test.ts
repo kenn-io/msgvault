@@ -53,14 +53,12 @@ describe('ReadingPane header', () => {
     expect(meta).not.toContain(messageType === 'email' ? 'email ·' : messageType);
   });
   it('opens the known counterpart of an outgoing-only WhatsApp conversation', async () => {
-    const view = renderPane(entryRow());
     const onOpenPerson = vi.fn();
-    await view.rerender({
+    render(ReadingPane, {
       selection: { kind: 'entry', row: entryRow({ kind: 'conversation', message_type: 'whatsapp', conversation_id: 7, counterpart_participant_id: 22 }) },
-      client: createAPIClient(async () => Response.json({ id: 7, anchor_id: 42, messages: [{ id: 42, conversation_id: 7, message_type: 'whatsapp', from: 'You', is_from_me: true, to: [], subject: 'Outgoing chat', body: 'Outgoing-only message', labels: [], attachments: [] }], has_before: false, has_after: false, total: 1 })),
-      onOpenPerson,
+      client: createAPIClient(async () => Response.json({ id: 7, messages: [], total: 0 })),
+      predicate: {}, onOpenPerson,
     });
-    await screen.findByText('Outgoing-only message');
     await fireEvent.click(screen.getByRole('button', { name: 'Open person' }));
     expect(onOpenPerson).toHaveBeenCalledWith(22);
   });

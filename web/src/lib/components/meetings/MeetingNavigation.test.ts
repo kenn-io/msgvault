@@ -1,3 +1,4 @@
+import { disabledTaskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -9,7 +10,7 @@ import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-sup
 import AppShell from '../shell/AppShell.svelte';
 
 const detail: MessageDetail = { id: 42, conversation_id: 8, message_type: 'meeting_transcript', subject: 'Archived review', sent_at: '2026-01-01T00:00:00Z', from: 'Example', to: [], body: 'Archived transcript body', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Archived' };
-const action = { meeting: { message_id: 42, conversation_id: 8, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', source_message_id: 'source-42', title: 'Action provenance title', occurred_at: detail.sent_at },
+const action = { meeting: { message_id: 42, conversation_id: 8, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', source_message_id: 'source-42', title: 'Action provenance title', occurred_at: detail.sent_at, archive_path: '/api/v1/messages/42' },
   action: { ordinal: 0, locator: 'action:0', origin: 'source', title: 'Prepare review', status: 'pending' } };
 
 async function metricsResponse(request: Request): Promise<Response> {
@@ -31,7 +32,7 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path.endsWith('/meetings/actions')) return Response.json(meetingActions({ rows: [action], total_count: 1 }));
     if (path.endsWith('/messages/42')) return detailResponse();
     if (path.endsWith('/integrations/tasks/status')) return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
-    if (path.endsWith('/messages/43/tasks')) return Response.json({ state: 'disabled', complete: false, tasks: [] });
+    if (path.endsWith('/messages/43/tasks')) return Response.json(disabledTaskLookup(43, 8));
     if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 1, display_name: 'Example Person', participant_ids: [7], vcard_uid: 'person-7', created_at: '', updated_at: '' });
     if (path === '/api/v1/people/directory') return Response.json({ people: [] });
     if (path.endsWith('/brief-enrollment')) return Response.json({ person_id: 7, enrolled: false });
@@ -63,7 +64,7 @@ function groupNavigationClient() {
       const body = await request.json();
       const messageID = body.scope?.message_ids?.[0];
       const rows = messageID === 43
-        ? [{ ...action, meeting: { ...action.meeting, message_id: 43 } }] : [action];
+        ? [{ ...action, meeting: { ...action.meeting, message_id: 43, archive_path: '/api/v1/messages/43' } }] : [action];
       return Response.json(meetingActions({ rows, total_count: rows.length }));
     }
     if (url.pathname.endsWith('/messages/42')) return Response.json(detail);
