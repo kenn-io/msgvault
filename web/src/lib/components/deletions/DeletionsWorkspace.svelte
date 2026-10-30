@@ -208,7 +208,7 @@
 
 <style>
   .deletions > :global(.page-header) {
-    margin-bottom: calc(var(--space-5) - var(--section-gap));
+    --page-header-parent-gap: var(--section-gap);
   }
 
   .deletions {
@@ -233,7 +233,8 @@
     color: var(--text-danger);
   }
   :global(.kit-table-wrapper.batch-table) {
-    flex: none;
+    min-height: 0;
+    flex: 0 1 auto;
     overflow: auto;
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);

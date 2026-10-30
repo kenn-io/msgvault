@@ -158,7 +158,7 @@ describe('AppShell', () => {
     render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
 
     await fireEvent.keyDown(window, { key: '/' });
-    const search = screen.getByRole('searchbox', { name: 'Search messages' });
+    const search = screen.getByRole('searchbox', { name: 'Search everything' });
     expect(document.activeElement).toBe(search);
     await fireEvent.keyDown(search, { key: 'Escape' });
     expect(document.activeElement).toBe(search);
@@ -170,7 +170,7 @@ describe('AppShell', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
     const handleKeydown = vi.spyOn(appShortcuts, 'handleKeydown');
-    const search = screen.getByRole('searchbox', { name: 'Search messages' });
+    const search = screen.getByRole('searchbox', { name: 'Search everything' });
     const textarea = document.createElement('textarea');
     const select = document.createElement('select');
     const editable = document.createElement('div');
@@ -242,7 +242,7 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
     render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
-    const search = screen.getByRole('searchbox', { name: 'Search messages' });
+    const search = screen.getByRole('searchbox', { name: 'Search everything' });
     const host = document.createElement('div');
     document.body.append(host);
 
@@ -274,7 +274,7 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
     render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
-    const search = screen.getByRole('searchbox', { name: 'Search messages' });
+    const search = screen.getByRole('searchbox', { name: 'Search everything' });
     search.focus();
 
     await fireEvent.keyDown(search, { key: 'j' });
@@ -675,7 +675,7 @@ describe('AppShell', () => {
       render(AppShell, { client: createAPIClient(fetchFn), state: shellState('files'), enabled: false });
       await screen.findByRole('grid', { name: 'Files results' });
 
-      await fireEvent.input(screen.getByRole('searchbox', { name: 'Search messages' }), { target: { value: 'invoice' } });
+      await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), { target: { value: 'invoice' } });
 
       await waitFor(async () => {
         const body = await searches.at(-1)!.clone().json() as { predicate: { query?: string } };
@@ -748,10 +748,10 @@ describe('AppShell', () => {
       const length = window.history.length;
       render(AppShell, { client: exploreClient(), state, enabled: false });
 
-      const search = screen.getByRole('searchbox', { name: 'Search messages' });
+      const search = screen.getByRole('searchbox', { name: 'Search everything' });
       await fireEvent.input(search, { target: { value: 'pipeline' } });
       expect(state.current.workspace).toBe('sources');
-      await fireEvent.submit(screen.getByRole('search', { name: 'Search Messages' }));
+      await fireEvent.submit(screen.getByRole('search', { name: 'Search Everything' }));
 
       expect(state.current.workspace).toBe('everything');
       expect(state.current.query).toBe('pipeline');
@@ -770,10 +770,10 @@ describe('AppShell', () => {
       render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
       const grid = await screen.findByRole('grid', { name: 'Files results' });
 
-      const search = screen.getByRole('searchbox', { name: 'Search messages' });
+      const search = screen.getByRole('searchbox', { name: 'Search everything' });
       search.focus();
       await fireEvent.input(search, { target: { value: 'invoice' } });
-      await fireEvent.submit(screen.getByRole('search', { name: 'Search Messages' }));
+      await fireEvent.submit(screen.getByRole('search', { name: 'Search Everything' }));
 
       expect(state.current.query).toBe('invoice');
       expect(document.activeElement).toBe(grid);
@@ -783,7 +783,7 @@ describe('AppShell', () => {
       const state = shellState('sources');
       render(AppShell, { client: exploreClient(), state, enabled: false });
 
-      const search = screen.getByRole('searchbox', { name: 'Search messages' }) as HTMLInputElement;
+      const search = screen.getByRole('searchbox', { name: 'Search everything' }) as HTMLInputElement;
       await fireEvent.input(search, { target: { value: 'pipeline' } });
       await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' }));
 
@@ -807,7 +807,7 @@ describe('AppShell', () => {
       render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, media]]) });
       if (ready === true) await waitFor(() => expect(media.ready).toBe(true));
       if (ready === false) await waitFor(() => expect(media.absent).toBe(true));
-      const search = screen.getByRole('searchbox', { name: 'Search messages' });
+      const search = screen.getByRole('searchbox', { name: 'Search everything' });
       await fireEvent.input(search, { target: { value: 'missing' } });
       await waitFor(() => expect(reported()).toContain('search_run:text'));
       expect(reported()).not.toContain('search_empty:text');
@@ -834,7 +834,7 @@ describe('AppShell', () => {
       }));
       const daily = vi.spyOn(startTelemetryReporting(client), 'reportDaily');
       const view = render(AppShell, { client, state });
-      await fireEvent.input(screen.getByRole('searchbox', { name: 'Search messages' }), { target: { value: 'gas' } });
+      await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), { target: { value: 'gas' } });
       expect(state.current.query).toBe('gas');
       await screen.findByText('Synthetic subject 1');
       if (trigger !== 'visible') {
@@ -1996,10 +1996,10 @@ describe('AppShell', () => {
         await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' }))
           .getByRole('button', { name: 'Messages' }));
       } else {
-        await fireEvent.input(screen.getByRole('searchbox', { name: 'Search messages' }), {
+        await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), {
           target: { value: 'pipeline' }
         });
-        await fireEvent.submit(screen.getByRole('search', { name: 'Search Messages' }));
+        await fireEvent.submit(screen.getByRole('search', { name: 'Search Everything' }));
       }
       expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
 

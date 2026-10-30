@@ -333,7 +333,7 @@ test("rapid search scope changes leave only the final meeting evidence", async (
   const summary = page.getByRole('region', { name: 'Meeting summary', exact: true });
   await expect(summary).toContainText('5 meetings');
   const search = page.getByRole("searchbox", {
-    name: "Search messages",
+    name: "Search everything",
     exact: true,
   });
   const firstRequest = page.waitForRequest(
@@ -460,7 +460,7 @@ test('closing the reader removes its scope and cancels a pending continuation', 
     await expect(page).toHaveURL((url) => url.searchParams.get('workspace') === 'directory');
     await network.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await page.getByRole('button', { name: 'Messages', exact: true }).click();
-    const search = page.getByRole('searchbox', { name: 'Search messages', exact: true });
+    const search = page.getByRole('searchbox', { name: 'Search everything', exact: true });
     await search.fill('Generic');
     await search.press('Enter');
     const finalSummary = page.getByRole('region', { name: 'Meeting summary', exact: true });

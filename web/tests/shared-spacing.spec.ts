@@ -17,12 +17,17 @@ test.beforeEach(async ({ page }) => {
 test('page content sits one header gap below the divider, and full-width panes meet it', async ({ page }) => {
   await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
   await stubOperationStatus(page);
-  await page.route('**/api/v1/sources**', (route) => route.fulfill({ json: { sources: [] } }));
+  await page.route('**/api/v1/carddav/connections', (route) => route.fulfill({ json: { connections: [] } }));
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
     id: 1, name: 'Synthetic saved view', schema_version: 2, revision: 1, canonical_state: {},
     created_at: row.occurred_at, updated_at: row.occurred_at
   }] } }));
-  await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [] } }));
+  await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [{
+    id: 'spacing-batch', status: 'pending', message_count: 1, created_at: row.occurred_at, created_by: 'api'
+  }] } }));
+  await page.route('**/api/v1/deletions/spacing-batch', (route) => route.fulfill({ json: {
+    id: 'spacing-batch', status: 'pending', message_count: 1, created_at: row.occurred_at, created_by: 'api', account: 'archive@example.com'
+  } }));
   await page.route('**/api/v1/identity/match-candidates**', (route) => route.fulfill({ json: { candidates: [], limit: 100, offset: 0 } }));
   await page.route('**/api/v1/person-relationship-reviews**', (route) => route.fulfill({ json: { reviews: [] } }));
   const gaps: Record<string, number> = {};
@@ -33,8 +38,8 @@ test('page content sits one header gap below the divider, and full-width panes m
     if (label === 'Messages') await expect(page.getByRole('grid', { name: 'Messages results' }).getByText(row.title, { exact: true })).toBeVisible();
     if (label === 'Files') await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
     if (label === 'Reviews') await expect(page.getByText('No identity matches in this queue.', { exact: true })).toBeVisible();
-    if (label === 'Deletions') await expect(page.getByText('No staged deletions', { exact: true })).toBeVisible();
-    if (label === 'Sources') await expect(page.getByText('No archived sources are available.')).toBeVisible();
+    if (label === 'Deletions') await expect(page.getByRole('table', { name: 'Staged deletions' }).getByText('archive@example.com', { exact: true })).toBeVisible();
+    if (label === 'Sources') await expect(page.getByRole('table', { name: 'Sources' }).getByText('Archive', { exact: true })).toBeVisible();
     if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
     const header = page.locator('.page-header:visible');
     await expect(header).toHaveCount(1);
@@ -43,7 +48,7 @@ test('page content sits one header gap below the divider, and full-width panes m
       const owner = element.parentElement!;
       let next = element.nextElementSibling;
       if (!next) next = owner.nextElementSibling;
-      while (next && next.getBoundingClientRect().height === 0) next = next.nextElementSibling;
+      while (next && (next.getBoundingClientRect().height === 0 || next.classList.contains('kit-sr-only'))) next = next.nextElementSibling;
       return next!.getBoundingClientRect().top - divider;
     });
   }
@@ -123,7 +128,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
     created_at: row.occurred_at, updated_at: row.occurred_at
   }] } }));
   await selectWorkspace(page, 'Messages');
-  await page.getByRole('searchbox', { name: 'Search messages' }).fill('archive');
+  await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
   await page.getByRole('combobox', { name: 'Group by', exact: true }).click();
   await page.getByRole('option', { name: 'Source', exact: true }).click();
   const chips = page.locator('.context-chips .chip');
@@ -143,7 +148,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
     expect.soft(shape.radius).toBeGreaterThanOrEqual(shape.height / 2);
   }
   const longQuery = 'archive '.repeat(100).trim();
-  await page.getByRole('searchbox', { name: 'Search messages' }).fill(longQuery);
+  await page.getByRole('searchbox', { name: 'Search everything' }).fill(longQuery);
   const queryChip = chips.filter({ hasText: longQuery });
   const wrapping = await queryChip.locator('.kit-chip__label').evaluate((element) => ({
     clipped: element.scrollWidth > element.clientWidth,
