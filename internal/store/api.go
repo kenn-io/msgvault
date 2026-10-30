@@ -57,6 +57,8 @@ type APIMessage struct {
 	SourceConversationID string
 	Subject              string
 	MessageType          string
+	FromParticipantID    int64
+	ToParticipants       []ParticipantDisplay
 	From                 string
 	FromEmail            string
 	FromName             string
@@ -77,6 +79,20 @@ type APIMessage struct {
 	IsFromMe             bool
 	Headers              map[string]string
 	Attachments          []APIAttachment
+}
+
+// ParticipantDisplay retains the archived person behind a recipient label.
+type ParticipantDisplay struct {
+	ParticipantID int64
+	Display       string
+}
+
+func recipientDisplays(values []ParticipantDisplay) []string {
+	var result []string
+	for _, value := range values {
+		result = append(result, value.Display)
+	}
+	return result
 }
 
 // MessageRecipient is one archived message-recipient relationship.
@@ -1165,9 +1181,10 @@ func (s *Store) batchPopulateContext(ctx context.Context, messages []APIMessage,
 		return err
 	}
 	for i := range messages {
-		messages[i].To = recipientMap[messages[i].ID]
-		messages[i].Cc = ccMap[messages[i].ID]
-		messages[i].Bcc = bccMap[messages[i].ID]
+		messages[i].ToParticipants = recipientMap[messages[i].ID]
+		messages[i].To = recipientDisplays(messages[i].ToParticipants)
+		messages[i].Cc = recipientDisplays(ccMap[messages[i].ID])
+		messages[i].Bcc = recipientDisplays(bccMap[messages[i].ID])
 		messages[i].Labels = labelMap[messages[i].ID]
 	}
 	return nil
@@ -1184,11 +1201,11 @@ const batchQueryIDChunk = 500
 
 // batchGetRecipients loads recipients for multiple messages, chunked to stay
 // under the SQLite bound-parameter ceiling.
-func (s *Store) batchGetRecipients(ctx context.Context, messageIDs []int64, recipientType string) (map[int64][]string, error) {
+func (s *Store) batchGetRecipients(ctx context.Context, messageIDs []int64, recipientType string) (map[int64][]ParticipantDisplay, error) {
 	if len(messageIDs) == 0 {
-		return map[int64][]string{}, nil
+		return map[int64][]ParticipantDisplay{}, nil
 	}
-	result := make(map[int64][]string, len(messageIDs))
+	result := make(map[int64][]ParticipantDisplay, len(messageIDs))
 	for start := 0; start < len(messageIDs); start += batchQueryIDChunk {
 		end := min(start+batchQueryIDChunk, len(messageIDs))
 		if err := s.fetchRecipientsInto(ctx, messageIDs[start:end], recipientType, result); err != nil {
@@ -1202,7 +1219,7 @@ func (s *Store) batchGetRecipients(ctx context.Context, messageIDs []int64, reci
 // into result, keyed by message id. Every id belongs to exactly one chunk,
 // so no key is ever written by more than one call.
 func (s *Store) fetchRecipientsInto(
-	ctx context.Context, messageIDs []int64, recipientType string, result map[int64][]string,
+	ctx context.Context, messageIDs []int64, recipientType string, result map[int64][]ParticipantDisplay,
 ) error {
 	placeholders := make([]string, len(messageIDs))
 	args := make([]any, 0, len(messageIDs)+1)
@@ -1213,7 +1230,7 @@ func (s *Store) fetchRecipientsInto(
 	args = append(args, recipientType)
 
 	query := fmt.Sprintf(`
-		SELECT mr.message_id, %s
+		SELECT mr.message_id, p.id, %s
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s) AND mr.recipient_type = ?
@@ -1227,12 +1244,12 @@ func (s *Store) fetchRecipientsInto(
 
 	for rows.Next() {
 		var msgID int64
-		var display string
-		if err := rows.Scan(&msgID, &display); err != nil {
+		var recipient ParticipantDisplay
+		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display); err != nil {
 			return fmt.Errorf("scan recipient: %w", err)
 		}
-		if display != "" {
-			result[msgID] = append(result[msgID], display)
+		if recipient.Display != "" {
+			result[msgID] = append(result[msgID], recipient)
 		}
 	}
 	if err := rows.Err(); err != nil {

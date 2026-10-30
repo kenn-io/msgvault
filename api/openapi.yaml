@@ -3102,6 +3102,18 @@ components:
         - state
         - evidence
       type: object
+    ConversationParticipant:
+      additionalProperties: true
+      properties:
+        display:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - display
+      type: object
     ConversationResponse:
       additionalProperties: true
       properties:
@@ -8027,6 +8039,10 @@ components:
           type: string
         from_name:
           type: string
+        from_participant_id:
+          description: Sender participant ID, populated for conversation windows.
+          format: int64
+          type: integer
         from_phone:
           type: string
         has_attachments:
@@ -8062,6 +8078,11 @@ components:
         to:
           items:
             type: string
+          type: array
+        to_participants:
+          description: Recipient participants, populated for conversation windows.
+          items:
+            $ref: "#/components/schemas/ConversationParticipant"
           type: array
       required:
         - body
@@ -16644,7 +16665,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.27.0
+  version: 3.28.0
 openapi: 3.1.0
 paths:
   /api/ping:

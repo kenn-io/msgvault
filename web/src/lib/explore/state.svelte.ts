@@ -33,6 +33,7 @@ import { hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseRecordingSelection } from '../archive/recording-selection';
 import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
+import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../relationships/reader-history';
 import {
   normalizeSettingsNavigationAuthority,
   settingsNavigationTarget,
@@ -960,7 +961,7 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow), ...this.operationHistoryState(priorEntry) }, '', committedURL);
+      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow), ...this.operationHistoryState(priorEntry), ...this.relationshipReaderHistoryState(priorEntry) }, '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -981,10 +982,15 @@ export class ExploreState {
     if (mode === 'push') this.historyIndex += 1;
     const history = historyEntry(search, this.current, this.historyIndex);
     if (mode === 'push') {
-      this.browser.history.pushState({ ...history, ...this.operationHistoryState(next, 1) }, '', url);
+      this.browser.history.pushState({ ...history, ...this.operationHistoryState(next, 1), ...this.relationshipReaderHistoryState(next) }, '', url);
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
-    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow), ...this.operationHistoryState(this.current) }, '', url);
+    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow), ...this.operationHistoryState(this.current), ...this.relationshipReaderHistoryState(this.current) }, '', url);
+  }
+
+  private relationshipReaderHistoryState(state: ExploreURLState): Record<string, unknown> | null {
+    const snapshot = relationshipReaderHistory(this.browser.history.state, state.workspace, state.relationshipTarget);
+    return snapshot ? { [RELATIONSHIP_READER_HISTORY_KEY]: snapshot } : null;
   }
 
   private operationHistoryDepth(): number {

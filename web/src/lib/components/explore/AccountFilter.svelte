@@ -10,10 +10,12 @@
     client,
     filters,
     onChange,
+    showSingleMailbox = false,
   }: {
     client: APIClient;
     filters: ExploreFilter[];
     onChange: (filters: ExploreFilter[]) => void;
+    showSingleMailbox?: boolean;
   } = $props();
   type Option = { value: string; label: string; sourceID: string };
 
@@ -103,7 +105,7 @@
         };
       });
       for (const entry of entries) all.set(entry.value, entry);
-      return showChildren(account) ? entries : [];
+      return showSingleMailbox || showChildren(account) ? entries : [];
     });
     return { options: read, known: all, pending: pendingCount };
   }

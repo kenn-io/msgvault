@@ -330,6 +330,9 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
+	FromParticipantID int64                     `json:"from_participant_id,omitzero" doc:"Sender participant ID, populated for conversation windows."`
+	ToParticipants    []ConversationParticipant `json:"to_participants,omitempty" doc:"Recipient participants, populated for conversation windows."`
+
 	RelatedMessageID  *int64 `json:"related_message_id,omitempty"`
 	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
 

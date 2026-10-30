@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { disabledTaskLookup } from '../tasks/fixtures.test-support';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
@@ -23,4 +24,21 @@ it('reports a displayed linked message loading failure', async () => {
   await waitFor(() => expect(telemetryEvents).toEqual([
     { event: 'error_shown', properties: { surface: 'web', kind: 'message' } }
   ]));
+});
+
+it('passes exact person navigation from the message reader', async () => {
+  const onOpenPerson = vi.fn();
+  const fetchFn = vi.fn<typeof fetch>(async (input) => {
+    const path = new URL((input as Request).url).pathname;
+    if (path === '/api/v1/messages/2') return Response.json({ id: 2, conversation_id: 7, from: 'Same name', to: ['Same name'], subject: 'Follow up', body: 'Loaded body' });
+    if (path === '/api/v1/conversations/7') return Response.json({ id: 7, anchor_id: 2, messages: [{ id: 2, conversation_id: 7, message_type: 'email', from: 'Same name', from_participant_id: 11, to: ['Same name'], subject: 'Follow up', body: 'Loaded body' }], has_before: false, has_after: false, total: 1 });
+    if (path.endsWith('/tasks/status')) return Response.json({ state: 'disabled', message: 'Set up Tasks' });
+    if (path.endsWith('/kata/status')) return Response.json({ state: 'disabled' });
+    return Response.json({ recordings: [], ...disabledTaskLookup(2) });
+  });
+  const client = createCaptureClient(fetchFn, [], []);
+  render(MessagePage, { client, messageID: 2, onOpenPerson });
+  await screen.findByText('Loaded body');
+  await fireEvent.click(screen.getAllByRole('button', { name: 'Same name' })[0]!);
+  expect(onOpenPerson).toHaveBeenCalledWith(11);
 });
