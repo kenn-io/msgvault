@@ -204,3 +204,28 @@ it('waits for the current detail after a status refresh supersedes the first rea
     expect(failedReads).toBe(1);
   } finally { controller.destroy(); }
 });
+
+it('follows the replacement when a status refresh supersedes a queued detail read', async () => {
+  let status = 'pending', targetReads = 0;
+  const blocked: Array<(response: Response) => void> = [];
+  const controller = new DeletionsController(createAPIClient(async input => {
+    const request = input as Request;
+    if (request.url.endsWith('/deletions')) return Response.json({ manifests: [batch('target', status), ...Array.from({ length: 4 }, (_, i) => batch(`busy-${i}`, 'pending'))] });
+    if (request.url.endsWith('/target')) { targetReads++; return Response.json({ ...batch('target', 'in_progress'), account: 'archive@example.com' }); }
+    return new Promise<Response>(resolve => blocked.push(resolve));
+  }));
+  const busy: Array<Promise<unknown>> = [];
+  try {
+    await controller.refresh();
+    busy.push(...Array.from({ length: 4 }, (_, i) => controller.getDetail(`busy-${i}`)));
+    const opening = controller.getDetail('target');
+    expect(targetReads).toBe(0);
+    status = 'in_progress';
+    await controller.refresh();
+    const replacement = controller.getDetail('target');
+    blocked[0](Response.json(batch('busy-0', 'pending')));
+    expect(await opening).toMatchObject({ id: 'target', status: 'in_progress', account: 'archive@example.com' });
+    expect(await replacement).toEqual(controller.details.target);
+    expect(targetReads).toBe(1);
+  } finally { controller.destroy(); await Promise.all(busy); }
+});
