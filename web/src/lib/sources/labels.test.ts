@@ -34,6 +34,8 @@ describe('source labels', () => {
     expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled'), scheduler_queued: true })).toBe('queued');
     expect(sourceRunState({ active_sync: null, latest_sync: run('failed'), scheduler_queued: true })).toBe('failed');
     expect(sourceRunState({ active_sync: null, latest_sync: run('completed'), scheduler_queued: true })).toBe('queued');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('completed'), scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z' })).toBe('running');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('running'), scheduler_queued: true })).toBe('running');
     expect(sourceRunState({ active_sync: null, latest_sync: run('completed', 2), scheduler_queued: true })).toBe('partial');
     expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled') })).toBe('cancelled');
     expect(sourceRunState({ active_sync: null, latest_sync: run('completed', 2) })).toBe('partial');
