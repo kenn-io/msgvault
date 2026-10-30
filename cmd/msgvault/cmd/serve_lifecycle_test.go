@@ -854,21 +854,23 @@ func TestStopLiveDaemonsReturnsRuntimeListError(t *testing.T) {
 }
 
 func TestWaitForBackgroundServeReadyReturnsRuntimeListError(t *testing.T) {
-	assert := assert.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
 
-	dataDir := runtimeDataDirFile(t)
+		dataDir := runtimeDataDirFile(t)
 
-	rt, ready, err := waitForBackgroundServeReady(
-		context.Background(),
-		dataDir,
-		nil,
-		serveLifecycleTestTimeout,
-	)
+		rt, ready, err := waitForBackgroundServeReady(
+			context.Background(),
+			dataDir,
+			nil,
+			time.Millisecond,
+		)
 
-	require.Error(t, err, "wait should surface runtime-store failures")
-	assert.Contains(err.Error(), "list daemon runtimes", "runtime list error")
-	assert.False(ready, "ready")
-	assert.Nil(rt, "runtime")
+		require.Error(t, err, "wait should surface runtime-store failures")
+		assert.Contains(err.Error(), "list daemon runtimes", "runtime list error")
+		assert.False(ready, "ready")
+		assert.Nil(rt, "runtime")
+	})
 }
 
 func TestWaitForDaemonRuntimeCancelsDuringProbe(t *testing.T) {
@@ -1724,6 +1726,7 @@ func TestNewDaemonIdleTrackerDisabled(t *testing.T) {
 
 func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
 	t.Setenv(serveBackgroundChildEnv, "1")
+	t.Setenv(daemonIdleTimeoutEnv, "")
 	synctest.Test(t, func(t *testing.T) {
 		cfg := lifecycleTestConfig(t.TempDir())
 		cfg.Server.DaemonIdleTimeout = 20 * time.Millisecond

@@ -134,10 +134,9 @@ func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map
 }
 
 // newSlowAccountsServer serves one account with one message behind slowCountsStore.
-func newSlowAccountsServer(t *testing.T) (*Server, *slowCountsStore, int64) {
+func newSlowAccountsServer(t *testing.T, st *store.Store, release chan struct{}) (*Server, *slowCountsStore, int64) {
 	t.Helper()
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
 	convID, err := st.EnsureConversation(src.ID, "thread-1", "")
@@ -146,7 +145,7 @@ func newSlowAccountsServer(t *testing.T) (*Server, *slowCountsStore, int64) {
 		SourceID: src.ID, ConversationID: convID, SourceMessageID: "msg-1", MessageType: "email",
 	})
 	require.NoError(err)
-	slow := &slowCountsStore{Store: st, release: make(chan struct{})}
+	slow := &slowCountsStore{Store: st, release: release}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  slow,
@@ -156,12 +155,11 @@ func newSlowAccountsServer(t *testing.T) (*Server, *slowCountsStore, int64) {
 }
 
 func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
-	srv, slow, _ := newSlowAccountsServer(t)
+	st := testutil.NewTestStore(t)
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		// The blocked refresh must use a channel owned by this virtual clock.
-		slow.release = make(chan struct{})
+		srv, slow, _ := newSlowAccountsServer(t, st, make(chan struct{}))
 		t.Cleanup(func() { close(slow.release) })
 		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
 		srv.statsSnapshotWait = 50 * time.Millisecond
@@ -187,48 +185,52 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 }
 
 func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	srv, slow, sourceID := newSlowAccountsServer(t)
-	slow.calls.Store(1)
-	srv.statsSnapshotWait = 20 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked cold count must expire and return pending counts or a timeout error
-	get := func(optIn bool) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
-		if optIn {
-			req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+	st := testutil.NewTestStore(t)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		srv, slow, sourceID := newSlowAccountsServer(t, st, make(chan struct{}))
+		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
+		slow.calls.Store(1)
+		srv.statsSnapshotWait = 20 * time.Millisecond
+		get := func(optIn bool) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+			if optIn {
+				req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+			}
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			return w
 		}
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		return w
-	}
 
-	legacy := get(false)
-	assert.Equal(http.StatusServiceUnavailable, legacy.Code, "older clients never get placeholder zeros")
-	assert.Contains(legacy.Body.String(), "query_timeout")
+		legacy := get(false)
+		assert.Equal(http.StatusServiceUnavailable, legacy.Code, "older clients never get placeholder zeros")
+		assert.Contains(legacy.Body.String(), "query_timeout")
 
-	pending := get(true)
-	require.Equal(http.StatusOK, pending.Code, pending.Body.String())
-	var resp cliAccountsResponse
-	require.NoError(json.Unmarshal(pending.Body.Bytes(), &resp))
-	assert.True(resp.CountsPending)
-	require.Len(resp.Accounts, 1)
-	assert.Equal(sourceID, resp.Accounts[0].ID)
-	assert.Zero(resp.Accounts[0].MessageCount)
+		pending := get(true)
+		require.Equal(http.StatusOK, pending.Code, pending.Body.String())
+		var resp cliAccountsResponse
+		require.NoError(json.Unmarshal(pending.Body.Bytes(), &resp))
+		assert.True(resp.CountsPending)
+		require.Len(resp.Accounts, 1)
+		assert.Equal(sourceID, resp.Accounts[0].ID)
+		assert.Zero(resp.Accounts[0].MessageCount)
 
-	close(slow.release)
-	require.Eventually(func() bool {
-		resp = cliAccountsResponse{}
-		return json.Unmarshal(get(true).Body.Bytes(), &resp) == nil && !resp.CountsPending
-	}, 10*time.Second, 10*time.Millisecond)
-	assert.EqualValues(1, resp.Accounts[0].MessageCount)
-	legacy = get(false)
-	require.Equal(http.StatusOK, legacy.Code, "older clients get real counts once they exist")
+		close(slow.release)
+		require.Eventually(func() bool {
+			resp = cliAccountsResponse{}
+			return json.Unmarshal(get(true).Body.Bytes(), &resp) == nil && !resp.CountsPending
+		}, 10*time.Second, 10*time.Millisecond)
+		assert.EqualValues(1, resp.Accounts[0].MessageCount)
+		legacy = get(false)
+		require.Equal(http.StatusOK, legacy.Code, "older clients get real counts once they exist")
+	})
 }
 
 func TestHandleCLIAccountsDelegatedCountsLive(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	srv, slow, sourceID := newSlowAccountsServer(t)
+	srv, slow, sourceID := newSlowAccountsServer(t, testutil.NewTestStore(t), make(chan struct{}))
 	t.Cleanup(func() { close(slow.release) })
 	srv.cfg.Server.AgentAccess = true
 	srv.cfg.Server.APIKey = "owner"
@@ -278,7 +280,7 @@ func TestHandleCLIAccountsDelegatedCountErrors(t *testing.T) {
 	requirements := require.New(t)
 	for _, deleted := range []bool{false, true} {
 		for _, failure := range []error{context.Canceled, errors.New("synthetic count failure")} {
-			srv, slow, sourceID := newSlowAccountsServer(t)
+			srv, slow, sourceID := newSlowAccountsServer(t, testutil.NewTestStore(t), make(chan struct{}))
 			source, err := slow.GetSourceByID(sourceID)
 			requirements.NoError(err)
 			srv.store = &failingDirectCountsStore{Store: slow.Store, deleted: deleted, err: failure}
