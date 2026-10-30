@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import type { ExploreSelection } from '../../api/generated/models';
@@ -41,21 +41,18 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe('DeletionReview', () => {
-
-  it('disables staging and says why when nothing qualifies', async () => {
-    const review = preflight({
-      deletable_count: 0,
-      unavailable_actions: [{ action: 'stage_deletion', reason: 'no_deletable_messages' }]
-    });
-    render(DeletionReview, { client: api(review), selection, onclose: vi.fn() });
-    const stage = await screen.findByRole('button', { name: 'Stage 0 messages' });
-    expect((stage as HTMLButtonElement).disabled).toBe(true);
-    expect(await screen.findByText('No deletable messages.')).toBeDefined();
+it('disables staging and says why when nothing qualifies', async () => {
+  const review = preflight({
+    deletable_count: 0,
+    unavailable_actions: [{ action: 'stage_deletion', reason: 'no_deletable_messages' }]
   });
+  render(DeletionReview, { client: api(review), selection, onclose: vi.fn() });
+  const stage = await screen.findByRole('button', { name: 'Stage 0 messages' });
+  expect((stage as HTMLButtonElement).disabled).toBe(true);
+  expect(await screen.findByText('No deletable messages.')).toBeDefined();
 });
 
-it('keeps all-matching exclusions and its token, clears failed previews, and retains the staged result', async () => {
+it('keeps all-matching exclusions and its token through failed preview and staging retries', async () => {
   const matching: ExploreSelection = { ...selection, mode: 'all_matching', row_keys: undefined, exclusions: ['message:2'], predicate: { query: 'budget', search_mode: 'semantic', presentation: 'table' }, candidate_snapshot_id: 'snapshot-1' };
   const posts: unknown[] = [];
   let failStage = true, reads = 0;
@@ -91,27 +88,22 @@ it('keeps all-matching exclusions and its token, clears failed previews, and ret
   ]);
 });
 
-it('ignores a staging response after the review closes', async () => {
-  let finish!: (response: Response) => void;
-  const onStaged = vi.fn();
-  const client = createAPIClient(async input => (input as Request).url.endsWith('/preflight') ? Response.json(preflight()) : new Promise(resolve => { finish = resolve; }));
-  const view = render(DeletionReview, { client, selection, onclose: vi.fn(), onStaged });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
-  view.unmount();
-  finish(Response.json({ id: 'late', message_count: 2, dry_run: false }, { status: 201 }));
-  await new Promise(resolve => setTimeout(resolve, 0));
-  expect(onStaged).not.toHaveBeenCalled();
-});
-
-it('holds the review open through Escape while staging and handles the result once', async () => {
+it.each(['stays mounted', 'unmounts'])('handles a pending stage when the review %s', async lifecycle => {
   let finish!: (response: Response) => void;
   const onclose = vi.fn(), onStaged = vi.fn();
   const client = createAPIClient(async input => (input as Request).url.endsWith('/preflight')
     ? Response.json(preflight())
     : new Promise<Response>(resolve => { finish = resolve; }));
-  render(DeletionReview, { client, selection, onclose, onStaged });
+  const view = render(DeletionReview, { client, selection, onclose, onStaged });
   await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
   await waitFor(() => expect(finish).toBeTypeOf('function'));
+  if (lifecycle === 'unmounts') {
+    view.unmount();
+    finish(Response.json({ id: 'late', message_count: 2, dry_run: false }, { status: 201 }));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(onStaged).not.toHaveBeenCalled();
+    return;
+  }
   await fireEvent.keyDown(document, { key: 'Escape' });
   expect(onclose).not.toHaveBeenCalled();
   finish(Response.json({ id: 'batch-pending', message_count: 2, matched_count: 3, dry_run: false }, { status: 201 }));
