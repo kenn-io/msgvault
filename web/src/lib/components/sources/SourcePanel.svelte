@@ -12,10 +12,12 @@
   import SidePanel from '../common/SidePanel.svelte';
   import CommandLine from './CommandLine.svelte';
 
-  let { client, source, syncing = false, onSync, onclose, onOpenSettings }: {
+  let { client, source, syncing = false, triggerError, onRefresh, onSync, onclose, onOpenSettings }: {
     client: APIClient;
     source: SourceStatus;
     syncing?: boolean;
+    triggerError: string;
+    onRefresh: () => void;
     onSync: () => void;
     onclose: () => void;
     onOpenSettings: () => void;
@@ -71,6 +73,12 @@
         {#if source.can_sync}<Button size="sm" tone="info" surface="soft" label={syncRunning(source) ? 'Syncing…' : syncing ? 'Starting…' : 'Sync now'} disabled={syncing} onclick={onSync} />{/if}
       </div>
     </div>
+    {#if triggerError}
+      <section class="block" role="alert">
+        <p class="failure">{triggerError}</p>
+        <Button size="sm" label="Refresh" onclick={onRefresh} />
+      </section>
+    {/if}
     {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure}</p>{#if source.scheduler_last_error && source.scheduler_last_error !== failure}<p class="failure">{source.scheduler_last_error}</p>{/if}</section>{/if}
     {#if !source.can_sync && !syncing}
       <section class="block" aria-label="Sync">
