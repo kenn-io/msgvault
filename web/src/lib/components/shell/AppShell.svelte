@@ -1442,6 +1442,7 @@
             />
           {:else}
             <FilesWorkspace
+              onConfigureVisualSearch={openVisualAttachmentSettings}
               bind:submitted={loader.submitted}
               {client}
               embedded

@@ -64,11 +64,14 @@ describe('SourcesWorkspace', () => {
 
   it('reports each rejected click despite an unchanged stored run', async () => {
     const events: unknown[] = [];
-    const fetchFn = api([source({ latest_sync: run('failed', 0) })], (_url, request) =>
+    const fetchFn = api([source({ latest_sync: run('failed', 0) }), source({ id: 2, display_name: 'Waiting', identifier: 'waiting@example.com', can_sync: false, scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: run('completed', 5) })], (_url, request) =>
       request.method === 'POST' ? Response.json({ message: 'Credentials unavailable' }, { status: 500 }) : undefined
     );
     render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
     await screen.findByText('Failed');
+    const queued = screen.getByRole('row', { name: /Waiting/ });
+    expect(within(queued).getByText('Queued')).toBeDefined();
+    expect(within(queued).getByText('Sync queued')).toBeDefined();
     expect(events).toEqual([]);
     for (const count of [1, 2]) {
       await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
@@ -109,16 +112,19 @@ describe('SourcesWorkspace', () => {
     expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
   });
 
-  it.each(['ready', 'failed', 'contacts-only'])('keeps contacts visible through completion with %s mail status', async mail => {
+  it.each(['ready', 'failed', 'contacts-only', 'unknown'])('keeps contacts visible and recoverable through %s status reads', async mail => {
     vi.useFakeTimers();
     let reads = 0, finish!: (response: Response) => void, finishSync!: (response: Response) => void;
     const syncs: Request[] = [];
+    let historyReads = 0;
     const fetch = api(mail === 'contacts-only' ? [] : [source()], (url, request) => {
       if (url.pathname.endsWith('/sources/status') && mail === 'failed') return Response.json({ message: 'Mail status unavailable' }, { status: 500 });
       if (url.pathname.endsWith('/carddav/status')) {
         if (++reads === 1) return Response.json({ ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null } });
-        return new Promise<Response>(resolve => { finish = resolve; });
+        if (reads === 2) return new Promise<Response>(resolve => { finish = resolve; });
+        return Response.json(contact.status);
       }
+      if (url.pathname.endsWith('/carddav/runs') && mail === 'unknown' && syncs.length > 0 && ++historyReads === 1) return Response.json({}, { status: 503 });
       if (url.pathname.endsWith('/carddav/sync')) {
         syncs.push(request);
         return new Promise<Response>(resolve => { finishSync = resolve; });
@@ -141,9 +147,18 @@ describe('SourcesWorkspace', () => {
       expect(await syncs[0].clone().json()).toEqual({ full: false, connection: 'default' });
       if (mail === 'failed') expect(screen.getByRole('alert').textContent).toContain('Mail status unavailable');
       else if (mail === 'ready') expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(false);
-      finishSync(Response.json({ status: 'partial', connections: [{ connection: 'default', status: 'failed' }] }));
+      finishSync(Response.json(mail === 'unknown' ? { status: 'succeeded' } : { status: 'partial', connections: [{ connection: 'default', status: 'failed' }] }));
       await vi.advanceTimersByTimeAsync(0);
-      expect(screen.getByText(/CardDAV sync partial/)).toBeDefined();
+      if (mail === 'unknown') {
+        expect(within(table).getByRole('button', { name: 'Retry CardDAV sync state' })).toBeDefined();
+        expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(true);
+        await fireEvent.click(screen.getByRole('button', { name: 'Details for user-a' }));
+        const panel = screen.getByRole('dialog', { name: 'user-a' });
+        await fireEvent.click(within(panel).getByRole('button', { name: 'Retry CardDAV sync state' }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(screen.queryByRole('button', { name: 'Retry CardDAV sync state' })).toBeNull();
+        expect((within(table).getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+      } else expect(screen.getByText(/CardDAV sync partial/)).toBeDefined();
     } finally { view.unmount(); }
   });
 
@@ -215,8 +230,8 @@ describe('SourcesWorkspace', () => {
     await screen.findByText('5 processed');
     await vi.advanceTimersByTimeAsync(500);
     await waitFor(() => expect(statusReads).toBe(2));
-    expect(screen.getByText('Syncing…')).toBeDefined();
-    expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Sync in progress')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Sync now Archive' })).toBeNull();
 
     // Polling continues (with backoff) while the lock is held...
     await vi.advanceTimersByTimeAsync(1_000);
@@ -594,7 +609,7 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), maxLockHoldPolls: 3
     });
 
-    await screen.findByText('Syncing…');
+    await screen.findByText('Sync in progress');
     await vi.advanceTimersByTimeAsync(30_000);
     expect(reads).toBe(4);
     expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
@@ -620,7 +635,7 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), maxLockHoldPolls: 2
     });
 
-    await screen.findByText('Syncing…');
+    await screen.findByText('Sync in progress');
     await vi.advanceTimersByTimeAsync(30_000);
     expect(reads).toBe(6);
     expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
@@ -641,7 +656,7 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), maxLockHoldPolls: 1
     });
 
-    expect(await screen.findByText('Syncing…')).toBeDefined();
+    expect(await screen.findByText('Sync in progress')).toBeDefined();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(reads).toBe(2);
     expect(screen.getByRole('alert').textContent).toContain('status unavailable');
@@ -667,7 +682,7 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), requestTimeoutMs: 20, maxLockHoldPolls: 3
     });
 
-    expect(await screen.findByText('Syncing…')).toBeDefined();
+    expect(await screen.findByText('Sync in progress')).toBeDefined();
     for (let expectedReads = 2; expectedReads <= 4; expectedReads += 1) {
       await vi.advanceTimersByTimeAsync(10_000);
       expect(reads).toBe(expectedReads);
