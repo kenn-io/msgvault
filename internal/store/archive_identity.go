@@ -45,10 +45,17 @@ func (s *Store) ArchiveRevision() (string, error) {
 
 // ArchiveRevisionContext reads the identity contract with the caller's context.
 func (s *Store) ArchiveRevisionContext(ctx context.Context) (string, error) {
-	if _, err := s.ArchiveUIDContext(ctx); err != nil {
-		return "", err
+	_, revision, err := s.ArchiveIdentityContext(ctx)
+	return revision, err
+}
+
+// ArchiveIdentityContext reads the archive UID and its identity contract together.
+func (s *Store) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
+	uid, err := s.ArchiveUIDContext(ctx)
+	if err != nil {
+		return "", "", err
 	}
-	return archiveRevisionV1, nil
+	return uid, archiveRevisionV1, nil
 }
 
 func (s *Store) ensureArchiveUID() error {
