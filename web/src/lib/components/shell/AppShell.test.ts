@@ -2772,7 +2772,11 @@ describe('AppShell', () => {
             action_targets: []
           });
         }
-        return Response.json(exploreResponse({ rows: [entry(1), entry(2)], total_count: 2 }));
+        if (path === '/api/v1/messages/1') return Response.json({ id: 1, conversation_id: 7, from: 'Example', to: [], subject: 'Synthetic subject 1', body: 'Email body' });
+        if (path === '/api/v1/conversations/7') return Response.json({ id: 7, anchor_id: 1, messages: [{ id: 1, conversation_id: 7, message_type: 'email', from: 'Example', to: [], subject: 'Synthetic subject 1', body: 'Email body' }], has_before: false, has_after: false, total: 1 });
+        if (path.endsWith('/integrations/tasks/status')) return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
+        if (path.endsWith('/messages/1/tasks')) return Response.json({ state: 'disabled', complete: false, tasks: [] });
+        return Response.json(exploreResponse({ rows: [{ ...entry(1), conversation_id: 7, anchor_message_id: 1 }, entry(2)], total_count: 2 }));
       });
       render(AppShell, { client: createAPIClient(fetchFn), state });
       const grid = await screen.findByRole('grid', { name: 'Messages results' });
@@ -2824,10 +2828,18 @@ describe('AppShell', () => {
         },
         isOpen: () => screen.queryByRole('dialog', { name: 'Save view' }) !== null
       }
-    ])('closes $layer first and leaves the reading pane for the next Escape', async ({ open, isOpen }) => {
+    ])('closes $layer first and leaves the reading pane for the next Escape', async ({ layer, open, isOpen }) => {
       const state = await openReadingPane();
       await open();
       expect(isOpen()).toBe(true);
+      if (layer === 'Filter') {
+        await fireEvent.click(await screen.findByRole('button', { name: 'More actions for message 1' }));
+        await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+        const taskDialog = await screen.findByRole('dialog', { name: 'Add to task' });
+        await fireEvent.keyDown(taskDialog, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add to task' })).toBeNull());
+        expect(isOpen()).toBe(true);
+      }
 
       await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
 

@@ -168,6 +168,13 @@ type ChangedMessageLister interface {
 // the route through the adapter in cmd/msgvault/cmd/changes_api_e2e_test.go.
 var _ ChangedMessageLister = (*store.Store)(nil)
 
+// ArchiveIdentityStore supplies the checked identity pair used by task links.
+type ArchiveIdentityStore interface {
+	ArchiveIdentityContext(ctx context.Context) (uid, revision string, err error)
+}
+
+var _ ArchiveIdentityStore = (*store.Store)(nil)
+
 // ArchiveIdentifier is an optional extension of MessageStore for stores that
 // can report the durable identity of the archive behind them.
 //

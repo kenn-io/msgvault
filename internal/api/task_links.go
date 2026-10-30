@@ -255,21 +255,12 @@ func writeTaskLinkError(w http.ResponseWriter, err error) {
 	}
 }
 
-type archiveUIDReader interface {
-	ArchiveUIDContext(ctx context.Context) (string, error)
-	ArchiveRevisionContext(ctx context.Context) (string, error)
-}
-
 func (s *Server) resolveTaskMessageIdentity(ctx context.Context, message *APIMessage) (tasklinks.MessageIdentity, error) {
-	archive, ok := s.store.(archiveUIDReader)
+	archive, ok := s.store.(ArchiveIdentityStore)
 	if !ok {
 		return tasklinks.MessageIdentity{}, errors.New("archive identity unavailable")
 	}
-	uid, err := archive.ArchiveUIDContext(ctx)
-	if err != nil {
-		return tasklinks.MessageIdentity{}, err
-	}
-	revision, err := archive.ArchiveRevisionContext(ctx)
+	uid, revision, err := archive.ArchiveIdentityContext(ctx)
 	if err != nil {
 		return tasklinks.MessageIdentity{}, err
 	}
@@ -295,5 +286,3 @@ func (s *Server) resolveTaskMessageIdentity(ctx context.Context, message *APIMes
 		Subject: message.Subject, From: message.From, SentAt: message.SentAt, SourceType: sourceType,
 		SourceIdentifier: identifier, SourceMessageID: message.SourceMessageID}, nil
 }
-
-var _ archiveUIDReader = (*store.Store)(nil)

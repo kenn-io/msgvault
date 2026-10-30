@@ -222,6 +222,13 @@ test("production imports expose archived actions, duration evidence, and exact c
     .click();
   await expect(reader).toHaveCount(0);
 
+  await page.goto(`${daemon.origin}/messages/${daemon.meetings.circleback.message_id}`);
+  const standaloneEvidence = page.getByRole('link', { name: 'Circleback provider half hour', exact: true });
+  await expect(standaloneEvidence).toHaveAttribute('href', `/messages/${daemon.meetings.circleback.message_id}`);
+  await standaloneEvidence.click();
+  await expect(page).toHaveURL(new RegExp(`/messages/${daemon.meetings.circleback.message_id}$`));
+  await expect(page.getByRole('article', { name: `Message ${daemon.meetings.circleback.message_id}`, exact: true })).toBeVisible();
+
   const deleted = await daemon.post("meetings/metrics", {
     scope: { deletion: "deleted" },
   });

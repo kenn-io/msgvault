@@ -87,13 +87,13 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 		assertions.Equal("task-wiring-email", identity.SourceMessageID)
 	}
 	assertions.Equal("Follow up", ops.created.Title)
-	t.Run("cancelled revision", func(t *testing.T) {
+	t.Run("cancelled identity", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		srv := api.NewServerWithOptions(api.ServerOptions{
-			Config: &config.Config{}, Store: &cancelAfterArchiveUIDAdapter{storeAPIAdapter: &storeAPIAdapter{store: f.Store}, cancel: cancel},
+			Config: &config.Config{}, Store: &cancelArchiveIdentityAdapter{storeAPIAdapter: &storeAPIAdapter{store: f.Store}, cancel: cancel},
 			Logger: slog.New(slog.DiscardHandler), TaskLinkOperations: ops,
 		})
 		request := httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)
@@ -104,16 +104,15 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 	})
 }
 
-type cancelAfterArchiveUIDAdapter struct {
+type cancelArchiveIdentityAdapter struct {
 	*storeAPIAdapter
 
 	cancel context.CancelFunc
 }
 
-func (a *cancelAfterArchiveUIDAdapter) ArchiveUIDContext(ctx context.Context) (string, error) {
-	uid, err := a.storeAPIAdapter.ArchiveUIDContext(ctx)
+func (a *cancelArchiveIdentityAdapter) ArchiveIdentityContext(ctx context.Context) (string, string, error) {
 	a.cancel()
-	return uid, err
+	return a.storeAPIAdapter.ArchiveIdentityContext(ctx)
 }
 
 func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {

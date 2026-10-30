@@ -1,22 +1,11 @@
 <script lang="ts">
-  import { appShortcuts, Button, escapeCloses, Modal } from '@kenn-io/kit-ui';
+  import { claimDialogEscape } from './dialog-escape';
+  import { Button, Modal } from '@kenn-io/kit-ui';
   import { onMount, type Snippet } from 'svelte';
 
   const id = $props.id();
   const scope = `shell-dialog:${id}`;
-  onMount(() => {
-    const popScope = appShortcuts.pushScope(scope);
-    const close = escapeCloses(() => onclose());
-    const handleEscape = (event: KeyboardEvent): void => {
-      if (appShortcuts.activeScope() !== scope) return;
-      // kit-ui-check-ignore: observes Kit popup roles; renders no popup markup.
-      if (document.querySelector('[role="listbox"], [role="menu"], [role="dialog"]:not([aria-modal="true"])')) return;
-      close(event);
-    };
-    // Claim Escape before the shell and an underlying reader's window listeners.
-    document.addEventListener('keydown', handleEscape);
-    return () => { document.removeEventListener('keydown', handleEscape); popScope(); };
-  });
+  onMount(() => claimDialogEscape(scope, () => onclose()));
 
   interface Props {
     title: string;
