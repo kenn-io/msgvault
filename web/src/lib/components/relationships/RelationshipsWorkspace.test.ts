@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
-import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { RelationshipsController } from '../../relationships/controller.svelte';
@@ -9,6 +9,8 @@ import { computeHubLayout } from './RelationshipsWorkspace.svelte';
 import RelationshipsWorkspace from './RelationshipsWorkspace.svelte';
 
 const when = '2026-07-19T10:00:00Z';
+
+beforeEach(() => window.history.replaceState(null, '', '/'));
 
 function person(id: number, label: string) {
   return {
