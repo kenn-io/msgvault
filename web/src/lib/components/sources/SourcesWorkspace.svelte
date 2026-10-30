@@ -295,7 +295,7 @@
       ? value.message
       : fallback;
   }
-  function refresh(): void {
+  export function refresh(): void {
     stopPolling(false);
     lockHoldPolls = 0;
     lockStatusStale = false;
