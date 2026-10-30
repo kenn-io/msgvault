@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sourceFailure, sourceRunState, sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from './labels';
+import { sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -33,6 +33,8 @@ describe('source labels', () => {
     expect(sourceRunState({ active_sync: null, latest_sync: null, scheduler_queued: true })).toBe('queued');
     expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled'), scheduler_queued: true })).toBe('queued');
     expect(sourceRunState({ active_sync: null, latest_sync: run('failed'), scheduler_queued: true })).toBe('failed');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('completed'), scheduler_queued: true })).toBe('queued');
+    expect(sourceRunState({ active_sync: null, latest_sync: run('completed', 2), scheduler_queued: true })).toBe('partial');
     expect(sourceRunState({ active_sync: null, latest_sync: run('cancelled') })).toBe('cancelled');
     expect(sourceRunState({ active_sync: null, latest_sync: run('completed', 2) })).toBe('partial');
     expect(sourceRunState({ active_sync: null, latest_sync: run('paused') })).toBe('paused');
@@ -40,11 +42,9 @@ describe('source labels', () => {
     expect(sourceRunState({ active_sync: null, latest_sync: run('completed') })).toBe('succeeded');
     expect(sourceRunState({ active_sync: null, latest_sync: run('failed') })).toBe('failed');
     expect(sourceRunState({ active_sync: null, latest_sync: null })).toBeUndefined();
-    expect(syncStatusChip({ active_sync: null, latest_sync: run('failed'), scheduler_queued: false }).tone).toBe('danger');
-    expect(syncStatusChip({ active_sync: null, latest_sync: run('completed'), scheduler_queued: false }).tone).toBe('success');
   });
 });
 
 it('prefers the run error over the scheduler error', () => {
-  expect(sourceFailure({ latest_sync: { ...run('paused'), error_message: 'Rate limit reached' }, identifier: 'archive@example.com', source_type: 'omi', scheduler_last_error: 'Scheduler stopped' })).toEqual({ reason: 'Rate limit reached' });
+  expect(sourceFailure({ latest_sync: { ...run('paused'), error_message: 'Rate limit reached' }, scheduler_last_error: 'Scheduler stopped' })).toBe('Rate limit reached');
 });

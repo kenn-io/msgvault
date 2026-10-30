@@ -107,12 +107,22 @@ it('keeps the selected batch when another account lookup finishes late', async (
   expect(screen.getByText('Batch B review')).toBeDefined();
 });
 
-it.each(['completed', 'failed'])('opens %s batch details without offering cancellation', async status => {
-  render(DeletionsWorkspace, { controller: new DeletionsController(api([batch('terminal', status, 2)], [], {
-    terminal: detail('terminal', status, { description: 'Old newsletter cleanup', ...(status === 'failed' ? { execution: { failed_ids: ['message-a', 'message-b'], succeeded: 0, failed: 2 } } : {}) })
-  })) });
+it.each(['completed', 'failed', 'recovers'])('opens %s batch details without offering cancellation', async status => {
+  const terminalStatus = status === 'recovers' ? 'completed' : status;
+  let available = status !== 'recovers';
+  const current = detail('terminal', terminalStatus, { description: 'Old newsletter cleanup', ...(status === 'failed' ? { execution: { failed_ids: ['message-a', 'message-b'], succeeded: 0, failed: 2 } } : {}) });
+  const client = createAPIClient(async input => (input as Request).url.endsWith('/deletions')
+    ? Response.json({ manifests: [batch('terminal', terminalStatus, 2)] })
+    : available ? Response.json(current) : Response.json({}, { status: 503 }));
+  render(DeletionsWorkspace, { controller: new DeletionsController(client) });
   await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
+  if (status === 'recovers') {
+    await screen.findByText("Can't open this batch.");
+    available = true;
+    await fireEvent.click(screen.getByRole('button', { name: /^Open batch from/ }));
+  }
   await screen.findByText('Old newsletter cleanup');
+  await waitFor(() => expect(screen.queryByText("Can't open this batch.")).toBeNull());
   expect(screen.queryByRole('button', { name: 'Cancel batch' })).toBeNull();
   if (status === 'failed') {
     expect(screen.getByText('message-a')).toBeDefined();
