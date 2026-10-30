@@ -631,11 +631,14 @@ export class ExploreState {
   current = $state<ExploreURLState>(freshDefaults());
   restorationEpoch = $state(1);
   holdLeave?: (leave: () => void, stay?: () => void) => boolean;
+  // Drops a held leave once another history navigation commits first.
+  cancelHeldLeave?: () => void;
   private readonly browser: ExploreWindow;
   private readonly preferenceStorage: SearchModeStorage | null;
   private configuredDefaultSearchMode: ExploreSearchMode | undefined;
   private committed: ExploreURLState;
   private historyIndex: number;
+  private poppedCommits = 0;
   private restoringHeldLeave = false;
   private pendingHeldLeaveRestore?: () => void;
   private pendingRestorationEpoch = $state<number | undefined>(1);
@@ -647,7 +650,8 @@ export class ExploreState {
     }
     const next = this.readURLState();
     const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
-    const commit = () => this.commitPopped(next, nextIndex);
+    const seen = this.poppedCommits;
+    const commit = () => { if (this.poppedCommits === seen) this.commitPopped(next, nextIndex); };
     if (this.current.workspace === 'settings' && next.workspace !== 'settings' && this.holdPop(nextIndex - this.historyIndex, commit)) return;
     commit();
   };
@@ -666,6 +670,8 @@ export class ExploreState {
   }
 
   private commitPopped(next: ExploreURLState, index: number): void {
+    this.poppedCommits += 1;
+    this.cancelHeldLeave?.();
     this.pendingHeldLeaveRestore = undefined;
     this.historyIndex = index;
     this.current = next;
