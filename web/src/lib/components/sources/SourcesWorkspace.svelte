@@ -43,7 +43,7 @@
     maxAwaitingPolls?: number;
     maxLockHoldPolls?: number;
     /** Opens a Settings category, such as `carddav` for the contacts account. */
-    onOpenSettings?: (categoryID: string) => void;
+    onOpenSettings?: (categoryID: string, connection?: string) => void;
   } = $props();
 
   let sources = $state<Source[]>([]);
@@ -527,7 +527,7 @@
     controller={contactControllers.get(selectedContact.connection)!}
     onSync={() => void syncContacts(selectedContact)}
     onclose={() => (selected = undefined)}
-    onOpenSettings={() => onOpenSettings('carddav')}
+    onOpenSettings={() => onOpenSettings('carddav', selectedContact.connection)}
   />
 {/if}
 

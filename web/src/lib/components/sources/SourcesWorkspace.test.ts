@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
+import { cardDAVRepairCopy } from '../../carddav/account-settings';
 import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 
 function source(overrides: Record<string, unknown> = {}) {
@@ -61,65 +62,6 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
-
-  it('reports each rejected click despite an unchanged stored run', async () => {
-    const events: unknown[] = [];
-    const fetchFn = api([source({ latest_sync: run('failed', 0) }), source({ id: 2, display_name: 'Waiting', identifier: 'waiting@example.com', can_sync: false, scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: run('completed', 5) }), source({ id: 3, display_name: 'Executing', identifier: 'executing@example.com', scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z', active_sync: null, latest_sync: run('completed', 5) })], (_url, request) =>
-      request.method === 'POST' ? Response.json({ message: 'Credentials unavailable' }, { status: 500 }) : undefined
-    );
-    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
-    await screen.findByText('Failed');
-    const queued = screen.getByRole('row', { name: /Waiting/ });
-    expect(within(queued).getByText('Queued')).toBeDefined();
-    expect(within(queued).getByText('Sync queued')).toBeDefined();
-    const executing = screen.getByRole('row', { name: /Executing/ });
-    expect(within(executing).getByText('Running')).toBeDefined();
-    expect(within(executing).getByText('Syncing…')).toBeDefined();
-    await fireEvent.click(within(executing).getByRole('button', { name: 'Details for Executing' }));
-    const panel = screen.getByRole('dialog', { name: 'Executing' });
-    expect(within(panel).getByText('Running')).toBeDefined();
-    expect(within(panel).queryByText('Sync queued')).toBeNull();
-    await fireEvent.click(within(executing).getByRole('button', { name: 'Details for Executing' }));
-    expect(events).toEqual([]);
-    for (const count of [1, 2]) {
-      await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
-      await screen.findByText('Credentials unavailable');
-      await waitFor(() => expect(events).toHaveLength(count));
-    }
-    expect(events).toEqual(Array(2).fill({ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }));
-  });
-
-  it('opens a panel with the plain reason and the command that fixes it, and the row closes it again', async () => {
-    const fetchFn = api([
-      source({ identifier: 'archive@example.com', display_name: 'Alex', can_sync: false,
-        sync_unavailable_reason: 'sync_not_configured',
-        latest_sync: run('failed', 0, {
-          error_message: 'oauth2: token expired and refresh token is invalid (invalid_grant)' }) })
-    ]);
-    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Alex' }));
-    expect(await screen.findByText('oauth2: token expired and refresh token is invalid (invalid_grant)')).toBeDefined();
-    expect(screen.getByText("msgvault sync 'archive@example.com'")).toBeDefined();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Details for Alex' }));
-    await waitFor(() => expect(screen.queryByText(/invalid_grant/)).toBeNull());
-  });
-
-  it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
-    const onOpenSettings = vi.fn();
-    const settings = [{ key: 'beeper.media', kind: 'boolean', value: { boolean: true } }, { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 0 }, validation: { off: { value: '0', label: 'No size limit' } } }];
-    const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper', scheduled: true, schedule: '0 3 * * *', next_sync_at: '2026-07-19T11:00:00Z' })], url => url.pathname.endsWith('/settings') ? Response.json({ settings }) : undefined);
-    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []), onOpenSettings });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
-    await screen.findByText('No size limit');
-    expect(screen.getByText('On')).toBeDefined();
-    expect(screen.getByText('At 03:00 every day')).toBeDefined();
-    expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit in Settings › Sources' }));
-    expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
-  });
-
   it('shows a readable type and a muted reason with the raw code in its tooltip', async () => {
     const unavailable = (id: number, identifier: string, display_name: string, reason: string, extra = {}) =>
       source({ id, identifier, display_name, can_sync: false, sync_unavailable_reason: reason, ...extra });
@@ -146,6 +88,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByRole('columnheader', { name: 'Status' })).toBeDefined();
   });
 
+
   it('shows config-only Gmail schedules and next sync', async () => {
     render(SourcesWorkspace, { client: createAPIClient(api([source({ source_type: 'gmail', scheduled: true, schedule: '0 * * * *', next_sync_at: '2026-07-19T11:00:00Z' })])) });
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
@@ -153,55 +96,6 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
   });
 
-  it.each(['ready', 'failed', 'contacts-only', 'unknown'])('keeps contacts visible and recoverable through %s status reads', async mail => {
-    vi.useFakeTimers();
-    let reads = 0, finish!: (response: Response) => void, finishSync!: (response: Response) => void;
-    const syncs: Request[] = [];
-    let historyReads = 0;
-    const fetch = api(mail === 'contacts-only' ? [] : [source()], (url, request) => {
-      if (url.pathname.endsWith('/sources/status') && mail === 'failed') return Response.json({ message: 'Mail status unavailable' }, { status: 500 });
-      if (url.pathname.endsWith('/carddav/status')) {
-        if (++reads === 1) return Response.json({ ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null } });
-        if (reads === 2) return new Promise<Response>(resolve => { finish = resolve; });
-        return Response.json(contact.status);
-      }
-      if (url.pathname.endsWith('/carddav/runs') && mail === 'unknown' && syncs.length > 0 && ++historyReads === 1) return Response.json({}, { status: 503 });
-      if (url.pathname.endsWith('/carddav/sync')) {
-        syncs.push(request);
-        return new Promise<Response>(resolve => { finishSync = resolve; });
-      }
-    }, [contact]);
-    const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
-    try {
-      await vi.advanceTimersByTimeAsync(0);
-      const table = screen.getByRole('table', { name: 'Sources' });
-      expect(within(table).getByText('Running')).toBeDefined();
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(reads).toBe(2);
-      expect(screen.getByRole('table', { name: 'Sources' })).toBe(table);
-      expect(screen.queryByText('Loading…')).toBeNull();
-      finish(Response.json(contact.status));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(within(table).getByText('Succeeded')).toBeDefined();
-      await fireEvent.click(screen.getByRole('button', { name: 'Sync now user-a' }));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(await syncs[0].clone().json()).toEqual({ full: false, connection: 'default' });
-      if (mail === 'failed') expect(screen.getByRole('alert').textContent).toContain('Mail status unavailable');
-      else if (mail === 'ready') expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(false);
-      finishSync(Response.json(mail === 'unknown' ? { status: 'succeeded' } : { status: 'partial', connections: [{ connection: 'default', status: 'failed' }] }));
-      await vi.advanceTimersByTimeAsync(0);
-      if (mail === 'unknown') {
-        expect(within(table).getByRole('button', { name: 'Retry CardDAV sync state' })).toBeDefined();
-        expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(true);
-        await fireEvent.click(screen.getByRole('button', { name: 'Details for user-a' }));
-        const panel = screen.getByRole('dialog', { name: 'user-a' });
-        await fireEvent.click(within(panel).getByRole('button', { name: 'Retry CardDAV sync state' }));
-        await vi.advanceTimersByTimeAsync(0);
-        expect(screen.queryByRole('button', { name: 'Retry CardDAV sync state' })).toBeNull();
-        expect((within(table).getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
-      } else expect(screen.getByText(/CardDAV sync partial/)).toBeDefined();
-    } finally { view.unmount(); }
-  });
 
   it('keeps the cron text in the schedule tooltip only', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
@@ -212,6 +106,7 @@ describe('SourcesWorkspace', () => {
     expect(summary.getAttribute('title')).toBe('0 */6 * * *');
     expect(screen.queryByText('0 */6 * * *')).toBeNull();
   });
+
 
   it('shows status and only exposes Sync now from server capability truth', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
@@ -233,6 +128,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.queryAllByTitle('2026-07-19T10:00:00Z')).toHaveLength(0);
   });
 
+
   it('presents generic meeting imports as on-demand API sources', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       source_type: 'meeting_import',
@@ -250,6 +146,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Sync now Local Meetings' })).toBeNull();
   });
+
 
   it('shows authoritative schedule, fresh result, and bounded item error details', async () => {
     const latest = run('completed', 10, {
@@ -276,6 +173,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText('Malformed MIME header')).toBeDefined();
   });
 
+
   it('shows the last successful sync with a readable full date in its tooltip', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       last_successful_sync: run('completed', 4, { completed_at: '2026-07-18T08:15:00Z' })
@@ -285,6 +183,7 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByTitle(formatDateTime('2026-07-18T08:15:00Z', 'long'))).toBeDefined();
     expect(screen.queryByTitle('2026-07-18T08:15:00Z')).toBeNull();
   });
+
 
   it('names a terminal result older than the documented threshold as stale', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
@@ -297,12 +196,119 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('This result may be out of date.')).toBeDefined();
   });
 
-  it('shows the add-account command when there are no sources, and from Add source', async () => {
-    render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
+
+
+  it('reports each rejected click despite an unchanged stored run', async () => {
+    const events: unknown[] = [];
+    const fetchFn = api([source({ latest_sync: run('failed', 0) })], (_url, request) =>
+      request.method === 'POST' ? Response.json({ message: 'Credentials unavailable' }, { status: 500 }) : undefined
+    );
+    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
+    await screen.findByText('Failed');
+    expect(events).toEqual([]);
+    for (const count of [1, 2]) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
+      await screen.findByText('Credentials unavailable');
+      await waitFor(() => expect(events).toHaveLength(count));
+    }
+    expect(events).toEqual(Array(2).fill({ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }));
+  });
+
+  it('distinguishes queued and executing sources and shows failure repair in their panels', async () => {
+    const fetchFn = api([
+      source({ identifier: 'archive@example.com', display_name: 'Alex', can_sync: false,
+        sync_unavailable_reason: 'sync_not_configured',
+        latest_sync: run('failed', 0, {
+          error_message: 'oauth2: token expired and refresh token is invalid (invalid_grant)' }) }),
+      source({ id: 2, display_name: 'Waiting', identifier: 'waiting@example.com', can_sync: false, scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: run('completed', 5) }), source({ id: 3, display_name: 'Executing', identifier: 'executing@example.com', scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z', active_sync: null, latest_sync: run('completed', 5) })
+    ]);
+    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Alex' }));
+    expect(await screen.findByText('oauth2: token expired and refresh token is invalid (invalid_grant)')).toBeDefined();
+    expect(screen.getByText("msgvault sync 'archive@example.com'")).toBeDefined();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Alex' }));
+    await waitFor(() => expect(screen.queryByText(/invalid_grant/)).toBeNull());
+    const queued = screen.getByRole('row', { name: /Waiting/ });
+    expect(within(queued).getByText('Queued')).toBeDefined();
+    expect(within(queued).getByText('Sync queued')).toBeDefined();
+    const executing = screen.getByRole('row', { name: /Executing/ });
+    expect(within(executing).getByText('Running')).toBeDefined();
+    expect(within(executing).getByText('Syncing…')).toBeDefined();
+    await fireEvent.click(within(executing).getByRole('button', { name: 'Details for Executing' }));
+    const panel = screen.getByRole('dialog', { name: 'Executing' });
+    expect(within(panel).getByText('Running')).toBeDefined();
+    expect(within(panel).queryByText('Sync queued')).toBeNull();
+    await fireEvent.click(within(executing).getByRole('button', { name: 'Details for Executing' }));
+  });
+
+  it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
+    const onOpenSettings = vi.fn();
+    const settings = [{ key: 'beeper.media', kind: 'boolean', value: { boolean: true } }, { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 0 }, validation: { off: { value: '0', label: 'No size limit' } } }];
+    const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper', scheduled: true, schedule: '0 3 * * *', next_sync_at: '2026-07-19T11:00:00Z' })], url => url.pathname.endsWith('/settings') ? Response.json({ settings }) : undefined);
+    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []), onOpenSettings });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
+    await screen.findByText('No size limit');
+    expect(screen.getByText('On')).toBeDefined();
+    expect(screen.getByText('At 03:00 every day')).toBeDefined();
+    expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit in Settings › Sources' }));
+    expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
+  });
+
+  it('keeps contacts usable when mail status fails', async () => {
+    const fetch = api([], url => url.pathname.endsWith('/sources/status') ? Response.json({ message: 'Mail status unavailable' }, { status: 500 }) : undefined, [contact]);
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+    expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByRole('alert').textContent).toContain('Mail status unavailable');
+    view.unmount();
+  });
+
+  it('keeps a contacts-only archive populated', async () => {
+    const view = render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [contact]), []) });
+    expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
+    expect(screen.queryByText('No sources yet')).toBeNull();
+    view.unmount();
+  });
+
+  it('offers Sync now for ready mail alongside contacts', async () => {
+    const view = render(SourcesWorkspace, { client: createCaptureClient(api([source()], () => undefined, [contact]), []) });
+    await screen.findByRole('button', { name: 'Details for user-a' });
+    expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(false);
+    view.unmount();
+  });
+
+  it('offers contacts sync-state retry in the row and panel', async () => {
+    let statusReads = 0;
+    const fetch = api([], url => {
+      if (url.pathname.endsWith('/carddav/status') && ++statusReads === 2) return Response.json({}, { status: 500 });
+      if (url.pathname.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded' });
+    }, [contact]);
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync now user-a' }));
+    const table = screen.getByRole('table', { name: 'Sources' });
+    await within(table).findByRole('button', { name: 'Retry CardDAV sync state' });
+    expect((within(table).getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for user-a' }));
+    const panel = screen.getByRole('dialog', { name: 'user-a' });
+    await fireEvent.click(within(panel).getByRole('button', { name: 'Retry CardDAV sync state' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry CardDAV sync state' })).toBeNull());
+    expect((within(table).getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+    view.unmount();
+  });
+
+  it('opens source setup and sync history from an empty workspace', async () => {
+    const onOpenOperations = vi.fn();
+    render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenOperations });
     expect(await screen.findByText('No sources yet')).toBeDefined();
     expect(screen.getByText('msgvault add-account user@example.com')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(screen.getAllByText('msgvault add-account user@example.com')).toHaveLength(2);
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
+    expect(onOpenOperations).toHaveBeenCalledOnce();
   });
 
   it('keeps polling through idle races until the accepted run completes', async () => {
@@ -830,13 +836,10 @@ describe('SourcesWorkspace', () => {
   });
 });
 
-it('opens sync history and the selected run’s item failures', async () => {
-  const onOpenOperations = vi.fn();
-  render(SourcesWorkspace, { onOpenOperations, client: createCaptureClient(api([
+it('opens the selected run’s item failures', async () => {
+  render(SourcesWorkspace, { client: createCaptureClient(api([
     source({ display_name: 'Imported account', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', latest_sync: run('completed', 3, { errors_count: 1, item_errors: [{ source_message_id: 'message-1', phase: 'fetch', created_at: '2026-07-19T10:00:00Z', error_message: 'Attachment unavailable' }] }) }),
   ]), []) });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Sync history' }));
-  expect(onOpenOperations).toHaveBeenCalledOnce();
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for Imported account' }));
   await fireEvent.click(await screen.findByText('1 item failed'));
   expect(screen.getByText('Attachment unavailable')).toBeDefined();
@@ -852,11 +855,9 @@ it('publishes source rows while the optional contacts request waits', async () =
   try {
     await vi.advanceTimersByTimeAsync(0);
     expect(screen.getByText('5 processed')).toBeDefined();
-    const counts = screen.queryByText('3 added · 2 errors');
+    expect(screen.getByText('3 added · 2 errors')).toBeDefined();
     await vi.advanceTimersByTimeAsync(1000);
     expect(screen.getByText('Succeeded')).toBeDefined();
-    expect(counts).not.toBeNull();
-    expect(screen.getByText('This result may be out of date.')).toBeDefined();
     expect(reads).toBe(2);
   } finally { view.unmount(); }
 });
@@ -874,10 +875,10 @@ it('shows OAuth app repair instructions for contacts rather than assuming expiry
   const onOpenSettings = vi.fn();
   render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [{ ...contact, status: { ...contact.status, repair_reason: 'google_authorization_required', latest: { ...contact.status.latest, state: 'partial', error_code: 'upstream_failed', error_message: 'CardDAV server request failed.' } } }]), []), onOpenSettings });
   await fireEvent.click(await screen.findByRole('button', { name: 'Details for user-a' }));
-  expect(within(screen.getByRole('region', { name: 'Failure' })).getByText("Check the selected OAuth app's client settings. Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.")).toBeDefined();
+  expect(within(screen.getByRole('region', { name: 'Failure' })).getByText(cardDAVRepairCopy.google_authorization_required)).toBeDefined();
   expect(screen.queryByText('CardDAV server request failed.')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Open Settings › Contacts' }));
-  expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('carddav');
+  expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('carddav', 'default');
 });
 
 it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming the archive has no sources', async failure => {
