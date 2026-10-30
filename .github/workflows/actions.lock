@@ -27,7 +27,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'step-security/setup-bun@v2.1.3'
     '.github/workflows/sibling-pins.yml':
-        - 'kenn-io/actions@68ba2c6390aff0de4aced81a8c2af669514c7ac0'
+        - 'kenn-io/actions@main'
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
         - 'step-security/jactionlint@v2.2.0'
@@ -77,9 +77,9 @@ dependencies:
         commit: 'sha1-6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee'
         owner_id: 9919
         repo_id: 259445878
-    'kenn-io/actions@68ba2c6390aff0de4aced81a8c2af669514c7ac0':
+    'kenn-io/actions@main':
         ref: 'main'
-        commit: 'sha1-68ba2c6390aff0de4aced81a8c2af669514c7ac0'
+        commit: 'sha1-dd712a31dea1a9573a033bc09c42fa00903e8c17'
         owner_id: 259885253
         repo_id: 1427332808
         uses:
