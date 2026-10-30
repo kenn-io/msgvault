@@ -62,7 +62,7 @@
     selectedID = batch.id;
     const data = await controller.getDetail(batch.id, true);
     if (generation !== detailGeneration || controller.batches.find(current => current.id === batch.id)?.status !== batch.status) return;
-    if (!data) { error = "Can't open this batch."; selectedID = undefined; }
+    error = data ? '' : "Can't open this batch."; selectedID = data ? batch.id : undefined;
   }
   function close(): void { detailGeneration++; selectedID = undefined; }
 
