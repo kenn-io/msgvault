@@ -18,10 +18,12 @@
     client,
     filters,
     onChange,
+    onClear,
   }: {
     client: APIClient;
     filters: ExploreFilter[];
     onChange: (filters: ExploreFilter[]) => void;
+    onClear: () => void;
   } = $props();
 
   const api = createExploreAPI(untrack(() => client));
@@ -122,7 +124,7 @@
 
   function clear(): void {
     dateError = '';
-    onChange([]);
+    onClear();
   }
 </script>
 

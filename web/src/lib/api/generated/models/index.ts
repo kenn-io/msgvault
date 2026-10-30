@@ -178,7 +178,6 @@ export * from "./contactObservationPage";
 export * from "./contactPointPage";
 export * from "./contactState";
 export * from "./contextPassage";
-export * from "./conversationMessage";
 export * from "./conversationParticipant";
 export * from "./conversationResponse";
 export * from "./createAttributeDefinitionRequest";
