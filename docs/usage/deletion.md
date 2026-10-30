@@ -64,18 +64,13 @@ mail accounts are the ones added with `add-o365 --graph`. Creating a manifest ne
 
 ## Staging in the Web UI
 
-In Messages, select individual rows or all rows matching the current
-canonical filter, then press `d` or `D` to open the Deletions workspace. The UI
-runs a server-side preflight before it enables staging and requires a separate
-confirmation to create the manifest. The Deletions workspace also lists,
-inspects, and cancels staged manifests. It never executes remote deletion;
-that final step remains the explicit CLI command described below.
+In Messages, select individual rows or all rows matching the current filter, then choose **Review deletion…** or press `d` or `D`. A review dialog shows the server preflight counts, exclusions, and expiration. **Dry run** reports what would be staged. **Stage N messages** creates the batch and shows its ID and counts; **Done** returns to Messages. The Deletions workspace lists and inspects batches, including their descriptions and failed message IDs. **Cancel batch** asks for confirmation and then cancels the batch immediately. Remote deletion remains the explicit CLI command described below.
 
 Preflight validates the selection itself (that it still matches, that the
 cache/search revision hasn't moved) but does not check which accounts the
 matched messages belong to. Each deletion manifest executes against exactly
 one mailbox, so if you stage "all matching" across an unfiltered or
-multi-account view, confirming the stage fails with a `multi_account_selection`
+multi-account view, staging fails with a `multi_account_selection`
 error even though preflight succeeded. Filter to one source/account
 (the `A` key in the TUI, or the equivalent source filter in the Web UI) before
 staging an all-matching selection that could span more than one account.

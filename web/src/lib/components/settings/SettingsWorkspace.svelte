@@ -2,9 +2,7 @@
   import {
     getEmbeddingStatus as generatedGetEmbeddingStatus,
     getOperationStatus as generatedGetOperationStatus,
-    getSettings as generatedGetSettings,
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
-    patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
   import { Notice, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
@@ -13,7 +11,6 @@
     EmbeddingStatus,
     PersonEnrichmentProviderSetting as GeneratedPersonEnrichmentProviderSetting,
     ProviderCredentialResponse as GeneratedProviderCredentialResponse,
-    SettingUpdate as GeneratedSettingUpdate,
     SettingsResponse as GeneratedSettingsResponse,
     OperationLaneStatus,
     Status as VisualStatus,
@@ -23,14 +20,12 @@
   import type { SavedAppearance } from '../../theme/preferences.svelte';
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import { runOperationAction } from '../../operations/actions';
-  import { draftValue, editDraft, scalarUpdates } from '../../settings/draft.svelte';
+  import { SettingsDraft } from '../../settings/draft.svelte';
   import { pendingSecret } from '../../settings/secrets';
   import type { SearchCoverageValue } from '../../search/modes';
   import {
-    isChange,
     isIncompleteNumber,
     persistedValue,
-    typedValue,
     valueText,
     type SettingState,
     type SettingGroupState,
@@ -57,7 +52,6 @@
   import SettingsOverview from './SettingsOverview.svelte';
 
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
-  type SettingUpdate = GeneratedSettingUpdate;
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
   type CredentialResponse = GeneratedProviderCredentialResponse;
   type SettingsDocument = GeneratedSettingsResponse;
@@ -88,20 +82,22 @@
     onStatusChange?: () => void;
   } = $props();
 
-  let settings = $state<SettingState[]>([]);
+  const draft = new SettingsDraft(untrack(() => client));
+  onDestroy(() => draft.destroy());
+  const settings = $derived(draft.settings);
   let groups = $state<SettingGroupState[]>([]);
   let providers = $state<ProviderSetting[]>([]);
-  let etag = $state('');
+  const etag = $derived(draft.etag);
   let credentialETag = $state('');
-  let drafts = $state<Record<string, unknown>>({});
+  const drafts = $derived(draft.drafts);
   let secretUpdates = $state<Record<string, SecretUpdate>>({});
   const inference = new PeopleInferenceController(untrack(() => client), () => loadSettings(true));
   onDestroy(() => inference.destroy());
-  let pendingRestart = $state(false);
-  let loading = $state(true);
+  const pendingRestart = $derived(draft.pendingRestart);
+  const loading = $derived(draft.loading);
   let loaded = $state(false);
-  let saving = $state(false);
-  let error = $state('');
+  const saving = $derived(draft.saving);
+  const error = $derived(draft.error);
   let buildError = $state('');
   let activeCategory = $state(untrack(() => category));
   let root = $state<HTMLElement>();
@@ -120,12 +116,12 @@
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
   const draftNeedsRestart = $derived(settings.some(setting => setting.restart_required && isDirty(setting.key)));
   let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
-  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => void) | undefined>('msgvault:hold-settings-leave');
-  registerLeave?.(
+  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => (() => void)) | undefined>('msgvault:hold-settings-leave');
+  const unregisterLeave = registerLeave?.(
     (leave, stay) => dirtyCount > 0 && !saving && (pendingLeave = { leave, stay }, true),
     () => { pendingLeave = undefined; }
   );
-  onDestroy(() => registerLeave?.(undefined));
+  onDestroy(() => unregisterLeave?.());
   function focusStay(node: HTMLElement) {
     node.querySelector('button')?.focus();
   }
@@ -254,42 +250,34 @@
     }
   });
 
+  function syncDocument(): void {
+    const document = draft.document;
+    if (!document) return;
+    loaded = true;
+    groups = document.groups;
+    providers = document.person_enrichment_providers ?? providers;
+    inference.updateConfigRevision(etag);
+    credentialETag = draft.credentialETag;
+  }
   async function loadSettings(retainDrafts: boolean) {
-    if (!retainDrafts) loading = true;
-    try {
-      const { data: document, error: responseError, response } = await generatedGetSettings(client);
-      if (!document) throw new Error(apiErrorMessage(responseError, "Can't load settings."));
-      loaded = true;
-      settings = document.settings;
-      groups = document.groups;
-      providers = document.person_enrichment_providers ?? [];
-      pendingRestart = document.pending_restart;
-      etag = response.headers.get('ETag') ?? '';
-      inference.updateConfigRevision(etag);
-      credentialETag = response.headers.get('Credential-ETag') ?? document.credential_etag ?? '';
-      if (retainDrafts) pruneSettledDrafts();
-      else discardChanges();
-      error = '';
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Can't load settings.";
-    } finally {
-      loading = false;
-    }
+    if (!await draft.load(retainDrafts)) return;
+    syncDocument();
+    if (retainDrafts) pruneSettledDrafts();
+    else secretUpdates = {};
   }
   function find(key: string): SettingState | undefined {
     return settings.find((candidate) => candidate.key === key);
   }
   function currentValue(setting: SettingState): unknown {
-    return draftValue(settings, drafts, setting.key);
+    return draft.value(setting.key);
   }
   function setDraft(key: string, value: unknown) {
-    drafts = editDraft(settings, drafts, key, value);
+    draft.set(key, value);
   }
   // After a reload that keeps local edits, drop the ones the daemon already
   // holds: a draft equal to the new persisted value, or a clear for a secret
   // that is no longer configured.
   function pruneSettledDrafts() {
-    drafts = Object.fromEntries(Object.entries(drafts).filter(([key, value]) => isChange(find(key), value)));
     secretUpdates = Object.fromEntries(Object.entries(secretUpdates).filter(([key, update]) => update.action === 'set' || find(key)?.secret?.configured));
   }
   function setSecret(setting: SettingState, value: string) {
@@ -304,7 +292,7 @@
     secretUpdates = next;
   }
   function discardChanges() {
-    drafts = {};
+    draft.discard();
     secretUpdates = {};
   }
   // The save bar takes the focused button with it, so focus moves to the
@@ -338,57 +326,25 @@
 
   async function saveSettings() {
     if (saving || inference.busy || dirtyCount === 0) return;
-    const updates: SettingUpdate[] = [
-      ...scalarUpdates(settings, drafts),
-      ...Object.entries(secretUpdates).map(([key, secret]) => ({ key, secret })),
-    ];
-    saving = true;
-    error = '';
-    try {
-      const {
-        data: result,
-        error: responseError,
-        response,
-      } = await generatedPatchSettings({ updates }, { ...client, headers: { 'If-Match': etag } });
-      if (response.status === 412) {
-        await loadSettings(true);
-        error = 'The settings changed on disk. The latest are loaded. Review your changes and save again.';
-        if (dirtyCount === 0) void focusCategoryHeading();
-        return;
-      }
-      if (!result) {
-        error = apiErrorMessage(responseError, "Can't save settings.");
-        return;
-      }
-      settings = result.settings;
-      providers = result.person_enrichment_providers ?? providers;
-      pendingRestart = result.pending_restart;
-      etag = response.headers.get('ETag') ?? etag;
-      inference.updateConfigRevision(etag);
-      credentialETag = response.headers.get('Credential-ETag') ?? result.credential_etag ?? credentialETag;
-      discardChanges();
+    const keys = new Set([...Object.keys(drafts), ...Object.keys(secretUpdates)]);
+    const saved = await draft.save(Object.entries(secretUpdates).map(([key, secret]) => ({ key, secret })));
+    if (saved || draft.conflicted) syncDocument();
+    if (saved) {
+      secretUpdates = {};
       void focusCategoryHeading();
-      const appearance = savedAppearance(result.settings, new Set(updates.map(({ key }) => key)));
+      const appearance = savedAppearance(settings, keys);
       if (appearance) onAppearanceSaved(appearance);
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Can't save settings.";
-    } finally {
-      statusRevision += 1;
-      saving = false;
-      onStatusChange();
+    } else if (draft.conflicted) {
+      pruneSettledDrafts();
+      if (dirtyCount === 0) void focusCategoryHeading();
     }
-  }
-  function apiErrorMessage(responseError: unknown, fallback: string): string {
-    if (typeof responseError === 'object' && responseError !== null && 'message' in responseError) {
-      const message = (responseError as { message?: unknown }).message;
-      if (typeof message === 'string' && message) return message;
-    }
-    return fallback;
+    statusRevision += 1;
+    onStatusChange();
   }
   function credentialSaved(response: CredentialResponse, nextETag: string) {
-    credentialETag = nextETag;
-    pendingRestart = pendingRestart || response.pending_restart;
-    settings = settings.map((setting) =>
+    draft.credentialETag = credentialETag = nextETag;
+    draft.pendingRestart = pendingRestart || response.pending_restart;
+    draft.settings = settings.map((setting) =>
       setting.credential_id === response.credential_id ? { ...setting, secret: response.state } : setting,
     );
     providers = providers.map((provider) =>
@@ -399,12 +355,13 @@
     return Object.hasOwn(drafts, `${credentialID}.endpoint`) ? 'Save endpoint settings first before changing this credential.' : '';
   }
   function providerSaved(document: SettingsDocument, nextETag: string) {
-    settings = document.settings;
+    draft.document = document;
+    draft.settings = document.settings;
     providers = document.person_enrichment_providers ?? providers;
-    pendingRestart = document.pending_restart;
-    etag = nextETag;
+    draft.pendingRestart = document.pending_restart;
+    draft.etag = nextETag;
     inference.updateConfigRevision(etag);
-    credentialETag = document.credential_etag || credentialETag;
+    draft.credentialETag = credentialETag = document.credential_etag || credentialETag;
   }
   function rowLabel(setting: SettingState): string {
     if (Object.hasOwn(LABELS, setting.key)) return LABELS[setting.key]!;

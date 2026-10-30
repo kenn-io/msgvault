@@ -3075,3 +3075,36 @@ it('reloads a failed source job when Sources is already open', async () => {
     rendered.unmount(); state.destroy();
   }
 });
+
+it('guards the replacement source panel after discarding another source draft', async () => {
+  window.history.replaceState(null, '', '/?workspace=sources');
+  const state = new ExploreState(window);
+  const client = createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [
+      sourceStatus({ id: 1, source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper' }),
+      sourceStatus({ id: 2, source_type: 'slack', identifier: 'slack', display_name: 'Slack' }),
+    ] });
+    if (path.endsWith('/settings')) return Response.json({ groups: [], pending_restart: false, settings: ['beeper', 'slack'].flatMap(kind => [
+      { key: `${kind}.enabled`, kind: 'boolean', value: { boolean: false }, group: 'sources' },
+      { key: `${kind}.schedule`, kind: 'string', value: { string: '' }, group: 'sources', validation: { format: 'cron' } },
+    ]) });
+    return Response.json({});
+  });
+  const view = render(AppShell, { client, state });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
+  await chooseSelectOption(await screen.findByRole('combobox', { name: 'Presets: Off' }), 'Every hour');
+  await fireEvent.click(screen.getByRole('button', { name: 'Details for Slack' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }));
+  await chooseSelectOption(await screen.findByRole('combobox', { name: 'Presets: Off' }), 'Every hour');
+  await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+  await screen.findByRole('dialog', { name: 'Discard changes?' });
+  expect(state.current.workspace).toBe('sources');
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+  expect(screen.getByRole('combobox', { name: 'Presets: Every hour' })).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }));
+  await waitFor(() => expect(state.current.workspace).toBe('files'));
+  view.unmount();
+  state.destroy();
+});

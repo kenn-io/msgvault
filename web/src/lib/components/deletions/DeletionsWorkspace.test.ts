@@ -70,6 +70,9 @@ describe('DeletionsWorkspace', () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cancel deletion batch?' })).toBeNull());
     expect(screen.queryByRole('button', { name: /^Open batch from/ })).toBeNull();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
+    await screen.findByRole('button', { name: /^Open batch from/ });
+    expect(seen.filter(entry => entry.method === 'GET' && entry.path === '/api/v1/deletions/b1')).toHaveLength(2);
   });
 
   it('holds four account reads, then loads later displayed accounts', async () => {
@@ -90,7 +93,9 @@ describe('DeletionsWorkspace', () => {
     await screen.findByText('batch-4@example.com');
     expect(ids).not.toContain('batch-5');
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
-    await waitFor(() => expect(ids).toHaveLength(9));
+    await waitFor(() => expect(ids).toEqual(['batch-0', 'batch-1', 'batch-2', 'batch-3', 'batch-4', 'batch-0', 'batch-5']));
+    pending.slice(5).forEach((resolve, i) => resolve(Response.json(detail(ids[i + 5], 'pending'))));
+    await screen.findAllByText('archive@example.com');
   });
 
   it('keeps the batch and confirmation after failed cancellation, then retries', async () => {
@@ -150,4 +155,15 @@ it('ignores a closed detail response after another batch opens', async () => {
   waiting[1](Response.json(detail('b', 'pending')));
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(screen.queryByText('stale@example.com')).toBeNull();
+});
+
+
+it('shows the review description and failed message IDs in batch details', async () => {
+  render(DeletionsWorkspace, { client: api([batch('failed', 'failed', 2)], [], {
+    failed: detail('failed', 'failed', { description: 'Old newsletter cleanup', execution: { failed_ids: ['message-a', 'message-b'], succeeded: 0, failed: 2 } })
+  }) });
+  await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
+  await screen.findByText('Old newsletter cleanup');
+  expect(screen.getByText('message-a')).toBeDefined();
+  expect(screen.getByText('message-b')).toBeDefined();
 });

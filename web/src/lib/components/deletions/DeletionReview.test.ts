@@ -114,3 +114,21 @@ it('ignores a staging response after the review closes', async () => {
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(onStaged).not.toHaveBeenCalled();
 });
+
+it('holds the review open through Escape while staging and handles the result once', async () => {
+  let finish!: (response: Response) => void;
+  const onclose = vi.fn(), onStaged = vi.fn();
+  const client = createAPIClient(async input => (input as Request).url.endsWith('/preflight')
+    ? Response.json(preflight())
+    : new Promise<Response>(resolve => { finish = resolve; }));
+  render(DeletionReview, { client, selection, onclose, onStaged });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
+  await waitFor(() => expect(finish).toBeTypeOf('function'));
+  await fireEvent.keyDown(document, { key: 'Escape' });
+  expect(onclose).not.toHaveBeenCalled();
+  finish(Response.json({ id: 'batch-pending', message_count: 2, dry_run: false }, { status: 201 }));
+  await screen.findByText('batch-pending');
+  expect(onStaged).toHaveBeenCalledExactlyOnceWith('batch-pending');
+  await fireEvent.keyDown(document, { key: 'Escape' });
+  expect(onclose).toHaveBeenCalledOnce();
+});

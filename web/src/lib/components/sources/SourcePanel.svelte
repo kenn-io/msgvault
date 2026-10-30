@@ -78,15 +78,15 @@
   onDestroy(() => draft.destroy());
 
   let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
-  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => void) | undefined>('msgvault:hold-settings-leave');
+  const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => (() => void)) | undefined>('msgvault:hold-settings-leave');
   function holdLeave(leave: () => void, stay: (() => void) | undefined = undefined): boolean {
     if (draft.saving) return true;
     if (!draft.dirty) return false;
     pendingLeave = { leave, stay };
     return true;
   }
-  registerLeave?.(holdLeave, () => pendingLeave = undefined);
-  onDestroy(() => registerLeave?.(undefined));
+  const unregisterLeave = registerLeave?.(holdLeave, () => pendingLeave = undefined);
+  onDestroy(() => unregisterLeave?.());
   function stay(): void {
     pendingLeave?.stay?.();
     pendingLeave = undefined;

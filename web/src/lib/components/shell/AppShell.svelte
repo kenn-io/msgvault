@@ -329,6 +329,11 @@
   setContext('msgvault:hold-settings-leave', (hold: ExploreState['holdLeave'], cancel: ExploreState['cancelHeldLeave']) => {
     exploreState.holdLeave = hold;
     exploreState.cancelHeldLeave = cancel;
+    return () => {
+      if (exploreState.holdLeave !== hold) return;
+      exploreState.holdLeave = undefined;
+      exploreState.cancelHeldLeave = undefined;
+    };
   });
   function consumeCardDAVSettingsRequest(key: number): void {
     if (cardDAVSettingsRequest?.key === key) cardDAVSettingsRequest = undefined;

@@ -109,7 +109,7 @@ describe('SourcesWorkspace', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Alex' }));
     expect(await screen.findByText('oauth2: token expired and refresh token is invalid (invalid_grant)')).toBeDefined();
-    expect(screen.getByText('msgvault sync archive@example.com')).toBeDefined();
+    expect(screen.getByText("msgvault sync 'archive@example.com'")).toBeDefined();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Alex' }));
     await waitFor(() => expect(screen.queryByText(/invalid_grant/)).toBeNull());
@@ -171,7 +171,7 @@ describe('SourcesWorkspace', () => {
     await screen.findByText('Offline');
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Save changes' }));
-    await screen.findByText('The configuration changed on disk. Review the latest values and save again.');
+    await screen.findByText('The settings changed on disk. The latest are loaded. Review your changes and save again.');
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await screen.findByText('Restart msgvault to apply these changes.');
     expect(patches).toEqual([
@@ -738,4 +738,18 @@ it('keeps queued, cancelled, partial, and unavailable source meanings', async ()
   await fireEvent.click(await screen.findByText('1 item failed'));
   expect(screen.getByText('Attachment unavailable')).toBeDefined();
 
+});
+
+
+it('publishes source rows while the optional contacts request waits', async () => {
+  let finish!: (response: Response) => void;
+  const client = createCaptureClient(async input => (input as Request).url.endsWith('/sources/status')
+    ? Response.json({ sources: [source()] })
+    : new Promise<Response>(resolve => { finish = resolve; }), []);
+  const view = render(SourcesWorkspace, { client });
+  await screen.findByRole('button', { name: 'Details for Archive' });
+  expect(screen.queryByRole('rowheader', { name: 'Contacts' })).toBeNull();
+  finish(Response.json({ connections: [contact] }));
+  await screen.findByRole('rowheader', { name: 'Contacts' });
+  view.unmount();
 });

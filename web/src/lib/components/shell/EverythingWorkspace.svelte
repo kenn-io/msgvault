@@ -34,7 +34,7 @@
   import ContextBar from '../explore/ContextBar.svelte';
   import EverythingTable from '../explore/EverythingTable.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
-  import ExploreSelectionBar from '../explore/ExploreSelectionBar.svelte';
+  import SelectionBar from '../explore/SelectionBar.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
@@ -815,7 +815,7 @@
                 onRetry={loader.retry}
               />
             {/if}
-            <ExploreSelectionBar
+            <SelectionBar
               {selection}
               totalCount={loader.result?.totalCount}
               allMatching={allMatchingSelection}

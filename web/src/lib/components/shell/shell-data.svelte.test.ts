@@ -295,3 +295,24 @@ it('bounds older completion reads to four while a recent batch keeps navigation 
   await refresh;
   data.stop();
 });
+
+it('refreshes completion time after an old failed batch runs again', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-29T12:00:00Z'));
+  let status = 'failed', reads = 0;
+  const data = new ShellData(createAPIClient(async input => {
+    if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [{ id: 'retry', status, created_at: '2020-01-01T00:00:00Z' }] });
+    reads++;
+    return Response.json({ execution: { completed_at: status === 'failed' ? '2020-01-01T00:00:00Z' : '2026-10-29T11:59:00Z' } });
+  }));
+  try {
+    await data.refreshDeletions();
+    expect(data.deletionsStaged).toBe(false);
+    status = 'in_progress';
+    await data.refreshDeletions();
+    expect(data.deletionsStaged).toBe(true);
+    status = 'completed';
+    await data.refreshDeletions();
+    expect(data.deletionsStaged).toBe(true);
+    expect(reads).toBe(2);
+  } finally { data.stop(); vi.restoreAllMocks(); }
+});
