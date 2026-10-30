@@ -117,7 +117,7 @@ describe('TaskLinks', () => {
     expect(screen.getByRole('radio', { name: 'Existing' })).toBeDefined();
   });
 
-  it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project', 'authentication_required'])(
+  it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project'])(
     'keeps mutations disabled when the index state is %s even with a ready integration',
     async (state) => {
       const view = render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
@@ -133,6 +133,17 @@ describe('TaskLinks', () => {
       expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
     }
   );
+
+  it('keeps add actions unavailable when authentication returns no linked tasks', async () => {
+    render(TaskLinks, { client: createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/integrations/tasks/status')
+      ? { state: 'ready', project: 'project', message: 'Ready' }
+      : { state: 'authentication_required', complete: false, reason: 'authentication_required', tasks: [], outbound_metadata: {} })),
+      mode: 'add', messageId: 42, title: 'Synthetic' });
+    expect((await screen.findByRole('alert')).textContent).toContain('Authentication is required');
+    expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Unlink/ })).toBeNull();
+  });
 
   it('explains unsupported disk persistence while keeping safe current-session mutations ready', async () => {
     render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
