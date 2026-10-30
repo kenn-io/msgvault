@@ -597,21 +597,9 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	// completed run still saves fresh high water marks afterwards.
 	imapOpts := imapFolderStateOptions(s, src, syncNoResume, cfg, logger)
 
-	// Pass CLI folder filter strings to the IMAP client. The IMAP
-	// client selects the effective include list (CLI --folder when
-	// set, otherwise config Folders) and applies CLI --skip-folder
-	// as an exclusion on top. Both CLI filters are applied in a
-	// single call to filterMailboxes so --folder can fully
-	// override configuration and --skip-folder works together with
-	// --folder.
-	imapOpts = append(imapOpts,
-		imaplib.WithFolderFilter(
-			parseFolderFilter(syncFolders),
-			parseFolderFilter(syncSkipFolders),
-		))
-
 	if src.SourceType == sourceTypeIMAP {
 		imapOpts = append(imapOpts,
+			imapSyncFolderFilter(s, src.Identifier, state, syncFolders, syncSkipFolders),
 			imaplib.WithListProgress(progress.OnIMAPListProgress),
 		)
 	}
@@ -739,7 +727,33 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	return nil
 }
 
-// trimFolderFilter trims whitespace from folder names and removes empty
+// imapSyncFolderFilter uses saved exclusions unless command folder flags
+// replace the saved filter for this run.
+func imapSyncFolderFilter(s *store.Store, identifier string, state *invocation, folders, skipFolders []string) imaplib.Option {
+	folders = parseFolderFilter(folders)
+	skipFolders = parseFolderFilter(skipFolders)
+	cfg := state.cfg
+	if len(folders) == 0 && len(skipFolders) == 0 {
+		if len(cfg.Sync.IMAPSkipFolders) > 0 {
+			state.imapFolderAccounts.Do(func() {
+				sources, err := s.ListSources(sourceTypeIMAP)
+				if err != nil {
+					state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
+					return
+				}
+				for account := range cfg.Sync.IMAPSkipFolders {
+					if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
+						state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
+					}
+				}
+			})
+		}
+		skipFolders = parseFolderFilter(cfg.Sync.IMAPSkipFolders[identifier])
+	}
+	return imaplib.WithFolderFilter(folders, skipFolders)
+}
+
+// parseFolderFilter trims whitespace from folder names and removes empty
 // entries. Returns nil when the input slice is empty.
 func parseFolderFilter(folders []string) []string {
 	if len(folders) == 0 {
@@ -1026,7 +1040,7 @@ func init() {
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().StringVar(&syncAfter, "after", "", "Only messages after this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().IntVar(&syncLimit, "limit", 0, "Limit number of messages (for testing)")
-	syncFullCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan (repeatable)")
-	syncFullCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip (repeatable)")
+	syncFullCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan; either folder flag replaces saved exclusions for this run (repeatable)")
+	syncFullCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip; either folder flag replaces saved exclusions for this run (repeatable)")
 	rootCmd.AddCommand(addManualSyncCacheFlags(syncFullCmd))
 }

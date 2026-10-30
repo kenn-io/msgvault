@@ -4517,6 +4517,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	cfg := state.cfg
 	logger := state.logger
 	imapOpts := imapFolderStateOptions(s, src, false, cfg, logger)
+	imapOpts = append(imapOpts, imapSyncFolderFilter(s, src.Identifier, state, nil, nil))
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)

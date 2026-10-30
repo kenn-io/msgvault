@@ -843,6 +843,9 @@ type SyncConfig struct {
 	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
 	// can activate tracking pixels. Unset is deliberately false.
 	ArchiveRemoteImages bool `toml:"archive_remote_images"`
+	// IMAPSkipFolders maps exact source identifiers from list-accounts to
+	// folders excluded from sync unless command folder flags override them.
+	IMAPSkipFolders map[string][]string `toml:"imap_skip_folders"`
 	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
 	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
 	// "imaps://user@example.com@imap.example.com:993") to that source's
@@ -853,6 +856,18 @@ type SyncConfig struct {
 	// a missing entry leaves snapshot refresh authorized only by
 	// unambiguous advertised \Sent or \Drafts placement.
 	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
+}
+
+// Validate rejects blank saved IMAP folder names.
+func (s *SyncConfig) Validate() error {
+	for identifier, folders := range s.IMAPSkipFolders {
+		for _, folder := range folders {
+			if strings.TrimSpace(folder) == "" {
+				return fmt.Errorf("sync.imap_skip_folders[%q] contains a blank folder name", identifier)
+			}
+		}
+	}
+	return nil
 }
 
 // DefaultHome returns the default msgvault home directory.
@@ -1196,6 +1211,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
+	cfg.deferDaemonError(cfg.Sync.Validate())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
