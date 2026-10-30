@@ -7,7 +7,7 @@
     getTaskIntegrationStatus,
     getMessage as generatedGetMessage,
   } from '../../api/generated/api/api';
-  import type { ConversationMessage as GeneratedConversationMessage } from '../../api/generated/models';
+  import type { MessageDetail as GeneratedMessageDetail } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
   import type { MessageViewMode } from '../../archive/types';
@@ -16,7 +16,7 @@
   import { conversationTaskStatusKey, type TaskStatusLoader } from '../tasks/task-status';
   import { reportError, reportAction, reportWhenVisible } from '../../telemetry/actions';
 
-  type APIMessageDetail = GeneratedConversationMessage;
+  type APIMessageDetail = GeneratedMessageDetail;
 
   let {
     client,
@@ -46,10 +46,9 @@
   const apiClient = untrack(() => client);
   const taskStatusController = new AbortController();
   let taskStatus: ReturnType<TaskStatusLoader> | undefined;
-  setContext<TaskStatusLoader>(conversationTaskStatusKey, () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).then(
-    result => { if (!result.data || ['unreachable', 'not_found'].includes(result.data.state)) taskStatus = undefined; return result; },
-    cause => { taskStatus = undefined; throw cause; },
-  ));
+  setContext<TaskStatusLoader>(conversationTaskStatusKey, () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).finally(() => {
+    taskStatus = undefined;
+  }));
   onDestroy(() => taskStatusController.abort());
   let scroller = $state<HTMLElement>();
   let messages = $state<APIMessageDetail[]>([]);
