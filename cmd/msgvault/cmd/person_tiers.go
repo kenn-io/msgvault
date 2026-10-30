@@ -40,6 +40,9 @@ func defaultPersonTiersCommandDeps() personTiersCommandDeps {
 				if currentCfg == nil {
 					return store.PersonTierOptions{}, errors.New("configuration is unavailable")
 				}
+				if err := currentCfg.PeopleTiersError(); err != nil {
+					return store.PersonTierOptions{}, err
+				}
 				return store.PersonTierOptions{
 					Config:            currentCfg.People.Tiers,
 					ActivityTimezone:  currentCfg.Activity.Timezone,

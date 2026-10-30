@@ -57,3 +57,32 @@ func TestPeopleTierConfigRejectsInvalidSettings(t *testing.T) {
 		})
 	}
 }
+
+// Clients load leniently and keep daemon-only errors aside. Tier previews must
+// still see their own errors, and only their own.
+func TestPeopleTiersErrorKeepsOnlyTierErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		tierError     bool
+	}{
+		{"misspelled threshold", "[people.tiers.tier1]\nmin_outbound_shrt = 3\n", true},
+		{"zero threshold", "[people.tiers.tier1]\nmin_outbound_short = 0\n", true},
+		{"other daemon setting", "[people.identity_scoring]\nunknown_key = 1\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte(tc.content), 0o600))
+			snapshot, err := ReadConfigFile(path)
+			require.NoError(err)
+			c, err := LoadClientConfigFile(snapshot, "")
+			require.NoError(err)
+			require.Error(c.DaemonConfigError())
+			if tc.tierError {
+				require.ErrorIs(c.PeopleTiersError(), persontiers.ErrInvalidConfig)
+			} else {
+				require.NoError(c.PeopleTiersError())
+			}
+		})
+	}
+}
