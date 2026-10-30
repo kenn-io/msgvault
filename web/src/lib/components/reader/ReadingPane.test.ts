@@ -52,11 +52,11 @@ describe('ReadingPane header', () => {
     expect(meta.startsWith(`${name} · `)).toBe(true);
     expect(meta).not.toContain(messageType === 'email' ? 'email ·' : messageType);
   });
-  it('opens the known counterpart of an outgoing-only WhatsApp conversation', async () => {
+  it('opens the header counterpart through onOpenPerson', async () => {
     const onOpenPerson = vi.fn();
     render(ReadingPane, {
-      selection: { kind: 'entry', row: entryRow({ kind: 'conversation', message_type: 'whatsapp', conversation_id: 7, counterpart_participant_id: 22 }) },
-      client: createAPIClient(async () => Response.json({ id: 7, messages: [], total: 0 })),
+      selection: { kind: 'entry', row: entryRow({ anchor_message_id: undefined, counterpart_participant_id: 22 }) },
+      client: createAPIClient(vi.fn<typeof fetch>()),
       predicate: {}, onOpenPerson,
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Open person' }));
