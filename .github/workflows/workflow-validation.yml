@@ -13,8 +13,8 @@ jobs:
   actionlint:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: step-security/jactionlint@30b636b51bcfb8cd8404be70a661f28e5564466d # v2.2.0
+      - uses: actions/checkout@v7.0.1
+      - uses: step-security/jactionlint@v2.2.0
         with:
           version: 2.3.0
           profile: correctness
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 

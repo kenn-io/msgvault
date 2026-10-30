@@ -19,8 +19,8 @@ jobs:
   windows-shell:
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: step-security/setup-bun@f6f5dadeac34f70c7828f731569e8d6e8330b8fb # v2.1.3
+      - uses: actions/checkout@v7.0.1
+      - uses: step-security/setup-bun@v2.1.3
         with:
           bun-version-file: web/package.json
       - name: Install frontend dependencies
