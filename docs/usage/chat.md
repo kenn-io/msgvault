@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: "2026-10-29"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -428,6 +428,12 @@ support message-type filtering.
 slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
+
+For a calendar event, `get_message` also returns `calendar` with `status`,
+`sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`, so an
+assistant can tell a cancelled or moved event from a confirmed one. A field
+is `null` when the stored event does not carry it; calendar sync does not
+store a `sequence` of 0, so a `null` sequence usually means 0.
 
 ### Find a person's messaging routes
 

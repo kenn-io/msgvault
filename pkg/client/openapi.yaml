@@ -1311,6 +1311,62 @@ components:
         - action
         - calendar_id
       type: object
+    CalendarProjection:
+      properties:
+        all_day:
+          nullable: true
+          type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        end:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        ical_uid:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        sequence:
+          format: int64
+          nullable: true
+          type: integer
+          x-go-type: "*int64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        start:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        status:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        time_zone:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - status
+        - sequence
+        - start
+        - end
+        - all_day
+        - time_zone
+        - ical_uid
+      type: object
     CalendarRequest:
       additionalProperties: false
       not:
@@ -2649,6 +2705,8 @@ components:
           type: string
         body_text:
           type: string
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
         cc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
@@ -7940,6 +7998,9 @@ components:
           type: string
         body_omitted:
           type: boolean
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
+          description: "Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."
         cc:
           items:
             type: string
@@ -16395,7 +16456,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.27.0
+  version: 3.28.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
