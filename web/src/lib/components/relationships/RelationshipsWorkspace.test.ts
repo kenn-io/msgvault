@@ -402,7 +402,7 @@ describe('RelationshipsWorkspace', () => {
     }
   });
 
-  it('restores a bounded reader at its latest anchor before the timeline loads and clears it on close', async () => {
+  it.each([null, 'cluster:2', 'close'])('restores a bounded reader and clears it through %s', async (destination) => {
     const { fetchFn } = fetchHandler({
       '/api/v1/conversations/70': async () => Response.json({ id: 70, anchor_id: 10, has_before: false, has_after: false, total: 1, messages: [{ id: 10, from: 'Example sender', subject: 'Saved subject', body: 'Saved message body', sent_at: when, to: [], labels: [], attachments: [] }] }),
     });
@@ -414,9 +414,8 @@ describe('RelationshipsWorkspace', () => {
       const request = fetchFn.mock.calls.map(([input]) => new URL((input as Request).url)).find(url => url.pathname.endsWith('/conversations/70'))!;
       expect(request.searchParams.get('anchor')).toBe('10');
       expect([request.searchParams.get('start'), request.searchParams.get('end')]).toEqual(['2026-07-19T00:00:00.000Z', '2026-07-20T00:00:00.000Z']);
-      await fireEvent.click(within(pane).getByRole('button', { name: 'Close reading pane' }));
-      expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
-      await view.rerender({ ...props, target: 'cluster:2' });
+      if (destination === 'close') await fireEvent.click(within(pane).getByRole('button', { name: 'Close reading pane' }));
+      else await view.rerender({ ...props, target: destination });
       expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
     } finally { view.unmount(); props.controller.destroy(); }
   });
