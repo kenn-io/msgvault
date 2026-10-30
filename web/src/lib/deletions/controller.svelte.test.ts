@@ -46,7 +46,7 @@ it('shares four in-flight lookups with page consumers and stops retention work a
   pending[0](Response.json(detail));
   expect(await page).toMatchObject({ account: 'archive@example.com' });
   await vi.waitFor(() => expect(ids).toHaveLength(5));
-  pending.slice(1).forEach(resolve => resolve(Response.json({ execution: { completed_at: '2020-01-02T00:00:00Z' } })));
+  pending.slice(1).forEach((resolve, i) => resolve(Response.json({ ...batch(`b${i + 1}`, 'completed'), execution: { completed_at: '2020-01-02T00:00:00Z' } })));
   await Promise.all([refreshing, laterPageRow]);
   expect(controller.visible).toBe(true);
   expect(ids).toEqual(['b0', 'b1', 'b2', 'b3', 'b4']);
@@ -55,18 +55,18 @@ it('shares four in-flight lookups with page consumers and stops retention work a
   controller.destroy();
 });
 
-it.each(['refresh', 'open'])('suppresses timer retries after a failed lookup and retries on explicit %s', async retry => {
+it('caches a settled failed lookup until the page explicitly retries', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(now);
   let reads = 0;
   const controller = new DeletionsController(createAPIClient(async input => {
     if ((input as Request).url.endsWith('/deletions')) return Response.json({ manifests: [batch('old', 'failed')] });
-    return ++reads === 1 ? Response.json({}, { status: 500 }) : Response.json({ execution: { completed_at: '2026-10-29T11:00:00Z' } });
+    return ++reads === 1 ? Response.json({}, { status: 500 }) : Response.json({ ...batch('old', 'failed'), execution: { completed_at: '2026-10-29T11:00:00Z' } });
   }));
   await controller.refresh();
-  await controller.refresh();
+  await controller.getDetail('old');
+  expect(await controller.getDetail('old')).toBeUndefined();
   expect(reads).toBe(1);
-  if (retry === 'refresh') { await controller.refresh(true); await controller.getDetail('old'); }
-  else await controller.getDetail('old', true);
+  expect(await controller.getDetail('old', true)).toMatchObject({ id: 'old' });
   expect(reads).toBe(2);
   expect(controller.visible).toBe(true);
   controller.destroy();
