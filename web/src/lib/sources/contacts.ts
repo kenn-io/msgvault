@@ -1,4 +1,5 @@
 import type { CardDAVConnectionResponse } from '../api/generated/models';
+import { cardDAVRepairCopy } from '../carddav/account-settings';
 import type { SourceFailure } from './labels';
 
 type Status = CardDAVConnectionResponse['status'];
@@ -29,19 +30,7 @@ export function contactLabel(connection: CardDAVConnectionResponse): string {
 /** The repair reason shown before opening Contacts settings. */
 export function contactFailure(connection: CardDAVConnectionResponse): SourceFailure | undefined {
   const { status } = connection;
-  switch (status.repair_reason) {
-    case 'google_authorization_required':
-      return { reason: 'Google Contacts sign-in expired' };
-    case 'microsoft_authorization_required':
-      return { reason: 'Microsoft contacts sign-in expired' };
-    case 'account_missing':
-    case 'credential_missing':
-    case 'credential_mismatch':
-    case 'credential_unavailable':
-    case 'runtime_unavailable':
-      return { reason: 'The contacts account needs to be connected again' };
-    default:
-  }
+  if (status.repair_reason) return { reason: cardDAVRepairCopy[status.repair_reason] };
   if (status.latest?.state === 'failed' && status.latest.error_message) {
     return { reason: status.latest.error_message.split('\n')[0]!.trim() };
   }
