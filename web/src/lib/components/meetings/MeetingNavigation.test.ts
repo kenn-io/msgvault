@@ -62,7 +62,7 @@ function groupNavigationClient() {
     if (url.pathname.endsWith('/meetings/actions')) {
       const body = await request.json();
       const messageID = body.scope?.message_ids?.[0];
-      const rows = messageID === 43 ? [] : messageID === 42
+      const rows = messageID === 43
         ? [{ ...action, meeting: { ...action.meeting, message_id: 43, archive_path: '/api/v1/messages/43' } }] : [action];
       return Response.json(meetingActions({ rows, total_count: rows.length }));
     }
@@ -215,7 +215,9 @@ describe('meeting archive reader navigation', () => {
     try {
       await fireEvent.click(await screen.findByRole('link', { name: 'Open archived meeting' }));
       const firstReader = await screen.findByRole('dialog', { name: 'Archived meeting' });
-      await fireEvent.click(await within(firstReader).findByRole('link', { name: 'Action provenance title' }));
+      await fireEvent.click(await within(firstReader).findByRole('button', { name: 'Expand message 43 from Example' }));
+      const secondMessage = await within(firstReader).findByRole('article', { name: 'Message 43' });
+      await fireEvent.click(await within(secondMessage).findByRole('link', { name: 'Action provenance title' }));
       await screen.findByRole('complementary', { name: 'Reading pane: Archived follow-up' });
       expect(state.current.selectedRow).toBe('archive-meeting:43');
       const back = historyChange(); window.history.back(); await back;

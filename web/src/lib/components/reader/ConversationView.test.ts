@@ -175,6 +175,24 @@ describe('ConversationView', () => {
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(2);
   });
 
+  it('retries a rejected shared Tasks status when another message expands', async () => {
+    let statusCalls = 0;
+    const client = createCaptureClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) {
+        if (++statusCalls === 1) throw new Error('Synthetic connection failed');
+        return Response.json({ state: 'ready' });
+      }
+      if (path.endsWith('/messages/1/tasks')) return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Recovered linked task' }] });
+      return Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    }, telemetryEvents, telemetryRequests);
+    render(ConversationView, { client, conversationId: 7, anchorId: 2 });
+    await screen.findByText('Synthetic connection failed');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    expect(await screen.findByText('Recovered linked task')).toBeDefined();
+    expect(statusCalls).toBe(2);
+  });
+
   it('collapses an expanded message back to its one-line card', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
       id: 7, anchor_id: 2, messages: [message(1), message(2)],
