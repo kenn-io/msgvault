@@ -240,3 +240,40 @@ func TestPersonTiersRefuseWhileTheProjectionRebuilds(t *testing.T) {
 	projectTierSignals(t, p.f, "America/New_York", 10)
 	assert.Equal(10, previewTiers(t, p).Projection.MaxDirect)
 }
+
+// Dedup can keep draft evidence on a message that was sent. The projector lets
+// the Sent label win, and the tier counts must follow it.
+func TestPersonTiersCountSentMailThatKeptDraftEvidence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	person := mustPromotedPerson(t, f.Store, "sent@example.com", "sent")
+	seedTierMail(t, f, person.ParticipantIDs[0], owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
+	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+		"Drafts": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+		"Sent":   {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	})
+	require.NoError(err)
+	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`SELECT id FROM messages WHERE sender_id = ?`), owner)
+	require.NoError(err)
+	var sent []int64
+	for rows.Next() {
+		var id int64
+		require.NoError(rows.Scan(&id))
+		sent = append(sent, id)
+	}
+	require.NoError(rows.Err())
+	require.NoError(rows.Close())
+	require.Len(sent, 4)
+	for _, id := range sent {
+		require.NoError(f.Store.AddMessageLabels(id, []int64{labels["Drafts"], labels["Sent"]}))
+	}
+	projectTierSignals(t, f, "UTC", 25)
+
+	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
+	require.NoError(err)
+	assert.Equal(4, explanation.Signals.OutboundShort)
+	assert.Equal(1, explanation.Tier)
+}

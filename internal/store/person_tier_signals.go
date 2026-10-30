@@ -64,7 +64,7 @@ func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs [
 	tally := newTierTally(cfg, asOf)
 	var after tierSignalRow
 	for {
-		rows, err := personTierRows(ctx, tx, personIDs, asOf, cfg, after)
+		rows, err := s.personTierRows(ctx, tx, personIDs, asOf, cfg, after)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +105,9 @@ type tierSignalRow struct {
 // in (person, date, message) order after the given row. The WHERE clause is the
 // counting rule: sent email and chat messages between the person and the owner,
 // not drafts, unsent texts, or call records, and meetings in either direction.
-func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
+// Unsent uses the projector's own predicate, so a sent copy that kept draft
+// evidence after dedup still counts.
+func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
 	args := personMergeSnapshotIDArgs(personIDs)
 	args = append(args,
 		asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly),
@@ -128,7 +130,7 @@ func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf t
  (ae.ref_kind='message' AND ((ae.direction='inbound' AND aep.role='sender') OR
  (ae.direction='outbound' AND aep.role IN ('addressed','member')))
  AND (COALESCE(m.message_type,'') IN ('','`+MessageTypeEmail+`') OR `+identityindex.IsChatSQL("m.message_type", "c.conversation_type")+`)
- AND COALESCE(m.is_sent,TRUE) AND NOT `+draftEvidenceSQL("m", "src")+`))
+ AND NOT `+s.activityUnsentSQL()+`))
  ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier signals: %w", err)
