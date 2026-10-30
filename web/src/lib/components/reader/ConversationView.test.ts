@@ -175,6 +175,22 @@ describe('ConversationView', () => {
     view.unmount();
   });
 
+  it('shows one Tasks section when the service is unreachable and neither email has cached links', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) return Response.json({ state: 'unreachable', message: 'Task service is unreachable.' });
+      if (/^\/api\/v1\/messages\/\d+\/tasks$/.test(path)) return Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} });
+      return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    });
+    render(ConversationView, { client: createCaptureClient(fetchFn, telemetryEvents, telemetryRequests), conversationId: 7, anchorId: 1 });
+    await screen.findByRole('button', { name: 'Open Settings' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+    await waitFor(() => expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/messages/2/tasks'))).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
+    expect(screen.getAllByRole('heading', { name: /^Tasks$/ })).toHaveLength(1);
+    expect(within(screen.getByRole('article', { name: 'Message 1' })).getByRole('button', { name: 'Open Settings' })).toBeDefined();
+  });
+
   it.each(['ready', 'unreachable'])('updates every card when Tasks changes from %s', async (initial) => {
     const latest = initial === 'ready' ? 'unreachable' : 'ready';
     let statusCalls = 0;
