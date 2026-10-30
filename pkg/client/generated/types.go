@@ -7875,27 +7875,31 @@ type MessageDetail struct {
 	ConversationID *int64              `json:"conversation_id,omitempty"`
 
 	// ConversationTitle Conversation title, when available.
-	ConversationTitle *string                   `json:"conversation_title,omitzero"`
-	DeletedAt         *string                   `json:"deleted_at,omitzero"`
-	From              string                    `json:"from" validate:"required"`
-	FromEmail         *string                   `json:"from_email,omitzero"`
-	FromName          *string                   `json:"from_name,omitzero"`
-	FromParticipantID *int64                    `json:"from_participant_id,omitempty"`
-	FromPhone         *string                   `json:"from_phone,omitzero"`
-	HasAttachments    bool                      `json:"has_attachments"`
-	ID                int64                     `json:"id"`
-	IsFromMe          *bool                     `json:"is_from_me,omitempty"`
-	Labels            []string                  `json:"labels" validate:"required"`
-	MessageType       *string                   `json:"message_type,omitzero"`
-	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
-	SentAt            string                    `json:"sent_at" validate:"required"`
-	SizeBytes         int64                     `json:"size_bytes"`
-	Snippet           string                    `json:"snippet" validate:"required"`
-	SourceID          *int64                    `json:"source_id,omitempty"`
-	SourceMessageID   *string                   `json:"source_message_id,omitzero"`
-	Subject           string                    `json:"subject" validate:"required"`
-	To                []string                  `json:"to" validate:"required"`
-	ToParticipants    []ConversationParticipant `json:"to_participants,omitempty"`
+	ConversationTitle *string `json:"conversation_title,omitzero"`
+	DeletedAt         *string `json:"deleted_at,omitzero"`
+	From              string  `json:"from" validate:"required"`
+	FromEmail         *string `json:"from_email,omitzero"`
+	FromName          *string `json:"from_name,omitzero"`
+
+	// FromParticipantID Sender participant ID, populated for conversation windows.
+	FromParticipantID *int64   `json:"from_participant_id,omitempty"`
+	FromPhone         *string  `json:"from_phone,omitzero"`
+	HasAttachments    bool     `json:"has_attachments"`
+	ID                int64    `json:"id"`
+	IsFromMe          *bool    `json:"is_from_me,omitempty"`
+	Labels            []string `json:"labels" validate:"required"`
+	MessageType       *string  `json:"message_type,omitzero"`
+	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
+	SentAt            string   `json:"sent_at" validate:"required"`
+	SizeBytes         int64    `json:"size_bytes"`
+	Snippet           string   `json:"snippet" validate:"required"`
+	SourceID          *int64   `json:"source_id,omitempty"`
+	SourceMessageID   *string  `json:"source_message_id,omitzero"`
+	Subject           string   `json:"subject" validate:"required"`
+	To                []string `json:"to" validate:"required"`
+
+	// ToParticipants Recipient participants, populated for conversation windows.
+	ToParticipants []ConversationParticipant `json:"to_participants,omitempty"`
 }
 
 func (m MessageDetail) Validate() error {
