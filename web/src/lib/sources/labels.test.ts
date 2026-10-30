@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sourceFailure, sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from './labels';
+import { sourceFailure, sourceRunState, sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -29,19 +29,17 @@ describe('source labels', () => {
     [undefined, 'Sync unavailable']
   ])('names sync reason %j', (code, want) => expect(syncUnavailableLabel(code)).toBe(want));
 
-  it('maps each latest result to one status chip', () => {
-    expect(syncStatusChip({ latest_sync: run('paused'), active_sync: null })).toEqual({ label: 'Paused', tone: 'neutral' });
-
-    expect(syncStatusChip({ active_sync: run('running'), latest_sync: run('completed') }))
-      .toEqual({ label: 'Syncing', tone: 'info' });
-    expect(syncStatusChip({ active_sync: null, latest_sync: run('completed') }))
-      .toEqual({ label: 'Completed', tone: 'success' });
-    expect(syncStatusChip({ active_sync: null, latest_sync: run('completed', 2) }))
-      .toEqual({ label: 'Completed with errors', tone: 'warning' });
-    expect(syncStatusChip({ active_sync: null, latest_sync: run('failed') }))
-      .toEqual({ label: 'Failed', tone: 'danger' });
-    expect(syncStatusChip({ active_sync: null, latest_sync: null }))
-      .toEqual({ label: 'Never synced', tone: 'muted' });
+  it('maps run states for rows and status tones for the job indicator', () => {
+    expect(sourceRunState({ scheduler_queued: true })).toBe('queued');
+    expect(sourceRunState({ latest_sync: run('cancelled') })).toBe('cancelled');
+    expect(sourceRunState({ latest_sync: run('completed', 2) })).toBe('partial');
+    expect(sourceRunState({ latest_sync: run('paused') })).toBe('paused');
+    expect(sourceRunState({ active_sync: run('running'), latest_sync: run('completed') })).toBe('running');
+    expect(sourceRunState({ latest_sync: run('completed') })).toBe('succeeded');
+    expect(sourceRunState({ latest_sync: run('failed') })).toBe('failed');
+    expect(sourceRunState({ latest_sync: null })).toBeUndefined();
+    expect(syncStatusChip({ latest_sync: run('failed') }).tone).toBe('danger');
+    expect(syncStatusChip({ latest_sync: run('completed') }).tone).toBe('success');
   });
 });
 
