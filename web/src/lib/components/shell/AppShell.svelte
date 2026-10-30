@@ -464,7 +464,6 @@
   });
 
   $effect(() => {
-    void exploreState.current.workspace;
     const active = enabled;
     untrack(() => { if (active) void shellData.refresh(); });
   });
