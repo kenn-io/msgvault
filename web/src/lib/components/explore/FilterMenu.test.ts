@@ -49,28 +49,22 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
   expect(screen.queryByText('Could not load kinds')).toBeNull();
 });
 
-it('preserves Kind selections and groups meeting notes and minutes', async () => {
+it.each([
+  { name: 'preserves restored kinds when adding Email', reset: false, filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['whatsapp', 'restored-kind', 'email'] },
+  { name: 'selects Email after filters reset', reset: true, filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['email'] },
+  { name: 'groups meeting notes and minutes in a meetings-only archive', reset: false, filters: [], kinds: ['meeting_note', 'meeting_minutes'], label: 'Meeting', expected: ['meeting_note', 'meeting_minutes'] },
+])('$name', async ({ reset, filters, kinds, label, expected }) => {
   const onChange = vi.fn();
-  let meetingsOnly = false;
   const view = render(FilterMenu, {
-    client: createAPIClient(async (input) => {
-      if (new URL((input as Request).url).pathname.endsWith('/groups')) return Response.json({ rows: meetingsOnly ? [{ key: 'meeting_note' }, { key: 'meeting_minutes' }] : [{ key: 'whatsapp' }, { key: 'discord' }, { key: 'email' }] });
-      return Response.json({ accounts: [], identities: [] });
-    }), filters: [{ dimension: 'message_type', values: ['whatsapp', 'restored-kind'] }], onChange, onClear: vi.fn(),
+    client: createAPIClient(async (input) => new URL((input as Request).url).pathname.endsWith('/groups')
+      ? Response.json({ rows: kinds.map(key => ({ key, count: 1 })) })
+      : Response.json({ accounts: [], identities: [] })),
+    filters, onChange, onClear: vi.fn(),
   });
+  if (reset) await view.rerender({ filters: [] });
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await fireEvent.click(await screen.findByLabelText('Email'));
-  expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['whatsapp', 'restored-kind', 'email'] }]);
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await view.rerender({ filters: [] });
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await fireEvent.click(await screen.findByLabelText('Email'));
-  expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['email'] }]);
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  meetingsOnly = true;
-  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await fireEvent.click(await screen.findByLabelText('Meeting'));
-  expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: ['meeting_note', 'meeting_minutes'] }]);
+  await fireEvent.click(await screen.findByLabelText(label));
+  expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: expected }]);
 });
 
 it('Escape closes only the active Account picker, then Filter', async () => {

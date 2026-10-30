@@ -67,7 +67,8 @@ func (f *fakeTaskLinkOperations) Unlink(_ context.Context, _ string, identity ta
 	f.identities = append(f.identities, identity)
 	return taskclient.Task{ID: "task-1", Project: "project", Title: "Linked", Revision: "r2"}, f.err
 }
-func (f *fakeTaskLinkOperations) Lookup(context.Context, tasklinks.MessageIdentity) tasklinks.LookupResult {
+func (f *fakeTaskLinkOperations) Lookup(_ context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult {
+	f.identities = append(f.identities, identity)
 	return f.lookup
 }
 func (f *fakeTaskLinkOperations) Search(context.Context, string) ([]tasklinks.TaskSummary, error) {
@@ -246,22 +247,34 @@ func TestTaskMessageLookupErrorClassification(t *testing.T) {
 			}
 		})
 	}
-	t.Run("canceled during identity", func(t *testing.T) {
-		require := require.New(t)
-		f := storetest.New(t)
-		id := f.CreateMessage("cancelled-identity")
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		srv := NewServerWithOptions(ServerOptions{
-			Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{Store: f.Store, cancel: cancel},
-			Logger: testLogger(), TaskLinkOperations: &fakeTaskLinkOperations{},
-		})
-		request := httptest.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/tasks", id), nil)
-		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, request)
-		require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
-		require.ErrorIs(ctx.Err(), context.Canceled)
-	})
+}
+
+func TestTaskMessageIdentityUsesArchiveContext(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("task-identity-email")
+	ops := &fakeTaskLinkOperations{}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: f.Store, Logger: testLogger(), TaskLinkOperations: ops})
+	path := fmt.Sprintf("/api/v1/messages/%d/tasks", id)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	require.Len(ops.identities, 1)
+	identity := ops.identities[0]
+	assert.Equal("1", identity.ArchiveRevision)
+	assert.Equal(id, identity.MessageID)
+	assert.Equal("gmail", identity.SourceType)
+	assert.Equal("test@example.com", identity.SourceIdentifier)
+	assert.Equal("task-identity-email", identity.SourceMessageID)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	srv = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{Store: f.Store, cancel: cancel}, Logger: testLogger(), TaskLinkOperations: ops})
+	response = httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), `"error":"identity_unavailable"`)
 }
 
 func TestTaskLinkAPIsRejectNonEmailConcreteRows(t *testing.T) {

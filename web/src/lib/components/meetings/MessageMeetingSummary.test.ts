@@ -30,29 +30,21 @@ describe('Messages meeting summary', () => {
     expect(screen.getByRole('textbox', { name: 'Assignee' })).toHaveProperty('value', '');
   });
 
-  it('opens scoped actions and navigates to source evidence', async () => {
+  it.each([{ count: 1, label: '1 meeting' }, { count: 4, label: '4 meetings' }])('labels $count meetings and opens scoped source evidence', async ({ count, label }) => {
     const onOpenMeeting = vi.fn();
     const client = createAPIClient(async (input) => {
       const request = input as Request;
-      if (request.url.endsWith('/metrics')) return Response.json(meetingMetrics());
+      if (request.url.endsWith('/metrics')) return Response.json(meetingMetrics({ totals: { ...meetingMetrics().totals, meeting_count: count } }));
       return Response.json(meetingActions({ rows: [meetingAction()] }));
     });
     render(MessageMeetingSummary, { client, scope: { kind: 'direct', scope: { message_ids: [42] } }, onOpenMeeting });
-    expect(await screen.findByText(/4 meetings/)).toBeDefined();
+    expect(await screen.findByText(new RegExp(`^${label} ·`))).toBeDefined();
     expect(screen.queryByRole('region', { name: 'Meeting metrics' })).toBeNull();
     await fireEvent.click(await screen.findByRole('button', { name: /Action items/ }));
     const dialog = screen.getByRole('dialog', { name: 'Action items' });
     expect(within(dialog).getByText('Prepare review')).toBeDefined();
     await fireEvent.click(await within(dialog).findByRole('link', { name: 'Archived review' }));
     expect(onOpenMeeting).toHaveBeenCalledWith(expect.objectContaining({ message_id: 42 }));
-  });
-
-  it('labels a singular meeting count', async () => {
-    const count = 1;
-    render(MessageMeetingSummary, { client: createAPIClient(async (input) => (input as Request).url.endsWith('/metrics')
-      ? Response.json(meetingMetrics({ totals: { ...meetingMetrics().totals, meeting_count: count } }))
-      : Response.json(meetingActions())), scope: { kind: 'direct', scope: { message_ids: [42] } } });
-    expect(await screen.findByText(/^1 meeting ·/)).toBeDefined();
   });
 
   it('asks the workspace for fresh authority after a changed scope', async () => {

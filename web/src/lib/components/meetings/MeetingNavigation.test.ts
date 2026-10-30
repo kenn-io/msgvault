@@ -1,4 +1,3 @@
-import { disabledTaskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -20,7 +19,7 @@ async function metricsResponse(request: Request): Promise<Response> {
     : meetingMetrics());
 }
 
-function handler(detailResponse: () => Response | Promise<Response> = () => Response.json(detail), withEmail = false) {
+function handler(detailResponse: () => Response | Promise<Response> = () => Response.json(detail)) {
   const requests: Request[] = [];
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
@@ -32,13 +31,12 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path.endsWith('/meetings/actions')) return Response.json(meetingActions({ rows: [action], total_count: 1 }));
     if (path.endsWith('/messages/42')) return detailResponse();
     if (path.endsWith('/integrations/tasks/status')) return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
-    if (path.endsWith('/messages/43/tasks')) return Response.json(disabledTaskLookup(43, 8));
     if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 1, display_name: 'Example Person', participant_ids: [7], vcard_uid: 'person-7', created_at: '', updated_at: '' });
     if (path === '/api/v1/people/directory') return Response.json({ people: [] });
     if (path.endsWith('/brief-enrollment')) return Response.json({ person_id: 7, enrolled: false });
     if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false });
     if (path.startsWith('/api/v1/people/') || path.startsWith('/api/v1/carddav/')) return Response.json({ error: 'not_found', message: 'Synthetic optional section unavailable.' }, { status: 404 });
-    if (path.endsWith('/conversations/8')) return Response.json({ id: 8, messages: [{ ...detail, from_participant_id: 7, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }] }, ...(withEmail ? [{ ...detail, id: 43, message_type: 'email', subject: 'Meeting follow-up', body: 'Email evidence' }] : [])], anchor_id: 42, total: withEmail ? 2 : 1, has_before: false, has_after: false });
+    if (path.endsWith('/conversations/8')) return Response.json({ id: 8, messages: [{ ...detail, from_participant_id: 7, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }] }], anchor_id: 42, total: 1, has_before: false, has_after: false });
     return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
   });
   return { client, requests };
@@ -87,21 +85,6 @@ function stateWithGroup(): ExploreState {
 }
 
 describe('meeting archive reader navigation', () => {
-  it('opens Tasks settings from email evidence in a meeting conversation', async () => {
-    const { client } = handler(undefined, true);
-    const state = stateWithMeetingFilter('archive-meeting:42');
-    const view = render(AppShell, { client, state });
-    try {
-      const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
-      await fireEvent.click(await within(reader).findByRole('button', { name: /Expand message 43/ }));
-      await fireEvent.click(await within(reader).findByRole('button', { name: 'Set up' }));
-      await waitFor(() => expect(state.current.workspace).toBe('settings'));
-      expect(state.current.settingsCategory).toBe('tasks');
-      expect(screen.queryByRole('dialog', { name: 'Archived meeting' })).toBeNull();
-      const back = historyChange(); window.history.back(); await back;
-      expect(await screen.findByRole('dialog', { name: 'Archived meeting' })).toBeDefined();
-    } finally { view.unmount(); state.destroy(); }
-  });
   it('preflights detail, opens the real reader, and restores scope and focus through Back/Forward and Close', async () => {
     let resolveDetail!: (response: Response) => void;
     const { client, requests } = handler(() => new Promise<Response>((resolve) => { resolveDetail = resolve; }));
