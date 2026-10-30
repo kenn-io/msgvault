@@ -134,7 +134,7 @@
   if (open && ![panelElement, triggerElement].some((element) => element?.contains(event.target as Node))) open = false;
 }} onkeydown={(event) => {
   // kit-ui-check-ignore: observes the nested Kit picker's open state.
-  if (!open || panelElement?.querySelector('[role="combobox"][aria-expanded="true"]')) return;
+  if (!open || document.querySelector('[aria-modal="true"]') || panelElement?.querySelector('[role="combobox"][aria-expanded="true"]')) return;
   escapeCloses(() => { open = false; triggerElement?.querySelector('button')?.focus(); })(event);
 }} />
 
