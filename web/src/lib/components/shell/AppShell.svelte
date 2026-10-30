@@ -1364,6 +1364,7 @@
               scrollAnchor: null,
             })}
           onOpenEverything={() => commitWorkspace('everything')}
+          onOpenPerson={openRelationship}
           onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}

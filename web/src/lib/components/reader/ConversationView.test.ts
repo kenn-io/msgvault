@@ -136,6 +136,22 @@ describe('ConversationView', () => {
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
   });
 
+  it('shows an unreachable Tasks notice once while keeping each expanded message task list', async () => {
+    const client = createCaptureClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) return Response.json({ state: 'unreachable', message: 'Task service is unreachable.' });
+      const tasks = /messages\/(\d+)\/tasks$/.exec(path);
+      if (tasks) return Response.json({ state: 'unreachable', complete: false, tasks: [{ id: `task-${tasks[1]}`, title: `Cached task ${tasks[1]}` }], outbound_metadata: {} });
+      return Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    }, telemetryEvents, telemetryRequests);
+    render(ConversationView, { client, conversationId: 7, anchorId: 2 });
+    await screen.findByText('Cached task 2');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    expect(await screen.findByText('Cached task 1')).toBeDefined();
+    expect(screen.getByText('Cached task 2')).toBeDefined();
+    expect(screen.getAllByText('Task integration unreachable: Task service is unreachable.')).toHaveLength(1);
+  });
+
   it('shares pending Tasks probes and setup while preserving cached links', async () => {
     const lookedUp: number[] = [];
     let releaseStatus!: () => void;
