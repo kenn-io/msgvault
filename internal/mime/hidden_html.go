@@ -239,7 +239,9 @@ func fontShorthandSize(value string) string {
 	fields := strings.Fields(value)
 	for i, field := range fields {
 		size, lineHeight, slash := strings.Cut(field, "/")
-		if _, unit, length := inlineCSSLength(size); !(length && (unit != "" || size == "0") || slices.Contains(strings.Fields(inlineCSSValues["font-size"]), size)) {
+		_, unit, length := inlineCSSLength(size)
+		isSize := length && (unit != "" || size == "0") || slices.Contains(strings.Fields(inlineCSSValues["font-size"]), size)
+		if !isSize {
 			continue
 		}
 		// A family must follow the size and any line height, or browsers ignore the shorthand.
