@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from './labels';
+import { sourceFailure, sourceTypeLabel, syncCommand, syncStatusChip, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -41,4 +41,16 @@ describe('source labels', () => {
     expect(syncStatusChip({ active_sync: null, latest_sync: null }))
       .toEqual({ label: 'Never synced', tone: 'muted' });
   });
+});
+
+
+it('preserves paused run errors before scheduler errors', () => {
+  expect(syncStatusChip({ latest_sync: run('paused'), active_sync: null })).toEqual({ label: 'Paused', tone: 'neutral' });
+  expect(sourceFailure({ latest_sync: { ...run('paused'), error_message: 'Rate limit reached' }, identifier: 'archive@example.com', source_type: 'omi', scheduler_last_error: 'Scheduler stopped' })).toEqual({ reason: 'Rate limit reached' });
+});
+
+it('quotes an account for the terminal the user selects', () => {
+  const source = { identifier: "o'brien@example.com", sync_unavailable_reason: 'sync_not_configured' };
+  expect(syncCommand(source, 'posix')).toBe("msgvault sync 'o'\\''brien@example.com'");
+  expect(syncCommand(source, 'cmd')).toBe('msgvault sync "o\'brien@example.com"');
 });
