@@ -18,14 +18,14 @@
     client,
     filters,
     onChange,
-    onClear,
     extra = undefined,
+    onClear = undefined,
   }: {
     extra?: Snippet;
+    onClear?: () => void;
     client: APIClient;
     filters: ExploreFilter[];
     onChange: (filters: ExploreFilter[]) => void;
-    onClear: () => void;
   } = $props();
 
   const api = createExploreAPI(untrack(() => client));
@@ -126,7 +126,8 @@
 
   function clear(): void {
     dateError = '';
-    onClear();
+    if (onClear) onClear();
+    else onChange([]);
   }
 </script>
 
@@ -178,7 +179,7 @@
     </fieldset>
     {#if dateError}<p role="alert">{dateError}</p>{/if}
     {@render extra?.()}
-    {#if filters.length > 0}
+    {#if filters.length > 0 || extra}
       <div class="panel-footer">
         <Button surface="soft" label="Clear filters" onclick={clear} />
       </div>

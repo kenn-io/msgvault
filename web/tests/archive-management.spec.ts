@@ -160,20 +160,26 @@ test('read-only source settings open their editor and contact-only runs finish',
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} } }));
   await page.route('**/api/v1/deletions', route => route.fulfill({ json: { manifests: [] } }));
   await page.route('**/api/v1/settings', route => route.fulfill({ json: { pending_restart: false, settings: [
-    { key: 'beeper.schedule', kind: 'string', value: { string: '0 3 * * *' }, group: 'sources', label: 'Schedule', validation: { format: 'cron' } }
+    { key: 'beeper.schedule', kind: 'string', value: { string: '0 3 * * *' }, group: 'sources', label: 'Schedule', validation: { format: 'cron' } },
+    { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 0 }, group: 'sources', label: 'Largest file (MiB)', validation: { off: { value: '0', label: 'No size limit' } } }
   ] } }));
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [{
     id: 1, source_type: 'beeper', identifier: 'beeper', display_name: 'Example chats', can_sync: true, latest_sync: null, last_successful_sync: null
   }] } }));
   await page.route('**/api/v1/carddav/connections', route => route.fulfill({ json: { connections: [{ connection: 'default', status: {
     configured: true, available: true, credential_configured: true, account: { username: 'contacts@example.com' },
-    active: ++contactsReads === 1 ? { state: 'running' } : null, latest: { state: 'succeeded', started_at: '2026-10-29T10:00:00Z' }
+    repair_reason: 'google_authorization_required',
+    active: ++contactsReads === 1 ? { state: 'running' } : null, latest: { state: 'succeeded', started_at: '2026-10-29T10:00:00Z', books: 1, created: 4, updated: 0, removed: 0 }
   } }] } }));
   await page.goto('/?workspace=everything');
   await page.getByRole('button', { name: 'Sources', exact: true }).click();
   await expect(page.getByText('Succeeded', { exact: true })).toBeVisible();
   expect(contactsReads).toBeGreaterThanOrEqual(2);
+  await page.getByRole('button', { name: 'Details for contacts@example.com' }).click();
+  await expect(page.getByText(/Check the selected OAuth app's client settings/)).toBeVisible();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Details for Example chats' }).click();
+  await expect(page.getByText('No size limit', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Edit in Settings › Sources' }).click();
   await expect(page.getByRole('heading', { name: 'Sources', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Files', exact: true }).click();
