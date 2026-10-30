@@ -513,6 +513,14 @@ type MediaAccountConfig struct {
 	MaxMediaMB int   `toml:"max_media_mb"`
 }
 
+// ThreadsConfig enables publication only for explicitly selected archive sources.
+type ThreadsConfig struct {
+	Sends []ThreadsSendConfig `toml:"sends"`
+}
+type ThreadsSendConfig struct {
+	SourceID int64 `toml:"source_id"`
+}
+
 // DiscordConfig holds provider-wide Discord import settings and optional
 // per-guild message-container filters.
 //
@@ -596,6 +604,7 @@ type Config struct {
 	Muesli             []MuesliSource                  `toml:"muesli"`
 	Twenty             []TwentySource                  `toml:"twenty"`
 	Backup             BackupConfig                    `toml:"backup"`
+	Threads            ThreadsConfig                   `toml:"threads"`
 	Discord            DiscordConfig                   `toml:"discord"`
 	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
 	Activity           ActivityConfig                  `toml:"activity"`
@@ -1131,6 +1140,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.normalizeFastmailSources(fastmailSourceIDConfigured(content))
 	cfg.deferDaemonError(cfg.validateFastmailSources())
 	cfg.deferDaemonError(cfg.validateDraftSources(content))
+	cfg.deferDaemonError(cfg.validateThreadsSources(content))
 
 	// Expand ~ in paths
 	cfg.Data.DataDir = expandPath(cfg.Data.DataDir)
@@ -1266,6 +1276,24 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 
 type draftSelector struct {
 	SourceID *int64 `toml:"source_id"`
+}
+
+func (c *Config) validateThreadsSources(content []byte) error {
+	var raw struct {
+		Threads struct {
+			Sends []draftSelector `toml:"sends"`
+		} `toml:"threads"`
+	}
+	metadata, err := toml.Decode(string(content), &raw)
+	if err != nil {
+		return err
+	}
+	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "threads" {
+			return fmt.Errorf("unknown Threads configuration key %s", key.String())
+		}
+	}
+	return validateDraftSelectors("threads.sends", c.Threads.Sends, raw.Threads.Sends, func(d ThreadsSendConfig) int64 { return d.SourceID }, nil)
 }
 
 func (c *Config) validateDraftSources(content []byte) error {

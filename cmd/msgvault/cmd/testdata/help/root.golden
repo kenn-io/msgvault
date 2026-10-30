@@ -1,20 +1,15 @@
-Archive email, chats, and meetings offline. Use the daemon
-or config.toml's [remote].url; --local forces local.
+Archive email, chats and meetings offline.
+Use [remote].url for a daemon; --local for local access.
 
 Start here:
   msgvault list-accounts --json
-  msgvault search 'from:alice@example.com newer_than:30d' --json
+  msgvault search 'newer_than:30d' --json
   msgvault show-message <id> --json
-  msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
-  msgvault person --help
-  msgvault daemon status
-  msgvault setup status --json
 
 Output:
-  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
-  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.
+  --json: JSON (export-messages: JSONL). Logs: stderr.
+  Exit: 0 success, 1 error, 130 interrupted.
+  More: msgvault quickstart; quiet: --log-level=warn.
 
 Usage:
   msgvault [command]
@@ -72,6 +67,7 @@ Add and sync sources:
   add-slack              Add a Slack workspace as an archive source
   add-synctech-sms-drive Configure a Google Drive SMS Backup & Restore source
   add-teams              Authorize Microsoft Teams (delegated Graph) for an account
+  add-threads            Connect your Threads account for archiving posts and replies
   add-twenty             Register and validate a Twenty Call Recorder source
   add-twilio             Register and validate a Twilio call source
   archive-remote-images  Download remote images in archived email (needs consent)
@@ -102,6 +98,7 @@ Add and sync sources:
   sync-slack             Sync Slack conversations (channels, group DMs, DMs)
   sync-synctech-sms      Run one configured synctech-sms source now
   sync-teams             Sync Microsoft Teams chats and channels
+  sync-threads           Archive available Threads posts and replies
   sync-twenty            Sync Twenty Call Recorder meetings
   sync-twilio            Sync Twilio calls and recordings
   update-account         Update account settings
@@ -133,6 +130,7 @@ Drafts, calendar, and Kata (write to providers):
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
   message-tags  Read or update native email tags
+  send-reply    Send a reply to an archived message or reviewed draft
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches

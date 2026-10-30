@@ -1969,6 +1969,35 @@ CREATE INDEX IF NOT EXISTS idx_chat_drafts_source
 CREATE INDEX IF NOT EXISTS idx_chat_drafts_conversation
     ON chat_drafts(conversation_id);
 
+-- Durable publication receipts outlive draft consumption. Only source removal
+-- cascades them; publish_dispatched_at never depends on presentation state.
+CREATE TABLE IF NOT EXISTS threads_reply_sends (
+    draft_id TEXT PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    source_identifier TEXT NOT NULL,
+    conversation_id BIGINT NOT NULL,
+    draft_revision BIGINT NOT NULL CHECK (draft_revision > 0),
+    root_media_id TEXT NOT NULL,
+    parent_media_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    body_hash TEXT NOT NULL,
+    row_revision BIGINT NOT NULL DEFAULT 1 CHECK (row_revision > 0),
+    state TEXT NOT NULL CHECK (state IN ('claimed','container_saved','ready',
+        'publish_dispatched','remote_unknown','sent_archive_pending','complete',
+        'rate_limited','reply_not_permitted','invalid_body','send_failed')),
+    container_id TEXT,
+    media_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    container_created_at TIMESTAMPTZ,
+    last_status_at TIMESTAMPTZ,
+    next_poll_at TIMESTAMPTZ,
+    publish_dispatched_at TIMESTAMPTZ,
+    archive_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    local_message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_threads_reply_sends_source ON threads_reply_sends(source_id);
+
 -- Beeper drafts bind a chat's native composer, which holds the content, so
 -- the shared pending columns carry no archive message link.
 CREATE TABLE IF NOT EXISTS beeper_drafts (

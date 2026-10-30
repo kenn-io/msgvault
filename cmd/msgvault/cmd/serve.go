@@ -57,6 +57,7 @@ import (
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/teams"
 	"go.kenn.io/msgvault/internal/telemetry"
+	"go.kenn.io/msgvault/internal/threads"
 	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
 )
@@ -1770,6 +1771,7 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	threadsReplyDeps          *threadsCommandDeps
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
 	store                     *store.Store
@@ -2545,6 +2547,12 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if len(req.Args) > 0 && req.Args[0] == "add-threads" && req.Grant != nil {
+		return errors.New("Threads connection requires the owner")
+	}
+	if api.IsCLIRunSendReply(req.Args) {
+		return a.runCLISendReply(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
@@ -4163,6 +4171,9 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	// (preserves behaviour for tokens uploaded via API before the source
 	// row exists).
 	if len(srcs) == 0 {
+		if strings.HasPrefix(identifier, "threads:") && !retiredMatch {
+			return errors.New("Threads account is not registered")
+		}
 		if retiredMatch {
 			logger.Info("skipping scheduled sync for retired source", "identifier", identifier)
 			return scheduler.ErrDeferUntilNextTrigger
@@ -4211,6 +4222,8 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 				ctx, s, src, defaultDiscordCommandDeps().bind(ctx), false, time.Time{}, nil,
 			)
 			logScheduledDiscordIssues(identifier, discordSummary, logger)
+		case sourceTypeThreads:
+			_, err = importThreadsSource(ctx, s, src, defaultThreadsCommandDeps().bind(ctx), threads.SyncRequest{}, threads.ScheduledRequestLimit, nil)
 		default:
 			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
 		}
@@ -4299,6 +4312,22 @@ func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary
 //
 // Matches against both sources.identifier and sources.display_name.
 func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Source, bool, error) {
+	if strings.HasPrefix(identifier, "threads:") {
+		if _, _, err := threads.ParseSourceIdentifier(identifier); err != nil {
+			return nil, false, err
+		}
+		source, err := s.GetSourceByTypeAndIdentifier(sourceTypeThreads, identifier)
+		if errors.Is(err, store.ErrSourceNotFound) {
+			return []*store.Source{}, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if source.HistoryOnly || source.MergedIntoSourceID != 0 {
+			return []*store.Source{}, true, nil
+		}
+		return []*store.Source{source}, false, nil
+	}
 	rows, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
 	if err != nil {
 		return nil, false, err

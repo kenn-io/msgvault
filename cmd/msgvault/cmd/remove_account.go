@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/threads"
 )
 
 const (
@@ -203,6 +204,27 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			return runRemoveAccountLocalWithMatrixLock(cmd, args, true)
 		})
 	}
+	if source.SourceType == sourceTypeThreads && !matrixLockHeld {
+		cleanup()
+		manager := threads.NewTokenManager(cfg.TokensDir())
+		return manager.WithSourceLock(cmd.Context(), source.Identifier, func() error {
+			// The source may have been removed or replaced while this request
+			// waited. Bind removal to the original row, before taking cache locks.
+			check, closeCheck, err := openWritableStoreAndInitForInvocation(state)
+			if err != nil {
+				return err
+			}
+			current, lookupErr := check.GetSourceByIDContext(cmd.Context(), source.ID)
+			closeCheck()
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if current.Identifier != source.Identifier || current.SourceType != sourceTypeThreads {
+				return errors.New("Threads source changed while waiting for removal")
+			}
+			return runRemoveAccountLocalWithMatrixLock(cmd, args, true)
+		})
+	}
 	defer cleanup()
 	email := source.Identifier
 
@@ -258,6 +280,13 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		if err := revokeMatrixCredentials(cmd.Context(), cfg.TokensDir(), source.Identifier); err != nil {
 			return fmt.Errorf("revoke Matrix device (account was not removed): %w", err)
 		}
+	}
+	if source.SourceType == sourceTypeThreads {
+		release, err := s.AcquireSourceRemovalLockContext(cmd.Context(), source.ID)
+		if err != nil {
+			return fmt.Errorf("prepare Threads account removal: %w", err)
+		}
+		defer func() { retErr = errors.Join(retErr, release()) }()
 	}
 
 	// Collect attachment paths unique to this source before the cascade deletes them.
@@ -443,6 +472,13 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	case sourceTypeMatrix:
 		// The dedicated device and local credential were revoked before the
 		// source cascade so a remote failure could abort removal safely.
+	case sourceTypeThreads:
+		appID, ownerID, parseErr := threads.ParseSourceIdentifier(source.Identifier)
+		if parseErr != nil {
+			fmt.Fprintln(os.Stderr, "Warning: invalid Threads source binding; credential was preserved")
+		} else if err := threads.NewTokenManager(cfg.TokensDir()).Delete(appID, ownerID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove Threads credential: %v\n", err)
+		}
 	case sourceTypeSlack:
 		if teamID, userID, ok := splitSlackIdentifier(source.Identifier); ok {
 			if err := slack.DeleteToken(cfg.TokensDir(), teamID, userID); err != nil {

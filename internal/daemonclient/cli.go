@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/accountops"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/cacheops"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -653,6 +655,35 @@ func (c *Client) RunCLICommand(
 	req CLIRunRequest,
 	output func(stream, data string) error,
 ) error {
+	if _, carriesThreadsOAuth := req.Env[clirun.EnvThreadsOAuth]; carriesThreadsOAuth {
+		if len(req.Args) == 0 || req.Args[0] != "add-threads" || c.agentToken != "" {
+			return errors.New("Threads connection requires an owner add-threads request")
+		}
+		u, err := url.Parse(c.baseURL)
+		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("invalid daemon URL for Threads OAuth")
+		}
+		ip := net.ParseIP(u.Hostname())
+		loopback := ip != nil && ip.IsLoopback()
+		if (u.Scheme == "http" && !loopback) || (u.Scheme == "https" && !loopback && c.apiKey == "") || (u.Scheme != "http" && u.Scheme != "https") {
+			return errors.New("Threads OAuth requires literal loopback HTTP or authenticated HTTPS")
+		}
+		// This request carries an app secret and one-use authorization code.
+		// Clone both bindings: the shared owner client keeps its usual redirect
+		// behavior, while no redirect may replay this credential-bearing body.
+		scoped := *c
+		strict := *c.httpClient
+		strict.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return errors.New("Threads OAuth handoff does not follow redirects")
+		}
+		scoped.httpClient = &strict
+		scoped.typedClient = nil
+		return scoped.runCLICommand(ctx, req, output)
+	}
+	return c.runCLICommand(ctx, req, output)
+}
+
+func (c *Client) runCLICommand(ctx context.Context, req CLIRunRequest, output func(stream, data string) error) error {
 	if req.GrantDecided {
 		if c.localDaemonToken == "" {
 			return errors.New("grant preflight proof is unavailable for this daemon")

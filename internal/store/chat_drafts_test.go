@@ -61,6 +61,33 @@ func TestChatDraftLifecycleKeepsDraftsOutOfArchive(t *testing.T) {
 	}
 }
 
+func TestChatDraftWithStableIDIsIdempotent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "synthetic-stable-id")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "C-STABLE", "channel", "Synthetic")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "message-stable", MessageType: "chat",
+	})
+	require.NoError(err)
+	draftID := store.ChatDraftIDPrefix + "direct-example"
+
+	first, err := st.CreateChatDraftWithIDContext(t.Context(), draftID, conversationID, messageID, "same body", allowChatDraft)
+	require.NoError(err)
+	second, err := st.CreateChatDraftWithIDContext(t.Context(), draftID, conversationID, messageID, "same body", allowChatDraft)
+	require.NoError(err)
+	assert.Equal(first, second)
+	_, err = st.CreateChatDraftWithIDContext(t.Context(), draftID, conversationID, messageID, "different body", allowChatDraft)
+	require.ErrorIs(err, store.ErrChatDraftIDConflict)
+	current, err := st.GetChatDraftContext(t.Context(), draftID)
+	require.NoError(err)
+	assert.Equal(first, current)
+}
+
 func TestChatDraftCreateRejectsWrongDestination(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
