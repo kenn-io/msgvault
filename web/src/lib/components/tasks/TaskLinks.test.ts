@@ -97,7 +97,7 @@ describe('TaskLinks', () => {
     }
   );
 
-  it('keeps unlink available on a partial index with its incompleteness warning', async () => {
+  it('keeps create, link, and unlink available on a partial index', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
@@ -107,11 +107,14 @@ describe('TaskLinks', () => {
       });
     });
     const client = createAPIClient(fetchFn);
-    render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
 
     expect(await screen.findByText('Partial task')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('partial');
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
+    await view.rerender({ mode: 'add' });
+    expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
+    expect(screen.getByRole('radio', { name: 'Existing' })).toBeDefined();
   });
 
   it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project', 'authentication_required'])(
