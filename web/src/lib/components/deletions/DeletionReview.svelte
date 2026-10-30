@@ -12,7 +12,7 @@
     StageDeletionResponse,
   } from '../../api/generated/models';
   import { preflightReasonLabel } from '../../explore/labels';
-  import { formatBytes } from '../../util/format';
+  import { formatBytes, formatDateTime } from '../../util/format';
   import Dialog from '../common/Dialog.svelte';
 
   let {
@@ -23,13 +23,14 @@
   }: {
     client: APIClient;
     selection: Selection;
-    /** Runs when the dialog is done, after a successful stage. */
+    /** Closes review or its staged result. */
     onclose: () => void;
     /** Runs once the batch is staged, so the sidebar can show Staged deletions. */
     onStaged?: (batchID: string) => void;
   } = $props();
 
   let review = $state<Preflight>();
+  let result = $state<StageDeletionResponse>();
   let preview = $state<StageDeletionResponse>();
   let pending = $state(true);
   let error = $state('');
@@ -46,6 +47,8 @@
   async function run(): Promise<void> {
     pending = true;
     error = '';
+    preview = undefined;
+    review = undefined;
     try {
       const { data, error: responseError } = await generatedPreflightExploreSelection({ selection }, requestClient);
       if (!data) throw new Error(messageFor(responseError, "Can't check this selection."));
@@ -62,6 +65,7 @@
     if (!review || pending) return;
     pending = true;
     error = '';
+    preview = undefined;
     try {
       const { data, error: responseError } = await generatedStageDeletion(
         { selection, operation_token: review.operation_token, dry_run: true },
@@ -82,6 +86,7 @@
     if (!review || pending) return;
     pending = true;
     error = '';
+    preview = undefined;
     try {
       const {
         data,
@@ -98,13 +103,20 @@
       );
       if (!data || response.status !== 201 || !data.id) throw new Error(messageFor(responseError, "Can't stage these messages."));
       if (controller.signal.aborted) return;
+      result = data;
       onStaged(data.id);
-      onclose();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Can't stage these messages.";
     } finally {
       pending = false;
     }
+  }
+
+  function resultSummary(value: StageDeletionResponse): string {
+    const staged = value.message_count;
+    const skipped = value.skipped_count ?? Math.max((value.matched_count ?? staged) - staged, 0);
+    const matched = value.matched_count ?? staged + skipped;
+    return `${value.dry_run ? 'Dry run' : 'Staged'}: Matched: ${matched.toLocaleString()} · Staged: ${staged.toLocaleString()} · Skipped: ${skipped.toLocaleString()}${value.account ? ` in ${value.account}` : ''}`;
   }
 
   function messageFor(value: unknown, fallback: string): string {
@@ -116,26 +128,36 @@
 </script>
 
   <Dialog
-    title="Delete from Gmail"
+    title="Review deletion"
     {onclose}
-    primaryLabel={`Stage ${deletable.toLocaleString()} ${noun(deletable)}`}
-    primaryDisabled={pending || !review || deletable === 0 || Boolean(blocked)}
-    onprimary={() => void stage()}
+    primaryLabel={result ? 'Done' : `Stage ${deletable.toLocaleString()} ${noun(deletable)}`}
+    primaryDisabled={!result && (pending || !review || deletable === 0 || Boolean(blocked))}
+    onprimary={() => result ? onclose() : void stage()}
   >
+    {#if result}
+      <p role="status">{resultSummary(result)}</p>
+      <p>Batch ID: <code>{result.id}</code></p>
+      <p>Run <code>msgvault delete-staged</code> separately to delete these messages from the source.</p>
+    {:else}
+    <p>Stage eligible Gmail and Microsoft mail. The archive stays intact. Run <code>msgvault delete-staged</code> separately to execute deletion.</p>
     <Button label="Dry run" disabled={pending || !review || deletable === 0 || Boolean(blocked)} onclick={() => void dryRun()} />
     {#if pending && !review}
       <p class="muted" role="status">Checking…</p>
     {:else if review}
       <div class="counts" role="status">
-        <strong>{review.count.toLocaleString()} {noun(review.count)} · {formatBytes(review.estimated_bytes)}</strong>
-        {#if skipped > 0}<span class="muted">{skipped.toLocaleString()} can't be deleted from Gmail and stay.</span>{/if}
+        <strong>{review.count.toLocaleString()} {noun(review.count)} matched · {formatBytes(review.estimated_bytes)}</strong>
+        <span>{deletable.toLocaleString()} eligible · {skipped.toLocaleString()} skipped</span>
+        {#if selection.mode === 'all_matching' && selection.exclusions?.length}<span>After {selection.exclusions.length.toLocaleString()} {selection.exclusions.length === 1 ? 'exclusion' : 'exclusions'}.</span>{/if}
+        <span>Review expires <time datetime={review.expires_at}>{formatDateTime(review.expires_at, 'long')}</time></span>
+        {#if review.search_deletion_scope === 'active'}<span>Semantic search covers active messages only.</span>{/if}
         {#if blocked}<span class="muted">{preflightReasonLabel('stage_deletion', blocked)}</span>{/if}
         {#if preview}
           <span class="muted">
-            Dry run: {preview.message_count.toLocaleString()} {noun(preview.message_count)} would be staged.
+            {resultSummary(preview)}
           </span>
         {/if}
       </div>
+    {/if}
     {/if}
     {#if error}
       <p class="error" role="alert">

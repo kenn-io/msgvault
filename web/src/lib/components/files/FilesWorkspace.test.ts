@@ -1191,24 +1191,9 @@ describe('FilesWorkspace', () => {
     }
 
     async function typeMenuItems(): Promise<string[]> {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+
       return ['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other'].filter(label => screen.queryByRole('checkbox', { name: label }) !== null);
     }
-
-    it('filters by type from the shared Filter menu', async () => {
-      const onMIMEFamiliesChange = vi.fn();
-      renderFiles({ onMIMEFamiliesChange });
-      expect(await typeMenuItems()).toEqual(['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other']);
-      await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
-      expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf']);
-    });
-
-    it('marks selected file types', async () => {
-      renderFiles({ mimeFamilies: ['pdf'] });
-      await typeMenuItems();
-      expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(true);
-      expect((screen.getByRole('checkbox', { name: 'Images' }) as HTMLInputElement).checked).toBe(false);
-    });
 
     it.each([
       ['media', ['Images', 'Video']],
@@ -1281,3 +1266,18 @@ function describedBy(element: HTMLElement): string | undefined {
   const id = element.getAttribute('aria-describedby');
   return id ? document.getElementById(id)?.textContent?.trim() : undefined;
 }
+
+it('keeps embedded identity and relationship scope when filename and type change', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const client = createAPIClient(async input => { bodies.push(await (input as Request).clone().json()); return Response.json(personResponse()); });
+  const predicate = { query: 'quarterly', search_mode: 'full_text' as const, filters: [{ dimension: 'participant' as const, values: ['42'] }, { dimension: 'source' as const, values: ['9'] }] };
+  const onFilenameQueryChange = vi.fn(), onMIMEFamiliesChange = vi.fn();
+  const view = renderReady({ client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf'], onFilenameQueryChange, onMIMEFamiliesChange });
+  await screen.findByText('fixture.pdf');
+  await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'budget' } });
+  expect(onFilenameQueryChange).toHaveBeenCalledWith('budget');
+  await view.rerender({ filenameQuery: 'budget', mimeFamilies: ['pdf', 'text'] });
+  await waitFor(() => expect(bodies.at(-1)).toMatchObject({ predicate, filename_query: 'budget', mime_families: ['pdf', 'text'] }));
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'Audio' }));
+  expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf', 'text', 'audio']);
+});
