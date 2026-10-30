@@ -260,7 +260,7 @@
   );
 </script>
 
-{#if showSetup || integrationState === 'ready' || loading || tasks.length > 0 || error}
+{#if showSetup || integrationState === 'ready' || loading || (tasks.length > 0 && integrationState !== 'authentication_required') || error}
 <section class="task-links" aria-label="Linked tasks">
   {#if mode !== 'add' && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
@@ -275,7 +275,7 @@
     {#if sessionOnlyIndex}<p role="status">
         Linked-task index updates are available for this session but are not persisted to disk on this platform.
       </p>{/if}
-    {#if mode !== 'add'}
+    {#if mode !== 'add' && integrationState !== 'authentication_required'}
     {#if tasks.length > 0}
       <ul>
         {#each tasks as task (task.id)}<li>
