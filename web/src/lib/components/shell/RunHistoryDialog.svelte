@@ -129,7 +129,7 @@
         {/if}
       </div>
       {#if current.initialLoading || current.backgroundLoading}<p class="muted" role="status">Loading…</p>{/if}
-      {#if current.historyReadable && current.rows.length === 0 && !current.runsError && !current.conflict}<p class="muted">No runs match.</p>{/if}
+      {#if current.historyReadable && current.rows.length === 0 && current.unavailableKinds.length === 0 && !current.runsError && !current.conflict}<p class="muted">No runs match.</p>{/if}
       <div class="runs"><OperationRunTable rows={current.rows} onSelect={selectRun} /></div>
       {#if current.nextCursor}<Button size="sm" surface="soft" label={current.paging ? 'Loading…' : 'Show more'} disabled={current.paging} onclick={() => void controller.loadMore()} />{/if}
     {/if}

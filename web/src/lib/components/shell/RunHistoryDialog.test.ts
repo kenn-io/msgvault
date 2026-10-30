@@ -142,3 +142,26 @@ it('refreshes unchanged filters when the dialog opens', async () => {
   await screen.findByText('No runs match.');
   expect(applyURLState).toHaveBeenCalledWith(state, true);
 });
+
+it('withholds an empty result while requested history is unavailable', async () => {
+  let unavailable = true;
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+    if (path === '/api/v1/operations/runs') return Response.json({
+      runs: [], membership_revision: 1,
+      unavailable_kinds: unavailable ? [{ kind: 'document_extraction', lane: 'documents', unavailable_code: 'document_extraction_history_unavailable' }] : [],
+    });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const controller = new OperationsController(client); controllers.push(controller);
+  render(RunHistoryDialog, { client, controller,
+    state: { ...defaultOperationsState(), operationLane: 'documents', operationState: 'failed' },
+    onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+  await screen.findByText('Document extraction history is unavailable.');
+  expect(screen.queryByText('No runs match.')).toBeNull();
+  unavailable = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText('No runs match.');
+  expect(screen.queryByText('Document extraction history is unavailable.')).toBeNull();
+});
