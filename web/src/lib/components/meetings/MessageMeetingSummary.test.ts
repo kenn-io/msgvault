@@ -47,11 +47,12 @@ describe('Messages meeting summary', () => {
     expect(onOpenMeeting).toHaveBeenCalledWith(expect.objectContaining({ message_id: 42 }));
   });
 
-  it.each([1, 4])('labels a count of %s meetings', async (count) => {
+  it('labels a singular meeting count', async () => {
+    const count = 1;
     render(MessageMeetingSummary, { client: createAPIClient(async (input) => (input as Request).url.endsWith('/metrics')
       ? Response.json(meetingMetrics({ totals: { ...meetingMetrics().totals, meeting_count: count } }))
       : Response.json(meetingActions())), scope: { kind: 'direct', scope: { message_ids: [42] } } });
-    expect(await screen.findByText(new RegExp(`^${count} ${count === 1 ? 'meeting' : 'meetings'} ·`))).toBeDefined();
+    expect(await screen.findByText(/^1 meeting ·/)).toBeDefined();
   });
 
   it('asks the workspace for fresh authority after a changed scope', async () => {

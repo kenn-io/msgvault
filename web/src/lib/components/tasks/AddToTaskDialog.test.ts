@@ -1,10 +1,9 @@
+import { taskCreationClient } from './fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import AddToTaskDialog from './AddToTaskDialog.svelte';
-
-const metadata = { archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Follow up', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z' };
 
 describe('Add to task', () => {
   it('opens Kata evidence directly for a non-email message when Kata is ready', async () => {
@@ -26,12 +25,7 @@ describe('Add to task', () => {
   it.each(['create', 'cancel'])('closes its single dialog and reports only completed changes after %s', async (mode) => {
     const onclose = vi.fn();
     const onchanged = vi.fn();
-    const client = createAPIClient(async (input) => {
-      const request = input as Request;
-      const path = new URL(request.url).pathname;
-      if (request.method === 'POST') return Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 });
-      return Response.json(path.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: metadata });
-    });
+    const client = taskCreationClient();
     const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Follow up', email: true, onclose, onchanged } });
     try {
       await screen.findByRole('button', { name: 'Cancel' });
