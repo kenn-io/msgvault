@@ -218,4 +218,17 @@ func TestPersonTiersUseTheLoadedConfig(t *testing.T) {
 	assert.Empty(raised.People, "a raised threshold from [people.tiers] drops the person")
 	_, warning := preview("[activity]\ntimezone = \"America/New_York\"\n")
 	assert.Contains(warning, "settings_changed")
+
+	// The daemon's CLI children load leniently, so a misspelled threshold must
+	// stop the preview instead of falling back to the default.
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[people.tiers.tier2]\nmin_active_days_lng = 4\n"), 0o600))
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	lenient, err := config.LoadClientConfigFile(snapshot, home)
+	require.NoError(err)
+	ctx := testInvocationContext(t.Context(), lenient, invocationOptions{})
+	_, _, err = executePersonTiersCommandContext(ctx, defaultPersonTiersCommandDeps(), "preview", "--json")
+	require.ErrorIs(err, persontiers.ErrInvalidConfig)
+	assert.ErrorContains(err, "min_active_days_lng")
 }

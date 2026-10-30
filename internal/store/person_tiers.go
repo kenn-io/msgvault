@@ -213,11 +213,14 @@ type personTierPlan struct {
 	stored bool
 }
 
-// planPersonTiers reads the projection timezone and direct limit. While either
-// is changing, the stored rows follow neither the old nor the new value, so it
-// refuses. With nothing projected yet, counts use UTC and the default limit and
-// readiness reports the missing projection.
+// planPersonTiers validates the rules, then reads the projection timezone and
+// direct limit. While either is changing, the stored rows follow neither the
+// old nor the new value, so it refuses. With nothing projected yet, counts use
+// UTC and the default limit and readiness reports the missing projection.
 func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, options PersonTierOptions) (personTierPlan, error) {
+	if err := options.Config.Validate(); err != nil {
+		return personTierPlan{}, err
+	}
 	zone, err := s.activityTimezoneTransitionQueryContext(ctx, tx)
 	if err != nil {
 		return personTierPlan{}, err

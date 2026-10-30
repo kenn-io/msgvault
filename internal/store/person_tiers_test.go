@@ -277,3 +277,14 @@ func TestPersonTiersCountSentMailThatKeptDraftEvidence(t *testing.T) {
 	assert.Equal(4, explanation.Signals.OutboundShort)
 	assert.Equal(1, explanation.Tier)
 }
+
+func TestPersonTiersRejectInvalidRules(t *testing.T) {
+	require := require.New(t)
+	p := newTierPeople(t)
+	options := tierOptions()
+	options.Config.Tier1.MinOutboundShort = 0
+	_, err := p.f.Store.PreviewPersonTiersContext(t.Context(), options)
+	require.ErrorIs(err, persontiers.ErrInvalidConfig)
+	_, err = p.f.Store.ExplainPersonTierContext(t.Context(), p.frequent, options)
+	require.ErrorIs(err, persontiers.ErrInvalidConfig)
+}

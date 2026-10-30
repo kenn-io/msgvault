@@ -629,6 +629,18 @@ func (c *Config) DaemonConfigError() error {
 	return errors.Join(c.daemonErrs...)
 }
 
+// PeopleTiersError returns the recorded [people.tiers] errors, or nil. Tier
+// previews refuse to run on them instead of falling back to defaults.
+func (c *Config) PeopleTiersError() error {
+	var errs []error
+	for _, err := range c.daemonErrs {
+		if errors.Is(err, persontiers.ErrInvalidConfig) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // requireDaemonValid returns the config, or the recorded daemon errors.
 func (c *Config) requireDaemonValid() (*Config, error) {
 	if err := c.DaemonConfigError(); err != nil {
@@ -1122,7 +1134,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			cfg.deferDaemonError(fmt.Errorf("unknown people.identity_scoring config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "people.tiers.") {
-			cfg.deferDaemonError(fmt.Errorf("unknown people.tiers config key %q", key.String()))
+			cfg.deferDaemonError(fmt.Errorf("%w: unknown people.tiers config key %q", persontiers.ErrInvalidConfig, key.String()))
 		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
 			cfg.deferDaemonError(fmt.Errorf("unknown IMAP draft config key %q", key.String()))

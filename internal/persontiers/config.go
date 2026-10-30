@@ -40,6 +40,10 @@ type Tier2Thresholds struct {
 	MinMeetingDaysLong int `toml:"min_meeting_days_long"`
 }
 
+// ErrInvalidConfig marks every [people.tiers] error, from validation or an
+// unknown key, so callers can refuse to evaluate on any of them.
+var ErrInvalidConfig = errors.New("invalid people.tiers config")
+
 // DefaultConfig returns the shipped windows, thresholds and exclusions.
 func DefaultConfig() Config {
 	return Config{
@@ -57,7 +61,15 @@ func DefaultConfig() Config {
 }
 
 // Validate rejects windows, thresholds and patterns the rules cannot evaluate.
+// Every error wraps ErrInvalidConfig.
 func (c Config) Validate() error {
+	if err := c.validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidConfig, err)
+	}
+	return nil
+}
+
+func (c Config) validate() error {
 	if c.ShortWindowDays < 1 || c.LongWindowDays < c.ShortWindowDays || c.LongWindowDays > 3650 {
 		return errors.New("people.tiers windows must satisfy 1 <= short_window_days <= long_window_days <= 3650")
 	}
