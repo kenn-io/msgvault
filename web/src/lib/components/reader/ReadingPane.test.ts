@@ -44,13 +44,25 @@ describe('ReadingPane header', () => {
   it.each([
     ['email', 'message', 'Email'],
     ['imessage', 'conversation', 'Conversation'],
+    ['whatsapp', 'conversation', 'Conversation'],
     ['calendar', 'event', 'Calendar event'],
     ['meeting', 'meeting', 'Meeting']
-  ])('labels %s (%s) entries %s in the meta strip', (messageType, kind, name) => {
-    renderPane(entryRow({ message_type: messageType, kind, anchor_message_id: undefined }));
+  ])('labels %s (%s) entries %s in the meta strip', async (messageType, kind, name) => {
+    const view = renderPane(entryRow({ message_type: messageType, kind, anchor_message_id: undefined }));
     const meta = document.querySelector('.pane-meta')?.textContent ?? '';
     expect(meta.startsWith(`${name} · `)).toBe(true);
     expect(meta).not.toContain(messageType === 'email' ? 'email ·' : messageType);
+    if (messageType === 'whatsapp') {
+      const onOpenPerson = vi.fn();
+      await view.rerender({
+        selection: { kind: 'entry', row: entryRow({ kind, message_type: messageType, conversation_id: 7, counterpart_participant_id: 22 }) },
+        client: createAPIClient(async () => Response.json({ id: 7, anchor_id: 42, messages: [{ id: 42, conversation_id: 7, message_type: 'whatsapp', from: 'You', is_from_me: true, to: [], subject: 'Outgoing chat', body: 'Outgoing-only message', labels: [], attachments: [] }], has_before: false, has_after: false, total: 1 })),
+        onOpenPerson,
+      });
+      await screen.findByText('Outgoing-only message');
+      await fireEvent.click(screen.getByRole('button', { name: 'Open person' }));
+      expect(onOpenPerson).toHaveBeenCalledWith(22);
+    }
   });
 });
 

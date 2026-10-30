@@ -18,8 +18,9 @@ describe('Message task list', () => {
     title = 'Review revised notes';
     await view.rerender({ refresh: 1 });
     expect(await screen.findByText('Review revised notes')).toBeDefined();
+    requests.length = 0;
     await view.rerender({ email: false, messageId: 43 });
-    expect(requests.some(request => request.url.endsWith('/messages/43/tasks'))).toBe(false);
+    expect(requests).toHaveLength(0);
   });
 
   it('shows linked Kata issues and refreshes them after the task dialog closes', async () => {

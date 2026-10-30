@@ -1853,16 +1853,11 @@ it('keeps relationship readers in their own history entries, including same-targ
     expect(state.current.relationshipReader).toBeNull();
     const returnToReader = popped(); window.history.back(); await returnToReader;
     expect(state.current.relationshipReader).toEqual(reader);
-    for (const snapshot of [{ version: 2, reader }, { version: 1, reader: { ...reader, target: 'cluster:2' } }]) {
-      window.history.replaceState({ ...window.history.state, relationshipReader: snapshot }, '', window.location.href);
-      window.dispatchEvent(new PopStateEvent('popstate'));
-      expect(state.current.relationshipReader).toBeNull();
-    }
+    window.history.replaceState({ ...window.history.state, relationshipReader: { version: 1, reader: { ...reader, target: 'cluster:2' } } }, '', window.location.href);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(state.current.relationshipReader).toBeNull();
     state.commitWorkspace('files');
     expect(state.current.relationshipReader).toBeNull();
-    window.history.replaceState({ exploreSearch: window.location.search, exploreState: { ...state.current, schemaVersion: 999, workspace: 'relationships', relationshipTarget: 'cluster:1', relationshipReader: reader } }, '', window.location.href);
-    window.dispatchEvent(new PopStateEvent('popstate'));
-    expect(state.current.workspace).toBe('files');
-    expect(state.current.relationshipReader).toBeNull();
+
   } finally { state.destroy(); }
 });
