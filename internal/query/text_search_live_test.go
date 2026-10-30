@@ -8,61 +8,23 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
-// openTextSearchDB creates a minimal in-memory SQLite DB with one text
+// openTextSearchDB creates a production-schema in-memory SQLite DB with one text
 // message indexed in FTS. The caller may soft-delete the message via
 // SQL after this call to verify live-message filtering.
 func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:")
-	require.NoError(t, err, "open")
-	t.Cleanup(func() { _ = db.Close() })
+	st, err := store.Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	require.NoError(t, st.InitSchema())
+	db := st.DB()
 
-	_, err = db.Exec(`
-		CREATE TABLE sources (
-			id INTEGER PRIMARY KEY,
-			source_type TEXT NOT NULL DEFAULT 'imessage',
-			identifier TEXT NOT NULL UNIQUE
-		);
-		CREATE TABLE conversations (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER,
-			source_conversation_id TEXT,
-			title TEXT
-		);
-		CREATE TABLE participants (
-			id INTEGER PRIMARY KEY,
-			email_address TEXT,
-			display_name TEXT,
-			phone_number TEXT,
-			domain TEXT
-		);
-		CREATE TABLE messages (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER,
-			source_message_id TEXT,
-			conversation_id INTEGER,
-			sender_id INTEGER,
-			subject TEXT,
-			snippet TEXT,
-			sent_at DATETIME,
-			size_estimate INTEGER DEFAULT 0,
-			has_attachments INTEGER DEFAULT 0,
-			attachment_count INTEGER DEFAULT 0,
-			deleted_at DATETIME,
-			deleted_from_source_at DATETIME,
-			message_type TEXT NOT NULL DEFAULT 'imessage'
-		);
-		CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body, content='', contentless_delete=1);
-	`)
-	if err != nil {
-		t.Skipf("FTS5 not available: %v", err)
-	}
-
-	_, err = db.Exec(`INSERT INTO sources (id, identifier) VALUES (1, 'test@example.com')`)
+	_, err = db.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (1, 'imessage', 'test@example.com')`)
 	require.NoError(t, err, "insert source")
-	_, err = db.Exec(`INSERT INTO conversations (id, source_id) VALUES (1, 1)`)
+	_, err = db.Exec(`INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'direct_chat')`)
 	require.NoError(t, err, "insert conv")
 	res, err := db.Exec(`INSERT INTO messages (id, source_id, conversation_id, subject, message_type) VALUES (1, 1, 1, 'hello world', 'imessage')`)
 	require.NoError(t, err, "insert message")
@@ -201,7 +163,7 @@ func TestTextSearchScopesBeforePagination(t *testing.T) {
 	db, _ := openTextSearchDB(t)
 	insertTextSearchMessage(t, db, 2, "imessage", "hello second")
 	_, err := db.Exec(`
-		INSERT INTO sources (id, identifier) VALUES (2, 'second@example.com');
+		INSERT INTO sources (id, source_type, identifier) VALUES (2, 'imessage', 'second@example.com');
 		UPDATE messages SET sent_at = '2026-01-01 10:00:00' WHERE id = 1;
 		UPDATE messages SET source_id = 2, sent_at = '2026-01-01 11:00:00' WHERE id = 2;
 	`)

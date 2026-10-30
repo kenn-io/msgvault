@@ -2423,6 +2423,10 @@ var exclusiveLockTables = []string{
 // persons and waits on participants. Taking the row lock first serializes
 // the two paths instead.
 func (d *PostgreSQLDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) error {
+	return d.beginExclusive(ctx, conn, nil)
+}
+
+func (d *PostgreSQLDialect) beginExclusive(ctx context.Context, conn *sql.Conn, preFence func() error) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 		return err
 	}
@@ -2430,8 +2434,15 @@ func (d *PostgreSQLDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) 
 		_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		return err
 	}
+	// Disable the pool's statement timeout before the fence: waiting behind a
+	// long policy refresh must not time out source removal or channel purge.
 	if _, err := conn.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
 		return rollback(err)
+	}
+	if preFence != nil {
+		if err := preFence(); err != nil {
+			return rollback(err)
+		}
 	}
 	if _, err := conn.ExecContext(ctx,
 		"INSERT INTO archive_metadata (key, value) VALUES ($1, '0') ON CONFLICT DO NOTHING",

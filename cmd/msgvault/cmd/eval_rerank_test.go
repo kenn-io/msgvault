@@ -523,3 +523,26 @@ func TestEvalJSONOutputIsDeterministic(t *testing.T) {
 	require.True(t, found)
 	assert.Less(t, strings.Index(inner, `"b"`), strings.Index(inner, `"y"`))
 }
+
+// Production search admits include:cold only lexically, so a semantic eval
+// mode must reject such a topic instead of silently dropping the operator.
+func TestRunEvalRejectsIncludeColdForSemanticModes(t *testing.T) {
+	for _, modes := range []string{"vector", "fts,hybrid"} {
+		t.Run(modes, func(t *testing.T) {
+			preserveEvalRerankGlobals(t)
+			dir := t.TempDir()
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = dir
+			evalModes, evalDocKey, evalLimit, evalJSON = modes, "message", 100, true
+			evalRerankJev = ""
+			evalQrels = writeEvalFile(t, dir, "qrels.txt", "q1 0 <m1@example.com> 1\n")
+			evalTopics = writeEvalFile(t, dir, "topics.tsv", "q1\trenewal include:cold\n")
+			cmd := newEvalRerankTestCommand(t, &bytes.Buffer{}, true, true)
+			cmd.SetContext(testInvocationContext(cmd.Context(), cfg, invocationOptions{}))
+			err := runEvalWithRerankerFactory(cmd, nil, (&evalRerankRecorder{}).makeReranker)
+			require.ErrorContains(t, err, "include:cold is available only for lexical evaluation")
+			_, statErr := os.Stat(filepath.Join(dir, "msgvault.db"))
+			assert.True(t, os.IsNotExist(statErr), "the rejected topic must not open the archive")
+		})
+	}
+}

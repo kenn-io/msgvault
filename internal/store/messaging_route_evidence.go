@@ -14,6 +14,7 @@ import (
 // Sync calls it with incomplete evidence before roster writes, then with the
 // exact completed roster afterward. Discovery never calls this write method.
 func (s *Store) SetConversationMessagingRouteEvidence(ctx context.Context, conversationID int64, e MessagingRouteEvidence) error {
+	e.SelfParticipantIDsComplete = len(e.SelfParticipantIDs) <= maxRouteEvidenceIDs
 	for _, ids := range []*[]int64{&e.ParticipantIDs, &e.SelfParticipantIDs} {
 		*ids = slices.Clone(*ids)
 		slices.Sort(*ids)
@@ -28,7 +29,7 @@ func (s *Store) SetConversationMessagingRouteEvidence(ctx context.Context, conve
 		e.Truncated = true
 		e.MemberChatIDs = e.MemberChatIDs[:maxRouteEvidenceIDs]
 	}
-	return s.withSyncConversationWriteContext(ctx, conversationID, func(q querier) error {
+	return s.withConversationPolicyActivityWriteContext(ctx, conversationID, func(q querier) error {
 		var raw sql.NullString
 		if err := q.QueryRow(`SELECT metadata FROM conversations WHERE id=?`, conversationID).Scan(&raw); err != nil {
 			return fmt.Errorf("read route metadata: %w", err)
@@ -66,13 +67,25 @@ func (s *Store) SetSourceMessagingRouteFailureContext(ctx context.Context, sourc
 		return errors.New("invalid source messaging route failure")
 	}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var result sql.Result
+		var err error
 		if failure == "" {
-			_, err := tx.ExecContext(ctx, `DELETE FROM source_messaging_route_failures WHERE source_id=?`, sourceID)
+			result, err = tx.ExecContext(ctx, `DELETE FROM source_messaging_route_failures WHERE source_id=?`, sourceID)
+		} else {
+			result, err = tx.ExecContext(ctx, `INSERT INTO source_messaging_route_failures(source_id,failure) VALUES(?,?)
+ ON CONFLICT(source_id) DO UPDATE SET failure=excluded.failure,updated_at=CURRENT_TIMESTAMP WHERE source_messaging_route_failures.failure<>excluded.failure`, sourceID, failure)
+		}
+		if err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO source_messaging_route_failures(source_id,failure)
- VALUES (?,?) ON CONFLICT(source_id) DO UPDATE SET failure=excluded.failure,updated_at=CURRENT_TIMESTAMP`, sourceID, failure)
-		return err
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return nil
+		}
+		return s.markSourceConversationPolicyActivityDirtyTx(ctx, tx, sourceID)
 	})
 	if err != nil {
 		return fmt.Errorf("set source messaging route failure: %w", err)
@@ -87,7 +100,7 @@ func (s *Store) InvalidateConversationMessagingRouteEvidence(ctx context.Context
 }
 
 func (s *Store) invalidateConversationMessagingRouteEvidence(ctx context.Context, conversationID int64, failure string) error {
-	return s.withSyncConversationWriteContext(ctx, conversationID, func(q querier) error {
+	return s.withConversationPolicyActivityWriteContext(ctx, conversationID, func(q querier) error {
 		return s.invalidateMessagingRouteEvidenceWith(q, conversationID, failure)
 	})
 }

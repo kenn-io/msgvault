@@ -171,23 +171,6 @@ func (s *Store) withSyncMessageWriteContext(
 	})
 }
 
-func (s *Store) withSyncConversationWriteContext(
-	ctx context.Context,
-	conversationID int64,
-	write func(querier) error,
-) error {
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		q := boundQuerier{ctx: ctx, q: tx}
-		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
-			return err
-		}
-		return write(q)
-	})
-}
-
 func (s *Store) withSyncSourceWriteContext(
 	ctx context.Context,
 	sourceID int64,

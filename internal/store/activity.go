@@ -954,7 +954,7 @@ func (s *Store) StaleContactStatePersonsContext(
 				UNION
 				SELECT aep.person_id
 				FROM activity_event_persons aep
-				WHERE aep.evidence = 'direct'
+				WHERE aep.evidence = 'direct' AND `+FullActivityEventWhere("aep")+`
 				  AND NOT EXISTS (
 					SELECT 1
 					FROM person_contact_state pcs
@@ -2189,7 +2189,8 @@ func (s *Store) recomputeContactStateTx(
 		       ae.owner_source_id, ae.owner_address
 		FROM activity_event_persons aep
 		JOIN activity_events ae ON ae.message_id = aep.message_id
-		WHERE aep.person_id = ? AND aep.evidence = 'direct'
+		JOIN messages m ON m.id = ae.message_id
+		WHERE aep.person_id = ? AND aep.evidence = 'direct' AND `+FullMessageWhere("m")+`
 		ORDER BY ae.occurred_at, ae.message_id
 	`, personID)
 	if err != nil {

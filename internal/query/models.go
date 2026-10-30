@@ -235,6 +235,8 @@ const (
 
 // MessageFilter specifies which messages to retrieve.
 type MessageFilter struct {
+	includeCold bool // set only by lexical builders from search.Query
+
 	AccountScopes []search.AccountScope // picker account selections; intersect with source filters
 
 	// Filter by aggregate key

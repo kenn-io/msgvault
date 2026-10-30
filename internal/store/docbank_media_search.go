@@ -9,9 +9,10 @@ import (
 	"go.kenn.io/msgvault/internal/personscope"
 )
 
-// ListMediaSearchOccurrences reads the complete live population for a destination.
+// ListMediaSearchOccurrences reads the complete live population for a
+// destination. Like default lexical search, it leaves out cold rooms.
 func (s *Store) ListMediaSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope) ([]MessageMediaOccurrence, error) {
-	return s.listMessageOccurrenceRows(ctx, destination, 0, scope)
+	return s.listMessageOccurrenceRows(ctx, destination, 0, scope, true)
 }
 
 // MediaSearchLocalGaps counts audio that has no current mapping to search.
@@ -29,7 +30,7 @@ func (s *Store) MediaSearchLocalGaps(ctx context.Context, destination string, sc
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations cv ON cv.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE `+LiveMessagesWhere("m", true)+` AND `+messageRecordingAudio("")+`
+		WHERE `+(LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))+` AND `+messageRecordingAudio("")+`
 		  AND NOT EXISTS (SELECT 1 FROM beeper_media_occurrences o
 		    WHERE o.destination_key = ? AND o.retention_state <> 'revoked'
 		      AND o.source_type = src.source_type AND o.source_identifier = src.identifier
@@ -68,7 +69,8 @@ func (s *Store) documentSearchAttachmentMatch() string {
 }
 
 func documentSearchMessageWhere(scope *personscope.Scope) (string, []any) {
-	where := LiveMessagesWhere("m", true)
+	// Document search follows default lexical search and leaves out cold rooms.
+	where := LiveMessagesWhere("m", true) + " AND " + FullMessageWhere("m")
 	var args []any
 	if scope != nil {
 		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")

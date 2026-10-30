@@ -1083,6 +1083,9 @@ func (h *handlers) searchMessageBodiesHybrid(
 	ctx context.Context, args map[string]any,
 	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*toolResult, error) {
+	if parsed.IncludeCold {
+		return toolErrorResult("include:cold is available only for lexical search; use search_message_bodies or search_metadata"), nil
+	}
 	if h.hybridSearcher != nil {
 		return h.searchMessageBodiesHybridViaSearcher(ctx, args, queryStr, parsed, mode, explain)
 	}

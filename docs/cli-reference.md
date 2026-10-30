@@ -20,7 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
-| Inspect staged room policy | [policy](#policy) |
+| Inspect room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
@@ -2561,6 +2561,7 @@ msgvault search <query> [flags]
 | `--account` | Limit results to a specific account |
 | `--collection` | Limit results to all member accounts of a collection |
 | `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `discord`, `calendar_event`, `sms` |
+| `--include-cold` | Include retained cold conversations in lexical search; requires `--mode fts` (newer `main` builds). |
 | `--deletion-scope` | Source-deletion scope: `active` (default), `deleted`, or `any`. Non-active scopes require `--mode fts`. |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |
@@ -2568,6 +2569,11 @@ msgvault search <query> [flags]
 | `--sort date` | Display the retrieved vector/hybrid page newest first; requires `--mode vector` or `--mode hybrid` (newer `main` builds). |
 
 Search and stats reject an explicitly empty collection with `empty_scope` for owners and agents.
+
+Newer `main` builds search full conversations by default. Add `include:cold`
+or `--include-cold` with `--mode fts` to search retained cold text. The option
+applies to every pipe alternative. Vector and hybrid search reject it. Direct
+message and conversation detail requests can still read retained cold text.
 
 Without an explicit message-type filter, search intentionally returns all
 matching cached message types, including meeting transcripts and chats.
@@ -5342,9 +5348,10 @@ revoked secret is denied without fallback.
 
 ## policy
 
-Inspect staged conversation archive tiers and source-qualified overrides.
-See [conversation archive tiers](configuration.md#conversation-archive-tiers-staged)
-for defaults and the staged-release limitation.
+Inspect enforced conversation archive tiers and source-qualified overrides
+in newer `main` builds.
+See [conversation archive tiers](configuration.md#conversation-archive-tiers)
+for defaults and refresh timing.
 
 ```sh
 msgvault policy list
@@ -5353,5 +5360,9 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 ```
 
 `list` always prints JSON. Saved CLI overrides win over config. `reset` restores
-config or automatic selection. Effective tiers remain `full` in this release;
+config or automatic selection. JSON includes effective full/cold tier, roster
+count with known/unknown status, last activity, override origin and `staged: false`.
+Set/reset enforce eligibility immediately and request an analytics rebuild when
+automatic rebuilding is enabled. Completion does not mean the cache has finished
+rebuilding.
 `stub` and `skip` are rejected. No messages are removed.
