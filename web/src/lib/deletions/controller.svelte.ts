@@ -89,7 +89,7 @@ export class DeletionsController {
     let superseded = false;
     const request = new Promise<DeletionManifestDetail | undefined>(resolve => {
       this.#queue.push(() => {
-        if (this.#disposed || controller.signal.aborted) { resolve(undefined); return; }
+        if (this.#disposed || controller.signal.aborted) { resolve(this.#disposed ? undefined : this.getDetail(id, { retry: true })); return; }
         this.#running++;
         let timeout: ReturnType<typeof setTimeout>;
         const stopped = new Promise<undefined>(done => {
