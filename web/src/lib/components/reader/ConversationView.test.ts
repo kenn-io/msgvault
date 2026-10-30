@@ -76,7 +76,7 @@ describe('ConversationView', () => {
         ...entry,
         conversation_id: owner ? 7 : 8,
         from: owner ? '' : 'Chat sender',
-        from_participant_id: owner ? 11 : 22,
+        from_participant_id: owner ? 0 : 22,
         to: ['Chat recipient'],
         to_participants: [{ display: 'Chat recipient', participant_id: 33 }],
         is_from_me: owner
@@ -199,6 +199,7 @@ describe('ConversationView', () => {
     await waitFor(() => expect(statusCalls).toBe(2));
     await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 1' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+    expect(await screen.findByRole('dialog', { name: 'Add to task' })).toBeDefined();
     await waitFor(() => expect(statusCalls).toBe(3));
   });
 

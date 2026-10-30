@@ -337,5 +337,5 @@ type participantConversationStore struct{ *mockStore }
 
 func (*participantConversationStore) ConversationExists(int64) (bool, error) { return true, nil }
 func (*participantConversationStore) GetConversationWindow(int64, int64, int, int) (*store.ConversationWindow, error) {
-	return &store.ConversationWindow{Messages: []store.APIMessage{{ID: 42, ConversationID: 7, FromParticipantID: 11, ToParticipants: []store.ParticipantDisplay{{ParticipantID: 22, Display: "Blair Example <blair@example.com>"}}}}, Total: 1}, nil
+	return &store.ConversationWindow{Messages: []store.APIMessage{{ID: 42, ConversationID: 7, From: "Alex Example <alex@example.com>", FromParticipantID: 11, To: []string{"Blair Example <blair@example.com>"}, ToParticipants: []store.ParticipantDisplay{{ParticipantID: 22, Display: "Blair Example <blair@example.com>"}}}}, Total: 1}, nil
 }
