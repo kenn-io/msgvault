@@ -52,7 +52,7 @@ test('page content sits one header gap below the divider, and full-width panes m
       return next!.getBoundingClientRect().top - divider;
     });
   }
-  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Settings'].includes(label) ? 0 : 8])));
+  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Directory', 'Settings'].includes(label) ? 0 : 8])));
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {
@@ -128,7 +128,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
     created_at: row.occurred_at, updated_at: row.occurred_at
   }] } }));
   await selectWorkspace(page, 'Messages');
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
+  await page.getByRole('searchbox', { name: 'Search messages' }).fill('archive');
   await page.getByRole('combobox', { name: 'Group by', exact: true }).click();
   await page.getByRole('option', { name: 'Source', exact: true }).click();
   const chips = page.locator('.context-chips .chip');
@@ -148,7 +148,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
     expect.soft(shape.radius).toBeGreaterThanOrEqual(shape.height / 2);
   }
   const longQuery = 'archive '.repeat(100).trim();
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill(longQuery);
+  await page.getByRole('searchbox', { name: 'Search messages' }).fill(longQuery);
   const queryChip = chips.filter({ hasText: longQuery });
   const wrapping = await queryChip.locator('.kit-chip__label').evaluate((element) => ({
     clipped: element.scrollWidth > element.clientWidth,
