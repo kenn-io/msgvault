@@ -13,6 +13,7 @@ import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry
 import AppShell from './AppShell.svelte';
 import { ShellData } from './shell-data.svelte';
 import SettingsWorkspace from '../settings/SettingsWorkspace.svelte';
+import type { CardDAVSettingsRequest } from '../../carddav/navigation';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
@@ -340,7 +341,7 @@ describe('AppShell', () => {
 
   it.each([
     ['everything', 'Messages'],
-    ['directory', 'Directory'], ['deletions', 'Deletions'], ['settings', 'Settings']
+    ['directory', 'Directory'], ['deletions', 'Staged deletions'], ['settings', 'Settings']
   ])('reaches %s through the command palette', async (workspace, label) => {
     window.history.replaceState(null, '', `/?workspace=${workspace === 'everything' ? 'sources' : 'everything'}`);
     const state = new ExploreState(window);
@@ -443,7 +444,10 @@ describe('AppShell', () => {
     });
     const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
     try {
-      if (workspace === 'files') expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
+      if (workspace === 'files') {
+        await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+        expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
+      }
       await openDemoView();
       const grid = await screen.findByRole('grid', { name: 'Files results' });
       if (workspace === 'everything') await waitFor(() => expect(document.activeElement).toBe(grid));
@@ -531,7 +535,7 @@ describe('AppShell', () => {
     it.each([
       ['relationships', 'Relationships'], ['directory', 'Directory'], ['directory_review', 'Reviews'],
       ['everything', 'Messages'], ['files', 'Files'],
-      ['sources', 'Sources'], ['deletions', 'Deletions']
+      ['sources', 'Sources'], ['deletions', 'Staged deletions']
     ])('shows one visible page title in %s', async (workspace, title) => {
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -2187,7 +2191,7 @@ describe('AppShell', () => {
 
     const row = (await screen.findByText('report.pdf')).closest('[role="row"]')!;
     await fireEvent.click(row);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open containing item' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open message' }));
 
     await waitFor(() => expect(state.current.workspace).toBe('everything'));
     expect(state.current.selectedRow).toBe('message:42');
@@ -2242,6 +2246,7 @@ describe('AppShell', () => {
     state.replaceTransient({ workspace: 'files' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
       const input = await screen.findByLabelText('Filter filename');
       await screen.findByRole('grid', { name: 'Files results' });
       const initialRequestCount = searchRequests.length;
@@ -2277,10 +2282,10 @@ describe('AppShell', () => {
     state.replaceTransient({ workspace: 'files' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
       const input = await screen.findByLabelText('Filter filename');
       await screen.findByRole('grid', { name: 'Files results' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Type' }));
-      const pdfs = await screen.findByRole('button', { name: 'PDFs' });
+      const pdfs = await screen.findByRole('checkbox', { name: 'PDFs' });
       const initialRequestCount = searchRequests.length;
       // Start a debounced filename-search patch (queued for 250ms) and then,
       // still inside that window, commit a navigation.
@@ -2323,6 +2328,7 @@ describe('AppShell', () => {
     state.commitNavigation({ workspace: 'files' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
       const input = await screen.findByLabelText('Filter filename');
       await screen.findByRole('grid', { name: 'Files results' });
       const initialRequestCount = searchRequests.length;
@@ -2383,12 +2389,13 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('shows grouped Files filename and type filters as removable chips', async () => {
+  it('shows removable filename and type chips in grouped and ungrouped Files', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const groupRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
       if (path.endsWith('/groups')) {
         groupRequests.push(request);
         return Response.json({
@@ -2421,27 +2428,10 @@ describe('AppShell', () => {
     expect(state.current.fileMIMEFamilies).toEqual([]);
     await expect(groupRequests[2]!.clone().json()).resolves.not.toHaveProperty('mime_families');
     expect(screen.queryByText(/^Filename:|^Type:/)).toBeNull();
-    rendered.unmount();
-    state.destroy();
-  });
-
-  it('shows no file filter chips beside the ungrouped Files controls', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/files/search') return Response.json({
-        files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {}
-      });
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    state.replaceTransient({ workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-
+    state.replaceTransient({ groupingChain: [], fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'] });
     await screen.findByRole('grid', { name: 'Files results' });
-    expect((screen.getByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).value).toBe('invoice');
-    expect(screen.queryByRole('button', { name: 'Remove filename filter' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Remove type filter' })).toBeNull();
+    expect(screen.getByText('Filename: “invoice”')).toBeDefined();
+    expect(screen.getByText('Type: PDFs')).toBeDefined();
     rendered.unmount();
     state.destroy();
   });
@@ -2501,7 +2491,7 @@ describe('AppShell', () => {
     await screen.findByText('Synthetic subject 1');
 
     const main = screen.getByRole('main', { name: 'Messages' });
-    expect(within(main).getAllByText('2 items')).toHaveLength(1);
+    await waitFor(() => expect(within(main).getAllByText('2 items')).toHaveLength(1));
     await fireEvent.keyDown(document.body, { key: 's' });
     const sort = screen.getByRole('combobox', { name: 'Sort: Newest first' });
     expect(document.activeElement).toBe(sort);
@@ -2706,14 +2696,15 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
-    expect(screen.queryByRole('button', { name: 'Review for deletion…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review deletion…' })).toBeNull();
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
     await waitFor(() => expect(preflights).toBe(1));
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Review for deletion…' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review deletion…' }));
 
-    await waitFor(() => expect(state.current.workspace).toBe('deletions'));
+    expect(await screen.findByRole('dialog', { name: 'Review deletion' })).toBeDefined();
+    expect(state.current.workspace).toBe('everything');
     await waitFor(() => expect(preflights).toBe(2));
     rendered.unmount();
     state.destroy();
@@ -3061,10 +3052,64 @@ it('reloads a failed source job when Sources is already open', async () => {
     const readsBeforeOpen = statusReads;
     await fireEvent.click(job);
     await waitFor(() => expect(statusReads).toBeGreaterThan(readsBeforeOpen));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Show details for Example archive' }));
-    await screen.findByText('Scheduler: Scheduled sync failed');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Example archive' }));
+    await screen.findByText('Scheduled sync failed');
     expect(state.current.workspace).toBe('sources');
   } finally {
     rendered.unmount(); state.destroy();
   }
+});
+
+it.each(['sources', 'carddav', 'search'])('opens %s settings from its workspace despite an old status authority', async category => {
+  window.history.replaceState(null, '', category === 'search' ? '/?workspace=files' : '/?workspace=sources');
+  const state = new ExploreState(window);
+  state.current.settingsAuthority = 'visual_attachments';
+  const client = createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [sourceStatus({ source_type: 'beeper', identifier: 'beeper', display_name: 'Example chats' }), sourceStatus({ id: 2, source_type: 'slack', identifier: 'slack', display_name: 'Example Slack' })] });
+    if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'work', oauth_app: 'team-app', status: { configured: true, available: true, account: { username: 'contacts@example.com' }, repair_reason: 'google_authorization_required' } }] });
+    if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'files-1', search_provenance: {} });
+    if (path.endsWith('/settings')) return Response.json({ settings: [], groups: [], pending_restart: false });
+    return Response.json({});
+  });
+  const settings = createRawSnippet<[CardDAVSettingsRequest | undefined, (key: number) => void]>((getRequest, getConsumed) => ({
+    render: () => '<div></div>',
+    setup: element => {
+      const component = mount(SettingsWorkspace, { target: element, props: { client, category: 'carddav', cardDAVRequest: getRequest(), onCardDAVRequestConsumed: getConsumed() } });
+      return () => { void unmount(component); };
+    }
+  }));
+  const view = render(AppShell, { client, state, ...(category === 'carddav' ? { settings: settings as never } : {}) });
+  if (category !== 'search') await fireEvent.click(await screen.findByRole('button', { name: category === 'sources' ? 'Details for Example Slack' : 'Details for contacts@example.com' }));
+  await fireEvent.click(await screen.findByRole('button', { name: category === 'search' ? 'Set up' : category === 'sources' ? 'Edit in Settings › Sources' : 'Open Settings › Contacts' }));
+  await waitFor(() => expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: category, settingsAuthority: category === 'search' ? 'visual_attachments' : '' }));
+  if (category === 'carddav') await waitFor(() => expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('contacts@example.com'));
+  view.unmount(); state.destroy();
+});
+
+it.each(['', 'invoice'])('clears Files filters and a pending filename edit from %j', async filename => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  window.history.replaceState(null, '', '/?workspace=files');
+  const state = new ExploreState(window);
+  state.replaceTransient({ fileFilenameQuery: filename, fileMIMEFamilies: ['pdf'], filters: [{ dimension: 'after', values: ['2026-07-01T00:00:00Z'] }] });
+  const view = render(AppShell, { client: createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path === '/api/v1/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+    if (path === '/api/v1/cli/accounts') return Response.json({ accounts: [] });
+    if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
+    if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+    if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
+    if (path === '/api/v1/explore/groups') return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+    return Response.json({}, { status: 404 });
+  }), state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: /^Filter$/ }));
+    await fireEvent.input(await screen.findByLabelText('Filter filename'), { target: { value: 'pending' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(state.current).toMatchObject({ filters: [], fileFilenameQuery: '', fileMIMEFamilies: [] });
+    expect((screen.getByLabelText('Filter filename') as HTMLInputElement).value).toBe('');
+    expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(false);
+  } finally { view.unmount(); state.destroy(); vi.useRealTimers(); }
 });

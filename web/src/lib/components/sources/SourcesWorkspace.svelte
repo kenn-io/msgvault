@@ -1,54 +1,74 @@
 <script lang="ts">
   import { reportError } from '../../telemetry/actions';
   import {
+    listCardDAVConnections as generatedListCardDAVConnections,
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
   } from '../../api/generated/api/api';
-  import { Button, Chip, IconButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
-  import ChevronDown from '@lucide/svelte/icons/chevron-down';
-  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import { Button, Chip, Table, TableHeaderCell } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
-  import { SvelteSet } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
-  import { scheduleSummary } from '../../settings/cron';
-  import { sourceTypeLabel, syncRunning, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
+  import type { CardDAVConnectionResponse, SourceStatus } from '../../api/generated/models';
+  import { CardDAVController } from '../../carddav/controller.svelte';
+  import { SvelteMap } from 'svelte/reactivity';
+  import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
+  import { sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
+  import Dialog from '../common/Dialog.svelte';
+  import { EmptyState } from '@kenn-io/kit-ui';
+  import { operationStateChip } from '../../operations/labels';
   import PageHeader from '../shell/PageHeader.svelte';
-  import type {
-    SourceStatus as GeneratedSourceStatus,
-    SyncRunStatus as GeneratedSyncRunStatus,
-  } from '../../api/generated/models';
-  type SyncRun = GeneratedSyncRunStatus;
-  type Source = GeneratedSourceStatus;
+  import CommandLine from './CommandLine.svelte';
+  import ContactPanel from './ContactPanel.svelte';
+  import SourcePanel from './SourcePanel.svelte';
+
+  type Source = SourceStatus;
   const MIN_POLL_MS = 500;
   const MAX_POLL_MS = 8000;
-  // A terminal result older than 24 hours is explicitly called stale.
-  const STALE_LAST_RESULT_MS = 24 * 60 * 60 * 1000;
+  const ADD_SOURCE_COMMAND = 'msgvault add-account user@example.com';
+
   let {
     client,
     requestTimeoutMs = 20_000,
     maxAwaitingPolls = 6,
     maxLockHoldPolls = 8,
-    now = () => new Date(),
     onOpenOperations = () => undefined,
     onStatusChange = () => undefined,
+    onOpenSettings = () => undefined,
   }: {
     client: APIClient;
+    onOpenOperations?: () => void;
+    onStatusChange?: () => void;
     requestTimeoutMs?: number;
     maxAwaitingPolls?: number;
     maxLockHoldPolls?: number;
-    now?: () => Date;
-    onOpenOperations?: () => void;
-    onStatusChange?: () => void;
+    /** Opens a Settings category, such as `carddav` for the contacts account. */
+    onOpenSettings?: (categoryID: string, connection?: string) => void;
   } = $props();
+
   let sources = $state<Source[]>([]);
-  const expanded = new SvelteSet<number>();
+  let connections = $state<CardDAVConnectionResponse[]>([]);
+  const contactControllers = new SvelteMap<string, CardDAVController>();
+  const contacts = $derived(connections.map(connection => ({
+    ...connection,
+    status: contactControllers.get(connection.connection)?.status ?? connection.status,
+  })));
+  let contactsLoading = $state(true);
+  let contactsRequest: AbortController | undefined;
+  let selected = $state<string>();
+  let adding = $state(false);
   let loading = $state(true);
+  const initialLoading = $derived((loading || contactsLoading) && !sources.length && !contacts.length);
   let lockStatusStale = $state(false);
+  let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
   let statusError = $state('');
+  let contactsError = $state('');
   let triggerError = $state('');
+  let triggerErrorSourceID = $state<number>();
   let triggering = $state<string>();
-  $effect(() => { if (triggerError) return reportError(() => client, () => 'sync'); });
+  $effect(() => {
+    if (triggerError) return reportError(() => client, () => 'sync');
+  });
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -59,26 +79,80 @@
   let awaitingAttempts = 0;
   let lockHoldPolls = 0;
   let hasLoadedStatus = false;
-  let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
   let disposed = false;
+
+  const selectedSource = $derived(
+    selected?.startsWith('source:') ? sources.find((source) => `source:${source.id}` === selected) : undefined,
+  );
+  const selectedContact = $derived(
+    selected?.startsWith('contacts:')
+      ? contacts.find((connection) => `contacts:${connection.connection}` === selected)
+      : undefined,
+  );
+
   onMount(() => {
     const visibilityChanged = (): void => {
       if (document.hidden) {
         stopPolling();
         loading = false;
+        contactsRequest?.abort();
+        contactsLoading = false;
       } else {
         pollDelay = MIN_POLL_MS;
-        void load();
+        refresh();
       }
     };
     document.addEventListener('visibilitychange', visibilityChanged);
-    void load();
+    refresh();
     return () => document.removeEventListener('visibilitychange', visibilityChanged);
   });
   onDestroy(() => {
     disposed = true;
     stopPolling();
+    contactsRequest?.abort();
+    for (const controller of contactControllers.values()) controller.destroy();
   });
+
+  async function loadContacts(): Promise<void> {
+    if (disposed || document.hidden) {
+      contactsLoading = false;
+      return;
+    }
+    if (!connections.length) contactsLoading = true;
+    contactsRequest?.abort();
+    const request = contactsRequest = new AbortController();
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs)]);
+    try {
+      const { data } = await generatedListCardDAVConnections({ ...client, signal });
+      if (signal.aborted || disposed) return;
+      if (!data) throw new Error();
+      connections = data.connections.filter((connection) => !connection.orphaned);
+      const names = new Set(connections.map(connection => connection.connection));
+      for (const [name, controller] of contactControllers) {
+        if (!names.has(name)) {
+          controller.destroy();
+          contactControllers.delete(name);
+        }
+      }
+      for (const connection of connections) {
+        let controller = contactControllers.get(connection.connection);
+        if (!controller) {
+          controller = new CardDAVController(client, document, connection.connection);
+          controller.status = connection.status;
+          contactControllers.set(connection.connection, controller);
+        }
+        void controller.retryStatus();
+      }
+      contactsError = '';
+    } catch {
+      if (!request.signal.aborted && !disposed) contactsError = "Can't load contacts.";
+    } finally {
+      if (contactsRequest === request) {
+        contactsRequest = undefined;
+        contactsLoading = false;
+      }
+    }
+  }
   function stopPolling(clearAwaiting = true): void {
     generation += 1;
     controller?.abort();
@@ -126,20 +200,18 @@
       loading = false;
       return;
     }
-    if (sources.length === 0) loading = true;
+    if (!sources.length) loading = true;
     const requestGeneration = ++generation;
     controller?.abort();
-    const requestController = new AbortController();
-    controller = requestController;
+    const requestController = (controller = new AbortController());
     const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
-      const { data, error: responseError } = await generatedListSourceStatus(undefined, {
-        ...client,
-        signal,
-      });
+      const { data, error: responseError } = await generatedListSourceStatus(undefined, { ...client, signal });
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
       const next = data.sources ?? [];
+      sources = next;
+      if (next.length) loading = false;
       let nextDelay: number | undefined;
       let lockHoldPoll = false;
       let advanced = false;
@@ -191,7 +263,6 @@
         lockHoldPolls = 0;
         lockStatusStale = false;
       }
-      sources = next;
       statusError = '';
       hasLoadedStatus = true;
       if (nextDelay !== undefined) {
@@ -238,6 +309,7 @@
     if (!source.can_sync || triggering) return;
     triggering = source.identifier;
     triggerError = '';
+    triggerErrorSourceID = source.id;
     const signal = AbortSignal.timeout(requestTimeoutMs);
     try {
       const {
@@ -269,26 +341,18 @@
       onStatusChange();
     }
   }
-  function label(source: Source): string {
-    return source.display_name || source.identifier;
-  }
-  function resultTimestamp(run: SyncRun | null | undefined): string | undefined {
-    return run?.completed_at ?? run?.started_at;
-  }
-  function hasDetails(source: Source): boolean {
-    return Boolean(
-      source.latest_sync?.error_message || source.latest_sync?.item_errors?.length || source.scheduler_last_error
-    );
-  }
-  function toggleDetails(id: number): void {
-    if (expanded.has(id)) expanded.delete(id);
-    else expanded.add(id);
+  async function syncContacts(connection: CardDAVConnectionResponse): Promise<void> {
+    await contactControllers.get(connection.connection)?.sync();
+    if (!disposed) onStatusChange();
   }
   function staleLastResult(source: Source): boolean {
     const resultAt = source.latest_sync?.completed_at ?? source.latest_sync?.started_at;
     if (!resultAt) return false;
     const timestamp = Date.parse(resultAt);
-    return Number.isFinite(timestamp) && now().getTime() - timestamp > STALE_LAST_RESULT_MS;
+    return Number.isFinite(timestamp) && Date.now() - timestamp > 24 * 60 * 60 * 1000;
+  }
+  function label(source: Source): string {
+    return source.display_name || source.identifier;
   }
   function messageFor(value: unknown, fallback: string): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
@@ -302,244 +366,263 @@
     statusError = '';
     pollDelay = MIN_POLL_MS;
     void load();
+    void loadContacts();
+  }
+  function toggle(key: string): void {
+    const next = selected === key ? undefined : key;
+    selected = next;
+  }
+  function syncing(source: Source): boolean {
+    return (
+      triggering === source.identifier ||
+      awaitingSourceID === source.id ||
+      syncRunning(source)
+    );
   }
 </script>
 
+{#snippet lastGood(value: string | null | undefined)}
+  {#if value}
+    <time datetime={value} title={formatDateTime(value, 'long')}>{formatDateTime(value)}</time>
+  {:else}
+    <span class="muted">Never</span>
+  {/if}
+{/snippet}
+
 <main class="sources" aria-label="Sources">
-  <PageHeader title="Sources" description="Accounts and imports in your archive, and when they last synced.">
+  <PageHeader title="Sources">
     {#snippet actions()}
-      <Button size="sm" surface="soft" label="Sync history" onclick={onOpenOperations} />
+      <Button size="sm" label="Sync history" onclick={onOpenOperations} />
+      <Button size="sm" tone="info" surface="solid" label="Add source" onclick={() => (adding = true)} />
     {/snippet}
   </PageHeader>
   {#if statusError}<div class="notice notice--error" role="alert">
       <span>{statusError}</span>
       <Button size="sm" surface="soft" label="Retry" onclick={refresh} />
     </div>{/if}
+  {#if contactsError}<div class="notice notice--error" role="alert"><span>{contactsError}</span><Button size="sm" label="Retry" onclick={refresh} /></div>{/if}
+  {#if lockStatusStale}<div class="notice" role="status"><span>Automatic refresh paused. Source status may be stale.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
+  {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if triggerError}<div class="notice notice--error" role="alert">
       <span>{triggerError}</span>
       <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
     </div>{/if}
-  {#if lockStatusStale}<div class="notice" role="status">
-      <span>Automatic refresh paused. Source status may be stale.</span>
-      <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
-    </div>{/if}
-  {#if awaitingState === 'awaiting'}<p class="notice" role="status">Awaiting accepted sync run…</p>
-  {:else if awaitingState === 'not_observed'}<div class="notice" role="status">
-      <span>The sync was requested, but it hasn't started yet. Refresh to check again.</span>
-      <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
-    </div>{/if}
-  {#if loading}<p role="status">Loading source status…</p>
-  {:else if sources.length === 0}{#if !statusError}<p class="notice" role="status">No archived sources are available.</p>{/if}
+  {#if initialLoading}<p class="muted" role="status">Loading…</p>
+  {:else if sources.length === 0 && contacts.length === 0}
+    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" /><CommandLine command={ADD_SOURCE_COMMAND} />{/if}
   {:else}
-    <Table ariaLabel="Source status" zebra={false} class="source-table" unsorted>
+    <Table ariaLabel="Sources" zebra={false} class="source-table" unsorted>
       {#snippet header()}
         <TableHeaderCell label="Source" />
-        <TableHeaderCell label="Schedule" />
         <TableHeaderCell label="Status" />
-        <TableHeaderCell label="Last successful sync" />
-        <TableHeaderCell label="Action" />
+        <TableHeaderCell label="Last good sync" />
+        <TableHeaderCell label="Sync now" />
       {/snippet}
       {#each sources as source (source.id)}
-        {@const detailID = `source-${source.id}-details`}
-        {@const chip = syncStatusChip(source)}
-        {@const latestAt = resultTimestamp(source.latest_sync)}
-        <tr>
+        {@const key = `source:${source.id}`}
+        {@const chip = operationStateChip(sourceRunState(source) ?? 'Never synced')}
+        <tr class:selected={selected === key} aria-selected={selected === key} onclick={() => toggle(key)}>
           <td>
-            <div class="source-cell">
-              <div class="source-title">
-                {#if hasDetails(source)}
-                  <IconButton
-                    size="sm"
-                    ariaLabel={`Show details for ${label(source)}`}
-                    ariaExpanded={expanded.has(source.id)}
-                    ariaControls={expanded.has(source.id) ? detailID : undefined}
-                    onclick={() => toggleDetails(source.id)}
-                  >
-                    {#if expanded.has(source.id)}<ChevronDown size={14} aria-hidden="true" />{:else}<ChevronRight
-                        size={14}
-                        aria-hidden="true"
-                      />{/if}
-                  </IconButton>
-                {/if}
-                <strong class="source-name">{label(source)}</strong>
-              </div>
-              <span>{[sourceTypeLabel(source.source_type), source.identifier].filter(Boolean).join(' · ')}</span>
-              <span
-                >Updated <time datetime={source.updated_at} title={formatDateTime(source.updated_at, 'long')}
-                  >{formatDateTime(source.updated_at)}</time
-                ></span
+            <div class="name">
+              <button
+                type="button"
+                class="name__button"
+                aria-label={`Details for ${label(source)}`}
+                onclick={(event) => {
+                  event.stopPropagation();
+                  toggle(key);
+                }}>{label(source)}</button
               >
+              <span class="muted">{sourceTypeLabel(source.source_type)}</span>
             </div>
           </td>
-          <td>
-            <div class="cell-stack">
-              {#if source.scheduled}
-                {#if source.schedule}
-                  <strong title={source.schedule}>{scheduleSummary(source.schedule)}</strong>
-                {:else}
-                  <strong>Schedule unavailable</strong>
-                {/if}
-                {#if source.next_sync_at}
-                  <span
-                    >Next <time datetime={source.next_sync_at} title={formatDateTime(source.next_sync_at, 'long')}
-                      >{formatDateTime(source.next_sync_at)}</time
-                    ></span
-                  >
-                {/if}
-              {:else if isOnDemandSource(source)}
-                <span>On demand · imported through the API</span>
-              {:else}<span>Not scheduled</span>{/if}
-            </div>
-          </td>
-          <td>
-            <div class="cell-stack">
-              <Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip>
-              {#if source.active_sync}
-                <strong>{source.active_sync.messages_processed.toLocaleString()} processed</strong>
-                <span
-                  >{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()}
-                  errors</span
-                >
-              {:else if latestAt}
-                <time datetime={latestAt} title={formatDateTime(latestAt, 'long')}>{formatDateTime(latestAt)}</time>
-                {#if staleLastResult(source)}<span class="stale">This result may be out of date.</span>{/if}
-              {/if}
-            </div>
-          </td>
-          <td>
-            {#if source.last_successful_sync?.completed_at}
-              <time
-                datetime={source.last_successful_sync.completed_at}
-                title={formatDateTime(source.last_successful_sync.completed_at, 'long')}
-              >
-                {formatDateTime(source.last_successful_sync.completed_at)}
-              </time>
-            {:else}
-              <span>No successful sync result</span>
-            {/if}
-          </td>
-          <td class="action-cell">
-            {#if source.can_sync}
+          <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}</div></td>
+          <td>{@render lastGood(source.last_successful_sync?.completed_at)}</td>
+          <td class="action">
+            {#if source.can_sync || syncing(source)}
               <Button
                 size="sm"
                 tone="info"
                 surface="soft"
-                label={`Sync now ${label(source)}`}
-                disabled={Boolean(triggering) || awaitingSourceID === source.id}
-                onclick={() => void syncNow(source)}
+                label={source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : syncRunning(source) ? 'Syncing…' : syncing(source) ? 'Starting…' : 'Sync now'}
+                ariaLabel={`Sync now ${label(source)}`}
+                disabled={Boolean(triggering) || syncing(source)}
+                onclick={(event) => {
+                  event.stopPropagation();
+                  void syncNow(source);
+                }}
               />
-            {:else if isOnDemandSource(source)}
-              <span>On-demand API source</span>
             {:else}
-              {@const reason = source.sync_unavailable_reason ?? 'sync_unavailable'}
-              <span class="reason" title={reason}>{source.scheduler_queued && !source.active_sync ? 'Sync queued' : syncUnavailableLabel(reason)}</span>
+              <span class="muted">{source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : isOnDemandSource(source) ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
             {/if}
           </td>
         </tr>
-        {#if expanded.has(source.id) && hasDetails(source)}
-          <tr class="detail-row" id={detailID}>
-            <td colspan="5">
-              <div class="details">
-                {#if source.latest_sync?.error_message}<p class="error-copy">{source.latest_sync.error_message}</p>{/if}
-                {#if source.scheduler_last_error}<p class="error-copy">Scheduler: {source.scheduler_last_error}</p>{/if}
-                {#if source.latest_sync?.item_errors?.length}
-                  {@const count = source.latest_sync.item_errors.length}
-                  <p>{count} item {count === 1 ? 'error' : 'errors'}</p>
-                  <ul>
-                    {#each source.latest_sync.item_errors as item (`${item.source_message_id}:${item.phase}:${item.created_at}`)}
-                      <li class="error-copy">{item.error_message}</li>
-                    {/each}
-                  </ul>
-                {/if}
+      {/each}
+      {#if contacts.length > 0}
+        <tr class="group"><th scope="rowgroup" colspan="4">Contacts</th></tr>
+        {#each contacts as connection (connection.connection)}
+          {@const key = `contacts:${connection.connection}`}
+          {@const controller = contactControllers.get(connection.connection)!}
+          {@const state = contactRunState(connection.status)}
+          {@const chip = operationStateChip(state ?? 'Never synced')}
+          <tr class:selected={selected === key} aria-selected={selected === key} onclick={() => toggle(key)}>
+            <td>
+              <div class="name">
+                <button
+                  type="button"
+                  class="name__button"
+                  aria-label={`Details for ${contactLabel(connection)}`}
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    toggle(key);
+                  }}>{contactLabel(connection)}</button
+                >
+                <span class="muted">Contacts</span>
               </div>
             </td>
+            <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
+              {#if controller.statusError}<span class="muted" role="alert">{controller.statusError}</span><Button size="sm" label="Retry" onclick={() => void controller.retryStatus()} />{/if}
+              {#if controller.syncUnknown}<span class="muted" role="alert">Sync state unknown.</span><Button size="sm" label="Retry CardDAV sync state" disabled={controller.syncPending} onclick={() => void controller.retrySyncState()} />{/if}
+              {#if controller.syncError}<span class="muted" role="alert">{controller.syncError}</span>{/if}
+              {#if controller.syncStatus}<span class="muted" role="status">{controller.syncStatus}</span>{/if}
+            </div></td>
+            <td>{@render lastGood(contactLastGood(connection.status))}</td>
+            <td class="action">
+              {#if contactCanSync(connection.status) || controller.syncPending}
+                <Button
+                  size="sm"
+                  tone="info"
+                  surface="soft"
+                  label={controller.syncPending ? 'Syncing…' : 'Sync now'}
+                  ariaLabel={`Sync now ${contactLabel(connection)}`}
+                  disabled={!controller.canSync}
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    void syncContacts(connection);
+                  }}
+                />
+              {:else}
+                <span class="muted">{connection.status.active ? 'Sync in progress' : connection.status.available ? 'Account needs attention' : 'Contacts unavailable'}</span>
+              {/if}
+            </td>
           </tr>
-        {/if}
-      {/each}
+        {/each}
+      {/if}
     </Table>
   {/if}
 </main>
 
+{#if selectedSource}
+  {#key selectedSource.id}
+    <SourcePanel
+      {client}
+      source={selectedSource}
+      syncing={syncing(selectedSource)}
+      triggerError={triggerErrorSourceID === selectedSource.id ? triggerError : ''}
+      onRefresh={refresh}
+      onSync={() => void syncNow(selectedSource)}
+      onclose={() => (selected = undefined)}
+      onOpenSettings={() => onOpenSettings('sources')}
+    />
+  {/key}
+{:else if selectedContact}
+  <ContactPanel
+    connection={selectedContact}
+    controller={contactControllers.get(selectedContact.connection)!}
+    onSync={() => void syncContacts(selectedContact)}
+    onclose={() => (selected = undefined)}
+    onOpenSettings={() => onOpenSettings('carddav', selectedContact.connection)}
+  />
+{/if}
+
+{#if adding}
+  <Dialog title="Add source" onclose={() => (adding = false)}>
+    <CommandLine command={ADD_SOURCE_COMMAND} />
+  </Dialog>
+{/if}
+
 <style>
+  .sources > :global(.page-header) {
+    --page-header-parent-gap: var(--section-gap);
+  }
+
   .sources {
     display: flex;
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--section-gap);
     padding: var(--space-5) var(--page-gutter) var(--space-4);
   }
-  td span,
-  td time {
+  .muted {
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
   }
-  :global(.source-table) {
+  :global(.kit-table-wrapper.source-table) {
+    min-height: 0;
+    flex: 0 1 auto;
     overflow: auto;
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
   }
   :global(.source-table .kit-table) {
-    min-width: 980px;
     background: var(--bg-surface);
   }
   :global(.source-table tbody td) {
+    padding-inline: var(--pane-pad-x);
     vertical-align: middle;
   }
-  :global(.source-table tbody td:first-child) {
-    width: 30%;
+  :global(.source-table thead th) {
+    padding-inline: var(--pane-pad-x);
   }
-  :global(.source-table tbody td:nth-child(2)) {
-    width: 20%;
+  :global(.source-table tbody tr:not(.group)) {
+    cursor: pointer;
   }
-  :global(.source-table tbody td:nth-child(3)) {
-    width: 18%;
+  tr.selected {
+    background: var(--bg-surface-hover);
   }
-  :global(.source-table tbody td:nth-child(4)) {
-    width: 18%;
+  .group th {
+    padding: var(--pane-pad-y) var(--pane-pad-x);
+    border-bottom: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-align: left;
   }
-  .source-cell,
-  .cell-stack,
-  .details {
+  .name {
     display: grid;
     min-width: 0;
-    gap: var(--space-1);
+    gap: var(--label-gap);
   }
-  .source-name {
+  .name :global(.kit-chip) {
+    justify-self: start;
+  }
+  .name__button {
+    justify-self: start;
+    padding: 0;
+    border: 0;
+    background: none;
     color: var(--text-primary);
+    font: inherit;
     font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    text-align: left;
   }
-  .source-title {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: var(--space-1);
+  .name__button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
-  .details {
-    padding: var(--pane-pad-y) var(--pane-pad-x);
-  }
-  .details p,
-  .details ul {
-    margin: 0;
-  }
-  .details ul {
-    padding-left: var(--space-5);
-  }
-  .action-cell {
+  .action {
     text-align: right;
     white-space: nowrap;
   }
-  td .reason {
-    color: var(--text-muted);
-  }
-  td .stale {
-    color: var(--status-warning-ink);
-  }
-  .error-copy {
-    color: var(--text-danger);
-    font-size: var(--font-size-sm);
-  }
   .notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--control-gap);
     padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);

@@ -64,18 +64,13 @@ mail accounts are the ones added with `add-o365 --graph`. Creating a manifest ne
 
 ## Staging in the Web UI
 
-In Messages, select individual rows or all rows matching the current
-canonical filter, then press `d` or `D` to open the Deletions workspace. The UI
-runs a server-side preflight before it enables staging and requires a separate
-confirmation to create the manifest. The Deletions workspace also lists,
-inspects, and cancels staged manifests. It never executes remote deletion;
-that final step remains the explicit CLI command described below.
+In Messages, select individual rows or all rows matching the current filter, then choose **Review deletion…** or press `d` or `D`. A review dialog shows the server preflight counts, exclusions, and expiration. **Dry run** reports what would be staged. **Stage N messages** creates the batch and shows its ID and counts; **Done** returns to Messages. The Staged deletions workspace lists and inspects batches, including their descriptions and failed message IDs. **Cancel batch** asks for confirmation and then cancels the batch immediately. Remote deletion remains the explicit CLI command described below.
 
 Preflight validates the selection itself (that it still matches, that the
 cache/search revision hasn't moved) but does not check which accounts the
 matched messages belong to. Each deletion manifest executes against exactly
 one mailbox, so if you stage "all matching" across an unfiltered or
-multi-account view, confirming the stage fails with a `multi_account_selection`
+multi-account view, staging fails with a `multi_account_selection`
 error even though preflight succeeded. Filter to one source/account
 (the `A` key in the TUI, or the equivalent source filter in the Web UI) before
 staging an all-matching selection that could span more than one account.
@@ -98,7 +93,7 @@ For finer control, drill into any group and use `Space` to select individual row
 
 You can also stage deletions through the [MCP server](/docs/usage/chat/) by asking an AI assistant like Claude to find and stage messages for you. For example:
 
-- *"Stage all messages from noreply@linkedin.com for deletion"*
+- *"Stage all messages from notifications@example.com for deletion"*
 - *"Stage all promotional emails older than 2024-01-01"*
 
 The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [MCP Server](/docs/usage/chat/#staged-deletion-via-mcp) for details.
@@ -146,16 +141,16 @@ Staged deletions create manifests that record exactly which messages will be aff
 msgvault delete-staged --list
 
 # Execute deletion for a Gmail account (moves to trash by default)
-msgvault delete-staged --account you@gmail.com
+msgvault delete-staged --account user@example.com
 
 # Move staged IMAP messages to the server's Trash folder
-msgvault delete-staged --account you@fastmail.com
+msgvault delete-staged --account archive@example.com
 
 # Move staged Microsoft Graph mail messages to Deleted Items
-msgvault delete-staged --account you@company.com
+msgvault delete-staged --account work@example.com
 
 # Permanently delete Gmail messages instead of moving them to trash
-msgvault delete-staged --account you@gmail.com --permanent
+msgvault delete-staged --account user@example.com --permanent
 ```
 
 Gmail and IMAP both default to moving messages to Trash. Gmail retains trash
@@ -188,7 +183,7 @@ remote_enabled = true
 As a one-command alternative:
 
 ```bash
-MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account you@gmail.com
+MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account user@example.com
 ```
 
 When remote mode is configured, the invoking CLI forwards its effective

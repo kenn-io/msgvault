@@ -2,605 +2,323 @@
   import type { ChipTone } from '@kenn-io/kit-ui';
   import { sentenceCase } from '../../explore/labels';
 
-  const MANIFEST_STATUS: Readonly<Record<string, { label: string; tone: ChipTone }>> = {
-    pending: { label: 'Pending', tone: 'info' },
-    in_progress: { label: 'In progress', tone: 'info' },
-    completed: { label: 'Completed', tone: 'success' },
+  const BATCH_STATUS: Readonly<Record<string, { label: string; tone: ChipTone }>> = {
+    pending: { label: 'Staged', tone: 'info' },
+    in_progress: { label: 'Deleting', tone: 'info' },
+    completed: { label: 'Deleted', tone: 'success' },
     failed: { label: 'Failed', tone: 'danger' },
     cancelled: { label: 'Cancelled', tone: 'muted' },
   };
 
-  function manifestStatusChip(status: string): { label: string; tone: ChipTone } {
-    return Object.hasOwn(MANIFEST_STATUS, status)
-      ? MANIFEST_STATUS[status]!
+  function batchStatus(status: string): { label: string; tone: ChipTone } {
+    return Object.hasOwn(BATCH_STATUS, status)
+      ? BATCH_STATUS[status]!
       : { label: sentenceCase(status), tone: 'neutral' };
   }
 </script>
 
 <script lang="ts">
-  import {
-    cancelDeletion as generatedCancelDeletion,
-    getDeletion as generatedGetDeletion,
-    listDeletions as generatedListDeletions,
-    stageDeletion as generatedStageDeletion,
-  } from '../../api/generated/api/api';
-  import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
-  import {
-    Button,
-    Card,
-    Chip,
-    EmptyState,
-    Modal,
-    Table,
-    TableHeaderCell,
-    appShortcuts,
-  } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, tick } from 'svelte';
-  import type { APIClient } from '../../api/client';
-  import { preflightReasonLabel } from '../../explore/labels';
-  import { formatBytes, formatDateTime, formatRelativeTime } from '../../util/format';
-  import PageHeader from '../shell/PageHeader.svelte';
+  import { Button, Checkbox, Chip, CopyButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
+  import { onMount } from 'svelte';
+  import type { DeletionsController } from '../../deletions/controller.svelte';
   import type {
-    DeletionManifestDetail as GeneratedDeletionManifestDetail,
     DeletionManifestSummary as GeneratedDeletionManifestSummary,
-    ExplorePreflightResponse as GeneratedExplorePreflightResponse,
-    ExploreSelection as GeneratedExploreSelection,
-    StageDeletionResponse as GeneratedStageDeletionResponse,
+    DeletionManifestDetail,
   } from '../../api/generated/models';
-  type ExploreSelection = GeneratedExploreSelection;
-  type Preflight = GeneratedExplorePreflightResponse;
-  type ManifestSummary = GeneratedDeletionManifestSummary;
-  type ManifestDetail = GeneratedDeletionManifestDetail;
-  type StageDeletionResponse = GeneratedStageDeletionResponse;
-  let {
-    client,
-    selection = undefined,
-    reviewOnMount = false,
-    onReviewStarted = () => undefined,
-    now = () => new Date(),
-  }: {
-    client: APIClient;
-    selection?: ExploreSelection;
-    reviewOnMount?: boolean;
-    onReviewStarted?: () => void;
-    now?: () => Date;
-  } = $props();
-  let manifests = $state<ManifestSummary[]>([]);
-  let detail = $state<ManifestDetail>();
-  let manifestsElement = $state<HTMLElement>();
-  let reviewed = $state<Preflight>();
-  let reviewedFingerprint = '';
-  let loading = $state(true);
-  let pending = $state(false);
+  import { formatBytes, formatDateTime } from '../../util/format';
+  import { EmptyState } from '@kenn-io/kit-ui';
+  import SidePanel from '../common/SidePanel.svelte';
+  import Dialog from '../common/Dialog.svelte';
+  import PageHeader from '../shell/PageHeader.svelte';
+  import CommandLine from '../sources/CommandLine.svelte';
+
+  type Batch = GeneratedDeletionManifestSummary;
+  const DELETE_COMMAND = 'msgvault delete-staged';
+  let { controller, onChanged = () => undefined }: { controller: DeletionsController; onChanged?: () => void } = $props();
+  const batches = $derived(controller.batches);
+  const loading = $derived(controller.loading);
+  let selectedID = $state<string>();
+  let panelDetail = $state<DeletionManifestDetail>();
+  let showCancelled = $state(false);
   let error = $state('');
-  let preview = $state<StageDeletionResponse>();
-  let confirmStage = $state<'explicit' | 'all_matching'>();
-  let confirmCancel = $state<ManifestSummary>();
-  let listController: AbortController | undefined;
-  onMount(() => {
-    void loadManifests();
-    if (reviewOnMount && selection) {
-      onReviewStarted();
-      void reviewSelection(true);
-    }
-    const releaseScope = appShortcuts.pushScope('deletions');
-    const unregister = [
-      appShortcuts.register(
-        'd',
-        () => {
-          if (selection?.mode === 'explicit') void reviewSelection(true);
-        },
-        { scope: 'deletions', description: 'Stage selected messages for deletion' },
-      ),
-      appShortcuts.register(
-        'shift+d',
-        () => {
-          if (selection?.mode === 'all_matching') void reviewSelection(true);
-        },
-        { scope: 'deletions', description: 'Stage all matching messages for deletion' },
-      ),
-    ];
-    return () => {
-      for (const remove of unregister.reverse()) remove();
-      releaseScope();
-    };
+  let confirmCancel = $state<Batch>();
+  let cancelling = $state(false);
+  let detailGeneration = 0;
+
+  const cancelledCount = $derived(batches.filter((batch) => batch.status === 'cancelled').length);
+  const rows = $derived(
+    batches.filter(
+      (batch) => showCancelled || batch.status !== 'cancelled',
+    ),
+  );
+
+  onMount(() => void load());
+  async function load(): Promise<void> { await controller.refresh(true); }
+  $effect(() => {
+    if (!loading) void Promise.all(rows.map(batch => controller.getDetail(batch.id)));
   });
-  onDestroy(() => listController?.abort());
-  function fingerprint(value: ExploreSelection | undefined): string {
-    return value ? JSON.stringify(value) : '';
+  const selectedBatch = $derived(batches.find(batch => batch.id === selectedID));
+  const shownDetail = $derived(selectedID ? controller.details[selectedID] ?? panelDetail : undefined);
+  async function open(batch: Batch): Promise<void> {
+    const generation = ++detailGeneration;
+    if (selectedID === batch.id) { selectedID = undefined; return; }
+    selectedID = batch.id;
+    panelDetail = undefined;
+    const data = await controller.getDetail(batch.id, { retry: true, fresh: true });
+    if (generation !== detailGeneration) return;
+    error = data ? '' : "Can't open this batch."; panelDetail = data; selectedID = data ? batch.id : undefined;
   }
-  function reviewedIsCurrent(): boolean {
-    if (!reviewed || reviewedFingerprint !== fingerprint(selection)) {
-      reviewed = undefined;
-      preview = undefined;
-      error = 'The selection changed. Review it again before continuing.';
-      return false;
-    }
-    return true;
-  }
-  async function loadManifests(): Promise<void> {
-    listController?.abort();
-    const controller = new AbortController();
-    listController = controller;
-    try {
-      const { data, error: responseError } = await generatedListDeletions(undefined, {
-        ...client,
-        signal: controller.signal,
-      });
-      if (!data) throw new Error(messageFor(responseError, 'Unable to load deletion manifests.'));
-      manifests = data.manifests ?? [];
-      error = '';
-    } catch (cause) {
-      if (!controller.signal.aborted)
-        error = cause instanceof Error ? cause.message : 'Unable to load deletion manifests.';
-    } finally {
-      if (listController === controller) {
-        listController = undefined;
-        loading = false;
-      }
-    }
-  }
-  async function reviewSelection(openConfirmation = false): Promise<void> {
-    if (!selection || pending) return;
-    pending = true;
-    error = '';
-    preview = undefined;
-    const candidate = selection;
-    const candidateFingerprint = fingerprint(candidate);
-    try {
-      const { data, error: responseError } = await generatedPreflightExploreSelection({ selection: candidate }, client);
-      if (!data) throw new Error(messageFor(responseError, 'Unable to review this selection.'));
-      if (typeof data.deletable_count !== 'number') {
-        throw new Error('Deletion review requires daemon API schema 2.18.0 or newer. Upgrade the daemon and review again.');
-      }
-      if (candidateFingerprint !== fingerprint(selection)) {
-        throw new Error('The selection changed while it was being reviewed. Review it again.');
-      }
-      reviewed = data;
-      reviewedFingerprint = candidateFingerprint;
-      if (openConfirmation && !unavailableReason('stage_deletion')) confirmStage = candidate.mode;
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to review this selection.';
-    } finally {
-      pending = false;
-    }
-  }
-  function unavailableReason(action: string): string | undefined {
-    return reviewed?.unavailable_actions.find((item) => item.action === action)?.reason;
-  }
-  async function dryRun(): Promise<void> {
-    if (!selection || !reviewedIsCurrent()) return;
-    pending = true;
-    error = '';
-    const dryRunSelection = selection;
-    const dryRunFingerprint = fingerprint(dryRunSelection);
-    try {
-      const { data, error: responseError } = await generatedStageDeletion(
-        {
-          selection: dryRunSelection,
-          operation_token: reviewed!.operation_token,
-          dry_run: true,
-        },
-        client,
-      );
-      if (!data) throw new Error(messageFor(responseError, 'Unable to run the deletion preview.'));
-      if (dryRunFingerprint !== fingerprint(selection)) {
-        throw new Error('The selection changed while it was being reviewed. Review it again.');
-      }
-      preview = data;
-    } catch (cause) {
-      preview = undefined;
-      error = cause instanceof Error ? cause.message : 'Unable to run the deletion preview.';
-    } finally {
-      pending = false;
-    }
-  }
-  async function stage(): Promise<void> {
-    if (!selection || !reviewedIsCurrent()) return;
-    pending = true;
-    error = '';
-    const stagedSelection = selection;
-    try {
-      const {
-        data,
-        error: responseError,
-        response,
-      } = await generatedStageDeletion(
-        {
-          selection: stagedSelection,
-          operation_token: reviewed!.operation_token,
-          description:
-            stagedSelection.mode === 'all_matching' ? 'reviewed matching selection' : 'reviewed explicit selection',
-          dry_run: false,
-        },
-        client,
-      );
-      if (!data || response.status !== 201)
-        throw new Error(messageFor(responseError, 'Unable to stage this deletion.'));
-      reviewed = undefined;
-      preview = data;
-      confirmStage = undefined;
-      await loadManifests();
-    } catch (cause) {
-      preview = undefined;
-      error = cause instanceof Error ? cause.message : 'Unable to stage this deletion.';
-    } finally {
-      pending = false;
-    }
-  }
-  async function closeDetail(): Promise<void> {
-    const id = detail?.id;
-    detail = undefined;
-    await tick();
-    const rows = manifestsElement?.querySelectorAll<HTMLTableRowElement>('tr[data-manifest-id]') ?? [];
-    const row = Array.from(rows).find((candidate) => candidate.dataset['manifestId'] === id);
-    row?.querySelector<HTMLButtonElement>('.inspect-action')?.focus();
-  }
-  async function inspect(manifest: ManifestSummary): Promise<void> {
-    pending = true;
-    error = '';
-    try {
-      const { data, error: responseError } = await generatedGetDeletion({ id: manifest.id }, client);
-      if (!data) throw new Error(messageFor(responseError, 'Unable to inspect this deletion manifest.'));
-      detail = data;
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to inspect this deletion manifest.';
-    } finally {
-      pending = false;
-    }
-  }
+  function close(): void { detailGeneration++; selectedID = undefined; }
+
   async function cancelManifest(): Promise<void> {
-    if (!confirmCancel) return;
-    const target = confirmCancel;
-    pending = true;
+    if (!confirmCancel || cancelling) return;
+    const batch = confirmCancel;
+    cancelling = true;
     error = '';
     try {
-      const { data, error: responseError } = await generatedCancelDeletion({ id: target.id }, client);
-      if (!data) throw new Error(messageFor(responseError, 'Unable to cancel this deletion manifest.'));
-      manifests = manifests.map((manifest) =>
-        manifest.id === data.id ? { ...manifest, status: data.status } : manifest,
-      );
-      if (detail?.id === data.id) detail = { ...detail, status: data.status };
+      await controller.cancel(batch.id);
       confirmCancel = undefined;
+      onChanged();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to cancel this deletion manifest.';
-    } finally {
-      pending = false;
-    }
+      error = cause instanceof Error ? cause.message : "Can't cancel the batch.";
+    } finally { cancelling = false; }
   }
-  function stageCounts(value: StageDeletionResponse): { matched: number; staged: number; skipped: number } {
-    const staged = value.message_count;
-    const skipped = value.skipped_count ?? Math.max((value.matched_count ?? staged) - staged, 0);
-    const matched = value.matched_count ?? staged + skipped;
-    return { matched, staged, skipped };
+
+  function count(value: number): string {
+    return `${value.toLocaleString()} ${value === 1 ? 'message' : 'messages'}`;
   }
-  function resultSummary(value: StageDeletionResponse): string {
-    const { matched, staged, skipped } = stageCounts(value);
-    const prefix = value.dry_run ? 'Dry run' : 'Staged';
-    const account = value.account ? ` in ${value.account}` : '';
-    const batch = !value.dry_run && value.id ? ` · Batch ID: ${value.id}` : '';
-    return `${prefix}: Matched: ${matched.toLocaleString()} · Staged: ${staged.toLocaleString()} · Skipped: ${skipped.toLocaleString()}${account}${batch}`;
-  }
-  function partialWarning(value: StageDeletionResponse): string {
-    const { staged, skipped } = stageCounts(value);
-    if (value.dry_run) {
-      return `Partial staging: only the deletable Gmail and Microsoft Graph mail subset (${staged.toLocaleString()}) will be staged; ${skipped.toLocaleString()} unsupported ${skipped === 1 ? 'match will be' : 'matches will be'} skipped.`;
-    }
-    return `Partial staging: only the deletable Gmail and Microsoft Graph mail subset (${staged.toLocaleString()}) was staged; ${skipped.toLocaleString()} unsupported ${skipped === 1 ? 'match was' : 'matches were'} skipped.`;
-  }
-  function selectionExclusions(): string {
-    const count = selection?.exclusions?.length ?? 0;
-    return selection?.mode === 'all_matching' && count > 0
-      ? ` After ${count.toLocaleString()} ${count === 1 ? 'exclusion' : 'exclusions'}.`
-      : '';
-  }
-  function confirmationDescription(): string {
-    const counts = preview?.dry_run
-      ? resultSummary(preview)
-      : `Matched: ${reviewed!.count.toLocaleString()} · Will stage: ${reviewed!.deletable_count.toLocaleString()} · Will skip: ${(reviewed!.count - reviewed!.deletable_count).toLocaleString()}`;
-    return `${counts}.${selectionExclusions()} Only deletable Gmail and Microsoft Graph mail messages will be staged. This creates a staged manifest; it does not execute deletion.`;
-  }
-  function messageFor(value: unknown, fallback: string): string {
-    return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
-      ? value.message
-      : fallback;
-  }
+  const cancellable = (status: string): boolean => status === 'pending' || status === 'in_progress';
 </script>
 
-<main class="deletions" aria-label="Deletions">
-  <PageHeader title="Deletions">
-    {#snippet descriptionContent()}Deletions you've staged. Nothing is deleted until you run <code>msgvault delete-staged</code>.{/snippet}
-  </PageHeader>
-  {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
-
-  <section class="selection-review" aria-label="Deletion selection">
-    {#if !selection}
-      <EmptyState
-        title="Nothing selected for deletion"
-        description="Select items in Messages, then choose Review for deletion…"
-      />
-    {:else}
-      <Card padding="sm">
-        <section class="staging" aria-labelledby="deletion-review-title">
-        <div class="staging-header">
-          <h2 id="deletion-review-title">Review selection</h2>
-          <Button
-            tone="info"
-            surface="soft"
-            label="Review selection"
-            disabled={pending}
-            onclick={() => void reviewSelection()}
-          />
-        </div>
-        {#if reviewed}
-          {@const stageReason = unavailableReason('stage_deletion')}
-          <div class="review" role="status">
-            <strong
-              >{reviewed.count.toLocaleString()}
-              {reviewed.count === 1 ? 'item' : 'items'} · {formatBytes(reviewed.estimated_bytes)}</strong
-            >
-            <span>
-              {reviewed.deletable_count.toLocaleString()} can be staged · {(reviewed.count - reviewed.deletable_count).toLocaleString()} will be skipped.{selectionExclusions()}
-            </span>
-            <span
-              >Review expires <time datetime={reviewed.expires_at} title={formatDateTime(reviewed.expires_at, 'long')}
-                >{formatRelativeTime(reviewed.expires_at, now())}</time
-              ></span
-            >
-            {#if reviewed.search_deletion_scope === 'active'}
-              <span>Semantic search covers active messages only.</span>
-            {/if}
-            {#if stageReason}
-              <span class="reason" title={stageReason}>{preflightReasonLabel('stage_deletion', stageReason)}</span>
-            {/if}
-          </div>
-          <div class="actions">
-            <Button surface="outline" label="Dry run" disabled={pending} onclick={() => void dryRun()} />
-            <Button
-              tone="info"
-              surface="solid"
-              label="Stage deletion…"
-              disabled={pending || Boolean(stageReason)}
-              onclick={() => {
-                if (reviewedIsCurrent()) confirmStage = selection?.mode;
-              }}
-            />
-          </div>
-        {/if}
-        {#if preview}
-          <p class="result" role="status">{resultSummary(preview)}</p>
-          {#if stageCounts(preview).skipped > 0}<p class="warning" role="alert">{partialWarning(preview)}</p>{/if}
-        {/if}
-        </section>
-      </Card>
-    {/if}
-  </section>
-
-  {#if loading}<p role="status">Loading deletion manifests…</p>
-  {:else if manifests.length === 0}
-    <EmptyState
-      title="No staged deletions"
-      description="Deletions you stage appear here, along with their execution status."
-    />
-  {:else}
-    <div class="manifests" class:has-detail={Boolean(detail)} bind:this={manifestsElement}>
-      <Table ariaLabel="Deletion manifests" zebra={false} unsorted>
-        {#snippet header()}
-          <TableHeaderCell label="ID" />
-          <TableHeaderCell label="Description" />
-          <TableHeaderCell label="Items" />
-          <TableHeaderCell label="Status" />
-          <TableHeaderCell label="Created" />
-          <TableHeaderCell label="Actions" />
-        {/snippet}
-        {#each manifests as manifest (manifest.id)}
-          {@const chip = manifestStatusChip(manifest.status)}
-          <tr data-manifest-id={manifest.id}>
-            <td><code>{manifest.id}</code></td>
-            <td>{manifest.description}</td>
-            <td>{manifest.message_count.toLocaleString()} {manifest.message_count === 1 ? 'item' : 'items'}</td>
-            <td><Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip></td>
-            <td><time datetime={manifest.created_at} title={formatDateTime(manifest.created_at, 'long')}>{formatDateTime(manifest.created_at)}</time></td>
-            <td class="row-actions">
-              <Button
-                size="sm"
-                surface="outline"
-                class="inspect-action"
-                label={`Inspect ${manifest.id}`}
-                onclick={() => void inspect(manifest)}
-              />
-              {#if manifest.status === 'pending' || manifest.status === 'in_progress'}
-                <Button
-                  size="sm"
-                  surface="outline"
-                  label={`Cancel ${manifest.id}`}
-                  onclick={() => {
-                    confirmCancel = manifest;
-                  }}
-                />
-              {/if}
-            </td>
-          </tr>
-        {/each}
-      </Table>
-      {#if detail}
-        {@const detailChip = manifestStatusChip(detail.status)}
-        <Card padding="sm" ariaLabel={`Deletion manifest ${detail.id}`}>
-          <aside class="detail">
-            <div class="detail-header">
-              <h2><code>{detail.id}</code></h2>
-              <Button
-                size="sm"
-                surface="soft"
-                label="Close manifest detail"
-                onclick={() => void closeDetail()}
-              />
-            </div>
-            <Chip size="sm" tone={detailChip.tone} uppercase={false}>{detailChip.label}</Chip>
-            <span>{detail.account || 'Account unavailable'}</span>
-            <span>{detail.message_count.toLocaleString()} items · {detail.description}</span>
-            {#if detail.execution}
-              <span>{detail.execution.succeeded} succeeded · {detail.execution.failed} failed</span>
-              {#each detail.execution.failed_ids ?? [] as id}<code>{id}</code>{/each}
-            {/if}
-          </aside>
-        </Card>
+<main class="deletions" aria-label="Staged deletions">
+  <PageHeader title="Staged deletions">
+    {#snippet actions()}
+      {#if cancelledCount > 0}
+        <Checkbox bind:checked={showCancelled} label={`Show cancelled (${cancelledCount})`} />
       {/if}
-    </div>
+    {/snippet}
+  </PageHeader>
+  {#if error || controller.error}<div class="notice" role="alert"><span>{error || controller.error}</span><Button label="Retry" onclick={() => { error = ''; void load(); }} /></div>{/if}
+
+  {#if loading}
+    <p class="muted" role="status">Loading…</p>
+  {:else if rows.length === 0}
+    <EmptyState title="Nothing staged" />
+  {:else}
+    <Table ariaLabel="Staged deletions" zebra={false} class="batch-table" unsorted>
+      {#snippet header()}
+        <TableHeaderCell label="Date" />
+        <TableHeaderCell label="Messages" />
+        <TableHeaderCell label="Account" />
+        <TableHeaderCell label="Status" />
+      {/snippet}
+      {#each rows as batch (batch.id)}
+        {@const chip = batchStatus(batch.status)}
+        <tr class:selected={selectedID === batch.id} aria-selected={selectedID === batch.id} onclick={() => void open(batch)}>
+          <td>
+            <button
+              type="button"
+              class="row-button"
+              aria-label={`Open batch from ${formatDateTime(batch.created_at)}`}
+              onclick={(event) => {
+                event.stopPropagation();
+                void open(batch);
+              }}>{formatDateTime(batch.created_at)}</button
+            >
+          </td>
+          <td>{count(batch.message_count)}</td>
+          <td>{controller.details[batch.id]?.account ?? (controller.details[batch.id]?.summary?.accounts ?? []).join(', ')}</td>
+          <td><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip></td>
+        </tr>
+      {/each}
+    </Table>
   {/if}
+
+  <footer class="end">
+    <CommandLine command={DELETE_COMMAND} />
+  </footer>
 </main>
 
-{#if confirmStage && reviewed}
-  <Modal
-    title={confirmStage === 'all_matching' ? 'Confirm matching deletion' : 'Confirm selected deletion'}
+{#snippet cancelAction()}
+  <Button
     tone="danger"
-    onclose={() => {
-      confirmStage = undefined;
-    }}
+    surface="soft"
+    label="Cancel batch"
+    onclick={() => confirmCancel = batches.find((batch) => batch.id === selectedID)}
+  />
+{/snippet}
+
+{#if selectedID && shownDetail && selectedBatch}
+  {@const chip = batchStatus(selectedBatch.status)}
+  <SidePanel
+    title={`Staged ${formatDateTime(shownDetail.created_at)}`}
+    onclose={close}
+    footer={cancellable(selectedBatch.status) ? cancelAction : undefined}
   >
-    <p>{confirmationDescription()}</p>
-    {#snippet footer()}
-      <Button
-        surface="soft"
-        label="Cancel"
-        onclick={() => {
-          confirmStage = undefined;
-        }}
-      />
-      <Button
-        tone="danger"
-        surface="solid"
-        label="Confirm stage deletion"
-        disabled={pending}
-        onclick={() => void stage()}
-      />
-    {/snippet}
-  </Modal>
+    <div class="panel">
+      <div class="line">
+        <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
+        <span class="muted">{shownDetail.account || (shownDetail.summary?.accounts ?? []).join(', ')}</span>
+      </div>
+      {#if shownDetail.description}<p>{shownDetail.description}</p>{/if}
+      <section class="block" aria-label="Messages">
+        <h3>{count(shownDetail.message_count)}</h3>
+        {#if shownDetail.summary}
+          <span class="muted">
+            {formatBytes(shownDetail.summary.total_size_bytes)}{#if shownDetail.summary.date_range?.[0]} · {shownDetail.summary.date_range[0].slice(0, 10)} to {shownDetail.summary.date_range[1]?.slice(0, 10)}{/if}
+          </span>
+          {#if shownDetail.summary.top_senders?.length}
+            <ul class="senders">
+              {#each shownDetail.summary.top_senders as sender (sender.sender)}
+                <li><span>{sender.sender}</span><span class="muted">{sender.count.toLocaleString()}</span></li>
+              {/each}
+            </ul>
+          {/if}
+        {/if}
+      </section>
+      {#if shownDetail.execution}
+        <span class="muted">
+          {shownDetail.execution.succeeded.toLocaleString()} deleted · {shownDetail.execution.failed.toLocaleString()} failed
+        </span>
+        {#if shownDetail.execution.failed_ids?.length}
+          <section class="block" aria-label="Failed message IDs">
+            <h3>Failed message IDs</h3>
+            {#each shownDetail.execution.failed_ids as id}<code>{id}</code>{/each}
+          </section>
+        {/if}
+      {/if}
+      <div class="id">
+        <span class="muted">Batch ID</span>
+        <span class="id__value">
+          <code>{shownDetail.id}</code>
+          <CopyButton text={shownDetail.id} ariaLabel="Copy batch ID" />
+        </span>
+      </div>
+    </div>
+  </SidePanel>
 {/if}
 
 {#if confirmCancel}
-  <Modal
-    title="Cancel deletion manifest?"
-    tone="warning"
-    onclose={() => {
-      confirmCancel = undefined;
-    }}
-  >
-    <p>Cancel {confirmCancel.id}? Completed and failed manifests cannot be cancelled.</p>
-    {#snippet footer()}
-      <Button
-        surface="soft"
-        label="Keep manifest"
-        onclick={() => {
-          confirmCancel = undefined;
-        }}
-      />
-      <Button
-        tone="danger"
-        surface="solid"
-        label="Confirm cancel manifest"
-        disabled={pending}
-        onclick={() => void cancelManifest()}
-      />
-    {/snippet}
-  </Modal>
+  <Dialog title="Cancel deletion batch?" onclose={() => { if (!cancelling) confirmCancel = undefined; }} primaryLabel={cancelling ? 'Cancelling…' : 'Cancel batch'} primaryDisabled={cancelling} onprimary={() => void cancelManifest()}>
+    <p>Cancel deletion of {count(confirmCancel.message_count)} from the source?</p>
+    <Button label="Keep staged" disabled={cancelling} onclick={() => confirmCancel = undefined} />
+    {#if error}<p role="alert">{error}</p>{/if}
+  </Dialog>
 {/if}
 
 <style>
+  .deletions > :global(.page-header) {
+    --page-header-parent-gap: var(--section-gap);
+  }
+
   .deletions {
     display: flex;
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--section-gap);
     padding: var(--space-5) var(--page-gutter) var(--space-4);
   }
-  .actions,
-  .staging-header,
-  .detail-header,
-  .row-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .selection-review {
-    flex: none;
-    overflow: hidden;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-  }
-  .selection-review :global(.kit-empty-state) {
+  .muted {
     margin: 0;
-    padding: var(--space-6);
-  }
-  .selection-review :global(.kit-card) {
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-  }
-  .staging {
-    display: grid;
-    gap: var(--section-gap);
-  }
-  .staging-header,
-  .detail-header {
-    justify-content: space-between;
-  }
-  h2,
-  .staging p {
-    margin: 0;
-  }
-  .detail span {
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
   }
-  .review {
-    display: grid;
-    gap: var(--space-1);
-  }
-  .reason {
-    color: var(--text-secondary);
-  }
-  .notice--error {
+  .notice {
+    margin: 0;
+    padding: var(--pane-pad-y) var(--pane-pad-x);
+    border: 1px solid var(--accent-red);
+    border-radius: var(--radius-md);
+    background: var(--bg-subtle);
     color: var(--text-danger);
   }
-  .manifests.has-detail {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
-    gap: var(--space-4);
-    align-items: start;
-  }
-  .detail {
-    display: grid;
-    gap: var(--space-2);
-  }
-  .notice,
-  .result,
-  .warning {
-    padding: var(--pane-pad-y) var(--pane-pad-x);
-    border: 1px solid var(--accent-amber);
-    background: var(--bg-subtle);
-  }
-  .notice,
-  .warning {
+  :global(.kit-table-wrapper.batch-table) {
+    min-height: 0;
+    flex: 0 1 auto;
+    overflow: auto;
+    border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
   }
-  .result {
-    border-color: var(--border-default);
+  :global(.batch-table .kit-table) {
+    background: var(--bg-surface);
   }
-  .notice--error {
-    border-color: var(--accent-red);
+  :global(.batch-table tbody td),
+  :global(.batch-table thead th) {
+    padding-inline: var(--pane-pad-x);
+    vertical-align: middle;
   }
-  @media (max-width: 900px) {
-    .manifests.has-detail {
-      grid-template-columns: 1fr;
-    }
+  :global(.batch-table tbody tr) {
+    cursor: pointer;
   }
-  @media (max-width: 760px) {
-    .staging-header {
-      align-items: stretch;
-      flex-direction: column;
-    }
+  tr.selected {
+    background: var(--bg-surface-hover);
+  }
+  .row-button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    text-align: left;
+  }
+  .row-button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  .end {
+    margin-top: auto;
+    padding-top: var(--section-gap);
+  }
+  .panel {
+    display: grid;
+    gap: var(--section-gap);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
+  }
+  .line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--control-gap);
+  }
+  .block {
+    display: grid;
+    gap: var(--field-gap);
+  }
+  h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+  .senders {
+    display: grid;
+    gap: var(--label-gap);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+  .senders li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--control-gap);
+  }
+  .id {
+    display: grid;
+    gap: var(--label-gap);
+  }
+  .id__value {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--control-gap);
+    min-width: 0;
+  }
+  code {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
   }
 </style>

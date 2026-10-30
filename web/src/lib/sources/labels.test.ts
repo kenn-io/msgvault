@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from './labels';
+import { sourceFailure, sourceMailbox, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -29,16 +29,29 @@ describe('source labels', () => {
     [undefined, 'Sync unavailable']
   ])('names sync reason %j', (code, want) => expect(syncUnavailableLabel(code)).toBe(want));
 
-  it('maps each latest result to one status chip', () => {
-    expect(syncStatusChip({ active_sync: run('running'), latest_sync: run('completed') }))
-      .toEqual({ label: 'Syncing', tone: 'info' });
-    expect(syncStatusChip({ active_sync: null, latest_sync: run('completed') }))
-      .toEqual({ label: 'Completed', tone: 'success' });
-    expect(syncStatusChip({ active_sync: null, latest_sync: run('completed', 2) }))
-      .toEqual({ label: 'Completed with errors', tone: 'warning' });
-    expect(syncStatusChip({ active_sync: null, latest_sync: run('failed') }))
-      .toEqual({ label: 'Failed', tone: 'danger' });
-    expect(syncStatusChip({ active_sync: null, latest_sync: null }))
-      .toEqual({ label: 'Never synced', tone: 'muted' });
-  });
+  it.each([
+    [{ active_sync: null, latest_sync: null, scheduler_queued: true }, 'queued'],
+    [{ active_sync: null, latest_sync: run('cancelled'), scheduler_queued: true }, 'queued'],
+    [{ active_sync: null, latest_sync: run('failed'), scheduler_queued: true }, 'failed'],
+    [{ active_sync: null, latest_sync: run('completed'), scheduler_queued: true }, 'queued'],
+    [{ active_sync: null, latest_sync: run('completed'), scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z' }, 'running'],
+    [{ active_sync: null, latest_sync: run('running'), scheduler_queued: true }, 'running'],
+    [{ active_sync: null, latest_sync: run('completed', 2), scheduler_queued: true }, 'partial'],
+    [{ active_sync: null, latest_sync: run('cancelled') }, 'cancelled'],
+    [{ active_sync: null, latest_sync: run('completed', 2) }, 'partial'],
+    [{ active_sync: null, latest_sync: run('paused') }, 'paused'],
+    [{ active_sync: run('running'), latest_sync: run('completed') }, 'running'],
+    [{ active_sync: null, latest_sync: run('completed') }, 'succeeded'],
+    [{ active_sync: null, latest_sync: run('failed') }, 'failed'],
+    [{ active_sync: null, latest_sync: null }, undefined],
+  ])('maps source run state %#', (source, want) => expect(sourceRunState(source)).toBe(want));
+
+  it.each([
+    ['imaps://work%40example.com@imap.example.com', 'work@example.com'],
+    ['imaps://home%40example.com@imap.example.com', 'home@example.com']
+  ])('identifies mailbox %s', (identifier, want) => expect(sourceMailbox(identifier)).toBe(want));
+});
+
+it('prefers the run error over the scheduler error', () => {
+  expect(sourceFailure({ latest_sync: { ...run('paused'), error_message: 'Rate limit reached' }, scheduler_last_error: 'Scheduler stopped' })).toBe('Rate limit reached');
 });

@@ -20,10 +20,10 @@ you do not need a separate web application process.
 | Which identity matches or profile facts need my decision? | Reviews |
 | Can I return to this search later? | Saved views under Messages and Files |
 | Did sync, enrichment, or indexing finish? | Status dot, Past runs, and Sources |
-| What is staged for deletion? | Deletions |
+| What is staged for deletion? | Staged deletions |
 | How do I change the daemon's configuration? | Settings |
 
-The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory, Reviews, and Deletions remain available through the command palette. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
+The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory and Reviews remain available through the command palette. **Staged deletions** appears for waiting or running batches and for seven days after execution finishes. Use **Go to Staged deletions** in the command palette to open its history when the sidebar entry is hidden. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
 
 The top bar holds global search and **Display**. Display sets theme and density for this tab. On the ungrouped Messages table, it also shows **Columns**. **Reader position** appears when the results are at least 960 pixels wide. **Use Settings defaults** clears temporary theme and density choices. [Settings](#settings-and-restart-behavior) holds the saved defaults.
 
@@ -121,8 +121,8 @@ toolbar. Select the chip's remove button, such as **Remove search** or **Remove
 Person filter**, to drop it. **Save view…** in the page header saves the current
 context; see [Saved views](#saved-views).
 
-Selecting rows opens a selection bar. **Review for deletion…** opens the
-[Deletions](#deletions) workspace. The button is disabled when the daemon
+Selecting rows opens a selection bar. **Review deletion…** opens a review dialog over Messages; see
+[Deletions](#deletions). The button is disabled when the daemon
 reports that staging is unavailable for the selection, and the bar states the
 reason beside it, for example "None of the selected items can be deleted from
 their source." Export and **Open selection in source** explain their
@@ -221,7 +221,7 @@ true` for daemon startup to build a stale cache. With `analytics.engine =
 ## Files and containing context
 
 Files is the single file view. It is a searchable table of attachment date,
-filename, type, size, person or domain, source, containing item, and content
+filename, type, size, person or domain, source, Message, and content
 availability. Archived images and PDFs open in application-controlled viewers.
 Metadata-only, missing, unsupported, and previewable content remain distinct.
 From a file, navigate to its containing item and then its email or chat
@@ -230,10 +230,10 @@ conversation.
 Files uses the same toolbar as Messages, with **Show as** set to Files. Choose Table
 or Timeline there to return to Messages. **Sort** offers Newest first, Oldest
 first, Filename A–Z, Filename Z–A, Largest first, and Smallest first. The
-Filename field and the **Type** menu (Images, PDFs, Audio, Video, Text,
-Documents, Archives, Other) narrow the table. Grouping replaces the table with
-groups and hides Sort, Filename, Type, and Visual search; active Filename and
-Type filters stay visible as chips.
+**Filter** menu includes Filename and Type (Images, PDFs, Audio, Video, Text,
+Documents, Archives, Other). Grouping replaces the table with groups and hides
+Sort and Visual search; Filename and Type remain editable in Filter, and active
+filters stay visible as chips.
 **Save view…** saves the search, filters, and grouping, but not the Filename
 filter, Type filter, or file sort.
 
@@ -360,27 +360,16 @@ All three read the same records and see the same revisions.
 
 ## Sources and sync status
 
-Sources is a status workspace. Each row shows a source's name, readable type and
-identifier, schedule, status, last successful sync, and an action. The schedule
-reads as a sentence, with the cron expression in its tooltip.
+Sources lists Source, Status, Last good sync, and Sync now. Status shows Running, Succeeded, Partial, Failed, Paused, Queued, Cancelled, or Never synced. Contacts accounts appear in their own group. Sources stays available while contacts status loads, and contacts-only runs continue polling.
 
-The **Status** chip is **Syncing**, **Completed**, **Completed with errors**,
-**Failed**, or **Never synced**. A running sync also shows its processed, added,
-and error counts. Otherwise the time of the latest result appears under the
-chip, and the last successful sync has its own column. A latest result older
-than 24 hours adds "This result may be out of date." A failed status request
-remains an error rather than becoming an empty source list.
+Select a source to open its panel. Schedule, Next sync, and attachment rules show the current values. **Edit in Settings › Sources** opens the existing editor for settings shared by that source type. The panel also shows Runs, item errors, and **Sync now**. A latest run's error appears before a scheduler error. **Sync history** opens Past runs filtered to source sync.
 
-A source with a sync error message, item errors, or a scheduler error has
-**Show details for {name}**, which opens the run-level errors, item-level
-errors, and scheduler error. **Sync history** in the page header opens
-**Past runs** filtered to source sync.
+A contacts panel shows its repair reason and **Open Settings › Contacts** for sign-in recovery. That editor retains the selected OAuth app and provides commands for both shells. Mail sync instructions in the source panel also label POSIX and Command Prompt commands.
 
 **Sync now** is available only when that source reports the capability. When it
-is not, the Action column says why in words: "Imported file — nothing to sync",
+is not, the Sync now column says why in words: "Imported file — nothing to sync",
 "Sync in progress", "Scheduler unavailable", "Sync not set up", or "Sync
-unavailable". The daemon's reason code stays in the text's tooltip.
-Meeting-import sources show "On-demand API source" instead, because meetings
+unavailable". Meeting-import sources show "On demand" instead, because meetings
 arrive through the API rather than a sync. A `202
 Accepted` response means the daemon accepted the request, not that work has
 finished. While the page is visible, the UI polls source status with bounded
@@ -421,33 +410,11 @@ Old Operations links with a run, status, or history filter open Past runs over S
 
 ## Deletions
 
-Messages supports explicit row selection and select-all-matching for the
-current query and filters. **Review for deletion…** in the selection bar, or `d`
-and `D`, opens the Deletions workspace. The daemon first preflights the
-selection and reports any unavailable action before the UI offers a separate
-staging confirmation. The workspace lists, inspects, and cancels manifests; it
-cannot execute deletion against a provider. Use the explicit
-`msgvault delete-staged` CLI workflow for that final operation.
+Messages supports individual row selection and select-all-matching for the current query and filters. **Review deletion…** in the selection bar, or `d` and `D`, opens a review dialog over Messages. The daemon preflights the selection before enabling staging.
 
-Without a selection, the workspace says "Nothing selected for deletion" and
-points back to Messages. With one, the **Review selection** panel shows the
-item count and estimated size, how many items can be staged and how many will be
-skipped, and when the review expires, as a relative time such as "in 8 minutes"
-with the exact time in a tooltip. When the daemon reports that staging is
-unavailable, the panel gives the reason as a sentence and disables **Stage
-deletion…**. **Dry run** reports matched, staged, and skipped counts without
-staging anything. **Stage deletion…** opens a confirmation, and only its red
-**Confirm stage deletion** button creates the manifest. Staging covers Gmail and
-Microsoft Graph mail only and does not execute deletion. Arriving from
-Messages runs the review at once and, when staging is available, opens the
-confirmation.
+The dialog shows the selected count and estimated size, eligible and skipped counts, exclusions, and review expiration. Semantic search reviews warn that they cover active messages only. **Dry run** reports matched, staged, and skipped counts without creating a batch. **Stage N messages** creates the batch and leaves a success summary with its ID. **Done** returns to Messages. Staging supports Gmail and Microsoft Graph mail; use `msgvault delete-staged` to execute deletion.
 
-The manifests table lists ID, Description, Items, Status, and Created. Status is
-Pending, In progress, Completed, Failed, or Cancelled. **Inspect** opens a
-manifest's detail beside the table, or below it at 900 pixels wide or narrower;
-**Close manifest detail** closes it. **Cancel** appears for Pending and In
-progress manifests and asks for **Confirm cancel manifest**. With no manifests,
-the workspace says "No staged deletions".
+The Staged deletions workspace lists batches by creation date, message count, account, and status. Select a row to inspect its description, summary, execution counts, and failed message IDs. **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches in page history; cancelled-only batches do not keep the sidebar entry visible. With no batches, the workspace says "Nothing staged". The sidebar entry remains visible for active batches and for seven days after execution finishes.
 
 ## Keyboard controls
 

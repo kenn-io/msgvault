@@ -10,6 +10,8 @@ import type { SavedView, PatchSavedViewRequest } from '../../api/generated/model
 import type { ExploreURLState } from '../../explore/models';
 import { supportsSavedViewSchema, exploreStateFromSavedView, type CanonicalState } from '../../saved-views/canonical';
 
+import { DeletionsController } from '../../deletions/controller.svelte';
+
 const REFRESH_MS = 30_000;
 export function viewIncompatibility(view: SavedView): string {
   if (!supportsSavedViewSchema(view.schema_version)) {
@@ -31,6 +33,8 @@ export class ShellData {
   }
   pending = $state<SavedView>();
   error = $state<string>();
+  readonly deletions: DeletionsController;
+  get deletionsStaged(): boolean { return this.deletions.visible; }
   readonly jobs: JobsStore;
 
   #client: APIClient;
@@ -39,13 +43,14 @@ export class ShellData {
 
   constructor(client: APIClient, operations = new OperationsController(client)) {
     this.#client = client;
+    this.deletions = new DeletionsController(client);
     this.jobs = new JobsStore(client, operations);
   }
 
   /** Jobs poll while visible; saved views refresh on entry, focus, and writes. */
   start(): void {
     this.#timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') void this.jobs.refresh();
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') { void this.jobs.refresh(); }
     }, REFRESH_MS);
   }
 
@@ -53,6 +58,7 @@ export class ShellData {
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#timer = undefined;
     this.#controller?.abort();
+    this.deletions.destroy();
     this.jobs.dispose();
   }
 
@@ -60,11 +66,15 @@ export class ShellData {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     const client = { ...this.#client, signal: controller.signal };
+    const deletions = this.refreshDeletions(true);
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
     this.error = views ? undefined : "Couldn't load saved views.";
     if (views) this.#ordered = views;
+    await deletions;
   }
+
+  refreshDeletions(retry = false): Promise<void> { return this.deletions.refresh(retry); }
 
   async #loadViews(client: APIClient): Promise<SavedView[] | undefined> {
     try {

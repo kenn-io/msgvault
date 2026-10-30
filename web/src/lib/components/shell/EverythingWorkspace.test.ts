@@ -19,6 +19,7 @@ const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = 
 beforeEach(() => { telemetryEvents.length = 0; });
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+  if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
   if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
   if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
   if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });

@@ -17,6 +17,7 @@ function setup(answers: Answers = {}) {
     requests.push(request);
     const path = new URL(request.url).pathname;
     if (answers.failing?.includes(path)) return Response.json({ error: 'boom' }, { status: 500 });
+    if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
     if (path === '/api/v1/saved-views' && request.method === 'GET') return Response.json({ saved_views: answers.views ?? [] });
     if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') {
       answers.views = answers.views?.filter(view => !path.endsWith(`/${view.id}`));
@@ -214,4 +215,18 @@ it('restores the visible view and reports a failed delete', async () => {
   finish(Response.json({}, { status: 500 }));
   expect(await deleting).toBe("Couldn't delete Équipe.");
   expect(data.views).toContainEqual(saved);
+});
+
+it('refreshes jobs on the timer and deletions on explicit refresh', async () => {
+  vi.useFakeTimers();
+  const { data, requests } = setup();
+  try {
+    await data.refresh();
+    data.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(1);
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/sources/status')).toHaveLength(1);
+    await data.refresh();
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(2);
+  } finally { data.stop(); vi.useRealTimers(); }
 });
