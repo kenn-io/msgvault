@@ -90,7 +90,9 @@ func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
 	defer cancel()
 	args := []string{
 		"--unshare-user", "--unshare-pid", "--die-with-parent",
-		"--ro-bind", "/", "/", "--bind", dataDir, dataDir, "--proc", "/proc", "--",
+		"--ro-bind", "/", "/", "--bind", dataDir, dataDir, "--proc", "/proc",
+		// TestMain creates its isolated home inside the writable fixture.
+		"--setenv", "TMPDIR", dataDir, "--",
 	}
 	daemonPIDNamespaceProbe.Do(func() {
 		probe := exec.CommandContext(ctx, bwrap, append(args, os.Args[0], "-test.run=^$")...) //nolint:gosec // Bubblewrap comes from LookPath; the test binary and flags are controlled here.
@@ -104,7 +106,7 @@ func runDaemonPIDNamespace(t *testing.T, dataDir, mode string) {
 	}
 	helperArgs := append([]string{"--info-fd", "3", "--block-fd", "4"}, args...)
 	cmd := exec.CommandContext(ctx, bwrap, append(helperArgs, os.Args[0], "-test.run=^TestDaemonRuntimePIDNamespaceHelper$", "-test.v")...) //nolint:gosec // Bubblewrap comes from LookPath; the test binary and flags are controlled here.
-	cmd.Env = append(os.Environ(), "MSGVAULT_HOME="+dataDir, "MSGVAULT_TEST_PIDNS="+mode)
+	cmd.Env = append(os.Environ(), "MSGVAULT_TEST_PIDNS_DATA_DIR="+dataDir, "MSGVAULT_TEST_PIDNS="+mode)
 	infoRead, infoWrite, err := os.Pipe()
 	require.NoError(t, err)
 	defer func() { _ = infoRead.Close() }()
@@ -149,7 +151,7 @@ func TestDaemonRuntimePIDNamespaceHelper(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	require.Equal(2, os.Getpid(), "helper runs as namespace PID 2 behind Bubblewrap's init")
-	dataDir := os.Getenv("MSGVAULT_HOME")
+	dataDir := os.Getenv("MSGVAULT_TEST_PIDNS_DATA_DIR")
 	store := daemonRuntimeStore(dataDir)
 	path, err := store.Path(os.Getpid())
 	require.NoError(err)

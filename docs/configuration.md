@@ -1628,6 +1628,7 @@ self_agent_ids = []
 include_private = false
 media = true
 max_media_mb = 250
+recording_max_bytes = 4294967296   # 4 GiB per call recording
 reconcile_interval_hours = 24
 ```
 
@@ -1644,7 +1645,8 @@ reconcile_interval_hours = 24
 | `self_agent_ids` | — | Positive user IDs representing the archive owner; outgoing replies alone do not establish ownership |
 | `include_private` | `false` | Include private notes; turning it on later and running `sync-chatwoot --full` backfills the notes already skipped. Sync refuses to run with it off once private notes are archived |
 | `media` | `true` | Download attachment and call-recording bytes; retain metadata and source transcripts when disabled |
-| `max_media_mb` | `250` | Per-attachment cap in MiB; zero selects the default; negative/overflowing values are rejected |
+| `max_media_mb` | `250` | Cap in MiB for media other than call recordings; zero selects the default; negative/overflowing values are rejected |
+| `recording_max_bytes` | `4294967296` (4 GiB) | Per-file cap in bytes for audio on voice-call messages and linked call meetings; zero selects the default; negative values and `MaxInt64` are rejected. Does not enable media downloads or Docbank uploads |
 | `reconcile_interval_hours` | `24` | Interval for listing every conversation and rereading histories with commit-time updates since the previous reconcile began; zero selects the default; negative/overflowing values are rejected |
 
 Duplicate profile labels (case-insensitive) and duplicate canonical instance/account
