@@ -35,7 +35,6 @@ jobs:
               - '!{web/**,docs/**,*.md}'
               - 'docs/assets/**'
               - 'docs/screenshots/**'
-              - 'cmd/msgvault/cmd/quickstart.md'
               - 'web/src/lib/settings/cron-corpus.json'
               - 'web/tests/e2e/fixtures/operations-public.json'
               - 'web/tests/e2e/fixtures/operations-private-sentinels.json'
