@@ -12,10 +12,11 @@
   import SidePanel from '../common/SidePanel.svelte';
   import CommandLine from './CommandLine.svelte';
 
-  let { client, source, syncing = false, triggerError, onRefresh, onSync, onclose, onOpenSettings }: {
+  let { client, source, syncing = false, starting = false, triggerError, onRefresh, onSync, onclose, onOpenSettings }: {
     client: APIClient;
     source: SourceStatus;
     syncing?: boolean;
+    starting?: boolean;
     triggerError: string;
     onRefresh: () => void;
     onSync: () => void;
@@ -70,7 +71,7 @@
       <div class="status">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
         <span class="muted">{lastGood ? `Last good sync ${formatDateTime(lastGood)}` : 'No good sync yet'}</span>
-        {#if source.can_sync}<Button size="sm" tone="info" surface="soft" label={syncRunning(source) ? 'Syncing…' : syncing ? 'Starting…' : 'Sync now'} disabled={syncing} onclick={onSync} />{/if}
+        {#if source.can_sync}<Button size="sm" tone="info" surface="soft" label={syncRunning(source) ? 'Syncing…' : syncing ? 'Starting…' : 'Sync now'} disabled={starting || syncing} onclick={onSync} />{/if}
       </div>
     </div>
     {#if triggerError}
