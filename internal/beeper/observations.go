@@ -37,9 +37,8 @@ type captureContext struct {
 
 // observedAddress is one address kind and raw value seen on a Beeper user.
 type observedAddress struct {
-	Kind       store.ContactAddressKind
-	Value      string
-	ProviderID string
+	Kind  store.ContactAddressKind
+	Value string
 }
 
 // observationKey dedupes writes inside one run.
@@ -116,12 +115,12 @@ func (r *observationRecorder) capture(
 	var results []*store.RecordContactObservationResult
 	addresses := observedAddresses(u, anchor)
 	if key := telegramSharedKey(slug, u); key != "" {
-		addresses = append(addresses, observedAddress{Kind: store.ContactAddressProviderIdentity, Value: key, ProviderID: key})
+		addresses = append(addresses, observedAddress{Kind: store.ContactAddressProviderIdentity, Value: key})
 	}
 	for _, address := range addresses {
-		providerID := address.ProviderID
-		if providerID == "" {
-			providerID = anchor
+		providerID := anchor
+		if address.Kind == store.ContactAddressProviderIdentity {
+			providerID = address.Value
 		}
 		key := observationKey{
 			participantID: participantID, sourceID: cc.SourceID,

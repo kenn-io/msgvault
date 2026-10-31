@@ -235,6 +235,12 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		if err != nil {
 			return err
 		}
+		if direct && peerPID == 0 {
+			peerPID, err = resolve(peer, chat.Name)
+			if err != nil {
+				return err
+			}
+		}
 		key := fmt.Sprintf("%s:%d", peer, m.ID)
 		if id, ok := existing[key]; ok {
 			writes, err := mediaWrites(ctx, st, id, m, opts, summary)
@@ -248,12 +254,6 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			}
 			summary.MessagesSkipped++
 			continue
-		}
-		if direct && peerPID == 0 {
-			peerPID, err = resolve(peer, chat.Name)
-			if err != nil {
-				return err
-			}
 		}
 		fromMe := sender != 0 && sender == ownerPID
 		members := []store.ConversationParticipantRef{{ParticipantID: ownerPID, Role: "member"}}

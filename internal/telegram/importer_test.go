@@ -687,6 +687,47 @@ func TestImportLinksPreviouslyArchivedSenders(t *testing.T) {
 	}
 }
 
+func TestImportLinksArchivedPeerWithoutMessages(t *testing.T) {
+	for _, noResume := range []bool{false, true} {
+		t.Run("no-resume="+strconv.FormatBool(noResume), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"name":"Alice Example","type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1610909872","text":"hello"}]}]}}`))
+			opts := ImportOptions{RootDir: root}
+			first, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			require.EqualValues(1, first.MessagesAdded)
+			// Older imports archived the peer as a recipient without identity observations.
+			_, err = st.DB().Exec("DELETE FROM participant_contact_observations")
+			require.NoError(err)
+			peer, err := st.EnsureParticipantByIdentifier("telegram", "user2", "Alice Example")
+			require.NoError(err)
+			bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Alice Example")
+			require.NoError(err)
+			source, err := st.GetOrCreateSource("beeper", "telegram")
+			require.NoError(err)
+			key := "provider:8:telegram:7:service:0::1:2"
+			_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
+				AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
+				ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+			})
+			require.NoError(err)
+
+			opts.NoResume = noResume
+			summary, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Zero(summary.MessagesAdded)
+			assert.EqualValues(1, summary.MessagesSkipped)
+			members, err := st.ClusterMembers(peer)
+			require.NoError(err)
+			assert.ElementsMatch([]int64{peer, bridge}, members)
+		})
+	}
+}
+
 func TestImportIdentityFailureIsRetryable(t *testing.T) {
 	for _, table := range []string{"participant_contact_observations", "participant_links"} {
 		for _, noResume := range []bool{false, true} {
