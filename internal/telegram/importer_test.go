@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -170,10 +172,11 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","date_unixtime":"1610909872","text":""}]}`)
-	for range 3 {
+	for i := range 3 {
 		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1})
 		require.NoError(err)
 		assert.EqualValues(1, summary.MessagesAdded)
+		assert.Equal(i < 2, summary.LimitReached)
 	}
 	var n int
 	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
@@ -247,8 +250,6 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 	var chats []*Chat
 	require.NoError(reader.Chats(func(c *Chat) error { chats = append(chats, c); return nil }))
 	require.NoError(reader.Close())
-	// Exclude the fixture's two invalid media paths from this successful import.
-	chats[1].Messages = append(chats[1].Messages[:3], chats[1].Messages[5:]...)
 	chats[0].Messages[0].Edited = "2021-01-18T00:00:00"
 	for _, m := range []Message{
 		{ID: 105, Type: "message", File: "sticker.webp", MediaType: "sticker", Thumbnail: "thumb.jpg"},
@@ -286,11 +287,11 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 	opts := ImportOptions{RootDir: root, AttachmentsDir: t.TempDir()}
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
-	assert.EqualValues(12, summary.MessagesAdded)
+	assert.EqualValues(14, summary.MessagesAdded)
 	assert.EqualValues(1, summary.ServiceMessagesSkipped)
 	assert.EqualValues(1, summary.UnsupportedEntriesSkipped)
 	assert.Equal(4, summary.AttachmentsStored)
-	assert.Equal(2, summary.AttachmentsMissing)
+	assert.Equal(4, summary.AttachmentsMissing)
 	assert.Equal(6, summary.ParticipantsResolved)
 	for _, tc := range []struct {
 		query string
@@ -318,7 +319,7 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 	summary, err = Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.Zero(summary.MessagesAdded)
-	assert.EqualValues(12, summary.MessagesSkipped)
+	assert.EqualValues(14, summary.MessagesSkipped)
 	assert.Zero(summary.AttachmentsStored)
 	chats[0].Messages[0].RawText = jsontext.Value(`"replacement"`)
 	chats[0].Messages[0].Edited = ""
@@ -422,7 +423,7 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			require.NoError(err)
 			writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":`+string(encodedPath)+`}]}`)
 			summary, err := Import(t.Context(), st, opts)
-			sourceMissing := kind == "directory" || kind == "symlink" || kind == "unreadable"
+			sourceMissing := kind != "storage"
 			if sourceMissing {
 				require.NoError(err)
 				assert.EqualValues(1, summary.MessagesAdded)
@@ -434,9 +435,9 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 				assert.Zero(n)
 			}
 			if kind == "escape" || kind == "absolute" {
-				return
-			}
-			if sourceMissing {
+				writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":"photo.jpg"}]}`)
+				require.NoError(os.WriteFile(media, []byte("photo"), 0600))
+			} else if sourceMissing {
 				require.NoError(os.Remove(media))
 				require.NoError(os.WriteFile(media, []byte("photo"), 0600))
 			} else {
@@ -578,4 +579,77 @@ func TestImportSearchMatchesRebuiltIndex(t *testing.T) {
 			assert.Equal(tc.want, total, "term %s, rebuilt %t", tc.term, rebuilt)
 		}
 	}
+}
+
+func TestImportInvalidMediaContinuesLaterChats(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"before","photo":"../outside.jpg"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"after"}]}]}}`)
+	var warnings bytes.Buffer
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, AttachmentsDir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(&warnings, nil))})
+	require.NoError(err)
+	assert.EqualValues(2, summary.MessagesAdded)
+	assert.Equal(1, summary.AttachmentsMissing)
+	assert.Contains(warnings.String(), "level=WARN")
+	var missing int
+	require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
+	assert.Equal(1, missing)
+}
+
+func TestImportIgnoresOtherSyncTypeCheckpoint(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":2,"type":"message","date_unixtime":"1","text":"second"}]}`)
+	opts := ImportOptions{RootDir: root, Me: "1", Limit: 1}
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	foreignSync, err := st.StartSyncContext(t.Context(), summary.SourceID, "sync-telegram")
+	require.NoError(err)
+	require.NoError(st.PauseSyncWithCheckpoint(foreignSync, &store.Checkpoint{PageToken: `{"version":999}`}))
+	summary, err = Import(t.Context(), st, opts)
+	require.NoError(err)
+	assert.True(summary.WasResumed)
+	assert.EqualValues(1, summary.MessagesAdded)
+}
+
+func TestImportMediaRecoveryRollsBackWithStats(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	data := `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":"photo.jpg"}]}`
+	writeExport(t, root, data)
+	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()}
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	require.NoError(os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("photo"), 0600))
+	if st.IsPostgreSQL() {
+		_, err = st.DB().Exec(`CREATE FUNCTION fail_media_stats() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'stats unavailable'; END $$`)
+		require.NoError(err)
+		_, err = st.DB().Exec(`CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages FOR EACH ROW EXECUTE FUNCTION fail_media_stats()`)
+		require.NoError(err)
+	} else {
+		_, err = st.DB().Exec(`CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages BEGIN SELECT RAISE(ABORT, 'stats unavailable'); END`)
+		require.NoError(err)
+	}
+	_, err = Import(t.Context(), st, opts)
+	require.ErrorContains(err, "stats unavailable")
+	var path string
+	require.NoError(st.DB().QueryRow("SELECT storage_path FROM attachments").Scan(&path))
+	assert.Empty(path)
+	if st.IsPostgreSQL() {
+		_, err = st.DB().Exec(`DROP TRIGGER fail_media_stats ON messages`)
+	} else {
+		_, err = st.DB().Exec(`DROP TRIGGER fail_media_stats`)
+	}
+	require.NoError(err)
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	assert.Equal(1, summary.AttachmentsStored)
+	require.NoError(st.DB().QueryRow("SELECT storage_path FROM attachments").Scan(&path))
+	assert.NotEmpty(path)
 }

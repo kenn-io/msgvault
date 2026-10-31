@@ -380,7 +380,7 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 		return "", "", 0, fmt.Errorf("lstat attachment source: %w", err)
 	}
 	if !linfo.Mode().IsRegular() {
-		return "", "", 0, fmt.Errorf("attachment source %q is not a regular file", srcPath)
+		return "", "", 0, &os.PathError{Op: "open attachment source", Path: srcPath, Err: errors.New("not a regular file")}
 	}
 	if maxSize > 0 && linfo.Size() > maxSize {
 		return "", "", 0, fmt.Errorf("attachment source %q is %d bytes (max %d)", srcPath, linfo.Size(), maxSize)

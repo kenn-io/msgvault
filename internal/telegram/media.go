@@ -59,16 +59,17 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 		} else if m.MediaType == "sticker" {
 			write.Role, write.RoleSource = store.AttachmentRoleSticker, store.AttachmentRoleSourceProviderExplicit
 		}
-		if isMediaWarning(slot.path) {
+		invalidPath := !filepath.IsLocal(slot.path)
+		if invalidPath && opts.Logger != nil {
+			opts.Logger.Warn("telegram: media path must be local to the export; recording missing media", "slot", slot.key, "path", slot.path)
+		}
+		if isMediaWarning(slot.path) || invalidPath {
 			summary.AttachmentsMissing++
 			if messageID == 0 {
 				write.Filename = slot.key
 				writes = append(writes, write)
 			}
 			continue
-		}
-		if !filepath.IsLocal(slot.path) {
-			return nil, fmt.Errorf("telegram: media path %q must be local to the export", slot.path)
 		}
 		write.Filename = filepath.Base(slot.path)
 		if slot.key == "file" {
@@ -85,10 +86,8 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 		}
 		if opts.AttachmentsDir != "" {
 			source := filepath.Join(opts.RootDir, slot.path)
-			info, err := os.Lstat(source)
-			if err == nil && info.Mode().IsRegular() {
-				write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(opts.AttachmentsDir, source, 0)
-			}
+			var err error
+			write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(opts.AttachmentsDir, source, 0)
 			pathErr, sourceError := errors.AsType[*os.PathError](err)
 			if err != nil && (!sourceError || pathErr.Path != source) {
 				return nil, fmt.Errorf("telegram: store media %q: %w", slot.path, err)

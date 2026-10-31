@@ -31,7 +31,7 @@ func TestImportTelegramEndToEnd(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{"--home", tmp, "import-telegram", "--limit", "3", fixture})
 	require.NoError(rootCmd.ExecuteContext(t.Context()))
-	assert.Contains(stdout.String(), "Import complete")
+	assert.Contains(stdout.String(), "Import paused at --limit. More messages remain; re-run to continue.")
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
@@ -114,7 +114,7 @@ func TestImportTelegramConfirmsOwnerAfterWrites(t *testing.T) {
 					require.NoError(err)
 				}
 				require.EqualValues(1, summary.MessagesAdded)
-				require.NoError(runTelegramPostImportMigrations(io.Discard, st, summary, optOut == "flag", invocationFromContext(ctx)))
+				require.NoError(runExportPostImportMigrations(io.Discard, st, summary.SourceID, optOut == "flag", invocationFromContext(ctx)))
 				var n int
 				require.NoError(st.DB().QueryRow("SELECT count(*) FROM account_identities WHERE address = 'user1'").Scan(&n))
 				want := 1

@@ -49,7 +49,7 @@ type ImportSummary struct {
 	AttachmentsStored         int
 	AttachmentsMissing        int
 	WasResumed                bool
-	ArchiveWritten            bool
+	LimitReached              bool
 }
 
 // Import adds messages and fills media slots that still lack bytes.
@@ -90,11 +90,10 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	if err != nil {
 		return summary, err
 	}
-	summary.ArchiveWritten = true
 	summary.SourceID = source.ID
 	cp := telegramCheckpoint{Version: checkpointVersion, RootDir: root, ExportSize: info.Size(), ExportModTime: info.ModTime().UnixNano()}
 	if !opts.NoResume {
-		prev, err := st.GetLatestCheckpointedSync(source.ID)
+		prev, err := st.GetLatestCheckpointedSyncByType(source.ID, syncType)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return summary, err
 		}
@@ -117,7 +116,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return summary, err
 	}
 	st = st.ScopedToSync(source.ID, syncID)
-	paused := false
 	defer func() {
 		cleanup := context.WithoutCancel(ctx)
 		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, MessageType, 500), st.RecomputeConversationStatsContext(cleanup, source.ID))
@@ -132,7 +130,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		}
 		if retErr != nil {
 			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
-		} else if paused && checkpoint != nil {
+		} else if summary.LimitReached && checkpoint != nil {
 			retErr = errors.Join(retErr, st.PauseSyncWithCheckpoint(syncID, checkpoint))
 		} else {
 			retErr = errors.Join(retErr, st.CompleteSyncContext(cleanup, syncID, ""))
@@ -194,7 +192,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return nil
 	})
 	if errors.Is(err, errLimitReached) {
-		paused = true
+		summary.LimitReached = true
 		err = nil
 	}
 	return summary, err
@@ -241,12 +239,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 				return err
 			}
 			for _, write := range writes {
-				if err := st.UpsertAttachmentRecord(ctx, id, write); err != nil {
-					return err
-				}
-			}
-			if len(writes) > 0 {
-				if err := st.RecomputeMessageAttachmentStatsContext(ctx, id); err != nil {
+				if err := st.UpsertAttachmentRecordWithStats(ctx, id, write, true); err != nil {
 					return err
 				}
 			}

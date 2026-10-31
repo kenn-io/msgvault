@@ -3,12 +3,10 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telegram"
 )
 
@@ -100,10 +98,10 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 		NoResume:       opts.NoResume,
 		Logger:         state.logger,
 	})
-	err = errors.Join(err, runTelegramPostImportMigrations(cmd.OutOrStdout(), s, summary, opts.NoDefaultIdentity, state))
+	err = errors.Join(err, runExportPostImportMigrations(cmd.OutOrStdout(), s, summary.SourceID, opts.NoDefaultIdentity, state))
 	if err != nil {
 		var cacheErr error
-		if summary.ArchiveWritten {
+		if summary.SourceID != 0 {
 			cacheErr = rebuildCacheAfterWrite(dbPath, state)
 		}
 		if ctx.Err() != nil {
@@ -116,7 +114,11 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 	if summary.WasResumed {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Resumed from checkpoint.")
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import complete!")
+	if summary.LimitReached {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import paused at --limit. More messages remain; re-run to continue.")
+	} else {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import complete!")
+	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Duration:         %s\n", summary.Duration.Round(time.Millisecond))
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Chats:            %d processed, %d skipped\n", summary.ChatsProcessed, summary.ChatsSkipped)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Messages:         %d added, %d skipped\n", summary.MessagesAdded, summary.MessagesSkipped)
@@ -127,26 +129,6 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Participants:     %d\n", summary.ParticipantsResolved)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Attachments:      %d stored, %d missing\n", summary.AttachmentsStored, summary.AttachmentsMissing)
 	return rebuildCacheAfterWrite(dbPath, state)
-}
-
-func runTelegramPostImportMigrations(out io.Writer, st *store.Store, summary *telegram.ImportSummary, noDefaultIdentity bool, state *invocation) error {
-	if summary == nil || summary.SourceID == 0 {
-		return nil
-	}
-	var identityErr error
-	if !noDefaultIdentity {
-		source, err := st.GetSourceByID(summary.SourceID)
-		if err != nil {
-			identityErr = fmt.Errorf("read Telegram source: %w", err)
-		} else {
-			confirmDefaultIdentity(out, st, source.ID, source.Identifier, source.Identifier, "account-identifier", state.logger)
-		}
-	}
-	migrationErr := runPostSourceCreateMigrationsForInvocation(st, state)
-	if migrationErr != nil {
-		migrationErr = fmt.Errorf("post-source-create migrations: %w", migrationErr)
-	}
-	return errors.Join(identityErr, migrationErr)
 }
 
 func init() {
