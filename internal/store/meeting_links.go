@@ -9,7 +9,9 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/calrecur"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 const (
@@ -57,6 +59,16 @@ func meetingEventRows(ctx context.Context, r reboundReader, predicate string, ar
 		return nil, err
 	}
 	*budget -= len(rows)
+	for i := range rows {
+		if rows[i].rawFormat != rawFormatICS {
+			continue
+		}
+		uid, err := meetingICSUID(ctx, r, rows[i], budget)
+		if err != nil {
+			return nil, err
+		}
+		rows[i].ICalUID = uid
+	}
 	return rows, nil
 }
 
@@ -280,7 +292,10 @@ func exceptionBoundsFor(set *calrecur.Set, duration time.Duration, days int, row
 func memberLinkKey(ctx context.Context, r SQLReader, id int64) (meetingLinkKey, error) {
 	var key meetingLinkKey
 	var at sql.NullTime
-	err := r.QueryRowContext(ctx, `SELECT kind,value,calendar_id,scheduled_at FROM meeting_link_key WHERE message_id = ?`, id).Scan(&key.Kind, &key.Value, &key.CalendarID, &at)
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	args = append([]any{id}, args...)
+	err := r.QueryRowContext(ctx, `SELECT k.kind,k.value,k.calendar_id,k.scheduled_at FROM meeting_link_key k JOIN messages m ON m.id=k.message_id WHERE k.message_id = ? AND m.deleted_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)`+scope, args...).Scan(&key.Kind, &key.Value, &key.CalendarID, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, nil
 	}
@@ -290,8 +305,47 @@ func memberLinkKey(ctx context.Context, r SQLReader, id int64) (meetingLinkKey, 
 	return key, err
 }
 
-func (s *Store) calendarUIDPredicate() string {
-	return calendarUIDExpression(s.dialect, "m.metadata") + ` = ? AND m.message_type = 'calendar_event'`
+// ICS stores the UID in retained VEVENT evidence, not message metadata. Its
+// deterministic provider key lets the UID lookup reach those copies by index.
+func (s *Store) calendarUIDPredicate(uid string) (string, []any) {
+	key := calevent.ICSMessageID(uid, "")
+	return `e.message_id IN (
+ SELECT uid_message.id FROM messages uid_message WHERE uid_message.message_type='calendar_event' AND ` + calendarUIDExpression(s.dialect, "uid_message.metadata") + ` = ?
+ UNION
+ SELECT uid_event.message_id FROM calendar_events uid_event JOIN message_raw uid_raw ON uid_raw.message_id=uid_event.message_id
+ WHERE uid_raw.raw_format='ics' AND (uid_event.provider_event_id=? OR uid_event.series_provider_id=?)
+ )`, []any{uid, key, key}
+}
+
+func meetingICSUID(ctx context.Context, r reboundReader, row CalendarEventRow, budget *int) (string, error) {
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	args = append([]any{row.MessageID}, args...)
+	var stored []byte
+	var compression sql.NullString
+	err := r.QueryRowContext(ctx, `SELECT raw.raw_data,raw.compression FROM message_raw raw JOIN messages m ON m.id=raw.message_id WHERE m.id=? AND m.deleted_at IS NULL`+scope, args...).Scan(&stored, &compression)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read meeting ICS identity: %w", err)
+	}
+	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	if err != nil {
+		return "", nil //nolint:nilerr // Damaged optional evidence keeps the projected message identity.
+	}
+	parseBudget := calevent.NewICSParseBudget()
+	parseBudget.VerificationRemaining = budget
+	components, _, err := calevent.ParseICSWithDiagnostics(ctx, raw, "", row.Event.CalendarTimeZone, parseBudget)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, calrecur.ErrBudgetExceeded) {
+			return "", fmt.Errorf("decode meeting ICS identity: %w", err)
+		}
+		return "", nil //nolint:nilerr // Invalid retained evidence cannot supply a UID.
+	}
+	if len(components) != 1 {
+		return "", nil
+	}
+	return components[0].UID, nil
 }
 
 func freshestOrphanCalendarException(ctx context.Context, r reboundReader, row CalendarEventRow, budget *int) (CalendarEventRow, error) {
@@ -346,15 +400,16 @@ func latestVisibleCalendarExceptionPredicate(d Dialect) string {
 	)`
 }
 
-func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
+func (s *Store) automaticMeetingCandidates(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
 	if key.Kind != "google_event_id" && key.Kind != "ical_uid" {
 		return nil, nil
 	}
-	predicate, args := s.calendarUIDPredicate(), []any{key.Value}
+	predicate, args := s.calendarUIDPredicate(key.Value)
 	base, instance, _ := calrecur.ParseInstanceID(key.Value)
 	if key.Kind == "google_event_id" {
 		// Parse the same source configuration used by calendar persistence.
-		sources, err := r.QueryContext(ctx, `SELECT id,sync_config FROM sources WHERE source_type = 'gcal'`)
+		scope, scopeArgs := sourceScopeClause(ctx, "id")
+		sources, err := r.QueryContext(ctx, `SELECT id,sync_config FROM sources WHERE source_type = 'gcal'`+scope, scopeArgs...)
 		if err != nil {
 			return nil, err
 		}
@@ -446,6 +501,15 @@ candidatesLoop:
 			out = append(out, o)
 		}
 	}
+	return out, nil
+}
+
+// Preserve ambiguity suppression for the existing link and split readers.
+func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
+	out, err := s.automaticMeetingCandidates(ctx, r, key, budget)
+	if err != nil {
+		return nil, err
+	}
 	for _, o := range out {
 		if o.Identity != out[0].Identity {
 			return nil, nil
@@ -460,7 +524,28 @@ type meetingLinkDecision struct {
 	CreatedAt time.Time
 }
 
+type meetingMemberCandidate struct {
+	linkOccurrence
+	Provenance string // manual or automatic
+}
+
 func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {
+	candidates, err := s.meetingMemberCandidatesWithAmbiguity(ctx, r, memberID, budget, true)
+	if err != nil {
+		return nil, err
+	}
+	var out []linkOccurrence
+	for _, c := range candidates {
+		out = append(out, c.linkOccurrence)
+	}
+	return out, nil
+}
+
+func (s *Store) meetingMemberCandidates(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]meetingMemberCandidate, error) {
+	return s.meetingMemberCandidatesWithAmbiguity(ctx, r, memberID, budget, false)
+}
+
+func (s *Store) meetingMemberCandidatesWithAmbiguity(ctx context.Context, r reboundReader, memberID int64, budget *int, suppressAmbiguity bool) ([]meetingMemberCandidate, error) {
 	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
 	if err != nil {
 		return nil, err
@@ -490,7 +575,7 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			return nil, err
 		}
 		// Keep an absent target's identity so its decision still overrides automatic matches.
-		if len(targets) == 0 {
+		if len(targets) == 0 && !sourcescope.Restricted(ctx) {
 			targets = []linkOccurrence{{Identity: d.Identity}}
 		}
 		for _, o := range targets {
@@ -508,7 +593,7 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 		}
 	}
 	if hasManualLink {
-		return uniqueMeetingOccurrences(out), nil
+		return meetingCandidatesWithProvenance(out, "manual"), nil
 	}
 	key, err := memberLinkKey(ctx, r, memberID)
 	if err != nil {
@@ -518,7 +603,11 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 		return nil, nil
 	}
 	if key.Value != "" {
-		matches, err := s.automaticMeetingOccurrences(ctx, r, key, budget)
+		resolve := s.automaticMeetingCandidates
+		if suppressAmbiguity {
+			resolve = s.automaticMeetingOccurrences
+		}
+		matches, err := resolve(ctx, r, key, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -528,7 +617,16 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			}
 		}
 	}
-	return uniqueMeetingOccurrences(out), nil
+	return meetingCandidatesWithProvenance(out, "automatic"), nil
+}
+
+func meetingCandidatesWithProvenance(out []linkOccurrence, provenance string) []meetingMemberCandidate {
+	unique := uniqueMeetingOccurrences(out)
+	candidates := make([]meetingMemberCandidate, 0, len(unique))
+	for _, o := range unique {
+		candidates = append(candidates, meetingMemberCandidate{o, provenance})
+	}
+	return candidates
 }
 
 func (s *Store) meetingReader(ctx context.Context) reboundReader {
@@ -582,7 +680,7 @@ func uniqueMeetingOccurrences(out []linkOccurrence) []linkOccurrence {
 }
 
 func (s *Store) meetingIdentityRows(ctx context.Context, r reboundReader, identity meetingIdentity, budget *int) ([]CalendarEventRow, error) {
-	predicate, args := s.calendarUIDPredicate(), []any{identity.ICalUID}
+	predicate, args := s.calendarUIDPredicate(identity.ICalUID)
 	if identity.ICalUID == "" {
 		predicate, args = "e.message_id = ?", []any{identity.EventMessageID}
 	}
@@ -615,6 +713,11 @@ func (s *Store) meetingSplitIdentities(ctx context.Context, r reboundReader, ide
 	}
 	identities := []meetingIdentity{identity}
 	for _, row := range rows {
+		// Older ICS decisions used message IDs before retained UIDs were read.
+		// Keep that saved split effective against the normalized copy identity.
+		if row.rawFormat == rawFormatICS {
+			identities = append(identities, occurrenceFromRow(row, identity.OccurrenceKey).Identity)
+		}
 		if row.Event.Kind != meetingExceptionKind || row.Event.Start == nil || row.Event.End == nil {
 			continue
 		}

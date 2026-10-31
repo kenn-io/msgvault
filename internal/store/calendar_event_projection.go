@@ -195,7 +195,7 @@ func (s *Store) writeCalendarEventProjectionWith(ctx context.Context, tx *logged
 }
 
 func isCalendarProviderRawFormat(format string) bool {
-	return format == gcalmodel.RawFormat
+	return format == gcalmodel.RawFormat || format == rawFormatICS
 }
 
 func (s *Store) markCalendarEventProviderObservedWith(ctx context.Context, tx *loggedTx, messageID int64) error {

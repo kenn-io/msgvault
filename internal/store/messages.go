@@ -2504,6 +2504,11 @@ func (s *Store) persistMessageWith(
 			return 0, err
 		}
 	}
+	if data.Message != nil && data.Message.MessageType == MessageTypeCalendarEvent && len(data.RawMIME) > 0 && isCalendarProviderRawFormat(data.RawFormat) {
+		if err := s.markCalendarEventProviderObservedWith(ctx, tx, messageID); err != nil {
+			return 0, err
+		}
+	}
 
 	if !data.PreserveLabels {
 		if err := replaceMessageLabelsTx(q, messageID, data.LabelIDs); err != nil {
@@ -6227,6 +6232,11 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		}
 		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
+		}
+		if isCalendarProviderRawFormat(format) {
+			if err := s.markCalendarEventProviderObservedWith(ctx, tx, messageID); err != nil {
+				return err
+			}
 		}
 		if format == rawFormatMIME {
 			if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, calendarMIMEForRefresh(rawData)); err != nil {

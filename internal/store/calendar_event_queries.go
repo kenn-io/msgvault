@@ -106,8 +106,9 @@ func queryCalendarEventRowsWithinBudget(ctx context.Context, r reboundReader, pr
 	}
 	// Public callers supply a snapshot: probe only IDs before decoding event
 	// payloads or loading attendees, and stop once the budget is exceeded.
-	probe := `SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ") LIMIT ?) AS candidates"
-	probeArgs := append([]any(nil), args...)
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	probe := `SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ")" + scope + " LIMIT ?) AS candidates"
+	probeArgs := append(slices.Clone(args), scopeArgs...)
 	probeArgs = append(probeArgs, budget+1)
 	var count int
 	if err := r.QueryRowContext(ctx, probe, probeArgs...).Scan(&count); err != nil {
@@ -123,10 +124,12 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(slices.Clone(args), scopeArgs...)
 	query := fmt.Sprintf(calendarEventSelect,
 		calendarProviderMetadataNullableNumberExpression(r.dialect, "m.metadata", "provider_updated_at_unix_nano"),
 		calendarProviderMetadataNullableNumberExpression(r.dialect, "m.metadata", "sequence"),
-		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ") ORDER BY e.message_id"
+		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
@@ -195,7 +198,7 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	if closeErr != nil {
 		return nil, fmt.Errorf("close calendar events: %w", closeErr)
 	}
-	if err := loadCalendarAttendees(ctx, r.reader, out); err != nil {
+	if err := loadCalendarAttendees(ctx, r, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -312,7 +315,7 @@ func calendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, ids []any, re
 	return diagnostics, errors.Join(rows.Err(), rows.Close())
 }
 
-func loadCalendarAttendees(ctx context.Context, r SQLReader, events []CalendarEventRow) error {
+func loadCalendarAttendees(ctx context.Context, r reboundReader, events []CalendarEventRow) error {
 	byID := make(map[int64]int, len(events))
 	for i, event := range events {
 		byID[event.MessageID] = i
