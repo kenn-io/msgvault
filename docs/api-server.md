@@ -2563,7 +2563,7 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 `day` returns `YYYY-MM-DD` keys and counts individual messages; other
 dimensions count entries, with chats collapsed into conversations.
 `timezone` sets the IANA time zone for day grouping and defaults to `UTC`.
-Day rows include `level` for calendar shading only when the page contains every day row. It ranks each count across that complete day set; partial pages omit `level`.
+Day rows include `level` for calendar shading only when the page contains every day row. It ranks each count across that complete day set; partial pages and keyed lookups omit `level`.
 `sent_only: true` excludes drafts and unsent items from the counts.
 Day grouping is request-only and cannot be stored in a saved view.
 Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
