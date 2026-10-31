@@ -31,6 +31,7 @@ export interface PersonInstruction {
   status: string;
   /** @nullable */
   supersedes_id?: number | null;
+  text: string;
   updated_at: string;
   valid_from: string;
   /** @nullable */

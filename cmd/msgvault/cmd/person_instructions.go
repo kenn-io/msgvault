@@ -247,7 +247,7 @@ func writeInstructionCLIRows(cmd *cobra.Command, rows []store.PersonInstruction)
 		if scope == "" {
 			scope = "person"
 		}
-		if _, err := fmt.Fprintf(writer, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.PersonID, textutil.SanitizeTerminal(scope), row.Kind, row.Status, row.ReviewState, textutil.SanitizeTerminal(row.ValueText), textutil.SanitizeTerminal(row.NormalizedText)); err != nil {
+		if _, err := fmt.Fprintf(writer, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.PersonID, textutil.SanitizeTerminal(scope), row.Kind, row.Status, row.ReviewState, textutil.SanitizeTerminal(row.ValueText), textutil.SanitizeTerminal(row.Text)); err != nil {
 			return fmt.Errorf("write instruction table row %d: %w", row.ID, err)
 		}
 	}

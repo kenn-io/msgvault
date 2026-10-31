@@ -12281,6 +12281,8 @@ components:
           format: int64
           nullable: true
           type: integer
+        text:
+          type: string
         updated_at:
           format: date-time
           type: string
@@ -12301,6 +12303,7 @@ components:
         - instruction_key
         - kind
         - scope_key
+        - text
         - normalized_text
         - value_text
         - origin

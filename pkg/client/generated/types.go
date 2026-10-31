@@ -12157,6 +12157,7 @@ type PersonInstruction struct {
 	StatedAt            *time.Time `json:"stated_at,omitempty"`
 	Status              string     `json:"status" validate:"required"`
 	SupersedesID        *int64     `json:"supersedes_id,omitempty"`
+	Text                string     `json:"text" validate:"required"`
 	UpdatedAt           time.Time  `json:"updated_at" validate:"required"`
 	ValidFrom           time.Time  `json:"valid_from" validate:"required"`
 	ValidUntil          *time.Time `json:"valid_until,omitempty"`
