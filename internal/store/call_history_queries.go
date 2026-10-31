@@ -175,39 +175,19 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		where, args = append(where, "i.occurred_at < ?"), append(args, q.Before.UTC())
 	}
 	args = append(args, limit, q.Offset)
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`
-		WITH active AS (
-			SELECT c.*, CASE WHEN c.canonical_key = '' THEN 'm:' || CAST(c.message_id AS TEXT)
-				ELSE 'n:' || c.canonical_key END AS identity_key
-			FROM call_details c JOIN messages m ON m.id = c.message_id
-			WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-		), identities AS (
-			SELECT identity_key, MIN(occurred_at) AS occurred_at, MIN(kind) AS kind,
-				MAX(CASE WHEN outcome = 'answered' THEN 1 ELSE 0 END) AS answered,
-				MAX(CASE WHEN owner_participation = 'not_joined' OR outcome IN ('missed','declined','cancelled')
-					THEN 1 ELSE 0 END) AS negative,
-				MAX(CASE WHEN outcome = 'missed' THEN 1 ELSE 0 END) AS missed,
-				MAX(CASE WHEN outcome = 'declined' THEN 1 ELSE 0 END) AS declined,
-				MAX(CASE WHEN outcome = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
-			FROM active GROUP BY identity_key
-		), per_person AS (
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(scopeArgs, args...)
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH `+callIdentityCTEs(callActiveSQL(scope))+`,
+		per_person AS (
 			SELECT a.identity_key, pp.person_id, MIN(a.message_id) AS example_id,
-				MAX(CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
-					AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END) AS confirmed
+				MAX(`+callConfirmedSQL()+`) AS confirmed
 			FROM active a JOIN message_recipients r ON r.message_id = a.message_id
 			JOIN person_participants pp ON pp.participant_id = r.participant_id
 			WHERE r.recipient_type IN ('call_joined','call_invited','call_unknown')
 			GROUP BY a.identity_key, pp.person_id
 		), classified AS (
 			SELECT p.person_id, p.example_id,
-				CASE WHEN i.kind = 'scheduled_meeting' AND i.cancelled = 1 THEN 'scheduled_cancelled'
-					WHEN i.kind = 'scheduled_meeting' THEN 'scheduled'
-					WHEN (i.answered = 1 AND i.negative = 1) OR i.missed + i.declined + i.cancelled > 1 THEN 'conflicting'
-					WHEN p.confirmed = 1 THEN 'answered'
-					WHEN i.missed = 1 THEN 'missed'
-					WHEN i.declined = 1 THEN 'declined'
-					WHEN i.cancelled = 1 THEN 'cancelled'
-					ELSE 'unknown' END AS category
+				`+callCategorySQL("p.confirmed")+` AS category
 			FROM per_person p JOIN identities i ON i.identity_key = p.identity_key
 			WHERE `+strings.Join(where, " AND ")+`
 		)
@@ -237,4 +217,44 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// callIdentitySQL also serves fallback observations without a canonical key.
+func callIdentitySQL(alias string) string {
+	return "CASE WHEN " + alias + ".canonical_key = '' THEN 'm:' || CAST(" + alias + ".message_id AS TEXT) ELSE 'n:' || " + alias + ".canonical_key END"
+}
+
+func callActiveSQL(extra string) string {
+	return `SELECT c.*, ` + callIdentitySQL("c") + ` AS identity_key
+ FROM call_details c JOIN messages m ON m.id = c.message_id
+ WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + extra
+}
+
+// Resolve all active evidence before filtering an identity by its earliest date.
+func callIdentityCTEs(active string) string {
+	return `active AS (` + active + `), identities AS (
+ SELECT identity_key, MIN(occurred_at) AS occurred_at, MIN(kind) AS kind,
+ MIN(message_id) AS message_id, MAX(duration_seconds) AS duration_seconds,
+ MAX(CASE WHEN outcome = 'answered' THEN 1 ELSE 0 END) AS answered,
+ MAX(CASE WHEN owner_participation = 'not_joined' OR outcome IN ('missed','declined','cancelled') THEN 1 ELSE 0 END) AS negative,
+ MAX(CASE WHEN outcome = 'missed' THEN 1 ELSE 0 END) AS missed,
+ MAX(CASE WHEN outcome = 'declined' THEN 1 ELSE 0 END) AS declined,
+ MAX(CASE WHEN outcome = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+ FROM active GROUP BY identity_key)`
+}
+
+func callCategorySQL(confirmed string) string {
+	return fmt.Sprintf(`CASE WHEN i.kind = 'scheduled_meeting' AND i.cancelled = 1 THEN 'scheduled_cancelled'
+ WHEN i.kind = 'scheduled_meeting' THEN 'scheduled'
+ WHEN (i.answered = 1 AND i.negative = 1) OR i.missed + i.declined + i.cancelled > 1 THEN 'conflicting'
+ WHEN %s = 1 THEN 'answered'
+ WHEN i.missed = 1 THEN 'missed'
+ WHEN i.declined = 1 THEN 'declined'
+ WHEN i.cancelled = 1 THEN 'cancelled'
+ ELSE 'unknown' END`, confirmed)
+}
+
+func callConfirmedSQL() string {
+	return `CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
+ AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END`
 }
