@@ -135,7 +135,7 @@ func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, pro
 		switch outcome {
 		case "":
 			result.Waiting += count
-		case "requested":
+		case "requested", DocbankProcessingRetryRequested:
 			result.Requested += count
 		case "extracted":
 			result.Extracted += count
