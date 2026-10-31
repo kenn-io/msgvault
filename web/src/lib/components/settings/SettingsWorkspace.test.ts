@@ -175,7 +175,7 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
   let hold: ((leave: () => void, stay?: () => void) => boolean) | undefined;
   let cancel: (() => void) | undefined;
   const { unmount, rerender } = render(SettingsWorkspace, {
-    props: { client, category: 'server' },
+    props: { client, operationsController, onStatusChange, category: 'server' },
     context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => { hold = next; cancel = nextCancel; }]])
   });
   const field = await screen.findByLabelText('Stop when idle after');
