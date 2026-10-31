@@ -462,6 +462,15 @@ test('saved people keep durable IDs separate from participants and open profiles
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92 });
 });
 
+test('reloading a saved person deep link opens its activity after the profile loads', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/people/91', route => route.fulfill({ json: { id: 91, display_name: 'Saved Alice', revision: 1, participant_ids: [1] } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 91, relationshipTarget: 'cluster:1' }))}`);
+  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
+});
+
 test('People history and reload restore participant scope without a message query', async ({ page }) => {
   await prepare(page);
   const requests: Record<string, unknown>[] = [];
