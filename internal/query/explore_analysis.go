@@ -124,13 +124,13 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate analytical groups: %w", err)
 	}
-	return withDayHeatLevels(request.Dimension, response), nil
+	return withDayHeatLevels(request, response), nil
 }
 
 // withDayHeatLevels assigns shared relationship heat levels only when the page
-// contains every day row; other dimensions carry no level.
-func withDayHeatLevels(dimension string, response *ExploreGroupResponse) *ExploreGroupResponse {
-	if dimension != timeGranularityDay || int64(len(response.Rows)) != response.TotalCount {
+// contains every day row; keyed lookups and other dimensions carry no level.
+func withDayHeatLevels(request ExploreGroupRequest, response *ExploreGroupResponse) *ExploreGroupResponse {
+	if request.Dimension != timeGranularityDay || request.GroupKey != "" || int64(len(response.Rows)) != response.TotalCount {
 		return response
 	}
 	signals := make([]identityindex.DailyTemperatureSignals, len(response.Rows))
