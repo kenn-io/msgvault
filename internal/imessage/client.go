@@ -447,6 +447,10 @@ func (c *Client) importMessage(
 		return fmt.Errorf("write message recipients: %w", err)
 	}
 
+	if err := s.IndexStoredMessageContext(ctx, msgID); err != nil {
+		c.logger.Warn("failed to index message for search", "message_id", msgID, "error", err)
+	}
+
 	// Store raw data as JSON for completeness
 	if err := c.writeMessageRaw(s, msgID, msg, body); err != nil {
 		return fmt.Errorf("write message raw: %w", err)

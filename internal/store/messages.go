@@ -3890,6 +3890,29 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 	})
 }
 
+// IndexStoredMessageContext fills or refreshes a message's search entry from stored
+// rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
+func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		if !s.fts5Available {
+			return nil
+		}
+		row, err := s.loadDerivedEmailText(q, messageID)
+		if err != nil {
+			return fmt.Errorf("load stored message for search: %w", err)
+		}
+		row.fts.Body = row.body
+		matches, err := s.dialect.FTSMatches(q, row.fts)
+		if err != nil {
+			return fmt.Errorf("compare stored search entry: %w", err)
+		}
+		if matches {
+			return nil
+		}
+		return s.dialect.FTSUpsert(q, row.fts)
+	})
+}
+
 // BackfillFTS fills missing search entries from existing message data on SQLite.
 // PostgreSQL also refreshes entries with an old indexing version.
 // Processes in batches to avoid blocking for minutes on large archives.
