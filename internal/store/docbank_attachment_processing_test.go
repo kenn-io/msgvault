@@ -26,7 +26,7 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 		d := store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: hash, Fingerprint: "fp", Outcome: "extracted", JobID: hash}
 		var next time.Time
 		if i < 25 {
-			d.Outcome, d.JobID = "requested", hash
+			d.Outcome = "requested"
 			next = time.Now().Add(-time.Minute)
 		}
 		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, next))
@@ -79,7 +79,7 @@ func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {
 		{"b", "requested", time.Now().Add(-time.Minute)},
 		{"c", "extracted", time.Time{}},
 		{"d", "provider_timeout", time.Time{}},
-		{"e", "operator_required", time.Now().Add(store.BeeperMediaRetryDelay)},
+		{"e", "operator_required", time.Time{}},
 		{"f", "", time.Now().Add(time.Hour)},
 	} {
 		jobID := fmt.Sprintf("%064x", i+1)
@@ -168,7 +168,7 @@ func TestDocbankAttachmentProcessingBackfillDuringPoll(t *testing.T) {
 	ctx := t.Context()
 	f.SeedDocumentAttachments(f.CreateMessage("backfill"), []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "pending"}})
 	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
-		ContentHash: fmt.Sprintf("%064x", 0xabcdef), Fingerprint: "fp", Outcome: "requested", JobID: "pending-job",
+		ContentHash: fmt.Sprintf("%064x", 0xabcdef), Fingerprint: "fp", Outcome: "requested", JobID: fmt.Sprintf("%064x", 0x5678),
 	}, time.Now().Add(-time.Minute)))
 	poll, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
@@ -180,7 +180,7 @@ func TestDocbankAttachmentProcessingBackfillDuringPoll(t *testing.T) {
 	require.NoError(err)
 	require.Len(retry, 1, "backfill must survive the in-flight poll's terminal result")
 	assert.Equal(store.DocbankProcessingRetryRequested, retry[0].Outcome)
-	assert.Equal("pending-job", retry[0].JobID)
+	assert.Equal(fmt.Sprintf("%064x", 0x5678), retry[0].JobID)
 	retry[0].Outcome = "requested"
 	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", retry[0], time.Now().Add(time.Hour)))
 	var outcome string
