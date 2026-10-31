@@ -660,7 +660,7 @@ func uniqueMeetingOccurrences(out []linkOccurrence) []linkOccurrence {
 		key := exceptionAliasIdentity{
 			sourceID: occurrence.Row.SourceID,
 			seriesID: event.SeriesProviderID,
-			key:      event.Original.Key(),
+			key:      calendarExceptionAliasKey(*event.Original),
 		}
 		current, exists := aliases[key]
 		if !exists || calendarEventSnapshotNewer(occurrence.Row, current.Row) {
