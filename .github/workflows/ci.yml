@@ -54,7 +54,9 @@ jobs:
         shell: bash
         run: |
           GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
-          kit-download "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" go.tar.gz
+          # workflowretry: allow Cap each attempt so a slow transfer leaves time to retry.
+          kit-retry 3 5 curl -fsSL --connect-timeout 30 --max-time 120 \
+            "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
           tar -C /usr/local -xzf go.tar.gz
           rm go.tar.gz
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
@@ -97,6 +99,8 @@ jobs:
         run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
   checks:
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     runs-on: ubuntu-26.04
     timeout-minutes: 37
     steps:
@@ -126,7 +130,7 @@ jobs:
 
       - name: Install lint tools
         run: |
-          make lint-tools
+          kit-retry 3 5 make lint-tools
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Check OpenAPI artifacts

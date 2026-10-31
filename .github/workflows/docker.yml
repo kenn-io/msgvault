@@ -27,6 +27,11 @@ jobs:
         with:
           bun-version: 1.4.4
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
+      - name: Install browser application dependencies
+        run: kit-retry 3 5 make web-install
+
       - name: Build browser application
         run: make web-assets-check
 

@@ -1,3 +1,6 @@
+# CI can retry acquisition commands inside mixed build/test recipes.
+DOWNLOAD_RETRY ?=
+
 # Makefile for msgvault
 
 .DEFAULT_GOAL := help
@@ -488,7 +491,7 @@ lint-ci: custom-gcl testify-helper-check lint-workflow-retries
 # installed by the base branch's pull-request workflow cannot replace it.
 vuln-tools:
 	@mkdir -p "$(CI_TOOLS_BIN)"
-	GOBIN="$(CI_TOOLS_BIN)" go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	GOBIN="$(CI_TOOLS_BIN)" $(DOWNLOAD_RETRY) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 
 vulncheck: vuln-tools
 	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
