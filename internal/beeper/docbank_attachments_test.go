@@ -1052,8 +1052,8 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 }
 
 func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
-	for _, pollBeforeBackfill := range []bool{true, false} {
-		t.Run(fmt.Sprintf("poll_before_backfill=%t", pollBeforeBackfill), func(t *testing.T) {
+	for _, backfill := range []string{"before_poll", "during_poll", "after_poll"} {
+		t.Run(backfill, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
@@ -1064,20 +1064,40 @@ func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 			jobID := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
 			r.processing.States[jobID] = [3]string{"failed", "rendition", "consent"}
 			r.processingDue()
-			if pollBeforeBackfill {
+			if backfill == "after_poll" {
 				require.NoError(r.runBatch(t.Context()))
 				assert.Equal([]string{jobID}, r.processing.Polls)
 				assert.Equal(map[string]int64{"consent": 1}, r.processingCounts().Outcomes)
 			}
 
-			require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+			if backfill == "during_poll" {
+				var backfilled atomic.Bool
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if req.Method == http.MethodGet && req.URL.Path == "/api/v1/processing/jobs/"+jobID && backfilled.CompareAndSwap(false, true) {
+						assert.NoError(r.f.Store.RetryDocbankAttachments(req.Context(), "dest"))
+					}
+					r.serve(w, req)
+				}))
+				t.Cleanup(srv.Close)
+				client, err := docbankmedia.NewClient(srv.URL, nil)
+				require.NoError(err)
+				r.worker.client = client
+				require.NoError(r.runBatch(t.Context()))
+				require.True(backfilled.Load())
+			} else {
+				require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+			}
 			require.NoError(r.runBatch(t.Context()))
 			assert.Equal([]string{"a", "a"}, r.processing.Plans)
 			assert.Equal([]string{"a", "a"}, r.processing.Jobs)
 			var savedJobID string
 			require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&savedJobID))
 			assert.Equal(jobID, savedJobID)
-			assert.Equal([]string{jobID}, r.processing.Polls)
+			if backfill == "during_poll" {
+				assert.Equal([]string{jobID, jobID}, r.processing.Polls)
+			} else {
+				assert.Equal([]string{jobID}, r.processing.Polls)
+			}
 			r.processing.States[jobID] = [3]string{"completed", "rendition", ""}
 			r.processingDue()
 			require.NoError(r.runBatch(t.Context()))
