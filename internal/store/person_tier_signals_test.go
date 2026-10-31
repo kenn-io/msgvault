@@ -246,12 +246,14 @@ func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
 // Duplicate mailbox copies must not supply the second outbound event needed
 // for tier one; qualification and authorization precede logical-email collapse.
 func TestPersonTierSignalsCollapseQualifiedEmailCopies(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	a := newAudienceFixture(t)
 	second, err := a.f.Store.GetOrCreateSource("gmail", "second@example.com")
-	require.NoError(t, err)
-	require.NoError(t, a.f.Store.AddAccountIdentity(second.ID, "owner@example.com", "manual"))
+	require.NoError(err)
+	require.NoError(a.f.Store.AddAccountIdentity(second.ID, "owner@example.com", "manual"))
 	room, err := a.f.Store.EnsureConversationWithType(second.ID, "copies", "email_thread", "Copies")
-	require.NoError(t, err)
+	require.NoError(err)
 	for day := range 6 {
 		for _, source := range []struct{ id, room int64 }{{a.f.Source.ID, a.f.ConvID}, {second.ID, room}} {
 			from, to := a.sender, a.owner
@@ -263,9 +265,9 @@ func TestPersonTierSignalsCollapseQualifiedEmailCopies(t *testing.T) {
 			m.SenderID = sql.NullInt64{Int64: from, Valid: true}
 			m.RFC822MessageID = sql.NullString{String: fmt.Sprintf("<logical-%d@example.com>", day), Valid: true}
 			id, err := a.f.Store.UpsertMessage(m)
-			require.NoError(t, err)
-			require.NoError(t, a.f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
-			require.NoError(t, a.f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
+			require.NoError(err)
+			require.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
+			require.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
 		}
 	}
 	projectTierSignals(t, a.f, "UTC", 25)
@@ -276,18 +278,18 @@ func TestPersonTierSignalsCollapseQualifiedEmailCopies(t *testing.T) {
 			ctx = sourcescope.WithSourceIDs(ctx, sources)
 		}
 		preview, err := a.f.Store.PreviewPersonTiersContext(ctx, tierOptions())
-		require.NoError(t, err)
+		require.NoError(err)
 		if sources != nil && len(sources) == 0 {
-			assert.Empty(t, preview.People)
+			assert.Empty(preview.People)
 			continue
 		}
-		require.Len(t, preview.People, 1)
-		assert.Equal(t, 2, preview.People[0].Tier)
+		require.Len(preview.People, 1)
+		assert.Equal(2, preview.People[0].Tier)
 		explanation, err := a.f.Store.ExplainPersonTierContext(ctx, a.personID, tierOptions())
-		require.NoError(t, err)
-		assert.Equal(t, 1, explanation.Signals.OutboundShort)
-		assert.Equal(t, 5, explanation.Signals.InboundShort)
-		assert.Equal(t, 6, explanation.Signals.ActiveDaysShort)
+		require.NoError(err)
+		assert.Equal(1, explanation.Signals.OutboundShort)
+		assert.Equal(5, explanation.Signals.InboundShort)
+		assert.Equal(6, explanation.Signals.ActiveDaysShort)
 	}
 }
 
@@ -306,9 +308,11 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 		{name: "deleted first", kind: "email_thread", deleted: true, want: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			a := newAudienceFixture(t)
 			room, err := a.f.Store.EnsureConversationWithType(a.f.Source.ID, "copy-controls", tc.kind, "Copy controls")
-			require.NoError(t, err)
+			require.NoError(err)
 			guest := a.f.EnsureParticipant("guest@example.com", "Guest", "example.com")
 			for i := range 2 {
 				m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -2+i)).Build()
@@ -325,26 +329,26 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 					m.ListID = sql.NullString{String: "list.example.com", Valid: true}
 				}
 				id, err := a.f.Store.UpsertMessage(m)
-				require.NoError(t, err)
+				require.NoError(err)
 				to := []int64{a.owner}
 				if tc.broadcast && i == 0 {
 					to = append(to, guest)
 				}
-				require.NoError(t, a.f.Store.ReplaceMessageRecipients(id, "to", to, nil))
+				require.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", to, nil))
 				if tc.deleted && i == 0 {
 					_, err = a.f.Store.DB().ExecContext(t.Context(), a.f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), a.asOf, id)
-					require.NoError(t, err)
+					require.NoError(err)
 				}
 			}
 			projectTierSignals(t, a.f, "UTC", 1)
 			defer store.SetPersonTierRowPage(1)()
 			signals := tierSignals(t, a.f, a.personID, a.asOf, persontiers.DefaultConfig())
-			assert.Equal(t, tc.want, signals.InboundShort)
+			assert.Equal(tc.want, signals.InboundShort)
 			if tc.list {
-				assert.Equal(t, 1, signals.ExcludedListEvents)
+				assert.Equal(1, signals.ExcludedListEvents)
 			}
 			if tc.broadcast {
-				assert.Equal(t, 1, signals.LargeAudienceInboundEvents)
+				assert.Equal(1, signals.LargeAudienceInboundEvents)
 			}
 		})
 	}
