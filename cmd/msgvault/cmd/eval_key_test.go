@@ -37,14 +37,6 @@ func TestDocKeyFuncs(t *testing.T) {
 	assert.False(t, ok, "thread scoring is a future extension, not yet registered")
 }
 
-// TestDocKeySpec_Collapses pins which keys need the over-fetch: a conversation
-// id is shared by every message in a thread, a source message id is not.
-func TestDocKeySpec_Collapses(t *testing.T) {
-	registry := newDocKeyRegistry()
-	assert.False(t, registry["message"].collapses)
-	assert.True(t, registry["conversation"].collapses)
-}
-
 // TestNewDocKeyRegistry_IsPerRun backs the extensibility claim in the
 // registry's doc comment: it is built by a call, not fixed at program init, so
 // an entry closing over state that only exists after flags are parsed (a

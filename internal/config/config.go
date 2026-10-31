@@ -21,6 +21,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/cronexpr"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
@@ -61,7 +62,7 @@ type AnalyticsConfig struct {
 	Engine             string        `toml:"engine"`               // auto, sql, or duckdb
 	AutoBuildCache     bool          `toml:"auto_build_cache"`     // Build stale/missing Parquet cache before using DuckDB
 	MinRebuildInterval time.Duration `toml:"min_rebuild_interval"` // Minimum age before a scheduled sync can rebuild a usable stale cache
-	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
+	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Empty: quarter of available memory, 256MiB–16GiB; 2GB fallback
 	BuilderThreads     int           `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
 	BuilderTempLimit   string        `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
 	QueryMemoryLimit   string        `toml:"query_memory_limit"`   // Optional DuckDB daemon-query memory limit; empty uses the default
@@ -517,6 +518,7 @@ type MediaAccountConfig struct {
 //
 //nolint:recvcheck // ApplyDefaults mutates; MediaPolicy keeps the value receiver shared by the sibling provider configs
 type DiscordConfig struct {
+	MaxParticipants      int                           `toml:"max_participants"`
 	MaxMediaBytes        int64                         `toml:"max_media_bytes"`
 	Media                *bool                         `toml:"media"`
 	MediaScope           string                        `toml:"media_scope"`
@@ -560,6 +562,7 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
+	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
 	OAuth              OAuthConfig                     `toml:"oauth"`
@@ -583,10 +586,12 @@ type Config struct {
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
+	Inline             InlineConfig                    `toml:"inline"`
 	Omi                []OmiSource                     `toml:"omi"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
+	Pocket             []PocketSource                  `toml:"pocket"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Twilio             []TwilioSource                  `toml:"twilio"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
@@ -839,6 +844,9 @@ type SyncConfig struct {
 	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
 	// can activate tracking pixels. Unset is deliberately false.
 	ArchiveRemoteImages bool `toml:"archive_remote_images"`
+	// IMAPSkipFolders maps exact source identifiers from list-accounts to
+	// folders excluded from sync unless command folder flags override them.
+	IMAPSkipFolders map[string][]string `toml:"imap_skip_folders"`
 	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
 	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
 	// "imaps://user@example.com@imap.example.com:993") to that source's
@@ -849,6 +857,18 @@ type SyncConfig struct {
 	// a missing entry leaves snapshot refresh authorized only by
 	// unambiguous advertised \Sent or \Drafts placement.
 	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
+}
+
+// Validate rejects blank saved IMAP folder names.
+func (s *SyncConfig) Validate() error {
+	for identifier, folders := range s.IMAPSkipFolders {
+		for _, folder := range folders {
+			if strings.TrimSpace(folder) == "" {
+				return fmt.Errorf("sync.imap_skip_folders[%q] contains a blank folder name", identifier)
+			}
+		}
+	}
+	return nil
 }
 
 // DefaultHome returns the default msgvault home directory.
@@ -905,12 +925,14 @@ func NewDefaultConfig() *Config {
 			BatchSize:             500,
 			Schedule:              "17 * * * *",
 		},
-		Accounts:    []AccountSchedule{},
-		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
-		GCal:        []GCalSource{},
+		ConversationPolicy: ConversationPolicyConfig{ActivityWindowDays: conversationpolicy.DefaultActivityWindowDays},
+		Accounts:           []AccountSchedule{},
+		SynctechSMS:        SynctechSMSConfig{Sources: []SynctechSMSSource{}},
+		GCal:               []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
 		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Inline:  InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
@@ -1156,6 +1178,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// survived decode (e.g. `max_retries = 0` or an omitted timeout).
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
+	if err := cfg.validateConversationPolicy(); err != nil {
+		return nil, err
+	}
 	cfg.Vector.ApplyDefaults()
 	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(field string) bool {
 		return metadata.IsDefined("attachments", "documents", field)
@@ -1187,6 +1212,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
+	cfg.deferDaemonError(cfg.Sync.Validate())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
@@ -1221,6 +1247,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.validateMediaPolicies(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateInlineAccounts(); err != nil {
 		return nil, err
 	}
 	cfg.applySynctechSMSDefaults()
@@ -1650,6 +1679,7 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 // there is exactly one instance per machine and the daemon must be co-located
 // with it.
 type BeeperConfig struct {
+	MaxParticipants int `toml:"max_participants"`
 	// URL is the Beeper Desktop API base URL. Empty means the default
 	// loopback address (http://localhost:23373).
 	URL string `toml:"url"`
@@ -1694,6 +1724,7 @@ type MatrixConfig struct {
 // One block covers every registered workspace: tokens are per-workspace
 // files, so no per-workspace config entries are needed.
 type SlackConfig struct {
+	MaxParticipants int `toml:"max_participants"`
 	// Enabled gates the daemon scheduler job.
 	Enabled bool `toml:"enabled"`
 	// Schedule is a 5-field cron expression; empty = not daemon-scheduled.
@@ -1727,6 +1758,7 @@ type SlackConfig struct {
 // MediaMaxParticipants follows the same omitted-versus-explicit-zero rule as
 // the other providers.
 type TeamsConfig struct {
+	MaxParticipants      int                           `toml:"max_participants"`
 	Media                *bool                         `toml:"media"`
 	MediaScope           string                        `toml:"media_scope"`
 	MediaMaxParticipants int                           `toml:"media_max_participants"`
@@ -1857,6 +1889,8 @@ func (c *Config) validateMediaPolicies() error {
 			accountMaxMedia: mediaAccountMaximums(c.Beeper.AccountsConfig)},
 		{name: "slack", policy: c.Slack.MediaPolicy(""), providerMaxMB: c.Slack.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Slack.AccountsConfig)},
+		{name: "inline", policy: c.Inline.MediaPolicy(""), providerMaxMB: c.Inline.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Inline.AccountsConfig)},
 		{name: "discord", policy: c.Discord.MediaPolicy(""), providerMaxMB: c.Discord.MaxMediaMB,
 			accountMaxMedia: discordGuildMaximums(c.Discord.Guilds)},
 		{name: "teams", policy: c.Teams.MediaPolicy(""), providerMaxMB: c.Teams.MaxMediaMB,
@@ -2157,33 +2191,47 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 	return email, true
 }
 
+// defaultMeetingSourceIdentifier names the single unlabeled meeting source.
+const defaultMeetingSourceIdentifier = "default"
+
 // applyMeetingSourceDefaults normalizes native meeting-source entries: a
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Omi) == 1 && c.Omi[0].Identifier == "" {
-		c.Omi[0].Identifier = "default"
+		c.Omi[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
-		c.Plaud[0].Identifier = "default"
+		c.Plaud[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twenty) == 1 && c.Twenty[0].Identifier == "" {
-		c.Twenty[0].Identifier = "default"
+		c.Twenty[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	for i := range c.Pocket {
+		c.Pocket[i].Identifier = strings.TrimSpace(c.Pocket[i].Identifier)
+	}
+	if len(c.Pocket) == 1 && c.Pocket[0].Identifier == "" {
+		c.Pocket[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	for i := range c.Pocket {
+		if c.Pocket[i].APIKeyEnv == "" {
+			c.Pocket[i].APIKeyEnv = "POCKET_API_KEY"
+		}
 	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
-		c.Granola[0].Identifier = "default"
+		c.Granola[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
-		c.Circleback[0].Identifier = "default"
+		c.Circleback[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
-		c.NotionMeetings[0].Identifier = "default"
+		c.NotionMeetings[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
-		c.Muesli[0].Identifier = "default"
+		c.Muesli[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
-		c.Twilio[0].Identifier = "default"
+		c.Twilio[0].Identifier = defaultMeetingSourceIdentifier
 	}
 }
 
@@ -2204,6 +2252,27 @@ func (c *Config) validateMeetingSources() error {
 			seen[key] = true
 		}
 		return nil
+	}
+	pocketIDs := make([]string, len(c.Pocket))
+	for i, src := range c.Pocket {
+		pocketIDs[i] = src.Identifier
+	}
+	if err := check("pocket", pocketIDs); err != nil {
+		return err
+	}
+	for i := range c.Pocket {
+		src := &c.Pocket[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		for j, char := range src.APIKeyEnv {
+			valid := char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || j > 0 && char >= '0' && char <= '9'
+			if !valid {
+				return fmt.Errorf("[[pocket]] identifier %q has invalid api_key_env", src.Identifier)
+			}
+		}
 	}
 	twentyIDs := make([]string, len(c.Twenty))
 	for i, s := range c.Twenty {

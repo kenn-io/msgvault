@@ -121,13 +121,11 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 	for _, source := range request.MediaSources {
 		sources[source.SearchMediaSource] = source
 	}
-	var report SearchReport
-	if err := c.jsonRequestLimits(ctx, http.MethodPost, "/api/v1/search", request, &report, maxSearchBytes, maxSearchBytes); err != nil {
+	report, err := c.searchReport(ctx, request)
+	if err != nil {
 		return SearchReport{}, err
 	}
-	if report.MediaSelections == nil || len(report.MediaSelections) > MaxSearchVersions || len(report.MediaSelections) > len(sources) || !report.MediaSourceSelection || report.ActualMode != "lexical" || report.RequestedMode != "lexical" || report.Results == nil || len(report.Results) > request.Limit ||
-		report.Coverage.State == "" || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
-		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments {
+	if report.MediaSelections == nil || len(report.MediaSelections) > MaxSearchVersions || len(report.MediaSelections) > len(sources) || !report.MediaSourceSelection {
 		return SearchReport{}, ErrInvalidReceipt
 	}
 	selections := make(map[SearchMediaSource]SearchMediaSelection, len(report.MediaSelections))
@@ -144,7 +142,7 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 	builds := make(map[[2]string]bool)
 	for i := range report.Results {
 		hit := &report.Results[i]
-		if hit.VaultUID != request.Fence.VaultUID || !ids[hit.ContentVersionID] || hit.NodeID <= 0 || hit.Rank <= 0 || len(hit.Excerpt) > 2048 || len(hit.Evidence) != 1 {
+		if !validSearchHit(*hit, request.Fence.VaultUID, ids) || len(hit.Evidence) != 1 {
 			return SearchReport{}, ErrInvalidReceipt
 		}
 		for _, evidence := range hit.Evidence {
@@ -168,7 +166,81 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 				return SearchReport{}, ErrInvalidReceipt
 			}
 		}
-		hit.Excerpt = strings.ReplaceAll(strings.ReplaceAll(hit.Excerpt, "\x01", ""), "\x02", "")
+		hit.Excerpt = plainExcerpt(hit.Excerpt)
 	}
+	return report, nil
+}
+
+// searchReport applies the report checks shared by recording and document search.
+func (c *Client) searchReport(ctx context.Context, request SearchRequest) (SearchReport, error) {
+	var report SearchReport
+	if err := c.jsonRequestLimits(ctx, http.MethodPost, "/api/v1/search", request, &report, maxSearchBytes, maxSearchBytes); err != nil {
+		return SearchReport{}, err
+	}
+	if report.ActualMode != "lexical" || report.RequestedMode != "lexical" || report.Results == nil || len(report.Results) > request.Limit ||
+		report.Coverage.State == "" || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
+		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments {
+		return SearchReport{}, ErrInvalidReceipt
+	}
+	return report, nil
+}
+
+// plainExcerpt removes the match markers Docbank puts around each hit.
+func plainExcerpt(excerpt string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(excerpt, "\x01", ""), "\x02", "")
+}
+
+func validSearchHit(hit SearchHit, vault string, ids map[string]bool) bool {
+	return hit.VaultUID == vault && ids[hit.ContentVersionID] && hit.NodeID > 0 && hit.Rank > 0 && len(hit.Excerpt) <= 2048
+}
+
+// VaultFence fences versions to Docbank's vault via an empty filtered
+// fence, so stale versions don't fail it; search skips them on its own.
+func (c *Client) VaultFence(ctx context.Context, versions []string) (SearchFence, error) {
+	request := map[string]map[string]string{"filters": {"modified_before": "0001-01-01T00:00:00Z"}}
+	var response struct {
+		Fence SearchFence `json:"fence"`
+	}
+	if err := c.jsonRequest(ctx, http.MethodPost, "/api/v1/processing/source-fences/resolve", request, &response); err != nil {
+		return SearchFence{}, err
+	}
+	if response.Fence.VaultUID == "" {
+		return SearchFence{}, ErrInvalidReceipt
+	}
+	return SearchFence{VaultUID: response.Fence.VaultUID, ContentVersionIDs: versions}, nil
+}
+
+// SearchDocuments searches exact mirrored versions without transcript selectors.
+func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (SearchReport, error) {
+	ids := make(map[string]bool, len(request.Fence.ContentVersionIDs))
+	for _, id := range request.Fence.ContentVersionIDs {
+		ids[id] = true
+	}
+	report, err := c.searchReport(ctx, request)
+	if err != nil {
+		return SearchReport{}, err
+	}
+	results := make([]SearchHit, 0, len(report.Results))
+	for _, hit := range report.Results {
+		if !validSearchHit(hit, request.Fence.VaultUID, ids) {
+			return SearchReport{}, ErrInvalidReceipt
+		}
+		content := false
+		for _, evidence := range hit.Evidence {
+			switch evidence.Kind {
+			case "content_blob", "rendition_segment":
+				content = true
+			case "node_name":
+			default:
+				return SearchReport{}, ErrInvalidReceipt
+			}
+		}
+		if !content {
+			continue
+		}
+		hit.Excerpt = plainExcerpt(hit.Excerpt)
+		results = append(results, hit)
+	}
+	report.Results = results
 	return report, nil
 }

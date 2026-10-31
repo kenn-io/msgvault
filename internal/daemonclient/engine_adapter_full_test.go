@@ -1013,6 +1013,57 @@ func TestEngineGetDeletionTargetsBySearchUsesVersionedExactScope(t *testing.T) {
 	}}, targets)
 }
 
+func TestEngineGetDeletionTargetsBySearchBoundedGatesOnDaemonSchemaAndForwardsMaxResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, schema string
+	}{
+		{"supported daemon", "3.26.0"},
+		{"older daemon", "3.25.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			var healthRequests, targetRequests int
+			store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					healthRequests++
+					writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": tc.schema})
+				case "/api/v1/messages/gmail-ids":
+					targetRequests++
+					assertions.Equal("100001", r.URL.Query().Get("max_results"))
+					writeJSONResponse(t, w, map[string]any{
+						"gmail_ids": []string{"gm-1"}, "search_query": "bodyneedle",
+						"search_mode": "fast", "matched_count": 2,
+						"targets": []map[string]any{{
+							"message_id": 1, "source_id": 7, "source_type": "gmail",
+							"source_identifier": "account@example.test", "source_message_id": "gm-1",
+						}},
+					})
+				default:
+					http.NotFound(w, r)
+				}
+			})
+
+			_, matched, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(
+				t.Context(), search.Parse("bodyneedle"), query.MessageFilter{},
+				query.DeletionSearchFast, query.MaxDeletionTargetSearchResults,
+			)
+			assertions.Equal(1, healthRequests)
+			if tc.schema == "3.25.0" {
+				requirements.ErrorIs(err, ErrBoundedDeletionSearchUnsupported)
+				requirements.ErrorContains(err, "requires daemon API schema 3.26.0 or newer")
+				requirements.ErrorContains(err, "upgrade the daemon and retry")
+				assertions.Zero(targetRequests)
+				return
+			}
+			requirements.NoError(err)
+			assertions.Equal(2, matched)
+			assertions.Equal(1, targetRequests)
+		})
+	}
+}
+
 func TestEngineGetDeletionTargetsByAggregateSearchForwardsDisplayedRow(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

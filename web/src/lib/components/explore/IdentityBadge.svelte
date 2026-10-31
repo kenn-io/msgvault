@@ -43,9 +43,13 @@
 
   .identity-badge--sender {
     border-left: 2px solid var(--accent-teal);
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
   }
 
   .identity-badge--recipient {
     border-left: 2px solid var(--accent-blue);
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
   }
 </style>

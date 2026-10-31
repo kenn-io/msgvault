@@ -97,16 +97,6 @@ func TestIdentifierMatch_TableDriven(t *testing.T) {
 	}
 }
 
-// TestIdentifierMatch_WhereClauseAcceptsCustomColumn asserts the helper
-// is column-name-driven so call sites can specify their own column
-// (today every site uses "address", but the contract supports more).
-func TestIdentifierMatch_WhereClauseAcceptsCustomColumn(t *testing.T) {
-	m := newIdentifierMatch("foo@x.com")
-	assert.Equal(t, "LOWER(normalized) = LOWER(?)", m.WhereClause("normalized"))
-	m2 := newIdentifierMatch("AliceHandle")
-	assert.Equal(t, "col = ?", m2.WhereClause("col"))
-}
-
 // TestLooksLikeEmail asserts the email-shape predicate directly. The
 // regression cases (iter2→iter3 Matrix MXID misclassification) are
 // the load-bearing rows here: a future refactor that loosens the

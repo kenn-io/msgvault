@@ -36,6 +36,27 @@ func identityRequestIsSourceOnly(request ExploreRequest) bool {
 	return identityRequestIsUnfiltered(request)
 }
 
+// sentIdentityConditions filters before logical grouping so drafts cannot
+// become chat anchors or change identity counts. Explore keeps the full set.
+func sentIdentityConditions(conditions string) string {
+	return conditions + ` AND NOT EXISTS (
+		SELECT 1 FROM relationship_unsent_messages a
+		WHERE a.message_id = analytical_entries.message_id
+	)`
+}
+
+// sentIdentityConditions rejects contact reads until the committed exclusion
+// set loads successfully. Base-message lookups can keep using their Parquet.
+func (e *DuckDBEngine) sentIdentityConditions(conditions string) (string, error) {
+	e.optColsMu.RLock()
+	err := e.unsentRefreshErr
+	e.optColsMu.RUnlock()
+	if err != nil {
+		return "", err
+	}
+	return sentIdentityConditions(conditions), nil
+}
+
 // buildIdentityLogicalSQL renders the context-filtered logical-entry
 // population with per-(entry, canonical) relationship facts as a closed
 // logical_people CTE: entry facts come from analytical_entries (one row per
@@ -62,6 +83,10 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
+	conditions, err = e.sentIdentityConditions(conditions)
+	if err != nil {
+		return "", nil, err
+	}
 	// entry_num is a numeric logical-entry key: the anchor message ID for
 	// message entries, the (globally unique, NOT NULL) conversation ID
 	// negated for chat conversation entries so the two spaces cannot
@@ -150,6 +175,10 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
+	conditions, err = e.sentIdentityConditions(conditions)
+	if err != nil {
+		return "", nil, err
+	}
 	// entry_num mirrors buildIdentityLogicalSQL: the per-(entry, domain)
 	// dedup hash stays numeric-keyed so a broad filter fits the interactive
 	// memory budget.

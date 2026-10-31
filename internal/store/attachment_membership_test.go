@@ -277,6 +277,26 @@ func TestBeeperRetryPolicyWeighsArchivedTotal(t *testing.T) {
 	items, err = st.ListBeeperRetryableAttachmentMessages(fixture.sourceID, policy)
 	require.NoError(err)
 	assert.Empty(items)
+
+	// A partially applied repair may have committed a count before it replaced
+	// participants and refreshed stats. Treat it as unresolved until the repair
+	// clears its durable marker.
+	require.NoError(st.SetConversationMemberCount(fixture.conversationID, 3))
+	require.NoError(st.SetSourceConversationRosterRepairPendingContext(
+		context.Background(), fixture.sourceID, "beeper-conversation", true,
+	))
+	items, err = st.ListBeeperRetryableAttachmentMessages(fixture.sourceID, policy)
+	require.NoError(err)
+	assert.Empty(items, "media retries fail closed while the archived roster repair is incomplete")
+	membership, err := st.AttachmentConversationMembershipContext(context.Background(), fixture.messageID)
+	require.NoError(err)
+	assert.False(membership.RosterArchived)
+	require.NoError(st.SetSourceConversationRosterRepairPendingContext(
+		context.Background(), fixture.sourceID, "beeper-conversation", false,
+	))
+	items, err = st.ListBeeperRetryableAttachmentMessages(fixture.sourceID, policy)
+	require.NoError(err)
+	require.Len(items, 1, "clearing the marker releases a successful roster repair")
 }
 
 // TestAttachmentPolicyCandidatesReportUnresolvedRosters keeps purge on the
@@ -323,6 +343,12 @@ func TestAttachmentPolicyCandidatesReportUnresolvedRosters(t *testing.T) {
 	require.NoError(st.MarkConversationMemberCountUnknown(fixture.conversationID))
 	assert.Equal(3, candidate().ParticipantCount)
 	assert.True(candidate().RosterUnresolved)
+	require.NoError(st.SetConversationMemberCount(fixture.conversationID, 3))
+	require.NoError(st.SetSourceConversationRosterRepairPendingContext(
+		context.Background(), fixture.sourceID, "slack-conversation", true,
+	))
+	assert.True(candidate().RosterUnresolved,
+		"an interrupted roster replacement must not be a purge eligibility proof")
 }
 
 // TestMembershipRecordWritesPreserveKnownCounts pins the write side: an exact

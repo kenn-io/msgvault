@@ -234,8 +234,11 @@ function parseTerm(text: string, spec: CronFieldSpec): CronTerm {
     if (highText === undefined && !all) end = spec.max;
   }
 
-  if (start < spec.min) throw new Error(`${start} is below the minimum of ${spec.min}.`);
-  if (end > spec.max) throw new Error(`${end} is above the maximum of ${spec.max}.`);
+  // Both ends must lie inside the field, even when the range wraps.
+  for (const value of [start, end]) {
+    if (value < spec.min) throw new Error(`${value} is below the minimum of ${spec.min}.`);
+    if (value > spec.max) throw new Error(`${value} is above the maximum of ${spec.max}.`);
+  }
   // A range whose start comes after its end wraps past the end of the field,
   // so 22-2 in the hour field is 22:00 through 02:00.
   const size = start > end ? spec.max - start + 1 + (end - spec.min + 1) : end - start + 1;
@@ -280,7 +283,6 @@ export function describeCron(expression: string): string {
 
 /** Describes parsed fields; a zone adds ", Europe/Berlin time" at the end. */
 export function describeFields(fields: CronField[], zone?: string): string {
-  if (neverRuns(fields)) return 'Never runs';
   const [minute, hour, day, month, weekday] = fields;
   const time = describeTime(minute, hour);
   const days = describeDays(day, month, weekday);
@@ -346,28 +348,12 @@ function describeHourWindow(hour: CronField): string {
   return `during hours ${describeGeneric(hour)}`;
 }
 
-/**
- * The daemon accepts a wrapped range such as 70-5 that picks no values. A
- * schedule with one never runs, except in a day field: when both day fields
- * are restricted the daemon runs on a day matching either one, so the other
- * field still decides.
- */
-function neverRuns(fields: CronField[]): boolean {
-  const [minute, hour, day, month, weekday] = fields;
-  if ([minute, hour, month].some((field) => values(field).length === 0)) return true;
-  const noDay = values(day).length === 0;
-  const noWeekday = values(weekday).length === 0;
-  if (day.any || weekday.any) return noDay || noWeekday;
-  return noDay && noWeekday;
-}
-
 function describeDays(day: CronField, month: CronField, weekday: CronField): string {
   // A weekday field naming all seven days matches every day whatever the
-  // day of the month says, because the daemon matches either day field. A
-  // day field with no values leaves the other one in charge.
+  // day of the month says, because the daemon matches either day field.
   const everyWeekday = !weekday.any && values(weekday).length === WEEKDAYS.length;
-  const dayPart = day.any || everyWeekday || values(day).length === 0 ? '' : describeDayOfMonth(day);
-  const weekdayPart = weekday.any || everyWeekday || values(weekday).length === 0 ? '' : describeWeekday(weekday);
+  const dayPart = day.any || everyWeekday ? '' : describeDayOfMonth(day);
+  const weekdayPart = weekday.any || everyWeekday ? '' : describeWeekday(weekday);
   const monthPart = month.any ? '' : describeMonth(month);
 
   let result = 'every day';
@@ -439,15 +425,13 @@ function values(field: CronField): number[] {
 }
 
 /**
- * Where a range endpoint lands in its field. The daemon wraps a range whose
- * start comes after its end into the next lap of the field, so 60 in the
- * minute field is minute 0 and 0 in the day field is the 31st. Weekday 7 is
- * Sunday.
+ * Where a value lands in its field. A wrapped range runs into the next lap
+ * of the field, so the minute after 59 is 0. Weekday 7 is Sunday.
  */
 function position(name: CronFieldName, value: number): number {
   const spec = specFor(name);
   const span = spec.max - spec.min + 1;
-  const wrapped = value > spec.max ? value - span : value < spec.min ? value + span : value;
+  const wrapped = value > spec.max ? value - span : value;
   return name === 'weekday' ? wrapped % 7 : wrapped;
 }
 

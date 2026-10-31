@@ -131,7 +131,7 @@ func TestNonWriteConflictPreservesOrdinaryPublicationAcrossRecovery(t *testing.T
 			require.NoError(service.ApproveConflictPublication(t.Context(), conflict.ID, preview.ApprovalToken))
 			if restart {
 				sf.timeout = true
-				service.dav().client.requestTimeout = 250 * time.Millisecond
+				service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 				require.Error(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepLocal))
 				during, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 				require.NoError(err)

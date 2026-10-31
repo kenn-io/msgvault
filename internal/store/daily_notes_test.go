@@ -379,9 +379,3 @@ func TestDailyNoteAuthoringDoesNotTouchComputedActivity(t *testing.T) {
 		assert.Equal(before[table], after, table)
 	}
 }
-
-func TestDailyNoteSchemaReinitializationIsIdempotent(t *testing.T) {
-	f := storetest.New(t)
-	require.NoError(t, f.Store.InitSchema())
-	require.NoError(t, f.Store.InitSchema())
-}

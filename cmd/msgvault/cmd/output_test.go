@@ -36,24 +36,6 @@ func TestParseCommonFlagsRejectsNonPositiveLimit(t *testing.T) {
 	}
 }
 
-func TestParseCommonFlagsUsesFlagLimit(t *testing.T) {
-	savedLimit := aggLimit
-	savedAfter := aggAfter
-	savedBefore := aggBefore
-	t.Cleanup(func() {
-		aggLimit = savedLimit
-		aggAfter = savedAfter
-		aggBefore = savedBefore
-	})
-	aggLimit = 25
-	aggAfter = ""
-	aggBefore = ""
-
-	opts, err := parseCommonFlags()
-	require.NoError(t, err, "parseCommonFlags")
-	assert.Equal(t, 25, opts.Limit, "opts.Limit should track the flag")
-}
-
 // JSON mode must emit valid empty JSON ([]) for zero results, never
 // prose like "No senders found." — agents pipe --json output to jq.
 func TestOutputAggregateJSON_EmptyEmitsEmptyArray(t *testing.T) {

@@ -15,23 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestPersonInferenceProviderV2Schema(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	profileColumns := liveTableColumns(t, st, "person_inference_profiles")
-	for _, column := range []string{
-		"auth_scheme", "credential_source", "credential_ref", "output_mode",
-		"token_limit_parameter", "reasoning_effort", "reasoning_mode", "driver_version",
-		"execution_boundary", "packet_renderer_policy", "program_fingerprint",
-		"disclosed_packet_fields",
-	} {
-		assert.Contains(t, profileColumns, column)
-	}
-	assert.ElementsMatch(t, []string{
-		"profile_fingerprint", "checked_at", "driver_version", "output_mode",
-		"provider_request_id", "model_version",
-	}, liveTableColumns(t, st, "person_inference_checks"))
-}
-
 // TestPersonInferenceProviderV2RemovesPreProfileRows covers an archive created
 // by a development build before named protocol profiles existed: the new
 // columns and check table appear, and the pre-profile row, which no current

@@ -127,7 +127,11 @@ func TestQuerySQLToolConfinesDaemonOwnerCredentialsToArchive(t *testing.T) {
 		dir := filepath.Join(analyticsDir, dataset)
 		require.NoError(os.MkdirAll(dir, 0o700))
 		path := strings.ReplaceAll(filepath.ToSlash(filepath.Join(dir, "rows.parquet")), "'", "''")
-		_, err := fixtureDB.Exec("COPY (SELECT 'synthetic archive row' AS subject) TO '" + path + "' (FORMAT PARQUET)")
+		rows := "SELECT 'synthetic archive row' AS subject"
+		if dataset == "relationship_activity" {
+			rows = "SELECT 1::BIGINT AS message_id, NULL::BIGINT AS canonical_id, FALSE AS unsent, 'synthetic archive row' AS subject"
+		}
+		_, err := fixtureDB.Exec("COPY (" + rows + ") TO '" + path + "' (FORMAT PARQUET)")
 		require.NoError(err)
 	}
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)

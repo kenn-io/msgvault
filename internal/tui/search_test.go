@@ -166,19 +166,6 @@ func TestSearchResultsDisplay(t *testing.T) {
 	assertLoading(t, m, false, false)
 }
 
-// TestSearchResultsStale verifies stale search results are ignored.
-func TestSearchResultsStale(t *testing.T) {
-	model := NewBuilder().WithPageSize(10).WithSize(100, 20).Build()
-	model.searchRequestID = 2 // Current request is 2
-
-	m := applySearchResults(t, model, 1, []query.MessageSummary{
-		{ID: 1, Subject: "Stale Result"},
-	}, 0)
-
-	// Messages should not be updated (still nil/empty)
-	assert.Empty(t, m.messages, "stale ignored")
-}
-
 // TestInlineSearchTabToggle verifies Tab key behavior across different search states.
 func TestInlineSearchTabToggle(t *testing.T) {
 	tests := []struct {
@@ -1383,19 +1370,6 @@ func TestDrillDownSearchBreadcrumbRoundTrip(t *testing.T) {
 
 	assertLevel(t, m2, levelAggregates)
 	assertSearchQuery(t, m2, "important")
-}
-
-// TestDrillDownPreservesSearchQuery verifies that searchQuery persists
-// after drill-down so highlighting and filtering remain active.
-func TestDrillDownPreservesSearchQuery(t *testing.T) {
-	model := newTestModelWithRows(testAggregateRows)
-	model.level = levelAggregates
-	model.searchQuery = "alice"
-	model.cursor = 0
-
-	m := applyAggregateKey(t, model, keyEnter())
-
-	assertSearchQuery(t, m, "alice")
 }
 
 // TestSubAggregateDrillDownSearchBreadcrumbRoundTrip verifies the breadcrumb

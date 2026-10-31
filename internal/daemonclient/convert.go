@@ -417,6 +417,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 	return &query.MessageDetail{
 		RelatedMessageID:     resp.RelatedMessageID,
 		ID:                   resp.ID,
+		Calendar:             calendarProjectionFromGenerated(resp.Calendar),
 		SourceMessageID:      resp.SourceMessageID,
 		RFC822MessageID:      stringValue(resp.Rfc822MessageID),
 		ConversationID:       resp.ConversationID,
@@ -933,4 +934,19 @@ func docbankRefsFromGenerated(refs []generated.DocbankAttachmentRef) []store.Doc
 		result[i] = store.DocbankAttachmentRef{Endpoint: ref.Endpoint, Folder: ref.Folder, NodeID: ref.NodeID, VersionID: ref.VersionID, BlobHash: ref.BlobHash}
 	}
 	return result
+}
+
+func calendarProjectionFromGenerated(calendar *generated.CalendarProjection) *store.CalendarProjection {
+	if calendar == nil {
+		return nil
+	}
+	return &store.CalendarProjection{
+		Status:   calendar.Status,
+		Sequence: calendar.Sequence,
+		Start:    calendar.Start,
+		End:      calendar.End,
+		AllDay:   calendar.AllDay,
+		TimeZone: calendar.TimeZone,
+		ICalUID:  calendar.IcalUID,
+	}
 }

@@ -79,7 +79,11 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
 
 - Use `make build` for a worktree binary. `make install` changes the user's
   installed binary and needs intentional authorization.
-- All `go test` invocations need `-tags "fts5 sqlite_vec"`; prefer `make test`.
+- Tests that construct configuration directly must set `Data.DataDir` to a
+  temporary directory before writing or purging attachments. Changing
+  `HomeDir` after `config.NewDefaultConfig()` does not change `Data.DataDir`.
+- All `go test` invocations need `-tags "fts5 sqlite_vec"`. Run the packages you
+  changed; `make test` (and CI) runs the full suite.
   PostgreSQL tests use the targets documented in [Development](docs/development.md).
   The PostgreSQL-only library profile is the exception: use `make test-pg-nocgo`,
   which omits native-driver tags and disables CGO.
@@ -97,6 +101,12 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
   the commit message.
 - Do not write shell tests that grep scripts, workflows, config, or docs for
   expected implementation text. Use real execution or tool-native validation.
+- Never locate files from a path returned by `runtime.Caller` or a stack
+  trace; builds use `-trimpath`, so those paths are module-relative. Tests run
+  from their package directory, so use paths relative to it.
+- A test package that loads a named time zone must import `time/tzdata` in a
+  `_test.go` file. Trimmed builds cannot fall back to GOROOT's zone database,
+  and Windows has no system database.
 - A timeout may bound a wait for an observable transition. Do not make runner
   throughput a correctness requirement, such as ten polls within one second.
 

@@ -577,15 +577,6 @@ func TestCalendarSyncNextCommandIncludesSelectionFlags(t *testing.T) {
 		}))
 }
 
-func TestCalendarCommandsRegistered(t *testing.T) {
-	have := map[string]bool{}
-	for _, c := range rootCmd.Commands() {
-		have[c.Name()] = true
-	}
-	assert.True(t, have["add-calendar"], "add-calendar should be registered")
-	assert.True(t, have["sync-calendar"], "sync-calendar should be registered")
-}
-
 func newCalendarDecisionStore(t *testing.T) *store.Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")

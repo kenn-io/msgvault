@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1396,40 +1397,41 @@ func TestCodexTransportRejectsLateStderrOverflowAfterFinalFrame(t *testing.T) {
 func TestCodexLoginAndModelsApplyConfiguredTimeout(t *testing.T) {
 	for _, operation := range []string{"login", "models"} {
 		t.Run(operation, func(t *testing.T) {
-			checks := assert.New(t)
-			must := require.New(t)
-			starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
-				func(reader *bufio.Reader, _, _ io.Writer) error {
-					if _, err := reader.ReadBytes('\n'); err != nil {
-						return fmt.Errorf("read silent Codex request: %w", err)
-					}
-					_, err := reader.ReadBytes('\n')
-					if err != nil {
-						return fmt.Errorf("wait for silent Codex request: %w", err)
-					}
-					return nil
-				},
-			}}
-			config := codexTestConfig()
-			config.RequestTimeout = 30 * time.Millisecond
-			transport, err := peoplesweep.NewCodexAppServerDriver(config, starter, &recordingCodexGate{})
-			must.NoError(err)
-			switch operation {
-			case "login":
-				err = transport.StartDeviceLogin(t.Context(), func(peoplesweep.DeviceLogin) error { return nil })
-			case "models":
-				_, err = transport.ListModels(t.Context())
-			}
-			must.ErrorIs(err, context.DeadlineExceeded)
-			must.NoError(t.Context().Err(), "the configured provider deadline must expire before the test context")
-			must.Len(starter.records, 1)
-			process := starter.records[0].process
-			checks.Equal(int64(1), process.kills.Load())
-			checks.Equal(int64(1), process.waits.Load())
-			checks.True(process.stdinClosed.Load())
-			checks.True(process.stdoutClosed.Load())
-			checks.True(process.stderrClosed.Load())
-			checks.NoDirExists(starter.records[0].dir)
+			synctest.Test(t, func(t *testing.T) {
+				checks := assert.New(t)
+				must := require.New(t)
+				starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
+					func(reader *bufio.Reader, _, _ io.Writer) error {
+						if _, err := reader.ReadBytes('\n'); err != nil {
+							return fmt.Errorf("read silent Codex request: %w", err)
+						}
+						_, err := reader.ReadBytes('\n')
+						if err != nil {
+							return fmt.Errorf("wait for silent Codex request: %w", err)
+						}
+						return nil
+					},
+				}}
+				config := codexTestConfig()
+				config.RequestTimeout = 30 * time.Millisecond
+				transport, err := peoplesweep.NewCodexAppServerDriver(config, starter, &recordingCodexGate{})
+				must.NoError(err)
+				switch operation {
+				case "login":
+					err = transport.StartDeviceLogin(t.Context(), func(peoplesweep.DeviceLogin) error { return nil })
+				case "models":
+					_, err = transport.ListModels(t.Context())
+				}
+				must.ErrorIs(err, context.DeadlineExceeded)
+				must.Len(starter.records, 1)
+				process := starter.records[0].process
+				checks.Equal(int64(1), process.kills.Load())
+				checks.Equal(int64(1), process.waits.Load())
+				checks.True(process.stdinClosed.Load())
+				checks.True(process.stdoutClosed.Load())
+				checks.True(process.stderrClosed.Load())
+				checks.NoDirExists(starter.records[0].dir)
+			})
 		})
 	}
 }

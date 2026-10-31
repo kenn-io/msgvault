@@ -327,8 +327,8 @@
 
   h2 {
     margin: 0;
-    font-size: var(--text-sm);
-    font-weight: 650;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
   }
 
   .year-navigation {
@@ -352,7 +352,7 @@
 
   .calendar-graphs {
     max-width: 100%;
-    margin-top: var(--space-3);
+    margin-top: var(--section-gap);
     overflow-x: auto;
     overflow-y: hidden;
   }
@@ -369,7 +369,7 @@
     gap: var(--relationship-cell-gap);
     margin-left: var(--relationship-label-gutter);
     color: var(--text-muted);
-    font-size: var(--text-xs);
+    font-size: var(--font-size-xs);
   }
 
   .month-row span {
@@ -389,7 +389,7 @@
     grid-template-rows: repeat(7, var(--relationship-cell-size));
     gap: var(--relationship-cell-gap);
     color: var(--text-muted);
-    font-size: 9px;
+    font-size: var(--font-size-2xs);
     line-height: var(--relationship-cell-size);
   }
 
@@ -436,8 +436,8 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
-    margin-top: var(--space-3);
-    font-size: var(--text-sm);
+    margin-top: var(--section-gap);
+    font-size: var(--font-size-sm);
   }
 
   .level-none { background: var(--bg-inset); }
@@ -454,7 +454,7 @@
   .calendar-meta {
     display: grid;
     gap: var(--space-2);
-    margin-top: var(--space-3);
+    margin-top: var(--section-gap);
   }
 
   .legend {
@@ -462,7 +462,7 @@
     align-items: center;
     gap: 4px;
     color: var(--text-muted);
-    font-size: var(--text-xs);
+    font-size: var(--font-size-xs);
   }
 
   .legend .heat-cell {
@@ -471,7 +471,7 @@
 
   .temperature-summary {
     flex-wrap: wrap;
-    font-size: var(--text-xs);
+    font-size: var(--font-size-xs);
     font-variant-numeric: tabular-nums;
   }
 
@@ -493,7 +493,7 @@
   .empty-year {
     margin: var(--space-3) 0 0;
     color: var(--text-muted);
-    font-size: var(--text-sm);
+    font-size: var(--font-size-sm);
   }
 
   .calendar-state {

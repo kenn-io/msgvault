@@ -553,6 +553,7 @@
                   detail={controller.detail}
                   loading={controller.timelineLoading}
                   {filesOpen}
+                  missing={controller.detailMissing}
                   {onFilesToggle}
                   {client}
                   {onOpenDirectory}
@@ -564,7 +565,7 @@
                   onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
                   onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
                 />
-                {#if target !== null && domainOf(target) === undefined}
+                {#if target !== null && domainOf(target) === undefined && !controller.detailMissing}
                   <RelationshipCalendar
                     calendar={controller.relationshipCalendar}
                     loading={controller.relationshipCalendarLoading}
@@ -722,7 +723,8 @@
   }
 
   .hub-header {
-    padding: var(--space-5) var(--page-gutter) var(--space-4);
+    --page-header-gap: 0px;
+    padding: var(--space-5) var(--page-gutter) var(--field-gap);
   }
 
   .hub-body {
@@ -766,9 +768,9 @@
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--section-gap);
     margin-inline: auto;
-    padding: var(--space-6) var(--space-7);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     overflow: auto;
   }
 
@@ -786,7 +788,7 @@
     min-height: 80px;
     max-height: 50%;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--section-gap);
     overflow: auto;
   }
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, DetailDrawer, IconButton, Modal, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Chip, DetailDrawer, IconButton, Modal, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { MeetingRef } from '../../api/generated/models';
@@ -304,11 +304,13 @@
     {#if filterChips.length > 0}
       <div class="filter-chips">
         {#each filterChips as chip (chip.key)}
-          <span class="chip">
+          <Chip size="sm" uppercase={false} class="chip" title={chip.text}>
             {chip.text}
-            <IconButton size="sm" ariaLabel={`Remove ${chip.text} filter`}
-              onclick={() => selectFilter({ [chip.key]: '' })}><XIcon size="12" aria-hidden="true" /></IconButton>
-          </span>
+            {#snippet trailing()}
+              <IconButton size="sm" ariaLabel={`Remove ${chip.text} filter`}
+                onclick={() => selectFilter({ [chip.key]: '' })}><XIcon size="12" aria-hidden="true" /></IconButton>
+            {/snippet}
+          </Chip>
         {/each}
       </div>
     {/if}
@@ -384,7 +386,7 @@
   .filter-panel { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
   .date-field { display: inline-flex; gap: var(--space-2); align-items: center; color: var(--text-secondary); font-size: var(--font-size-xs); }
   .date-field label { display: inline-flex; gap: var(--space-2); align-items: center; }
-  .chip { display: inline-flex; max-width: 100%; align-items: center; gap: var(--space-1); padding: 0 0 0 var(--space-2); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+  .filter-chips :global(.chip) { border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
   .directory-content > :global(*) { min-height: 0; overflow: auto; }
   .directory-content.has-detail { grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr); gap: var(--space-4); }

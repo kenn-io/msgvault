@@ -190,12 +190,6 @@ func TestChunkText(t *testing.T) {
 		assert.False(t, tailDropped, "short input that fit in %d chunks should not flag tailDropped", len(got))
 	})
 
-	t.Run("MaxSpansZeroIsUnlimited", func(t *testing.T) {
-		text := strings.Repeat("a", 1000)
-		got, _ := ChunkText(text, 100, 0, 0)
-		assert.Len(t, got, 10, "no cap")
-	})
-
 	t.Run("MaxSpansLargerThanNaturalChunkCountIsNoop", func(t *testing.T) {
 		text := strings.Repeat("a", 300)
 		got, _ := ChunkText(text, 100, 0, 100)

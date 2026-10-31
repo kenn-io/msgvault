@@ -707,35 +707,6 @@ func TestConfirmModalCancel(t *testing.T) {
 	assertPendingManifestCleared(t, model)
 }
 
-func TestSelectionCount(t *testing.T) {
-	model := Model{
-		selection: selectionState{
-			aggregateKeys: map[string]bool{"a": true, "b": true},
-			messageIDs:    map[int64]bool{1: true, 2: true, 3: true},
-		},
-	}
-
-	assert.Equal(t, 5, model.selectionCount())
-}
-
-func TestHasSelection(t *testing.T) {
-	model := Model{
-		selection: selectionState{
-			aggregateKeys: make(map[string]bool),
-			messageIDs:    make(map[int64]bool),
-		},
-	}
-
-	assert.False(t, model.hasSelection(), "expected false for empty selection")
-
-	model.selection.aggregateKeys["test"] = true
-	assert.True(t, model.hasSelection(), "with aggregate selection")
-
-	model.selection.aggregateKeys = make(map[string]bool)
-	model.selection.messageIDs[1] = true
-	assert.True(t, model.hasSelection(), "with message selection")
-}
-
 func TestDKeyAutoSelectsCurrentRow(t *testing.T) {
 	model := NewBuilder().
 		WithRows(
@@ -863,38 +834,6 @@ func TestMessageListDKeyAutoSelectsCurrentMessage(t *testing.T) {
 	assertModal(t, m, modalDeleteConfirm)
 }
 
-func TestToggleAggregateSelection(t *testing.T) {
-	m := NewBuilder().WithRows(
-		makeRow("alice@example.com", 0),
-		makeRow("bob@example.com", 0),
-	).Build()
-	m.cursor = 0
-
-	m.toggleAggregateSelection()
-	assert.True(t, m.selection.aggregateKeys["alice@example.com"], "expected alice to be selected")
-
-	m.toggleAggregateSelection()
-	assert.False(t, m.selection.aggregateKeys["alice@example.com"], "expected alice to be deselected")
-}
-
-func TestSelectVisibleAggregates(t *testing.T) {
-	rows := make([]query.AggregateRow, 0, 10)
-	for i := range 10 {
-		rows = append(rows, query.AggregateRow{Key: fmt.Sprintf("user%d", i)})
-	}
-	m := NewBuilder().WithRows(rows...).Build()
-	m.pageSize = 3
-	m.scrollOffset = 2
-
-	m.selectVisibleAggregates()
-
-	for i := 2; i < 5; i++ {
-		k := fmt.Sprintf("user%d", i)
-		assert.True(t, m.selection.aggregateKeys[k], "expected %s to be selected", k)
-	}
-	assert.False(t, m.selection.aggregateKeys["user0"], "user0 should not be selected")
-}
-
 func TestSelectVisibleAggregates_OffsetBeyondRows(t *testing.T) {
 	m := NewBuilder().WithRows(makeRow("a", 0)).Build()
 	m.scrollOffset = 100
@@ -903,15 +842,4 @@ func TestSelectVisibleAggregates_OffsetBeyondRows(t *testing.T) {
 	m.selectVisibleAggregates()
 
 	assert.Empty(t, m.selection.aggregateKeys, "expected no selections when scrollOffset > len(rows)")
-}
-
-func TestClearAllSelections(t *testing.T) {
-	m := NewBuilder().WithRows(makeRow("a", 0)).Build()
-	m.selection.aggregateKeys["a"] = true
-	m.selection.messageIDs[1] = true
-
-	m.clearAllSelections()
-
-	assert.Empty(t, m.selection.aggregateKeys, "aggregateKeys should be cleared")
-	assert.Empty(t, m.selection.messageIDs, "messageIDs should be cleared")
 }

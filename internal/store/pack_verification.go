@@ -19,13 +19,21 @@ type packVerificationKey struct{}
 // lease, so a repack that finished earlier cannot leave a stale pack location
 // for repair to delete.
 type PackVerificationPass struct {
-	start      string
-	maxEntries int
-	maxBytes   int64
+	skipLooseEnumeration bool
+	start                string
+	maxEntries           int
+	maxBytes             int64
 	// selected is set by the first ListIndexed call, which fixes the range.
 	selected bool
 	end      string
 	more     bool
+}
+
+// SkipLooseEnumeration empties Pack's candidate list for a pass that only advances
+// verification and has no new loose blob to find. Reference inventory, orphan
+// reconciliation, and loose sweeping are untouched.
+func (p *PackVerificationPass) SkipLooseEnumeration() {
+	p.skipLooseEnumeration = true
 }
 
 // BeginPackVerification starts a bounded verification window after the

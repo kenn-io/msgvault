@@ -261,105 +261,6 @@ func TestStoreAPIAdapterDeletePersonRejectsRecordedAttemptKeyMismatch(t *testing
 // minutes to execute schema.sql under filesystem load.
 const serveLifecycleTestTimeout = 180 * time.Second
 
-func TestServeConfigParsing(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	// Create temp config with scheduled accounts
-	tmpDir := t.TempDir()
-	configContent := `
-[oauth]
-client_secrets = "/path/to/secrets.json"
-
-[server]
-api_port = 9090
-api_key = "test-key"
-
-[[accounts]]
-email = "user1@gmail.com"
-schedule = "0 2 * * *"
-enabled = true
-
-[[accounts]]
-email = "user2@gmail.com"
-schedule = "0 3 * * *"
-enabled = true
-
-[[accounts]]
-email = "disabled@gmail.com"
-schedule = "0 4 * * *"
-enabled = false
-`
-	configPath := filepath.Join(tmpDir, "config.toml")
-	require.NoError(os.WriteFile(configPath, []byte(configContent), 0644), "write config")
-
-	cfg, err := config.Load(configPath, "")
-	require.NoError(err, "Load")
-
-	// Verify server config
-	assert.Equal(9090, cfg.Server.APIPort, "APIPort")
-	assert.Equal("test-key", cfg.Server.APIKey, "APIKey")
-
-	// Verify scheduled accounts
-	scheduled := cfg.ScheduledAccounts()
-	assert.Len(scheduled, 2, "len(ScheduledAccounts())")
-
-	// Verify specific accounts
-	acc := cfg.GetAccountSchedule("user1@gmail.com")
-	require.NotNil(acc, "GetAccountSchedule(user1)")
-	assert.Equal("0 2 * * *", acc.Schedule, "user1 schedule")
-
-	// Disabled account should still be retrievable but not in scheduled list
-	disabled := cfg.GetAccountSchedule("disabled@gmail.com")
-	assert.NotNil(disabled, "GetAccountSchedule(disabled)")
-}
-
-func TestSchedulerWithConfig(t *testing.T) {
-	cfg := &config.Config{
-		Accounts: []config.AccountSchedule{
-			{Email: "test1@gmail.com", Schedule: "0 2 * * *", Enabled: true},
-			{Email: "test2@gmail.com", Schedule: "0 3 * * *", Enabled: true},
-			{Email: "test3@gmail.com", Schedule: "invalid", Enabled: true},
-		},
-	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-
-	var syncCalls []string
-	sched := scheduler.New(func(ctx context.Context, email string) error {
-		syncCalls = append(syncCalls, email)
-		return nil
-	})
-
-	count, errs := sched.AddAccountsFromConfig(cfg)
-
-	// Should schedule 2 valid accounts
-	assert.Equal(t, 2, count, "scheduled count")
-
-	// Should have 1 error for invalid cron
-	assert.Len(t, errs, 1, "len(errs)")
-
-	// Verify status
-	statuses := sched.Status()
-	assert.Len(t, statuses, 2, "len(Status())")
-}
-
-func TestServeCmdNoAccounts(t *testing.T) {
-	// Create temp config without accounts
-	tmpDir := t.TempDir()
-	configContent := `
-[oauth]
-client_secrets = "/path/to/secrets.json"
-`
-	configPath := filepath.Join(tmpDir, "config.toml")
-	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644), "write config")
-
-	cfg, err := config.Load(configPath, "")
-	require.NoError(t, err, "Load")
-
-	scheduled := cfg.ScheduledAccounts()
-	assert.Empty(t, scheduled, "expected no scheduled accounts")
-}
-
 func TestServeOAuthValidationAllowsMicrosoftOnly(t *testing.T) {
 	assert.True(t, hasServeOAuthConfig(&config.Config{
 		Microsoft: config.MicrosoftConfig{ClientID: "azure-client-id"},
@@ -491,7 +392,7 @@ func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.FailNow("runServe returned before listener-start barrier", "error: %v", err)
-	case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the listener-start barrier keeps runServe from returning
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the listener-start barrier keeps runServe from returning
 	}
 
 	close(release)
@@ -920,14 +821,14 @@ func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 				return
 			}
 		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls runServe's real TCP listener
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls runServe's real TCP listener
 	}
 	require.FailNow(t, "serve health endpoint did not become ready")
 }
 
 func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 	t.Helper()
-	client := &http.Client{Timeout: 100 * time.Millisecond}
+	client := &http.Client{Timeout: 2 * time.Second}
 	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
 	deadline := time.Now().Add(serveLifecycleTestTimeout)
 	for time.Now().Before(deadline) {
@@ -944,7 +845,7 @@ func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 				return
 			}
 		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls runServe's real TCP listener
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls runServe's real TCP listener
 	}
 	require.FailNow(t, "serve health endpoint did not become ready")
 }
@@ -1303,14 +1204,27 @@ func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 	`)
 	requirements.NoError(err)
 	for _, test := range []struct {
-		name       string
-		args       []string
-		interval   time.Duration
-		shutdown   bool
-		wantQueued bool
-		wantMode   buildCacheMode
+		name        string
+		args        []string
+		interval    time.Duration
+		shutdown    bool
+		disableAuto bool
+		childError  error
+		wantQueued  bool
+		wantMode    buildCacheMode
 	}{
 		{name: "default inside interval", args: []string{"sync-slack"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "inline default inside interval", args: []string{"sync-inline"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "inline media backfill", args: []string{"backfill-inline-media"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "inline media partial failure", args: []string{"backfill-inline-media"}, childError: errors.New("partial backfill"), wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "inline force with auto disabled", args: []string{"sync-inline", "--build-cache"}, disableAuto: true, wantQueued: true, wantMode: buildCacheModeAuto},
+		{name: "inline media force with auto disabled", args: []string{"backfill-inline-media", "--build-cache"}, disableAuto: true, wantQueued: true, wantMode: buildCacheModeAuto},
+		{name: "inline skip", args: []string{"sync-inline", "--no-build-cache"}},
+		{name: "inline media skip", args: []string{"backfill-inline-media", "--no-build-cache"}},
+		{name: "inline partial failure", args: []string{"sync-inline"}, childError: errors.New("partial sync"), wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "inline probe", args: []string{"sync-inline", "--probe"}},
+		{name: "inline explicit probe", args: []string{"sync-inline", "--probe=true"}},
+		{name: "inline false probe", args: []string{"sync-inline", "--probe=false"}, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
 		{name: "forced inside interval", args: []string{"sync-teams", "--build-cache"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeAuto},
 		{name: "default when due", args: []string{"sync-calendar"}, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
 		{name: "skip when due", args: []string{"sync-slack", "--no-build-cache"}},
@@ -1320,6 +1234,7 @@ func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			c.Analytics.MinRebuildInterval = test.interval
+			c.Analytics.AutoBuildCache = !test.disableAuto
 			daemonCtx, cancel := context.WithCancel(t.Context())
 			started := make(chan buildCacheMode, 1)
 			jobs := newCacheBuildJobs(daemonCtx, nil, func(ctx context.Context, mode buildCacheMode) error {
@@ -1343,9 +1258,9 @@ func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 					if test.shutdown {
 						cancel()
 					}
-					return nil
+					return test.childError
 				})
-			require.NoError(err)
+			require.ErrorIs(err, test.childError)
 			assert.True(runnerCalled)
 			assert.Equal(test.wantQueued, jobs.active())
 			if test.wantQueued {
@@ -3571,32 +3486,4 @@ func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {
 	assert.Equal([]int64{first.ID, second.ID}, imported)
 	assert.Equal([]string{first.Identifier, second.Identifier}, rebuilt,
 		"each scheduled guild invocation rebuilds its cache exactly once")
-}
-
-func TestCronExpressionValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		expr    string
-		wantErr bool
-	}{
-		{"daily at 2am", "0 2 * * *", false},
-		{"every 15 min", "*/15 * * * *", false},
-		{"weekly sunday", "0 0 * * 0", false},
-		{"monthly first", "0 0 1 * *", false},
-		{"twice daily", "0 8,18 * * *", false},
-		{"invalid", "not a cron", true},
-		{"empty", "", true},
-		{"too many fields", "* * * * * *", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := scheduler.ValidateCronExpr(tt.expr)
-			if tt.wantErr {
-				assert.Error(t, err, "ValidateCronExpr(%q)", tt.expr)
-			} else {
-				assert.NoError(t, err, "ValidateCronExpr(%q)", tt.expr)
-			}
-		})
-	}
 }

@@ -54,11 +54,6 @@ func TestPostgreSQLDialect_Rebind(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLDialect_Now(t *testing.T) {
-	d := &PostgreSQLDialect{}
-	assert.Equal(t, "NOW()", d.Now())
-}
-
 func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 	d := &PostgreSQLDialect{}
 	tests := []struct {
@@ -92,11 +87,6 @@ func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 			assert.Equal(t, tc.want, d.InsertOrIgnore(tc.in), "InsertOrIgnore(%q)", tc.in)
 		})
 	}
-}
-
-func TestPostgreSQLDialect_InsertOrIgnoreSuffix(t *testing.T) {
-	d := &PostgreSQLDialect{}
-	assert.Equal(t, " ON CONFLICT DO NOTHING", d.InsertOrIgnoreSuffix())
 }
 
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {

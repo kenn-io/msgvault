@@ -104,14 +104,21 @@ func docbankAttachmentEligibleWhere() string {
 // docbankAttachmentSourceExists matches an eligible attachment for hash, a SQL expression.
 func docbankAttachmentSourceExists(hash string) string {
 	eligible := ` AND ` + docbankAttachmentEligibleWhere()
-	// LOWER on both sides lets SQLite use the expression index for a correlated hash.
+	hashMatch, pathMatch := docbankAttachmentMatch("a", hash)
 	return `(EXISTS (
 			SELECT 1 FROM attachments a
-			WHERE LOWER(a.content_hash) = LOWER(` + hash + `)` + eligible + `)
+			WHERE ` + hashMatch + eligible + `)
 		OR EXISTS (
 			SELECT 1 FROM attachments a
-			WHERE a.storage_path = SUBSTR(` + hash + `,1,2) || '/' || ` + hash + `
-			  AND COALESCE(a.content_hash,'') = ''` + eligible + `))`
+			WHERE ` + pathMatch + eligible + `))`
+}
+
+// docbankAttachmentMatch keeps hash and hashless CAS lookups separately indexable.
+func docbankAttachmentMatch(alias, hash string) (string, string) {
+	// LOWER on both sides lets SQLite use the expression index for a correlated hash.
+	return `LOWER(` + alias + `.content_hash) = LOWER(` + hash + `)`,
+		alias + `.storage_path = SUBSTR(` + hash + `,1,2) || '/' || ` + hash + `
+			  AND COALESCE(` + alias + `.content_hash,'') = ''`
 }
 
 // DocbankAttachmentStoragePaths returns local candidates for a mirror source hash.

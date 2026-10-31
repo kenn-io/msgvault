@@ -2218,7 +2218,7 @@ export const getMCPCapabilities = (
   );
 };
 /**
- * @summary Search source-selected transcripts as visible messages
+ * @summary Search recordings and attachments as visible messages
  */
 export const searchMedia = (
   params: SearchMediaParams,

@@ -19,13 +19,15 @@ const (
 	ModeFull Mode = iota
 	ModeIncremental
 	ModeIndexOnly
-	// ModeAppendRepair rebuilds activity after recipients or canonical links
-	// change while reading committed and staged message shards together.
+	// ModeAppendRepair rebuilds activity after recipients, canonical links, or
+	// unsent status change, reading committed and staged message shards together.
 	ModeAppendRepair
 )
 
 // BuildOptions identifies committed, staged, and output cache roots.
 type BuildOptions struct {
+	// UnsentMessages names a message_id relation; empty means no unsent messages.
+	UnsentMessages string
 	Mode           Mode
 	CommittedRoot  string
 	StagedBaseRoot string
@@ -41,6 +43,7 @@ type BuildOptions struct {
 
 // ActivityStats records the rows built in this run. Incremental builds
 // report only their staged delta, so reporting does not rescan old activity.
+// These construction metrics include unsent rows retained for Explore.
 type ActivityStats struct {
 	DirectRows               int64
 	ConversationExpandedRows int64
@@ -267,6 +270,14 @@ func (b builder) messageRelation() string {
 	return readParquetRelation(paths, true)
 }
 
+func (b builder) recipientRelation() string {
+	paths := []string{b.base("message_recipients")}
+	if b.opts.Mode == ModeAppendRepair && !b.opts.ReplacedBaseDatasets["message_recipients"] {
+		paths = append([]string{b.committed("message_recipients")}, paths...)
+	}
+	return readParquetRelation(paths, false)
+}
+
 func (b builder) statsRelations() cacheStatsRelations {
 	relation := func(dataset string, hivePartitioning bool) string {
 		paths := []string{b.base(dataset)}
@@ -310,7 +321,7 @@ func (b builder) copyRelationshipActivity(ctx context.Context) error {
 	options := "FORMAT PARQUET, COMPRESSION 'zstd', PARTITION_BY (occurred_year), " +
 		"WRITE_PARTITION_COLUMNS true, OVERWRITE_OR_IGNORE"
 	for _, year := range years {
-		query := buildSparseRelationshipActivitySQL(b.base, b.messageRelation(), year)
+		query := buildSparseRelationshipActivitySQL(b.base, b.messageRelation(), b.recipientRelation(), year, b.opts.UnsentMessages)
 		statement := "COPY (" + query + ") TO '" + quoteSQLString(output) +
 			"' (" + options + ")"
 		if _, err := b.db.ExecContext(ctx, statement); err != nil {
@@ -364,7 +375,7 @@ func (b builder) copyEmptyRelationshipActivity(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(emptyOutput), 0o755); err != nil {
 		return fmt.Errorf("create empty %s partition: %w", DatasetActivity, err)
 	}
-	query := buildSparseRelationshipActivitySQL(b.base, b.messageRelation(), 0)
+	query := buildSparseRelationshipActivitySQL(b.base, b.messageRelation(), b.recipientRelation(), 0, b.opts.UnsentMessages)
 	statement := "COPY (SELECT * FROM (" + query + ") WHERE false) TO '" +
 		quoteSQLString(emptyOutput) + "' (FORMAT PARQUET, COMPRESSION 'zstd')"
 	if _, err := b.db.ExecContext(ctx, statement); err != nil {

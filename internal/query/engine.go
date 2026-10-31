@@ -128,6 +128,11 @@ const (
 	DeletionSearchAggregate DeletionSearchMode = "aggregate"
 )
 
+// MaxDeletionTargetSearchResults is the largest permitted bounded search
+// result set. Callers use the extra row as an overflow sentinel for the
+// 100,000-match staging limit.
+const MaxDeletionTargetSearchResults = 100_001
+
 // DeletionTargetSearchResolver resolves a filtered search and source deletion
 // eligibility in one backend query. Keeping this capability separate from
 // Engine lets callers fail closed when a backend cannot provide a stable
@@ -139,6 +144,20 @@ type DeletionTargetSearchResolver interface {
 		filter MessageFilter,
 		mode DeletionSearchMode,
 	) ([]DeletionTarget, error)
+}
+
+// BoundedDeletionTargetSearchResolver resolves at most maxResults exact
+// search matches for one-shot staging and reports the count before eligibility
+// filtering. The existing unbounded resolver stays
+// available to callers such as the TUI that intentionally stage every match.
+type BoundedDeletionTargetSearchResolver interface {
+	GetDeletionTargetsBySearchBounded(
+		ctx context.Context,
+		searchQuery *search.Query,
+		filter MessageFilter,
+		mode DeletionSearchMode,
+		maxResults int,
+	) ([]DeletionTarget, int, error)
 }
 
 // DeletionTargetAggregateSearchResolver resolves the exact message population

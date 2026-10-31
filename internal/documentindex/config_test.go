@@ -232,7 +232,7 @@ func TestDocumentsProfilePolicyJSONRemainsByteStable(t *testing.T) {
 
 	policyJSON, err := config.ProfilePolicyJSON(manifest, []string{"text/csv", "application/pdf", "text/csv"})
 	require.NoError(err)
-	expected := `{"version":1,"provider":"mistral","endpoint":"https://api.eu.mistral.ai/v1/ocr","model":"mistral-ocr-4-0","retention":"zdr","training":"opted-out","max_file_bytes":52428800,"max_pages_per_document":500,"max_response_bytes":67108864,"max_normalized_chars":25000000,"max_spool_bytes":536870912,"min_free_space_bytes":1073741824,"request_timeout_nanos":300000000000,"max_retries":3,"max_pages_per_run":10000,"max_estimated_cost_usd_per_run":50,"message_types":["chat","email"],"allowed_media_types":["application/pdf","text/csv"],"document_policy_fingerprint":"466816abfedf47e64d25db7b38262b15d3a52077fd0856340fedd0227b600843","lexical":true,"store_chunk_text":true,"extract_header":true,"extract_footer":true,"normalization_version":3,"max_unit_chars":1000000,"max_source_unit_bytes":4000000,"max_metadata_source_bytes":65536,"max_link_chars":2048,"max_chunk_runes":4000,"chunk_overlap":200,"max_chunks":20000}`
+	expected := `{"version":1,"provider":"mistral","endpoint":"https://api.eu.mistral.ai/v1/ocr","model":"mistral-ocr-4-1","retention":"zdr","training":"opted-out","max_file_bytes":52428800,"max_pages_per_document":500,"max_response_bytes":67108864,"max_normalized_chars":25000000,"max_spool_bytes":536870912,"min_free_space_bytes":1073741824,"request_timeout_nanos":300000000000,"max_retries":3,"max_pages_per_run":10000,"max_estimated_cost_usd_per_run":50,"message_types":["chat","email"],"allowed_media_types":["application/pdf","text/csv"],"document_policy_fingerprint":"8a162dea2813be2fa9c379e1fa92521c647feb9eac480a0d6775c7e1b959247d","lexical":true,"store_chunk_text":true,"extract_header":true,"extract_footer":true,"normalization_version":3,"max_unit_chars":1000000,"max_source_unit_bytes":4000000,"max_metadata_source_bytes":65536,"max_link_chars":2048,"max_chunk_runes":4000,"chunk_overlap":200,"max_chunks":20000}`
 	assert.JSONEq(expected, string(policyJSON))
 
 	fingerprint, err := config.ProfileFingerprint(manifest, []string{"application/pdf", "text/csv"})
@@ -356,7 +356,7 @@ func TestDocumentsProfileBindsPPTXMediaTypeAndManifestEvidence(t *testing.T) {
 	assert.Equal([]any{"application/pdf"}, payloads[0]["allowed_media_types"])
 	assert.NotEqual(payloads[0]["document_policy_fingerprint"], payloads[1]["document_policy_fingerprint"])
 	assert.NotEqual(fingerprints[0], fingerprints[1])
-	assert.Equal("466816abfedf47e64d25db7b38262b15d3a52077fd0856340fedd0227b600843", payloads[0]["document_policy_fingerprint"])
+	assert.Equal("8a162dea2813be2fa9c379e1fa92521c647feb9eac480a0d6775c7e1b959247d", payloads[0]["document_policy_fingerprint"])
 	t.Logf("PDF-only document_policy_fingerprint=%s; PPTX admitted routes=1", payloads[0]["document_policy_fingerprint"])
 }
 

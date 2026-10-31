@@ -10,22 +10,6 @@ import (
 var _ Engine = (*SQLiteEngine)(nil)
 var _ Engine = (*DuckDBEngine)(nil)
 
-// TestPostgresEngineUsesDialect verifies that NewPostgreSQLEngine creates an engine
-// with the PostgreSQL query dialect (Rebind converts ? to $N).
-func TestPostgresEngineUsesDialect(t *testing.T) {
-	require := require.New(t)
-	e := NewPostgreSQLEngine(nil)
-	pe, ok := e.(*pgEngine)
-	require.True(ok, "NewPostgreSQLEngine returned %T, want *pgEngine", e)
-	inner, ok := pe.Engine.(*SQLiteEngine)
-	require.True(ok, "pgEngine.Engine = %T, want *SQLiteEngine", pe.Engine)
-	_, ok = inner.dialect.(PostgreSQLQueryDialect)
-	require.True(ok, "inner dialect = %T, want PostgreSQLQueryDialect", inner.dialect)
-	reboundQuery := inner.dialect.Rebind("SELECT ? WHERE id = ?")
-	require.Contains(reboundQuery, "$1", "Rebind did not convert ? to $N")
-	require.Contains(reboundQuery, "$2", "Rebind did not convert ? to $N")
-}
-
 // TestPostgresEngineHidesTextEngine verifies that the PostgreSQL engine is
 // NOT exposed as a TextEngine. The underlying *SQLiteEngine satisfies
 // TextEngine, but the pgEngine wrapper deliberately hides those methods

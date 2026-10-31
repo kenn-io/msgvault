@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -37,6 +38,9 @@ type Assembly struct {
 	EvidenceStatusChanges []personfacts.EvidenceStatusChange
 	Packet                EvidencePacket
 	Batches               []PacketBatch
+
+	// ContextPriority lists retained context evidence IDs, highest priority first.
+	ContextPriority []string
 }
 
 type Assembler struct {
@@ -268,6 +272,7 @@ cursorLoop:
 	}
 	if a.Context != nil && a.ContextPerTarget > 0 {
 		contextByID := make(map[string]EvidenceItem)
+		perTarget := make([][]EvidenceItem, 0, len(result.Packet.Catalog.Targets))
 		seedIDs := make(map[string]struct{}, len(result.Packet.Seeds))
 		for _, seed := range result.Packet.Seeds {
 			seedIDs[packetEvidenceID(seed)] = struct{}{}
@@ -282,6 +287,7 @@ cursorLoop:
 			if retrieveErr != nil {
 				return Assembly{}, fmt.Errorf("retrieve context for target %q: %w", target.Key, retrieveErr)
 			}
+			allowedItems := make([]EvidenceItem, 0, len(items))
 			for _, item := range items {
 				allowed, validateErr := assemblyEvidenceAllowed(item, request.Profile, after, before)
 				if validateErr != nil {
@@ -293,23 +299,59 @@ cursorLoop:
 				id := packetEvidenceID(item)
 				if _, isSeed := seedIDs[id]; !isSeed {
 					contextByID[id] = item
+					allowedItems = append(allowedItems, item)
 				}
 			}
+			perTarget = append(perTarget, allowedItems)
 		}
 		result.Packet.Context = evidenceMapValues(contextByID)
+		result.ContextPriority = mergeContextPriority(perTarget)
 	}
 	result.Batches, err = PartitionEvidencePacket(result.Packet, a.MaxBytes, a.MaxItems)
 	if err != nil {
 		return Assembly{}, err
 	}
-	for a.MaxBatches > 0 && len(result.Batches) > a.MaxBatches && len(result.Packet.Context) > 0 {
-		result.Packet.Context = result.Packet.Context[:len(result.Packet.Context)-1]
+	for a.MaxBatches > 0 && len(result.Batches) > a.MaxBatches &&
+		len(result.Packet.Context) > 0 && len(result.ContextPriority) > 0 {
+		drop := result.ContextPriority[len(result.ContextPriority)-1]
+		result.ContextPriority = result.ContextPriority[:len(result.ContextPriority)-1]
+		for index, item := range result.Packet.Context {
+			if packetEvidenceID(item) == drop {
+				result.Packet.Context = slices.Delete(result.Packet.Context, index, index+1)
+				break
+			}
+		}
 		result.Batches, err = PartitionEvidencePacket(result.Packet, a.MaxBytes, a.MaxItems)
 		if err != nil {
 			return Assembly{}, err
 		}
 	}
 	return result, nil
+}
+
+// mergeContextPriority interleaves target retrieval orders, retaining each
+// evidence ID at its first occurrence. Targets are supplied in catalog order.
+func mergeContextPriority(perTarget [][]EvidenceItem) []string {
+	maxItems := 0
+	for _, items := range perTarget {
+		maxItems = max(maxItems, len(items))
+	}
+	var priority []string
+	seen := make(map[string]struct{})
+	for rank := range maxItems {
+		for _, items := range perTarget {
+			if rank >= len(items) {
+				continue
+			}
+			id := packetEvidenceID(items[rank])
+			if _, exists := seen[id]; exists {
+				continue
+			}
+			seen[id] = struct{}{}
+			priority = append(priority, id)
+		}
+	}
+	return priority
 }
 
 func (a Assembler) loadWindow(ctx context.Context, request WindowRequest) (PersonWindow, error) {

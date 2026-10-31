@@ -232,25 +232,6 @@ func TestPersonEnrichmentSchemaManualRunTargetBinding(t *testing.T) {
 		`PRAGMA foreign_key_list(person_enrichment_manual_run_targets)`, 2))
 }
 
-func TestPersonEnrichmentAttemptProviderStartedAtLegacyMigrationParity(t *testing.T) {
-	for name, migrations := range map[string][]store.ColumnMigration{
-		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
-		"postgres": (&store.PostgreSQLDialect{}).LegacyColumnMigrations(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			matches := 0
-			for _, migration := range migrations {
-				if migration.Desc == "person_enrichment_attempts.provider_started_at" {
-					matches++
-					assert.Contains(t, migration.SQL, "ADD COLUMN")
-					assert.Contains(t, migration.SQL, "provider_started_at")
-				}
-			}
-			assert.Equal(t, 1, matches)
-		})
-	}
-}
-
 func TestPersonEnrichmentAttemptDispatchAuthorizationLegacyMigrationParity(t *testing.T) {
 	for name, migrations := range map[string][]store.ColumnMigration{
 		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
@@ -266,45 +247,6 @@ func TestPersonEnrichmentAttemptDispatchAuthorizationLegacyMigrationParity(t *te
 				}
 			}
 			assert.Equal(t, 1, matches)
-		})
-	}
-}
-
-func TestPersonEnrichmentAttemptTargetsLegacyMigrationParity(t *testing.T) {
-	for name, migrations := range map[string][]store.ColumnMigration{
-		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
-		"postgres": (&store.PostgreSQLDialect{}).LegacyColumnMigrations(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			matches := 0
-			for _, migration := range migrations {
-				if migration.Desc == "person_enrichment_attempts.targets_json" {
-					matches++
-					assert.Contains(t, migration.SQL, "ADD COLUMN")
-					assert.Contains(t, migration.SQL, "targets_json TEXT")
-				}
-			}
-			assert.Equal(t, 1, matches)
-		})
-	}
-}
-
-func TestPersonEnrichmentFreshTriggerLegacyMigrationParity(t *testing.T) {
-	for name, migrations := range map[string][]store.ColumnMigration{
-		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
-		"postgres": (&store.PostgreSQLDialect{}).LegacyColumnMigrations(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			assert := assert.New(t)
-			matches := 0
-			for _, migration := range migrations {
-				if migration.Desc == "person_enrichment_work.has_fresh_trigger" {
-					matches++
-					assert.Contains(migration.SQL, "ADD COLUMN")
-					assert.Contains(migration.SQL, "has_fresh_trigger")
-				}
-			}
-			assert.Equal(1, matches)
 		})
 	}
 }

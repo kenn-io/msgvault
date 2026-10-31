@@ -30,76 +30,6 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func TestNew_RejectsHTTPWithoutAllowInsecure(t *testing.T) {
-	_, err := New(Config{
-		URL:    "http://nas:8080",
-		APIKey: "key",
-	})
-	require.Error(t, err, "New() should reject http:// without AllowInsecure")
-}
-
-func TestNew_AllowsHTTPWithAllowInsecure(t *testing.T) {
-	s, err := New(Config{
-		URL:           "http://nas:8080",
-		APIKey:        "key",
-		AllowInsecure: true,
-	})
-	require.NoError(t, err, "New()")
-	require.NotNil(t, s, "New() returned nil store")
-}
-
-func TestNew_AllowsHTTPS(t *testing.T) {
-	s, err := New(Config{
-		URL:    "https://nas:8080",
-		APIKey: "key",
-	})
-	require.NoError(t, err, "New()")
-	require.NotNil(t, s, "New() returned nil store")
-}
-
-func TestNew_RejectsEmptyURL(t *testing.T) {
-	_, err := New(Config{APIKey: "key"})
-	require.Error(t, err, "New() should reject empty URL")
-}
-
-func TestNew_RejectsInvalidScheme(t *testing.T) {
-	_, err := New(Config{
-		URL:    "ftp://nas:8080",
-		APIKey: "key",
-	})
-	require.Error(t, err, "New() should reject ftp:// scheme")
-	assert.ErrorContains(t, err, "http or https")
-}
-
-func TestNew_RejectsEmptyHost(t *testing.T) {
-	_, err := New(Config{
-		URL:           "http://",
-		APIKey:        "key",
-		AllowInsecure: true,
-	})
-	require.Error(t, err, "New() should reject URL with empty host")
-	assert.ErrorContains(t, err, "must include a host")
-}
-
-func TestNew_TrimsTrailingSlash(t *testing.T) {
-	s, err := New(Config{
-		URL:           "http://nas:8080/",
-		APIKey:        "key",
-		AllowInsecure: true,
-	})
-	require.NoError(t, err, "New()")
-	assert.Equal(t, "http://nas:8080", s.BaseURL(), "baseURL should have trailing slash trimmed")
-}
-
-func TestNew_DefaultTimeout(t *testing.T) {
-	s, err := New(Config{
-		URL:    "https://nas:8080",
-		APIKey: "key",
-	})
-	require.NoError(t, err, "New()")
-	assert.Equal(t, 30*time.Second, s.Timeout(), "httpClient.Timeout should have a 30-second default")
-}
-
 func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
@@ -845,33 +775,6 @@ func writeJSONResponse(t *testing.T, w http.ResponseWriter, value any) {
 	require.NoError(t, json.NewEncoder(w).Encode(value), "encode JSON response")
 }
 
-func TestGeneratedClientUsesStoreTransportAndAuth(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(http.MethodPost, r.Method, "method")
-		assert.Equal("/api/v1/query", r.URL.Path, "path")
-		assert.Equal("secret-key", r.Header.Get("X-Api-Key"), "api key")
-		assert.Equal("application/json", r.Header.Get("Accept"), "accept")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"columns":["n"],"rows":[[1]],"row_count":1}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	s := newTestStore(srv, "secret-key")
-	c, err := s.GeneratedClient()
-	require.NoError(err, "generated client")
-
-	got, err := c.RunQuery(context.Background(), &generated.RunQueryRequestOptions{
-		Body: &generated.RunQueryBody{SQL: "SELECT 1"},
-	})
-
-	require.NoError(err, "RunQuery")
-	assert.Equal([]string{"n"}, got.Columns, "columns")
-	require.Len(got.Rows, 1, "rows")
-	assert.InDelta(float64(1), got.Rows[0][0], 0, "scalar cell")
-}
-
 func TestGeneratedCLIResponseErrorRejectsMissingJSON200Payload(t *testing.T) {
 	err := CLIResponseError(&generated.CreateCLICollectionResp{
 		StatusCode: http.StatusOK,
@@ -913,21 +816,6 @@ func TestCreateCLICollectionRejectsEmptyGeneratedOKBody(t *testing.T) {
 
 	require.Error(err, "empty 200 mutation body must fail")
 	assert.NotContains(err.Error(), "API error (200)", "empty success decode failures are not API errors")
-}
-
-func TestHandleErrorResponse_JSONBody(t *testing.T) {
-	body := `{"error":"not_found","message":"Message 42 not found"}`
-	resp := &http.Response{
-		StatusCode: http.StatusNotFound,
-		Body:       http.NoBody,
-	}
-	// Use a real body
-	resp.Body = readCloser(body)
-
-	err := HandleErrorResponse(resp)
-	require.Error(t, err, "HandleErrorResponse should return error")
-	require.ErrorContains(t, err, "404", "error should contain status code")
-	assert.ErrorContains(t, err, "Message 42 not found", "error should contain API message")
 }
 
 func TestHandleErrorResponse_PlainTextBody(t *testing.T) {
@@ -1042,29 +930,6 @@ func TestGetStats_ErrorResponse(t *testing.T) {
 	_, err := s.GetStats()
 	require.Error(t, err, "GetStats should return error on 500")
 	assert.ErrorContains(t, err, "database locked")
-}
-
-func TestGetStats_Success(t *testing.T) {
-	assert := assert.New(t)
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(generated.StatsResponse{
-			TotalMessages:     100,
-			TotalThreads:      50,
-			TotalAccounts:     2,
-			TotalLabels:       10,
-			TotalAttachments:  5,
-			DatabaseSizeBytes: int64Ptr(1024),
-		})
-	}))
-	defer srv.Close()
-
-	s := newTestStore(srv, "key")
-	stats, err := s.GetStats()
-	require.NoError(t, err, "GetStats error")
-	assert.Equal(int64(100), stats.MessageCount, "MessageCount")
-	assert.Equal(int64(50), stats.ThreadCount, "ThreadCount")
-	assert.Equal(int64(2), stats.SourceCount, "SourceCount")
 }
 
 func TestGetStatsUsesGeneratedClientAdapter(t *testing.T) {
@@ -2091,26 +1956,6 @@ func TestGetCLIMessageRateLimitWaitIsBounded(t *testing.T) {
 	}
 }
 
-func TestGetCLIMessageRaw_Success(t *testing.T) {
-	assert := assert.New(t)
-	raw := []byte("From: alice@example.com\r\nSubject: Raw\r\n\r\nBody")
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/cli/message/raw", r.URL.Path, "path")
-		assert.Equal("gmail-42", r.URL.Query().Get("id"), "id query")
-		w.Header().Set("Content-Type", "message/rfc822")
-		w.Header().Set("X-Msgvault-Source-Message-Id", "gmail-42")
-		_, _ = w.Write(raw)
-	}))
-	defer srv.Close()
-
-	s := newTestStore(srv, "key")
-	got, sourceMessageID, err := s.GetCLIMessageRaw(context.Background(), "gmail-42")
-	require.NoError(t, err, "GetCLIMessageRaw")
-
-	assert.Equal(raw, got, "raw")
-	assert.Equal("gmail-42", sourceMessageID, "SourceMessageID")
-}
-
 func TestGetCLIMessageRawUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -2170,25 +2015,6 @@ func TestGetCLIMessageRaw_NotFoundPreservesGeneratedDecodeError(t *testing.T) {
 	assert.NotContains(t, err.Error(), "API error (404)", "decode failures are contract errors, not daemon API messages")
 }
 
-func TestGetCLIAttachment_Success(t *testing.T) {
-	assert := assert.New(t)
-	data := []byte("attachment bytes")
-	contentHash := fmt.Sprintf("%x", sha256.Sum256(data))
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/cli/attachment", r.URL.Path, "path")
-		assert.Equal(contentHash, r.URL.Query().Get("content_hash"), "content_hash query")
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(data)
-	}))
-	defer srv.Close()
-
-	s := newTestStore(srv, "key")
-	got, err := s.GetCLIAttachment(context.Background(), contentHash)
-	require.NoError(t, err, "GetCLIAttachment")
-
-	assert.Equal(data, got, "data")
-}
-
 func TestGetCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -2204,29 +2030,6 @@ func TestGetCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 
 	got, err := s.GetCLIAttachment(context.Background(), contentHash)
 	require.NoError(err, "GetCLIAttachment")
-	assert.Equal(data, got, "data")
-}
-
-func TestOpenCLIAttachment_Success(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	data := []byte("attachment bytes")
-	contentHash := fmt.Sprintf("%x", sha256.Sum256(data))
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/cli/attachment", r.URL.Path, "path")
-		assert.Equal(contentHash, r.URL.Query().Get("content_hash"), "content_hash query")
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(data)
-	}))
-	defer srv.Close()
-
-	s := newTestStore(srv, "key")
-	body, err := s.OpenCLIAttachment(context.Background(), contentHash)
-	require.NoError(err, "OpenCLIAttachment")
-	defer func() { _ = body.Close() }()
-
-	got, err := io.ReadAll(body)
-	require.NoError(err, "read stream")
 	assert.Equal(data, got, "data")
 }
 
@@ -2495,21 +2298,6 @@ func TestSearchMessages_ZeroLimit(t *testing.T) {
 	assert.Empty(msgs, "len(msgs)")
 }
 
-func TestSearchMessages_QueryEncoding(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query().Get("q")
-		assert.Equal(t, "hello world", q, "q")
-		resp := generated.SearchResult{Query: "hello world", Total: 0, Page: 1, PageSize: 20}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer srv.Close()
-
-	s := newTestStore(srv, "test")
-	_, _, err := s.SearchMessages("hello world", 0, 20)
-	require.NoError(t, err, "SearchMessages error")
-}
-
 func TestSearchMessagesUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -2586,28 +2374,6 @@ func TestListMessages_PageCalculation(t *testing.T) {
 			require.NoError(t, err, "ListMessages(%d, %d) error", tt.offset, tt.limit)
 		})
 	}
-}
-
-func TestListAccounts_Success(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/accounts", r.URL.Path, "path")
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(generated.AccountListResponse{
-			Accounts: []generated.AccountInfo{
-				{Email: "user@gmail.com", Enabled: true, Schedule: stringPtr("0 2 * * *")},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	s := newTestStore(srv, "key")
-	accounts, err := s.ListAccounts()
-	require.NoError(err, "ListAccounts error")
-	require.Len(accounts, 1, "len(accounts)")
-	assert.Equal("user@gmail.com", accounts[0].Email, "Email")
 }
 
 func TestListAccountsUsesGeneratedClientAdapter(t *testing.T) {

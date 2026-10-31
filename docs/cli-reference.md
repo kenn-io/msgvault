@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-18"
+last_edited: "2026-10-28"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -20,6 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
@@ -838,6 +839,31 @@ where the listing is intentionally incomplete. Gmail source-deletion
 reconciliation happens only during the complete mailbox recovery described
 under [`sync`](#sync).
 
+### Gmail Spam and Trash coverage
+
+Gmail full sync includes messages in Spam and Trash. A full sync with a Gmail
+`--query`, `--after`, `--before`, or `--limit` is still scoped by those options.
+To discover historical Spam and Trash messages omitted by an earlier full sync,
+run a complete full sync for the account with none of those options:
+
+```bash
+msgvault sync-full account@example.com
+```
+
+An idle incremental sync cannot discover older omitted messages unless Gmail
+reports a new history event for them. The full listing resumes from its saved
+checkpoint when the request scope matches; after this coverage change, an older
+narrower checkpoint restarts from the first page. Previously archived messages
+are not duplicated. Gmail can return only messages that still exist in the
+mailbox; permanently deleted messages cannot be backfilled.
+
+At the current 500-ID page size, a listing of N matching messages needs roughly
+`ceil(N / 500)` Gmail list requests. Each newly discovered message also needs one
+RAW-message fetch; retries can add requests. Previously archived messages still
+appear in the listing but are not downloaded again. Actual quota use, transfer,
+storage, and first-full duration depend on mailbox size, newly discovered mail,
+and retries. Plan for additional API use and storage on large accounts.
+
 ---
 
 ## sync
@@ -879,6 +905,23 @@ the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
 absence.
+
+Recovery saves its phase and the history cursor captured before enumeration.
+After an interruption, `sync` or an unfiltered `sync-full` resumes that recovery.
+An interrupted presence inventory is collected again before reconciling absence.
+Once the catch-up phase is durably checkpointed, retries consume History from
+the saved cursor without repeating the full listings. An interruption between
+the reconciliation commit and that checkpoint repeats reconciliation safely.
+The source cursor advances only after catch-up succeeds. If the saved recovery
+cursor also expires, msgvault starts a new complete recovery; one invocation
+attempts at most one such restart.
+Like an ordinary sync, recovery records per-message fetch and ingest
+errors without stopping, so one failing message cannot hold the account in
+recovery. Fetches that fail during catch-up are retried by the next `sync`.
+
+While recovery is pending, a Gmail `sync-full` with query, date, or limit
+filters is rejected. Finish the complete recovery first. `--noresume` restarts
+the complete recovery from a fresh cursor.
 
 Source deletion updates archive metadata rather than deleting local message or
 raw MIME data. Search excludes source-deleted messages by default; use
@@ -1036,6 +1079,51 @@ configured source that has been removed from the archive and directs you to run
 See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ---
+
+## add-pocket
+
+Verify a configured personal Pocket API key and register its meeting source.
+Available on `main`; consult the release changelog for installed releases.
+
+```bash
+msgvault add-pocket [identifier]
+```
+
+The identifier can be omitted when exactly one `[[pocket]]` entry is configured.
+The daemon reads the key from `api_key_env` (default `POCKET_API_KEY`). The live
+account email must match `account_email`. Registration binds the source to both
+that email and Pocket's stable user ID. A different account needs a new label.
+
+## sync-pocket
+
+Archive Pocket transcripts, completed summaries, and structured action items.
+
+```bash
+msgvault sync-pocket
+msgvault sync-pocket personal --limit 10
+msgvault sync-pocket personal --full --after 2026-01-01
+```
+
+Without an identifier, sync all configured Pocket sources. Each run enumerates
+all recording metadata and fetches selected recordings in least-attempted
+order, then newest meeting time and recording ID. Limited runs retain attempt
+order, including failed attempts, so one invalid recording does not block
+older meetings. Edits update the same archived message.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--limit` | `0` | Maximum detail fetches in this run; zero means unlimited; negative values fail |
+| `--after` | Unset | Include meetings dated on or after this UTC date (`YYYY-MM-DD`); implies `--full`. Recordings listed with an earlier recording date skip detail fetches |
+| `--full` | `false` | Repair derived projections and invalid sync state; preserve valid attempt order |
+| `--build-cache` | `false` | Request analytics cache refresh after sync |
+| `--no-build-cache` | `false` | Skip analytics cache refresh after sync |
+
+Failed or canceled runs preserve committed meetings and recoverable attempt
+state without advancing the last successful sync. Processing or missing
+sections retain prior usable content independently. Explicit successful empty
+sections clear it. Provider deletions do not remove archived meetings.
+
+See the [Pocket workflow](usage/meetings.md#pocket) for setup and limitations.
 
 ## add-notion-meetings
 
@@ -1635,6 +1723,116 @@ msgvault backfill-beeper-media --account signal
 
 ---
 
+## add-inline
+
+Register an [Inline account](usage/inline.md) and archive all its accessible
+chats by default. Use repeated `--chat-id` values for an exact chat filter.
+The default transport is OAuth MCP; choose `cli` explicitly to use an
+authenticated Inline CLI on the daemon host.
+
+```bash
+msgvault add-inline
+msgvault add-inline --transport cli --cli-path inline
+msgvault add-inline --chat-id 123 --chat-id 456
+```
+
+Setup verifies the signed-in user and capture scope. It writes the canonical
+account identifier, transport, and optional filter to `[[inline.accounts]]`.
+Re-running with IDs merges them into an existing filter or establishes a filter
+for an account previously in all-chat mode. Re-running without IDs restores
+all-chat capture. Removing IDs while keeping the configuration filter nonempty
+stops future capture of those chats and keeps archived records. An empty filter
+restores all accessible chats.
+
+A transport change keeps the same source identity. Every `add-inline`
+invocation defaults to MCP; repeat `--transport cli` when updating a CLI-backed
+account.
+
+OAuth requests `messages:read` and `offline_access`, with no message-write
+scopes. OAuth credentials stay in private files on the daemon host. The CLI
+transport keeps its credentials in Inline's own authentication store. Remote
+OAuth consent runs on the invoking machine, then hands credentials to the
+configured daemon for verification and storage. The CLI executable and its
+login must be on the daemon host; see the
+[connection guide](usage/inline.md#connect-an-account).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--chat-id` | all accessible chats | Numeric Inline chat ID for an exact filter (repeatable); children must be selected separately |
+| `--transport` | `mcp` | `mcp` for browser OAuth or `cli` for the authenticated Inline executable |
+| `--cli-path` | `inline` | Executable path for the CLI transport, resolved on the daemon host |
+| `--no-default-identity` | `false` | Do not auto-confirm the verified Inline account as this source's "me" identity |
+
+After adding, run `msgvault sync-inline --probe` and `msgvault sync-inline`.
+Restart the daemon after changing scheduled accounts or chat selections.
+
+---
+
+## sync-inline
+
+Archive all accessible chats for every registered Inline account, or one
+canonical account identifier, honoring any explicit chat filter. All-chat mode
+includes hidden and archived chats and accessible child threads. The first run
+backfills currently readable history and resumes after interruption; later
+runs collect new messages and discover newly accessible chats.
+
+All-chat mode requires the complete-catalog backend and corresponding MCP server
+or CLI. Deploy the backend first: an older backend can ignore the subthread
+request, and the response does not identify that mismatch. Unsupported CLI
+commands and malformed MCP pagination still fail; see
+[catalog support](usage/inline.md#check-all-chat-catalog-support).
+
+```bash
+msgvault sync-inline
+msgvault sync-inline 'api.inline.chat:user:42'
+msgvault sync-inline --full
+msgvault sync-inline --probe
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Re-fetch available history within the account's capture scope and refresh existing messages |
+| `--probe` | `false` | Check identity and read contracts, reporting catalog shape and counts without importing or printing sampled message text |
+| `--no-media` | `false` | Defer attachment downloads while keeping message and media metadata |
+| `--limit` | `0` | Total messages of work per account this run; `0` is unlimited, and unfinished history or refresh work resumes later |
+| `--build-cache` | `false` | Force the normal analytics cache refresh after this sync |
+| `--no-build-cache` | `false` | Skip analytics cache refresh after this sync |
+
+`--probe` cannot be combined with `--full`, `--no-media`, or a nonzero `--limit`.
+Cache overrides are mutually exclusive. Limited runs resume with the next chat
+in the current selection so a busy earlier chat cannot starve later chats.
+Unfinished older history has priority during limited capture; new arrivals are
+scanned after that backlog finishes.
+
+Older edits require `--full`. A source deletion does not erase captured text
+or downloaded media. Content removed before capture and historical edit
+versions are unavailable; see [capture limits](usage/inline.md#sync-and-refresh).
+Use [Inline configuration](configuration.md#inline) to schedule ongoing sync.
+
+---
+
+## backfill-inline-media
+
+Retry eligible missing media for every registered Inline account, or one
+canonical account identifier. The command refreshes signed source URLs and
+reuses content-addressed bytes already stored. Size, scope, account, and
+participant policies still apply.
+
+```bash
+msgvault backfill-inline-media
+msgvault backfill-inline-media 'api.inline.chat:user:42'
+```
+
+Media backfill also accepts the mutually exclusive `--build-cache` and
+`--no-build-cache` overrides described for `sync-inline`.
+
+An unknown group participant count fails a positive participant cap. Message
+and attachment metadata remain archived when media is skipped. See
+[Inline media downloads](usage/inline.md#media-downloads) for the explicit
+policy choice and source-availability limits.
+
+---
+
 ## add-slack
 
 Register a [Slack workspace](/docs/usage/slack/) as a `slack` source. Requires a
@@ -1713,6 +1911,11 @@ msgvault sync-slack --private-channels=false --dms=false --group-dms=false
 | `--maintenance` | `false` | Repair edits/reaction changes on recent messages (ignored by default after capture) |
 | `--no-media` | `false` | Skip file downloads for this run (files become pending markers; `backfill-slack-media` fetches them later) |
 
+When a file download fails, the summary shows the error count and the first
+media error, including the Slack file ID. Each failed attachment retains its
+reason in `attachments.attachment_metadata.fetch_error`; the sync run item
+also records the error.
+
 ---
 
 ## backfill-slack-media
@@ -1726,6 +1929,10 @@ already-downloaded ones are never re-fetched. Files hosted outside
 msgvault backfill-slack-media
 msgvault backfill-slack-media T0123456789
 ```
+
+The summary shows the error count and first media error when downloads fail.
+Failed files remain eligible for retry. A successful retry clears the previous
+failure detail from the attachment row.
 
 ---
 
@@ -1990,6 +2197,12 @@ msgvault import-emlx <identifier> <mail-dir>
 ```
 
 The mail directory should be an Apple Mail mailbox tree containing `.mbox` or `.imapmbox` directories, each with a `Messages/` subdirectory of `.emlx` files. You can also point directly at a single `.mbox` directory. Labels are derived from directory names.
+
+If the import succeeds but its analytics cache refresh fails, the imported
+messages remain saved and searchable. The command exits nonzero; on unreleased
+`main`, its error explicitly says the import completed successfully. Follow the
+cache error's [builder-limit guidance](configuration.md#analytics), then run
+`msgvault build-cache` to refresh analytics without repeating the import.
 
 Apple Mail's `N.partial.emlx` files are also imported. Apple Mail keeps the
 attachments of these messages outside the MIME payload, in a sibling
@@ -2376,7 +2589,8 @@ and daily attachment maintenance also stop after one minute, which lets queued
 scheduled work run. Each scheduled pack pass verifies at most 128
 existing packed blobs or 32 MiB of their raw content, allowing one oversized
 blob. Its durable hash cursor resumes verification after a restart, while new
-loose blobs can be packed during each pass. Manual unpacking reads the full
+loose blobs are packed by sync-requested passes and the daily job when nothing
+is queued; verification-only follow-ups skip them. Manual unpacking reads the full
 catalog. Cancellation preserves committed packs. A pass with committed
 progress resumes behind waiting work; runtime expiry without a checkpoint
 records an error and waits for the next trigger. The first pack tick after a
@@ -2626,7 +2840,9 @@ msgvault media search "quarterly numbers" --person 7 --direction from_person --l
 
 `--mode lexical` is the default. Semantic and hybrid are unavailable. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
 
-The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Everything.
+The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Everything.
+
+Unreleased builds also print a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. A scope with more than 4096 document files returns an attachment error; set `--person` to narrow the scope. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
 
 ## documents
 
@@ -4391,7 +4607,7 @@ msgvault serve --bind 0.0.0.0 --port 8080
 
 ## setup
 
-Run the first-run setup wizard. It writes `config.toml`, optionally stores a Google OAuth credential (needed only for Gmail and Google Calendar; press Enter to skip), and optionally configures a remote deployment.
+Run the first-run setup wizard. It writes `config.toml`, offers the detected host IANA timezone for activity day boundaries, and includes the effective zone in any NAS bundle it creates. If a daemon is running, restart it to apply the change; later projection passes re-date existing activity rows automatically. Setup can also store a Google OAuth credential (needed only for Gmail and Google Calendar; press Enter to skip) and configure a remote deployment.
 
 ```bash
 msgvault setup
@@ -5035,6 +5251,9 @@ Update msgvault to the latest version.
 msgvault update [flags]
 ```
 
+A Homebrew install reports whether a newer release exists but does not replace
+itself. Run `brew upgrade msgvault` instead.
+
 | Flag | Description |
 |---|---|
 | `--check` | Check for updates without installing |
@@ -5284,3 +5503,19 @@ msgvault agent-token revoke <id>
 The grant is removed from the in-memory registry immediately. Any request in flight that
 already passed authentication completes, but the next authentication attempt with the
 revoked secret is denied without fallback.
+
+## policy
+
+Inspect staged conversation archive tiers and source-qualified overrides.
+See [conversation archive tiers](configuration.md#conversation-archive-tiers-staged)
+for defaults and the staged-release limitation.
+
+```sh
+msgvault policy list
+msgvault policy set SOURCE_ID CONVERSATION_ID full
+msgvault policy reset SOURCE_ID CONVERSATION_ID
+```
+
+`list` always prints JSON. Saved CLI overrides win over config. `reset` restores
+config or automatic selection. Effective tiers remain `full` in this release;
+`stub` and `skip` are rejected. No messages are removed.

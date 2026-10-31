@@ -1279,6 +1279,59 @@ func (c CalendarPlannedWrite) Validate() error {
 	return errors
 }
 
+type CalendarProjection struct {
+	AllDay   *bool   `json:"all_day" validate:"omitempty"`
+	End      *string `json:"end" validate:"omitempty"`
+	IcalUID  *string `json:"ical_uid" validate:"omitempty"`
+	Sequence *int64  `json:"sequence" validate:"omitempty"`
+	Start    *string `json:"start" validate:"omitempty"`
+	Status   *string `json:"status" validate:"omitempty"`
+	TimeZone *string `json:"time_zone" validate:"omitempty"`
+}
+
+func (c CalendarProjection) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.AllDay).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("AllDay", err)
+		}
+	}
+	if c.End != nil {
+		if err := typesValidator.Var(c.End, "required"); err != nil {
+			errors = errors.Append("End", err)
+		}
+	}
+	if c.IcalUID != nil {
+		if err := typesValidator.Var(c.IcalUID, "required"); err != nil {
+			errors = errors.Append("IcalUID", err)
+		}
+	}
+	if v, ok := any(c.Sequence).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Sequence", err)
+		}
+	}
+	if c.Start != nil {
+		if err := typesValidator.Var(c.Start, "required"); err != nil {
+			errors = errors.Append("Start", err)
+		}
+	}
+	if c.Status != nil {
+		if err := typesValidator.Var(c.Status, "required"); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if c.TimeZone != nil {
+		if err := typesValidator.Var(c.TimeZone, "required"); err != nil {
+			errors = errors.Append("TimeZone", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CalendarRequest struct {
 	Account      string                `json:"account" validate:"required"`
 	Action       CalendarRequestAction `json:"action" validate:"required"`
@@ -2643,6 +2696,7 @@ type CliMessageResponse struct {
 	Bcc                  []CliMessageAddress    `json:"bcc" validate:"required"`
 	BodyHTML             string                 `json:"body_html" validate:"required"`
 	BodyText             string                 `json:"body_text" validate:"required"`
+	Calendar             *CalendarProjection    `json:"calendar,omitempty"`
 	Cc                   []CliMessageAddress    `json:"cc" validate:"required"`
 	ConversationID       int64                  `json:"conversation_id"`
 	DeletedAt            *time.Time             `json:"deleted_at" validate:"required"`
@@ -2690,6 +2744,13 @@ func (c CliMessageResponse) Validate() error {
 	}
 	if err := typesValidator.Var(c.BodyText, "required"); err != nil {
 		errors = errors.Append("BodyText", err)
+	}
+	if c.Calendar != nil {
+		if v, ok := any(c.Calendar).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Calendar", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(c.Cc, "required"); err != nil {
 		errors = errors.Append("Cc", err)
@@ -6235,6 +6296,7 @@ func (g GenerationSummary) Validate() error {
 type GmailIDsResponse struct {
 	AppliedSourceIds []int64          `json:"applied_source_ids,omitempty"`
 	GmailIds         []string         `json:"gmail_ids" validate:"required"`
+	MatchedCount     *int64           `json:"matched_count,omitempty"`
 	SearchMode       *string          `json:"search_mode,omitzero"`
 	SearchQuery      *string          `json:"search_query,omitzero"`
 	Targets          []DeletionTarget `json:"targets,omitempty"`
@@ -7339,7 +7401,54 @@ type MatchSummary struct {
 	StrongestExcerpt  *string  `json:"strongest_excerpt,omitzero"`
 }
 
+type MediaAttachmentResult struct {
+	AttachmentID    int64      `json:"attachment_id"`
+	ContainingTitle string     `json:"containing_title" validate:"omitempty"`
+	ConversationID  int64      `json:"conversation_id"`
+	Excerpt         string     `json:"excerpt" validate:"required"`
+	Filename        string     `json:"filename" validate:"omitempty"`
+	MessageID       int64      `json:"message_id"`
+	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
+}
+
+func (m MediaAttachmentResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MediaAttachmentSearch struct {
+	ErrorData *ErrorResponse          `json:"error,omitempty"`
+	Results   []MediaAttachmentResult `json:"results" validate:"required"`
+	Truncated bool                    `json:"truncated"`
+}
+
+func (m MediaAttachmentSearch) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.ErrorData != nil {
+		if v, ok := any(m.ErrorData).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ErrorData", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
+	for i, item := range m.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MediaSearchResponse struct {
+	Attachments *MediaAttachmentSearch `json:"attachments,omitempty"`
+
 	// AttributionUnavailable Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
 	AttributionUnavailable int64          `json:"attribution_unavailable"`
 	Coverage               SearchCoverage `json:"coverage"`
@@ -7347,6 +7456,7 @@ type MediaSearchResponse struct {
 	// Partial Coverage or occurrence attribution is incomplete, even with no matching excerpts
 	Partial                bool                `json:"partial"`
 	PendingOccurrences     int64               `json:"pending_occurrences"`
+	RecordingsError        *ErrorResponse      `json:"recordings_error,omitempty"`
 	Results                []MediaSearchResult `json:"results" validate:"required"`
 	Truncated              bool                `json:"truncated"`
 	UnavailableOccurrences int64               `json:"unavailable_occurrences"`
@@ -7354,9 +7464,23 @@ type MediaSearchResponse struct {
 
 func (m MediaSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if m.Attachments != nil {
+		if v, ok := any(m.Attachments).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Attachments", err)
+			}
+		}
+	}
 	if v, ok := any(m.Coverage).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Coverage", err)
+		}
+	}
+	if m.RecordingsError != nil {
+		if v, ok := any(m.RecordingsError).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RecordingsError", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(m.Results, "required"); err != nil {
@@ -7946,13 +8070,14 @@ type MergeRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments    []AttachmentInfo `json:"attachments" validate:"required"`
-	Bcc            []string         `json:"bcc,omitempty"`
-	Body           string           `json:"body" validate:"required"`
-	BodyHTML       *string          `json:"body_html,omitzero"`
-	BodyOmitted    *bool            `json:"body_omitted,omitempty"`
-	Cc             []string         `json:"cc,omitempty"`
-	ConversationID *int64           `json:"conversation_id,omitempty"`
+	Attachments    []AttachmentInfo    `json:"attachments" validate:"required"`
+	Bcc            []string            `json:"bcc,omitempty"`
+	Body           string              `json:"body" validate:"required"`
+	BodyHTML       *string             `json:"body_html,omitzero"`
+	BodyOmitted    *bool               `json:"body_omitted,omitempty"`
+	Calendar       *CalendarProjection `json:"calendar,omitempty"`
+	Cc             []string            `json:"cc,omitempty"`
+	ConversationID *int64              `json:"conversation_id,omitempty"`
 
 	// ConversationTitle Conversation title, when available.
 	ConversationTitle *string  `json:"conversation_title,omitzero"`
@@ -7990,6 +8115,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Body, "required"); err != nil {
 		errors = errors.Append("Body", err)
+	}
+	if m.Calendar != nil {
+		if v, ok := any(m.Calendar).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Calendar", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.From, "required"); err != nil {
 		errors = errors.Append("From", err)
@@ -13746,7 +13878,7 @@ type RelationshipCalendarDay struct {
 	Email        int64                        `json:"email"`
 	Level        RelationshipCalendarDayLevel `json:"level" validate:"required"`
 	Meetings     int64                        `json:"meetings"`
-	ModalityMask int32                        `json:"modality_mask" validate:"gte=0"`
+	ModalityMask int32                        `json:"modality_mask" validate:"gte=0,lte=255"`
 	Received     int64                        `json:"received"`
 	Sent         int64                        `json:"sent"`
 	Total        int64                        `json:"total"`
@@ -13762,7 +13894,7 @@ func (r RelationshipCalendarDay) Validate() error {
 			errors = errors.Append("Level", err)
 		}
 	}
-	if err := typesValidator.Var(r.ModalityMask, "gte=0"); err != nil {
+	if err := typesValidator.Var(r.ModalityMask, "gte=0,lte=255"); err != nil {
 		errors = errors.Append("ModalityMask", err)
 	}
 	if len(errors) == 0 {

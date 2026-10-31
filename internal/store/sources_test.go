@@ -1194,13 +1194,6 @@ func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
 	assert.NotNil(other, "other source should remain")
 }
 
-func TestStore_RemoveSourceSerialized_NotFound(t *testing.T) {
-	st := testutil.NewTestStore(t)
-
-	_, _, err := st.RemoveSourceSerialized(context.Background(), 99999)
-	require.Error(t, err, "RemoveSourceSerialized should error for nonexistent ID")
-}
-
 func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

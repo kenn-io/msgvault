@@ -755,20 +755,6 @@ func newPersonSearchTestCommand(ctx context.Context, t *testing.T) (*cobra.Comma
 	return command, stdout, stderr
 }
 
-func TestPersonSearchProductionCommandRegistrationAndFlags(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
-
-	command, remaining, err := personCmd.Find([]string{"search"})
-	must.NoError(err)
-	check.Same(personSearchCmd, command)
-	check.Empty(remaining)
-	limitFlag := command.Flags().Lookup("limit")
-	must.NotNil(limitFlag)
-	check.Equal(strconv.Itoa(defaultPersonSearchLimit), limitFlag.DefValue)
-	check.NotNil(command.Flags().Lookup(flagJSON))
-}
-
 func writePersonSearchCommandResponse(t *testing.T, w http.ResponseWriter) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

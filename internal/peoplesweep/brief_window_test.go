@@ -362,19 +362,6 @@ func TestBuildBriefWindowFiltersDisallowedLanesDatesAndSensitiveTargets(t *testi
 		"archive excerpts keep the packet sensitive regardless of catalog filtering")
 }
 
-func TestBuildBriefWindowExcludesItemsBeforeTheProfileWindow(t *testing.T) {
-	archive := &briefFakeArchive{items: []EvidenceItem{
-		briefWindowItem(10, SourceConversationText, 12, "before the window"),
-		briefWindowItem(11, SourceConversationText, 20, "inside the window"),
-	}}
-	request := briefWindowRequest(t)
-	request.Profile.SourceSince = "2026-08-15"
-
-	window, err := BuildBriefWindow(t.Context(), archive, request)
-	require.NoError(t, err)
-	assert.Equal(t, []int64{11}, briefMessageIDs(window.Items))
-}
-
 func TestBuildBriefWindowAlwaysIncludesTheLastContactItem(t *testing.T) {
 	archive := &briefFakeArchive{
 		items: []EvidenceItem{

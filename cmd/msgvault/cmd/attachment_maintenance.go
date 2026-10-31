@@ -47,6 +47,11 @@ type attachmentMaintenance struct {
 	// packPending records that a scheduled sync wrote loose blobs that no
 	// pack pass has drained yet. Startup requests one scan of existing blobs.
 	packPending atomic.Bool
+	// verifyPending records that the indexed-blob verification window has
+	// more slices to walk. It is deliberately separate from packPending: a
+	// verification follow-up needs no loose-candidate scan, and conflating
+	// the two made every follow-up re-enumerate every attachment row.
+	verifyPending atomic.Bool
 }
 
 func newAttachmentMaintenance(
@@ -242,13 +247,19 @@ func (m *attachmentMaintenance) logAutomaticRepackSummary(message string, stats 
 }
 
 // runScheduledPack bounds existing-blob verification as well as new pack bytes.
-func (m *attachmentMaintenance) runScheduledPack(ctx context.Context) error {
+// enumerateLoose reports whether this pass should look for loose blobs to
+// pack. A pass that only advances the verification window passes false, which
+// skips a scan of every attachment row for candidates it cannot find.
+func (m *attachmentMaintenance) runScheduledPack(ctx context.Context, enumerateLoose bool) error {
 	if !m.packCreationEnabled {
 		return nil
 	}
 	packCtx, pass, err := m.store.BeginPackVerification(ctx, 128, 32<<20)
 	if err != nil {
 		return err
+	}
+	if !enumerateLoose {
+		pass.SkipLooseEnumeration()
 	}
 	if err := m.runAutomaticPack(packCtx, nil); err != nil {
 		return err
@@ -261,7 +272,7 @@ func (m *attachmentMaintenance) runScheduledPack(ctx context.Context) error {
 		// A completed verification cycle restarts on the next request. Only an
 		// unfinished window provides a resume point for a budgeted follow-up.
 		jobctx.RecordProgress(ctx)
-		m.markPackPending()
+		m.verifyPending.Store(true)
 	}
 	return nil
 }
@@ -270,12 +281,16 @@ func (m *attachmentMaintenance) runScheduledPack(ctx context.Context) error {
 // job so the scheduler records the failure instead of obscuring it with a
 // second maintenance result.
 func (m *attachmentMaintenance) daily(ctx context.Context) error {
-	m.packPending.Store(false)
-	if err := m.runScheduledPack(ctx); err != nil {
+	// Look for loose blobs when a sync queued a pass or nothing is queued.
+	// A pass queued only to continue verification skips loose enumeration.
+	loose := m.packPending.Swap(false)
+	verify := m.verifyPending.Swap(false)
+	enumerateLoose := loose || !verify
+	if err := m.runScheduledPack(ctx, enumerateLoose); err != nil {
 		m.markPackPending()
 		return err
 	}
-	if m.packPending.Load() {
+	if m.packPending.Load() || m.verifyPending.Load() {
 		return scheduler.ErrReschedule
 	}
 	return m.runAutomaticRepack(ctx, nil)
@@ -288,18 +303,23 @@ func (m *attachmentMaintenance) markPackPending() {
 	}
 }
 
-// runPendingPack runs one automatic pack pass when a scheduled sync left new
-// loose blobs since the last pass. A failed pass leaves the request pending;
+// runPendingPack runs one automatic pack pass when a sync or unfinished
+// verification queued it. A failed pass leaves the request pending;
 // an exhausted byte budget queues another pass behind waiting work.
 func (m *attachmentMaintenance) runPendingPack(ctx context.Context) error {
-	if m == nil || !m.packPending.Swap(false) {
+	if m == nil {
 		return nil
 	}
-	if err := m.runScheduledPack(ctx); err != nil {
+	loose := m.packPending.Swap(false)
+	verify := m.verifyPending.Swap(false)
+	if !loose && !verify {
+		return nil
+	}
+	if err := m.runScheduledPack(ctx, loose); err != nil {
 		m.packPending.Store(true)
 		return err
 	}
-	if m.packPending.Load() {
+	if m.packPending.Load() || m.verifyPending.Load() {
 		return scheduler.ErrReschedule
 	}
 	return nil
@@ -450,6 +470,7 @@ func attachmentProducingCommand(args []string) bool {
 	case "archive-remote-images",
 		"backfill-beeper-media",
 		"backfill-discord-media",
+		"backfill-inline-media",
 		"backfill-slack-media",
 		"backfill-teams-media",
 		"import",
@@ -468,6 +489,7 @@ func attachmentProducingCommand(args []string) bool {
 		"sync-beeper",
 		"sync-chatwoot",
 		"sync-discord",
+		"sync-inline",
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",

@@ -52,6 +52,9 @@ type Options struct {
 	DataDir      string
 	ExportDir    string
 	Version      string
+	// Distribution names who distributes the binary. When a package manager
+	// owns it, the update notice points at that package manager.
+	Distribution string
 
 	// AggregateLimit overrides the maximum number of aggregate rows to load.
 	// Zero uses the default (50,000).
@@ -402,7 +405,8 @@ type Model struct {
 	settingsRequestID uint64
 
 	// Version info for title bar
-	version string
+	version      string
+	distribution string
 
 	// Notice shown on the info line while aggregate data loads (e.g. the
 	// daemon is running live SQL because no analytics cache is built).
@@ -588,6 +592,7 @@ func New(engine query.Engine, opts Options) Model {
 		}),
 		semanticSearch:     opts.SemanticSearch,
 		version:            opts.Version,
+		distribution:       opts.Distribution,
 		analyticsNotice:    opts.AnalyticsNotice,
 		aggregateLimit:     aggLimit,
 		threadMessageLimit: threadLimit,

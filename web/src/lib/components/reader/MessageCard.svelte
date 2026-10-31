@@ -175,7 +175,7 @@
     width: 100%;
     align-items: center;
     gap: var(--space-4);
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-3) var(--pane-pad-x);
     border: 0;
     border-bottom: 1px solid var(--border-muted);
     background: none;
@@ -248,14 +248,14 @@
 
   .related-message {
     display: inline-block;
-    margin: var(--space-3) var(--space-4) 0;
+    margin: var(--space-3) var(--pane-pad-x) 0;
   }
 
   .card-header {
     display: flex;
     align-items: flex-start;
     gap: var(--space-3);
-    padding: var(--space-3) var(--space-4) 0;
+    padding: var(--space-3) var(--pane-pad-x) 0;
   }
 
   .collapse-target {
@@ -342,7 +342,7 @@
   }
 
   .sanitize-notice {
-    margin: var(--space-2) var(--space-4) 0;
+    margin: var(--space-2) var(--pane-pad-x) 0;
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
   }
@@ -354,12 +354,12 @@
   }
 
   .card-body {
-    padding: var(--space-3) var(--space-4) var(--space-4);
+    padding: var(--space-3) var(--pane-pad-x) var(--space-4);
   }
 
   .attachments {
     margin: 0;
-    padding: 0 var(--space-4) var(--space-4);
+    padding: 0 var(--pane-pad-x) var(--space-4);
     font-size: var(--font-size-sm);
     list-style: none;
   }

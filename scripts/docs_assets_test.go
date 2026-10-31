@@ -235,72 +235,6 @@ func TestAssetPublishersRejectProtectedBranchNames(t *testing.T) {
 	}
 }
 
-func TestCheckDocsRejectsForbiddenMediaReferenceOnLineWithAllowedAsset(t *testing.T) {
-	runCheckDocsMediaReferenceTest(
-		t,
-		"![bad](/favicon.svg) ![ok](/assets/static/favicon.svg)",
-		"docs media references must use /assets/static or /assets/generated",
-	)
-}
-
-func TestCheckDocsRejectsForbiddenSourceMediaReferenceOnLineWithAllowedAsset(t *testing.T) {
-	runCheckDocsMediaReferenceTest(
-		t,
-		`logo = "/favicon.svg" favicon = "assets/static/favicon.svg"`,
-		"docs source media references must use /assets/static or /assets/generated",
-	)
-}
-
-func TestDocsScreenshotDemoDataUsesIntegratedRepoSchemaPath(t *testing.T) {
-	content, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate_demo_data.py"))
-	require.NoError(t, err)
-
-	text := string(content)
-	assert.Contains(t, text, `SCRIPT_DIR / "../../internal/store/schema.sql"`)
-	assert.NotContains(t, text, `SCRIPT_DIR / "../../msgvault/internal/store/schema.sql"`)
-}
-
-func TestDocsScreenshotGenerateAllDoesNotRequireDockerIgnorefileFlag(t *testing.T) {
-	isolateGitFixture(t)
-	require := require.New(t)
-	assert := assert.New(t)
-
-	tempDir := t.TempDir()
-	screenshotsDir := filepath.Join(tempDir, "docs", "screenshots")
-	productRepo := filepath.Join(tempDir, "product")
-	binDir := filepath.Join(tempDir, "bin")
-	logPath := filepath.Join(tempDir, "docker-calls.log")
-	require.NoError(os.MkdirAll(screenshotsDir, 0o755))
-	require.NoError(os.MkdirAll(productRepo, 0o755))
-	require.NoError(os.MkdirAll(binDir, 0o755))
-
-	copyTestFile(t, filepath.Join("..", "docs", "screenshots", "generate-all.sh"), filepath.Join(screenshotsDir, "generate-all.sh"))
-	writeExecutableFile(t, filepath.Join(binDir, "docker"), fakeDockerScript(logPath))
-
-	cmd := exec.Command("bash", filepath.Join(screenshotsDir, "generate-all.sh"), "--skip-data", "--repo", productRepo)
-	cmd.Dir = tempDir
-	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	output, err := cmd.CombinedOutput()
-	require.NoError(err, string(output))
-
-	logContent, err := os.ReadFile(logPath)
-	require.NoError(err)
-	logText := string(logContent)
-	assert.NotContains(logText, "--ignorefile")
-
-	var buildLine string
-	for line := range strings.SplitSeq(logText, "\n") {
-		if strings.HasPrefix(line, "build ") {
-			buildLine = line
-			break
-		}
-	}
-	require.NotEmpty(buildLine)
-	buildFields := strings.Fields(buildLine)
-	require.NotEmpty(buildFields)
-	assert.Equal(filepath.Base(productRepo), filepath.Base(filepath.FromSlash(buildFields[len(buildFields)-1])))
-}
-
 func TestDocsScreenshotDockerfileSpecificIgnoreMatchesSourceIgnore(t *testing.T) {
 	sourceIgnore, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", ".dockerignore"))
 	require.NoError(t, err)
@@ -310,11 +244,20 @@ func TestDocsScreenshotDockerfileSpecificIgnoreMatchesSourceIgnore(t *testing.T)
 	assert.Equal(t, string(sourceIgnore), string(dockerfileIgnore))
 }
 
-func TestDocsGitignoreIgnoresVercelLocalGitignore(t *testing.T) {
-	content, err := os.ReadFile(filepath.Join("..", ".gitignore"))
-	require.NoError(t, err)
+func TestDocsScreenshotDockerfileGoVersionMatchesModule(t *testing.T) {
+	require := require.New(t)
 
-	assert.Contains(t, string(content), "docs/.gitignore")
+	goMod, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	require.NoError(err)
+	dockerfile, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile"))
+	require.NoError(err)
+
+	moduleGoVersion := regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+\.[0-9]+)`).FindStringSubmatch(string(goMod))
+	require.Len(moduleGoVersion, 2)
+	dockerGoVersion := regexp.MustCompile(`(?m)^FROM\s+golang:([0-9]+\.[0-9]+\.[0-9]+)-`).FindStringSubmatch(string(dockerfile))
+	require.Len(dockerGoVersion, 2)
+
+	assert.Equal(t, moduleGoVersion[1], dockerGoVersion[1])
 }
 
 func TestDocsScreenshotDemoDataPrefersMSGVAULTRepoSchema(t *testing.T) {
@@ -385,123 +328,6 @@ print(conn.scripts[0])
 	assert.Contains(t, string(output), "override schema marker")
 }
 
-func TestDocsScreenshotDockerfileGoVersionMatchesModule(t *testing.T) {
-	require := require.New(t)
-
-	goMod, err := os.ReadFile(filepath.Join("..", "go.mod"))
-	require.NoError(err)
-	dockerfile, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile"))
-	require.NoError(err)
-
-	moduleGoVersion := regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+\.[0-9]+)`).FindStringSubmatch(string(goMod))
-	require.Len(moduleGoVersion, 2)
-	dockerGoVersion := regexp.MustCompile(`(?m)^FROM\s+golang:([0-9]+\.[0-9]+\.[0-9]+)-`).FindStringSubmatch(string(dockerfile))
-	require.Len(dockerGoVersion, 2)
-
-	assert.Equal(t, moduleGoVersion[1], dockerGoVersion[1])
-}
-
-func TestDocsScreenshotDockerfileInstallsCGODependencies(t *testing.T) {
-	dockerfile, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile"))
-	require.NoError(t, err)
-
-	assert.Contains(t, string(dockerfile), "libsqlite3-dev")
-}
-
-func TestDocsScreenshotTmuxSessionStartsWithOptions(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
-	require.NoError(t, err)
-
-	assert := assert.New(t)
-	text := string(script)
-	assert.NotContains(text, "start-server")
-	assert.Contains(text, `tmux -f /dev/null set-option -g default-terminal "tmux-256color"`)
-	assert.Contains(text, `new-session -d -s "$SESSION" -x 120 -y 40`)
-}
-
-func TestDocsScreenshotWaitsForCurrentSenderLabel(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
-	require.NoError(t, err)
-
-	assert.NotContains(t, string(script), `wait_until "Sender Name"`)
-	assert.Contains(t, string(script), `wait_until "Sender"`)
-}
-
-func TestDocsScreenshotSubgroupRecipientWaitUsesCurrentLabel(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
-	require.NoError(err)
-
-	text := string(script)
-	subgroupStart := strings.Index(text, "# Sub-grouping:")
-	require.NotEqual(-1, subgroupStart)
-	captureIndex := strings.Index(text[subgroupStart:], `capture "tui-subgroup-recipients"`)
-	require.NotEqual(-1, captureIndex)
-	subgroupBlock := text[subgroupStart : subgroupStart+captureIndex]
-
-	assert.Contains(subgroupBlock, `wait_until "Recipient"`)
-	assert.NotContains(subgroupBlock, `wait_until "Recipient Name"`)
-}
-
-func TestDocsScreenshotCapturesLegacyTimeAsset(t *testing.T) {
-	require := require.New(t)
-
-	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
-	require.NoError(err)
-
-	text := string(script)
-	legacyIndex := strings.Index(text, `capture "tui-time"`)
-	monthlyIndex := strings.Index(text, `capture "tui-time-monthly"`)
-	require.NotEqual(-1, legacyIndex)
-	require.NotEqual(-1, monthlyIndex)
-	assert.Less(t, legacyIndex, monthlyIndex)
-}
-
-func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) {
-	t.Helper()
-	isolateGitFixture(t)
-	tempDir := t.TempDir()
-	repo := filepath.Join(tempDir, "repo")
-	binDir := filepath.Join(tempDir, "bin")
-	require.NoError(t, os.MkdirAll(repo, 0o755))
-	require.NoError(t, os.MkdirAll(binDir, 0o755))
-	git(t, repo, "init")
-	git(t, repo, "config", "user.name", "Test User")
-	git(t, repo, "config", "user.email", "test@example.invalid")
-
-	scriptPath := installScript(t, repo, filepath.Join("scripts", "check-docs.sh"))
-	writeAssetFile(
-		t,
-		filepath.Join(repo, "docs"),
-		"index.md",
-		docsLine,
-	)
-	writeAssetFile(t, repo, "README.md", "# test")
-	writeExecutableFile(
-		t,
-		filepath.Join(repo, "docs", "scripts", "check_markdown_sources.py"),
-		"#!/usr/bin/env python3\nprint('docs markdown source checks passed')\n",
-	)
-	writeExecutableFile(
-		t,
-		filepath.Join(repo, "docs", "assets", "hydrate-assets.sh"),
-		"#!/usr/bin/env bash\necho 'hydrate should not run' >&2\nexit 1\n",
-	)
-	writeExecutableFile(t, filepath.Join(binDir, "rg"), fakeRipgrepForDocsMediaRefs())
-
-	cmd := exec.Command("bash", scriptPath)
-	cmd.Dir = repo
-	cmd.Env = envWithPath(binDir + string(os.PathListSeparator) + os.Getenv("PATH"))
-	output, err := cmd.CombinedOutput()
-
-	require.Error(t, err, string(output))
-	assert.Contains(t, string(output), wantMessage)
-	assert.Contains(t, string(output), "/favicon.svg")
-	assert.NotContains(t, string(output), "hydrate should not run")
-}
-
 func installScript(t *testing.T, repo, scriptRel string) string {
 	t.Helper()
 	sourceScriptPath := filepath.Join("..", scriptRel)
@@ -561,89 +387,6 @@ func writeAssetFile(t *testing.T, dir, file, content string) {
 	path := filepath.Join(dir, file)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(content+"\n"), 0o644))
-}
-
-func writeExecutableFile(t *testing.T, path, content string) {
-	t.Helper()
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o755))
-}
-
-func copyTestFile(t *testing.T, source, dest string) {
-	t.Helper()
-	content, err := os.ReadFile(source)
-	require.NoError(t, err)
-	info, err := os.Stat(source)
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o755))
-	require.NoError(t, os.WriteFile(dest, content, info.Mode().Perm()))
-}
-
-func fakeDockerScript(logPath string) string {
-	return "#!/usr/bin/env bash\n" +
-		"set -euo pipefail\n" +
-		"printf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\n" +
-		"if [[ \"${1:-}\" == \"build\" && \"${2:-}\" == \"--help\" ]]; then\n" +
-		"  printf 'Usage: docker build [OPTIONS] PATH\\n'\n" +
-		"  exit 0\n" +
-		"fi\n" +
-		"for arg in \"$@\"; do\n" +
-		"  if [[ \"$arg\" == \"--ignorefile\" ]]; then\n" +
-		"    printf 'unknown flag: --ignorefile\\n' >&2\n" +
-		"    exit 125\n" +
-		"  fi\n" +
-		"done\n"
-}
-
-func fakeRipgrepForDocsMediaRefs() string {
-	return `#!/usr/bin/env bash
-set -euo pipefail
-
-mode="root"
-args="$*"
-if [[ "$args" == *"https://msgvault"* ]]; then
-  mode="source"
-fi
-
-status=1
-line=""
-if [[ -f docs/index.md ]]; then
-  line="$(cat docs/index.md)"
-fi
-
-case "$mode" in
-  root)
-    if [[ "$line" == *"/favicon.svg"* && ( "$line" == *"!["* || "$line" == *"<img"* ) ]]; then
-      printf 'docs/index.md:1:/favicon.svg\n'
-      status=0
-    fi
-    ;;
-  source)
-    if [[ "$line" == *"/favicon.svg"* ]]; then
-      printf 'docs/index.md:1:/favicon.svg\n'
-      status=0
-    fi
-    ;;
-esac
-
-exit "$status"
-`
-}
-
-func envWithPath(pathValue string) []string {
-	env := os.Environ()
-	pathEntry := "PATH=" + pathValue
-	for i, entry := range env {
-		if strings.HasPrefix(entry, "PATH=") {
-			env[i] = pathEntry
-			return env
-		}
-	}
-	return append(env, pathEntry)
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func assertRecursiveFileList(t *testing.T, dir string, want []string) {

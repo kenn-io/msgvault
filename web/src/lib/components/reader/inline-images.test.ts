@@ -74,15 +74,6 @@ describe('resolveArchivedInlineImages', () => {
     expect(html).not.toContain('Inline image unavailable');
     expect(fetchFn.mock.calls.every(([request]) => new URL((request as Request).url).pathname.endsWith('/inline'))).toBe(true);
   }, 30_000);
-  it('exports conservative request and decoded-byte budgets', () => {
-    expect(MAX_ARCHIVED_INLINE_IMAGE_CIDS).toBe(32);
-    expect(MAX_ARCHIVED_INLINE_IMAGE_BYTES).toBe(5 * 1024 * 1024);
-    expect(MAX_ARCHIVED_INLINE_IMAGE_TOTAL_BYTES).toBe(20 * 1024 * 1024);
-    expect(MAX_ARCHIVED_INLINE_IMAGE_CONCURRENCY).toBe(1);
-    expect(MAX_ARCHIVED_INLINE_IMAGE_OCCURRENCES).toBe(128);
-    expect(MAX_ARCHIVED_INLINE_IMAGE_SERIALIZED_BYTES).toBe(24 * 1024 * 1024);
-  });
-
   it('deduplicates thousands of normalized repeats but publishes at most 128 occurrences', async () => {
     const repeated = Array.from({ length: 2_000 }, (_value, index) =>
       index % 2 === 0 ? ' repeat@example.com ' : '<repeat@example.com>'

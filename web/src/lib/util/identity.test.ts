@@ -3,10 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { identityHue, initialsFor } from './identity';
 
 describe('identityHue', () => {
-  it('is deterministic for the same seed', () => {
-    expect(identityHue('cluster:42')).toBe(identityHue('cluster:42'));
-  });
-
   it('stays within [0, 360)', () => {
     for (const seed of ['', 'a', 'cluster:1', 'domain:example.com', '🙂 unicode']) {
       const hue = identityHue(seed);

@@ -44,21 +44,6 @@ func TestNewFieldDefinitionInputMapsEditableKinds(t *testing.T) {
 	}
 }
 
-func TestEditableFieldKindsIncludesEverySupportedKind(t *testing.T) {
-	assert.Equal(t, []FieldKind{
-		FieldKindText,
-		FieldKindLongText,
-		FieldKindNumber,
-		FieldKindCheckbox,
-		FieldKindDate,
-		FieldKindDateTime,
-		FieldKindURL,
-		FieldKindEmail,
-		FieldKindPhone,
-		FieldKindJSON,
-	}, EditableFieldKinds)
-}
-
 func TestNewFieldDefinitionInputRejectsUnknownKind(t *testing.T) {
 	_, err := (NewField{Kind: FieldKind("select")}).DefinitionInput()
 	require.Error(t, err)

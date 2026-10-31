@@ -862,7 +862,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 					cancel()
 				}()
 			} else {
-				opts.StopAt = time.Now().Add(500 * time.Millisecond)
+				opts.StopAt = time.Now().Add(500 * time.Millisecond) //nolint:kennlint // deadlinetest: the blocked roster request must exhaust the import budget
 			}
 			_, _, _, err = imp.ensureConversation(ctx, 0, source.ID, ch, opts, &ImportSummary{})
 			if test.cancelContext {

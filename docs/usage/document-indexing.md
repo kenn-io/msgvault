@@ -83,6 +83,12 @@ to send queries to the embedding provider.
     CSV, or PPTX extraction. Adding PPTX changes the profile fingerprint and
     requires `documents consent-mistral` again.
 
+    Mistral retired `mistral-ocr-4-0`, and msgvault now pins
+    `mistral-ocr-4-1`. If your configuration sets `model = "mistral-ocr-4-0"`,
+    change it to `mistral-ocr-4-1` or remove the line. Manifests recorded for the
+    old model no longer validate: run a fresh probe, then
+    `documents consent-mistral` again.
+
 Provider uploads are manual-only. `msgvault serve` performs weekly local
 reconciliation and derivative cleanup when document indexing is enabled, but it
 never starts extraction on its own. Start every upload batch explicitly with
@@ -101,7 +107,7 @@ enabled = true
 provider = "mistral"
 region = "eu"
 api_key_env = "MISTRAL_API_KEY"
-model = "mistral-ocr-4-0"
+model = "mistral-ocr-4-1"
 retention_posture = "zdr"
 training_posture = "opted-out"
 max_file_bytes = 52428800

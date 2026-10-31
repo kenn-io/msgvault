@@ -71,7 +71,7 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
   resolveReadiness();
   await expect(page.getByRole('heading', { name: /^Results/ })).toBeVisible();
-  const recordings = page.getByRole('region', { name: 'Recordings', exact: true });
+  const recordings = page.getByRole('region', { name: 'Media search', exact: true });
   await expect(recordings).toBeHidden();
   const firstRow = grid.getByRole('row').filter({ hasText: 'Synthetic subject 1' }).first();
   await expect(firstRow).toBeInViewport({ ratio: 1 });

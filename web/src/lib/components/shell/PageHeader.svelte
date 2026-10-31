@@ -28,8 +28,15 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    margin-bottom: var(--space-5);
+    gap: var(--control-gap);
+    /* Ordinary parents reserve --field-gap; block parents reserve 0. The margin fills the 12px header
+     * band, then leaves --page-header-gap below its line, matching the page's
+     * bottom padding. Full-width panes set that gap to 0 so they meet the line. */
+    margin-bottom: calc(var(--space-5) + var(--page-header-gap, var(--field-gap)) - var(--page-header-parent-gap, var(--field-gap)));
+  }
+
+  .page-header + :global(p) {
+    margin: 0;
   }
 
   .page-header::before {
@@ -37,7 +44,7 @@
     z-index: 0;
     top: calc(-1 * var(--space-5));
     right: calc(-1 * var(--page-gutter));
-    bottom: calc(-1 * var(--space-6));
+    bottom: calc(-1 * var(--space-5));
     left: calc(-1 * var(--page-gutter));
     border-bottom: 1px solid var(--border-muted);
     background: var(--bg-surface);
@@ -52,7 +59,7 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-3) var(--space-6);
+    gap: var(--control-gap) var(--section-gap);
   }
 
   .page-header__text {
@@ -63,7 +70,7 @@
     margin: 0;
     color: var(--text-primary);
     font-size: var(--font-size-xl);
-    font-weight: 650;
+    font-weight: var(--font-weight-semibold);
     line-height: 1.25;
   }
 
@@ -77,7 +84,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--control-gap);
   }
 
   .page-header__view {

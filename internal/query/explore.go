@@ -314,6 +314,9 @@ func validateResolvedSearch(search SearchSpec) (SearchProvenance, error) {
 func buildExploreConditions(request ExploreRequest) (string, []any) {
 	var conditions []string
 	var args []any
+	if request.SentOnly {
+		conditions = append(conditions, sentIdentityConditions("true"))
+	}
 	appendIntAnyOf := func(values []int64, expression string) {
 		if len(values) == 0 {
 			return
@@ -681,6 +684,9 @@ func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
 // are bound once. Listings without domain filters keep scalar rescans to avoid
 // materializing the archive's message strings.
 //
+// Materialize the bounded page so its enrichment queries share those rows
+// instead of inlining the full listing pipeline into each consumer.
+//
 // Output columns, ordering, and pagination are identical to buildExploreSQL;
 // TestExploreListingFastPathMatchesLegacy pins the equivalence.
 func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string, shareFilteredPopulation bool) string {
@@ -692,7 +698,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
 	}
 	return buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression) +
 		exploreLogicalEntriesCTE(false) + fmt.Sprintf(`
-), page AS (
+), page AS MATERIALIZED (
     SELECT * FROM logical_entries
     ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
     LIMIT ? OFFSET ?
@@ -873,7 +879,7 @@ func buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression
 func exploreLogicalEntriesCTE(withParticipantLists bool) string {
 	// These importers include attachment bytes in their message estimates.
 	// Known attachment bytes still bound an incomplete estimate from below.
-	estimatedBytes := `CASE WHEN lower(source_type) IN ('beeper', 'slack', 'teams')
+	estimatedBytes := `CASE WHEN lower(source_type) IN ('beeper', 'slack', 'teams', 'inline')
 		THEN GREATEST(size_estimate, attachment_size)
 		ELSE size_estimate + attachment_size END`
 	messageLists := ""

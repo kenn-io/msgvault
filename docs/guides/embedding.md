@@ -13,6 +13,10 @@ accept a context; the caller controls cancellation, scheduling, and shutdown.
 
 This package is newer than the latest release.
 
+For clients of a hosted message MCP endpoint, the
+[external credential provider](credential-providers.md) package validates access
+obtained from a trusted local helper. Hosts still own approval and scoped reads.
+
 ## Run scoped MCP reads
 
 `go.kenn.io/msgvault/pkg/mcp.Reader` runs native tools against a caller-owned

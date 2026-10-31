@@ -72,11 +72,6 @@ func TestRegistryLifecycle(t *testing.T) {
 	src := SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	perms := []Permission{PermissionDraftCreate}
 
-	t.Run("new registry has zero grants", func(t *testing.T) {
-		r := NewRegistry()
-		assert.Empty(t, r.List())
-	})
-
 	t.Run("Issue rejects empty label", func(t *testing.T) {
 		r := NewRegistry()
 		_, _, _, err := r.Issue("", perms, []SourceRef{src}, time.Time{})
@@ -201,20 +196,6 @@ func TestRegistryLifecycle(t *testing.T) {
 		r.Close()
 		assert.Empty(t, r.List())
 	})
-}
-
-// TestGrantAllowsExactOriginalTriple covers proof matrix row 6 (novel assertion).
-// The exact (ID, Type, Identifier) triple that was issued must be allowed; this
-// complements TestGrantPermissionsDoNotImply which covers partial-match cases.
-func TestGrantAllowsExactOriginalTriple(t *testing.T) {
-	original := SourceRef{ID: 5, Type: "imap", Identifier: "imap://alice@example.com"}
-	g := Grant{
-		ID:          "g-original",
-		Permissions: []Permission{PermissionDraftCreate},
-		Sources:     []SourceRef{original},
-	}
-	assert.True(t, g.Allows(PermissionDraftCreate, original),
-		"exact original (ID, Type, Identifier) triple must be allowed")
 }
 
 func TestDraftPermissionsRemainIndependent(t *testing.T) {

@@ -199,13 +199,15 @@ func TestChatwootOptionsPreserveSourcePolicies(t *testing.T) {
 	cfg.HomeDir = t.TempDir()
 	no := false
 	yes := true
-	src := config.ChatwootSource{SelfAgentIDs: []int64{201}, IncludePrivate: &yes, Media: &no, MaxMediaMB: 3, ReconcileIntervalHours: 2}
+	src := config.ChatwootSource{SelfAgentIDs: []int64{201}, IncludePrivate: &yes, Media: &no, MaxMediaMB: 3, RecordingMaxBytes: 3 << 30, ReconcileIntervalHours: 2}
 	opts := chatwootImportOptions(src, 7, cfg)
 	assert.Equal(int64(7), opts.InboxID)
 	assert.Equal([]int64{201}, opts.SelfAgentIDs)
 	assert.True(opts.IncludePrivate)
 	assert.Equal(attachmentpolicy.SkipAccountPolicy, opts.Policy.DisabledReason)
 	assert.Equal(int64(3<<20), opts.Policy.MaxBytes)
+	assert.Equal(int64(3<<30), opts.RecordingMaxBytes)
+	assert.Equal(int64(4<<30), chatwootImportOptions(config.ChatwootSource{}, 7, cfg).RecordingMaxBytes)
 	assert.Equal(2*time.Hour, opts.ReconcileInterval)
 	assert.Equal(cfg.AttachmentsDir(), opts.AttachmentsDir)
 }

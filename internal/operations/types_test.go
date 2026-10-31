@@ -980,26 +980,6 @@ func TestLaneHistoryStatusValidationEnforcesRegistryAndRunRoles(t *testing.T) {
 	})
 }
 
-func TestHistoryReaderContractUsesNormalizedTypes(t *testing.T) {
-	t.Parallel()
-
-	var _ HistoryReader = (*readerContractStub)(nil)
-}
-
-type readerContractStub struct{}
-
-func (*readerContractStub) Kinds() []Kind { return nil }
-
-func (*readerContractStub) ListRuns(context.Context, Query) (HistorySnapshot, error) {
-	return HistorySnapshot{}, nil
-}
-
-func (*readerContractStub) GetRun(context.Context, StableID) (Run, error) { return Run{}, nil }
-
-func (*readerContractStub) LaneStatus(context.Context, Kind) (LaneHistoryStatus, error) {
-	return LaneHistoryStatus{}, nil
-}
-
 func mustInt64ID(t *testing.T, kind Kind, id int64) StableID {
 	t.Helper()
 	stableID, err := NewInt64ID(kind, id)

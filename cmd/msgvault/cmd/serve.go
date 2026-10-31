@@ -47,6 +47,7 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/plaud"
+	"go.kenn.io/msgvault/internal/pocket"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -623,6 +624,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if cfg.Inline.Enabled && cfg.Inline.Schedule == "" {
+		logger.Warn("inline is enabled but has no schedule; set [inline].schedule to sync automatically")
+	}
+	if cfg.Inline.Enabled && cfg.Inline.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name: api.InlineJobName, Schedule: cfg.Inline.Schedule, Preemptible: true,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredInlineSync(ctx, s)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule inline sync", "error", err)
+		}
+	}
+
 	for _, source := range cfg.Chatwoot {
 		if source.Enabled && source.Schedule == "" {
 			logger.Warn("chatwoot profile is enabled but has no schedule", "profile", source.Identifier,
@@ -636,6 +653,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule Chatwoot", "profile", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled Chatwoot", "profile", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+
+	for _, src := range cfg.Pocket {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("pocket source is enabled but has no schedule; the daemon will not sync it", "source", src.Identifier)
+		}
+	}
+	for _, src := range cfg.ScheduledPocketSources() {
+		source := src
+		jobName, _ := api.SchedulerJobNameForSource(pocket.SourceType, source.Identifier)
+		if err := sched.AddJob(scheduler.Job{
+			Name: jobName, Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredPocketSync(ctx, s, source)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule pocket source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled pocket source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 
@@ -886,13 +923,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	schedAdapter := &schedulerAdapter{scheduler: sched, media: mediaSched}
 
-	docbankAttachments, err := newDocbankAttachmentReader(ctx, s, cfg.Integrations.Docbank)
-	if err != nil {
-		logger.Warn("Attachment mirror status unavailable", "error", err)
-	}
 	messageRecordings, err := newMessageRecordingReader(ctx, s, cfg.Integrations.Docbank)
 	if err != nil {
 		logger.Warn("Message transcripts unavailable", "error", err)
+	}
+	docbankAttachments, err := newDocbankAttachmentReader(ctx, s, cfg.Integrations.Docbank, messageRecordings.Client)
+	if err != nil {
+		logger.Warn("Attachment mirror status unavailable", "error", err)
 	}
 
 	// Create and start API server
@@ -4501,6 +4538,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	cfg := state.cfg
 	logger := state.logger
 	imapOpts := imapFolderStateOptions(s, src, false, cfg, logger)
+	imapOpts = append(imapOpts, imapSyncFolderFilter(s, src.Identifier, state, nil, nil))
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)

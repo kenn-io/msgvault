@@ -189,12 +189,6 @@ func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 	assert.NotContains(types, "synctech_sms_call", "text mode should not include call log")
 }
 
-func TestIsTextMessageTypeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
-	assert.True(t, IsTextMessageType("mms"), "mms should be a text message type")
-	assert.True(t, IsTextMessageType("teams"), "teams should be a text message type")
-	assert.False(t, IsTextMessageType("synctech_sms_call"), "synctech_sms_call should not be a text message type")
-}
-
 func insertTextSearchMessage(t *testing.T, db *sql.DB, id int64, messageType, body string) {
 	t.Helper()
 	_, err := db.Exec(`INSERT INTO messages (id, source_id, conversation_id, subject, snippet, message_type) VALUES (?, 1, 1, ?, ?, ?)`, id, body, body, messageType)

@@ -872,7 +872,8 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 func stageDeletionDefinition(_ *handlers) toolDefinition {
 	return writeDefinition(
 		ToolStageDeletion,
-		"Stage messages for deletion. Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. Does NOT delete immediately. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
+		fmt.Sprintf("Stage deletion without deleting immediately. Queries select Gmail, Microsoft Graph, and IMAP mail, report undeletable matches in skipped_count, and refuse above %d matches or when none are deletable. Structured filters select eligible Gmail and Microsoft Graph mail. ", maxStageDeletionResults)+
+			"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgAccount:   accountProperty(),
 			toolArgQuery:     stringSchema("Gmail-style search query (e.g. 'from:linkedin subject:job alert'). Cannot be combined with structured filters."),
@@ -1016,6 +1017,7 @@ type exportAttachmentResponse struct {
 }
 
 type stageDeletionResponse struct {
+	SkippedCount int    `json:"skipped_count,omitzero"`
 	BatchID      string `json:"batch_id"`
 	MessageCount int    `json:"message_count"`
 	Status       string `json:"status"`

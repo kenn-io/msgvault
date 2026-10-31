@@ -97,7 +97,7 @@
   .metadata > div, li dl > div { display: grid; gap: var(--space-1); }
   .evidence-section { display: grid; gap: var(--space-2); }
   ul { display: grid; gap: var(--space-2); padding: 0; list-style: none; }
-  li { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--border-default); background: var(--bg-inset); }
+  li { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--border-default); border-start-start-radius: 0; border-end-start-radius: 0; background: var(--bg-inset); }
   li dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-2) var(--space-4); }
   .empty-evidence { color: var(--text-muted); font-size: var(--font-size-sm); }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-2); width: 100%; }

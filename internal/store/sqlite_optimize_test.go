@@ -626,7 +626,7 @@ func TestCheckpointWALContextInterruptsBusyCheckpoint(t *testing.T) {
 	_, err = s.db.DB.Exec(`UPDATE messages SET snippet = 'changed after the reader snapshot'`)
 	require.NoError(err)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the reader snapshot keeps the checkpoint busy
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the reader snapshot keeps the checkpoint busy
 	defer cancel()
 	started := time.Now()
 	err = s.CheckpointWALContext(ctx)
@@ -649,7 +649,7 @@ func TestCheckpointWALPassiveContextHonorsDeadlineWaitingForPool(t *testing.T) {
 	require.NoError(err)
 	defer func() { _ = held.Close() }()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the held connection keeps the checkpoint waiting for the pool
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the held connection keeps the checkpoint waiting for the pool
 	defer cancel()
 	err = s.CheckpointWALPassive(ctx)
 	require.ErrorIs(err, context.DeadlineExceeded)

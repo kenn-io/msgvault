@@ -25,6 +25,8 @@ const (
 	wireStubEnv      = "MSGVAULT_TELEMETRY_WIRE_STUB"
 	wireDirEnv       = "MSGVAULT_TELEMETRY_WIRE_DIR"
 	wireConfigOffEnv = "MSGVAULT_TELEMETRY_WIRE_CONFIG_OFF"
+	// testAPIKey stands in for the key release builds set at link time.
+	testAPIKey = "phc_test"
 )
 
 // enableTelemetryEnv opts this test in and clears ambient opt-outs. An opted-out
@@ -65,7 +67,7 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 		exerciseDailyViewRollover(t, opts)
 		return
 	}
-	reporter := newReporterOrDisabled(opts, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	reporter := newReporterOrDisabled(opts, testAPIKey, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
 	if os.Getenv("MSGVAULT_OUTCOMES_TEST") != "" {
 		exerciseOutcomes(t, CaptureHandler(reporter, opts.DataDir), reporter)
@@ -175,7 +177,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 
 	messages := batchEvents(t, stub)
 	require.Len(messages, 2)
-	kitKeys := []string{"$process_person_profile", "$geoip_disable", "application", "source", "version", "commit", "goos", "goarch", "install_age_hours"}
+	kitKeys := []string{"$process_person_profile", "$geoip_disable", "application", "source", "version", "commit", "distribution", "goos", "goarch", "install_age_hours"}
 	sdkKeys := []string{"$lib", "$lib_version"}
 	events := make([]string, 0, len(messages))
 	for _, message := range messages {
@@ -200,6 +202,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 		assert.Equal("daemon", props["source"])
 		assert.Equal("v1.2.3", props["version"])
 		assert.Equal("test-commit", props["commit"])
+		assert.Empty(props["distribution"], "a build without the link-time flag reports no distribution")
 	}
 	assert.ElementsMatch([]string{EventAppOpened, posthog.EventDaemonActive}, events)
 }

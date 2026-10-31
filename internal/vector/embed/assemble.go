@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/kit/embedmodel"
+
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -742,9 +744,29 @@ func scopeSelectorKey(scope AffectedScope) string {
 		strconv.FormatInt(scope.MessageIDEnd, 10)
 }
 
+// dropBlankChunks removes chunks that carry nothing to embed and renumbers the
+// survivors. The scan worker already applies embedmodel.BlankText per span; the
+// assemblers tested only strings.TrimSpace, which passes text built from
+// invisible formatting or control runes and leaves kit to reject the whole
+// batch. ChunkIndex counts within a message, not across the document, so a chat
+// window carrying several messages keeps each of them numbered from zero.
+func dropBlankChunks(chunks []OwnedChunk) []OwnedChunk {
+	next := make(map[int64]int, len(chunks))
+	kept := chunks[:0]
+	for _, chunk := range chunks {
+		if embedmodel.BlankText(chunk.Text) {
+			continue
+		}
+		chunk.ChunkIndex = next[chunk.MessageID]
+		next[chunk.MessageID]++
+		kept = append(kept, chunk)
+	}
+	return kept
+}
+
 func assembleOrdinaryDocument(row AssemblyMessage, policy AssemblyPolicy) (Document, bool) {
 	text, bodyTruncated := Preprocess(row.Subject, row.Body, 0, policy.Preprocess)
-	if strings.TrimSpace(text) == "" {
+	if embedmodel.BlankText(text) {
 		return Document{}, false
 	}
 	spans, tailDropped := ChunkText(text, policy.MaxChunkRunes,
@@ -758,7 +780,7 @@ func assembleOrdinaryDocument(row AssemblyMessage, policy AssemblyPolicy) (Docum
 			Truncated:   bodyTruncated || tailDropped,
 		})
 	}
-	chunks = limitOwnedChunksToRequest(chunks, policy.MaxDocumentUTF8Bytes,
+	chunks = limitOwnedChunksToRequest(dropBlankChunks(chunks), policy.MaxDocumentUTF8Bytes,
 		defaultVoyageRequestLimits.MaxChunks, policy.DocumentPrefixUTF8Bytes)
 	if len(chunks) == 0 {
 		return Document{}, false

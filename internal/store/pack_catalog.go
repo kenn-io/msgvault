@@ -86,6 +86,9 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if pass, ok := ctx.Value(packVerificationKey{}).(*PackVerificationPass); ok && pass.skipLooseEnumeration {
+		return nil, nil
+	}
 	raw, err := c.store.ListUnpackedBlobsContext(ctx)
 	if err != nil {
 		return nil, err

@@ -625,7 +625,7 @@ func TestSerialOperationGateDrainRejectsQueuedWorkAndWaitsForActive(t *testing.T
 	select {
 	case queuedOK := <-queuedDone:
 		assert.Fail("queued work returned before drain", "ok=%v", queuedOK)
-	case <-time.After(25 * time.Millisecond): //nolint:kennlint // absence check: active work keeps queued work waiting
+	case <-time.After(25 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: active work keeps queued work waiting
 	}
 
 	drainDone := make(chan error, 1)
@@ -644,7 +644,7 @@ func TestSerialOperationGateDrainRejectsQueuedWorkAndWaitsForActive(t *testing.T
 	select {
 	case err := <-drainDone:
 		assert.Fail("drain returned before active work released", "err=%v", err)
-	case <-time.After(25 * time.Millisecond): //nolint:kennlint // absence check: unreleased active work keeps the drain waiting
+	case <-time.After(25 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: unreleased active work keeps the drain waiting
 	}
 
 	releaseActive()

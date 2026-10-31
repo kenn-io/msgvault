@@ -163,7 +163,7 @@
   .pin-list, .target-catalog ul { padding-left: var(--space-5); }
   .pin-list li, .target-catalog li { min-width: 0; overflow-wrap: anywhere; }
   .loading { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
-  .message { justify-items: start; padding-left: var(--space-3); border-left: 2px solid var(--accent-red); }
+  .message { justify-items: start; padding-left: var(--space-3); border-left: 2px solid var(--accent-red); border-start-start-radius: 0; border-end-start-radius: 0; }
   @media (max-width: 760px) {
     .toolbar { align-items: stretch; }
     .toolbar > :global(.kit-segmented), .toolbar label { width: 100%; }

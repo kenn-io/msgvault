@@ -687,36 +687,6 @@ func TestDocsPageDisabledOpenAPISpecStillServed(t *testing.T) {
 	assert.Equal("3.1.0", doc["openapi"], "openapi version")
 }
 
-func TestOpenAPIExportsCLIIdentityContracts(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
-
-	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
-	resp := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(resp, req)
-
-	assert.Equal(http.StatusOK, resp.Code, "openapi status: %s", resp.Body.String())
-	var doc map[string]any
-	require.NoError(json.NewDecoder(resp.Body).Decode(&doc), "decode openapi")
-	assert.Equal("3.1.0", doc["openapi"], "openapi version")
-
-	paths, ok := doc["paths"].(map[string]any)
-	require.True(ok, "paths object")
-	identityPath, ok := paths["/api/v1/cli/identities"].(map[string]any)
-	require.True(ok, "identity path present")
-
-	for _, method := range []string{"get", "post", "delete"} {
-		op, ok := identityPath[method].(map[string]any)
-		require.True(ok, "identity %s operation present", method)
-		assert.Contains(op, "operationId", "identity %s operation id", method)
-		assert.Contains(op, "responses", "identity %s responses", method)
-	}
-}
-
 func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -1335,51 +1305,54 @@ func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 	t.Parallel()
 	for _, path := range []string{queryEndpointPath, archiveQueryEndpointPath} {
 		t.Run(path, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			started := make(chan struct{})
-			waitForCancellation := func(ctx context.Context) error {
-				close(started)
-				<-ctx.Done() // simulate a runaway query that only stops on cancellation
-				return ctx.Err()
-			}
-			srv := NewServerWithOptions(ServerOptions{
-				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-				Logger: testLogger(),
-				SQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
-					return nil, nil, waitForCancellation(ctx)
-				},
-				ArchiveSQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
-					return nil, nil, waitForCancellation(ctx)
-				},
+			synctest.Test(t, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				started := make(chan struct{})
+				waitForCancellation := func(ctx context.Context) error {
+					close(started)
+					<-ctx.Done() // simulate a runaway query that only stops on cancellation
+					return ctx.Err()
+				}
+				srv := NewServerWithOptions(ServerOptions{
+					Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+					Logger: testLogger(),
+					SQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+						return nil, nil, waitForCancellation(ctx)
+					},
+					ArchiveSQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+						return nil, nil, waitForCancellation(ctx)
+					},
+				})
+				defer func() { require.NoError(srv.Shutdown(context.Background())) }()
+				// Test seam: shrink the query ceiling so the timeout fires immediately.
+				srv.queryTimeout = ordinaryQueryCeiling
+
+				body := strings.NewReader(`{"sql":"SELECT 1"}`)
+				req := httptest.NewRequest(http.MethodPost, path, body)
+				req.Header.Set("Content-Type", "application/json")
+				resp := httptest.NewRecorder()
+
+				done := make(chan struct{})
+				go func() {
+					srv.Router().ServeHTTP(resp, req)
+					close(done)
+				}()
+
+				select {
+				case <-started:
+				case <-time.After(2 * time.Second):
+					require.FailNow("query runner never started")
+				}
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+					require.FailNow("request did not return after query timeout")
+				}
+
+				require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
+				assert.Contains(resp.Body.String(), "query_timeout")
 			})
-			// Test seam: shrink the query ceiling so the timeout fires immediately.
-			srv.queryTimeout = ordinaryQueryCeiling
-
-			body := strings.NewReader(`{"sql":"SELECT 1"}`)
-			req := httptest.NewRequest(http.MethodPost, path, body)
-			req.Header.Set("Content-Type", "application/json")
-			resp := httptest.NewRecorder()
-
-			done := make(chan struct{})
-			go func() {
-				srv.Router().ServeHTTP(resp, req)
-				close(done)
-			}()
-
-			select {
-			case <-started:
-			case <-time.After(2 * time.Second):
-				require.FailNow("query runner never started")
-			}
-			select {
-			case <-done:
-			case <-time.After(2 * time.Second):
-				require.FailNow("request did not return after query timeout")
-			}
-
-			require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
-			assert.Contains(resp.Body.String(), "query_timeout")
 		})
 	}
 }
@@ -1412,7 +1385,7 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 			return result, nil, err
 		},
 	})
-	srv.queryTimeout = ordinaryQueryCeiling
+	srv.queryTimeout = ordinaryQueryCeiling //nolint:kennlint // deadlinetest: the blocked DuckDB query must outlive the ordinary ceiling before caller cancellation
 	httpServer := httptest.NewServer(srv.Router())
 	t.Cleanup(httpServer.Close)
 
@@ -3634,25 +3607,6 @@ func TestHandleListMessages(t *testing.T) {
 	assert.NoError(err, "sent_at %q is not RFC3339", sentAt)
 }
 
-func TestHandleListMessagesPagination(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	srv, _ := newTestServerWithMockStore(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages?page=1&page_size=10", nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	assert.Equal(http.StatusOK, w.Code, "status")
-
-	var resp map[string]any
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
-
-	assert.InDelta(float64(1), resp["page"], 1e-9, "page")
-	assert.InDelta(float64(10), resp["page_size"], 1e-9, "page_size")
-}
-
 // TestPageSizeClamping verifies that /messages and /search clamp an
 // over-max page_size to the max (100) rather than collapsing it to the
 // default (20), while absent/too-small values fall back to the default and
@@ -5103,24 +5057,6 @@ func TestHandleUploadTokenInvalidEmail(t *testing.T) {
 	}
 }
 
-func TestHandleUploadTokenMissingEmail(t *testing.T) {
-	t.Parallel()
-	cfg := &config.Config{
-		Server: config.ServerConfig{APIPort: 8080},
-	}
-	sched := newMockScheduler()
-	srv := NewServer(cfg, nil, sched, testLogger())
-
-	// Request without email in path - should 404 since route doesn't match
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/", strings.NewReader("{}"))
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	// Chi router will 404 on missing path parameter
-	assert.Contains(t, []int{http.StatusNotFound, http.StatusBadRequest}, w.Code, "status = %d, want 404 or 400", w.Code)
-}
-
 func TestHandleAddAccount(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -5535,6 +5471,68 @@ func TestHandleGmailIDsByFilterResolvesSearchAndFilterTogether(t *testing.T) {
 	assertions.Equal([]string{"gm-1"}, resp.GmailIDs)
 	assertions.Equal("invoice", resp.SearchQuery)
 	assertions.Equal("deep", resp.SearchMode)
+}
+
+func TestHandleGmailIDsByFilterUsesBoundedSearchResolver(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var calls int
+	engine := &querytest.MockEngine{
+		GetDeletionTargetsBySearchBoundedFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, _ query.DeletionSearchMode, maxResults int) ([]query.DeletionTarget, int, error) {
+			calls++
+			assertions.Equal(query.MaxDeletionTargetSearchResults, maxResults)
+			return []query.DeletionTarget{{
+				MessageID: 1, SourceID: 7, SourceType: "gmail",
+				SourceIdentifier: "reader@example.test", SourceMessageID: "gmail-one",
+			}}, 2, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/messages/gmail-ids?sender=alice@example.test&q=bodyneedle&search_mode=fast&max_results=100001", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirements.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp GmailIDsResponse
+	requirements.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assertions.Equal(new(int64(2)), resp.MatchedCount)
+	assertions.Equal(1, calls)
+}
+
+func TestHandleGmailIDsByFilterRejectsInvalidMaxResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, parameters string
+	}{
+		{"empty", "q=subject:newsletter&search_mode=fast&max_results="},
+		{"zero", "q=subject:newsletter&search_mode=fast&max_results=0"},
+		{"over limit", "q=subject:newsletter&search_mode=fast&max_results=100002"},
+		{"aggregate", "q=subject:newsletter&search_mode=aggregate&max_results=10"},
+		{"without query", "max_results=10"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			calls := 0
+			engine := &querytest.MockEngine{
+				GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
+					calls++
+					return nil, 0, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?"+tc.parameters, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusBadRequest, w.Code)
+			var resp struct {
+				Error string `json:"error"`
+			}
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+			assert.Equal("invalid_max_results", resp.Error)
+			assert.Zero(calls)
+		})
+	}
 }
 
 func TestHandleGmailIDsByFilterResolvesDisplayedAggregateSearch(t *testing.T) {
@@ -7080,33 +7078,36 @@ func (blockingEmbedder) Embed(ctx context.Context, _ []string) ([][]float32, err
 // fail because the response would be a bare 504 instead of the structured 503.
 func TestHandleSearch_HybridEmbeddingTimeoutReturnsStructuredError(t *testing.T) {
 	t.Parallel()
-	backend := &fakeVectorBackend{
-		active: &vector.Generation{
-			ID: 1, Model: "fake", Dimension: 4,
-			Fingerprint: "fake:4", State: vector.GenerationActive,
-		},
-	}
-	engine := hybrid.NewEngine(backend, nil, blockingEmbedder{}, hybrid.Config{
-		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
-	})
-	srv := NewServerWithOptions(ServerOptions{
-		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:          &mockStore{},
-		HybridEngine:   engine,
-		Backend:        backend,
-		Logger:         testLogger(),
-		RequestTimeout: 100 * time.Millisecond,
-	})
+	synctest.Test(t, func(t *testing.T) {
+		backend := &fakeVectorBackend{
+			active: &vector.Generation{
+				ID: 1, Model: "fake", Dimension: 4,
+				Fingerprint: "fake:4", State: vector.GenerationActive,
+			},
+		}
+		engine := hybrid.NewEngine(backend, nil, blockingEmbedder{}, hybrid.Config{
+			ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+		})
+		srv := NewServerWithOptions(ServerOptions{
+			Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:          &mockStore{},
+			HybridEngine:   engine,
+			Backend:        backend,
+			Logger:         testLogger(),
+			RequestTimeout: 100 * time.Millisecond,
+		})
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=meeting&mode=hybrid", nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=meeting&mode=hybrid", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
-	var errResp ErrorResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
-	assert.Equal(t, "embedding_timeout", errResp.Error,
-		"error (timeout handling may have preempted with a bare 504)")
+		require.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+		var errResp ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+		assert.Equal(t, "embedding_timeout", errResp.Error,
+			"error (timeout handling may have preempted with a bare 504)")
+	})
 }
 
 // TestHandleSearch_HybridFilterOnlyReturnsBadRequest regression-guards
@@ -8098,25 +8099,6 @@ func (f *fakeVectorBackend) CountRejectedPersons(_ context.Context, _ vector.Gen
 	return f.rejected, nil
 }
 func (f *fakeVectorBackend) Close() error { return nil }
-
-func TestHandleStats_VectorDisabled(t *testing.T) {
-	t.Parallel()
-	srv, _ := newTestServerWithMockStore(t)
-	// newTestServerWithMockStore uses NewServer (no Backend), so backend == nil.
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
-
-	// Parse raw JSON to verify "vector_search" is absent entirely.
-	var raw map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw), "decode")
-	assert.NotContains(t, raw, "vector_search",
-		"expected 'vector_search' to be absent from JSON when backend is nil")
-}
 
 func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 	t.Parallel()

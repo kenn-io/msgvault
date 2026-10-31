@@ -15,9 +15,9 @@ import (
 )
 
 type domainPopulationProfile struct {
-	OperatorName string                    `json:"operator_name"`
-	ExtraInfo    map[string]any            `json:"extra_info"`
-	Children     []domainPopulationProfile `json:"children"`
+	Type      string                    `json:"type"`
+	ExtraInfo map[string]any            `json:"extra_info"`
+	Children  []domainPopulationProfile `json:"children"`
 }
 
 // Profile the public entry point so the regression also exercises dispatch
@@ -37,14 +37,17 @@ func profileDomainPopulation(t *testing.T, engine *DuckDBEngine, request Explore
 	}
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	var profile domainPopulationProfile
+	var profile struct {
+		Operators []domainPopulationProfile `json:"operator"`
+	}
 	require.NoError(t, json.Unmarshal(data, &profile))
-	return profile, nil
+	require.NotEmpty(t, profile.Operators)
+	return domainPopulationProfile{Children: profile.Operators}, nil
 }
 
 func (p domainPopulationProfile) domainEvaluations() int {
 	count := 0
-	if strings.TrimSpace(p.OperatorName) == "FILTER" {
+	if strings.TrimSpace(p.Type) == "FILTER" {
 		expression, _ := p.ExtraInfo["Expression"].(string)
 		if strings.Contains(expression, "sender_domain") {
 			count++

@@ -4,7 +4,7 @@
 
 export type SearchMediaParams = {
   /**
-   * Spoken words to find in transcripts
+   * Words to find in recordings and attachments
    */
   q: string;
   /**

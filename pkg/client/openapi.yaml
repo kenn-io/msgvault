@@ -1409,6 +1409,62 @@ components:
         - action
         - calendar_id
       type: object
+    CalendarProjection:
+      properties:
+        all_day:
+          nullable: true
+          type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        end:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        ical_uid:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        sequence:
+          format: int64
+          nullable: true
+          type: integer
+          x-go-type: "*int64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        start:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        status:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        time_zone:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - status
+        - sequence
+        - start
+        - end
+        - all_day
+        - time_zone
+        - ical_uid
+      type: object
     CalendarRequest:
       additionalProperties: false
       not:
@@ -2758,6 +2814,8 @@ components:
           type: string
         body_text:
           type: string
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
         cc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
@@ -6559,6 +6617,9 @@ components:
           items:
             type: string
           type: array
+        matched_count:
+          format: int64
+          type: integer
         search_mode:
           type: string
         search_query:
@@ -7514,8 +7575,58 @@ components:
         strongest_excerpt:
           type: string
       type: object
+    MediaAttachmentResult:
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        containing_title:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        conversation_id:
+          format: int64
+          type: integer
+        excerpt:
+          type: string
+        filename:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        message_id:
+          format: int64
+          type: integer
+        occurred_at:
+          format: date-time
+          type: string
+      required:
+        - message_id
+        - conversation_id
+        - attachment_id
+        - filename
+        - containing_title
+        - excerpt
+      type: object
+    MediaAttachmentSearch:
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorResponse"
+        results:
+          items:
+            $ref: "#/components/schemas/MediaAttachmentResult"
+          type: array
+        truncated:
+          type: boolean
+      required:
+        - results
+        - truncated
+      type: object
     MediaSearchResponse:
       properties:
+        attachments:
+          $ref: "#/components/schemas/MediaAttachmentSearch"
         attribution_unavailable:
           description: Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
           format: int64
@@ -7528,6 +7639,8 @@ components:
         pending_occurrences:
           format: int64
           type: integer
+        recordings_error:
+          $ref: "#/components/schemas/ErrorResponse"
         results:
           items:
             $ref: "#/components/schemas/MediaSearchResult"
@@ -8096,6 +8209,9 @@ components:
           type: string
         body_omitted:
           type: boolean
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
+          description: "Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."
         cc:
           items:
             type: string
@@ -13684,6 +13800,7 @@ components:
           type: integer
         modality_mask:
           format: int32
+          maximum: 255
           minimum: 0
           type: integer
         received:
@@ -16550,7 +16667,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.27.0
+  version: 3.29.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -23882,7 +23999,7 @@ paths:
     get:
       operationId: searchMedia
       parameters:
-        - description: Spoken words to find in transcripts
+        - description: Words to find in recordings and attachments
           in: query
           name: q
           required: true
@@ -23981,7 +24098,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Search source-selected transcripts as visible messages
+      summary: Search recordings and attachments as visible messages
       tags:
         - API
   /api/v1/media/search/status:
@@ -24811,6 +24928,12 @@ paths:
           name: search_mode
           schema:
             type: string
+        - description: Maximum results for bounded search-aware deletion resolution (max 100001)
+          in: query
+          name: max_results
+          schema:
+            format: int64
+            type: integer
         - description: Aggregate view type; required for aggregate search
           in: query
           name: view_type

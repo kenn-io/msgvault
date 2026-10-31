@@ -115,6 +115,7 @@ HTTP Mode:
 			DataDir:               currentCfg.Data.DataDir,
 			ExportDir:             currentCfg.ExportDir(),
 			Version:               Version,
+			Distribution:          Distribution,
 			TextEngine:            textEngine,
 			PeopleBackend:         peopleBackend,
 			ManifestSaver:         backend.client,

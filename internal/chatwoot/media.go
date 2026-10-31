@@ -1,12 +1,16 @@
 package chatwoot
 
 import (
+	"bufio"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
+	"mime"
+	"net/http"
 	"net/url"
 	"path"
 	"slices"
@@ -90,7 +94,7 @@ func isAudio(a Attachment) bool {
 }
 
 // persistMedia returns the latest eligible failure start and whether files are pending.
-func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachments []Attachment, opts ImportOptions, sum *ImportSummary, reusable map[string]store.AttachmentRef) (failedSince int64, waiting bool, err error) {
+func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachments []Attachment, recordings bool, opts ImportOptions, sum *ImportSummary, reusable map[string]store.AttachmentRef) (failedSince int64, waiting bool, err error) {
 	existing, err := imp.store.MessageProviderAttachments(messageID, "chatwoot:")
 	if err != nil {
 		return 0, false, err
@@ -122,6 +126,9 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		}
 		maxInt := int64(^uint(0) >> 1)
 		ref := store.AttachmentRef{Filename: filename, MimeType: a.ContentType, SourceAttachmentID: key, SourcePartKey: key, StoragePath: key, Size: int(min(max(a.FileSize, 0), maxInt)), MediaType: a.FileType, Width: int64(a.Width), Height: int64(a.Height), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, State: attachmentpolicy.StatePending}
+		if isAudio(a) {
+			ref.MediaType = "audio"
+		}
 		previous, hadPrevious := existing[key]
 		if previous.ContentHash == "" && previous.SkipReason == attachmentpolicy.SkipSizeCap && storedMediaIdentity(previous) == currentURL {
 			ref.Size = max(ref.Size, previous.Size)
@@ -182,6 +189,12 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		if maxBytes <= 0 {
 			maxBytes = attachmentpolicy.DefaultChatMaxBytes
 		}
+		if recordings && isAudio(a) {
+			maxBytes = opts.RecordingMaxBytes
+			if maxBytes == 0 {
+				maxBytes = DefaultRecordingMaxBytes
+			}
+		}
 		policy := opts.Policy
 		policy.MaxBytes = maxBytes
 		reason := policy.Evaluate(attachmentpolicy.Conversation{}, proposedSize)
@@ -219,7 +232,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				evidence.FailedSince = failedAt
 			}
 		default:
-			storage, hash, size, mimeType, fetchErr := imp.downloadMedia(ctx, remote, opts.AttachmentsDir, maxBytes, hint)
+			storage, hash, size, mimeType, fetchErr := imp.downloadMedia(ctx, remote, opts.AttachmentsDir, maxBytes, hint, isAudio(a))
 			if fetchErr == nil || !stored {
 				ref.MimeType = mimeType
 			}
@@ -308,7 +321,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 	return failedSince, waiting, imp.store.ReplaceMessageChatwootAttachments(messageID, refs)
 }
 
-func (imp *Importer) downloadMedia(ctx context.Context, remote, dir string, maxBytes int64, mimeType string) (string, string, int, string, error) {
+func (imp *Importer) downloadMedia(ctx context.Context, remote, dir string, maxBytes int64, mimeType string, audio bool) (string, string, int, string, error) {
 	body, length, reportedType, err := imp.client.OpenMedia(ctx, remote, maxBytes)
 	if err != nil {
 		return "", "", 0, mimeType, errMediaFetch
@@ -321,7 +334,45 @@ func (imp *Importer) downloadMedia(ctx context.Context, remote, dir string, maxB
 		return "", "", attachmentpolicy.OversizeMarkerSize(maxBytes, length), mimeType, export.ErrAttachmentTooLarge
 	}
 	source := &export.SourceReader{R: body}
-	storage, hash, size, err := export.StoreAttachmentStream(ctx, dir, source, maxBytes)
+	var reader io.Reader = source
+	if audio {
+		buffered := bufio.NewReader(source)
+		header, readErr := buffered.Peek(int(min(maxBytes+1, 512)))
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return "", "", 0, mimeType, errMediaFetch
+		}
+		// Stored-byte evidence wins over stale attachment hints or a generic
+		// storage response. Only the small header is buffered; CAS still streams.
+		detected := http.DetectContentType(header)
+		// MP3 need not carry an ID3 tag. Recognize a Layer III frame with
+		// valid version, bitrate and sample-rate fields on extensionless URLs.
+		if len(header) >= 4 && header[0] == 0xff && header[1]&0xe0 == 0xe0 &&
+			header[1]&0x18 != 0x08 && header[1]&0x06 == 0x02 &&
+			header[2]&0xf0 != 0 && header[2]&0xf0 != 0xf0 && header[2]&0x0c != 0x0c {
+			detected = "audio/mpeg"
+		}
+		switch detected {
+		case "audio/wave", "audio/x-wav", "audio/vnd.wave":
+			detected = "audio/wav"
+		case "application/ogg":
+			detected = "audio/ogg"
+		}
+		if strings.HasPrefix(detected, "audio/") {
+			mimeType = detected
+		} else if !strings.HasPrefix(mimeType, "audio/") {
+			reported, _, _ := mime.ParseMediaType(reportedType)
+			if strings.HasPrefix(reported, "audio/") {
+				mimeType = reported
+			} else if parsed, parseErr := url.Parse(remote); parseErr == nil {
+				byExtension := mime.TypeByExtension(strings.ToLower(path.Ext(parsed.Path)))
+				if strings.HasPrefix(byExtension, "audio/") {
+					mimeType, _, _ = mime.ParseMediaType(byExtension)
+				}
+			}
+		}
+		reader = buffered
+	}
+	storage, hash, size, err := export.StoreAttachmentStream(ctx, dir, reader, maxBytes)
 	if err != nil && source.Err != nil {
 		err = errMediaFetch
 	}

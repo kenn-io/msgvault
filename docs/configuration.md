@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-20"
+last_edited: "2026-10-26"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -439,7 +439,7 @@ uses a configured endpoint without a manifest.
 | `endpoint` | — | Required for Docling: exact HTTP(S) origin with optional port; no trailing slash, path, user information, query, or fragment. Plain HTTP is allowed only for `localhost` and loopback IP addresses; other hosts require HTTPS |
 | `region` | `eu` | Mistral’s pinned EU region; Docling defaults to `operator_network` |
 | `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key; Docling defaults to empty and sends a configured key as `X-Api-Key` |
-| `model` | `mistral-ocr-4-0` | Pinned model; Docling defaults to `docling.serve-v1` |
+| `model` | `mistral-ocr-4-1` | Pinned model; Docling defaults to `docling.serve-v1` |
 | `retention_posture` | `unknown` | Mistral: `standard` or `zdr`; Docling: `operator-controlled` (default) |
 | `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
@@ -770,11 +770,73 @@ can override an excluded parent; an explicit child exclude can override an
 included parent. `exclude` wins when the same ID is in both lists. See
 [Discord](/docs/usage/discord/#configure-media-repairs-and-channel-filters).
 
+### Conversation archive tiers (staged)
+
+Conversation policy uses the provider's archived roster, including the same
+participant-count rules as media policy. The model defines four tiers:
+
+| Tier | Intended behavior |
+| --- | --- |
+| `full` | Archive text and use it in search, embeddings and people features. |
+| `cold` | Archive text; explicit lexical search only, without embeddings or people contributions. |
+| `stub` | Keep your own messages, direct replies and explicit mentions of you, plus room metadata. |
+| `skip` | Stop importing room history. |
+
+This release adds settings and inspection only. Every effective tier remains
+`full`; automatic classification and cold exclusions are not enabled yet.
+`stub` and `skip` settings are rejected until retention and purge support ships.
+Saving a `cold` override does not yet hide messages or remove vectors.
+
+Automatic classification is off by default. To turn it on for Beeper, Slack
+(including Slackdump imports), Discord or Teams, set that provider's
+`max_participants` to the largest room you want kept `full`, such as `20`.
+Omitting the key or setting `0` keeps every room `full` unless an override
+says otherwise. This setting is separate from `media_max_participants` and
+`max_media_mb`, which continue to govern attachments.
+
+```toml
+[beeper]
+max_participants = 20
+
+[conversation_policy]
+activity_window_days = 180
+
+[[conversation_policy.overrides]]
+source_type = "beeper"
+source_identifier = "example-account"
+conversation_id = "example-room"
+tier = "cold"
+```
+
+The model selects `full` for a known roster at or below the limit, or recent
+activity: your own post, an explicit mention of you, or a direct reply to your
+message. The activity cutoff is inclusive; future timestamps do not establish
+activity. Larger rooms and rooms with unknown size select `cold` without that
+activity. The activity window defaults to 180 days (also when set to `0`);
+negative values and windows beyond 106751 days are rejected. Other providers
+keep their current behavior.
+
+Inspect archived rooms and save overrides through the daemon:
+
+```sh
+msgvault policy list
+msgvault policy set 1 example-room cold
+msgvault policy reset 1 example-room
+```
+
+`list` prints JSON with source IDs, provider room IDs, roster status, effective
+tiers and selected overrides. Use its source ID and provider ID with `set` or
+`reset`. A saved CLI override wins over config. Reset removes that saved value
+and restores config or automatic selection. Config overrides match the exact
+source type, source identifier and provider room ID; duplicate keys are rejected.
+All saved values are marked staged in this release. These commands do not purge
+messages or contact a provider.
+
 ### Media policy
 
-`[beeper]`, `[slack]`, `[discord]`, and `[teams]` share one attachment policy
-vocabulary. It decides which chat media is downloaded during sync and backfill;
-message text is always archived.
+`[beeper]`, `[inline]`, `[slack]`, `[discord]`, and `[teams]` share one attachment
+policy vocabulary. It decides which chat media is downloaded during sync and
+backfill; message text is always archived.
 
 [Chatwoot](#chatwoot) supports `media` and `max_media_mb` for each configured
 account. Its `media = false` records an `account_policy` skip marker.
@@ -785,7 +847,7 @@ account. Its `media = false` records an `account_policy` skip marker.
 | `media_scope` | `all` | `all` collects from every conversation; `direct` collects only from direct and group chats (not channels, rooms, or guild channels); `none` collects nothing |
 | `media_max_participants` | `20` | Skip media from conversations with more participants than this. Omitting the key applies the default; an explicit `0` removes the cap |
 | `max_media_mb` | `250` (Discord `50`) | Per-attachment size cap in MiB. Sized for long voice notes, screen recordings, and phone video from direct chats now that the participant cap keeps large-room volume out |
-| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
+| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Inline canonical account identifier, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
 
 The participant cap exists because most attachment bytes in a real chat
 archive come from large rooms whose forwarded videos nobody wants kept. Direct
@@ -815,6 +877,17 @@ Policy changes apply to future downloads. Media already stored under an
 earlier policy stays until you run `msgvault purge-excluded-media`, which
 removes attachment bytes the current policy would no longer collect.
 
+Participant limits use provider membership, not the number of senders observed
+in archived messages. A normal Beeper sync refreshes missing or unreadable
+membership for quiet archived conversations, even when their activity has not
+changed. Repairs follow message sync in bounded batches. Failed repairs retry
+after a day and do not hold up new messages; a full sync retries sooner. Discord
+records its guild member estimate when a participant limit is configured,
+including syncs with media downloading disabled. If the provider
+still cannot report membership, `purge-excluded-media` retains that room's media
+and reports the unresolved count. Sync again after access is restored, then
+preview the purge again.
+
 ### `[log]`
 
 Structured file logging. Disabled by default. Enable it to get persistent, machine-readable logs for troubleshooting. Every CLI invocation writes a unique `run_id` on every log line so you can trace a single run across shared daily log files.
@@ -839,7 +912,25 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 |---|---|---|
 | `rate_limit_qps` | `5` | Scales Gmail's local quota-unit refill rate: `5` allows 250 units/second; `3` allows 150. Gmail values above `5` are capped at `5`. Also sets Microsoft Teams Graph requests/second, without that cap, so lowering it slows Teams imports too. Reduce it if Gmail reports quota errors; Google's [project quotas](https://developers.google.com/workspace/gmail/api/reference/quota) can be lower than this local budget. |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
+| `imap_skip_folders` | `{}` | Per-IMAP-account folders excluded from scheduled syncs and manual syncs without folder flags |
 | `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
+
+To skip folders on every sync, key `imap_skip_folders` by the exact `ACCOUNT`
+identifier printed by `msgvault list-accounts`:
+
+```toml
+[sync]
+imap_skip_folders = { "imaps://user@example.com@imap.example.com:993" = ["Trash", "Junk"] }
+```
+
+Folder names match exactly and case-insensitively. Use the full name for nested
+folders, with no wildcards. Restart the daemon after editing the file.
+Either `--folder` or `--skip-folder` replaces the saved filter for one run.
+Sync warns when an account key matches no stored IMAP source or a folder name
+matches no selectable mailbox. Unmatched folders stay configured and will be
+excluded if created later. Blank saved folder names prevent daemon startup.
+See [IMAP folder filtering](usage/imap.md#what-filtering-changes) for the effects
+on archive membership, deletion tracking, cursor advancement, and `gc`.
 
 Remote image archiving is **off by default**. Enabling it contacts
 sender-controlled servers and can activate tracking pixels or disclose the
@@ -1074,7 +1165,7 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `engine` | `auto` | Aggregate engine: `auto` starts with live SQL and switches to DuckDB after cache maintenance succeeds; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
 | `auto_build_cache` | `true` | Refresh a stale or missing Parquet cache automatically at startup, after scheduled or manual syncs, and when a query finds it due; `false` skips automatic builds. An explicit `query --fresh` or sync `--build-cache` can still request one |
 | `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a sync, query, or daemon restart may queue an automatic rebuild. Queries serve the committed snapshot during the interval |
-| `builder_memory_limit` | `2GB` | DuckDB buffer-manager budget for cache builds, such as `4GB` or `512MiB`; total process memory can exceed it |
+| `builder_memory_limit` | Adaptive | DuckDB buffer-manager budget for cache builds; an explicit value such as `16GiB` or `512MiB` replaces the adaptive default. Total process memory can exceed it |
 | `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
 | `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
 | `query_memory_limit` | `512MB` | DuckDB memory limit for daemon aggregate queries; raise it on a large archive |
@@ -1088,6 +1179,15 @@ raising these limits in `config.toml`. Restart the daemon to apply the change,
 then retry the query. The limits cap resource use; they do not reserve memory
 or disk space. Cache builds have separate `builder_*` limits.
 
+On unreleased `main`, the builder defaults to one quarter of currently available
+memory, bounded between `256MiB` and `16GiB`. The latest release uses a fixed
+`2GB` default. Linux builds also account for remaining memory under visible
+cgroup v2 ancestor limits. When host memory cannot be detected, the fallback is
+`2GB`; unsupported or unreadable Linux container limits cap the default at
+`2GB` while retaining any lower headroom already detected. The `256MiB` minimum
+is an attempt budget and can exceed available memory on an exhausted host.
+An explicit `builder_memory_limit` bypasses memory detection.
+
 Start with the builder defaults, including at most two threads. More threads
 can increase peak memory use. DuckDB's memory budget covers its buffer manager;
 native allocations and Go memory add to the process total. A `24GB` budget
@@ -1096,6 +1196,12 @@ Leave room for the daemon, syncs, other applications, and those allocations.
 For a constrained host, lower `builder_memory_limit` and set
 `builder_threads = 1` before raising the memory budget. See
 [DuckDB's memory guidance](https://duckdb.org/docs/stable/guides/performance/oom).
+
+If a cache build exhausts memory or spill space, its error names the effective
+`builder_memory_limit`, `builder_threads`, and `builder_temp_limit`. Check memory
+and free disk space before raising the relevant limit in `config.toml`, then
+retry `msgvault build-cache`. A large archive may need an explicit budget above
+the adaptive cap. Failed builds leave the previously published cache intact.
 
 Builders spill temporary work under the cache staging directory, beside the
 analytics cache. Check free space on that filesystem before increasing
@@ -1458,6 +1564,68 @@ capture limit is higher. Larger files remain in the msgvault archive.
 Agents can quote the transcripts of delivered files in
 [Kata issues](usage/kata-issues.md#cite-a-docbank-transcript).
 
+### `[inline]`
+
+Archive [all accessible Inline chats](usage/inline.md) by default, including
+hidden and archived chats and accessible child threads. `add-inline` verifies
+the account and adds it to `[[inline.accounts]]`. Optional chat IDs restrict
+capture to an exact filter. One provider block controls scheduling and media
+policy for all registered Inline accounts. Credentials are separate from this
+file.
+Restart the daemon after changing scheduled accounts or chat selections.
+
+```toml
+[inline]
+enabled = true
+schedule = "0 */6 * * *"          # optional; omitted = manual sync only
+media = true
+media_scope = "all"
+media_max_participants = 20       # unknown group counts also skip; 0 = no cap
+max_media_mb = 250
+
+[[inline.accounts]]
+identifier = "api.inline.chat:user:42" # verified by add-inline
+transport = "mcp"                # mcp (default) or cli
+chat_ids = []                     # empty or omitted = all accessible chats
+# chat_ids = ["123", "456"]     # optional exact filter; no implied children
+# endpoint = "https://mcp.inline.chat/mcp/v2"
+# cli_path = "inline"            # CLI transport only; daemon-host executable
+
+[inline.accounts_config."api.inline.chat:user:42"]
+media = true
+max_media_mb = 500
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules Inline sync |
+| `schedule` | — | Cron expression used by `msgvault serve`; no schedule means manual sync only |
+| `media` | `true` | Download attachment bytes; deferred media retains metadata |
+| `media_scope` | `all` | `all`, `direct`, or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip media above this participant count or when the effective group count is unknown; explicit `0` removes the cap |
+| `max_media_mb` | `250` | Per-attachment download cap in MiB |
+| `accounts_config` | — | Per-canonical-account-identifier `media` and `max_media_mb` overrides |
+
+Each `[[inline.accounts]]` entry has:
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | required | Canonical authenticated account identifier written by `add-inline` |
+| `transport` | `mcp` | OAuth MCP or the explicitly selected `cli` transport; there is no automatic fallback |
+| `chat_ids` | all accessible chats | Optional numeric chat IDs as strings for an exact filter; empty or omitted discovers all chats, while filtered child chats must be selected separately |
+| `endpoint` | `https://mcp.inline.chat/mcp/v2` | Only this production URL is accepted; omit the key to use the default |
+| `cli_path` | `inline` | CLI executable path on the daemon host, used only for `transport = "cli"` |
+
+An explicit filter pauses future capture outside that filter without removing
+archived records. Re-running `add-inline` with IDs merges existing explicit
+filters; running it without IDs restores all-chat mode. Changing transports
+retains the canonical account, conversation, and message identities. All-chat
+mode requires a complete catalog from the deployed Inline backend
+and MCP server or CLI. Deploy the backend first: an older backend can ignore
+the subthread request and silently omit child chats. Unsupported CLI commands
+and malformed MCP catalogs fail explicitly. Read the [connection and capture limits](usage/inline.md)
+before choosing media caps or configuring a remote daemon.
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a
@@ -1478,6 +1646,7 @@ self_agent_ids = []
 include_private = false
 media = true
 max_media_mb = 250
+recording_max_bytes = 4294967296   # 4 GiB per call recording
 reconcile_interval_hours = 24
 ```
 
@@ -1494,7 +1663,8 @@ reconcile_interval_hours = 24
 | `self_agent_ids` | — | Positive user IDs representing the archive owner; outgoing replies alone do not establish ownership |
 | `include_private` | `false` | Include private notes; turning it on later and running `sync-chatwoot --full` backfills the notes already skipped. Sync refuses to run with it off once private notes are archived |
 | `media` | `true` | Download attachment and call-recording bytes; retain metadata and source transcripts when disabled |
-| `max_media_mb` | `250` | Per-attachment cap in MiB; zero selects the default; negative/overflowing values are rejected |
+| `max_media_mb` | `250` | Cap in MiB for media other than call recordings; zero selects the default; negative/overflowing values are rejected |
+| `recording_max_bytes` | `4294967296` (4 GiB) | Per-file cap in bytes for audio on voice-call messages and linked call meetings; zero selects the default; negative values and `MaxInt64` are rejected. Does not enable media downloads or Docbank uploads |
 | `reconcile_interval_hours` | `24` | Interval for listing every conversation and rereading histories with commit-time updates since the previous reconcile began; zero selects the default; negative/overflowing values are rejected |
 
 Duplicate profile labels (case-insensitive) and duplicate canonical instance/account
@@ -1698,6 +1868,39 @@ queries, fragments, or path prefixes. Redirects are rejected. Identifiers must
 be unique ignoring case; each entry requires `account_email`. Enabled sources
 without a schedule are not scheduled. Removing a registered source prevents
 scheduled sync from silently recreating it.
+
+### Pocket Sources
+
+Pocket sync uses top-level `[[pocket]]` entries. This integration is available
+on `main`; check the release changelog before using it with an installed release.
+
+```toml
+[[pocket]]
+identifier = "personal"
+account_email = "you@example.com"
+api_key_env = "POCKET_API_KEY"
+enabled = true
+schedule = "15 */6 * * *"
+```
+
+| Field | Default | Purpose |
+|---|---|---|
+| `identifier` | `default` for one unnamed entry | Stable source label; multiple entries require unique labels |
+| `account_email` | Required | Explicit primary email; must match the live Pocket account |
+| `api_key_env` | `POCKET_API_KEY` | Environment variable holding a personal API key on the daemon host |
+| `enabled` | `false` | Enable scheduled sync |
+| `schedule` | Unset | Cron expression; an enabled source without a schedule is not synced automatically |
+
+Set the key in the daemon's environment and restart the daemon after changing
+it. A variable set only in a remote CLI shell does not reach the daemon.
+msgvault sends the key only to Pocket's fixed REST and MCP endpoints. It does
+not store the key in source configuration or raw meeting evidence.
+
+Run `msgvault add-pocket personal` to verify access and bind the source to the
+authenticated email and stable Pocket user ID. A replacement key for that same
+account works. Another account requires a new source label, even if the email
+matches. Removing an account does not revoke its Pocket key. See the
+[Pocket workflow](usage/meetings.md#pocket) for coverage and compatibility limits.
 
 ### Circleback Sources
 
@@ -2224,6 +2427,8 @@ that blocks storage, can also each send one. Each event carries only:
   `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
   `email`, `texts`, or `meetings`. Unknown names are dropped.
 - the msgvault version and commit
+- the distribution channel that built the binary, such as `homebrew` or `kenn`
+  for official downloads; empty for source builds
 - the operating system and CPU architecture
 - a random install ID kept in `telemetry-install.json` in the data directory, and
   the whole hours since it was created
@@ -2249,8 +2454,8 @@ other value turns it on. `TELEMETRY_ENABLED=0` and `DO_NOT_TRACK=1` also turn
 it off, and so does running in CI. Restart the daemon after changing these. The
 CLI and terminal UI honor the same opt-outs in their own environment. A CLI
 command that starts a local daemon passes its environment to it. Only release
-builds send telemetry, and builds made with the `kit_posthog_disabled` tag never
-do.
+builds send telemetry: they set the PostHog project key at link time. Builds
+without that key, including source builds and tests, send nothing.
 
 ## File Locations
 
@@ -2322,7 +2527,7 @@ auto_confirm_identities = false
 # Per-attachment download cap (default: 50 MiB)
 max_media_bytes = 52428800
 # Skip attachments from rooms with more than this many participants
-# (default: 20; 0 = no cap). Shared by [beeper], [slack], and [teams].
+# (default: 20; 0 = no cap). Shared by [beeper], [inline], [slack], and [teams].
 media_max_participants = 20
 # Trailing edit/delete/reaction repair window (default: seven days)
 edit_rescan_window = "168h"
@@ -2422,7 +2627,7 @@ enabled = false
 provider = "mistral"
 region = "eu"
 api_key_env = "MISTRAL_API_KEY"
-model = "mistral-ocr-4-0"
+model = "mistral-ocr-4-1"
 retention_posture = "zdr"
 training_posture = "opted-out"
 max_file_bytes = 52428800
