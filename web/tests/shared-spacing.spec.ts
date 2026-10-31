@@ -57,7 +57,7 @@ test('page content uses its header gap across workspaces', async ({ page }) => {
       return next!.getBoundingClientRect().top - divider;
     });
   }
-  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, label === 'Settings' ? 0 : 8])));
+  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Settings'].includes(label) ? 0 : 8])));
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {
