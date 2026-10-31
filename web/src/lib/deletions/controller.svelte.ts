@@ -1,62 +1,38 @@
-import { cancelDeletion, getDeletion, listDeletions } from '../api/generated/api/api';
+import { cancelDeletion, listDeletions } from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
-import type { DeletionManifestDetail, DeletionManifestSummary } from '../api/generated/models';
+import type { DeletionManifestSummary } from '../api/generated/models';
 
-/** One bounded detail cache for staged deletion history. */
+/** Shared staged deletion list and cancellation. */
 export class DeletionsController {
   batches = $state<DeletionManifestSummary[]>([]);
-  details = $state<Record<string, DeletionManifestDetail>>({});
-  visible = $derived(this.batches.length > 0);
+  visible = $derived(this.batches.some(batch => ['pending', 'in_progress', 'failed'].includes(batch.status)));
   loading = $state(false);
   error = $state('');
   #client: APIClient;
-  #timeout: number;
   #disposed = false;
   #loaded = false;
   #list?: Promise<void>;
   #trailing?: Promise<void>;
-  #retryRequested = false;
   #listController?: AbortController;
-  #failed = new Set<string>();
-  #pending = new Map<string, Promise<DeletionManifestDetail | undefined>>();
-  #controllers = new Map<string, AbortController>();
-  #queue: Array<() => void> = [];
-  #running = 0;
 
-  constructor(client: APIClient, timeoutMs = 20_000) { this.#client = client; this.#timeout = timeoutMs; }
+  constructor(client: APIClient) { this.#client = client; }
 
-  refresh(retry = false): Promise<void> {
+  refresh(): Promise<void> {
     if (this.#disposed) return Promise.resolve();
     if (this.#list) {
-      this.#retryRequested ||= retry;
       return this.#trailing ??= this.#list.then(() => {
-        const retry = this.#retryRequested;
-        this.#retryRequested = false;
         this.#trailing = undefined;
-        return this.refresh(retry);
+        return this.refresh();
       });
     }
-    if (retry) this.#failed.clear();
     this.loading = !this.#loaded;
     const controller = this.#listController = new AbortController();
     this.#list = (async () => {
       try {
-        const { data } = await listDeletions(undefined, { ...this.#client, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(this.#timeout)]) });
+        const { data } = await listDeletions(undefined, { ...this.#client, signal: controller.signal });
         if (controller.signal.aborted || this.#disposed) return;
         if (!data) { this.error = "Can't load staged deletions."; return; }
         const next = data.manifests ?? [];
-        const previous = new Map(this.batches.map(batch => [batch.id, batch]));
-        for (const batch of next) {
-          const old = previous.get(batch.id);
-          if (old && old.status !== batch.status) {
-            this.#controllers.get(batch.id)?.abort();
-            this.#pending.delete(batch.id);
-            this.#failed.delete(batch.id);
-            const details = { ...this.details };
-            delete details[batch.id];
-            this.details = details;
-          }
-        }
         this.batches = next;
         this.#loaded = true;
         this.error = '';
@@ -67,74 +43,14 @@ export class DeletionsController {
     return this.#list;
   }
 
-  getDetail(id: string, { retry = false, fresh = false }: { retry?: boolean; fresh?: boolean } = {}): Promise<DeletionManifestDetail | undefined> {
-    if (this.#disposed) return Promise.resolve(undefined);
-    if (!fresh && this.details[id]) return Promise.resolve(this.details[id]);
-    const pending = this.#pending.get(id);
-    if (pending) return pending;
-    if (this.#failed.has(id) && !retry) return Promise.resolve(undefined);
-    this.#failed.delete(id);
-    const status = this.batches.find(batch => batch.id === id)?.status;
-    const controller = new AbortController();
-    this.#controllers.set(id, controller);
-    let superseded = false;
-    const request = new Promise<DeletionManifestDetail | undefined>(resolve => {
-      this.#queue.push(() => {
-        if (this.#disposed || controller.signal.aborted) { resolve(this.#disposed ? undefined : this.getDetail(id, { retry: true })); return; }
-        this.#running++;
-        let timeout: ReturnType<typeof setTimeout>;
-        const stopped = new Promise<undefined>(done => {
-          controller.signal.addEventListener('abort', () => done(undefined), { once: true });
-          timeout = setTimeout(() => controller.abort(), this.#timeout);
-        });
-        void Promise.race([
-          getDeletion({ id }, { ...this.#client, signal: controller.signal }).then(({ data }) => data),
-          stopped,
-        ]).catch(() => undefined).then(data => {
-          const current = !this.#disposed && this.#controllers.get(id) === controller && this.batches.find(batch => batch.id === id)?.status === status;
-          superseded = !this.#disposed && !current;
-          if (current) {
-            if (data && !controller.signal.aborted) {
-              this.details = { ...this.details, [id]: data };
-              const batch = this.batches.find(batch => batch.id === id);
-              if (batch) {
-                const updated = { ...batch, status: data.status };
-                if (batch.status !== data.status) {
-                  this.batches = this.batches.map(current => current.id === id ? updated : current);
-                }
-              }
-            } else this.#failed.add(id);
-          }
-          return current && !controller.signal.aborted ? data : undefined;
-        }).finally(() => {
-          clearTimeout(timeout);
-          if (this.#controllers.get(id) === controller) { this.#controllers.delete(id); this.#pending.delete(id); }
-          this.#running--;
-          this.#next();
-        }).then(data => resolve(superseded ? this.getDetail(id, { retry: true }) : data));
-      });
-    });
-    this.#pending.set(id, request);
-    this.#next();
-    return request;
-  }
-
-  #next(): void { while (this.#running < 4 && this.#queue.length) this.#queue.shift()!(); }
-
   async cancel(id: string): Promise<void> {
     const { data, error } = await cancelDeletion({ id }, this.#client);
     if (!data) throw new Error(typeof error === 'object' && error && 'message' in error && typeof error.message === 'string' ? error.message : "Can't cancel the batch.");
-    this.#controllers.get(id)?.abort();
-    this.#controllers.delete(id);
-    this.#pending.delete(id);
     this.batches = this.batches.map(batch => batch.id === id ? { ...batch, status: data.status } : batch);
-    if (this.details[id]) this.details = { ...this.details, [id]: { ...this.details[id], status: data.status } };
   }
 
   destroy(): void {
     this.#disposed = true;
     this.#listController?.abort();
-    this.#controllers.forEach(controller => controller.abort());
-    this.#next();
   }
 }

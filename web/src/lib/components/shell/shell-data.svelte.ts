@@ -66,7 +66,7 @@ export class ShellData {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     const client = { ...this.#client, signal: controller.signal };
-    const deletions = this.refreshDeletions(true);
+    const deletions = this.refreshDeletions();
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
     this.error = views ? undefined : "Couldn't load saved views.";
@@ -74,7 +74,7 @@ export class ShellData {
     await deletions;
   }
 
-  refreshDeletions(retry = false): Promise<void> { return this.deletions.refresh(retry); }
+  refreshDeletions(): Promise<void> { return this.deletions.refresh(); }
 
   async #loadViews(client: APIClient): Promise<SavedView[] | undefined> {
     try {
