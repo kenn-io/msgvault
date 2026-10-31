@@ -1127,59 +1127,66 @@ func (s *Store) completeSyncAndUpdateSourceContext(
 			return fmt.Errorf("complete sync %d: %w", syncID, err)
 		}
 
-		now := s.dialect.Now()
-		updateSourceSQL := fmt.Sprintf(`
+		return completionStore.completeSyncSourceTx(ctx, tx, syncID, sourceID, finalHistoryID, updateCursor)
+	})
+	if err == nil {
+		completionStore.optimizeAfterSync(ctx)
+	}
+	return completionStore.finalizeSyncExecution(syncID, err)
+}
+
+// completeSyncSourceTx publishes a terminal run inside the caller's existing
+// transaction after validateCurrentSyncGeneration has locked its source. X
+// merges live control authority before entering this shared completion path.
+func (s *Store) completeSyncSourceTx(ctx context.Context, tx *loggedTx, syncID, sourceID int64, finalHistoryID string, updateCursor bool) error {
+	now := s.dialect.Now()
+	updateSourceSQL := fmt.Sprintf(`
 			UPDATE sources
 			SET last_sync_at = %s, updated_at = %s
 			WHERE id = ?
 		`, now, now)
-		args := []any{sourceID}
-		if updateCursor {
-			updateSourceSQL = fmt.Sprintf(`
+	args := []any{sourceID}
+	if updateCursor {
+		updateSourceSQL = fmt.Sprintf(`
 				UPDATE sources
 				SET sync_cursor = ?, last_sync_at = %s, updated_at = %s
 				WHERE id = ?
 			`, now, now)
-			args = []any{finalHistoryID, sourceID}
-		}
-		result, err := tx.ExecContext(ctx, updateSourceSQL, args...)
-		if err != nil {
-			return fmt.Errorf("complete sync %d: update source cursor: %w", syncID, err)
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("complete sync %d: inspect source cursor update: %w", syncID, err)
-		}
-		if rows != 1 {
-			return fmt.Errorf("complete sync %d: source %d not found", syncID, sourceID)
-		}
+		args = []any{finalHistoryID, sourceID}
+	}
+	result, err := tx.ExecContext(ctx, updateSourceSQL, args...)
+	if err != nil {
+		return fmt.Errorf("complete sync %d: update source cursor: %w", syncID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("complete sync %d: inspect source cursor update: %w", syncID, err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("complete sync %d: source %d not found", syncID, sourceID)
+	}
 
-		result, err = tx.ExecContext(ctx, fmt.Sprintf(`
+	result, err = tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE sync_runs
 			SET status = 'completed',
 			    completed_at = %s,
 			    cursor_after = ?
 			WHERE id = ? AND source_id = ? AND status = 'running'
 		`, now), finalHistoryID, syncID, sourceID)
-		if err != nil {
-			return fmt.Errorf("complete sync %d: %w", syncID, err)
-		}
-		rows, err = result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("complete sync %d: inspect update: %w", syncID, err)
-		}
-		if rows != 1 {
-			return fmt.Errorf("complete sync %d: %w", syncID, ErrSyncRunSuperseded)
-		}
-		if err := completionStore.coalescePersonSweepChangesTx(ctx, tx, syncID, sourceID); err != nil {
-			return fmt.Errorf("complete sync %d: %w", syncID, err)
-		}
-		return nil
-	})
-	if err == nil {
-		completionStore.optimizeAfterSync(ctx)
+	if err != nil {
+		return fmt.Errorf("complete sync %d: %w", syncID, err)
 	}
-	return completionStore.finalizeSyncExecution(syncID, err)
+	rows, err = result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("complete sync %d: inspect update: %w", syncID, err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("complete sync %d: %w", syncID, ErrSyncRunSuperseded)
+	}
+	if err := s.coalescePersonSweepChangesTx(ctx, tx, syncID, sourceID); err != nil {
+		return fmt.Errorf("complete sync %d: %w", syncID, err)
+	}
+	return nil
 }
 
 // finalizeSyncExecution releases source ownership after a terminal write

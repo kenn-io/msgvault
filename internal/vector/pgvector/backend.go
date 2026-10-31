@@ -730,6 +730,22 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	if state == string(vector.GenerationRetired) {
 		return fmt.Errorf("%w: %d", vector.ErrGenerationRetired, gen)
 	}
+
+	suppressed, err := store.XSuppressedMessagesContext(ctx, tx, true, distinctMessageIDs(chunks))
+	if err != nil {
+		return err
+	}
+	kept := make([]vector.Chunk, 0, len(chunks))
+	for _, chunk := range chunks {
+		if !suppressed[chunk.MessageID] {
+			kept = append(kept, chunk)
+		}
+	}
+	chunks = kept
+	if len(chunks) == 0 {
+		return tx.Commit()
+	}
+
 	for _, c := range chunks {
 		if len(c.Vector) != dim {
 			return fmt.Errorf("%w: chunk for msg %d has %d dims, gen has %d",

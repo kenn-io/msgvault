@@ -74,7 +74,7 @@ non-dry-run plan through client elicitation.
 
 ## Draft tools
 
-These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
+These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Creating or editing a draft does not send it. Unreleased X sources have a separate [owner reply flow](x.md#review-authors-and-reply).
 
 `draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
 
@@ -107,6 +107,21 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 ```
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
+
+## Owner replies (unreleased)
+
+`send_reply` sends a reviewed X reply through the selected daemon with API
+schema 3.29.0 or newer. Use `message_id` and `body` to prepare a reply, or
+`draft_id` and its exact `revision` to send an existing managed draft. The
+parent determines the source; there is no recipient or source selector.
+
+A new send requires owner authority, enabled numeric-owner `[[x.sends]]`
+policy, write scope, and client confirmation of the stored text, target,
+revision and reservation. The confirmation uses that same prepared draft.
+Delegated grants cannot send. Receipt lookup and local repair use the durable
+draft handle without posting or asking for another confirmation. Explicit
+`adopt_post` reconciliation requires confirmation and a budgeted lookup.
+See [X reply setup and recovery](x.md#review-authors-and-reply).
 
 ## Native email tags
 

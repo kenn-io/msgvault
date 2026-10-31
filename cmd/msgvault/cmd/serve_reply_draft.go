@@ -466,6 +466,21 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return err
 	}
+	// X replies use the parent's local conversation and current native pin;
+	// email sender and destination selectors cannot redirect a public reply.
+	if source, sourceErr := a.store.GetMessageSourceContext(ctx, intent.MessageID); sourceErr == nil && source.SourceType == "x" {
+		if err := chatDraftAuthorizer(req.Grant, agentgrant.PermissionDraftCreate)(source.SourceType, source.Identifier); err != nil {
+			return err
+		}
+		if intent.Account != "" || intent.SourceIDSet || intent.From != "" || intent.ReplyAll {
+			return draftReplyError("invalid_args", errors.New("X draft replies infer their source and accept no email sender, destination or reply-all selection"))
+		}
+		parent, err := a.store.GetMessageContext(ctx, intent.MessageID)
+		if err != nil {
+			return chatDraftStoreError(err, req.Grant)
+		}
+		return a.runCLIChatDraftCreate(ctx, draftComposeIntent{ConversationID: parent.ConversationID, ReplyTo: intent.MessageID, Body: intent.Body, JSON: intent.JSON}, req.Grant, emit)
+	}
 	target, from, selfAddresses, err := a.resolveDraftTarget(
 		ctx, &intent.MessageID, intent.Account, intent.SourceID, intent.SourceIDSet,
 		intent.From, req.Grant, true,

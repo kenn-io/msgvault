@@ -106,8 +106,27 @@ func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
 	stub := newWireStub(t)
 	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, testAPIKey, stub.server.URL, slog.Default())
 	defer func() { require.NoError(t, reporter.Close()) }()
-	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType} {
+	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", "x", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType} {
 		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
 		assert.Equal(t, sourceType, properties["sync_source"], sourceType)
 	}
+}
+
+func TestXSyncFailureTelemetryKeepsOnlyBoundedProperties(t *testing.T) {
+	enableTelemetryEnv(t)
+	stub := newWireStub(t)
+	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, testAPIKey, stub.server.URL, slog.Default())
+	defer func() { require.NoError(t, reporter.Close()) }()
+	properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{
+		"sync_source": "x", "reason": "network", "owner_id": "1001",
+		"text": "Synthetic private content", "access_token": "synthetic-token",
+	})
+	assert.Equal(t, "x", properties["sync_source"])
+	assert.Equal(t, "network", properties["reason"])
+	for _, private := range []string{"owner_id", "text", "access_token"} {
+		assert.NotContains(t, properties, private)
+	}
+	unknown, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": "x:1001", "reason": "provider text"})
+	assert.Equal(t, "other", unknown["sync_source"])
+	assert.Equal(t, "other", unknown["reason"])
 }

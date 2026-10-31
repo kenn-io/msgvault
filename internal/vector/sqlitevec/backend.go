@@ -773,6 +773,10 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if _, err := tx.ExecContext(ctx, `UPDATE index_generations SET id=id WHERE id=?`, int64(gen)); err != nil {
+		return err
+	}
+
 	// Read the generation's dimension and lifecycle state inside the write
 	// transaction and refuse to write to a retired generation. SQLite has
 	// no SELECT ... FOR UPDATE, but a write tx serializes against other
@@ -793,6 +797,23 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	}
 	if state == string(vector.GenerationRetired) {
 		return fmt.Errorf("%w: %d", vector.ErrGenerationRetired, gen)
+	}
+
+	if b.mainDB != nil {
+		suppressed, err := store.XSuppressedMessagesContext(ctx, b.mainDB, false, distinctMessageIDs(chunks))
+		if err != nil {
+			return err
+		}
+		kept := make([]vector.Chunk, 0, len(chunks))
+		for _, chunk := range chunks {
+			if !suppressed[chunk.MessageID] {
+				kept = append(kept, chunk)
+			}
+		}
+		chunks = kept
+		if len(chunks) == 0 {
+			return tx.Commit()
+		}
 	}
 	accelerator, err := b.readyAcceleratorForWrite(ctx, tx, gen, dim)
 	if err != nil {

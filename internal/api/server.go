@@ -255,6 +255,10 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	contentReadGuard        func(context.Context) (func(), error)
+	contentAnalyticsMu      sync.Mutex
+	contentAnalyticsEngines []*query.DuckDBEngine
+	contentAnalyticsRetired bool
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -535,8 +539,12 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config *config.Config
-	Store  MessageStore
+	// Clock supplies the existing handler clock; nil uses wall time.
+	Clock func() time.Time
+	// ContentReadGuard holds a read lease through the entire content response.
+	ContentReadGuard func(context.Context) (func(), error)
+	Config           *config.Config
+	Store            MessageStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -665,6 +673,8 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		daemonVersion:          opts.DaemonVersion,
 		idleTracker:            opts.IdleTracker,
 		operationGate:          opts.OperationGate,
+		contentReadGuard:       opts.ContentReadGuard,
+		clock:                  opts.Clock,
 		operationHistoryReader: opts.OperationHistoryReader,
 		importContext:          importContext,
 		cancelImports:          cancelImports,
@@ -702,6 +712,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		gmailProfileAddress:      opts.GmailProfileAddress,
 		started:                  make(chan struct{}),
 		readSnapshotSlots:        make(chan struct{}, readSnapshotConcurrency),
+	}
+	if duck, ok := opts.Engine.(*query.DuckDBEngine); ok {
+		s.contentAnalyticsEngines = append(s.contentAnalyticsEngines, duck)
 	}
 	s.analyticsState.Store(&analyticsEngineState{
 		engine: opts.Engine, mode: opts.AnalyticsMode,
@@ -785,6 +798,7 @@ func (s *Server) setupRouter() http.Handler {
 	// unauthenticated requests do not register as waiters.
 	var h http.Handler = mux
 	h = s.analyticsEngineMiddleware(h)
+	h = s.contentReadMiddleware(h)
 	h = operationGateMiddleware(s.operationGate, s.requestGateEligible)(h)
 	h = s.csrfMiddleware(h)
 	h = s.requestSecurityMiddleware(h)
@@ -1071,6 +1085,18 @@ func (s *Server) AnalyticsMode() string {
 // daemon-owned engines remain live until HTTP shutdown and background workers
 // have stopped.
 func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
+	s.contentAnalyticsMu.Lock()
+	defer s.contentAnalyticsMu.Unlock()
+	if duck, ok := engine.(*query.DuckDBEngine); ok {
+		if s.contentAnalyticsRetired {
+			if err := duck.Close(); err != nil {
+				s.logger.Error("close retired content analytics", "error", err)
+			}
+			return
+		}
+		s.contentAnalyticsEngines = append(s.contentAnalyticsEngines, duck)
+	}
+
 	for {
 		current := s.currentAnalyticsState()
 		next := &analyticsEngineState{engine: engine, mode: mode}
@@ -1112,15 +1138,25 @@ func (s *Server) AnalyticsInitializationActive() bool {
 // has shut down HTTP handling. If HTTP shutdown fails, the daemon skips this
 // call so a late request cannot use an engine while it is being closed.
 func (s *Server) CloseAnalyticsEngine() error {
+	s.contentAnalyticsMu.Lock()
+	defer s.contentAnalyticsMu.Unlock()
+	var closeErr error
+	for _, engine := range s.contentAnalyticsEngines {
+		closeErr = errors.Join(closeErr, engine.Close())
+	}
+	s.contentAnalyticsEngines = nil
 	state := s.analyticsState.Swap(&analyticsEngineState{})
 	var engine query.Engine
 	if state != nil {
 		engine = state.engine
 	}
 	if engine == nil {
-		return nil
+		return closeErr
 	}
-	return engine.Close()
+	if _, ok := engine.(*query.DuckDBEngine); ok {
+		return closeErr
+	}
+	return errors.Join(closeErr, engine.Close())
 }
 
 func (s *Server) requestUsesCLITimeoutPolicy(r *http.Request) bool {

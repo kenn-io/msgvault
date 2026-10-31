@@ -562,6 +562,7 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
+	X                  XConfig                         `toml:"x"`
 	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
@@ -1092,6 +1093,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 				"forward slashes (C:/Games/msgvault) or single quotes ('C:\\Games\\msgvault')", err)
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
+	}
+	cfg.X, err = decodeXConfig(content)
+	if err != nil {
+		return nil, err
 	}
 	if metadata.IsDefined("server", "bind_addr") {
 		cfg.bindSource = path

@@ -770,6 +770,66 @@ can override an excluded parent; an explicit child exclude can override an
 included parent. `exclude` wins when the same ID is in both lists. See
 [Discord](/docs/usage/discord/#configure-media-repairs-and-channel-filters).
 
+### `[[x.accounts]]` (unreleased)
+
+Set spending and refresh policy for a registered numeric X user ID. Missing
+policies use the defaults below. Tokens and client secrets stay in the protected
+token directory. See [X posts and replies](usage/x.md) for connection, scheduling,
+backfill, and content-removal procedures.
+
+```toml
+[[x.accounts]]
+user_id = "1000000001"
+monthly_budget = 5.00
+owned_reads = false
+refresh_batch_size = 100
+refresh_sweep_interval = "24h"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `user_id` | required | Canonical numeric account ID printed by `add-x`; duplicate IDs are rejected |
+| `monthly_budget` | `5.00` | USD allowance for all reads, expanded authors, refreshes, retries, reconciliation, and sends; `0` blocks billable work |
+| `owned_reads` | `false` | Use the owned post estimate only for matching own/mentions endpoints after verifying app ownership; it does not discount search or ID lookups |
+| `refresh_batch_size` | `100` | Maximum IDs per refresh lookup, from `1` through `100`; admission may reduce the batch |
+| `refresh_sweep_interval` | `"24h"` | Positive target interval for refreshing all collected IDs; this is not a deletion-discovery guarantee |
+| `post_read_price` | `0.005` | Estimated USD per post; without an explicit override, qualifying `owned_reads` uses `0.001` for own/mentions only |
+| `user_read_price` | `0.010` | Estimated USD per expanded user |
+| `create_reservation` | `0.200` | Conservative USD reservation per reply; must be at least `0.200` |
+
+Money uses exact whole USD micro-units internally. Negative, nonfinite,
+overflowing, and sub-micro-unit values are rejected. Explicit zero prices stay
+zero; an explicit post-price override takes precedence over the owned-read
+estimate. Estimates do not replace the X console's prepaid credits and spending
+limit, or promise an invoice amount.
+
+Schedule the same numeric ID through `[[accounts]]`. Disabling its schedule
+preserves collection progress, spend reservations, receipts, and outstanding
+refresh/removal work. The separate `sync-x --max-spend` archive-job allowance
+and the monthly account limit both apply.
+
+### `[[x.sends]]` (unreleased) {#x-sends}
+
+Enable explicit owner replies for the connected account's numeric user ID.
+Use the ID printed by `add-x`, not the local database source ID or username.
+Sending is disabled when no matching enabled entry exists.
+
+```toml
+[[x.sends]]
+user_id = "1000000001"
+enabled = true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `user_id` | required | Canonical numeric X owner ID |
+| `enabled` | `false` | Allow explicit owner sends for that account; granted `tweet.write`, a reviewed target and sufficient budget are also required |
+
+`x.accounts.allow_send=true` is rejected with migration guidance. Use
+`[[x.sends]]` instead. A legacy `allow_send=false` is ignored and omitted when
+saving configuration. Status and local repair of existing receipts remain
+available after send opt-out; delegated agent grants cannot send.
+
 ### Conversation archive tiers (staged)
 
 Conversation policy uses the provider's archived roster, including the same

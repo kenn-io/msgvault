@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/twilio"
+	xapi "go.kenn.io/msgvault/internal/x"
 )
 
 type sourceScheduleKind uint8
@@ -74,6 +75,11 @@ func CardDAVJobNameForConnection(name string) string {
 // types cannot borrow a scheduled account merely by sharing its identifier.
 func classifySourceScheduling(sourceType, identifier string) sourceScheduleClassification {
 	switch sourceType {
+	case "x":
+		if xapi.ValidateID(identifier) != nil {
+			return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
+		}
+		return sourceScheduleClassification{kind: sourceScheduleAccount}
 	case "", sourceTypeGmail, "imap", "msmail", "teams", "discord":
 		return sourceScheduleClassification{kind: sourceScheduleAccount}
 	case meetingimport.SourceType:

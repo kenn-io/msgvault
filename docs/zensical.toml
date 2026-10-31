@@ -38,6 +38,7 @@ nav = [
     {"Google Calendar" = "usage/calendar.md"},
     {"Microsoft Teams" = "usage/teams.md"},
     {"Discord" = "usage/discord.md"},
+    {"X Posts and Replies" = "usage/x.md"},
     {"Beeper" = "usage/beeper.md"},
     {"Inline" = "usage/inline.md"},
     {"Chatwoot" = "guides/chatwoot.md"},

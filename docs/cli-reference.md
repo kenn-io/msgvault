@@ -754,6 +754,137 @@ After adding the account, sync it with `msgvault sync-teams`.
 
 ---
 
+## add-x
+
+Unreleased: authorize your own X app locally, then register its numeric owner
+on the selected daemon. See [X setup](usage/x.md#connect-your-account) for the
+exact callback, confidential clients, and headless ownership transfer.
+
+```bash
+msgvault add-x --client-id <client-id>
+msgvault add-x --client-id <client-id> --allow-send
+msgvault add-x --register --user-id <numeric-id>
+```
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--client-id` | required for authorization | Your X application's OAuth client ID |
+| `--client-type` | `public` | `public` for a Native App, or `confidential` |
+| `--callback-port` | `8765` | IPv4 loopback callback port; register its exact URL in X |
+| `--allow-send` | `false` | Request `tweet.write` alongside archival scopes |
+| `--headless` | `false` | Print browser-machine authorization and host-copy instructions |
+| `--register` | `false` | Verify the staged host-local credential and register the source |
+| `--user-id` | required with `--register` | Canonical numeric X owner ID |
+| `--json` | `false` | Print registration details as JSON; requires `--register` |
+
+Registration accepts only `--user-id` and optional `--json`; it rejects the
+local authorization flags.
+
+Interactive authorization stays on the browser machine. Against a remote daemon,
+follow the secure-copy instructions and register the host-local credential. No
+token, secret, or arbitrary credential-path flag is accepted. `--allow-send`
+requests write scope; delivery also requires a matching enabled `[[x.sends]]`
+entry on the daemon, keyed by the numeric X owner ID.
+Reconnecting the same numeric ID preserves archive history and spending state.
+
+## sync-x
+
+Unreleased: collect one registered X source's own posts and returned public
+mentions/replies. Own-post and mentions coverage advance independently; partial
+coverage and budget, credential, or retention stops remain visible.
+
+```bash
+msgvault sync-x --source-id 42
+msgvault sync-x --source-id 42 --archive --after 2020-01-01
+msgvault sync-x --source-id 42 --archive --after 2020-01-01 --max-spend 25
+msgvault sync-x --source-id 42 --remove-post 123
+msgvault sync-x --source-id 42 --acknowledge-read-model
+msgvault sync-x --export-removals --json
+```
+
+| Flag | Purpose |
+|---|---|
+| `--source-id` | Existing X source ID; required except with `--export-removals` |
+| `--after` | Exclusive lower bound as `YYYY-MM-DD` or RFC3339 |
+| `--archive` | Preview or explicitly run a historical search |
+| `--max-spend` | Lifetime archive-job cap in USD; omission previews, explicit zero admits no requests |
+| `--job-id` | Select an existing frozen archive job |
+| `--new-job` | Start a fresh job; mutually exclusive with `--job-id` |
+| `--remove-post` | Remove a native post and known edits locally |
+| `--export-removals` | Export complete archive-wide removal authority without provider access |
+| `--acknowledge-read-model` | Clear only the reviewed read-model hold without provider access |
+| `--build-cache` / `--no-build-cache` | Request or skip the normal post-sync analytics refresh |
+| `--json` | Print structured counts, costs and coverage |
+
+Without `--max-spend`, archive mode previews the exact frozen queries/window and
+page reservation without contacting X. With a cap it creates or resumes a
+persistent job; repeating it does not renew that job's allowance. `--job-id`
+selects a job, and `--new-job` explicitly starts another. An increased explicit
+cap raises the same job's lifetime limit. The account's monthly limit also
+applies. Normal scheduled sync never starts archive search.
+
+`--remove-post` applies an authenticated local removal request across the known
+versions and their archived copies in other X sources, without provider I/O or
+read budget. It cannot be combined with
+archive/bound-selection options. It removes local content and derivatives,
+retains ID-only suppression, and sends no provider deletion request. Follow the
+[removal and restore procedure](usage/x.md#remove-content-and-recover-backups) for
+backup/export copies.
+
+`--export-removals` exports the complete archive-wide X removal record as JSON
+and prints its current head separately on stderr. It takes no source selector
+and cannot be combined with collection, removal, acknowledgement or cache flags.
+It refuses active source work or pending cleanup and makes no provider call.
+Use the separately retained current head with `backup restore --x-removals PATH
+--x-removals-head HEX` into a new isolated target. The
+[restore procedure](usage/x.md#remove-content-and-recover-backups) explains
+currency, quiescence and source-incarnation requirements. The record also
+binds a content-free fingerprint of spending, reservations, job allowances
+and send attempts. A snapshot that would lose this authority is refused; use
+a current snapshot. Restore also preserves current reply-target uncertainty;
+an older snapshot cannot make an unverified target eligible for sending.
+Supply the current proof even if the backup predates the archive's first X
+connection.
+
+An observed read-response shape that exceeds the reservation model pauses
+read requests across restarts. After verifying the adapter and price assumptions,
+`--acknowledge-read-model` clears that hold without a provider call or resetting
+spend. This maintenance action cannot be combined with collection options.
+
+## send-reply
+
+Unreleased: send the exact reviewed revision of a local X reply draft as the
+authenticated owner. The archived message or draft determines its source and
+platform; no `--source-id` or `--to` selector is accepted. This release supports
+X replies. Delegated agent grants cannot run this command.
+
+```bash
+msgvault draft-reply 55102 --body 'Thanks for the details.' --json
+msgvault draft-get <chat-draft-id> --json
+msgvault send-reply --draft <chat-draft-id> --revision 1 --json
+msgvault send-reply 55102 --body 'Thanks!' --json
+msgvault send-reply --draft <chat-draft-id> --revision 1 --adopt-post <native-id> --json
+```
+
+Direct parent/body mode writes a prepared draft ID and revision to stderr
+before admission or POST. With `--json`, stderr holds the prepared handle and
+stdout holds one send result. Retain the handle if the response is lost.
+
+A new send needs a matching `[[x.sends]]` entry with `enabled=true`, granted
+`tweet.write`, an available unchanged archived target, and at least the
+configured $0.200 reservation. The entry uses the numeric X owner ID, not a
+local source ID or username. X enforces
+weighted text limits and reply restrictions. A definite rejection preserves the
+draft; a new explicit invocation performs admission again.
+
+`remote_unknown` blocks another POST for that draft. Use `--adopt-post` only
+when you identify the actual reply: a budgeted lookup must verify its owner and
+frozen parent, and sends nothing. `sent_archive_pending` permits local repair.
+Repeat the returned draft ID/revision to check status, repair locally or get
+the durable receipt, including after draft removal or send opt-out. A fresh
+positional message/body invocation creates a new draft; recover with `--draft`
+instead. See [reply recovery](usage/x.md#review-authors-and-reply).
+
 ## add-discord
 
 Validate a Discord bot token and register one or more guilds as `discord`
@@ -2421,11 +2552,21 @@ msgvault backup restore [snapshot] --target <dir> [flags]
 |---|---|
 | `--repo <dir>` | Backup repository directory |
 | `--target <dir>` | Directory to restore into (required) |
+| `--x-removals <path>` | Complete current X removal and financial authority from the authenticated daemon; requires `--x-removals-head` |
+| `--x-removals-head <hex>` | Separately retained current head for that record; required with `--x-removals` |
 | `--overwrite` | Allow restoring into a non-empty target directory |
 | `--integrity-check` | Run SQLite's full integrity check after restoring (slow for large databases) |
 | `--loose-attachments` | Restore attachments as individual loose files instead of installing compatible packs |
 | `--force-unlock` | Break a stale exclusive repository lock before restoring |
 | `--jobs N` | Concurrent pack readers; `0` uses one per CPU |
+
+Unreleased X archives require both proof flags and a fresh isolated target,
+without overwrite or live-target coordination. The record must be strict JSON
+no larger than 8 MiB. Before publication, restore checks its trusted current
+head and source incarnations, replays local removals in private scratch space,
+and refuses incomplete cleanup. The
+[X restore procedure](usage/x.md#remove-content-and-recover-backups) explains
+how to obtain current authority and keep the archive quiescent.
 
 By default, restore installs compatible repository packs directly into the
 restored attachment store. Every selected attachment is still read and
@@ -4362,7 +4503,7 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
-Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Creating or editing a draft does not send it. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner. Unreleased X sources have a separate [owner reply flow](usage/x.md#review-authors-and-reply).
 
 With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 
