@@ -234,6 +234,50 @@ func TestCallContactAggregateCountsCreditedLogicalCalls(t *testing.T) {
 	assert.Equal(t, got, again, "header semantics do not depend on display noise toggles")
 }
 
+func TestCallContactAggregateBoundsResolvedIdentityByRequestClock(t *testing.T) {
+	f := newLogicalCallFixture(t)
+	person, _, err := f.st.CreatePersonFromParticipant(f.peer)
+	require.NoError(t, err)
+	now := f.at
+	before := now.Add(-24 * time.Hour)
+	earliest := before.Add(-time.Hour)
+	f.put(t, "before", func(o *callhistory.Observation) { o.OccurredAt = before })
+	f.put(t, "at-clock", func(o *callhistory.Observation) { o.Direction = "outgoing" })
+	f.put(t, "future-incoming", func(o *callhistory.Observation) { o.OccurredAt = now.Add(time.Minute) })
+	f.put(t, "future-outgoing", func(o *callhistory.Observation) {
+		o.OccurredAt = now.AddDate(0, 1, 0)
+		o.Direction = "outgoing"
+	})
+	// Later evidence still resolves an earlier identity's credit and conflicts.
+	f.put(t, "later-credit", func(o *callhistory.Observation) {
+		o.OccurredAt = earliest
+		o.Outcome = "unknown"
+		o.OwnerParticipation = "unknown"
+		o.Participants[0].Participation = "unknown"
+	})
+	f.put(t, "later-credit", func(o *callhistory.Observation) { o.OccurredAt = now.Add(time.Hour) })
+	f.put(t, "later-conflict", func(o *callhistory.Observation) { o.OccurredAt = before.Add(-2 * time.Hour) })
+	f.put(t, "later-conflict", func(o *callhistory.Observation) {
+		o.OccurredAt = now.Add(time.Hour)
+		o.Outcome = "missed"
+		o.OwnerParticipation = "not_joined"
+	})
+	want := store.ContactAggregate{
+		FirstAt: &earliest, LastAt: &now, LastInboundAt: &before, LastOutboundAt: &now,
+		Count: 3, Channels: []store.ActivityChannel{store.ChannelOther}, Monthly: [12]int{10: 2, 11: 1},
+	}
+	for _, subject := range []store.ActivitySubject{{PersonID: person.ID}, {ParticipantIDs: []int64{f.peer}}} {
+		q := store.ContactQuery{Subject: subject, Now: now, Location: time.FixedZone("archive", -7*60*60)}
+		got, err := f.st.CallContactAggregateContext(t.Context(), q)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, "bound resolved identities inclusively, without hiding later evidence")
+		q.Now = earliest.Add(-24 * time.Hour)
+		got, err = f.st.CallContactAggregateContext(t.Context(), q)
+		require.NoError(t, err)
+		assert.Equal(t, store.ContactAggregate{}, got, "future-only identities must leave all extrema and buckets empty")
+	}
+}
+
 func TestCallContactAggregateScope(t *testing.T) {
 	f := newLogicalCallFixture(t)
 	f.put(t, "one", nil)
