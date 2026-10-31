@@ -66,6 +66,7 @@
     onAnnounce?: (message: string) => void;
     onOpenSettings?: () => void;
     onOpenPerson?: (participantID: number) => void;
+    onConfigureVisualSearch?: () => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     /** Opening a file (or its containing conversation) from the hub's own
      * embedded Files pane has no reading pane of its own to resolve a full
@@ -98,6 +99,7 @@
     onOpenDirectory = undefined,
     onOpenDirectoryPerson = undefined,
     onAnnounce = undefined,
+    onConfigureVisualSearch = undefined,
     onOpenMeeting = undefined,
     onOpenSettings = undefined,
     onOpenPerson = undefined,
@@ -610,6 +612,7 @@
               <div class="relationship-activity" class:files-open={filesOpen && filesReady}>
                 {#if filesOpen && filesReady}
                   <FilesWorkspace
+                    {onConfigureVisualSearch}
                     {client}
                     embedded
                     predicate={contextPredicate(predicate)}
