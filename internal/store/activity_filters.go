@@ -151,7 +151,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	exclusion := `CASE WHEN ` + owner + ` THEN 'owner' WHEN ` + at + `>0 AND ` + domain + ` THEN 'calendar_room' WHEN ` + at + `>0 AND NOT ` + hasPhone + ` AND ` + local + ` THEN 'automated_address' ELSE '' END`
 	role := `CASE WHEN cp.recipient_type='from' THEN CASE WHEN e.ref_kind='meeting' THEN 'organizer' ELSE 'sender' END WHEN cp.recipient_type='member' THEN 'member' WHEN e.ref_kind='meeting' THEN 'attendee' ELSE 'addressed' END`
 	// Persisted person links carry the projector's strongest saved-person role.
-	// An explicit limit reclassifies both saved and unsaved paths consistently.
+	// Explicit limits recompute evidence before the same strongest-link arbitration.
 	if f.MaxDirect == 0 {
 		role = `COALESCE(aep.role,` + role + `)`
 	}
@@ -165,11 +165,20 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	}
 	large := `CASE WHEN e.direction='inbound' AND COALESCE(audience.n,0)>` + maxSQL + ` THEN 1 ELSE 0 END`
 	counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "e.direction", RefKind: "e.ref_kind", ListExcluded: listExcluded, LargeInbound: "e.large_inbound"})
+	countedSubject := ""
+	if w.Subject.PersonID != 0 || len(w.Subject.ParticipantIDs) > 0 {
+		predicate, subjectFactArgs, subjectErr := activityFactSubjectClause(w.Subject)
+		if subjectErr != nil {
+			return "", nil, subjectErr
+		}
+		countedSubject = " AND " + predicate
+		args = append(args, subjectFactArgs...)
+	}
 	// These reused sets must be evaluated once. SQLite can otherwise inline
 	// them into each correlated fact lookup and rebuild the scoped population
 	// repeatedly while scoring a burst. The fences retain all eligible rows
 	// before copy selection, grouping and pagination. Prefer counted contact
-	// when email copies have different owner attribution, then keep stable IDs.
+	// for the requested subject when copies differ, then keep stable IDs.
 	query := prefix + `eligible AS MATERIALIZED (
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
  m.message_type,m.rfc822_message_id,m.list_id,src.source_type,COALESCE(m.snippet,'') AS snippet,
@@ -180,18 +189,24 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  ), audiences AS (
  SELECT message_id,COUNT(DISTINCT CASE WHEN person_id IS NOT NULL THEN 'person:'||CAST(person_id AS TEXT) ELSE 'participant:'||CAST(participant_id AS TEXT) END) AS n
  FROM exclusions WHERE excluded<>'owner' GROUP BY message_id
- ), facts AS MATERIALIZED (
- SELECT cp.*,` + role + ` AS role,` + evidence + ` AS evidence
+ ), raw_facts AS MATERIALIZED (
+ SELECT cp.*,` + role + ` AS raw_role,` + evidence + ` AS raw_evidence
  FROM exclusions cp JOIN eligible e ON e.message_id=cp.message_id
  LEFT JOIN audiences audience ON audience.message_id=e.message_id
  LEFT JOIN activity_event_persons aep ON aep.message_id=e.message_id AND aep.person_id=cp.person_id
+ ), facts AS MATERIALIZED (
+ SELECT cp.*,FIRST_VALUE(raw_role) OVER strongest_link AS role,FIRST_VALUE(raw_evidence) OVER strongest_link AS evidence
+ FROM raw_facts cp WINDOW strongest_link AS (
+ PARTITION BY message_id,person_id,CASE WHEN person_id IS NULL THEN participant_id ELSE 0 END
+ ORDER BY CASE WHEN raw_evidence='direct' THEN 0 ELSE 1 END,
+ CASE raw_role WHEN 'sender' THEN 0 WHEN 'organizer' THEN 1 WHEN 'addressed' THEN 2 WHEN 'attendee' THEN 3 WHEN 'member' THEN 4 ELSE 5 END)
  ), message_flags AS (
  SELECT e.*,` + large + ` AS large_inbound,
  CASE WHEN e.source_type='matrix' AND e.snippet='` + archivemarker.EncryptedMessagePlaceholder + `' THEN 1 ELSE 0 END AS encrypted
  FROM eligible e LEFT JOIN audiences audience ON audience.message_id=e.message_id
  ), scored AS (
  SELECT e.*,
- CASE WHEN e.contact_eligible=1 AND e.encrypted=0 AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.excluded='' AND ` + counted + `) THEN 1 ELSE 0 END AS counted,
+ CASE WHEN e.contact_eligible=1 AND e.encrypted=0 AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.excluded=''` + countedSubject + ` AND ` + counted + `) THEN 1 ELSE 0 END AS counted,
  CASE WHEN ` + listExcluded + `=1 OR EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.recipient_type='from' AND f.excluded NOT IN ('','owner')) THEN 0 ELSE 1 END AS non_noise
  FROM message_flags e
  ), copies AS (

@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -111,6 +112,67 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 					requirements.NoError(err)
 					assertions.Len(quiet.Bursts, scope.count)
 				})
+			}
+		})
+	}
+}
+
+// Both copies have contact, but only the sent copy counts for the requested
+// addressee. The lower source is a received copy in another owned account.
+func TestActivityEmailCopiesPreferRequestedSubject(t *testing.T) {
+	for _, saved := range []bool{false, true} {
+		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newTimelineActivityFixture(t)
+			contact := timelineContactQuery(f)
+			if saved {
+				p, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+				require.NoError(err)
+				contact.Subject = store.ActivitySubject{PersonID: p.ID}
+			}
+			owner2 := f.EnsureParticipant("second@example.com", "Second owner", "example.com")
+			source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
+			require.NoError(err)
+			require.NoError(f.Store.AddAccountIdentity(source.ID, "second@example.com", "manual"))
+			room, err := f.Store.EnsureConversationWithType(source.ID, "sent-copy", "email_thread", "Sent copy")
+			require.NoError(err)
+			received := f.add(t, f.ConvID, f.Source.ID, contact.Now.Add(-time.Hour), false, "<subject-copy@example.com>")
+			require.NoError(f.Store.ReplaceMessageRecipients(received, "from", []int64{owner2}, nil))
+			require.NoError(f.Store.ReplaceMessageRecipients(received, "to", []int64{f.owner, f.peer}, nil))
+			sent := f.add(t, room, source.ID, contact.Now, true, "<subject-copy@example.com>")
+			require.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{owner2}, nil))
+			projectTimelineActivity(t, f, "UTC")
+			fullQuery := timelineBurstQuery()
+			fullQuery.Filters.IncludeNoise = true
+			full, err := f.Store.ListActivityBurstsContext(t.Context(), fullQuery)
+			require.NoError(err)
+			require.Len(full.Bursts, 1)
+			assert.Equal(received, full.Bursts[0].AnchorMessageID)
+			for _, scope := range []struct {
+				sources       []int64
+				count, copies int
+				id            int64
+			}{{nil, 1, 2, sent}, {[]int64{source.ID}, 1, 1, sent}, {[]int64{f.Source.ID}, 0, 1, received}} {
+				ctx := t.Context()
+				if scope.sources != nil {
+					ctx = sourcescope.WithSourceIDs(ctx, scope.sources)
+				}
+				aggregate, err := f.Store.MessageContactAggregateContext(ctx, contact)
+				require.NoError(err)
+				assert.Equal(scope.count, aggregate.Count)
+				if scope.count == 1 {
+					require.NotNil(aggregate.LastAt)
+					assert.True(contact.Now.Equal(*aggregate.LastAt))
+				}
+				q := timelineBurstQuery()
+				q.Subject = contact.Subject
+				q.Filters.IncludeNoise = true
+				page, err := f.Store.ListActivityBurstsContext(ctx, q)
+				require.NoError(err)
+				require.Len(page.Bursts, 1)
+				assert.Equal(scope.id, page.Bursts[0].AnchorMessageID)
+				assert.Equal(scope.copies, page.Bursts[0].CopyCounts[scope.id])
 			}
 		})
 	}
