@@ -18,6 +18,47 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
 
+it('retains the selected day, file filters, and Details across the 720px breakpoint', async () => {
+  const observers = new Map<Element, ResizeObserverCallback>();
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) { observers.set(target, this.callback); }
+    unobserve(target: Element) { observers.delete(target); }
+    disconnect() {}
+  });
+  onTestFinished(() => { vi.unstubAllGlobals(); });
+  const client = clientFor({
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], cache_revision: 'cache-1' }),
+    '/api/v1/relationships/1/calendar': async request => Response.json({ participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC', current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }, peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', annual: [], identity_revision: 1, cache_revision: 'cache-1', days: [{ date: '2026-07-19', total: 1, email: 1, chat: 0, meetings: 0, sent: 1, received: 0, modality_mask: 1, level: 'FIRST_QUARTILE' }] }),
+    '/api/v1/participants/1/files/search': () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', {}, false);
+  const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: true, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  const view = render(PeopleWorkspace, { props });
+  try {
+    await fireEvent.input(await screen.findByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'report' } });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+    await view.rerender({ filesOpen: false });
+    await fireEvent.click((await screen.findAllByRole('button', { name: '1 message on Jul 19, 2026' }))[0]);
+    await screen.findByRole('button', { name: 'Clear date' });
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    const root = screen.getByRole('main', { name: 'People' });
+    for (const width of [640, 1200]) {
+      await act(() => observers.get(root)?.([{ target: root, contentRect: { width } } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+      expect.soft(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
+    }
+    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+    expect.soft(screen.queryByRole('button', { name: 'Clear date' })).not.toBeNull();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
+    await view.rerender({ filesOpen: true });
+    expect.soft((await screen.findByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).value).toBe('report');
+    expect.soft((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(false);
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the open person', async (control) => {
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: [] }),
