@@ -12,6 +12,7 @@ import (
 )
 
 func TestIndexStoredMessageLeavesUnchangedEntry(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
@@ -34,7 +35,7 @@ func TestIndexStoredMessageLeavesUnchangedEntry(t *testing.T) {
 	require.NoError(st.DB().QueryRow(query, args...).Scan(&before))
 	require.NoError(st.IndexStoredMessageContext(context.Background(), id))
 	require.NoError(st.DB().QueryRow(query, args...).Scan(&after))
-	assert.Equal(t, before, after)
+	assert.Equal(before, after)
 
 	// Restore a missing search entry without changing the stored body.
 	clearDocument := `DELETE FROM messages_fts WHERE rowid = ?`
@@ -47,11 +48,11 @@ func TestIndexStoredMessageLeavesUnchangedEntry(t *testing.T) {
 	searchQuery := &search.Query{TextTerms: []string{"orchard"}}
 	ids, total, err := st.SearchMessageIDsQueryContext(ctx, searchQuery, 10)
 	require.NoError(err)
-	assert.Empty(t, ids)
-	assert.Zero(t, total)
+	assert.Empty(ids)
+	assert.Zero(total)
 	require.NoError(st.IndexStoredMessageContext(ctx, id))
 	ids, total, err = st.SearchMessageIDsQueryContext(ctx, searchQuery, 10)
 	require.NoError(err)
-	assert.Equal(t, []int64{id}, ids)
-	assert.Equal(t, int64(1), total)
+	assert.Equal([]int64{id}, ids)
+	assert.Equal(int64(1), total)
 }
