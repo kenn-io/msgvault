@@ -353,3 +353,51 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 		})
 	}
 }
+
+// Tier counts use the archive's canonical ID rule: one clean bracket pair is
+// optional, while whitespace remains part of the stored identifier.
+func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ids  [2]string
+		want int
+	}{
+		{"clean brackets", [2]string{"<canonical@example.com>", "canonical@example.com"}, 1},
+		{"inner whitespace", [2]string{"< canonical@example.com>", " canonical@example.com"}, 2},
+		{"outer whitespace", [2]string{" <canonical@example.com> ", "canonical@example.com"}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			a := newAudienceFixture(t)
+			second, err := a.f.Store.GetOrCreateSource("gmail", "second@example.com")
+			requirements.NoError(err)
+			requirements.NoError(a.f.Store.AddAccountIdentity(second.ID, "owner@example.com", "manual"))
+			room, err := a.f.Store.EnsureConversationWithType(second.ID, "canonical-copies", "email_thread", "Canonical copies")
+			requirements.NoError(err)
+			for i, source := range []struct{ id, room int64 }{{a.f.Source.ID, a.f.ConvID}, {second.ID, room}} {
+				m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -2+i)).Build()
+				m.SourceID, m.ConversationID = source.id, source.room
+				m.SenderID = sql.NullInt64{Int64: a.sender, Valid: true}
+				m.RFC822MessageID = sql.NullString{String: tc.ids[i], Valid: true}
+				id, err := a.f.Store.UpsertMessage(m)
+				requirements.NoError(err)
+				requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{a.sender}, nil))
+				requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{a.owner}, nil))
+			}
+			projectTierSignals(t, a.f, "UTC", 25)
+			defer store.SetPersonTierRowPage(1)()
+			for _, scope := range []struct {
+				ids  []int64
+				want int
+			}{{nil, tc.want}, {[]int64{a.f.Source.ID}, 1}, {[]int64{second.ID}, 1}} {
+				ctx := t.Context()
+				if scope.ids != nil {
+					ctx = sourcescope.WithSourceIDs(ctx, scope.ids)
+				}
+				explanation, err := a.f.Store.ExplainPersonTierContext(ctx, a.personID, tierOptions())
+				requirements.NoError(err)
+				assertions.Equal(scope.want, explanation.Signals.InboundShort)
+			}
+		})
+	}
+}

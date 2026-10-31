@@ -130,7 +130,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  CASE WHEN ae.direction='inbound' THEN 1 ELSE 0 END,
  CASE WHEN ae.ref_kind='meeting' THEN 1 ELSE 0 END,
  CASE WHEN m.list_id IS NULL THEN 0 ELSE 1 END,
- CASE WHEN m.message_type IN (`+callTypes+`) THEN 1 ELSE 0 END,COALESCE(m.rfc822_message_id,'')
+ CASE WHEN m.message_type IN (`+callTypes+`) THEN 1 ELSE 0 END,COALESCE(`+s.dialect.RFC822CanonicalIDExpr("m.rfc822_message_id")+`,'')
  FROM activity_event_persons aep
  JOIN activity_events ae ON ae.message_id=aep.message_id
  JOIN messages m ON m.id=ae.message_id
