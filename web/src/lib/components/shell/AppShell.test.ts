@@ -385,6 +385,23 @@ describe('AppShell', () => {
     rendered.unmount(); state.destroy();
   });
 
+  it('opens Directory filters through the shared command', async () => {
+    window.history.replaceState(null, '', '/?workspace=directory');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(async () => Response.json({ people: [] })), state, enabled: false });
+    try {
+      expect(screen.queryByRole('group', { name: 'Directory filters' })).toBeNull();
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      const palette = screen.getByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'Open filters' } });
+      await fireEvent.click(await screen.findByRole('option', { name: /^Open filters/ }));
+      expect(await screen.findByRole('group', { name: 'Directory filters' })).toBeDefined();
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   it.each([['everything', 'Messages', 'Cancel'], ['files', 'Files', 'Escape']] as const)(
     'offers Save view… in the %s header (%s); closing with %s returns focus to it',
     async (workspace, title, closeWith) => {
