@@ -1768,6 +1768,7 @@ snooze time in the past returns 400.
 that exact question. It returns `anchor_message_id` and `state: "open"`, or
 404 `loop_decision_not_found` when the message has no decision. Responses are
 not cacheable. These routes are owner-only: delegated agent tokens receive 401.
+See [Open loops](usage/open-loops.md) for the rules.
 
 ---
 
