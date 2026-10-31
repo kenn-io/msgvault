@@ -14,6 +14,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExploreDayGroupsHeatLevelsRequireCompletePage(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	for day := 1; day <= 3; day++ {
+		b.AddMessage(MessageOpt{SourceID: source, SentAt: time.Date(2026, 7, day, 12, 0, 0, 0, time.UTC)})
+	}
+	engine := b.BuildEngine()
+
+	for _, tc := range []struct {
+		name string
+		page PageSpec
+		rows int
+	}{
+		{"limited", PageSpec{Limit: 1}, 1},
+		{"unpaged", PageSpec{}, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Page: tc.page})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, tc.rows)
+			assert.Equal(t, int64(3), result.TotalCount)
+			for _, row := range result.Rows {
+				if tc.name == "limited" {
+					assert.Empty(t, row.Level)
+				} else {
+					assert.NotEmpty(t, row.Level)
+				}
+			}
+		})
+	}
+}
+
 func TestExploreSentOnlyExcludesDraftsBeforePagination(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("owner@example.com", "gmail")
