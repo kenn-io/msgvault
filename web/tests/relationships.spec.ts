@@ -285,8 +285,8 @@ test('Back restores the relationship message and its conversation window after f
   await page.goBack();
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
   await expect(reading.getByRole('button', { name: 'Collapse message 500 from Bob Example' })).toBeVisible();
-  expect(windows.at(-1)?.get('start')).toBeNull();
-  expect(windows.at(-1)?.get('end')).toBeNull();
+  expect(windows.at(-1)?.get('start')).toBe('2026-07-18T00:00:00.000Z');
+  expect(windows.at(-1)?.get('end')).toBe('2026-07-19T00:00:00.000Z');
   await page.goForward();
   await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
   await expect(reading).toBeHidden();

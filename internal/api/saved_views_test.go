@@ -177,10 +177,12 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 		})
 	}
 
-	invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
-		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["day"]},"schema_version":1}`),
-		session.mutationHeaders())
-	assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
+	for _, dimension := range []string{"sender", "day"} {
+		invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
+			[]byte(fmt.Sprintf(`{"name":"Unsupported","canonical_state":{"grouping":[%q]},"schema_version":1}`, dimension)),
+			session.mutationHeaders())
+		assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
+	}
 
 	createdResponse := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
 		[]byte(`{"name":"Before invalid patch","canonical_state":{"grouping":["source"]},"schema_version":1}`),

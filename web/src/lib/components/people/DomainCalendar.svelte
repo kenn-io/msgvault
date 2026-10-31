@@ -11,12 +11,12 @@
   let calendar = $state<(Pick<Calendar, 'year' | 'days'> & Partial<Calendar>) | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
+  const wanted = $derived(year ?? (new Date(lastAt).getFullYear() || currentYear));
   const firstYear = $derived(new Date(firstAt).getFullYear() || currentYear);
   const since = $derived(firstAt ? new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }).format(new Date(firstAt)) : undefined);
   $effect(() => { void domain; year ??= new Date(lastAt).getFullYear() || currentYear; calendar = null; });
   $effect(() => {
     void retry;
-    const wanted = year ?? currentYear;
     const abort = new AbortController();
     loading = true;
     error = null;

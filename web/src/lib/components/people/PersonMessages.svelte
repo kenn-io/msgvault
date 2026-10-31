@@ -20,9 +20,11 @@
     ? { dimension: 'participant', values: [String(identityScope.id)] }
     : { dimension: 'domain', values: [identityScope.domain] });
   const exploreState = new ExploreState(null);
-  exploreState.replaceCommittedNavigation({ filters: untrack(() => predicate.filters ?? []) });
   const restored = untrack(() => relationshipReaderHistory(window.history.state, 'relationships', target));
-  if (restored?.selection.kind === 'entry') exploreState.replaceTransient({ selectedRow: restored.selection.row.key, conversationAnchor: restored.anchor ? String(restored.anchor) : null });
+  const restoredRow = restored?.selection.kind === 'entry' ? restored.selection.row.key : null;
+  exploreState.replaceCommittedRestorableNavigation({ filters: untrack(() => predicate.filters ?? []), selectedRow: restoredRow, conversationAnchor: restoredRow && restored?.anchor ? String(restored.anchor) : null });
+  let restoredBounds = $state(restoredRow ? restored?.bounds : undefined);
+  const conversationBounds = $derived(period ? { start: period.after, end: period.before } : restoredBounds);
   const selection = new ExploreSelectionState();
   const session = new EverythingSessionState();
   let notice = $state('');
@@ -54,9 +56,10 @@
     const anchor = exploreState.current.conversationAnchor;
     if (key && !row) return;
     window.history.replaceState({ ...window.history.state, [RELATIONSHIP_READER_HISTORY_KEY]: row
-      ? { target, selection: { kind: 'entry', row: $state.snapshot(row) }, anchor: anchor ? Number(anchor) : undefined }
+      ? { target, selection: { kind: 'entry', row: $state.snapshot(row) }, anchor: anchor ? Number(anchor) : undefined, bounds: $state.snapshot(conversationBounds) }
       : undefined }, '');
   });
+  $effect(() => { if (exploreState.current.selectedRow !== restoredRow) restoredBounds = undefined; });
   function escape(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !exploreState.current.selectedRow || appShortcuts.activeScope() !== ROOT_SCOPE) return;
     if ((event.target as Element | null)?.closest('input, textarea, select, [contenteditable]')) return;
@@ -84,7 +87,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -- Escape closes the embedded reader. -->
 <div class="messages" bind:this={root} onkeydown={escape}>
-  <EverythingWorkspace {client} {meetingContext} scope={scope} conversationStart={period?.after} conversationEnd={period?.before} {exploreState} {loader} {session} {selection} enabled
+  <EverythingWorkspace {client} {meetingContext} scope={scope} conversationStart={conversationBounds?.start} conversationEnd={conversationBounds?.end} {exploreState} {loader} {session} {selection} enabled
     readingTargetKey={exploreState.current.selectedRow} conversationAnchorId={exploreState.current.conversationAnchor ? Number(exploreState.current.conversationAnchor) : undefined}
     sortNotice={notice} searchInput={undefined} selectionPreflight={undefined} meetingSelection={undefined}
     exportSelection={() => undefined} onReviewDeletion={() => undefined} commitNavigation={navigate}
