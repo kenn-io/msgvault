@@ -26,6 +26,10 @@ const (
 
 var ErrPersonSweepConsentRevoked = errors.New("person sweep provider consent is no longer active")
 
+// ErrPersonSweepDeferred leaves changed archive work immediately claimable.
+// The attempt was cancelled before provider preparation, without a failure.
+var ErrPersonSweepDeferred = errors.New("person sweep archive changed during status apply")
+
 const personSweepCleanupTimeout = 5 * time.Second
 
 type CompletedBatch struct {
@@ -83,6 +87,15 @@ type ApplyRequest struct {
 	CompletedAt  time.Time
 }
 
+// StatusOnlyApplyRequest commits evidence support before provider preparation.
+// The caller renews Lease first; applying it preserves ownership and cursors.
+type StatusOnlyApplyRequest struct {
+	AttemptID   string
+	Lease       Lease
+	Generation  personfacts.GenerationInput
+	CompletedAt time.Time
+}
+
 type ApplyMutationMetadata struct {
 	// BriefVersion is the person brief version this apply stored, or zero.
 	BriefVersion               int
@@ -103,6 +116,8 @@ type ApplyMutationMetadata struct {
 type ApplyResult struct {
 	Generation personfacts.GenerationResult
 	Mutations  ApplyMutationMetadata
+	// AttemptProjectedWrites includes writes committed by an earlier status phase.
+	AttemptProjectedWrites int
 }
 
 type sequenceCursorCoordinate struct {
@@ -357,6 +372,7 @@ type WorkStore interface {
 	StartPersonSweepRun(ctx context.Context, input StartRun) (Run, error)
 	FinishPersonSweepRun(ctx context.Context, runID string, status RunStatus, completedAt time.Time) error
 	StartPersonSweepAttempt(ctx context.Context, input StartAttempt) error
+	RebindPersonSweepAttempt(ctx context.Context, lease Lease, attemptID string, cursors []GenerationCursor) error
 	ReconcilePersonSweepWorkContext(ctx context.Context, request GapRequest) (GapResult, error)
 	ClaimPersonSweep(ctx context.Context, request ClaimRequest) (*Lease, error)
 	RenewPersonSweep(ctx context.Context, lease Lease, duration time.Duration) (*Lease, error)
@@ -367,10 +383,15 @@ type WorkStore interface {
 	CompleteIdlePersonSweep(ctx context.Context, lease Lease, programFingerprint, catalogFingerprint string) error
 	FailPersonSweepWork(ctx context.Context, failure WorkFailure) error
 	FinalizePersonSweepFailure(ctx context.Context, input FailureFinalization) error
+	DeferPersonSweepAttempt(ctx context.Context, lease Lease, attemptID string, completedAt time.Time) error
 }
 
 type ClaimSink interface {
 	ApplyPersonSweep(ctx context.Context, request ApplyRequest) (ApplyResult, error)
+	ApplyPersonSweepStatusOnly(ctx context.Context, request StatusOnlyApplyRequest) (Lease, error)
+	PersonSweepEvidenceStatusesApplied(
+		ctx context.Context, personID int64, changes []personfacts.EvidenceStatusChange,
+	) (bool, error)
 }
 
 type CatalogSource interface {
@@ -498,10 +519,12 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 		}
 	}
 	var firstErr error
+	deferred := 0
+	deferredPeople := make([]int64, 0)
 	for result.PeopleAttempted < limit {
 		lease, claimErr := w.Store.ClaimPersonSweep(ctx, ClaimRequest{
 			WorkerID: w.WorkerID, LeaseDuration: w.Config.LeaseDuration,
-			AvailableAt: w.now(), PersonID: request.PersonID,
+			AvailableAt: w.now(), PersonID: request.PersonID, ExcludePersonIDs: deferredPeople,
 		})
 		if claimErr != nil {
 			firstErr = claimErr
@@ -525,6 +548,19 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 		result.PeopleAttempted++
 		person, personErr := w.runPerson(ctx, runID, *lease, request.Mode, request.Brief,
 			profile, catalog, now)
+		if errors.Is(personErr, ErrPersonSweepDeferred) {
+			deferred++
+			if w.forcedSinglePersonBrief(request) && result.PeopleSucceeded == 0 {
+				firstErr = personErr
+			}
+			if request.PersonID == 0 {
+				// The deferred row remains immediately claimable by the next run.
+				// Exclude it here so other due people can use this run's budget.
+				deferredPeople = append(deferredPeople, lease.PersonID)
+				continue
+			}
+			break
+		}
 		if personErr != nil {
 			if firstErr == nil {
 				firstErr = personErr
@@ -543,7 +579,8 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 	status := RunSucceeded
 	if firstErr != nil && result.PeopleSucceeded == 0 {
 		status = RunFailed
-	} else if firstErr != nil || result.PeopleSucceeded != result.PeopleAttempted {
+	} else if firstErr != nil || (deferred > 0 && result.PeopleSucceeded > 0) ||
+		result.PeopleSucceeded+deferred != result.PeopleAttempted {
 		status = RunPartial
 	}
 	cleanupCtx, cancel := personSweepCleanupContext(ctx)
@@ -607,25 +644,41 @@ func (w *Worker) runPerson(
 	assemblyRequest := AssemblyRequest{PersonID: lease.PersonID, Cursors: cursors, Catalog: catalog,
 		Profile: profile, Now: resolvedAt, BackstopInterval: w.Config.BackstopInterval,
 		ForceBackstop: mode == RunBackstop}
-	buildAssembly := func(selected []Cursor, maxProgressWindows int, forceBackstop bool) (Assembly, error) {
+	assembler := Assembler{Source: w.Source, Context: w.Context,
+		MaxBytes: w.Config.EvidenceMaxBytes,
+		MaxItems: w.Config.EvidenceMaxItems, WindowLimit: w.Config.ChangeBatchSize,
+		MaxBatches: maxBatches, ContextPerTarget: w.Config.ContextPerTarget,
+		HistoricalMessageCap: w.Config.HistoricalMessageCap}
+	discoverAssembly := func(selected []Cursor, maxProgressWindows int, forceBackstop bool) (AssemblyProgress, error) {
 		request := assemblyRequest
 		request.Cursors = selected
 		request.ForceBackstop = request.ForceBackstop || forceBackstop
-		return (Assembler{Source: w.Source, Context: w.Context,
-			MaxBytes: w.Config.EvidenceMaxBytes,
-			MaxItems: w.Config.EvidenceMaxItems, WindowLimit: w.Config.ChangeBatchSize,
-			MaxBatches: maxBatches, MaxProgressWindows: maxProgressWindows,
-			ContextPerTarget:     w.Config.ContextPerTarget,
-			HistoricalMessageCap: w.Config.HistoricalMessageCap}).Build(ctx, request)
+		candidate := assembler
+		candidate.MaxProgressWindows = maxProgressWindows
+		return candidate.Discover(ctx, request)
 	}
-	assembly, err := buildAssembly(cursors, 0, false)
-	if err != nil && !errors.Is(err, ErrNoChangedSeed) {
+	buildPacket := func(selected []Cursor, progress AssemblyProgress, forceBackstop bool) (Assembly, error) {
+		request := assemblyRequest
+		request.Cursors = selected
+		request.ForceBackstop = request.ForceBackstop || forceBackstop
+		return assembler.BuildPacket(ctx, request, progress)
+	}
+	buildAssembly := func(selected []Cursor, maxProgressWindows int, forceBackstop bool) (Assembly, error) {
+		progress, err := discoverAssembly(selected, maxProgressWindows, forceBackstop)
+		if err != nil {
+			return Assembly{}, err
+		}
+		return buildPacket(selected, progress, forceBackstop)
+	}
+	progress, err := discoverAssembly(cursors, 0, false)
+	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
 	}
 	// forcedBackstop records that the assembly below came from the brief's
 	// fallback, so the batch-narrowing loop rebuilds it the same way.
 	forcedBackstop := false
-	if len(assembly.CursorEnvelope) == 0 && plan.run {
+	discoveryLimit := 0
+	if len(progress.CursorEnvelope) == 0 && plan.run {
 		// A person whose sweep is fully caught up has no cursor progress to
 		// bind a generation to, and every generation must name a source range.
 		// Re-reading one bounded backstop page gives the attempt a real range
@@ -633,40 +686,161 @@ func (w *Worker) runPerson(
 		// person the scheduled sweep already finished. The store bounds an
 		// empty archive with its zero source key, so that attempt can still
 		// succeed without a provider call or a new brief version.
-		if forced, forcedErr := buildAssembly(cursors, 1, true); forcedErr == nil &&
+		if forced, forcedErr := discoverAssembly(cursors, 1, true); forcedErr == nil &&
 			len(forced.CursorEnvelope) > 0 {
-			assembly, forcedBackstop = forced, true
+			progress, forcedBackstop, discoveryLimit = forced, true, 1
+		}
+	}
+	assembly := Assembly{Windows: progress.Windows, CursorEnvelope: progress.CursorEnvelope,
+		EvidenceStatusChanges: progress.EvidenceStatusChanges}
+	attemptID, attemptEnvelopeHash := "", ""
+	attemptStarted, statusOnlyBeforePacket, statusesAlreadyApplied := false, false, false
+	failAttemptOrClaim := func(cause error) error {
+		if attemptStarted {
+			return w.finalizeFailure(ctx, lease, attemptID, nil, nil, cause, resolvedAt)
+		}
+		return w.failClaim(ctx, lease, "", cause)
+	}
+	if hasEvidenceRetraction(progress.EvidenceStatusChanges) && len(progress.Seeds) > 0 &&
+		len(catalog.Targets) > 0 {
+		statusesAlreadyApplied, err = w.Sink.PersonSweepEvidenceStatusesApplied(
+			ctx, lease.PersonID, progress.EvidenceStatusChanges)
+		if err != nil {
+			return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+		}
+		if !statusesAlreadyApplied {
+			sourceCursors, _, cursorErr := PersonFactSourceCursors(progress.CursorEnvelope)
+			if cursorErr != nil {
+				return PersonRunResult{}, w.failClaim(ctx, lease, "", cursorErr)
+			}
+			attemptEnvelopeHash, cursorErr = personSweepAttemptEnvelopeHash(progress.CursorEnvelope)
+			if cursorErr != nil {
+				return PersonRunResult{}, w.failClaim(ctx, lease, "", cursorErr)
+			}
+			attemptID = w.NewID()
+			if attemptID == "" {
+				return PersonRunResult{}, w.failClaim(ctx, lease, "",
+					errors.New("person sweep worker generated an empty attempt ID"))
+			}
+			if err := w.Store.StartPersonSweepAttempt(ctx, StartAttempt{ID: attemptID, RunID: runID,
+				PersonID: lease.PersonID, LeaseFence: lease.Fence, Mode: mode,
+				CursorEnvelope: progress.CursorEnvelope, EnvelopeHash: attemptEnvelopeHash,
+				StartedAt: resolvedAt}); err != nil {
+				return PersonRunResult{}, w.failClaim(ctx, lease, attemptID, err)
+			}
+			attemptStarted = true
+			renewed, renewErr := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
+			if renewErr != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, renewErr, resolvedAt)
+			}
+			if renewed == nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, ErrLeaseLost, resolvedAt)
+			}
+			lease, err = w.Sink.ApplyPersonSweepStatusOnly(ctx, StatusOnlyApplyRequest{
+				AttemptID: attemptID, Lease: *renewed, CompletedAt: w.now(), Generation: personfacts.GenerationInput{
+					PersonID: lease.PersonID, SourceCursors: sourceCursors, ProgramID: ExtractionProgramID,
+					ProgramVersion: ExtractionProgramVersion, ProgramFingerprint: ProgramFingerprint(),
+					CatalogFingerprint: catalog.Fingerprint, Provider: StatusOnlyProvider,
+					ProviderVersion: StatusOnlyProviderVersion, Model: StatusOnlyModel,
+					ModelVersion: StatusOnlyModelVersion, ResolvedAt: resolvedAt,
+					Policy: personfacts.PolicyContext{AllowSensitive: profile.AllowSensitive,
+						ProviderPolicyFingerprint: profile.Fingerprint},
+					EvidenceStatusChanges: progress.EvidenceStatusChanges,
+				},
+			})
+			if err != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, *renewed, attemptID, nil, nil, err, resolvedAt)
+			}
+			refreshed, refreshErr := discoverAssembly(cursors, discoveryLimit, forcedBackstop)
+			if refreshErr != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, refreshErr, resolvedAt)
+			}
+			if !reflect.DeepEqual(refreshed.CursorEnvelope, progress.CursorEnvelope) ||
+				!reflect.DeepEqual(refreshed.EvidenceStatusChanges, progress.EvidenceStatusChanges) {
+				cleanupCtx, cancel := personSweepCleanupContext(ctx)
+				defer cancel()
+				if err := w.Store.DeferPersonSweepAttempt(cleanupCtx, lease, attemptID, w.now()); err != nil {
+					return PersonRunResult{}, err
+				}
+				return PersonRunResult{}, ErrPersonSweepDeferred
+			}
+			progress = refreshed
+			assembly, err = buildPacket(cursors, progress, forcedBackstop)
+			if err != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, err, resolvedAt)
+			}
+			assembly.EvidenceStatusChanges = nil
+			statusOnlyBeforePacket = true
+			statusesAlreadyApplied = true
+		}
+	}
+	if !statusOnlyBeforePacket {
+		assembly, err = buildPacket(cursors, progress, forcedBackstop)
+		if err != nil && !errors.Is(err, ErrNoChangedSeed) {
+			return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+		}
+		if statusesAlreadyApplied {
+			assembly.EvidenceStatusChanges = nil
 		}
 	}
 	deferredCursorWork := false
+	selectedCursors, progressLimit := cursors, discoveryLimit
 	if len(assembly.Batches) > maxBatches {
 		bounded := false
 		for index := range cursors {
 			candidate, candidateErr := buildAssembly(cursors[index:index+1], 0, forcedBackstop)
 			if candidateErr != nil && !errors.Is(candidateErr, ErrNoChangedSeed) {
-				return PersonRunResult{}, w.failClaim(ctx, lease, "", candidateErr)
+				return PersonRunResult{}, failAttemptOrClaim(candidateErr)
 			}
 			if len(candidate.CursorEnvelope) == 0 {
 				continue
 			}
 			if len(candidate.Batches) > maxBatches {
 				candidate, candidateErr = buildAssembly(cursors[index:index+1], 1, forcedBackstop)
+				progressLimit = 1
 				if candidateErr != nil && !errors.Is(candidateErr, ErrNoChangedSeed) {
-					return PersonRunResult{}, w.failClaim(ctx, lease, "", candidateErr)
+					return PersonRunResult{}, failAttemptOrClaim(candidateErr)
 				}
 			}
 			if len(candidate.Batches) > maxBatches {
-				return PersonRunResult{}, w.failClaim(ctx, lease, "",
+				return PersonRunResult{}, failAttemptOrClaim(
 					errors.New("person sweep assembly exceeded its request batch limit"))
 			}
 			assembly, bounded = candidate, true
+			selectedCursors = cursors[index : index+1]
 			deferredCursorWork = true
 			break
 		}
 		if !bounded {
-			return PersonRunResult{}, w.failClaim(ctx, lease, "",
+			return PersonRunResult{}, failAttemptOrClaim(
 				errors.New("person sweep assembly could not select bounded cursor progress"))
 		}
+	}
+	if attemptStarted {
+		applied, statusErr := w.Sink.PersonSweepEvidenceStatusesApplied(
+			ctx, lease.PersonID, assembly.EvidenceStatusChanges)
+		if statusErr != nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, statusErr, resolvedAt)
+		}
+		if !applied {
+			cleanupCtx, cancel := personSweepCleanupContext(ctx)
+			defer cancel()
+			if err := w.Store.DeferPersonSweepAttempt(cleanupCtx, lease, attemptID, w.now()); err != nil {
+				return PersonRunResult{}, err
+			}
+			return PersonRunResult{}, ErrPersonSweepDeferred
+		}
+		selectedHash, hashErr := personSweepAttemptEnvelopeHash(assembly.CursorEnvelope)
+		if hashErr != nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, hashErr, resolvedAt)
+		}
+		if selectedHash != attemptEnvelopeHash {
+			if err := w.Store.RebindPersonSweepAttempt(ctx, lease, attemptID, assembly.CursorEnvelope); err != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, err, resolvedAt)
+			}
+			attemptEnvelopeHash = selectedHash
+		}
+		assembly.EvidenceStatusChanges = nil
 	}
 	if len(assembly.CursorEnvelope) == 0 {
 		if !plan.run {
@@ -674,34 +848,87 @@ func (w *Worker) runPerson(
 			// extraction caught up, finish the idle claim without an inference
 			// attempt. The store preserves work that arrived during assembly.
 			if err := w.Store.CompleteIdlePersonSweep(ctx, lease, ProgramFingerprint(), catalog.Fingerprint); err != nil {
-				return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+				return PersonRunResult{}, failAttemptOrClaim(err)
 			}
 			return PersonRunResult{PersonID: lease.PersonID}, nil
 		}
-		return PersonRunResult{}, w.failClaim(ctx, lease, "",
+		return PersonRunResult{}, failAttemptOrClaim(
 			errors.New("person sweep assembly has no cursor progress"))
 	}
 	sourceCursors, sourceHash, err := PersonFactSourceCursors(assembly.CursorEnvelope)
 	if err != nil {
-		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+		return PersonRunResult{}, failAttemptOrClaim(err)
 	}
 	advances, err := cursorAdvances(assembly.CursorEnvelope, cursors, sourceHash)
 	if err != nil {
-		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+		return PersonRunResult{}, failAttemptOrClaim(err)
 	}
 	attemptHash, err := personSweepAttemptEnvelopeHash(assembly.CursorEnvelope)
 	if err != nil {
-		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+		return PersonRunResult{}, failAttemptOrClaim(err)
 	}
-	attemptID := w.NewID()
-	if attemptID == "" {
-		return PersonRunResult{}, w.failClaim(ctx, lease, "",
-			errors.New("person sweep worker generated an empty attempt ID"))
+	if attemptStarted {
+		if attemptEnvelopeHash != attemptHash {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil,
+				errors.New("person sweep status phase changed its attempt cursor envelope"), resolvedAt)
+		}
+	} else {
+		attemptID = w.NewID()
+		if attemptID == "" {
+			return PersonRunResult{}, w.failClaim(ctx, lease, "",
+				errors.New("person sweep worker generated an empty attempt ID"))
+		}
+		if err := w.Store.StartPersonSweepAttempt(ctx, StartAttempt{ID: attemptID, RunID: runID,
+			PersonID: lease.PersonID, LeaseFence: lease.Fence, Mode: mode,
+			CursorEnvelope: assembly.CursorEnvelope, EnvelopeHash: attemptHash, StartedAt: resolvedAt}); err != nil {
+			return PersonRunResult{}, w.failClaim(ctx, lease, attemptID, err)
+		}
 	}
-	if err := w.Store.StartPersonSweepAttempt(ctx, StartAttempt{ID: attemptID, RunID: runID,
-		PersonID: lease.PersonID, LeaseFence: lease.Fence, Mode: mode,
-		CursorEnvelope: assembly.CursorEnvelope, EnvelopeHash: attemptHash, StartedAt: resolvedAt}); err != nil {
-		return PersonRunResult{}, w.failClaim(ctx, lease, attemptID, err)
+
+	// Extraction packets must see retractions in the profile before preparation,
+	// even when the evidence backs no current value. Brief packets read archive
+	// messages, so work without extraction keeps its single completion phase.
+	if !statusOnlyBeforePacket && len(assembly.Batches) > 0 &&
+		hasEvidenceRetraction(assembly.EvidenceStatusChanges) {
+		renewed, renewErr := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
+		if renewErr != nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, renewErr, resolvedAt)
+		}
+		if renewed == nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, ErrLeaseLost, resolvedAt)
+		}
+		lease, err = w.Sink.ApplyPersonSweepStatusOnly(ctx, StatusOnlyApplyRequest{
+			AttemptID: attemptID, Lease: *renewed, CompletedAt: w.now(), Generation: personfacts.GenerationInput{
+				PersonID: lease.PersonID, SourceCursors: sourceCursors, ProgramID: ExtractionProgramID,
+				ProgramVersion: ExtractionProgramVersion, ProgramFingerprint: ProgramFingerprint(),
+				CatalogFingerprint: catalog.Fingerprint, Provider: StatusOnlyProvider,
+				ProviderVersion: StatusOnlyProviderVersion, Model: StatusOnlyModel,
+				ModelVersion: StatusOnlyModelVersion, ResolvedAt: resolvedAt,
+				Policy: personfacts.PolicyContext{AllowSensitive: profile.AllowSensitive,
+					ProviderPolicyFingerprint: profile.Fingerprint},
+				EvidenceStatusChanges: assembly.EvidenceStatusChanges,
+			},
+		})
+		if err != nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, *renewed, attemptID, nil, nil, err, resolvedAt)
+		}
+		rebuilt, buildErr := buildAssembly(selectedCursors, progressLimit, forcedBackstop)
+		if buildErr != nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, buildErr, resolvedAt)
+		}
+		// A new journal range needs its own status phase. Leave it queued for
+		// retry rather than sending a packet over unapplied retractions.
+		if !reflect.DeepEqual(rebuilt.CursorEnvelope, assembly.CursorEnvelope) ||
+			!reflect.DeepEqual(rebuilt.EvidenceStatusChanges, assembly.EvidenceStatusChanges) {
+			cleanupCtx, cancel := personSweepCleanupContext(ctx)
+			defer cancel()
+			if err := w.Store.DeferPersonSweepAttempt(cleanupCtx, lease, attemptID, w.now()); err != nil {
+				return PersonRunResult{}, err
+			}
+			return PersonRunResult{}, ErrPersonSweepDeferred
+		}
+		assembly = rebuilt
+		assembly.EvidenceStatusChanges = nil
 	}
 
 	reservations := make([]BudgetReservation, 0, len(assembly.Batches)+2)
@@ -940,9 +1167,18 @@ func (w *Worker) runPerson(
 			accounting.completedUsage, applyErr, resolvedAt)
 	}
 	return PersonRunResult{PersonID: lease.PersonID, AttemptID: attemptID,
-		ProjectedWrites: apply.Mutations.ProjectionRowsWritten, BriefVersion: apply.Mutations.BriefVersion,
+		ProjectedWrites: apply.AttemptProjectedWrites, BriefVersion: apply.Mutations.BriefVersion,
 		BriefFailureClass: briefFailure,
 		CursorAdvances:    advances, Usage: accounting.totalUsage}, nil
+}
+
+func hasEvidenceRetraction(changes []personfacts.EvidenceStatusChange) bool {
+	for _, change := range changes {
+		if !change.Supported {
+			return true
+		}
+	}
+	return false
 }
 
 type leaseHeartbeatResult struct {
