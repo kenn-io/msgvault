@@ -3,12 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
-<<<<<<< HEAD
-import { embeddingStatus, lane, lanes, visualStatus } from '../../../test/operations';
-=======
 import { OperationsController } from '../../operations/controller.svelte';
-import { lane, lanes } from '../../../test/operations';
->>>>>>> 883570417 (fix(web): keep Overview and the status dot in sync)
+import { embeddingStatus, lane, lanes, visualStatus } from '../../../test/operations';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 type Setting = Record<string, unknown>;
@@ -175,20 +171,12 @@ it('shows the restart cue before saving only while a restart-required draft is p
 });
 
 it('warns before leaving with drafts, keeps them on Stay, and discards before continuing', async () => {
-<<<<<<< HEAD
-  const { client } = fixture();
+  const { client, operationsController, onStatusChange } = fixture();
   let hold: ((leave: () => void, stay?: () => void) => boolean) | undefined;
   let cancel: (() => void) | undefined;
   const { unmount, rerender } = render(SettingsWorkspace, {
-    props: { client, category: 'server' },
-    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => { hold = next; cancel = nextCancel; }]])
-=======
-  const { client, operationsController, onStatusChange } = fixture();
-  let hold: ((leave: () => void) => boolean) | undefined;
-  const { unmount } = render(SettingsWorkspace, {
     props: { client, operationsController, onStatusChange, category: 'server' },
-    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
->>>>>>> 883570417 (fix(web): keep Overview and the status dot in sync)
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => { hold = next; cancel = nextCancel; }]])
   });
   const field = await screen.findByLabelText('Stop when idle after');
   await fireEvent.input(field, { target: { value: '15m' } });
@@ -241,8 +229,6 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
   expect(hold).toBeUndefined();
 });
 
-<<<<<<< HEAD
-=======
 it('cancels a pending leave when the category changes, keeping drafts', async () => {
   const { client, operationsController, onStatusChange } = fixture();
   let hold: ((leave: () => void, stay?: () => void) => boolean) | undefined;
@@ -276,7 +262,6 @@ it('cancels a pending leave when the category changes, keeping drafts', async ()
   expect(leave).not.toHaveBeenCalled();
 });
 
->>>>>>> 883570417 (fix(web): keep Overview and the status dot in sync)
 it('blocks reload only while Settings has unsaved drafts', async () => {
   const { client, operationsController, onStatusChange } = fixture();
   render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
@@ -568,31 +553,6 @@ it('keeps feature rows during refresh and recovers from a later status failure',
   await screen.findByText('On');
 });
 
-<<<<<<< HEAD
-it('preserves stored search defaults and offers only approved choices', async () => {
-  for (const [stored, label, semanticState] of [
-    ['full_text', 'Exact words', undefined],
-    ['semantic', 'Semantic', true]
-  ] as const) {
-    const doc = settingsDoc();
-    doc.settings.find(item => item.key === 'web.default_search_mode')!.value = typed(stored);
-    const { client } = fixture(doc);
-    const { unmount } = render(SettingsWorkspace, { client, category: 'advanced' });
-    const trigger = await screen.findByRole('combobox', { name: /^Search opens in:/ });
-    expect(trigger.textContent).toContain(label);
-    expect(screen.queryByText('1 unsaved change')).toBeNull();
-    await fireEvent.click(trigger);
-    expect((screen.queryByRole('option', { name: 'Semantic' }) as HTMLButtonElement | null)?.disabled).toBe(semanticState);
-    unmount();
-  }
-});
-
-it('saves the selected search default and reports the appearance changes', async () => {
-  const { client, seen } = fixture();
-  const onAppearanceSaved = vi.fn();
-  render(SettingsWorkspace, { client, category: 'advanced', onAppearanceSaved });
-  await chooseSelectOption(await screen.findByRole('combobox', { name: /^Search opens in:/ }), 'Best match');
-=======
 it.each(['full_text', 'semantic'])('offers approved search defaults and preserves stored %s until a new choice', async stored => {
   const doc = settingsDoc();
   doc.settings.find(item => item.key === 'web.default_search_mode')!.value = typed(stored);
@@ -610,7 +570,6 @@ it.each(['full_text', 'semantic'])('offers approved search defaults and preserve
   }
   expect(semantic).toBeNull();
   await fireEvent.click(screen.getByRole('option', { name: 'Best match' }));
->>>>>>> 883570417 (fix(web): keep Overview and the status dot in sync)
   await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());

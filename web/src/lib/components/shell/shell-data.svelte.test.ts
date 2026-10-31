@@ -62,8 +62,8 @@ describe('ShellData', () => {
     });
 
     it('hides a deleted view at once and deletes it for real on commit', async () => {
-      const views = [view(1, 'Budget'), view(2, 'Invoices')];
-      const { data, requests } = setup({ views });
+      const answers = { views: [view(1, 'Budget'), view(2, 'Invoices')] };
+      const { data, requests } = setup(answers);
       await data.refresh();
       const [budget] = data.views;
 
@@ -77,23 +77,13 @@ describe('ShellData', () => {
       expect(removal.headers.get('If-Match')).toBe('"saved-view-1-r1"');
       expect(removal.keepalive).toBe(true);
       expect(data.views.map(({ name }) => name)).toEqual(['Invoices']);
+      answers.views = [view(1, 'Receipts'), view(2, 'Invoices')];
+      await data.refresh();
+      expect(data.views.map(view => view.name)).toEqual(['Receipts', 'Invoices']);
     });
 
 
   });
-});
-
-
-it('shows a new view whose id reuses a completed deletion', async () => {
-  const answers = { views: [view(1, 'Budget'), view(2, 'Invoices')] };
-  const { data } = setup(answers);
-  await data.refresh();
-  const saved = data.views[1]!;
-  await data.deleteView(saved);
-  await data.expireDelete();
-  answers.views = [view(1, 'Budget'), view(2, 'Receipts')];
-  await data.refresh();
-  expect(data.views.map(view => view.name)).toEqual(['Budget', 'Receipts']);
 });
 
 
