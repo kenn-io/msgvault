@@ -124,3 +124,28 @@ it('resetting People filters commits one complete navigation', async () => {
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
+
+it('opening a saved person reads its profile once and leaves Directory sections lazy', async () => {
+  const paths: string[] = [];
+  const profile = { id: 91, display_name: 'Saved Example', participant_ids: [], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    paths.push(path);
+    if (path === '/api/v1/people/directory') return Response.json({ people: [profile] });
+    if (path === '/api/v1/people/91') return Response.json(profile);
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
+  const directory = new DirectoryController(client);
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: patch => state.commitNavigation(patch), onReplaceNavigation: patch => state.replaceCommittedNavigation(patch), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByText('Saved Example'));
+    await screen.findByRole('heading', { name: 'Saved Example' });
+    await waitFor(() => expect(directory.detailLoading).toBe(false));
+    expect.soft(paths.filter(path => path === '/api/v1/people/91')).toHaveLength(1);
+    expect(paths.filter(path => path.startsWith('/api/v1/people/91/'))).toEqual([]);
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});

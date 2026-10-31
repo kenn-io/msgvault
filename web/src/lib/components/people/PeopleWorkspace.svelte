@@ -54,7 +54,7 @@
   });
   $effect(() => {
     if (!directoryMode) return;
-    directory.applyURLState({ ...urlState, directoryQuery: query, directorySort: sort === 'recent' ? 'last_contact_desc' : 'name' });
+    directory.applyURLState({ ...urlState, directoryPersonID: null, directoryQuery: query, directorySort: sort === 'recent' ? 'last_contact_desc' : 'name' });
   });
   $effect(() => { void [facet, query, sort, directoryMode, predicateKey, showAll, urlState.directoryContactState, urlState.directoryCategory, urlState.directoryOrganization, urlState.directoryPrimaryChannel, urlState.directoryLastContactAfter, urlState.directoryLastContactBefore]; untrack(() => selection.clear()); });
   onMount(() => {
