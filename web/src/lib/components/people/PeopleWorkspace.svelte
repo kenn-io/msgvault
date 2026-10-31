@@ -81,7 +81,7 @@
   const activeKey = $derived(soloPerson !== null ? `person:${soloPerson}` : page.target);
   const hasPerson = $derived(page.target !== null || soloPerson !== null);
   $effect(() => {
-    if (narrow && hasPerson) void tick().then(() => root?.querySelector<HTMLElement>('.body > .solo-page')?.focus());
+    if (narrow && activeKey) void tick().then(() => root?.querySelector<HTMLElement>('.body > .solo-page')?.focus());
   });
   let openGeneration = 0;
   const navigationKey = $derived(JSON.stringify(urlState));
