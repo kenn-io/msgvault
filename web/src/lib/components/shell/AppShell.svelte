@@ -1084,11 +1084,8 @@
     keyboardHelpScopeCleanup?.();
     keyboardHelpScopeCleanup = keyboardHelpOpen ? appShortcuts.pushScope('everything-keyboard-help') : undefined;
   });
-  // Hydrates the Relationships hub's detail pane from a URL-carried target
-  // (initial load, or Back/Forward restoring a different one). The hub
-  // itself never opens a target on its own — RelationshipsWorkspace's own
-  // tests drive controller.openTarget explicitly — so AppShell, as the
-  // controller's owner, is the one place that reacts to the URL field.
+  // AppShell owns the People controller and opens the URL target on initial
+  // load and Back/Forward navigation.
   // Tracked (not untracked) so a predicate change alone — e.g. filters set
   // in Everything/Files that carry over when the URL-carried target stays
   // the same — re-opens the target too, mirroring how Everything's own
@@ -1283,6 +1280,7 @@
           urlState={exploreState.current}
           onNavigate={commitNavigation}
           onReplaceNavigation={replaceCommittedNavigation}
+          onDraftNavigation={replaceCommittedDraft}
           {client}
           controller={relationshipsController}
           target={exploreState.current.relationshipTarget}

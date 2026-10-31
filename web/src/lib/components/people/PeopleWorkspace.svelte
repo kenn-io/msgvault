@@ -17,9 +17,9 @@
   import type { ComponentProps } from 'svelte';
 
   type PageProps = Omit<ComponentProps<typeof PersonPage>, 'onBack'>;
-  let { directory, urlState, onNavigate, onReplaceNavigation, onShowAllChange, ...page }:
+  let { directory, urlState, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
     PageProps & { directory: DirectoryController; urlState: ExploreURLState; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
-      onNavigate: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
+      onNavigate: (patch: Partial<ExploreURLState>) => void; onDraftNavigation: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
   const query = $derived(urlState.identityQuery ?? '');
   const controller = $derived(page.controller);
   const facet = $derived(urlState.relationshipFacet);
@@ -130,7 +130,7 @@
     void tick().then(() => root?.querySelector<HTMLElement>('[aria-label="People results"]')?.focus());
   }
   function close(): void { openGeneration += 1; opening = false; onNavigate({ directoryPersonID: null, relationshipTarget: null, relationshipFiles: false }); }
-  function reset(): void { onNavigate({ relationshipSaved: false }); onShowAllChange(false); onNavigate({ directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
+  function reset(): void { onNavigate({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
   const filterSections = $derived<FilterDropdownSection[]>([{ items: [
     { id: 'saved', label: 'Saved', active: saved, closeOnSelect: false, onSelect: () => onNavigate({ relationshipSaved: !saved }) },
     ...(rankedList ? [{ id: 'one-way', label: 'Include one-way senders', active: showAll, closeOnSelect: false, onSelect: () => onShowAllChange(!showAll) }] : []),
@@ -185,8 +185,8 @@
     {#if filterOpen && facet === 'people'}
       <div class="filters" role="group" aria-label="Profile filters">
         <SelectDropdown title="Contact state" value={urlState.directoryContactState} options={[{ value: '', label: 'Any status' }, { value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }]} onchange={(value) => onNavigate({ directoryContactState: value })} />
-        <TextInput ariaLabel="Category filter" placeholder="Category" value={urlState.directoryCategory} oninput={(value) => onNavigate({ directoryCategory: value })} />
-        <TextInput ariaLabel="Organization filter" placeholder="Organization" value={urlState.directoryOrganization} oninput={(value) => onNavigate({ directoryOrganization: value })} />
+        <TextInput ariaLabel="Category filter" placeholder="Category" value={urlState.directoryCategory} oninput={(value) => onDraftNavigation({ directoryCategory: value })} />
+        <TextInput ariaLabel="Organization filter" placeholder="Organization" value={urlState.directoryOrganization} oninput={(value) => onDraftNavigation({ directoryOrganization: value })} />
         <SelectDropdown title="Primary channel" value={urlState.directoryPrimaryChannel} options={[{ value: '', label: 'All channels' }, ...PRIMARY_CHANNELS.map((value) => ({ value, label: channelLabel(value) }))]} onchange={(value) => onNavigate({ directoryPrimaryChannel: value })} />
         <label>Last contacted after
           <!-- kit-ui-check-ignore: retain the existing Directory optional one-sided date control. -->

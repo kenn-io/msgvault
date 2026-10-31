@@ -401,7 +401,7 @@ func (e *DuckDBEngine) searchPeople(
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(request.Query) != "" && request.Explore.Search.Mode == SearchNone {
+	if strings.TrimSpace(request.Query) != "" && request.Explore.Search.Mode == SearchNone && request.Sort.Field == "" {
 		order = "match_rank ASC, current_temperature DESC, last_at DESC, person_id ASC"
 	}
 	release, err := e.acquireQuerySlot(ctx)

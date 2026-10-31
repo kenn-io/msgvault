@@ -32,7 +32,7 @@ it('keeps the batch locked while a profile merge reconciles, then finishes the q
     '/api/v1/people/7/merge': () => Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: profile(7, 5, [1, 2]), merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } })
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   onTestFinished(() => { controller.destroy(); directory.destroy(); state.destroy(); });
   for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
   await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
@@ -57,7 +57,7 @@ it('clears a stale cache warning when the final link refreshes the cache', async
     '/api/v1/identity/links': () => { links.push(1); return Response.json({ identity_revision: 5, cache_state: links.length === 1 ? 'stale' : 'ready' }); },
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
@@ -77,7 +77,7 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
   await controller.openTarget('cluster:1', {}, false);
   const onNavigate = vi.fn();
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     const trigger = control === 'sort' ? await screen.findByRole('combobox', { name: 'Sort: Closest' }) : within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' });
     await fireEvent.click(trigger);
@@ -97,7 +97,7 @@ it.each(['fails', 'is cancelled'])('reports completed links when the next pair %
     '/api/v1/identity/links': () => ++calls === 1 ? Response.json({ identity_revision: 5, cache_state: 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 }),
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
@@ -107,5 +107,33 @@ it.each(['fails', 'is cancelled'])('reports completed links when the next pair %
     } else await screen.findByText(/Synthetic link failed/);
     expect(screen.getByRole('status').textContent).toContain('1 of 2');
     expect(calls).toBe(2);
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each(['Category', 'Organization'])('typing the %s profile filter replaces the current history entry', async (field) => {
+  const client = clientFor({});
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const onNavigate = vi.fn(); const onDraftNavigation = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: { ...state.current, directoryContactState: 'active' }, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation, onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: /Filter/ }));
+    await fireEvent.click(await screen.findByText('Profile filters'));
+    const input = await screen.findByLabelText(`${field} filter`);
+    for (const value of ['a', 'ac', 'acme']) await fireEvent.input(input, { target: { value } });
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(onDraftNavigation).toHaveBeenLastCalledWith({ [field === 'Category' ? 'directoryCategory' : 'directoryOrganization']: 'acme' });
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('resetting People filters commits one complete navigation', async () => {
+  const client = clientFor({});
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const onNavigate = vi.fn(); const onShowAllChange = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: { ...state.current, relationshipSaved: true, relationshipShowAll: true, directoryCategory: 'acme' }, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: /Filter/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
+    expect(onNavigate.mock.calls.length + onShowAllChange.mock.calls.length).toBe(1);
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

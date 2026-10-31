@@ -832,7 +832,7 @@ func TestGetDomainSummaryParticipantFilterExpandsClusters(t *testing.T) {
 		"filtering by the alias ID must agree with the canonical ID")
 }
 
-func TestSearchPeopleUsesTemperatureBeforeRecencyForEqualTextMatches(t *testing.T) {
+func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
@@ -869,19 +869,26 @@ func TestSearchPeopleUsesTemperatureBeforeRecencyForEqualTextMatches(t *testing.
 		{name: "logical filter", context: Context{MessageTypes: []string{"email"}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
-				Explore: ExploreRequest{Context: test.context}, Query: "alex",
-				Sort: SortSpec{Field: "display_label", Direction: "asc"},
-				Page: PageSpec{Limit: 25},
-			})
-			require.NoError(err)
-			require.Len(response.Rows, 2)
-			assert.Equal(hotID, response.Rows[0].ID,
-				"temperature breaks equal-quality matches before newer activity")
-			assert.Equal(100, response.Rows[0].CurrentRelationshipTemperature)
-			assert.Equal(coldID, response.Rows[1].ID)
+			for _, order := range []struct {
+				name  string
+				sort  SortSpec
+				first int64
+			}{
+				{name: "default relevance", first: hotID},
+				{name: "name", sort: SortSpec{Field: "display_label", Direction: "asc"}, first: coldID},
+				{name: "most recent", sort: SortSpec{Field: "latest_at", Direction: "desc"}, first: coldID},
+			} {
+				t.Run(order.name, func(t *testing.T) {
+					response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+						Explore: ExploreRequest{Context: test.context}, Query: "alex",
+						Sort: order.sort, Page: PageSpec{Limit: 1},
+					})
+					require.NoError(t, err)
+					require.Len(t, response.Rows, 1)
+					assert.Equal(t, int64(2), response.TotalCount)
+					assert.Equal(t, order.first, response.Rows[0].ID, "sort applies before the first page is selected")
+				})
+			}
 		})
 	}
 }
