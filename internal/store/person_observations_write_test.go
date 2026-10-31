@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -333,6 +334,20 @@ func TestApplyObservationBatchPreparedIntegrityAndIsolation(t *testing.T) {
 	batch.Items[0].Proposal.Content = "[PERSON] altered"
 	_, err = f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "extractor")
 	require.ErrorContains(t, err, "integrity")
+}
+
+func TestApplyObservationBatchUsesSingleConnection(t *testing.T) {
+	f, in, generation := observationBatchFixture(t, "I run")
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+	require.NoError(t, err)
+	f.store.DB().SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	result, err := f.store.ApplyPersonObservationBatch(ctx, batch, generation, "extractor")
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, "created", result.Items[0].Outcome)
 }
 
 func TestApplyObservationBatchRejectsSupportChangedAfterPreparation(t *testing.T) {

@@ -377,6 +377,10 @@ func resolvePersonSweepScope(ctx context.Context, s *Store, personID int64) (per
 	if err != nil {
 		return personscope.Scope{}, fmt.Errorf("resolve durable person %d: %w", personID, err)
 	}
+	return personSweepScopeForPerson(person)
+}
+
+func personSweepScopeForPerson(person *Person) (personscope.Scope, error) {
 	if len(person.ParticipantIDs) == 0 {
 		return personscope.Scope{}, errors.New("person has no resolved identities")
 	}
@@ -416,6 +420,36 @@ func (s *Store) hydratePersonSweepMessageSet(
 	ctx context.Context, personID int64, lane peoplesweep.SourceClass, ids []int64,
 	throughSequence int64,
 ) ([]peoplesweep.EvidenceItem, map[int64]bool, error) {
+	resolution, err := resolvePersonSweepScope(ctx, s, personID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.hydratePersonSweepMessageSetWithScope(
+		ctx, s.db, personID, lane, ids, throughSequence, resolution,
+	)
+}
+
+func (s *Store) hydratePersonSweepMessageSetTx(
+	ctx context.Context, tx *loggedTx, personID int64, lane peoplesweep.SourceClass, ids []int64,
+) ([]peoplesweep.EvidenceItem, map[int64]bool, error) {
+	person, err := s.getPersonTx(ctx, tx, personID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve durable person %d: %w", personID, err)
+	}
+	resolution, err := personSweepScopeForPerson(person)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.hydratePersonSweepMessageSetWithScope(
+		ctx, tx, personID, lane, ids, 0, resolution,
+	)
+}
+
+func (s *Store) hydratePersonSweepMessageSetWithScope(
+	ctx context.Context, queryer contextRowsQuerier, personID int64,
+	lane peoplesweep.SourceClass, ids []int64, throughSequence int64,
+	resolution personscope.Scope,
+) ([]peoplesweep.EvidenceItem, map[int64]bool, error) {
 	found := make(map[int64]bool)
 	if len(ids) == 0 {
 		return []peoplesweep.EvidenceItem{}, found, nil
@@ -429,10 +463,6 @@ func (s *Store) hydratePersonSweepMessageSet(
 	}
 	queryIDs := slices.Clone(requestedIDs)
 	slices.Sort(queryIDs)
-	resolution, err := resolvePersonSweepScope(ctx, s, personID)
-	if err != nil {
-		return nil, nil, err
-	}
 	predicate, scopeArgs := personscope.MessagePredicate(resolution, "m", "c")
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(queryIDs)), ",")
 	laneSQL := "m.message_type <> 'meeting_transcript'"
@@ -446,7 +476,7 @@ func (s *Store) hydratePersonSweepMessageSet(
 	}
 	args = append(args, scopeArgs...)
 	args = append(args, boundArgs...)
-	rows, err := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
+	rows, err := queryer.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
 		SELECT m.id, m.source_id, s.source_type, COALESCE(m.source_message_id, ''),
 		       COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(m.snippet, ''),
 		       COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at), m.archived_at
@@ -480,7 +510,7 @@ func (s *Store) hydratePersonSweepMessageSet(
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	provenance, err := s.PersonProvenanceForMessages(ctx, messageIDs, resolution)
+	provenance, err := s.personProvenanceForMessages(ctx, queryer, messageIDs, resolution)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1024,6 +1054,42 @@ func (s *Store) loadCurrentDocumentChunk(ctx context.Context, extractionID, chun
 type PersonSweepEvidenceAligner struct{ Store *Store }
 
 func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts.EvidenceInput) (personfacts.AlignmentResult, error) {
+	return a.align(ctx, input, func(ctx context.Context, input personfacts.EvidenceInput, ref peoplesweep.EvidenceRef) (peoplesweep.EvidenceItem, error) {
+		if ref.SourceLane == peoplesweep.SourceDocumentText {
+			return a.Store.alignDocumentItem(ctx, input.PersonID, ref, input.Excerpt)
+		}
+		items, _, err := a.Store.hydratePersonSweepMessageSet(ctx, input.PersonID, ref.SourceLane, []int64{ref.MessageID}, 0)
+		if err != nil {
+			return peoplesweep.EvidenceItem{}, err
+		}
+		if len(items) != 1 {
+			return peoplesweep.EvidenceItem{}, sql.ErrNoRows
+		}
+		return items[0], nil
+	})
+}
+
+func (a PersonSweepEvidenceAligner) alignTx(ctx context.Context, tx *loggedTx, input personfacts.EvidenceInput) (personfacts.AlignmentResult, error) {
+	return a.align(ctx, input, func(ctx context.Context, input personfacts.EvidenceInput, ref peoplesweep.EvidenceRef) (peoplesweep.EvidenceItem, error) {
+		if ref.SourceLane == peoplesweep.SourceDocumentText {
+			return a.Store.alignDocumentItemTx(ctx, tx, input.PersonID, ref, input.Excerpt)
+		}
+		items, _, err := a.Store.hydratePersonSweepMessageSetTx(ctx, tx, input.PersonID, ref.SourceLane, []int64{ref.MessageID})
+		if err != nil {
+			return peoplesweep.EvidenceItem{}, err
+		}
+		if len(items) != 1 {
+			return peoplesweep.EvidenceItem{}, sql.ErrNoRows
+		}
+		return items[0], nil
+	})
+}
+
+func (a PersonSweepEvidenceAligner) align(
+	ctx context.Context,
+	input personfacts.EvidenceInput,
+	readCurrent func(context.Context, personfacts.EvidenceInput, peoplesweep.EvidenceRef) (peoplesweep.EvidenceItem, error),
+) (personfacts.AlignmentResult, error) {
 	reject := func(reason personfacts.DecisionReason, detail string) personfacts.AlignmentResult {
 		return personfacts.AlignmentResult{Failure: &personfacts.ValidationFailure{Action: personfacts.DecisionIdentityRejected, Reason: reason, Detail: detail}}
 	}
@@ -1040,19 +1106,7 @@ func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts
 	if a.Store == nil {
 		return personfacts.AlignmentResult{}, errors.New("person sweep evidence aligner has no store")
 	}
-	var err error
-	var current peoplesweep.EvidenceItem
-	if ref.SourceLane == peoplesweep.SourceDocumentText {
-		current, err = a.Store.alignDocumentItem(ctx, input.PersonID, ref, input.Excerpt)
-	} else {
-		items, _, loadErr := a.Store.hydratePersonSweepMessageSet(ctx, input.PersonID, ref.SourceLane, []int64{ref.MessageID}, 0)
-		err = loadErr
-		if err == nil && len(items) == 1 {
-			current = items[0]
-		} else if err == nil {
-			err = sql.ErrNoRows
-		}
-	}
+	current, err := readCurrent(ctx, input, ref)
 	if errors.Is(err, sql.ErrNoRows) {
 		return reject(personfacts.ReasonUnalignedEvidence, "person sweep source is unavailable"), nil
 	}
@@ -1077,11 +1131,34 @@ func (s *Store) alignDocumentItem(ctx context.Context, personID int64, ref peopl
 	if err != nil {
 		return peoplesweep.EvidenceItem{}, err
 	}
+	return s.alignDocumentItemWithScope(ctx, s.db, personID, ref, excerpt, resolution)
+}
+
+func (s *Store) alignDocumentItemTx(ctx context.Context, tx *loggedTx, personID int64, ref peoplesweep.EvidenceRef, excerpt string) (peoplesweep.EvidenceItem, error) {
+	person, err := s.getPersonTx(ctx, tx, personID)
+	if err != nil {
+		return peoplesweep.EvidenceItem{}, fmt.Errorf("resolve durable person %d: %w", personID, err)
+	}
+	resolution, err := personSweepScopeForPerson(person)
+	if err != nil {
+		return peoplesweep.EvidenceItem{}, err
+	}
+	return s.alignDocumentItemWithScope(ctx, tx, personID, ref, excerpt, resolution)
+}
+
+func (s *Store) alignDocumentItemWithScope(
+	ctx context.Context,
+	queryer contextRowsQuerier,
+	personID int64,
+	ref peoplesweep.EvidenceRef,
+	excerpt string,
+	resolution personscope.Scope,
+) (peoplesweep.EvidenceItem, error) {
 	predicate, args := personscope.MessagePredicate(resolution, "m", "c")
 	args = append([]any{ref.AttachmentID, ref.MessageID, ref.SourceID, ref.OccurrenceKey, ref.ChunkKey}, args...)
 	var text, checksum, extractionID, sourceMessageID, sourceType string
 	var event, recorded requiredTimestamp
-	err = s.db.QueryRowContext(ctx, s.Rebind(fmt.Sprintf(`
+	rows, err := queryer.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
 		SELECT dc.text,dc.checksum,h.extraction_id,COALESCE(m.source_message_id,''),s.source_type,
 		       COALESCE(m.sent_at,m.received_at,m.internal_date,h.switched_at),h.switched_at
 		FROM document_chunks dc
@@ -1095,14 +1172,29 @@ func (s *Store) alignDocumentItem(ctx context.Context, personID int64, ref peopl
 		JOIN conversations c ON c.id=m.conversation_id
 		CROSS JOIN document_index_state ds
 		WHERE a.id=? AND m.id=? AND m.source_id=? AND o.occurrence_key=? AND dc.chunk_key=?
-		  AND %s AND (%s)`, documentSearchValidityForConsent("consent"), predicate)), args...).Scan(&text, &checksum, &extractionID, &sourceMessageID, &sourceType, &event, &recorded)
+		  AND %s AND (%s)`, documentSearchValidityForConsent("consent"), predicate)), args...)
 	if err != nil {
+		return peoplesweep.EvidenceItem{}, err
+	}
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return peoplesweep.EvidenceItem{}, err
+		}
+		_ = rows.Close()
+		return peoplesweep.EvidenceItem{}, sql.ErrNoRows
+	}
+	if err := rows.Scan(&text, &checksum, &extractionID, &sourceMessageID, &sourceType, &event, &recorded); err != nil {
+		_ = rows.Close()
+		return peoplesweep.EvidenceItem{}, err
+	}
+	if err := rows.Close(); err != nil {
 		return peoplesweep.EvidenceItem{}, err
 	}
 	if !strings.Contains(text, excerpt) || ref.SpanEnd > utf8.RuneCountInString(excerpt) {
 		return peoplesweep.EvidenceItem{}, sql.ErrNoRows
 	}
-	provMap, err := s.PersonProvenanceForMessages(ctx, []int64{ref.MessageID}, resolution)
+	provMap, err := s.personProvenanceForMessages(ctx, queryer, []int64{ref.MessageID}, resolution)
 	if err != nil {
 		return peoplesweep.EvidenceItem{}, err
 	}

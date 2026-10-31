@@ -31,8 +31,9 @@ func (s *Store) lockPersonMutationTx(ctx context.Context, tx *loggedTx, personID
 	return s.lockProfileIdentityKeyTxContext(ctx, tx, "person-observations", personID)
 }
 
-func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedTx, batch PreparedObservationBatch) error {
+func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedTx, batch PreparedObservationBatch) ([]int64, error) {
 	messageIDs := make([]int64, 0)
+	documentRefs := make([]peoplesweep.EvidenceRef, 0)
 	for _, item := range batch.Items {
 		if item.Failure != nil {
 			continue
@@ -43,6 +44,50 @@ func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedT
 				continue // Invalid evidence is dropped when the proposal is validated.
 			}
 			messageIDs = append(messageIDs, ref.MessageID)
+			if ref.SourceLane == peoplesweep.SourceDocumentText {
+				documentRefs = append(documentRefs, ref)
+			}
+		}
+	}
+	premiseIDs, premiseMessageIDs, premiseDocumentRefs, err := s.observationBatchPremiseSourcesTx(ctx, tx, batch)
+	if err != nil {
+		return nil, err
+	}
+	messageIDs = append(messageIDs, premiseMessageIDs...)
+	documentRefs = append(documentRefs, premiseDocumentRefs...)
+	attachmentIDs := make([]int64, 0, len(documentRefs))
+	for _, ref := range documentRefs {
+		attachmentIDs = append(attachmentIDs, ref.AttachmentID)
+	}
+	slices.Sort(attachmentIDs)
+	attachmentIDs = slices.Compact(attachmentIDs)
+	for _, attachmentID := range attachmentIDs {
+		if err := s.lockDocumentOccurrenceAttachmentTx(ctx, tx, attachmentID); err != nil {
+			return nil, err
+		}
+	}
+	documentHashes := make([]string, 0, len(documentRefs))
+	for _, ref := range documentRefs {
+		var canonicalBlobHash string
+		err := tx.QueryRowContext(ctx, `SELECT canonical_blob_hash FROM document_occurrences
+			WHERE attachment_id=? AND message_id=? AND source_id=? AND occurrence_key=?`,
+			ref.AttachmentID, ref.MessageID, ref.SourceID, ref.OccurrenceKey,
+		).Scan(&canonicalBlobHash)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read observation document support hash: %w", err)
+		}
+		if canonicalBlobHash != "" {
+			documentHashes = append(documentHashes, canonicalBlobHash)
+		}
+	}
+	slices.Sort(documentHashes)
+	documentHashes = slices.Compact(documentHashes)
+	for _, canonicalBlobHash := range documentHashes {
+		if err := s.lockDocumentPublicationHashTx(ctx, tx, canonicalBlobHash); err != nil {
+			return nil, err
 		}
 	}
 	slices.Sort(messageIDs)
@@ -50,13 +95,140 @@ func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedT
 	for _, messageID := range messageIDs {
 		var lockedID int64
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE id=?`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("lock observation support message %d: %w", messageID, err)
+			return nil, fmt.Errorf("lock observation support message %d: %w", messageID, err)
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT message_id FROM message_bodies WHERE message_id=?`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("lock observation support body %d: %w", messageID, err)
+			return nil, fmt.Errorf("lock observation support body %d: %w", messageID, err)
 		}
 	}
-	return nil
+	return premiseIDs, nil
+}
+
+func (s *Store) observationBatchPremiseSourcesTx(
+	ctx context.Context,
+	tx *loggedTx,
+	batch PreparedObservationBatch,
+) ([]int64, []int64, []peoplesweep.EvidenceRef, error) {
+	roots := make([]int64, 0)
+	for _, item := range batch.Items {
+		if item.Failure != nil {
+			continue
+		}
+		for _, premise := range item.Proposal.Premises {
+			roots = append(roots, premise.ID)
+		}
+		reinforcementTargetID, err := s.observationBatchReinforcementTargetIDTx(
+			ctx, tx, batch.PersonID, item)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if reinforcementTargetID != 0 {
+			roots = append(roots, reinforcementTargetID)
+		}
+	}
+	slices.Sort(roots)
+	roots = slices.Compact(roots)
+	observationIDs := make([]int64, 0)
+	messageIDs := make([]int64, 0)
+	documentRefs := make([]peoplesweep.EvidenceRef, 0)
+	for start := 0; start < len(roots); start += 400 {
+		end := min(start+400, len(roots))
+		rootRows := make([]string, 0, end-start)
+		args := make([]any, 0, end-start+1)
+		for _, rootID := range roots[start:end] {
+			rootRows = append(rootRows, "(CAST(? AS BIGINT))")
+			args = append(args, rootID)
+		}
+		args = append(args, batch.PersonID, batch.PersonID)
+		rows, err := tx.QueryContext(ctx, s.Rebind(`WITH RECURSIVE roots(id) AS (
+			VALUES `+strings.Join(rootRows, ",")+`
+		), premise_ancestors(id) AS (
+			SELECT observation.id FROM roots
+			JOIN person_observations observation ON observation.id=roots.id
+			WHERE observation.person_id=?
+			UNION
+			SELECT edge.premise_id
+			FROM person_observation_premises edge
+			JOIN premise_ancestors ancestor ON edge.derived_id=ancestor.id
+			JOIN person_observations premise ON premise.id=edge.premise_id AND premise.person_id=?
+		)
+		SELECT DISTINCT ancestor.id, citation.message_id, fact.source_ref
+		FROM premise_ancestors ancestor
+		LEFT JOIN person_observation_evidence citation ON citation.observation_id=ancestor.id
+		LEFT JOIN person_fact_evidence fact ON fact.id=citation.evidence_id
+		ORDER BY ancestor.id, citation.message_id, fact.source_ref`), args...)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("read observation premise sources: %w", err)
+		}
+		for rows.Next() {
+			var observationID int64
+			var messageID sql.NullInt64
+			var sourceRef sql.NullString
+			if err := rows.Scan(&observationID, &messageID, &sourceRef); err != nil {
+				_ = rows.Close()
+				return nil, nil, nil, fmt.Errorf("scan observation premise source: %w", err)
+			}
+			observationIDs = append(observationIDs, observationID)
+			if messageID.Valid {
+				messageIDs = append(messageIDs, messageID.Int64)
+			}
+			if sourceRef.Valid {
+				ref, err := peoplesweep.DecodePersonSweepEvidenceRef(sourceRef.String)
+				if err == nil && ref.SourceLane == peoplesweep.SourceDocumentText {
+					documentRefs = append(documentRefs, ref)
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, nil, nil, fmt.Errorf("read observation premise sources: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, nil, nil, fmt.Errorf("close observation premise sources: %w", err)
+		}
+	}
+	slices.Sort(observationIDs)
+	observationIDs = slices.Compact(observationIDs)
+	slices.Sort(messageIDs)
+	messageIDs = slices.Compact(messageIDs)
+	return observationIDs, messageIDs, documentRefs, nil
+}
+
+func (s *Store) observationBatchReinforcementTargetIDTx(
+	ctx context.Context, tx *loggedTx, personID int64, item PreparedObservation,
+) (int64, error) {
+	candidateID := int64(0)
+	autoLookup := item.Proposal.ReinforcesID == nil
+	if item.Proposal.ReinforcesID != nil {
+		candidate, err := s.loadObservationTx(ctx, tx, *item.Proposal.ReinforcesID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, nil
+			}
+			return 0, err
+		}
+		if candidate.PersonID != personID || candidate.Level != item.Proposal.Level ||
+			candidate.SubjectRef != item.Proposal.SubjectRef || candidate.Status == personobs.StatusRejected {
+			return 0, nil
+		}
+		if candidate.Status == personobs.StatusSuperseded {
+			autoLookup = true
+		} else {
+			candidateID = candidate.ID
+		}
+	}
+	if candidateID == 0 && autoLookup {
+		matches, err := s.queryObservationRows(ctx, tx,
+			`person_id=? AND content_key=? AND status IN ('active','unsupported')`,
+			`id LIMIT 1`, personID, item.ContentKey)
+		if err != nil {
+			return 0, err
+		}
+		if len(matches) > 0 {
+			candidateID = matches[0].ID
+		}
+	}
+	return candidateID, nil
 }
 
 func (s *Store) nextObservationSequenceTx(ctx context.Context, tx *loggedTx, personID int64) (int64, error) {
@@ -197,11 +369,23 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 	}
 	// Source rows must be locked before the person row. That makes the
 	// apply-time alignment check stable against message edits and reassignment.
-	if err := s.lockObservationSupportSourcesTx(ctx, tx, b); err != nil {
+	premiseIDs, err := s.lockObservationSupportSourcesTx(ctx, tx, b)
+	if err != nil {
 		return result, err
 	}
 	if err := s.lockPersonMutationTx(ctx, tx, b.PersonID); err != nil {
 		return result, err
+	}
+	for _, premiseID := range premiseIDs {
+		_, changed, err := s.refreshObservationCitationExclusionsTx(ctx, tx, premiseID)
+		if err != nil {
+			return result, err
+		}
+		if changed {
+			if err := s.notifyObservationSupportChangedTx(ctx, tx, b.PersonID, []int64{premiseID}, "citation-exclusions-changed"); err != nil {
+				return result, err
+			}
+		}
 	}
 	for index, item := range b.Items {
 		out := personobs.BatchItemResult{Index: index, Failure: item.Failure}
@@ -211,7 +395,7 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			continue
 		}
 		for _, support := range item.Proposal.Support {
-			alignment, err := (PersonSweepEvidenceAligner{Store: s}).Align(ctx, support.Evidence)
+			alignment, err := (PersonSweepEvidenceAligner{Store: s}).alignTx(ctx, tx, support.Evidence)
 			if err != nil {
 				return result, fmt.Errorf("revalidate observation support: %w", err)
 			}
@@ -234,21 +418,6 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 					break
 				}
 				return result, err
-			}
-			if premise.PersonID == b.PersonID {
-				_, changed, err := s.refreshObservationCitationExclusionsTx(ctx, tx, premise.ID)
-				if err != nil {
-					return result, err
-				}
-				if changed {
-					if err := s.notifyObservationSupportChangedTx(ctx, tx, b.PersonID, []int64{premise.ID}, "citation-exclusions-changed"); err != nil {
-						return result, err
-					}
-					premise, err = s.loadObservationTx(ctx, tx, edge.ID)
-					if err != nil {
-						return result, err
-					}
-				}
 			}
 			premises[edge.ID] = premise
 		}
