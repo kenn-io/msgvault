@@ -53,10 +53,10 @@ it('prefers the run error over the scheduler error', () => {
 
 
 it.each([
-  ['gmail', 'source_not_schedulable', undefined],
+  ['gmail', 'scheduler_unavailable', undefined],
   ['gmail', 'sync_not_configured', 'msgvault sync --source-id 4'],
   ['msmail', 'sync_not_configured', 'msgvault sync --source-id 4'],
-  ['future_source', 'sync_not_configured', undefined],
+  ['beeper', 'sync_not_configured', undefined],
 ] as const)('offers a manual sync command only for supported source type %s', (source_type, sync_unavailable_reason, want) => {
   const command = syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync: run('completed') });
   expect(command).toBe(want);
