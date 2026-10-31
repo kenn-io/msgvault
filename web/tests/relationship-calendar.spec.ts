@@ -56,8 +56,8 @@ test('calendar heading clears the graph and uses the touch type scale', async ({
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
   const geometry = await calendar.evaluate((element) => {
     const heading = element.querySelector('.calendar-heading')!.getBoundingClientRect();
-    const graphs = element.querySelector('.calendar-graphs')!.getBoundingClientRect();
-    return { gap: graphs.top - heading.bottom,
+    const graphs = element.querySelector('.calendar-graphs')!;
+    return { gap: graphs.getBoundingClientRect().top + Number.parseFloat(getComputedStyle(graphs).paddingTop) - heading.bottom,
       title: getComputedStyle(element.querySelector('h2')!).fontSize,
       month: getComputedStyle(element.querySelector('.month-row')!).fontSize,
       weekday: getComputedStyle(element.querySelector('.weekday-labels')!).fontSize };
