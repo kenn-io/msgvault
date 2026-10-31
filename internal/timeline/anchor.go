@@ -2,6 +2,7 @@ package timeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -39,8 +40,11 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			return c.src.Calendar.GetCalendarOccurrenceContext(ctx, ref.Ref)
 		})
 		if r.err != nil {
+			if errors.Is(r.err, store.ErrCalendarOccurrenceNotFound) {
+				return target, ErrUnknownReference
+			}
 			c.gap("anchor", r.err, false)
-			return target, ErrUnknownReference
+			return target, nil
 		}
 		o := r.value.CalendarOccurrence
 		target.occurrence = &o
@@ -57,7 +61,10 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
 			return c.src.Activity.LatestEligibleMessageContext(ctx, ref.ID)
 		})
-		c.gap("anchor", r.err, false)
+		if r.err != nil {
+			c.gap("anchor", r.err, false)
+			return target, nil
+		}
 		target.messageID = r.value
 		target.conversationID = ref.ID
 	case entryKindMessage:
@@ -73,12 +80,14 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			return c.src.Activity.ListActivityBurstsContext(ctx, q)
 		})
 		c.gap("anchor", r.err, false)
+		failed := r.err != nil
 		candidates := r.value.Bursts
 		if c.src.Cold != nil {
 			cold := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
 				return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
 			})
 			c.gap("anchor", cold.err, false)
+			failed = failed || cold.err != nil
 			candidates = append(candidates, cold.value.Bursts...)
 		}
 		for _, b := range candidates {
@@ -88,11 +97,19 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 				break
 			}
 		}
+		if target.messageID <= 0 && failed {
+			return target, nil
+		}
 	}
 	if target.messageID <= 0 {
 		return target, ErrUnknownReference
 	}
-	d, ok := c.displays([]int64{target.messageID})[target.messageID]
+	display := c.readDisplays([]int64{target.messageID})
+	if display.err != nil {
+		c.gap("anchor", display.err, false)
+		return target, nil
+	}
+	d, ok := display.value[target.messageID]
 	if !ok {
 		return target, ErrUnknownReference
 	}
