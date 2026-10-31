@@ -57,9 +57,19 @@
   $effect(() => { if (filesOpen) clearDate(); });
 </script>
 
+{#snippet files()}
+  <div class="files"><FilesWorkspace {client} embedded showHeader={false} predicate={context} identityScope={durablePersonID === null ? scope : { kind: 'durable-person', id: durablePersonID }} {sort} {filenameQuery} {mimeFamilies}
+    personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}
+    onFilenameQueryChange={(value) => filenameQuery = value} onMIMEFamiliesChange={(value) => mimeFamilies = value}
+    onPersonPresentationChange={onPersonFilePresentationChange} onPersonDirectionsChange={onPersonFileDirectionsChange}
+    onOpenItem={onOpenFileItem} onOpenConversation={onOpenFileConversation} /></div>
+{/snippet}
+
 <section class="person-page" role="group" aria-label="Person page">
   {#if controller.timelineLoading && !detail}
     <p role="status">Loading…</p>
+  {:else if controller.detailMissing && durablePersonID !== null}
+    {@render files()}
   {:else if controller.detailMissing}
     <EmptyState title="Person or domain not found" />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
@@ -98,11 +108,7 @@
     {#if !details && scope}
       {#key `${target}:${controller.activityRevision}`}
         {#if filesOpen}
-          <div class="files"><FilesWorkspace {client} embedded showHeader={false} predicate={context} identityScope={durablePersonID === null ? scope : { kind: 'durable-person', id: durablePersonID }} {sort} {filenameQuery} {mimeFamilies}
-            personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}
-            onFilenameQueryChange={(value) => filenameQuery = value} onMIMEFamiliesChange={(value) => mimeFamilies = value}
-            onPersonPresentationChange={onPersonFilePresentationChange} onPersonDirectionsChange={onPersonFileDirectionsChange}
-            onOpenItem={onOpenFileItem} onOpenConversation={onOpenFileConversation} /></div>
+          {@render files()}
         {:else}
           <PersonMessages {client} target={target!} predicate={context} identityScope={scope} {period} {onFiltersChange} {onOpenPerson} {onOpenMeeting} {onOpenSettings} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
         {/if}

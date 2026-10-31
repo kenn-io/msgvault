@@ -162,7 +162,7 @@ it('opens the checkbox-clicked person when Enter follows the selection', async (
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('keeps files from every bound cluster when opening a saved profile', async () => {
+it.each([false, true])('keeps files from every bound cluster when the first saved binding is draft-only: %s', async (draftOnly) => {
   const at = '2026-07-19T10:00:00Z';
   const profile = { id: 91, display_name: 'Saved Example', participant_ids: [1, 2], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: at, updated_at: at };
   const file = (id: number, filename: string) => ({ id, key: `file:${id}`, entry_key: `message:${id}`, message_id: id, conversation_id: id, occurred_at: at, source_id: 1, source_type: 'gmail', source_identifier: 'owner@example.com', containing_title: 'Archived message', filename, mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 123, participant_labels: ['Saved Example'], participant_domains: ['example.com'], content_state: 'metadata_only', content_available: false, person_provenance: { participant_ids: [id], roles: ['from'], directions: ['from_person'] } });
@@ -175,10 +175,11 @@ it('keeps files from every bound cluster when opening a saved profile', async ()
     requests.push(path);
     if (path === '/api/v1/people/directory') return Response.json({ people: [profile] });
     if (path === '/api/v1/people/91') return Response.json(profile);
+    if (path === '/api/v1/participants/1' && draftOnly) return Response.json({ error: 'not_found' }, { status: 404 });
     if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', identifiers: [], first_at: at, last_at: at, activity_count: 1, file_count: 1, source_counts: [] });
     if (path === '/api/v1/relationships/1/calendar') return Response.json({ year: 2026, days: [] });
     if (path === '/api/v1/participants/1/files/search') return Response.json({ files: [first], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
-    if (path === '/api/v1/people/91/files/search') return Response.json({ files: [first, second], total_count: 2, cache_revision: 'cache-1', search_provenance: {} });
+    if (path === '/api/v1/people/91/files/search') return Response.json({ files: draftOnly ? [second] : [first, second], total_count: draftOnly ? 1 : 2, cache_revision: 'cache-1', search_provenance: {} });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
   const state = new ExploreState(null);
@@ -188,8 +189,9 @@ it('keeps files from every bound cluster when opening a saved profile', async ()
   await controller.openTarget('cluster:1', {}, false);
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: true, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByText('first-address.pdf');
+    if (!draftOnly) await screen.findByText('first-address.pdf');
     await waitFor(() => expect(screen.queryByText('second-address.pdf'), requests.join(', ')).not.toBeNull());
+    expect(requests).toContain('/api/v1/people/91/files/search');
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
