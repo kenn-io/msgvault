@@ -12,19 +12,20 @@ import (
 )
 
 func TestPersonTiersScopeSignalsAndOwnerBindings(t *testing.T) {
+	const ownerAddress = "owner@example.com"
 	for _, ownerBinding := range []bool{false, true} {
 		t.Run(map[bool]string{false: "hidden contacts", true: "hidden owner binding"}[ownerBinding], func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := storetest.New(t)
-			owner := f.EnsureParticipant(storetest.OwnerAddress, "Owner", "example.com")
+			owner := f.EnsureParticipant(ownerAddress, "Owner", "example.com")
 			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
 			person, _, err := f.Store.CreatePersonFromParticipant(peer)
 			require.NoError(err)
-			require.NoError(f.Store.AddAccountIdentity(f.Source.ID, storetest.OwnerAddress, "manual"))
+			require.NoError(f.Store.AddAccountIdentity(f.Source.ID, ownerAddress, "manual"))
 			hidden, err := f.Store.GetOrCreateSource("gmail", "hidden@example.test")
 			require.NoError(err)
-			require.NoError(f.Store.AddAccountIdentity(hidden.ID, storetest.OwnerAddress, "manual"))
+			require.NoError(f.Store.AddAccountIdentity(hidden.ID, ownerAddress, "manual"))
 			seed := func(sourceID int64, first, count int) {
 				conv, err := f.Store.EnsureConversation(sourceID, "tier-scope", "Tier scope")
 				require.NoError(err)
