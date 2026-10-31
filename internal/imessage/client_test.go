@@ -71,8 +71,7 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			var attributed []byte
 			if tt.attributed {
 				text = nil
-				attributed = append([]byte("\x04\x0bstreamtyped\x84\x01+\x81"), byte(len(body)))
-				attributed = append(attributed, body...)
+				attributed = makeRealStreamtypedBlob(body)
 			}
 			_, err = db.Exec(`INSERT INTO message (date,text,attributedBody,service,is_from_me) VALUES (?,?,?,?,?)`, 725760000, text, attributed, tt.service, tt.outgoing)
 			require.NoError(err)
