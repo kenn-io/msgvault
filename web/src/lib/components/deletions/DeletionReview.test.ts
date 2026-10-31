@@ -33,10 +33,10 @@ afterEach(() => {
 it('disables staging and says why when nothing qualifies', async () => {
   const review = preflight({
     deletable_count: 0,
-    unavailable_actions: [{ action: 'stage_deletion', reason: 'no_deletable_messages' }]
+    unavailable_actions: [{ action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' }]
   });
   render(DeletionReview, { client: api(review), selection, onclose: vi.fn() });
-  expect(await screen.findByText('No deletable messages.')).toBeDefined();
+  expect(await screen.findByText('None of the selected items can be deleted from their source.')).toBeDefined();
   const stage = await screen.findByRole('button', { name: 'Stage 0 messages' });
   expect((stage as HTMLButtonElement).disabled).toBe(true);
 });
@@ -74,22 +74,15 @@ it('keeps all-matching exclusions and its token through failed preview and stagi
   ]);
 });
 
-it.each(['stays mounted', 'unmounts'])('handles a pending stage when the review %s', async lifecycle => {
+it('handles a pending stage when the review stays mounted', async () => {
   let finish!: (response: Response) => void;
   const onclose = vi.fn(), onStaged = vi.fn();
   const client = createAPIClient(async input => (input as Request).url.endsWith('/preflight')
     ? Response.json(preflight())
     : new Promise<Response>(resolve => { finish = resolve; }));
-  const view = render(DeletionReview, { client, selection, onclose, onStaged });
+  render(DeletionReview, { client, selection, onclose, onStaged });
   await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
   await waitFor(() => expect(finish).toBeTypeOf('function'));
-  if (lifecycle === 'unmounts') {
-    view.unmount();
-    finish(Response.json({ id: 'late', message_count: 2, dry_run: false }, { status: 201 }));
-    await new Promise(resolve => setTimeout(resolve, 0));
-    expect(onStaged).not.toHaveBeenCalled();
-    return;
-  }
   await fireEvent.keyDown(document, { key: 'Escape' });
   expect(onclose).not.toHaveBeenCalled();
   finish(Response.json({ id: 'batch-pending', message_count: 2, matched_count: 3, dry_run: false }, { status: 201 }));
@@ -98,4 +91,19 @@ it.each(['stays mounted', 'unmounts'])('handles a pending stage when the review 
   expect(screen.getByText('Staged: Matched: 3 · Staged: 2 · Skipped: 1')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
   expect(onclose).toHaveBeenCalledOnce();
+});
+
+it('ignores a pending stage after the review unmounts', async () => {
+  let finish!: (response: Response) => void;
+  const onStaged = vi.fn();
+  const client = createAPIClient(async input => (input as Request).url.endsWith('/preflight')
+    ? Response.json(preflight())
+    : new Promise<Response>(resolve => { finish = resolve; }));
+  const view = render(DeletionReview, { client, selection, onclose: vi.fn(), onStaged });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
+  await waitFor(() => expect(finish).toBeTypeOf('function'));
+  view.unmount();
+  finish(Response.json({ id: 'late', message_count: 2, dry_run: false }, { status: 201 }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(onStaged).not.toHaveBeenCalled();
 });
