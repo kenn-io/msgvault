@@ -31,7 +31,7 @@ func (s *Store) SaveDocbankAttachmentProcessingFingerprint(ctx context.Context, 
 	return s.SetArchiveMarker(ctx, "docbank-processing:"+dest+":"+profile, fingerprint)
 }
 
-// DocbankAttachmentProcessingCursor visits unasked files once, after polling due jobs.
+// DocbankAttachmentProcessingCursor visits unasked files once, before polling due jobs.
 // Use a fresh cursor for each pass and each profile fingerprint.
 type DocbankAttachmentProcessingCursor struct {
 	afterHash   string
@@ -42,10 +42,14 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 	visible, visibleArgs := s.documentSearchVisible(nil)
 	processable := documentSearchDelivered + " AND " + visible
 	var result []DocbankAttachmentProcessing
-	for _, unasked := range []bool{false, true} {
-		if len(result) >= n || unasked && cursor.unaskedDone {
+	for _, unasked := range []bool{true, false} {
+		if len(result) >= n {
 			break
 		}
+		if unasked && cursor.unaskedDone {
+			continue
+		}
+		limit := n - len(result)
 		query := `SELECT d.content_hash, d.node_id, d.version_id, '', '', '', ''
  FROM docbank_attachment_deliveries d
  LEFT JOIN docbank_attachment_processing p
@@ -55,10 +59,6 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  ORDER BY d.content_hash LIMIT ?`
 		args := []any{dest}
 		if !unasked {
-			pollLimit := n
-			if !cursor.unaskedDone {
-				pollLimit = n * 3 / 4
-			}
 			query = `SELECT d.content_hash, d.node_id, d.version_id, p.fingerprint, p.outcome, p.outcome, p.job_id
  FROM docbank_attachment_processing p JOIN docbank_attachment_deliveries d
  ON d.destination_key = p.destination_key AND d.content_hash = p.content_hash
@@ -67,10 +67,11 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  ORDER BY p.next_action_at, p.content_hash LIMIT ?`
 			args = append(args, fingerprint, s.timestampValue(time.Now().UTC()))
 			args = append(args, visibleArgs...)
-			args = append(args, pollLimit)
+			args = append(args, limit)
 		} else {
+			limit = max(1, n/4)
 			args = append(args, visibleArgs...)
-			args = append(args, cursor.afterHash, fingerprint, n-len(result))
+			args = append(args, cursor.afterHash, fingerprint, limit)
 		}
 		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 		if err != nil {
@@ -92,7 +93,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 			return nil, err
 		}
 		if unasked {
-			cursor.unaskedDone = len(result) < n
+			cursor.unaskedDone = len(result) < limit
 		}
 	}
 	return result, nil

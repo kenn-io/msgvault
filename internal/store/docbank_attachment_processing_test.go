@@ -42,23 +42,26 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 		}
 		if len(seen) == 0 {
 			require.Len(files, 20)
-			assert.Equal("requested", files[14].Outcome)
-			require.Empty(files[15].Outcome, "reserve five slots for unasked files despite the due backlog")
+			for _, d := range files[:5] {
+				require.Empty(d.Outcome, "unasked files run before slow polls can exhaust the pass budget")
+			}
+			assert.Equal("requested", files[5].Outcome)
 		}
 		batchUnasked := 0
-		for _, d := range files {
+		for i, d := range files {
 			require.False(seen[d.ContentHash], "file visited twice: %s", d.ContentHash)
 			seen[d.ContentHash] = true
 			if d.Outcome == "requested" {
-				assert.Zero(batchUnasked, "due jobs come before unasked files in each batch")
 				requested++
 				d.Outcome = "extracted"
 				require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Time{}))
 			} else {
+				assert.Equal(batchUnasked, i, "unasked files come first")
 				batchUnasked++
 				unasked++
 			}
 		}
+		assert.LessOrEqual(batchUnasked, 5, "discovery leaves room for due polls")
 	}
 	assert.Equal(950, unasked)
 	assert.Equal(25, requested)
@@ -108,8 +111,8 @@ func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
 	require.Len(due, 2)
-	assert.Equal(hashes["b"], due[0].ContentHash)
-	assert.Equal(hashes["a"], due[1].ContentHash)
+	assert.Equal(hashes["a"], due[0].ContentHash)
+	assert.Equal(hashes["b"], due[1].ContentHash)
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
 	assert.Equal(store.DocbankAttachmentProcessingSummary{Waiting: 2, Requested: 1, Extracted: 1, Outcomes: map[string]int64{"provider_timeout": 1, "operator_required": 1}}, counts)
@@ -117,9 +120,14 @@ func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {
 	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
 	assert.Equal(int64(6), counts.Waiting)
-	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "new-fp", new(store.DocbankAttachmentProcessingCursor), 20)
+	var cursor store.DocbankAttachmentProcessingCursor
+	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "new-fp", &cursor, 20)
 	require.NoError(err)
-	assert.Len(due, 6)
+	assert.Len(due, 5)
+	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "new-fp", &cursor, 20)
+	require.NoError(err)
+	require.Len(due, 1)
+	assert.Equal(hashes["f"], due[0].ContentHash)
 	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "elsewhere", "new-fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
 	assert.Empty(due)
@@ -154,11 +162,11 @@ func TestDocbankAttachmentProcessingBackfillRetriesRecoverableOutcomes(t *testin
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
 	require.Len(due, 7)
-	assert.Equal("pending", due[0].VersionID)
-	assert.Equal(store.DocbankProcessingRetryRequested, due[0].Outcome)
-	assert.Equal("pending-no-job", due[1].VersionID)
-	assert.Equal(store.DocbankProcessingRetryRequested, due[1].Outcome)
-	assert.ElementsMatch([]string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "operator_required"}, []string{due[2].VersionID, due[3].VersionID, due[4].VersionID, due[5].VersionID, due[6].VersionID})
+	assert.ElementsMatch([]string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "operator_required"}, []string{due[0].VersionID, due[1].VersionID, due[2].VersionID, due[3].VersionID, due[4].VersionID})
+	assert.Equal("pending", due[5].VersionID)
+	assert.Equal(store.DocbankProcessingRetryRequested, due[5].Outcome)
+	assert.Equal("pending-no-job", due[6].VersionID)
+	assert.Equal(store.DocbankProcessingRetryRequested, due[6].Outcome)
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
 	assert.Equal(int64(5), counts.Waiting)
@@ -203,6 +211,16 @@ func TestDocbankAttachmentProcessingBackfillDuringPoll(t *testing.T) {
 			retry, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 			require.NoError(err)
 			require.Len(retry, 1, "backfill must survive the in-flight poll's terminal result")
+			assert.Equal(store.DocbankProcessingRetryRequested, retry[0].Outcome)
+			assert.Equal(tc.jobID, retry[0].JobID)
+			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", retry[0], time.Now().Add(store.BeeperMediaRetryDelay)))
+			delayed, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
+			require.NoError(err)
+			require.Empty(delayed, "a temporary retry failure delays the next attempt")
+			require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
+			retry, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
+			require.NoError(err)
+			require.Len(retry, 1, "a second backfill makes an already requested retry due now")
 			assert.Equal(store.DocbankProcessingRetryRequested, retry[0].Outcome)
 			assert.Equal(tc.jobID, retry[0].JobID)
 			retry[0].Outcome = "requested"

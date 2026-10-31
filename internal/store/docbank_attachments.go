@@ -490,7 +490,7 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 		if _, err := q.Exec(`
 			UPDATE docbank_attachment_processing
 			SET outcome = ?, next_action_at = ?
-			WHERE destination_key = ? AND outcome IN ('', 'requested')
+			WHERE destination_key = ? AND outcome IN ('', 'requested', 'retry_requested')
 			  AND next_action_at IS NOT NULL`, DocbankProcessingRetryRequested, s.timestampValue(time.Now().UTC()), destination); err != nil {
 			return fmt.Errorf("request retry of pending attachment processing: %w", err)
 		}
