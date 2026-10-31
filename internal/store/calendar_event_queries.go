@@ -562,29 +562,47 @@ type calendarRowQueryer interface {
 
 // Only sparse cancellations inherit omitted details from the master. Evidence
 // decode failures are diagnostics; archive reads and context errors abort.
-func inheritCalendarCancellation(ctx context.Context, r calendarRowQueryer, row, master CalendarEventRow) (CalendarEventRow, string, error) {
+func inheritCalendarCancellation(ctx context.Context, r calendarRowQueryer, row, master CalendarEventRow) (CalendarEventRow, *calendarCancellationEvidence, error) {
 	if err := ctx.Err(); err != nil {
-		return row, "", err
+		return row, nil, err
 	}
 	if row.Event.Start != nil && row.Event.End != nil {
-		return row, "", nil
+		return row, nil, nil
 	}
-	var stored []byte
-	var compression sql.NullString
-	var format string
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression, &format); err != nil {
-		return row, "", fmt.Errorf("read cancellation evidence: %w", err)
+	evidence, err := readCalendarCancellationEvidence(ctx, r, row.MessageID)
+	if err != nil || evidence.diagnostic != "" || !evidence.sparse {
+		return row, evidence, err
 	}
-	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	return inheritSparseCalendarCancellation(row, master, evidence.fields), evidence, nil
+}
+
+type calendarCancellationEvidence struct {
+	raw        []byte
+	format     string
+	fields     map[string]any
+	sparse     bool
+	diagnostic string
+}
+
+func readCalendarCancellationEvidence(ctx context.Context, r calendarRowQueryer, messageID int64) (*calendarCancellationEvidence, error) {
+	raw, format, err := readCalendarRaw(ctx, r, messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &calendarCancellationEvidence{sparse: true}, nil
+	}
 	if err != nil {
-		return row, fmt.Sprintf("decode cancellation evidence: %s", err), nil
+		if errors.Is(err, errMeetingRawTooLarge) {
+			return &calendarCancellationEvidence{diagnostic: fmt.Sprintf("decode cancellation evidence: %s", err)}, nil
+		}
+		return nil, err
 	}
+	evidence := &calendarCancellationEvidence{raw: raw, format: format}
 	var fields map[string]any
 	switch format {
 	case rawFormatICS:
-		cal, err := ical.NewDecoder(bytes.NewReader(raw)).Decode()
-		if err != nil {
-			return row, fmt.Sprintf("decode ICS cancellation evidence: %s", err), nil
+		cal, decodeErr := ical.NewDecoder(bytes.NewReader(raw)).Decode()
+		if decodeErr != nil {
+			evidence.diagnostic = fmt.Sprintf("decode ICS cancellation evidence: %s", decodeErr)
+			return evidence, nil
 		}
 		fields = make(map[string]any)
 		for _, child := range cal.Children {
@@ -599,15 +617,16 @@ func inheritCalendarCancellation(ctx context.Context, r calendarRowQueryer, row,
 		}
 	case "gcal_json":
 		if err := json.Unmarshal(raw, &fields); err != nil {
-			return row, fmt.Sprintf("decode cancellation evidence: %s", err), nil
+			evidence.diagnostic = fmt.Sprintf("decode cancellation evidence: %s", err)
+			return evidence, nil
 		}
 	default:
-		return row, fmt.Sprintf("unsupported cancellation raw format %q", format), nil
+		evidence.diagnostic = fmt.Sprintf("unsupported cancellation raw format %q", format)
+		return evidence, nil
 	}
-	if fields["start"] != nil || fields["end"] != nil {
-		return row, "", nil
-	}
-	return inheritSparseCalendarCancellation(row, master, fields), "", nil
+	evidence.fields = fields
+	evidence.sparse = fields["start"] == nil && fields["end"] == nil
+	return evidence, nil
 }
 
 func inheritSparseCalendarCancellation(row, master CalendarEventRow, fields map[string]any) CalendarEventRow {

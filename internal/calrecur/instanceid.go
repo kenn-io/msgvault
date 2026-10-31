@@ -47,3 +47,14 @@ func ParseInstanceID(value string) (string, Identity, bool) {
 	}
 	return "", Identity{}, false
 }
+
+// ParseKey accepts the canonical keys produced by Identity.Key.
+func ParseKey(key string) (Identity, bool) {
+	if value, err := time.Parse(keyInstantLayout, key); err == nil && value.Format(keyInstantLayout) == key {
+		return Identity{Instant: value}, true
+	}
+	if value, err := time.Parse(keyDateLayout, key); err == nil {
+		return Identity{Date: value.Format(dateLayout), AllDay: true}, true
+	}
+	return Identity{}, false
+}

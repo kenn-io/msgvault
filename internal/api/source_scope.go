@@ -15,7 +15,7 @@ func sourceScopedOperation(r *http.Request, operation Operation) bool {
 		return false
 	}
 	switch operation.ID {
-	case "listMessages", "getMessage", "getConversation", "getAttachment", "listCLIAccounts":
+	case "listMessages", "getMessage", "getConversation", "getAttachment", "listCLIAccounts", "listCalendarEvents", "getCalendarEvent":
 		return true
 	case "searchMessages":
 		mode := r.URL.Query().Get("mode")

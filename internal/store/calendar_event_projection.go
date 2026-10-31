@@ -245,11 +245,11 @@ func calendarRecurrenceEnd(ctx context.Context, event calevent.Event, remaining 
 	if event.Kind != "series" || *remaining <= 0 {
 		return nil
 	}
-	set, duration, days, err := prepareCalendarRecurrence(event)
-	if err != nil {
+	series := newCalendarSeries(CalendarEventRow{Event: event})
+	if series.err != nil {
 		return nil
 	}
-	end, bounded, used := calrecur.ConservativeEnd(ctx, set, duration, days, min(*remaining, calrecur.SeriesReadBudget))
+	end, bounded, used := calrecur.ConservativeEnd(ctx, series.set, series.duration, series.days, min(*remaining, calrecur.SeriesReadBudget))
 	*remaining -= min(used, *remaining)
 	if !bounded {
 		return nil

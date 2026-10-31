@@ -3,13 +3,9 @@ package store
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"time"
@@ -330,12 +326,7 @@ func meetingActionsFilterHash(query MeetingActionsQuery) (string, error) {
 	if query.Scope.Before != nil {
 		filter.Before = query.Scope.Before.UTC().Format(time.RFC3339Nano)
 	}
-	encoded, err := json.Marshal(filter)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(encoded)
-	return hex.EncodeToString(digest[:]), nil
+	return readFilterHash(filter)
 }
 
 func normalizedMeetingDeletion(value string) string {
@@ -347,31 +338,20 @@ func normalizedMeetingDeletion(value string) string {
 }
 
 func encodeMeetingActionsCursor(cursor meetingActionsCursor) (string, error) {
-	encoded, err := json.Marshal(cursor)
+	encoded, err := encodeReadCursor(cursor)
+	if errors.Is(err, errEncodedReadCursorTooLarge) {
+		return "", &MeetingCursorError{Reason: "encoded position is too large"}
+	}
 	if err != nil {
 		return "", fmt.Errorf("encode meeting action cursor: %w", err)
 	}
-	if len(encoded) > meetingActionsCursorBytes {
-		return "", &MeetingCursorError{Reason: "encoded position is too large"}
-	}
-	return base64.RawURLEncoding.EncodeToString(encoded), nil
+	return encoded, nil
 }
 
 func decodeMeetingActionsCursor(value string) (meetingActionsCursor, error) {
-	if len(value) > base64.RawURLEncoding.EncodedLen(meetingActionsCursorBytes) {
-		return meetingActionsCursor{}, &MeetingCursorError{Reason: "cursor is too large"}
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil || len(decoded) > meetingActionsCursorBytes {
-		return meetingActionsCursor{}, &MeetingCursorError{Reason: "cursor is not valid base64url JSON"}
-	}
 	var cursor meetingActionsCursor
-	decoder := jsontext.NewDecoder(strings.NewReader(string(decoded)))
-	if err := json.UnmarshalDecode(decoder, &cursor, json.RejectUnknownMembers(true)); err != nil {
-		return meetingActionsCursor{}, &MeetingCursorError{Reason: "cursor has an invalid shape"}
-	}
-	if _, err := decoder.ReadValue(); !errors.Is(err, io.EOF) {
-		return meetingActionsCursor{}, &MeetingCursorError{Reason: "cursor has trailing data"}
+	if err := decodeReadCursor(value, &cursor); err != nil {
+		return meetingActionsCursor{}, &MeetingCursorError{Reason: err.Error()}
 	}
 	if cursor.Version != meetingActionsCursorV1 || !validMeetingFilterHash(cursor.ArchiveUID) ||
 		!validMeetingFilterHash(cursor.FilterHash) || cursor.MessageID == nil ||

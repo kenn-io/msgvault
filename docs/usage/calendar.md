@@ -14,22 +14,25 @@ Calendar sync is **read-only**. The separate event-control commands can change
 live events when you opt in to write consent and source permissions. Event
 control described below is unreleased functionality.
 
-## List archived events, unreleased
+## Read archived events, unreleased
 
 ```bash
 msgvault calendar events --from 2027-03-01 --to 2027-04-01
-msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --limit 100 --json
+msgvault calendar event evt:123@20270302T170000Z
 ```
 
 Repeating events expand into occurrences. Edited occurrences appear at their new times, and cancelled occurrences show `cancelled`. Existing archives rebuild event and attendee tables during setup, so a re-sync isn't needed.
 
-Date-only bounds use midnight in your machine's time zone. You can also pass RFC3339 timestamps with offsets. The end is exclusive and must follow the start. Timed events print in your machine's time zone; all-day events show their dates. The `END (EXCL)` column shows the exclusive end. The ID identifies the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`.
+Date-only bounds use midnight in your machine's time zone. You can also pass RFC3339 timestamps with offsets. The end is exclusive and must follow the start. Timed events print in your machine's time zone; all-day events show their dates. The `END (EXCL)` column shows the exclusive end. The ID identifies the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. Use the `REF` value with `calendar event <ref>` to open that occurrence and its attendees, location, description, and join URL when archived.
 
 JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. The table prints a warning for those events and shows `deleted` for events deleted at the source. Narrow the window when the command asks you to.
 
 Queries allow up to 2,000 recurring series and 500,000 candidate steps across the request, with 50,000 steps per series. When recurrence expansion reaches the request work limit, the response keeps completed series, standalone events, and archived exceptions, and lists the interrupted series and every remaining series under `unexpandable`. Long-running series count steps from their start, so a narrower window may not reduce the work. A narrower window will not reduce the number of open-ended series.
 
-This archive read requires daemon API schema 3.26.0 or newer and owner access. Use the live commands below for `--account`, `--dry-run`, `--read-only`, and `--send-updates`. See the [CLI reference](https://msgvault.io/docs/cli-reference/#calendar) for the command contract.
+Lists default to 100 occurrences, with a maximum of 500. Pass `next_cursor` as `--cursor` with the same window and offsets to continue. Each page re-runs the window's expansion within the request limits, and `unexpandable` is returned on the first page only. Table output labels the next cursor on its own line. Expansion warnings appear on the first page. Windows must be positive and at most 400 days.
+
+Archived calendar reads require daemon API schema 3.27.0. Agents need `calendar.event.read` or `message.read` on each source. `calendar.read` grants live availability only. Use the live commands below for `--account`, `--dry-run`, `--read-only`, and `--send-updates`. See the [CLI reference](https://msgvault.io/docs/cli-reference/#calendar) for the command contract.
 
 ## Prerequisites
 

@@ -82,6 +82,16 @@ never scan or rebuild the archive. See
 [ranking and maintenance](architecture/search-ranking.md#filename-suggestions)
 and [CLI usage](cli-reference.md#typo-tolerant-filenames).
 
+### Archived calendar occurrences, unreleased
+
+`GET /api/v1/calendar/events` lists archived occurrences with required RFC3339 `from` and `to` bounds. The window is half-open, positive, and at most 400 days. `limit` defaults to 100 and accepts 1–500. The response carries `occurrences`, `unexpandable`, and optional `next_cursor`.
+
+Pass `next_cursor` as `cursor` with the same window, including offsets, and authorized sources. Cursors belong to one archive and format version. `GET /api/v1/calendar/events/{ref}` opens one returned occurrence with `location`, `description`, and `join_url` decoded from its archived raw message. Empty content fields are omitted. Repeating occurrences use `evt:<masterID>@<original-key>`; standalone events use `evt:<messageID>`.
+
+Agents need `calendar.event.read` or `message.read` on the source. Reads include only granted sources. `calendar.read` alone returns 403. Missing or hidden occurrences return 404, and unsupported recurrence returns 422. Lists with too many candidate rows return 400 `query_too_broad`. When list expansion reaches its work limit, the response keeps completed results and lists interrupted and remaining series under `unexpandable`. Invalid windows, limits, refs, or cursors return 400 `invalid_argument`.
+
+Archived calendar reads require schema 3.27.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#read-archived-events-unreleased) for display and expansion behavior.
+
 ### Calendar control
 
 `POST /api/v1/calendar/control` accepts one strict JSON object with `action` and
@@ -158,7 +168,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.25.0**.
+it is separate from the binary release version. The current schema is **3.27.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,

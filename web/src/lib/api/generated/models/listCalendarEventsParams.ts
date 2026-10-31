@@ -5,4 +5,10 @@
 export type ListCalendarEventsParams = {
   from: string;
   to: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  cursor?: string;
 };

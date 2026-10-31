@@ -231,7 +231,7 @@ func newCalendarControlCmd(run calendarRunner) *cobra.Command {
 		}
 		root.AddCommand(command)
 	}
-	root.AddCommand(newCalendarEventsCommand(openCalendarEvents))
+	root.AddCommand(newCalendarEventsCommand(openCalendarEvents), newCalendarEventCommand(openCalendarEvents))
 	return root
 }
 func parseCalendarBound(value, tz string, allDay bool) (gcal.EventDateTime, error) {

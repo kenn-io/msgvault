@@ -709,3 +709,27 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
 }
+
+func TestCalendarArchiveMCPVersionGates(t *testing.T) {
+	for _, version := range []string{"3.26.0", "3.27.0"} {
+		t.Run(version, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := map[string]any{}
+				switch r.URL.Path {
+				case "/api/v1/health":
+					body = map[string]any{"status": "ok", "api_schema_version": version}
+				case "/api/v1/agent-tokens/self":
+					body = map[string]any{"permissions": []string{"calendar.event.read"}}
+				}
+				assertions.NoError(json.NewEncoder(w).Encode(body))
+			})
+			owner := daemonMCPServeOptions(t.Context(), client, nil)
+			assertions.Equal(version == "3.27.0", owner.CalEvents != nil)
+			delegated, err := delegatedMCPServeOptions(t.Context(), client)
+			requirements.NoError(err)
+			assertions.Equal(version == "3.27.0", delegated.CalEvents != nil)
+		})
+	}
+}
