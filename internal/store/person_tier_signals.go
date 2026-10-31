@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/persontiers"
 )
 
@@ -135,7 +134,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  AND (aep.person_id,aep.local_date,aep.message_id) > (?,?,?)
  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND (
  ae.ref_kind='meeting' OR
- ((COALESCE(m.message_type,'') IN ('','`+MessageTypeEmail+`') OR `+identityindex.IsChatSQL("m.message_type", "c.conversation_type")+`)
+ (`+countedMessageTypeSQL("m", "c")+`
  AND NOT `+s.activityUnsentSQL()+`))
  ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)
 	if err != nil {
