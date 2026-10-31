@@ -3161,10 +3161,10 @@ it.each(['sources', 'carddav', 'search'])('opens %s settings from its workspace 
     if (path.endsWith('/settings')) return Response.json({ settings: [], groups: [], pending_restart: false });
     return Response.json({});
   });
-  const settings = createRawSnippet<[CardDAVSettingsRequest | undefined, (key: number) => void]>((getRequest, getConsumed) => ({
+  const settings = createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((getRequest, getConsumed, ...args) => ({
     render: () => '<div></div>',
     setup: element => {
-      const component = mount(SettingsWorkspace, { target: element, props: { client, category: 'carddav', cardDAVRequest: getRequest(), onCardDAVRequestConsumed: getConsumed() } });
+      const component = mount(SettingsWorkspace, { target: element, props: { client, operationsController: args[6](), category: 'carddav', cardDAVRequest: getRequest(), onCardDAVRequestConsumed: getConsumed() } });
       return () => { void unmount(component); };
     }
   }));

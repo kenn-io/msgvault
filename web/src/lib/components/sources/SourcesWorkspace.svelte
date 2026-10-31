@@ -458,7 +458,7 @@
                 }}
               />
             {:else}
-              <span class="muted">{source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : isOnDemandSource(source) ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
+              <span class="muted" title={isOnDemandSource(source) ? undefined : source.sync_unavailable_reason}>{source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : isOnDemandSource(source) ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
             {/if}
           </td>
         </tr>
