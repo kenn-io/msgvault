@@ -81,12 +81,10 @@
     {/if}
     {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure}</p>{#if source.scheduler_last_error && source.scheduler_last_error !== failure}<p class="failure">{source.scheduler_last_error}</p>{/if}</section>{/if}
     {#if !source.can_sync && !syncing}
+      {@const command = syncCommand(source)}
       <section class="block" aria-label="Sync">
         <span class="muted">{source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : source.source_type === 'meeting_import' ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
-        {#each [['posix', 'POSIX'], ['cmd', 'Command Prompt']] as [shell, label]}
-          {@const command = syncCommand(source, shell as 'posix' | 'cmd')}
-          {#if command}<span class="label">{label}</span>{#if shell === 'cmd'}<span class="muted">Start Command Prompt with cmd /d /v:off, then paste:</span>{/if}<CommandLine {command} />{/if}
-        {/each}
+        {#if command}<CommandLine {command} />{/if}
       </section>
     {/if}
     <section class="block" aria-label="Schedule">

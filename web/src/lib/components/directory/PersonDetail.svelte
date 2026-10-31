@@ -36,6 +36,7 @@
     onOpenCardDAVConflict?: (conflictID: number) => void;
     onOpenCardDAVSettings?: () => void;
     onAnnounce?: (message: string) => void;
+    onConfigureVisualSearch?: () => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onOpenRelationship?: (participantID: number) => void;
     onReviewFacts?: (personID: number) => void;
@@ -62,6 +63,7 @@
     onOpenCardDAVConflict = () => undefined,
     onOpenCardDAVSettings = () => undefined,
     onAnnounce = () => undefined,
+    onConfigureVisualSearch = undefined,
     onOpenMeeting = undefined,
     onOpenRelationship = undefined,
     onReviewFacts = undefined
@@ -255,6 +257,7 @@
     {:else if activeTab === 'media'}
       <!-- Durable Directory IDs use the People API, never the analytical participant route. -->
       <FilesWorkspace
+        {onConfigureVisualSearch}
         {client}
         identityScope={{ kind: 'durable-person', id: personID }}
         predicate={{ filters: [], presentation: 'files' }}

@@ -226,7 +226,7 @@ describe('SourcesWorkspace', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Alex' }));
     expect(await screen.findByText('oauth2: token expired and refresh token is invalid (invalid_grant)')).toBeDefined();
-    expect(screen.getByText("msgvault sync 'archive@example.com'")).toBeDefined();
+    expect(screen.getByText('msgvault sync --source-id 1')).toBeDefined();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Alex' }));
     await waitFor(() => expect(screen.queryByText(/invalid_grant/)).toBeNull());

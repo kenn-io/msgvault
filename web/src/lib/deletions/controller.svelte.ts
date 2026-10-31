@@ -2,24 +2,17 @@ import { cancelDeletion, getDeletion, listDeletions } from '../api/generated/api
 import type { APIClient } from '../api/client';
 import type { DeletionManifestDetail, DeletionManifestSummary } from '../api/generated/models';
 
-const WEEK = 7 * 24 * 60 * 60 * 1000;
-const terminal = (status: string) => status === 'completed' || status === 'failed';
-export function batchIsRecent(batch: Pick<DeletionManifestSummary, 'status' | 'created_at'>, now: number, completedAt?: string): boolean {
-  return batch.status === 'pending' || batch.status === 'in_progress' || (terminal(batch.status) && now - Date.parse(completedAt || batch.created_at) <= WEEK);
-}
-
-/** One bounded detail cache for sidebar retention and staged deletion history. */
+/** One bounded detail cache for staged deletion history. */
 export class DeletionsController {
   batches = $state<DeletionManifestSummary[]>([]);
   details = $state<Record<string, DeletionManifestDetail>>({});
-  visible = $state(false);
+  visible = $derived(this.batches.length > 0);
   loading = $state(false);
   error = $state('');
   #client: APIClient;
   #timeout: number;
   #disposed = false;
   #loaded = false;
-  #revision = 0;
   #list?: Promise<void>;
   #trailing?: Promise<void>;
   #retryRequested = false;
@@ -64,12 +57,10 @@ export class DeletionsController {
             this.details = details;
           }
         }
-        const revision = ++this.#revision;
         this.batches = next;
         this.#loaded = true;
         this.error = '';
         this.loading = false;
-        void this.#retention(revision);
       } catch { if (!controller.signal.aborted && !this.#disposed) this.error = "Can't load staged deletions."; }
       finally { this.loading = false; this.#list = undefined; }
     })();
@@ -108,11 +99,8 @@ export class DeletionsController {
               const batch = this.batches.find(batch => batch.id === id);
               if (batch) {
                 const updated = { ...batch, status: data.status };
-                if (batchIsRecent(updated, Date.now(), data.execution?.completed_at)) this.visible = true;
                 if (batch.status !== data.status) {
                   this.batches = this.batches.map(current => current.id === id ? updated : current);
-                  this.#revision++;
-                  void this.#retention();
                 }
               }
             } else this.#failed.add(id);
@@ -133,34 +121,14 @@ export class DeletionsController {
 
   #next(): void { while (this.#running < 4 && this.#queue.length) this.#queue.shift()!(); }
 
-  async #retention(revision = this.#revision): Promise<void> {
-    const now = Date.now();
-    if (this.batches.some(batch => batchIsRecent(batch, now, this.details[batch.id]?.execution?.completed_at))) { this.visible = true; return; }
-    const older = this.batches.filter(batch => terminal(batch.status));
-    if (!older.length) { this.visible = false; return; }
-    let index = 0, found = false, failed = false;
-    await Promise.all(Array.from({ length: Math.min(4, older.length) }, async () => {
-      while (index < older.length && !found && !this.#disposed && revision === this.#revision) {
-        const batch = older[index++];
-        const detail = await this.getDetail(batch.id, { retry: true });
-        if (revision !== this.#revision || this.#disposed) return;
-        if (!detail) failed = true;
-        else if (batchIsRecent(batch, now, detail.execution?.completed_at)) { found = true; this.visible = true; }
-      }
-    }));
-    if (!this.#disposed && revision === this.#revision && (found || !failed)) this.visible = found;
-  }
-
   async cancel(id: string): Promise<void> {
     const { data, error } = await cancelDeletion({ id }, this.#client);
     if (!data) throw new Error(typeof error === 'object' && error && 'message' in error && typeof error.message === 'string' ? error.message : "Can't cancel the batch.");
     this.#controllers.get(id)?.abort();
     this.#controllers.delete(id);
     this.#pending.delete(id);
-    this.#revision++;
     this.batches = this.batches.map(batch => batch.id === id ? { ...batch, status: data.status } : batch);
     if (this.details[id]) this.details = { ...this.details, [id]: { ...this.details[id], status: data.status } };
-    void this.#retention();
   }
 
   destroy(): void {

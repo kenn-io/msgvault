@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sourceFailure, sourceMailbox, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
+import { syncCommand, sourceFailure, sourceMailbox, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -54,4 +54,16 @@ describe('source labels', () => {
 
 it('prefers the run error over the scheduler error', () => {
   expect(sourceFailure({ latest_sync: { ...run('paused'), error_message: 'Rate limit reached' }, scheduler_last_error: 'Scheduler stopped' })).toBe('Rate limit reached');
+});
+
+it('targets each source separately when two sources share an email', () => {
+  const source = { identifier: 'archive@example.com', sync_unavailable_reason: 'sync_not_configured' };
+  expect(syncCommand({ ...source, id: 1 })).toBe('msgvault sync --source-id 1');
+  expect(syncCommand({ ...source, id: 2 })).toBe('msgvault sync --source-id 2');
+});
+
+it('offers a sync command for a source with a non-email identifier', () => {
+  const source = { id: 3, identifier: 'imaps://archive%40example.com@imap.example.com', sync_unavailable_reason: 'sync_not_configured' };
+  expect(syncCommand(source)).toBe('msgvault sync --source-id 3');
+  expect(syncCommand({ ...source, sync_unavailable_reason: 'source_not_schedulable' })).toBeUndefined();
 });
