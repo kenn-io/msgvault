@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExcludesAddressUsesLocalPartAndDomainPatterns(t *testing.T) {
@@ -39,7 +40,7 @@ func TestDomainSubdomainPatternsCanBeConfigured(t *testing.T) {
 	assert := assert.New(t)
 	cfg := DefaultConfig()
 	cfg.ExcludeDomainPatterns = []string{"*.rooms.example.com"}
-	assert.NoError(cfg.Validate())
+	require.NoError(t, cfg.Validate())
 	assert.Equal("calendar_room", cfg.ExcludesAddress("room@floor.rooms.example.com"))
 	assert.Empty(cfg.ExcludesAddress("room@rooms.example.com"))
 	assert.Empty(cfg.ExcludesAddress("room@otherrooms.example.com"))
