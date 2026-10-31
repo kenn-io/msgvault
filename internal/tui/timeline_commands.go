@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/timeline"
 )
 
@@ -18,6 +19,7 @@ type timelineLoadedMsg struct {
 
 type timelineReaderLoadedMsg struct {
 	detail                *query.MessageDetail
+	calendar              *store.CalendarOccurrenceDetail
 	messages              []query.MessageSummary
 	truncated             bool
 	err                   error
@@ -91,9 +93,21 @@ func (m *Model) loadTimelineReader(reader timelineReader, id int64) tea.Cmd {
 	m.timelineState.cancel = cancel
 	requestID, generation := m.timelineState.requestID, m.presentationGeneration
 	engine, limit := m.engine, m.threadMessageLimit
+	backend, ref := m.timelineBackend, m.timelineState.calendarRef
 	return safeCmdWithPanic(func() tea.Msg {
 		msg := timelineReaderLoadedMsg{requestID: requestID, generation: generation}
-		if reader == timelineReaderThread {
+		switch reader {
+		case timelineReaderCalendar:
+			detail, err := backend.GetCalendarOccurrenceContext(ctx, ref)
+			msg.err = err
+			if err == nil {
+				if detail.Ref != ref {
+					msg.err = errors.New("calendar reader: empty or mismatched occurrence")
+				} else {
+					msg.calendar = &detail
+				}
+			}
+		case timelineReaderThread:
 			msg.messages, msg.err = engine.ListMessages(ctx, query.MessageFilter{
 				ConversationID: &id,
 				Sorting:        query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortAsc},
@@ -103,7 +117,7 @@ func (m *Model) loadTimelineReader(reader timelineReader, id int64) tea.Cmd {
 				msg.messages = msg.messages[:limit]
 				msg.truncated = true
 			}
-		} else {
+		default:
 			msg.detail, msg.err = engine.GetMessage(ctx, id)
 			if msg.err == nil && (msg.detail == nil || msg.detail.ID != id) {
 				msg.err = errors.New("timeline reader: empty or mismatched response")
@@ -126,6 +140,11 @@ func (m Model) handleTimelineReaderLoaded(msg timelineReaderLoadedMsg) (tea.Mode
 		return m, nil
 	}
 	switch m.timelineState.reader {
+	case timelineReaderNone:
+		return m, nil
+	case timelineReaderCalendar:
+		m.timelineState.calendar = msg.calendar
+		m.timelineState.calendarScroll = 0
 	case timelineReaderThread:
 		m.timelineState.messages = msg.messages
 		m.timelineState.threadTruncated = msg.truncated
@@ -144,6 +163,13 @@ func (m *Model) activateTimeline() tea.Cmd {
 	// Re-entering resumes a cancelled load, including a parked reader load.
 	if m.timelineState.reader != timelineReaderNone {
 		switch m.timelineState.reader {
+		case timelineReaderNone:
+			return nil
+		case timelineReaderCalendar:
+			if m.timelineState.calendar != nil {
+				m.loading = false
+				return nil
+			}
 		case timelineReaderMessage:
 			if m.messageDetail != nil {
 				m.loading = false

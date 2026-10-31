@@ -2,14 +2,18 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/timeline"
 )
 
@@ -116,24 +120,28 @@ func TestTimelineCancelsAndDiscardsStaleResults(t *testing.T) {
 	m := timelineModeModel()
 	first := m.startTimelineRequest(timeline.Request{Mode: timeline.ModeDay, Date: "2027-03-13"}, true)
 	require.NotNil(first)
-	old := first().(timelineLoadedMsg)
-	backend := m.timelineBackend.(*timelineModeBackend)
+	old, ok := first().(timelineLoadedMsg)
+	require.True(ok)
+	backend, ok := m.timelineBackend.(*timelineModeBackend)
+	require.True(ok)
 	require.Len(backend.contexts, 1)
 	second := m.startTimelineRequest(timeline.Request{Mode: timeline.ModeDay, Date: "2027-03-15"}, true)
 	require.NotNil(second)
-	assert.ErrorIs(backend.contexts[0].Err(), context.Canceled)
+	require.ErrorIs(backend.contexts[0].Err(), context.Canceled)
 	m = sendMsg(t, m, old)
 	assert.True(m.timelineState.loading)
 	assert.Equal("2027-03-15", m.timelineState.request.Date)
-	active := second().(timelineLoadedMsg)
+	active, ok := second().(timelineLoadedMsg)
+	require.True(ok)
 	m = sendMsg(t, m, active)
 	assert.False(m.timelineState.loading)
 	assert.Equal(backend.result, m.timelineState.result)
 	third := m.startTimelineRequest(timeline.Request{Mode: timeline.ModeAnchor, Around: "msg:9"}, true)
-	late := third().(timelineLoadedMsg)
+	late, ok := third().(timelineLoadedMsg)
+	require.True(ok)
 	next, _, handled := m.handleGlobalKeys(key('m'))
 	require.True(handled)
-	assert.ErrorIs(backend.contexts[2].Err(), context.Canceled)
+	require.ErrorIs(backend.contexts[2].Err(), context.Canceled)
 	before := next.timelineState.result
 	next = sendMsg(t, next, late)
 	assert.Equal(before, next.timelineState.result)
@@ -244,12 +252,13 @@ func TestTimelineBackAfterRapidRequestsRestoresSettledDay(t *testing.T) {
 	second := m.startTimelineRequest(timeline.Request{Mode: timeline.ModeDay, Date: "2027-03-16"}, true)
 	require.NotNil(second)
 	_ = second() // Neither request has settled in the model.
-	backend := m.timelineBackend.(*timelineModeBackend)
+	backend, ok := m.timelineBackend.(*timelineModeBackend)
+	require.True(ok)
 	require.Len(backend.contexts, 2)
-	assert.ErrorIs(backend.contexts[0].Err(), context.Canceled)
+	require.ErrorIs(backend.contexts[0].Err(), context.Canceled)
 	require.Len(m.timelineState.history, 1)
 	back, _ := sendKey(t, m, keyEsc())
-	assert.ErrorIs(backend.contexts[1].Err(), context.Canceled)
+	require.ErrorIs(backend.contexts[1].Err(), context.Canceled)
 	assert.Equal(originalRequest, back.timelineState.request)
 	assert.Same(originalResult, back.timelineState.result)
 	assert.Empty(back.timelineState.history)
@@ -268,7 +277,8 @@ func TestTimelineNextPagePreservesRequestAndBackRestoresSelection(t *testing.T) 
 			extra := firstPage.Days[0].Bursts[0]
 			extra.Ref, extra.AnchorRef = "conv:8", "burst:1:8:2027-03-14"
 			firstPage.Days[0].Bursts = append(firstPage.Days[0].Bursts, extra)
-			backend := m.timelineBackend.(*timelineModeBackend)
+			backend, ok := m.timelineBackend.(*timelineModeBackend)
+			require.True(ok)
 			backend.result = firstPage
 			request := timeline.Request{Mode: mode, Tiers: []int{1, 2}, IncludeCold: true, IncludeNoise: true, Budget: 4096, Format: "json"}
 			switch mode {
@@ -358,7 +368,8 @@ func TestTimelineNextPageBackCancelsAndRejectsLateResponse(t *testing.T) {
 	m := timelineModeModel()
 	m.timelineState.result.Cursor = "opaque-next-page"
 	firstPage, firstRequest := m.timelineState.result, m.timelineState.request
-	backend := m.timelineBackend.(*timelineModeBackend)
+	backend, ok := m.timelineBackend.(*timelineModeBackend)
+	require.True(ok)
 	next, cmd := sendKey(t, m, key('n'))
 	require.NotNil(cmd)
 	late := cmd()
@@ -366,9 +377,249 @@ func TestTimelineNextPageBackCancelsAndRejectsLateResponse(t *testing.T) {
 	assert.Nil(duplicate, "a pending page has no continuation to follow")
 	back, _ := sendKey(t, pending, keyEsc())
 	require.Len(backend.contexts, 1)
-	assert.ErrorIs(backend.contexts[0].Err(), context.Canceled)
+	require.ErrorIs(backend.contexts[0].Err(), context.Canceled)
 	back = sendMsg(t, back, late)
 	assert.Same(firstPage, back.timelineState.result)
 	assert.Equal(firstRequest, back.timelineState.request)
 	assert.False(back.timelineState.loading)
+}
+
+func TestTimelineMeetingSearchAcceptsTextAndCursorEditing(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m := timelineModeModel()
+	detail := &query.MessageDetail{ID: 55, Subject: "Archived transcript", BodyText: "hello and helxlyo"}
+	m.engine = newMockEngine(MockConfig{Detail: detail})
+	m.timelineState.result.Days[0].Bursts = nil
+	m.timelineState.result.Days[0].Meetings = []timeline.Entry{{Kind: "transcript", Ref: "msg:55", AnchorRef: "msg:55",
+		Meeting: &timeline.MeetingEntry{Title: timeline.UntrustedText{Text: "Archived transcript"}},
+		Open:    []timeline.Open{{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []int64{55}}}}}}
+	m.rebuildTimelineRows()
+	parked := m.meetingState
+	m, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	m = sendMsg(t, m, cmd())
+	m, _ = sendKey(t, m, key('/'))
+	for _, r := range "hello" {
+		m, _ = sendKey(t, m, key(r))
+	}
+	assert.Equal("hello", m.timelineState.meeting.detailSearchInput.Value())
+	lines := strings.Split(stripANSI(m.renderView()), "\n")
+	footer := lines[len(lines)-1]
+	assert.Contains(footer, "hello")
+	assert.Contains(footer, "Enter find")
+	assert.NotContains(footer, "Enter open")
+	m, _ = sendKey(t, m, keyLeft())
+	m, _ = sendKey(t, m, keyLeft())
+	m, _ = sendKey(t, m, key('x'))
+	m, _ = sendKey(t, m, keyRight())
+	m, _ = sendKey(t, m, key('y'))
+	assert.Equal("helxlyo", m.timelineState.meeting.detailSearchInput.Value())
+	lines = strings.Split(stripANSI(m.renderView()), "\n")
+	assert.Contains(lines[len(lines)-1], "helxlyo")
+	m, _ = sendKey(t, m, keyEnter())
+	assert.Equal("helxlyo", m.timelineState.meeting.detailSearchQuery)
+	assert.NotEmpty(m.timelineState.meeting.detailSearchMatches)
+	assert.NotContains(stripANSI(m.renderView()), "[Find]/")
+	m, _ = sendKey(t, m, key('/'))
+	assert.Contains(stripANSI(m.renderView()), "[Find]/")
+	m, _ = sendKey(t, m, keyEsc())
+	assert.NotContains(stripANSI(m.renderView()), "[Find]/")
+	assert.Equal(timelineReaderMeeting, m.timelineState.reader)
+	m, _ = sendKey(t, m, keyEsc())
+	assert.Equal(timelineReaderNone, m.timelineState.reader)
+	assert.Contains(stripANSI(m.renderView()), "Selected: msg:55")
+	assert.Equal(parked, m.meetingState)
+}
+
+type timelineCalendarFixtureBackend struct {
+	timelineModeBackend
+
+	calendarRequests []string
+	calendarContexts []context.Context
+	calendarDetail   store.CalendarOccurrenceDetail
+	calendarErr      error
+}
+
+func (b *timelineCalendarFixtureBackend) GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error) {
+	b.calendarRequests = append(b.calendarRequests, ref)
+	b.calendarContexts = append(b.calendarContexts, ctx)
+	return b.calendarDetail, b.calendarErr
+}
+
+func timelineCalendarModel(ref string) (Model, *timelineCalendarFixtureBackend) {
+	m := timelineModeModel()
+	backend := &timelineCalendarFixtureBackend{calendarDetail: store.CalendarOccurrenceDetail{
+		CalendarOccurrence: store.CalendarOccurrence{Ref: ref, MessageID: 42, Subject: "Archived planning", Status: "confirmed",
+			Start: m.timelineState.result.Now, End: m.timelineState.result.Now.Add(time.Hour),
+			Attendees: []calevent.Attendee{{DisplayName: "Example Guest", Email: "guest@example.com", RSVP: "accepted"}}},
+		Content: calevent.Content{Location: "Example room", JoinURL: "https://example.com/meeting", Description: "Archived agenda\x1b]52;c;unsafe\x07"},
+	}}
+	m.timelineBackend = backend
+	m.timelineState.result.Days[0].Bursts = nil
+	m.timelineState.result.Days[0].Meetings = []timeline.Entry{{Kind: "meeting", Ref: ref, AnchorRef: ref,
+		Meeting: &timeline.MeetingEntry{Title: timeline.UntrustedText{Text: "Archived planning"}},
+		Open:    []timeline.Open{{Tool: "get_calendar_event", Args: map[string]any{"ref": ref}}}}}
+	m.rebuildTimelineRows()
+	return m, backend
+}
+
+func TestTimelineCalendarOpensExactOccurrenceAndReturns(t *testing.T) {
+	for _, ref := range []string{"evt:42", "evt:42@20270314T083000.123456789Z", "evt:42@20270314"} {
+		t.Run(ref, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			m, backend := timelineCalendarModel(ref)
+			result, request := m.timelineState.result, m.timelineState.request
+			opened, cmd := sendKey(t, m, keyEnter())
+			require.NotNil(cmd)
+			loaded := sendMsg(t, opened, cmd())
+			assert.Equal([]string{ref}, backend.calendarRequests)
+			view := loaded.renderView()
+			for _, text := range []string{"Archived calendar occurrence", ref, "Archived planning", "Example room", "guest@example.com", "accepted", "https://example.com/meeting", "Archived agenda"} {
+				assert.Contains(stripANSI(view), text)
+			}
+			assert.NotContains(view, "\x1b]52;")
+			assert.Nil(loaded.messageDetail, "calendar occurrence must not masquerade as a message")
+			back, cmd := sendKey(t, loaded, keyEsc())
+			assert.Nil(cmd)
+			assert.Equal(timelineReaderNone, back.timelineState.reader)
+			assert.Same(result, back.timelineState.result)
+			assert.Equal(request, back.timelineState.request)
+			assert.Equal(0, back.timelineState.cursor)
+		})
+	}
+}
+
+func TestTimelineCalendarReaderScrollsWithinBounds(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m, backend := timelineCalendarModel("evt:42")
+	backend.calendarDetail.Description = strings.Repeat("Agenda line\n", 60) + "Last agenda line"
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	loaded := sendMsg(t, opened, cmd())
+	assert.NotContains(stripANSI(loaded.renderView()), "Last agenda line")
+	end, _ := sendKey(t, loaded, key('G'))
+	assert.Contains(stripANSI(end.renderView()), "Last agenda line")
+	again, _ := sendKey(t, end, key('j'))
+	assert.Equal(stripANSI(end.renderView()), stripANSI(again.renderView()))
+	home, _ := sendKey(t, again, tea.KeyPressMsg{Code: tea.KeyHome})
+	assert.Equal(stripANSI(loaded.renderView()), stripANSI(home.renderView()))
+}
+
+func TestTimelineLinkedCalendarStillOpensTranscript(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m, backend := timelineCalendarModel("evt:42")
+	m.engine = newMockEngine(MockConfig{Detail: &query.MessageDetail{ID: 55, BodyText: "Linked transcript body"}})
+	entry := &m.timelineState.result.Days[0].Meetings[0]
+	entry.Open = append(entry.Open, timeline.Open{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []int64{55}}})
+	m.rebuildTimelineRows()
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	loaded := sendMsg(t, opened, cmd())
+	assert.Empty(backend.calendarRequests)
+	assert.Equal(timelineReaderMeeting, loaded.timelineState.reader)
+	assert.Contains(stripANSI(loaded.renderView()), "Linked transcript body")
+}
+
+func (b *timelineModeBackend) GetCalendarOccurrenceContext(context.Context, string) (store.CalendarOccurrenceDetail, error) {
+	return store.CalendarOccurrenceDetail{}, errors.New("calendar fixture not configured")
+}
+
+func TestTimelineCalendarRetryKeepsExactRef(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m, backend := timelineCalendarModel("evt:42@20270314T083000.123456789Z")
+	backend.calendarErr = errors.New("calendar temporarily unavailable\x1b]52;c;unsafe\x07")
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	failed := sendMsg(t, opened, cmd())
+	assert.Contains(stripANSI(failed.renderView()), "r retry")
+	assert.Contains(stripANSI(failed.renderView()), "calendar temporarily unavailable")
+	assert.NotContains(failed.renderView(), "\x1b]52;")
+	backend.calendarErr = nil
+	retry, cmd := sendKey(t, failed, key('r'))
+	require.NotNil(cmd)
+	loaded := sendMsg(t, retry, cmd())
+	assert.Equal([]string{"evt:42@20270314T083000.123456789Z", "evt:42@20270314T083000.123456789Z"}, backend.calendarRequests)
+	assert.Contains(stripANSI(loaded.renderView()), "Archived planning")
+	assert.NoError(loaded.timelineState.err)
+}
+
+func TestTimelineCalendarBackCancelsAndRejectsLateResult(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m, backend := timelineCalendarModel("evt:42")
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	late := cmd()
+	back, _ := sendKey(t, opened, keyEsc())
+	require.Len(backend.calendarContexts, 1)
+	require.ErrorIs(backend.calendarContexts[0].Err(), context.Canceled)
+	back = sendMsg(t, back, late)
+	assert.Equal(timelineReaderNone, back.timelineState.reader)
+	assert.Nil(back.timelineState.calendar)
+	assert.False(back.loading)
+	assert.Contains(stripANSI(back.renderView()), "Selected: evt:42")
+}
+
+func TestTimelineCalendarModeExitCancelsAndReentryResumes(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m, backend := timelineCalendarModel("evt:42@20270314T083000Z")
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	late := cmd()
+	away, _ := sendKey(t, opened, key('m'))
+	require.Len(backend.calendarContexts, 1)
+	require.ErrorIs(backend.calendarContexts[0].Err(), context.Canceled)
+	away = sendMsg(t, away, late)
+	assert.Nil(away.timelineState.calendar)
+	require.Equal(modeEmail, away.mode)
+	meetings, _ := sendKey(t, away, key('m'))
+	require.Equal(modeMeetings, meetings.mode)
+	resumed, cmd := sendKey(t, meetings, key('m'))
+	require.Equal(modeTimeline, resumed.mode)
+	require.NotNil(cmd)
+	loaded := sendMsg(t, resumed, cmd())
+	assert.Equal([]string{"evt:42@20270314T083000Z", "evt:42@20270314T083000Z"}, backend.calendarRequests)
+	assert.Contains(stripANSI(loaded.renderView()), "Archived planning")
+}
+
+func TestTimelineCalendarRejectsMismatchedResponse(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m, backend := timelineCalendarModel("evt:42")
+	backend.calendarDetail.Ref = "evt:43"
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	failed := sendMsg(t, opened, cmd())
+	require.ErrorContains(failed.timelineState.err, "mismatched occurrence")
+	assert.NotContains(stripANSI(failed.renderView()), "Archived planning")
+}
+
+func TestTimelineCalendarMovedOccurrenceRetainsOriginalRef(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	const ref = "evt:42@20270314T083000.123456789Z"
+	m, backend := timelineCalendarModel(ref)
+	backend.calendarDetail.Start = time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)
+	backend.calendarDetail.End = backend.calendarDetail.Start.Add(time.Hour)
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	loaded := sendMsg(t, opened, cmd())
+	assert.Equal([]string{ref}, backend.calendarRequests)
+	view := stripANSI(loaded.renderView())
+	assert.Contains(view, ref)
+	assert.Contains(view, "Start: 2027-03-15T10:00:00Z")
+	assert.Contains(view, "End: 2027-03-15T11:00:00Z")
+}
+
+func TestTimelineCalendarAllDayAndDeletedStatus(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m, backend := timelineCalendarModel("evt:42@20270314")
+	backend.calendarDetail.AllDay = true
+	backend.calendarDetail.StartDate, backend.calendarDetail.EndDate = "2027-03-14", "2027-03-15"
+	backend.calendarDetail.DeletedFromSource = true
+	backend.calendarDetail.Status = "cancelled"
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	loaded := sendMsg(t, opened, cmd())
+	view := stripANSI(loaded.renderView())
+	assert.Contains(view, "All day: 2027-03-14 to 2027-03-15 (end date exclusive)")
+	assert.Contains(view, "Status: cancelled")
+	assert.Contains(view, "Deleted from source; showing the archived occurrence")
 }

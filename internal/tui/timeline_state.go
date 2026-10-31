@@ -4,12 +4,14 @@ import (
 	"context"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/timeline"
 )
 
-// TimelineBackend reads the selected daemon's composed archive timeline.
+// TimelineBackend reads the selected daemon's timeline and archived event details.
 type TimelineBackend interface {
-	Timeline(context.Context, timeline.Request) (*timeline.Timeline, string, error)
+	Timeline(ctx context.Context, req timeline.Request) (*timeline.Timeline, string, error)
+	GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error)
 }
 
 type timelineReader uint8
@@ -19,6 +21,7 @@ const (
 	timelineReaderMessage
 	timelineReaderThread
 	timelineReaderMeeting
+	timelineReaderCalendar
 )
 
 type timelineSelectableEntry struct {
@@ -52,6 +55,9 @@ type timelineState struct {
 	threadCursor, threadScroll int
 	threadTruncated            bool
 	meeting                    meetingState
+	calendarRef                string
+	calendar                   *store.CalendarOccurrenceDetail
+	calendarScroll             int
 }
 
 func (m *Model) cancelTimelineRequest() {

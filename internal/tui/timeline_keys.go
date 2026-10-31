@@ -92,9 +92,13 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		return m.openTimelineReader(m.timelineState.reader, m.timelineState.readerID)
 	}
 	switch m.timelineState.reader {
+	case timelineReaderNone:
+		// List navigation continues below.
+	case timelineReaderCalendar:
+		return m.handleTimelineCalendarKey(msg)
 	case timelineReaderMessage:
 		// Horizontal navigation belongs to the parked Email/Text reader state.
-		if msg.String() == "h" || msg.String() == "left" || msg.String() == "l" || msg.String() == keyNameRight || msg.String() == "T" {
+		if msg.String() == "h" || msg.String() == keyNameLeft || msg.String() == "l" || msg.String() == keyNameRight || msg.String() == "T" {
 			return m, nil
 		}
 		return m.handleMessageDetailKeys(msg)
@@ -115,7 +119,10 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.threadMessages = m.timelineState.messages
 		m.threadCursor, m.threadScrollOffset = m.timelineState.threadCursor, m.timelineState.threadScroll
 		updated, cmd := m.handleThreadViewKeys(msg)
-		next := updated.(Model)
+		next, ok := updated.(Model)
+		if !ok {
+			return m, cmd
+		}
 		next.timelineState.threadCursor, next.timelineState.threadScroll = next.threadCursor, next.threadScrollOffset
 		next.viewState = parked
 		return next, cmd
@@ -158,7 +165,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "h" || msg.String() == "left" || msg.String() == "l" || msg.String() == keyNameRight {
+	if !m.timelineState.meeting.detailSearchActive && (msg.String() == "h" || msg.String() == keyNameLeft || msg.String() == "l" || msg.String() == keyNameRight) {
 		return m, nil
 	}
 	parked := m.meetingState
@@ -170,7 +177,10 @@ func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	} else {
 		updated, cmd = m.handleMeetingDetailKeys(msg)
 	}
-	next := updated.(Model)
+	next, ok := updated.(Model)
+	if !ok {
+		return m, cmd
+	}
 	next.timelineState.meeting = next.meetingState
 	next.meetingState = parked
 	return next, cmd
@@ -192,8 +202,15 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	// Preserve transcript/message openers when a meeting has both targets.
+	var calendarRef string
 	for _, open := range entry.Open {
 		switch open.Tool {
+		case "get_calendar_event":
+			if ref, ok := open.Args["ref"].(string); ok && ref != "" {
+				calendarRef = ref
+			}
+
 		case "get_message":
 			if id := timelineOpenID(open.Args["id"]); id > 0 {
 				m.messageDetail = nil
@@ -232,6 +249,31 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	if calendarRef != "" {
+		m.timelineState.calendarRef = calendarRef
+		m.timelineState.calendar = nil
+		m.timelineState.calendarScroll = 0
+		return m.openTimelineReader(timelineReaderCalendar, 0)
+	}
+	return m, nil
+}
+
+func (m Model) handleTimelineCalendarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k", keyNameCtrlP:
+		m.timelineState.calendarScroll--
+	case keyNameDown, "j", keyNameCtrlN:
+		m.timelineState.calendarScroll++
+	case keyNamePageUp, keyNameCtrlU:
+		m.timelineState.calendarScroll -= m.detailPageSize()
+	case keyNamePageDown, keyNameCtrlD:
+		m.timelineState.calendarScroll += m.detailPageSize()
+	case keyNameHome:
+		m.timelineState.calendarScroll = 0
+	case keyNameEnd, "G":
+		m.timelineState.calendarScroll = len(m.timelineCalendarLines())
+	}
+	m.timelineState.calendarScroll = min(max(m.timelineState.calendarScroll, 0), max(len(m.timelineCalendarLines())-m.detailPageSize(), 0))
 	return m, nil
 }
 

@@ -26,6 +26,7 @@ const (
 	keyNameCtrlU     = "ctrl+u"
 	keyNameCtrlD     = "ctrl+d"
 	keyNameRight     = "right"
+	keyNameLeft      = "left"
 	keyNamePageUp    = "pgup"
 	keyNamePageDown  = "pgdown"
 	keyNameHome      = "home"
@@ -1302,7 +1303,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			if !previous.matches(selected) {
 				m.invalidateSourceScope()
 			}
-		case modePeople, modeCount:
+		case modePeople, modeTimeline, modeCount:
 		}
 		m.modal = modalNone
 		m.loading = true

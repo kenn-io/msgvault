@@ -398,7 +398,7 @@ func TestTUITimelineBackendRequiresTimelineSchema(t *testing.T) {
 		t.Run(version, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal("/api/v1/health", r.URL.Path)
+				assert.Equal("/api/v1/health", r.URL.Path)
 				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version})
 			}))
 			t.Cleanup(srv.Close)

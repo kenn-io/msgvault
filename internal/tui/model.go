@@ -2206,9 +2206,9 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if msg.String() == "," && m.settingsShortcutAvailable() &&
-		!(m.mode == modeTimeline && (m.timelineState.reader == timelineReaderMessage && m.detailSearchActive ||
-			m.timelineState.reader == timelineReaderMeeting && m.timelineState.meeting.detailSearchActive)) {
+	timelineSearchActive := m.mode == modeTimeline && (m.timelineState.reader == timelineReaderMessage && m.detailSearchActive ||
+		m.timelineState.reader == timelineReaderMeeting && m.timelineState.meeting.detailSearchActive)
+	if msg.String() == "," && m.settingsShortcutAvailable() && !timelineSearchActive {
 		return m.openSettings()
 	}
 	if m.mode == modeTimeline {
