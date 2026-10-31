@@ -1345,7 +1345,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	setEnumNames(schemas["ExploreGroupDimension"], []any{
 		"ExploreGroupDimensionSource", "ExploreGroupDimensionParticipant", "ExploreGroupDimensionDomain",
-		"ExploreGroupDimensionMessageType", "ExploreGroupDimensionMailingList", "ExploreGroupDimensionKind", "ExploreGroupDimensionYear", "ExploreGroupDimensionMonth",
+		"ExploreGroupDimensionMessageType", "ExploreGroupDimensionMailingList", "ExploreGroupDimensionKind", "ExploreGroupDimensionYear", "ExploreGroupDimensionMonth", "ExploreGroupDimensionDay",
 	})
 	if counter := schemas["OperationPublicCounter"]; counter != nil {
 		setEnumNames(counter.Properties["unit"], []any{

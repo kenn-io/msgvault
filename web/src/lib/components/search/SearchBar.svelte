@@ -63,7 +63,7 @@
   class="global-search"
   class:global-search--compact={compact}
   role="search"
-  aria-label="Search Messages"
+  aria-label={workspace === 'relationships' ? 'Search people' : 'Search Messages'}
   onsubmit={submit}
 >
   <div class="global-search__query">
@@ -71,13 +71,15 @@
       id="everything-search"
       bind:inputEl
       value={draft}
-      ariaLabel="Search messages"
-      placeholder={compact ? 'Search' : 'Search people, conversations, events, and files…'}
+      ariaLabel={workspace === 'relationships' ? 'Search people' : 'Search messages'}
+      placeholder={workspace === 'relationships' ? 'Search people' : compact ? 'Search' : 'Search people, conversations, events, and files…'}
       block
       oninput={changeQuery}
     />
   </div>
-  {#if compact}
+  {#if workspace === 'relationships'}
+    <Button type="submit" label="Search" surface="soft" />
+  {:else if compact}
     <SelectDropdown
       title="Search mode"
       value={draftMode}

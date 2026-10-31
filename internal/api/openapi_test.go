@@ -1637,7 +1637,7 @@ func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
 	schemas := doc.Components.Schemas.Map()
 	dimension := schemas["ExploreGroupDimension"]
 	requirements.NotNil(dimension)
-	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month"}, dimension.Enum)
+	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month", "day"}, dimension.Enum)
 
 	filter := schemas["ExploreFilter"]
 	requirements.NotNil(filter)

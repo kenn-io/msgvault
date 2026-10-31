@@ -272,3 +272,21 @@ describe('ExploreAPI routing', () => {
       .rejects.toThrow(/failed|activation/i);
   });
 });
+
+it.each([
+  [{ kind: 'person', id: 42 }, '/api/v1/participants/42/timeline'],
+  [{ kind: 'domain', domain: 'example.net' }, '/api/v1/domains/example.net/timeline'],
+] as const)('keeps %s scoped through timeline pagination', async (scope, path) => {
+  const bodies: unknown[] = [];
+  const paths: string[] = [];
+  const api = createExploreAPI(createAPIClient(async (input) => {
+    const request = input instanceof Request ? input : new Request(input);
+    paths.push(new URL(request.url).pathname);
+    bodies.push(await request.json());
+    return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-people', search_provenance: {} });
+  }), scope);
+  await api.explore({ filters: [], limit: 25 });
+  await api.explore({ filters: [], limit: 25, cursor: 'page-2' });
+  expect(paths).toEqual([path, path]);
+  expect(bodies).toEqual([{ filters: [], limit: 25 }, { filters: [], limit: 25, cursor: 'page-2' }]);
+});

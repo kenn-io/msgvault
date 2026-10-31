@@ -14,4 +14,5 @@ export const SavedViewStateEnvelopeGroupingItem = {
   kind: "kind",
   year: "year",
   month: "month",
+  day: "day",
 } as const;

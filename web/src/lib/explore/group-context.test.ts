@@ -87,4 +87,13 @@ describe('group context', () => {
     expect(filtersForGroup([], 'kind', 'message')).toBeUndefined();
     expect(parseGroupSelection('message:1')).toBeUndefined();
   });
+  it('drills a leap day into an exact UTC day and rejects invalid dates', () => {
+    expect(filtersForGroup([], 'day', '2024-02-29')).toEqual([
+      { dimension: 'after', values: ['2024-02-29T00:00:00.000Z'] },
+      { dimension: 'before', values: ['2024-03-01T00:00:00.000Z'] },
+    ]);
+    expect(filtersForGroup([], 'day', '2025-02-29')).toBeUndefined();
+    expect(parseGroupSelection('group:day:2024-02-29')).toEqual({ dimension: 'day', key: '2024-02-29' });
+  });
+
 });

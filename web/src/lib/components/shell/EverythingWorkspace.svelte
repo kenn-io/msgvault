@@ -54,6 +54,7 @@
   type ExplorePreflight = GeneratedExplorePreflightResponse;
 
   interface Props {
+    scope?: import('../../explore/models').ExploreFilter;
     resultsWidth?: number;
     client: APIClient;
     exploreState: ExploreState;
@@ -87,6 +88,7 @@
   }
 
   let {
+    scope = undefined,
     resultsWidth = $bindable(0),
     client,
     exploreState,
@@ -622,12 +624,13 @@
 </script>
 
 <main class="everything-workspace" aria-label="Messages">
-  <PageHeader title="Messages">
+  {#if !scope}<PageHeader title="Messages">
     {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
-  </PageHeader>
+  </PageHeader>{/if}
 
   <ContextBar
     messages
+    lockedFilter={scope}
     {client}
     query={exploreState.current.query}
     searchMode={exploreState.current.searchMode}
@@ -656,7 +659,7 @@
         activeRow: null,
         scrollAnchor: null,
       })}
-    onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
+    onClearFilters={() => commitNavigation({ filters: scope ? [scope] : [], activeRow: null, scrollAnchor: null })}
     onFiltersChange={(filters) =>
       commitNavigation({
         filters,
@@ -815,7 +818,7 @@
                 onRetry={loader.retry}
               />
             {/if}
-            <SelectionBar
+            {#if !scope}<SelectionBar
               {selection}
               totalCount={loader.result?.totalCount}
               allMatching={allMatchingSelection}
@@ -826,7 +829,7 @@
               onExport={exportSelection}
               {onReviewDeletion}
               onClear={focusGrid}
-            />
+            />{/if}
           {/if}
         </div>
       {/snippet}

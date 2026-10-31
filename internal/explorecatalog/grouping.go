@@ -11,6 +11,7 @@ const (
 	GroupKind        = "kind"
 	GroupYear        = "year"
 	GroupMonth       = "month"
+	GroupDay         = "day"
 )
 
 var groupingDimensions = [...]string{
@@ -22,6 +23,7 @@ var groupingDimensions = [...]string{
 	GroupKind,
 	GroupYear,
 	GroupMonth,
+	GroupDay,
 }
 
 // GroupingDimensions returns every grouping value accepted by the analytical

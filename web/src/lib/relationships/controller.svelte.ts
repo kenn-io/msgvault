@@ -70,6 +70,7 @@ type ListPageRequest =
       kind: 'people' | 'domains';
       context: ExplorePredicate;
       query: string;
+      sort: IdentitySearchSort;
     };
 interface ListPageResponse {
   data?: {
@@ -106,6 +107,7 @@ const TIMELINE_RESTART_MESSAGE = 'Timeline restarted: the archive changed.';
 export class RelationshipsController {
   facet = $state<RelationshipFacet>('people');
   query = $state('');
+  sort = $state<IdentitySearchSort>({ ...DEFAULT_IDENTITY_SORT });
   showAll = $state(false);
   listRows = $state<ListRows>([]);
   listLoading = $state(false);
@@ -228,10 +230,10 @@ export class RelationshipsController {
     const query = this.query.trim();
     const request: ListPageRequest =
       this.facet === 'domains'
-        ? { kind: 'domains', context: contextPredicate(predicate), query }
-        : query === ''
+        ? { kind: 'domains', context: contextPredicate(predicate), query, sort: { ...this.sort } }
+        : query === '' && this.sort.field === 'activity_count'
           ? { kind: 'relationships', filters: predicate.filters, showAll: this.showAll }
-          : { kind: 'people', context: contextPredicate(predicate), query };
+          : { kind: 'people', context: contextPredicate(predicate), query, sort: { ...this.sort } };
     this.listPageRequest = request;
     const signature = canonicalFingerprint(request);
     if (signature !== this.listContextSignature) {
@@ -308,7 +310,7 @@ export class RelationshipsController {
     const body = {
       predicate: request.context,
       identity_query: request.query,
-      sort: DEFAULT_IDENTITY_SORT,
+      sort: request.sort,
       limit: SEARCH_LIST_LIMIT,
       ...page,
     };
@@ -412,7 +414,7 @@ export class RelationshipsController {
             this.relationshipCalendarCurrentYear,
           );
           this.relationshipCalendarYear = clampNumber(
-            this.relationshipCalendarYear,
+            restore.year ?? personFirstYear({ ...personDetail, first_at: personDetail.last_at }, this.timezone(), this.relationshipCalendarCurrentYear),
             this.relationshipCalendarFirstYear,
             this.relationshipCalendarCurrentYear,
           );

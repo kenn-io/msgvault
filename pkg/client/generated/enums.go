@@ -737,6 +737,7 @@ func (e ExploreFilterDimension) Validate() error {
 type ExploreGroupDimension string
 
 const (
+	ExploreGroupDimensionDay         ExploreGroupDimension = "day"
 	ExploreGroupDimensionDomain      ExploreGroupDimension = "domain"
 	ExploreGroupDimensionKind        ExploreGroupDimension = "kind"
 	ExploreGroupDimensionMailingList ExploreGroupDimension = "mailing_list"
@@ -750,7 +751,7 @@ const (
 // Validate checks if the ExploreGroupDimension value is valid
 func (e ExploreGroupDimension) Validate() error {
 	switch e {
-	case ExploreGroupDimensionDomain, ExploreGroupDimensionKind, ExploreGroupDimensionMailingList, ExploreGroupDimensionMessageType, ExploreGroupDimensionMonth, ExploreGroupDimensionParticipant, ExploreGroupDimensionSource, ExploreGroupDimensionYear:
+	case ExploreGroupDimensionDay, ExploreGroupDimensionDomain, ExploreGroupDimensionKind, ExploreGroupDimensionMailingList, ExploreGroupDimensionMessageType, ExploreGroupDimensionMonth, ExploreGroupDimensionParticipant, ExploreGroupDimensionSource, ExploreGroupDimensionYear:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreGroupDimension value, got: %v", e))
@@ -2638,6 +2639,7 @@ func (s SavedViewStateEnvelopeColumns) Validate() error {
 type SavedViewStateEnvelopeGrouping string
 
 const (
+	SavedViewStateEnvelopeGroupingDay         SavedViewStateEnvelopeGrouping = "day"
 	SavedViewStateEnvelopeGroupingDomain      SavedViewStateEnvelopeGrouping = "domain"
 	SavedViewStateEnvelopeGroupingKind        SavedViewStateEnvelopeGrouping = "kind"
 	SavedViewStateEnvelopeGroupingMailingList SavedViewStateEnvelopeGrouping = "mailing_list"
@@ -2651,7 +2653,7 @@ const (
 // Validate checks if the SavedViewStateEnvelopeGrouping value is valid
 func (s SavedViewStateEnvelopeGrouping) Validate() error {
 	switch s {
-	case SavedViewStateEnvelopeGroupingDomain, SavedViewStateEnvelopeGroupingKind, SavedViewStateEnvelopeGroupingMailingList, SavedViewStateEnvelopeGroupingMessageType, SavedViewStateEnvelopeGroupingMonth, SavedViewStateEnvelopeGroupingParticipant, SavedViewStateEnvelopeGroupingSource, SavedViewStateEnvelopeGroupingYear:
+	case SavedViewStateEnvelopeGroupingDay, SavedViewStateEnvelopeGroupingDomain, SavedViewStateEnvelopeGroupingKind, SavedViewStateEnvelopeGroupingMailingList, SavedViewStateEnvelopeGroupingMessageType, SavedViewStateEnvelopeGroupingMonth, SavedViewStateEnvelopeGroupingParticipant, SavedViewStateEnvelopeGroupingSource, SavedViewStateEnvelopeGroupingYear:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewStateEnvelopeGrouping value, got: %v", s))

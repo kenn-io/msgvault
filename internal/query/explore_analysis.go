@@ -77,11 +77,15 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	}
 	queryText := buildPopulation(conditions, "NULL::BIGINT") +
 		exploreLogicalEntriesCTE(!spec.noLists)
+	byteExpression := "estimated_bytes"
+	if request.Dimension == "day" {
+		byteExpression = exploreEstimatedBytesSQL
+	}
 	queryText += spec.cte + `
 ), grouped AS (
 	SELECT ` + spec.key + ` AS group_key, ` + spec.label + ` AS group_label,
 		COUNT(*)::BIGINT AS group_count,
-		COALESCE(SUM(estimated_bytes), 0)::BIGINT AS estimated_bytes,
+		COALESCE(SUM(` + byteExpression + `), 0)::BIGINT AS estimated_bytes,
 		MAX(occurred_at) AS latest_at
 	FROM ` + spec.source + spec.fromSuffix + spec.whereSuffix + `
 	GROUP BY ` + spec.groupBy + `
@@ -264,6 +268,12 @@ func exploreGroupExpressions(
 		return simple("strftime(occurred_at, '%Y')"), nil
 	case timeGranularityMonth:
 		return simple("strftime(occurred_at, '%Y-%m')"), nil
+	case "day":
+		return groupExpressions{
+			key: "strftime(occurred_at, '%Y-%m-%d')", label: "strftime(occurred_at, '%Y-%m-%d')",
+			groupBy: "strftime(occurred_at, '%Y-%m-%d')", source: "classified",
+			noLists: true,
+		}, nil
 	default:
 		return groupExpressions{}, fmt.Errorf("%w: unknown group dimension %q", ErrInvalidExploreRequest, dimension)
 	}

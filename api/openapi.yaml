@@ -5371,6 +5371,7 @@ components:
         - kind
         - year
         - month
+        - day
       type: string
     ExploreGroupRow:
       additionalProperties: true
@@ -5450,6 +5451,9 @@ components:
             - semantic
             - hybrid
           type: string
+        sent_only:
+          description: Count sent messages only, excluding drafts and unsent items
+          type: boolean
         sort:
           items:
             $ref: "#/components/schemas/ExploreGroupSort"
@@ -14379,6 +14383,7 @@ components:
               - kind
               - year
               - month
+              - day
             type: string
           type: array
         inspector_pinned:

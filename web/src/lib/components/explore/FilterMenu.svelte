@@ -17,6 +17,7 @@
   let {
     client,
     filters,
+    lockedFilter = undefined,
     onChange,
     extra = undefined,
     onClear = undefined,
@@ -25,6 +26,7 @@
     onClear?: () => void;
     client: APIClient;
     filters: ExploreFilter[];
+    lockedFilter?: ExploreFilter;
     onChange: (filters: ExploreFilter[]) => void;
   } = $props();
 
@@ -167,7 +169,7 @@
     {/if}
     {#if kindsStatus}<p role="status">{kindsStatus}</p>{/if}
     <AccountFilter {client} {filters} {onChange} showSingleMailbox />
-    <IdentityFilter {client} {filters} {onChange} />
+    {#if !lockedFilter}<IdentityFilter {client} {filters} {onChange} />{/if}
     <fieldset class="field">
       <legend>Dates (UTC)</legend>
       <div class="dates">

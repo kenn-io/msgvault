@@ -1086,3 +1086,20 @@ func newExploreDuckDBFixtureWithClusters(
 	tb.Cleanup(func() { require.NoError(tb, engine.Close()) })
 	return engine, analyticsDir
 }
+
+func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Parallel()
+	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
+	response := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"sent_only":true,"limit":366}`)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreGroupsHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	require.NotEmpty(body.Rows)
+	for _, row := range body.Rows {
+		_, err := time.Parse("2006-01-02", row.Key)
+		require.NoError(err)
+		assert.Positive(row.Count)
+	}
+}

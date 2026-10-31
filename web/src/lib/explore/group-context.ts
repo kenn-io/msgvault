@@ -33,6 +33,11 @@ export function filtersForGroup(
     const year = Number(key);
     return replaceTimeFilters(filters, `${key}-01-01T00:00:00Z`, `${year + 1}-01-01T00:00:00Z`);
   }
+  if (dimension === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(key)) {
+    const start = new Date(`${key}T00:00:00Z`);
+    if (Number.isNaN(start.valueOf()) || start.toISOString().slice(0, 10) !== key) return undefined;
+    return replaceTimeFilters(filters, start.toISOString(), new Date(start.valueOf() + 86400000).toISOString());
+  }
   if (dimension === 'month' && /^\d{4}-(0[1-9]|1[0-2])$/.test(key)) {
     const [year, month] = key.split('-').map(Number) as [number, number];
     const nextYear = month === 12 ? year + 1 : year;

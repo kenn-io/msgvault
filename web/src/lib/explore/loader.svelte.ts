@@ -11,7 +11,7 @@ import type {
   ExploreSearchMode,
   FileMIMEFamily
 } from './models';
-import { createExploreAPI, type ExploreAPI } from './api';
+import { createExploreAPI, type ExploreAPI, type TimelineScope } from './api';
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseArchiveMeetingSelection } from '../meetings/archive-selection';
 import { parseRecordingSelection } from '../archive/recording-selection';
@@ -104,9 +104,9 @@ export class ExploreLoader {
   private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   #retryRevision = $state(0);
 
-  constructor(client: APIClient, state: ExploreState, callbacks: ExploreLoaderCallbacks) {
+  constructor(client: APIClient, state: ExploreState, callbacks: ExploreLoaderCallbacks, scope?: TimelineScope) {
     this.state = state;
-    this.api = createExploreAPI(client);
+    this.api = createExploreAPI(client, scope);
     this.callbacks = callbacks;
 
     // Declared as a constructor-local (rather than a class field) because a

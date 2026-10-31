@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- People brings people, domains, and saved profile filters into one list. Person and domain pages share Messages and Files, with a daily Activity calendar; Details keeps identity actions and links to full Directory profiles. API schema 3.28.0 adds daily grouping and sent-only group counts.
+
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.28.0 adds optional participant IDs to message details, and generated Go `ConversationResponse.Messages` uses `[]ConversationMessage`.
 

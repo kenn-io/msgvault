@@ -2072,3 +2072,21 @@ describe('RelationshipsController draft-only targets', () => {
     expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
   });
 });
+
+it('keeps the chosen People order on later pages', async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const controller = new RelationshipsController(createAPIClient(async (input) => {
+    const request = input instanceof Request ? input : new Request(input);
+    expect(new URL(request.url).pathname).toBe('/api/v1/participants/search');
+    bodies.push(await request.json());
+    return Response.json({ rows: [person(bodies.length)], total_count: 2, cache_revision: 'cache-rel',
+      ...(bodies.length === 1 ? { next_cursor: 'next' } : {}) });
+  }), () => 'UTC');
+  controller.sort = { field: 'display_label', direction: 'asc' };
+  await controller.loadList({ filters: [], presentation: 'table' });
+  controller.sort = { field: 'latest_at', direction: 'desc' };
+  await controller.loadMoreList();
+  expect(bodies.map((body) => body.sort)).toEqual([{ field: 'display_label', direction: 'asc' }, { field: 'display_label', direction: 'asc' }]);
+  expect(controller.listRows.map((row) => 'id' in row ? row.id : null)).toEqual([1, 2]);
+  controller.destroy();
+});

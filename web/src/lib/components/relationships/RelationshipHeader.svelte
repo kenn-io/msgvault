@@ -22,6 +22,7 @@
     detail: PersonSummary | DomainSummary | null;
     loading?: boolean;
     filesOpen: boolean;
+    showTabs?: boolean;
     missing?: boolean;
     onFilesToggle: (value: boolean) => void;
     client: APIClient;
@@ -39,6 +40,7 @@
     detail,
     loading = false,
     filesOpen,
+    showTabs = true,
     missing = false,
     onFilesToggle,
     client,
@@ -342,7 +344,7 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    <div class="view-row">
+    {#if showTabs}<div class="view-row">
       <SegmentedControl
         ariaLabel="Relationship view"
         value={filesOpen ? 'files' : 'messages'}
@@ -352,7 +354,7 @@
         ]}
         onchange={(value) => onFilesToggle(value === 'files')}
       />
-    </div>
+    </div>{/if}
     <p class="counts">
       {detail.activity_count.toLocaleString()} items
       {#if detail.activity_count > 0}

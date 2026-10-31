@@ -610,6 +610,8 @@ func fileGroupExpressions(
 		return simple("strftime(occurred_at, '%Y')"), nil
 	case timeGranularityMonth:
 		return simple("strftime(occurred_at, '%Y-%m')"), nil
+	case "day":
+		return simple("strftime(occurred_at, '%Y-%m-%d')"), nil
 	default:
 		return groupExpressions{}, fmt.Errorf("%w: unknown file group dimension %q", ErrInvalidExploreRequest, dimension)
 	}

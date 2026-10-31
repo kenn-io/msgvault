@@ -5318,6 +5318,7 @@ components:
         - kind
         - year
         - month
+        - day
       type: string
       x-enum-names:
         - ExploreGroupDimensionSource
@@ -5328,6 +5329,7 @@ components:
         - ExploreGroupDimensionKind
         - ExploreGroupDimensionYear
         - ExploreGroupDimensionMonth
+        - ExploreGroupDimensionDay
     ExploreGroupRow:
       properties:
         count:
@@ -5421,6 +5423,9 @@ components:
             - ExploreGroupsHTTPRequestSearchModeFullText
             - ExploreGroupsHTTPRequestSearchModeSemantic
             - ExploreGroupsHTTPRequestSearchModeHybrid
+        sent_only:
+          description: Count sent messages only, excluding drafts and unsent items
+          type: boolean
         sort:
           items:
             $ref: "#/components/schemas/ExploreGroupSort"
@@ -14193,6 +14198,7 @@ components:
               - kind
               - year
               - month
+              - day
             type: string
             x-enum-names:
               - SavedViewStateEnvelopeGroupingSource
@@ -14203,6 +14209,7 @@ components:
               - SavedViewStateEnvelopeGroupingKind
               - SavedViewStateEnvelopeGroupingYear
               - SavedViewStateEnvelopeGroupingMonth
+              - SavedViewStateEnvelopeGroupingDay
           type: array
         inspector_pinned:
           type: boolean

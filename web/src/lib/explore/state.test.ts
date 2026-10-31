@@ -1826,3 +1826,35 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   expect(state.current.operationHistory).toBe(false);
   state.destroy();
 });
+
+it('keeps embedded person navigation detached from shell history', () => {
+  window.history.replaceState({ marker: 'outer' }, '', '/?workspace=relationships');
+  const address = window.location.href;
+  const state = new ExploreState(null);
+  state.commitNavigation({ filters: [{ dimension: 'participant', values: ['42'] }] });
+  state.commitNavigation({ selectedRow: 'message:9' });
+  state.commitSearch('notes', 'full_text');
+  expect(state.current.query).toBe('notes');
+  expect(state.current.filters).toEqual([{ dimension: 'participant', values: ['42'] }]);
+  expect(window.location.href).toBe(address);
+  expect(window.history.state).toEqual({ marker: 'outer' });
+  state.destroy();
+});
+
+it('remembers People list and profile filters in shareable URLs', () => {
+  const state = { ...defaultExploreURLState, workspace: 'relationships' as const, relationshipSaved: true,
+    relationshipSort: 'recent' as const, directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91 };
+  expect(parseExploreURLState(serializeExploreURLState(state))).toMatchObject({ relationshipSaved: true,
+    relationshipSort: 'recent', directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91 });
+});
+
+it('keeps detached row focus from replacing the list predicate', () => {
+  const state = new ExploreState(null);
+  const filters = state.current.filters;
+  const groups = state.current.groupingChain;
+  state.replaceTransient({ activeRow: 'message:7' });
+  expect(state.current.filters).toBe(filters);
+  expect(state.current.groupingChain).toBe(groups);
+  expect(state.current.activeRow).toBe('message:7');
+  state.destroy();
+});

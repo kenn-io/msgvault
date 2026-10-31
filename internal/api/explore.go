@@ -84,6 +84,7 @@ const (
 	ExploreGroupKind        ExploreGroupDimension = explorecatalog.GroupKind
 	ExploreGroupYear        ExploreGroupDimension = explorecatalog.GroupYear
 	ExploreGroupMonth       ExploreGroupDimension = explorecatalog.GroupMonth
+	ExploreGroupDay         ExploreGroupDimension = explorecatalog.GroupDay
 )
 
 var exploreGroupDimensions = func() []ExploreGroupDimension {
@@ -128,6 +129,7 @@ type ExploreGroupSort struct {
 }
 
 type ExploreGroupsHTTPRequest struct {
+	SentOnly     bool                    `json:"sent_only,omitempty" doc:"Count sent messages only, excluding drafts and unsent items"`
 	Filters      []ExploreFilter         `json:"filters,omitempty"`
 	Query        string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`
 	SearchMode   string                  `json:"search_mode,omitempty" enum:"full_text,semantic,hybrid" doc:"Search mode; pipe OR is full_text only"`
@@ -507,7 +509,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	groupingStarted := time.Now()
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
-		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec}, Dimension: string(dimension),
+		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec, SentOnly: request.SentOnly}, Dimension: string(dimension),
 		GroupKey: request.GroupKey, Sort: sortSpec,
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})

@@ -869,6 +869,12 @@ func buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression
 		exploreLogicalEntriesCTE(true)
 }
 
+// These importers include attachment bytes in their message estimates.
+// Known attachment bytes still bound an incomplete estimate from below.
+const exploreEstimatedBytesSQL = `CASE WHEN lower(source_type) IN ('beeper', 'slack', 'teams', 'inline')
+	THEN GREATEST(size_estimate, attachment_size)
+	ELSE size_estimate + attachment_size END`
+
 // exploreLogicalEntriesCTE renders the logical_entries CTE (appended directly
 // after buildExploreFilteredClassifiedCTE, left unclosed for the caller).
 // withParticipantLists controls whether the three participant list columns
@@ -877,11 +883,6 @@ func buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression
 // Explore fast path omits them here and rebuilds them for the ≤limit page
 // rows only (see buildExploreFastListingSQL).
 func exploreLogicalEntriesCTE(withParticipantLists bool) string {
-	// These importers include attachment bytes in their message estimates.
-	// Known attachment bytes still bound an incomplete estimate from below.
-	estimatedBytes := `CASE WHEN lower(source_type) IN ('beeper', 'slack', 'teams', 'inline')
-		THEN GREATEST(size_estimate, attachment_size)
-		ELSE size_estimate + attachment_size END`
 	messageLists := ""
 	conversationLists := ""
 	if withParticipantLists {
@@ -911,7 +912,7 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
         snippet AS preview,` + messageLists + `
 		CASE WHEN candidate_rank IS NOT NULL THEN message_id ELSE NULL END AS strongest_matched_message_id,
 		1::BIGINT AS message_count,
-		(` + estimatedBytes + `)::BIGINT AS estimated_bytes,
+		(` + exploreEstimatedBytesSQL + `)::BIGINT AS estimated_bytes,
 		(entry_kind = 'email' AND lower(source_type) IN ` + deletableSourceTypesSQL + ` AND NOT internally_deleted AND NOT deleted_from_source AND NOT archive_only
 			AND COALESCE(source_message_id, '') <> '') AS deletable,
 		has_attachments,
@@ -941,7 +942,7 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
 		arg_min(message_id, struct_pack(candidate_rank := candidate_rank, message_id := message_id))
 			FILTER (WHERE candidate_rank IS NOT NULL) AS strongest_matched_message_id,
 		COUNT(*)::BIGINT AS message_count,
-		SUM(` + estimatedBytes + `)::BIGINT AS estimated_bytes,
+		SUM(` + exploreEstimatedBytesSQL + `)::BIGINT AS estimated_bytes,
 		false AS deletable,
 		bool_or(has_attachments) AS has_attachments,
 		arg_max(is_from_me, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS is_from_me,

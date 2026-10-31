@@ -69,7 +69,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     keywords: 'year month date annual monthly',
     requestable: true,
     drillable: true,
-    requestDimensions: ['year', 'month']
+    requestDimensions: ['year', 'month', 'day']
   },
   {
     concept: 'source',
@@ -162,7 +162,7 @@ export function groupingByDimension(
 export function groupingDimensionLabel(dimension: ExploreGroupDimension): string {
   const entry = groupingByDimension(dimension);
   if (entry.concept !== 'time') return entry.label;
-  return dimension === 'year' ? 'Year' : 'Month';
+  return dimension === 'year' ? 'Year' : dimension === 'day' ? 'Day' : 'Month';
 }
 
 export function groupingOptions(

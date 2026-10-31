@@ -26,6 +26,8 @@ export interface ExploreGroupsHTTPRequest {
   query?: string;
   /** Search mode; pipe OR is full_text only */
   search_mode?: ExploreGroupsHTTPRequestSearchMode;
+  /** Count sent messages only, excluding drafts and unsent items */
+  sent_only?: boolean;
   /** @maxItems 1 */
   sort?: ExploreGroupSort[];
 }

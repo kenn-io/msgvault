@@ -69,7 +69,7 @@
   import DeletionsWorkspace from '../deletions/DeletionsWorkspace.svelte';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
-  import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
+  import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
   import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
   import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
@@ -493,6 +493,7 @@
     loader.submitted = true;
     loader.retry();
     const workspace = exploreState.current.workspace;
+    if (workspace === 'relationships') { commitNavigation({ query }); return; }
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
       focusGrid();
@@ -1277,18 +1278,18 @@
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions(true)} />
       {:else if exploreState.current.workspace === 'relationships'}
-        <RelationshipsWorkspace
+        <PeopleWorkspace
+          directory={directoryController}
+          urlState={exploreState.current}
+          query={exploreState.current.query}
+          onNavigate={commitNavigation}
           {client}
           controller={relationshipsController}
-          facet={exploreState.current.relationshipFacet}
           target={exploreState.current.relationshipTarget}
-          showAll={exploreState.current.relationshipShowAll}
           filesOpen={exploreState.current.relationshipFiles}
           predicate={exploreState.predicate()}
           personFilePresentation={exploreState.current.personFilePresentation}
           personFileDirections={exploreState.current.personFileDirections}
-          onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
-          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
           onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
           onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
           onPersonFilePresentationChange={(personFilePresentation) =>
@@ -1305,7 +1306,6 @@
               selectedRow: null,
               scrollAnchor: null,
             })}
-          onOpenEverything={() => commitWorkspace('everything')}
           onOpenPerson={openRelationship}
           onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}

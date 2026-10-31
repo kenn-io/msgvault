@@ -4960,7 +4960,10 @@ type ExploreGroupsHTTPRequest struct {
 
 	// SearchMode Search mode; pipe OR is full_text only
 	SearchMode *ExploreGroupsHTTPRequestSearchMode `json:"search_mode,omitempty"`
-	Sort       []ExploreGroupSort                  `json:"sort,omitempty"`
+
+	// SentOnly Count sent messages only, excluding drafts and unsent items
+	SentOnly *bool              `json:"sent_only,omitempty"`
+	Sort     []ExploreGroupSort `json:"sort,omitempty"`
 }
 
 func (e ExploreGroupsHTTPRequest) Validate() error {

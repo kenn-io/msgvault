@@ -28,6 +28,7 @@
   let {
     client,
     messages = false,
+    lockedFilter = undefined,
     filterExtra = undefined,
     extraControls = undefined,
     query,
@@ -48,6 +49,7 @@
   }: {
     client: APIClient;
     messages?: boolean;
+    lockedFilter?: ExploreFilter;
     filterExtra?: Snippet;
     extraControls?: Snippet;
     query: string;
@@ -101,7 +103,7 @@
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
+      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
     {:else}
     <Button
       size="sm"
@@ -117,7 +119,7 @@
       options={presentationOptions}
       onchange={(value) => onPresentationChange?.(value as ExploreURLState['presentation'])}
     />
-    <div class="group-picker" data-group-picker>
+    {#if !lockedFilter}<div class="group-picker" data-group-picker>
       <SelectDropdown
         value=""
         {options}
@@ -125,6 +127,7 @@
         onchange={selectGrouping}
       />
     </div>
+    {/if}
     {#if sort}
       <div data-sort-menu>
         <SelectDropdown
@@ -156,6 +159,7 @@
             <IconButton
               size="sm"
               ariaLabel={`Remove ${filterDimensionLabel(filter.dimension)} filter`}
+              disabled={lockedFilter?.dimension === filter.dimension}
               onclick={() => onRemoveFilter?.(index)}
             ><XIcon size="12" aria-hidden="true" /></IconButton>
           {/snippet}
