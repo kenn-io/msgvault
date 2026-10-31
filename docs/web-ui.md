@@ -597,10 +597,9 @@ schedules the same way.
 The Save changes bar covers ordinary settings, and its edits survive category
 changes. Some controls save through their own buttons instead: provider
 credentials, person-enrichment providers, contact accounts, and People sweep.
-Above them, the page says "These save immediately when you use their buttons —
-not with Save changes." The bar stays visible on Contacts while ordinary settings have unsaved changes. After a save that
-needs a restart, Settings shows “Saved. Restart msgvault to apply these
-changes.”
+The bar stays visible on Contacts while ordinary settings have unsaved changes.
+After a save that needs a restart, Settings shows “Saved. Restart msgvault to
+apply these changes.”
 
 Saving makes targeted edits to `config.toml` while preserving comments. A stale
 edit is rejected after another browser or a hand edit changes the
@@ -632,10 +631,10 @@ a stored key. The box shows `None` when no key is set, or a masked
 hint of the set key, its first three and last three characters, such as
 `sk-…x9Q`, so you can tell which key is in place. A key under twelve
 characters shows as dots instead. The pencil opens a dialog to paste the
-new key, and the dialog says when it takes effect: a person-enrichment key
-applies right away, the text and visual embedding keys are stored at once
-but used after the daemon restarts, and the task integration key is saved
-with Save changes. A key that comes from an environment variable
+new key. A person-enrichment key applies right away; text and visual embedding
+keys are stored at once, and their dialog says the daemon uses them after a
+restart; the task integration key is saved with Save changes.
+A key that comes from an environment variable
 says so under the line and cannot be cleared from the browser.
 
 Credentials have a separate revision from `config.toml`. When changing both

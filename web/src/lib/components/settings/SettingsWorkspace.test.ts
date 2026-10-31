@@ -197,13 +197,20 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
 it('cancels a pending leave when the category changes, keeping drafts', async () => {
   const { client } = fixture();
   let hold: ((leave: () => void, stay?: () => void) => boolean) | undefined;
+  let cancel: (() => void) | undefined;
   const { rerender } = render(SettingsWorkspace, {
     props: { client, category: 'server' },
-    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => { hold = next; cancel = nextCancel; }]])
   });
   const field = await screen.findByLabelText('Stop when idle after');
   await fireEvent.input(field, { target: { value: '15m' } });
   const leave = vi.fn();
+  expect(hold?.(leave)).toBe(true);
+  await screen.findByRole('button', { name: 'Discard and leave' });
+  cancel?.();
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Discard and leave' })).toBeNull());
+  expect(leave).not.toHaveBeenCalled();
+  expect(field).toHaveProperty('value', '15m');
   const stay = vi.fn();
   expect(hold?.(leave, stay)).toBe(true);
   await screen.findByRole('button', { name: 'Discard and leave' });
