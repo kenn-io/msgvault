@@ -22,14 +22,14 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			voice := t.TempDir()
 			require.NoError(os.Mkdir(filepath.Join(voice, "Calls"), 0o700))
 			require.NoError(os.WriteFile(filepath.Join(voice, "Phones.vcf"), []byte("BEGIN:VCARD\nVERSION:3.0\nitem1.TEL:+12025550100\nitem1.X-ABLabel:Google Voice\nEND:VCARD\n"), 0o600))
-			fixture, token := "text.html", "textmarker"
+			content, token, imported := sampleTextHTML, "Awesome", 2
 			if kind == "Received" {
-				fixture, token = "voicemail/received-with-audio.html", "callmarker"
+				data, err := os.ReadFile(filepath.Join("testdata", "voicemail", "received-with-audio.html"))
+				require.NoError(err)
+				content, token, imported = string(data), "callmarker", 1
 			}
-			data, err := os.ReadFile(filepath.Join("testdata", fixture))
-			require.NoError(err)
-			content := strings.ReplaceAll(string(data), "Test User", strings.Repeat("padding ", 20)+"callmarker")
-			content = strings.ReplaceAll(content, "textmarker", strings.Repeat("padding ", 20)+"textmarker")
+			content = strings.ReplaceAll(content, "Test User", "callmarker")
+			content = strings.ReplaceAll(content, token, strings.Repeat("padding ", 20)+token)
 			filename := "Synthetic Peer - " + kind + " - 2024-01-02T03_04_05Z.html"
 			htmlPath := filepath.Join(voice, "Calls", filename)
 			require.NoError(os.WriteFile(htmlPath, []byte(content), 0o600))
@@ -38,14 +38,13 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 				t.Skip("FTS5 not available")
 			}
 			summary := importVoice(t, st, voice, t.TempDir())
-			assert.Equal(1, summary.MessagesImported)
+			assert.Equal(imported, summary.MessagesImported)
 			assert.Zero(summary.Skipped)
-			var id int64
-			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
 			ids, total, err := st.SearchMessageIDsQueryContext(context.Background(), &search.Query{TextTerms: []string{token}}, 10)
 			require.NoError(err)
 			assert.Equal(int64(1), total)
-			assert.Equal([]int64{id}, ids)
+			require.Len(ids, 1)
+			id := ids[0]
 
 			// Keep the text identity's first 50 body bytes fixed and use a fresh parser cache.
 			require.NoError(os.WriteFile(htmlPath, []byte(strings.ReplaceAll(content, token, "replacementmarker")), 0o600))
