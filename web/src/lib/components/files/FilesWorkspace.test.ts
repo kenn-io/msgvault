@@ -236,7 +236,7 @@ describe('FilesWorkspace', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('keeps source labels, headers, and virtual rows in one focusable grid', async () => {
+  it('shows mailbox and source type labels in file rows', async () => {
     const result = response();
     const first = result.files[0]!;
     first.source_type = 'imap';
@@ -250,9 +250,18 @@ describe('FilesWorkspace', () => {
     });
 
     const grid = await screen.findByRole('grid', { name: 'Files results' });
-    expect(screen.getAllByRole('grid')).toHaveLength(1);
     expect(await within(grid).findByRole('gridcell', { name: 'work@example.com' })).toBeDefined();
     expect(await within(grid).findByRole('gridcell', { name: 'Slack' })).toBeDefined();
+  });
+
+  it('keeps headers and virtual rows in one focusable grid', async () => {
+    render(FilesWorkspace, {
+      client: createAPIClient(async () => Response.json(response())), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    const grid = await screen.findByRole('grid', { name: 'Files results' });
+    expect(screen.getAllByRole('grid')).toHaveLength(1);
     expect(grid.contains(screen.getByRole('columnheader', { name: 'Filename' }))).toBe(true);
     expect((await screen.findAllByRole('row', { name: /fixture.pdf/ })).every(row => grid.contains(row))).toBe(true);
   });
