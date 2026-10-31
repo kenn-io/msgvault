@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,17 +19,12 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func writeExport(t *testing.T, root, data string) {
-	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "result.json"), []byte(data), 0600))
-}
-
 func TestImportPeerCollision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":555,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user1","text":"direct","date_unixtime":"1610909872"}]},{"id":555,"type":"private_supergroup","messages":[{"id":1,"type":"message","from_id":"user2","text":"group","date_unixtime":"1610909872"}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":555,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user1","text":"direct","date_unixtime":"1610909872"}]},{"id":555,"type":"private_supergroup","messages":[{"id":1,"type":"message","from_id":"user2","text":"group","date_unixtime":"1610909872"}]}]}}`))
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(err)
 	assert.EqualValues(2, summary.MessagesAdded)
@@ -41,18 +37,52 @@ func TestImportPeerCollision(t *testing.T) {
 	}
 }
 
+func TestImportMigratedSupergroup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":7,"type":"private_supergroup","messages":[{"id":-999999999,"type":"message","date_unixtime":"1","text":"old parent"},{"id":-999999998,"type":"message","date_unixtime":"2","reply_to_message_id":-999999999,"text":"old reply"},{"id":1,"type":"message","date_unixtime":"3","reply_to_message_id":-999999999,"text":"new reply"}]}`))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(err)
+	assert.EqualValues(3, summary.MessagesAdded)
+	for _, key := range []string{"channel7:-999999998", "channel7:1"} {
+		var parent string
+		require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), key).Scan(&parent))
+		assert.Equal("channel7:-999999999", parent)
+	}
+}
+
+func TestImportTextLinkPreservesURL(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text_entities":[{"type":"plain","text":"see "},{"type":"text_link","text":"docs","href":"https://example.org/linkneedle"},{"type":"plain","text":" today"}]}]}`))
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRow("SELECT id FROM messages WHERE source_message_id = 'user2:1'").Scan(&id))
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), id).Scan(&body))
+	assert.Equal("see docs (https://example.org/linkneedle) today", body)
+	_, total, err := st.SearchMessages("linkneedle", 0, 100)
+	require.NoError(err)
+	assert.EqualValues(1, total)
+}
+
 func TestImportCrossPeerAndLaterReplies(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":7,"type":"private_supergroup","messages":[{"id":1,"type":"message","text":"wrong parent","date_unixtime":"1610909872"},{"id":2,"type":"message","reply_to_message_id":1,"reply_to_peer_id":"channel9","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","reply_to_message_id":4,"date_unixtime":"1610909872","text":""}]},{"id":9,"type":"public_channel","messages":[{"id":1,"type":"message","text":"correct parent","date_unixtime":"1610909872"}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":7,"type":"private_supergroup","messages":[{"id":1,"type":"message","text":"wrong parent","date_unixtime":"1610909872"},{"id":2,"type":"message","reply_to_message_id":1,"reply_to_peer_id":"channel9","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","reply_to_message_id":4,"date_unixtime":"1610909872","text":""}]},{"id":9,"type":"public_channel","messages":[{"id":1,"type":"message","text":"correct parent","date_unixtime":"1610909872"}]}]}}`))
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(err)
 	var parent string
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), "channel7:2").Scan(&parent))
 	assert.Equal("channel9:1", parent)
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":7,"type":"private_supergroup","messages":[{"id":4,"type":"message","text":"later parent","date_unixtime":"1610909872"}]},{"id":8,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":7,"type":"private_supergroup","messages":[{"id":4,"type":"message","text":"later parent","date_unixtime":"1610909872"}]},{"id":8,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`))
 	_, err = Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorContains(err, "date_unixtime")
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), "channel7:3").Scan(&parent))
@@ -69,7 +99,7 @@ func TestImportSingleOwnerAndUnknownType(t *testing.T) {
 	require.NoError(err)
 	assert.Positive(summary.MessagesAdded)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":4,"type":"future_chat","messages":[]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":4,"type":"future_chat","messages":[]}`))
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "123"})
 	require.NoError(err)
 	assert.Equal(1, summary.ChatsSkipped)
@@ -80,11 +110,11 @@ func TestImportFailedChatResumes(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`))
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.Error(err)
 	assert.EqualValues(1, summary.MessagesAdded)
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"fixed","date_unixtime":"1610909872"}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"fixed","date_unixtime":"1610909872"}]}]}}`))
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(err)
 	assert.False(summary.WasResumed)
@@ -107,7 +137,7 @@ func TestImportCancelledAfterChatResumes(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1610909872","reply_to_message_id":2},{"id":2,"type":"message","text":"parent","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"second","date_unixtime":"1610909872"}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1610909872","reply_to_message_id":2},{"id":2,"type":"message","text":"parent","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"second","date_unixtime":"1610909872"}]}]}}`))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	summary, err := Import(ctx, st, ImportOptions{RootDir: root, Logger: slog.New(slog.NewTextHandler(cancelWriter{cancel}, nil))})
@@ -128,12 +158,12 @@ func TestImportReplacementExportAfterFailure(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`))
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorContains(err, "date_unixtime")
 	info, err := os.Stat(filepath.Join(root, resultFile))
 	require.NoError(err)
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","text":"new in completed chat","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","text":"new in completed chat","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]}]}}`))
 	require.NoError(os.Chtimes(filepath.Join(root, resultFile), info.ModTime(), info.ModTime()))
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(err)
@@ -149,7 +179,7 @@ func TestImportMediaFilenameContainsWarningWords(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","file":"files/(File not included).txt","date_unixtime":"1610909872","text":""}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","file":"files/(File not included).txt","date_unixtime":"1610909872","text":""}]}`))
 	require.NoError(os.Mkdir(filepath.Join(root, "files"), 0700))
 	require.NoError(os.WriteFile(filepath.Join(root, "files", "(File not included).txt"), []byte("attachment bytes"), 0600))
 	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()}
@@ -171,7 +201,7 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","date_unixtime":"1610909872","text":""}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","date_unixtime":"1610909872","text":""}]}`))
 	for i := range 3 {
 		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1})
 		require.NoError(err)
@@ -188,7 +218,7 @@ func TestImportEditFailureRollsBackMessage(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","edited":"2021-01-17T19:13:19","text":"edited body","date_unixtime":"1610909872"}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","edited":"2021-01-17T19:13:19","text":"edited body","date_unixtime":"1610909872"}]}`))
 	// A failed edit write models interruption between row persistence and the
 	// edit marker. Both must roll back so the append-only retry can recover.
 	if st.IsPostgreSQL() {
@@ -225,14 +255,14 @@ func TestImportSameSizeReplacementIgnoresCheckpoint(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	data := `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]}]}}`
-	writeExport(t, root, data)
+	testutil.WriteFile(t, root, "result.json", []byte(data))
 	info, err := os.Stat(filepath.Join(root, resultFile))
 	require.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	_, err = Import(ctx, st, ImportOptions{RootDir: root, Logger: slog.New(slog.NewTextHandler(cancelWriter{cancel}, nil))})
 	require.ErrorIs(err, context.Canceled)
-	writeExport(t, root, strings.Replace(data, `"id":1,"type":"message"`, `"id":2,"type":"message"`, 1))
+	testutil.WriteFile(t, root, "result.json", []byte(strings.Replace(data, `"id":1,"type":"message"`, `"id":2,"type":"message"`, 1)))
 	modified := info.ModTime().Add(time.Second)
 	require.NoError(os.Chtimes(filepath.Join(root, resultFile), modified, modified))
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
@@ -278,7 +308,7 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 	data.Chats.List = chats
 	encoded, err := json.Marshal(data)
 	require.NoError(err)
-	writeExport(t, root, string(encoded))
+	testutil.WriteFile(t, root, "result.json", encoded)
 	for _, path := range []string{"photos/photo_1@01-01-2020_12-00-00.jpg", "voice_messages/voice_message_1@01-01-2020_12-00-00.ogg", "sticker.webp", "thumb.jpg"} {
 		dest := filepath.Join(root, path)
 		require.NoError(os.MkdirAll(filepath.Dir(dest), 0700))
@@ -327,7 +357,7 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 	chats[0].Messages = append(chats[0].Messages, Message{ID: 109, Type: "message", DateUnixtime: "1610909872", RawText: jsontext.Value(`"new arrival"`)})
 	encoded, err = json.Marshal(data)
 	require.NoError(err)
-	writeExport(t, root, string(encoded))
+	testutil.WriteFile(t, root, "result.json", encoded)
 	summary, err = Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.EqualValues(1, summary.MessagesAdded)
@@ -350,7 +380,7 @@ func TestImportFillsMissingMediaSlots(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			root := t.TempDir()
 			data := `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","from_id":"user2","text":"original","photo":"` + initial + `"}]}`
-			writeExport(t, root, data)
+			testutil.WriteFile(t, root, "result.json", []byte(data))
 			opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()}
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
@@ -360,7 +390,7 @@ func TestImportFillsMissingMediaSlots(t *testing.T) {
 			data = strings.Replace(data, `"text":"original"`, `"text":"changed","edited":"later","from_id":"user3"`, 1)
 			// Keep from_id unique in the JSON object.
 			data = strings.Replace(data, `"from_id":"user2",`, "", 1)
-			writeExport(t, root, data)
+			testutil.WriteFile(t, root, "result.json", []byte(data))
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(err)
 			assert.Zero(summary.MessagesAdded)
@@ -410,6 +440,9 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 				require.NoError(os.WriteFile(target, []byte("photo"), 0600))
 				require.NoError(os.Symlink(target, media))
 			case "unreadable":
+				if runtime.GOOS == "windows" {
+					t.Skip("Windows does not deny reads for mode 0000")
+				}
 				require.NoError(os.WriteFile(media, []byte("photo"), 0000))
 			case "storage":
 				require.NoError(os.WriteFile(media, []byte("photo"), 0600))
@@ -421,7 +454,7 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			}
 			encodedPath, err := json.Marshal(path)
 			require.NoError(err)
-			writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":`+string(encodedPath)+`}]}`)
+			testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":`+string(encodedPath)+`}]}`))
 			summary, err := Import(t.Context(), st, opts)
 			sourceMissing := kind != "storage"
 			if sourceMissing {
@@ -435,7 +468,7 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 				assert.Zero(n)
 			}
 			if kind == "escape" || kind == "absolute" {
-				writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":"photo.jpg"}]}`)
+				testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":"photo.jpg"}]}`))
 				require.NoError(os.WriteFile(media, []byte("photo"), 0600))
 			} else if sourceMissing {
 				require.NoError(os.Remove(media))
@@ -460,7 +493,7 @@ func TestImportFutureCheckpointRefused(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":""},{"id":2,"type":"message","date_unixtime":"1","text":""}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":""},{"id":2,"type":"message","date_unixtime":"1","text":""}]}`))
 	opts := ImportOptions{RootDir: root, Me: "1", Limit: 1}
 	_, err := Import(t.Context(), st, opts)
 	require.NoError(err)
@@ -483,7 +516,7 @@ func TestImportCompletionErrorsReported(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"hello"}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"hello"}]}`))
 	// Refuse only sync finalization, after the message transaction succeeds.
 	if st.IsPostgreSQL() {
 		_, err := st.DB().Exec(`CREATE FUNCTION fail_sync_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'completion unavailable'; END $$`)
@@ -507,7 +540,7 @@ func TestImportUnsupportedAndEmptyText(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"before"},{"id":2,"type":"message","date_unixtime":"1","rich_message":{"blocks":[]}},{"type":"future_record"},{"id":3,"type":"message","date_unixtime":"1"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"after"}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"before"},{"id":2,"type":"message","date_unixtime":"1","rich_message":{"blocks":[]}},{"type":"future_record"},{"id":3,"type":"message","date_unixtime":"1"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"after"}]}]}}`))
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(err)
 	assert.EqualValues(3, summary.MessagesAdded)
@@ -522,7 +555,7 @@ func TestImportContactVCard(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","contact_vcard":"contact.vcard"}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","contact_vcard":"contact.vcard"}]}`))
 	const vcard = "BEGIN:VCARD\nVERSION:3.0\nFN:Example Contact\nEND:VCARD\n"
 	require.NoError(os.WriteFile(filepath.Join(root, "contact.vcard"), []byte(vcard), 0600))
 	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()}
@@ -541,7 +574,7 @@ func TestImportUnsupportedStructuredEntries(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","poll":{"question":"Lunch?"}},{"id":2,"type":"message","date_unixtime":"1","text":"","location_information":{"latitude":0,"longitude":0}},{"id":3,"type":"message","date_unixtime":"1","text":"","contact_information":{"first_name":"Example","phone_number":""}},{"id":4,"type":"message","date_unixtime":"1","text":"forwarded text","forwarded_from":"Example Channel"},{"id":5,"type":"message","date_unixtime":"1","text":"caption","poll":{"question":"Lunch?"}},{"id":6,"type":"message","date_unixtime":"1","text":"","contact_information":{"first_name":"Example"},"contact_vcard":"contact.vcard"}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","poll":{"question":"Lunch?"}},{"id":2,"type":"message","date_unixtime":"1","text":"","location_information":{"latitude":0,"longitude":0}},{"id":3,"type":"message","date_unixtime":"1","text":"","contact_information":{"first_name":"Example","phone_number":""}},{"id":4,"type":"message","date_unixtime":"1","text":"forwarded text","forwarded_from":"Example Channel"},{"id":5,"type":"message","date_unixtime":"1","text":"caption","poll":{"question":"Lunch?"}},{"id":6,"type":"message","date_unixtime":"1","text":"","contact_information":{"first_name":"Example"},"contact_vcard":"contact.vcard"}]}`))
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
 	require.NoError(err)
 	assert.EqualValues(3, summary.UnsupportedEntriesSkipped)
@@ -569,7 +602,7 @@ func TestImportParticipantNameBackfill(t *testing.T) {
 			assert := assert.New(t)
 			st := testutil.NewTestStore(t)
 			root := t.TempDir()
-			writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","from_id":"`+sender+`","text":"first"},{"id":2,"type":"message","date_unixtime":"2","from_id":"`+sender+`","from":"Example Sender","text":"second"}]}`)
+			testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","from_id":"`+sender+`","text":"first"},{"id":2,"type":"message","date_unixtime":"2","from_id":"`+sender+`","from":"Example Sender","text":"second"}]}`))
 			_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
 			require.NoError(err)
 			var name string
@@ -588,7 +621,7 @@ func TestImportSearchMatchesRebuiltIndex(t *testing.T) {
 	_, err = st.DB().Exec(st.Rebind("UPDATE participants SET email_address = ? WHERE id = ?"), "searchowner@example.org", sender)
 	require.NoError(err)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"name":"Chatneedle","type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","from_id":"user3","from":"Senderneedle","text":"Bodyneedle"}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"name":"Chatneedle","type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","from_id":"user3","from":"Senderneedle","text":"Bodyneedle"}]}`))
 	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
 	require.NoError(err)
 	for _, rebuilt := range []bool{false, true} {
@@ -612,7 +645,7 @@ func TestImportInvalidMediaContinuesLaterChats(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"before","photo":"../outside.jpg"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"after"}]}]}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"before","photo":"../outside.jpg"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"after"}]}]}}`))
 	var warnings bytes.Buffer
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, AttachmentsDir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(&warnings, nil))})
 	require.NoError(err)
@@ -629,7 +662,7 @@ func TestImportIgnoresOtherSyncTypeCheckpoint(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":2,"type":"message","date_unixtime":"1","text":"second"}]}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":2,"type":"message","date_unixtime":"1","text":"second"}]}`))
 	opts := ImportOptions{RootDir: root, Me: "1", Limit: 1}
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
@@ -648,7 +681,7 @@ func TestImportMediaRecoveryRollsBackWithStats(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	data := `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":"photo.jpg"}]}`
-	writeExport(t, root, data)
+	testutil.WriteFile(t, root, "result.json", []byte(data))
 	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()}
 	_, err := Import(t.Context(), st, opts)
 	require.NoError(err)

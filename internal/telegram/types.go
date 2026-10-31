@@ -71,8 +71,10 @@ type Message struct {
 	SentAt       time.Time `json:"-"`
 }
 
+func (m *Message) isMessage() bool { return m.Type == "message" && len(m.RichMessage) == 0 }
+
 func (m *Message) supported() bool {
-	if m.Type != "message" || len(m.RichMessage) != 0 {
+	if !m.isMessage() {
 		return false
 	}
 	structured := len(m.Poll) != 0 || len(m.LocationInformation) != 0 || len(m.ContactInformation) != 0

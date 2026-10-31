@@ -468,7 +468,7 @@ Full exports identify your account. For a single-chat export, supply your numeri
 msgvault import-telegram --me 482111 /path/to/chat-export
 ```
 
-Messages include senders, replies, edit markers, and available media. Service messages and unsupported entries are skipped. Missing media is counted in the import summary.
+Messages include senders, replies, edit markers, and available media. Service messages, unsupported entries, and polls, locations, or contacts without text or media are skipped. Missing media is counted in the import summary.
 
 A later or overlapping export adds new messages and fills media slots that still lack bytes. Archived messages keep their original text, sender, timestamp, and edit flag. Media already stored stays unchanged. Replies link when their parent arrives in a later export. Telegram participants remain separate from participants imported through Beeper.
 

@@ -313,7 +313,7 @@ func StoreAttachmentFromPathVerified(ctx context.Context, attachmentsDir, srcPat
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return "", contentHash, size, fmt.Errorf("rewind attachment source: %w", err)
 	}
-	result, writeErr := loose.Write(ctx, &attachmentContextReader{ctx: ctx, r: f}, packstore.WriteOptions{
+	result, writeErr := loose.Write(ctx, &ContextReader{Context: ctx, Reader: f}, packstore.WriteOptions{
 		Durability:   packstore.AtomicPublication,
 		Dedup:        packstore.VerifyFullHash,
 		ExpectedHash: hash,
@@ -329,7 +329,7 @@ func StoreAttachmentFromPathVerified(ctx context.Context, attachmentsDir, srcPat
 }
 
 func hashSourceFileContext(ctx context.Context, f *os.File, srcPath string, maxSize int64) (string, int64, error) {
-	src := io.Reader(&attachmentContextReader{ctx: ctx, r: f})
+	src := io.Reader(&ContextReader{Context: ctx, Reader: f})
 	if maxSize > 0 {
 		src = io.LimitReader(src, maxSize+1)
 	}
@@ -344,16 +344,33 @@ func hashSourceFileContext(ctx context.Context, f *os.File, srcPath string, maxS
 	return hex.EncodeToString(h.Sum(nil)), size, nil
 }
 
-type attachmentContextReader struct {
-	ctx context.Context
-	r   io.Reader
+// ContextReader stops reading when its context is canceled.
+type ContextReader struct {
+	Context context.Context
+	Reader  io.Reader
 }
 
-func (r *attachmentContextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
+func (r *ContextReader) Read(p []byte) (int, error) {
+	if err := r.Context.Err(); err != nil {
 		return 0, err
 	}
-	return r.r.Read(p)
+	return r.Reader.Read(p)
+}
+
+// OpenAttachmentSource opens a regular file and checks its size when maxSize > 0.
+func OpenAttachmentSource(srcPath string, maxSize int64) (*os.File, error) {
+	linfo, err := os.Lstat(srcPath)
+	if err != nil {
+		return nil, fmt.Errorf("lstat attachment source: %w", err)
+	}
+	if !linfo.Mode().IsRegular() {
+		return nil, &os.PathError{Op: "open attachment source", Path: srcPath, Err: errors.New("not a regular file")}
+	}
+	if maxSize > 0 && linfo.Size() > maxSize {
+		return nil, fmt.Errorf("attachment source %q is %d bytes (max %d)", srcPath, linfo.Size(), maxSize)
+	}
+
+	return os.Open(srcPath)
 }
 
 // StoreAttachmentFromPath streams the regular file at srcPath into
@@ -375,20 +392,9 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 	if attachmentsDir == "" || srcPath == "" {
 		return "", "", 0, errors.New("attachments dir and source path are required")
 	}
-	linfo, err := os.Lstat(srcPath)
+	f, err := OpenAttachmentSource(srcPath, maxSize)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("lstat attachment source: %w", err)
-	}
-	if !linfo.Mode().IsRegular() {
-		return "", "", 0, &os.PathError{Op: "open attachment source", Path: srcPath, Err: errors.New("not a regular file")}
-	}
-	if maxSize > 0 && linfo.Size() > maxSize {
-		return "", "", 0, fmt.Errorf("attachment source %q is %d bytes (max %d)", srcPath, linfo.Size(), maxSize)
-	}
-
-	f, err := os.Open(srcPath)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("open attachment source: %w", err)
+		return "", "", 0, err
 	}
 	defer func() { _ = f.Close() }()
 

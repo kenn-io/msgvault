@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestExportReaderCancelled(t *testing.T) {
@@ -49,7 +50,7 @@ func TestExportReaderFull(t *testing.T) {
 
 func TestExportReaderChatsBeforeLeftChats(t *testing.T) {
 	root := t.TempDir()
-	writeExport(t, root, `{"left_chats":{"list":[{"id":2,"type":"bot_chat"}]},"chats":{"about":"export","list":[{"id":1,"type":"saved_messages"}],"extra":true}}`)
+	testutil.WriteFile(t, root, "result.json", []byte(`{"left_chats":{"list":[{"id":2,"type":"bot_chat"}]},"chats":{"about":"export","list":[{"id":1,"type":"saved_messages"}],"extra":true}}`))
 	reader, err := OpenExport(t.Context(), root)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
@@ -60,8 +61,8 @@ func TestExportReaderChatsBeforeLeftChats(t *testing.T) {
 
 func TestExportReaderMalformed(t *testing.T) {
 	for _, tc := range []struct{ name, data, want string }{
-		{"missing id", `{"type":"message","date_unixtime":"1","text":""}`, "id must be positive"},
-		{"zero id", `{"id":0,"type":"message","date_unixtime":"1","text":""}`, "id must be positive"},
+		{"missing id", `{"type":"message","date_unixtime":"1","text":""}`, "id must be nonzero"},
+		{"zero id", `{"id":0,"type":"message","date_unixtime":"1","text":""}`, "id must be nonzero"},
 		{"sender", `{"id":1,"type":"message","date_unixtime":"1","from_id":"123","text":""}`, "invalid peer id"},
 		{"reply peer", `{"id":1,"type":"message","date_unixtime":"1","reply_to_peer_id":"userx","text":""}`, "invalid peer id"},
 		{"array text", `{"id":1,"type":"message","date_unixtime":"1","text":["keep",{"text":123}]}`, "text must be a string"},
@@ -73,7 +74,7 @@ func TestExportReaderMalformed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			root := t.TempDir()
-			writeExport(t, root, `{"id":5,"name":"Example chat","type":"personal_chat","messages":[`+tc.data+`]}`)
+			testutil.WriteFile(t, root, "result.json", []byte(`{"id":5,"name":"Example chat","type":"personal_chat","messages":[`+tc.data+`]}`))
 			reader, err := OpenExport(t.Context(), root)
 			require.NoError(err)
 			defer func() { require.NoError(reader.Close()) }()
@@ -86,7 +87,7 @@ func TestExportReaderMalformed(t *testing.T) {
 	for _, data := range []string{`{} {}`, `{} trailing`, `[]`, `{"chats":{"list":[]}`} {
 		t.Run(data, func(t *testing.T) {
 			root := t.TempDir()
-			writeExport(t, root, data)
+			testutil.WriteFile(t, root, "result.json", []byte(data))
 			_, err := OpenExport(t.Context(), root)
 			require.Error(t, err)
 		})

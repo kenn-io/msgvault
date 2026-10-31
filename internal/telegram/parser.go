@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/export"
 )
 
 const resultFile = "result.json"
@@ -35,7 +37,7 @@ func OpenExport(ctx context.Context, root string) (*ExportReader, error) {
 		return nil, fmt.Errorf("telegram: open result.json: %w", err)
 	}
 	r := &ExportReader{file: f, containers: map[string]int64{}}
-	dec := jsontext.NewDecoder(&contextReader{ctx: ctx, r: f})
+	dec := jsontext.NewDecoder(&export.ContextReader{Context: ctx, Reader: f})
 	err = readObject(dec, func(key string, dec *jsontext.Decoder) error {
 		if key == "personal_information" {
 			var info struct {
@@ -89,7 +91,7 @@ func (r *ExportReader) Chats(ctx context.Context, visit func(*Chat) error) error
 		return err
 	}
 	if r.single {
-		return decodeChat(ctx, jsontext.NewDecoder(&contextReader{ctx: ctx, r: r.file}), visit)
+		return decodeChat(ctx, jsontext.NewDecoder(&export.ContextReader{Context: ctx, Reader: r.file}), visit)
 	}
 	for _, key := range []string{"chats", "left_chats"} {
 		offset, ok := r.containers[key]
@@ -99,7 +101,7 @@ func (r *ExportReader) Chats(ctx context.Context, visit func(*Chat) error) error
 		if _, err := r.file.Seek(offset, io.SeekStart); err != nil {
 			return err
 		}
-		err := readObject(jsontext.NewDecoder(&contextReader{ctx: ctx, r: r.file}), func(name string, dec *jsontext.Decoder) error {
+		err := readObject(jsontext.NewDecoder(&export.ContextReader{Context: ctx, Reader: r.file}), func(name string, dec *jsontext.Decoder) error {
 			if name != "list" {
 				return dec.SkipValue()
 			}
@@ -164,7 +166,7 @@ func decodeChat(ctx context.Context, dec *jsontext.Decoder, visit func(*Chat) er
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if m.Type != "message" || len(m.RichMessage) != 0 {
+			if !m.isMessage() {
 				continue
 			}
 			if err := validateMessage(m); err != nil {
@@ -176,8 +178,8 @@ func decodeChat(ctx context.Context, dec *jsontext.Decoder, visit func(*Chat) er
 }
 
 func validateMessage(m *Message) error {
-	if m.ID <= 0 {
-		return errors.New("id must be positive")
+	if m.ID == 0 {
+		return errors.New("id must be nonzero")
 	}
 	unix, err := strconv.ParseInt(m.DateUnixtime, 10, 64)
 	if err != nil {
@@ -201,17 +203,4 @@ func validateMessage(m *Message) error {
 		return errors.New("text must be a string when text_entities is empty")
 	}
 	return nil
-}
-
-// contextReader lets long scans and chat decodes stop between file reads.
-type contextReader struct {
-	ctx context.Context
-	r   io.Reader
-}
-
-func (r *contextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.r.Read(p)
 }

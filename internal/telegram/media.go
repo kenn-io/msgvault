@@ -86,17 +86,10 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 		}
 		if opts.AttachmentsDir != "" {
 			source := filepath.Join(opts.RootDir, slot.path)
-			info, err := os.Lstat(source)
-			if err == nil && !info.Mode().IsRegular() {
-				err = &os.PathError{Op: "open attachment source", Path: source, Err: errors.New("not a regular file")}
-			}
+			file, err := export.OpenAttachmentSource(source, 0)
 			if err == nil {
-				var file *os.File
-				file, err = os.Open(source)
-				if err == nil {
-					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, file, 0)
-					err = errors.Join(err, file.Close())
-				}
+				write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, file, 0)
+				err = errors.Join(err, file.Close())
 			}
 			pathErr, sourceError := errors.AsType[*os.PathError](err)
 			if err != nil && (!sourceError || pathErr.Path != source) {
