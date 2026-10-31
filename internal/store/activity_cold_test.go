@@ -379,8 +379,7 @@ func TestColdAdapterMatchesSavedPersonRoles(t *testing.T) {
 	assertions.Equal(1, filtered.NoiseOmitted)
 }
 
-// Reapplying strongest projected roles for an explicit limit loses the raw
-// addressed evidence that the spine deliberately reclassifies for that limit.
+// Explicit limits retain the classifier's strongest role in both readers.
 func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 	for _, limit := range []int{1, 25} {
 		t.Run(strconv.Itoa(limit), func(t *testing.T) {
@@ -397,10 +396,11 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 			projectColdTimeline(t, f, "UTC")
 			q := timelineBurstQuery()
 			q.Filters.MaxDirect = limit
+			q.Filters.IncludeNoise = true
 			warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(warm.Bursts, 1)
-			assertions.Equal(1, warm.Bursts[0].Outbound)
+			assertions.Zero(warm.Bursts[0].Outbound)
 			assertions.Zero(warm.NoiseOmitted)
 
 			setTimelineConversationTier(t, f, f.Source.ID, "custom-limit-authors", conversationpolicy.Cold)
@@ -408,7 +408,7 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(cold.Bursts, 1)
-			assertions.Equal(1, cold.Bursts[0].Outbound)
+			assertions.Zero(cold.Bursts[0].Outbound)
 			warm.Bursts[0].Cold = true
 			warm.Bursts[0].FirstAt = warm.Bursts[0].FirstAt.UTC()
 			warm.Bursts[0].LastAt = warm.Bursts[0].LastAt.UTC()
@@ -416,6 +416,14 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Equal(1, count)
+			q.Filters.IncludeNoise = false
+			quiet, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Empty(quiet.Bursts)
+			assertions.Equal(1, quiet.NoiseOmitted)
+			count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Zero(count)
 		})
 	}
 }
