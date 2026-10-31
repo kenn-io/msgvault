@@ -165,10 +165,11 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q ContactQuery)
  WHERE r.recipient_type IN ('call_joined','call_invited','call_unknown')
  AND `+candidateSubject+`)`, subjectArgs...)
 	args = append(args, subjectArgs...)
+	args = append(args, q.Now.UTC())
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH `+ctes+`
  SELECT i.identity_key, i.occurred_at, MAX(p.incoming), MAX(p.outgoing)
  FROM identities i JOIN call_participants p ON p.identity_key = i.identity_key
- WHERE `+subject+` AND `+callCategorySQL("p.confirmed")+` = 'answered'
+ WHERE `+subject+` AND `+callCategorySQL("p.confirmed")+` = 'answered' AND i.occurred_at <= ?
  GROUP BY i.identity_key, i.occurred_at ORDER BY i.occurred_at, i.identity_key`), args...)
 	if err != nil {
 		return result, fmt.Errorf("aggregate call contact: %w", err)
