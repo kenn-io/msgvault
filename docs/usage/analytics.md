@@ -30,24 +30,24 @@ msgvault stats --collection work
 
 ```bash
 # Top 20 senders
-msgvault list-senders --limit 20
+msgvault sender list --limit 20
 ```
 
 ## List Domains
 
 ```bash
 # Top 20 sender domains
-msgvault list-domains --limit 20
+msgvault domain list --limit 20
 ```
 
 ## List Labels
 
 ```bash
 # All labels with message counts
-msgvault list-labels
+msgvault label list
 ```
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/generated/list-senders.svg" alt="msgvault list-senders command output" loading="lazy">
+  <img src="/docs/assets/generated/list-senders.svg" alt="msgvault sender list command output" loading="lazy">
 </figure>
 For interactive exploration, use the [Web UI](/docs/web-ui/) to combine search,
 filters, and grouping, then share a link to that view. Use the

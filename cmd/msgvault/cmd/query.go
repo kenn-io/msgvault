@@ -47,6 +47,10 @@ source-deleted message counts.`,
   msgvault query --format table "SELECT name, message_count FROM v_labels"`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		format := strings.ToLower(strings.TrimSpace(queryFormat))
+		if format != outputFormatJSON && format != "csv" && format != "table" {
+			return withHint(validationErr(cmd, fmt.Errorf("unknown format %q (use json, csv, or table)", format)), "choose --format json, --format csv, or --format table")
+		}
 		return runHTTPQuery(cmd, args[0])
 	},
 }
@@ -60,7 +64,7 @@ func runHTTPQuery(cmd *cobra.Command, sqlStr string) error {
 
 	result, accepted, err := st.RunSQLQueryWithFresh(cmd.Context(), sqlStr, queryFresh)
 	if err != nil {
-		return fmt.Errorf("query: %w", err)
+		return withHint(fmt.Errorf("query: %w", err), "inspect views with 'msgvault query \"SHOW TABLES\"'; build or refresh the analytics cache with 'msgvault cache build'")
 	}
 	for accepted != nil {
 		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Analytics cache build %s: %s; waiting for completion\n",
@@ -69,11 +73,11 @@ func runHTTPQuery(cmd *cobra.Command, sqlStr string) error {
 			return fmt.Errorf("write cache build status: %w", err)
 		}
 		if err := st.WaitForCacheBuild(cmd.Context(), accepted.JobID); err != nil {
-			return fmt.Errorf("query: %w", err)
+			return withHint(fmt.Errorf("query: %w", err), "inspect views with 'msgvault query \"SHOW TABLES\"'; build or refresh the analytics cache with 'msgvault cache build'")
 		}
 		result, accepted, err = st.RunSQLQueryWithFresh(cmd.Context(), sqlStr, false)
 		if err != nil {
-			return fmt.Errorf("query: %w", err)
+			return withHint(fmt.Errorf("query: %w", err), "inspect views with 'msgvault query \"SHOW TABLES\"'; build or refresh the analytics cache with 'msgvault cache build'")
 		}
 	}
 	if strings.ToLower(strings.TrimSpace(queryFormat)) != outputFormatJSON && result.Cache != nil {
@@ -100,7 +104,7 @@ func writeQueryResult(w io.Writer, result *query.QueryResult, format string) err
 	case "table":
 		return writeTable(w, result.Columns, result.Rows)
 	default:
-		return fmt.Errorf("unknown format %q (use json, csv, or table)", format)
+		return withHint(validationErr(nil, fmt.Errorf("unknown format %q (use json, csv, or table)", format)), "choose --format json, --format csv, or --format table")
 	}
 }
 

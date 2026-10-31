@@ -26,7 +26,8 @@ list-labels and cache-stats read the analytics cache, which retains them too.
 Text output only. For structured counts use query, for example:
   msgvault query "SELECT count(*) AS n FROM messages"`,
 	Example: `  msgvault stats
-  msgvault stats --account you@example.com`,
+  msgvault stats --account you@example.com
+  msgvault stats --collection work`,
 	Args: cobra.NoArgs,
 	RunE: runStats,
 }
@@ -34,7 +35,7 @@ Text output only. For structured counts use query, for example:
 func runStats(cmd *cobra.Command, _ []string) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil || state.logger == nil {
-		return errors.New("configuration is unavailable")
+		return withHint(errors.New("configuration is unavailable"), "select the archive with --home or MSGVAULT_HOME; inspect 'msgvault daemon status'")
 	}
 	cfg := state.cfg
 	logger := state.logger

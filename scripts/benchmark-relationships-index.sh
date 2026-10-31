@@ -102,7 +102,7 @@ build_time_file="$scratch/build-cache.time"
     export MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID="$PPID"
     exec "$@"
   ' benchmark-build "$binary" --home "$benchmark_home" \
-    build-cache --full-rebuild \
+    cache build --full-rebuild \
   >"$scratch/build-cache.log" 2>&1
 
 build_seconds="$(awk 'NR == 1 { print $1 }' "$build_time_file")"
@@ -130,7 +130,7 @@ index_time_file="$scratch/build-index.time"
     export MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID="$PPID"
     exec "$@"
   ' benchmark-index "$binary" --home "$benchmark_home" \
-    build-cache --derived-only \
+    cache build --derived-only \
   >"$scratch/build-index.log" 2>&1
 index_seconds="$(awk 'NR == 1 { print $1 }' "$index_time_file")"
 index_peak_rss_bytes="$(

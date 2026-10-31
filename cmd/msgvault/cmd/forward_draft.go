@@ -8,10 +8,12 @@ func init() {
 
 func newDraftForwardCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "draft-forward <message-id>",
-		Short: "Create an IMAP draft forwarding an archived message",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runDaemonCLICommandHTTPFromCobra,
+		Use:     "draft-forward <message-id>",
+		Short:   "Create an IMAP draft forwarding an archived message",
+		Long:    "Prepare an IMAP forwarding draft from an archived message ID, preserving the original content. Select the destination account and at least one recipient. Review and send the draft in your mail client.",
+		Example: "  msgvault draft forward 1234 --account you@example.com --to reader@example.com --body \"For review.\" --json",
+		Args:    cobra.ExactArgs(1),
+		RunE:    runDaemonCLICommandHTTPFromCobra,
 	}
 	command.Flags().String(draftFromFlag, "", "confirmed destination source identity for the draft")
 	command.Flags().StringArray("to", nil, "recipient address, repeatable")

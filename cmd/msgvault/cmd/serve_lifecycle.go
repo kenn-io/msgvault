@@ -66,6 +66,8 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 	switch name {
 	case "start":
 		cmd.Short = "Start msgvault daemon in the background"
+		cmd.Long = "Start the archive-owning daemon in the background for this machine. Commands can start it on demand; use this to start it explicitly, then inspect daemon status. Use serve for foreground operation."
+		cmd.Example = "  msgvault daemon start"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -78,7 +80,7 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 		cmd.Long = `Report the daemon for this machine's archive: URL, pid, version, API
 schema, and uptime, plus vector and operation health when it answers.
 Prints "No msgvault daemon is running." when there is none and exits 0
-either way. It never checks [remote].url. Text output only.`
+either way. Start it with msgvault daemon start when needed. It never checks [remote].url. Text output only.`
 		cmd.Example = "  msgvault daemon status"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			state := invocationFromCommand(cmd)
@@ -89,6 +91,8 @@ either way. It never checks [remote].url. Text output only.`
 		}
 	case "stop":
 		cmd.Short = "Stop msgvault daemon"
+		cmd.Long = "Ask the local archive daemon to shut down and wait for its operations to drain. Stop it before offline database migration or attachment unpacking. Remote daemon selection does not change which local process this manages."
+		cmd.Example = "  msgvault daemon stop"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -98,6 +102,8 @@ either way. It never checks [remote].url. Text output only.`
 		}
 	case "restart":
 		cmd.Short = "Restart msgvault daemon in the background"
+		cmd.Long = "Stop and restart the local archive daemon, applying the current binary and configuration. Use after configuration or credential changes; inspect daemon status to confirm its version and health."
+		cmd.Example = "  msgvault daemon restart"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {

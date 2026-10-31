@@ -44,8 +44,9 @@ func decodeMuesliHook(reader io.Reader) (int64, error) {
 var muesliHookInstall string
 var muesliHookCmd = &cobra.Command{
 	Use: "muesli-hook", Short: "Sync the meeting named by a Muesli completion event", Args: cobra.NoArgs,
-	Example: `  msgvault muesli-hook < completion-event.json
-  msgvault muesli-hook --install /path/to/launchers`,
+	Long: "Read one Muesli completion event as JSON on stdin and sync only its meeting. Exactly one Muesli source must be configured. Use --install to create the launcher that Muesli calls when a meeting completes.",
+	Example: `  msgvault source muesli hook < completion-event.json
+  msgvault source muesli hook --install /path/to/launchers`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if muesliHookInstall != "" {
 			path, err := installMuesliHook(muesliHookInstall)

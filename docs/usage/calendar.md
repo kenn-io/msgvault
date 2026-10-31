@@ -27,7 +27,7 @@ control described below is unreleased functionality.
 ## Authorize and register calendars
 
 ```bash
-msgvault add-calendar you@gmail.com
+msgvault source calendar add you@gmail.com
 ```
 
 This grants read-only Calendar access (`calendar.readonly`) and registers your
@@ -56,16 +56,16 @@ only read).
 
 ```bash
 # First run does a full sync and registers calendars; later runs are incremental.
-msgvault sync-calendar you@gmail.com
+msgvault source calendar sync you@gmail.com
 
 # Force a full re-sync
-msgvault sync-calendar you@gmail.com --full
+msgvault source calendar sync you@gmail.com --full
 
 # Include subscribed and holiday calendars
-msgvault sync-calendar you@gmail.com --all-calendars
+msgvault source calendar sync you@gmail.com --all-calendars
 
 # Bound a full sync to a date range (full sync only)
-msgvault sync-calendar you@gmail.com --full --after 2020-01-01 --before 2024-12-31
+msgvault source calendar sync you@gmail.com --full --after 2020-01-01 --before 2024-12-31
 ```
 
 The first run (or `--full`) enumerates and registers calendars and downloads
@@ -92,7 +92,7 @@ The first argument can be an account email or the `name` of a `[[gcal]]` entry i
 Authorize writes separately from sync:
 
 ```bash
-msgvault add-calendar person@example.com --write
+msgvault source calendar add person@example.com --write
 ```
 
 Re-consent preserves the existing Gmail grant, including a Gmail grant narrowed
@@ -173,7 +173,7 @@ sync persistence path. Cancelling retains the archived event and marks it
 cancelled; moving archives the destination and cancellation on the old calendar.
 Sync cursors do not advance, so the next sync can safely re-deliver the change.
 The response includes completed writes and archive message IDs. If a remote
-change succeeds but archiving fails, run `sync-calendar` to reconcile it; do not
+change succeeds but archiving fails, run `source calendar sync` to reconcile it; do not
 repeat the mutation. Future-series updates use two Google requests. If the replacement definitely
 fails, the daemon attempts to restore the original
 recurrence using the version returned by the shortening request. A concurrent
@@ -239,7 +239,7 @@ msgvault search "after:2024-01-01 before:2024-04-01" --message-type calendar_eve
 When [vector search](/docs/usage/vector-search/) is enabled, events become eligible
 for embedding after sync and can be found semantically with `--mode vector` or
 `--mode hybrid` once the embedding worker has processed them. For manual
-`sync-calendar` runs, follow up with `msgvault embeddings build`. In the
+`source calendar sync` runs, follow up with `msgvault embeddings build`. In the
 daemon, scheduled `[[gcal]]` syncs do not trigger the
 `[vector.embed.schedule].run_after_sync` hook (it applies to scheduled
 account syncs such as Gmail, IMAP, and Teams); newly synced events are
@@ -282,7 +282,7 @@ Drive or other previously granted Google scopes.
 2. **On a machine with a browser**, using the **same `client_secret.json`** as
     the server:
     ```bash
-    msgvault add-calendar you@gmail.com
+    msgvault source calendar add you@gmail.com
     ```
     Keep all existing permissions plus Calendar checked on the consent screen.
 
@@ -296,11 +296,11 @@ Drive or other previously granted Google scopes.
 
 4. **On the server**, register the calendars (no browser needed) and sync:
     ```bash
-    msgvault add-calendar you@gmail.com
-    msgvault sync-calendar you@gmail.com
+    msgvault source calendar add you@gmail.com
+    msgvault source calendar sync you@gmail.com
     ```
 
-Run `msgvault add-calendar you@gmail.com --headless` on the server to print these
+Run `msgvault source calendar add you@gmail.com --headless` on the server to print these
 steps at any time.
 
 ## Google Workspace service accounts
@@ -315,17 +315,17 @@ configure `[oauth].service_account_key` or
 Register the calendars, then sync their events:
 
 ```bash
-msgvault add-calendar user@example.com --oauth-app example
-msgvault sync-calendar user@example.com --oauth-app example
+msgvault source calendar add user@example.com --oauth-app example
+msgvault source calendar sync user@example.com --oauth-app example
 ```
 
 Replace `example` with the configured OAuth app name. Omit `--oauth-app` when
-using the default `[oauth]` configuration. `add-calendar` uses delegated access
+using the default `[oauth]` configuration. `source calendar add` uses delegated access
 directly: it does not request `client_secrets`, open a browser, or create a
 per-user refresh token. The usual `--all-calendars`, `--min-access-role`, and
 `--calendars` registration filters still apply.
 
-You can also start with `sync-calendar`, which registers matching calendars on
+You can also start with `source calendar sync`, which registers matching calendars on
 its first run, or configure a scheduled `[[gcal]]` entry. If Google rejects the
 delegated permission or reports that the Calendar API is disabled, msgvault
 reports the error immediately. Correct the service account's Calendar permission

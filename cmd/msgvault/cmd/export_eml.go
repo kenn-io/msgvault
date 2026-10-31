@@ -39,10 +39,10 @@ to a file. The .eml format is compatible with most email clients.
 With --thread, it writes every message in the conversation that has stored
 MIME into a directory, numbered oldest first, and reports messages it had to
 skip and when the account last synced.`,
-	Example: `  msgvault export-eml 12345
-  msgvault export-eml 12345 --output message.eml
-  msgvault export-eml 18f0abc123def -o important.eml
-  msgvault export-eml 18f0abc123def --thread -o thread/`,
+	Example: `  msgvault export eml 12345
+  msgvault export eml 12345 --output message.eml
+  msgvault export eml 18f0abc123def -o important.eml
+  msgvault export eml 18f0abc123def --thread -o thread/`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := resolveMessageIDArg(args[0])
@@ -81,10 +81,10 @@ func runExportEMLHTTP(cmd *cobra.Command, messageRef, outputPath string) error {
 
 	rawData, sourceMessageID, err := s.GetCLIMessageRaw(cmd.Context(), messageRef)
 	if errors.Is(err, store.ErrMessageNotFound) {
-		return fmt.Errorf("message not found: %s", messageRef)
+		return readMessageNotFound(messageRef)
 	}
 	if errors.Is(err, daemonclient.ErrMessageRawNotFound) {
-		return fmt.Errorf("get raw message data: %w (message may not have raw data stored)", err)
+		return withHint(fmt.Errorf("get raw message data: %w (message may not have raw data stored)", err), "raw MIME must have been retained for this email; read available parsed content with 'msgvault show <id> --json'")
 	}
 	if err != nil {
 		return fmt.Errorf("get raw message data: %w", err)
@@ -120,7 +120,7 @@ func writeExportedEML(cmd *cobra.Command, sourceMessageID, outputPath string, ra
 // then a provider message ID if no internal message exists.
 func runExportEMLThread(cmd *cobra.Command, messageRef, account, outputDir string) error {
 	if outputDir == stdoutSentinel {
-		return errors.New("--thread writes one file per message; pass a directory with -o")
+		return withHint(usageErr(cmd, errors.New("--thread writes one file per message; pass a directory with -o")), "use 'msgvault export eml <id> --thread -o ./thread-dir'")
 	}
 	if outputDir == "" {
 		outputDir = "."
@@ -145,7 +145,7 @@ func runExportEMLThread(cmd *cobra.Command, messageRef, account, outputDir strin
 		header, err = engine.ListThread(cmd.Context(), query.ThreadQuery{MessageRef: ref, All: true})
 	}
 	if errors.Is(err, store.ErrMessageNotFound) {
-		return fmt.Errorf("message not found: %s", messageRef)
+		return readMessageNotFound(messageRef)
 	}
 	if errors.Is(err, query.ErrAmbiguousReference) {
 		return fmt.Errorf("list thread: %w; pass --account", err)

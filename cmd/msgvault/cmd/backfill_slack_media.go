@@ -20,11 +20,9 @@ func newBackfillSlackMediaCmd() *cobra.Command {
 This command retries unfinished downloads and policy exclusions that are now
 allowed, such as files whose configured size cap was raised. It re-reads the
 archived message JSON and retries eligible downloads. Already-downloaded files
-are never re-fetched.
-
-Examples:
-  msgvault backfill-slack-media
-  msgvault backfill-slack-media T0123456789`,
+are never re-fetched.`,
+		Example: `  msgvault source slack backfill-media
+  msgvault source slack backfill-media T0123456789`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)

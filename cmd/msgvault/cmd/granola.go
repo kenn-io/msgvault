@@ -51,11 +51,9 @@ var addGranolaCmd = &cobra.Command{
 
 Reads the API key from the matching [[granola]] entry in config.toml and
 validates it with a live API call. Granola API keys are created in the
-desktop app's settings and require a Business plan.
-
-Examples:
-  msgvault add-granola
-  msgvault add-granola you@example.com`,
+desktop app's settings and require a Business plan.`,
+	Example: `  msgvault source granola add
+  msgvault source granola add you@example.com`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -103,7 +101,7 @@ Examples:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nGranola account registered successfully!\n")
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Identifier: %s\n\n", src.Identifier)
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "You can now run:")
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault sync-granola %s\n", src.Identifier)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault source granola sync %s\n", src.Identifier)
 		return nil
 	},
 }
@@ -118,12 +116,10 @@ fetched. With no identifier, every configured [[granola]] source is synced.
 
 Use --full to ignore the stored cursor and re-fetch everything; --after
 bounds a full sync to notes created after the given date. Re-fetched notes
-are upserted in place, so --full repairs existing rows without duplicates.
-
-Examples:
-  msgvault sync-granola
-  msgvault sync-granola you@example.com --limit 5
-  msgvault sync-granola --full --after 2024-01-01`,
+are upserted in place, so --full repairs existing rows without duplicates.`,
+	Example: `  msgvault source granola sync
+  msgvault source granola sync you@example.com --limit 5
+  msgvault source granola sync --full --after 2024-01-01`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -200,7 +196,7 @@ Examples:
 				pendingWrites += sum.NotesAdded + sum.NotesUpdated
 			}
 			if ctx.Err() != nil {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-granola to resume.")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run msgvault source granola sync to resume.")
 				return finish(src.Identifier, ctx.Err())
 			}
 			if finishErr := finish(src.Identifier, err); finishErr != nil {
@@ -227,7 +223,7 @@ func runConfiguredGranolaSync(ctx context.Context, st *store.Store, src config.G
 	// Generic scheduler jobs and mutating daemon requests share the operation
 	// gate, so a registered source cannot be removed between this precheck and
 	// the importer's existing-source GetOrCreateSource call.
-	notRegistered := fmt.Errorf("granola source %q is not registered; run msgvault add-granola %s",
+	notRegistered := fmt.Errorf("granola source %q is not registered; run msgvault source granola add %s",
 		src.Identifier, src.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, granola.SourceType, src.Identifier, notRegistered)
 	if err != nil {

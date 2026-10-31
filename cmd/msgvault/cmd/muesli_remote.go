@@ -54,7 +54,7 @@ func runMuesliClientAdd(cmd *cobra.Command, args []string) error {
 	if err := muesli.ForgetRemoteUploads(cmd.Context(), opts); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Muesli source registered. Run msgvault sync-muesli.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Muesli source registered. Run msgvault source muesli sync.")
 	return nil
 }
 
@@ -279,7 +279,7 @@ func muesliWatchFailureReason(err error) string {
 			return "daemon credentials were rejected; check [remote] credentials"
 		case http.StatusNotFound:
 			if apiErr.Code == "source_not_found" {
-				return "source is not registered; run msgvault add-muesli"
+				return "source is not registered; run msgvault source muesli add"
 			}
 			return "daemon endpoint is unavailable; check client and daemon versions"
 		case http.StatusUnprocessableEntity:
@@ -295,9 +295,9 @@ func muesliWatchFailureReason(err error) string {
 		if errors.Is(err, muesli.ErrRemoteTooLarge) {
 			return "a meeting exceeds the 16 MiB transfer limit"
 		}
-		return "a meeting failed transfer validation; run sync-muesli manually for details"
+		return "a meeting failed transfer validation; run source muesli sync manually for details"
 	}
-	return "local files or network are unavailable; run sync-muesli manually for details"
+	return "local files or network are unavailable; run source muesli sync manually for details"
 }
 
 // A joined record error must not conceal an authentication or transport failure.

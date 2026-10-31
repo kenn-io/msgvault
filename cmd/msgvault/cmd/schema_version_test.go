@@ -52,7 +52,7 @@ func TestSchemaVersionDatabaseDoesNotMigrate(t *testing.T) {
 		wantOut string
 		wantErr string
 	}{
-		{name: "missing", wantErr: "run 'msgvault migrate' first"},
+		{name: "missing", wantErr: "run 'msgvault database migrate' first"},
 		{name: "legacy", wantOut: "0\n"},
 		{name: "future", marker: future, wantOut: future + "\n"},
 		{name: "malformed", marker: "bad-marker", wantErr: `read archive schema version: invalid archive schema version "bad-marker"`},

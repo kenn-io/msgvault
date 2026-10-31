@@ -100,7 +100,7 @@ func TestWrapOAuthError_NestedNotExist(t *testing.T) {
 // newTestRootCmd creates a fresh root command for testing, avoiding mutation
 // of the global rootCmd which could cause race conditions in parallel tests.
 func newTestRootCmd() *cobra.Command {
-	return &cobra.Command{
+	root := &cobra.Command{
 		Use:   "msgvault",
 		Short: "Offline email, chat, and meeting archive tool",
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -111,6 +111,8 @@ func newTestRootCmd() *cobra.Command {
 			return nil
 		},
 	}
+	ensureHelpLayout(root)
+	return root
 }
 
 // TestExecuteContext_PropagatesContext verifies ExecuteContext passes context to command handlers.
@@ -299,7 +301,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 		require.NoError(t, err)
 		_, err = getTokenSourceWithReauth(t.Context(), mgr, scopeEscalationAccount, false, gmailReauthHint)
 		require.ErrorIs(t, err, oauth.ErrInvalidTokenJSON)
-		assert.ErrorContains(t, err, "add-account")
+		assert.ErrorContains(t, err, "source gmail add")
 	})
 
 	invalidGrant := &extOAuth2.RetrieveError{ErrorCode: "invalid_grant"}
@@ -335,7 +337,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			},
 			interactive: true,
 			wantErr:     true,
-			errContains: "add-account",
+			errContains: "source gmail add",
 		},
 		{
 			name: "transient error, token exists",
@@ -375,7 +377,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			},
 			interactive: false,
 			wantErr:     true,
-			errContains: "add-account test@gmail.com --force",
+			errContains: "source gmail add test@gmail.com --force",
 		},
 		{
 			name: "invalid_grant, reauth fails",
@@ -454,7 +456,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 		_, err := getTokenSourceWithReauth(context.Background(), mock, "user@example.com", true, gmailReauthHint)
 		require.Error(t, err)
 		msg := err.Error()
-		for _, want := range []string{"remove-account", "add-account", "primary address"} {
+		for _, want := range []string{"account remove", "source gmail add", "primary address"} {
 			assert.Contains(t, msg, want, "error message missing %q", want)
 		}
 		// Confirm the underlying TokenMismatchError is preserved.
@@ -475,8 +477,8 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			hasTokenVal: true,
 		}
 		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, gmailReauthHint)
-		require.ErrorContains(t, err, "add-account x@gmail.com --force")
-		require.ErrorContains(t, err, "add-account x@gmail.com --headless")
+		require.ErrorContains(t, err, "source gmail add x@gmail.com --force")
+		require.ErrorContains(t, err, "source gmail add x@gmail.com --headless")
 	})
 
 	// A Calendar caller must be pointed at add-calendar, not the Gmail
@@ -489,9 +491,9 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			hasTokenVal: true,
 		}
 		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, calendarReauthHint)
-		require.ErrorContains(t, err, "add-calendar x@gmail.com")
-		require.ErrorContains(t, err, "add-calendar x@gmail.com --headless")
-		require.NotContains(t, err.Error(), "add-account")
+		require.ErrorContains(t, err, "source calendar add x@gmail.com")
+		require.ErrorContains(t, err, "source calendar add x@gmail.com --headless")
+		require.NotContains(t, err.Error(), "source gmail add")
 	})
 }
 

@@ -31,7 +31,7 @@ const circlebackConfigHint = `Add to your config.toml:
   enabled = true
   # schedule = "30 */6 * * *"      # optional daemon schedule
 
-Then run 'msgvault add-circleback <identifier>' to authorize via browser`
+Then run 'msgvault source circleback add <identifier>' to authorize via browser`
 
 func circlebackSources(cfg *config.Config) meetingSources[config.CirclebackSource] {
 	sources := meetingSources[config.CirclebackSource]{
@@ -99,7 +99,7 @@ func validateAddCirclebackOAuthRouting(state *invocation) error {
 	if !IsRemoteMode(state) {
 		return nil
 	}
-	return errors.New("add-circleback cannot run through a configured remote: the localhost OAuth callback would run on the daemon host; run msgvault add-circleback on the daemon host, or use --local to authorize a local account")
+	return errors.New("source circleback add cannot run through a configured remote: the localhost OAuth callback would run on the daemon host; run msgvault source circleback add on the daemon host, or use --local to authorize a local account")
 }
 
 func newAddCirclebackLocalCmd() *cobra.Command {
@@ -110,11 +110,9 @@ func newAddCirclebackLocalCmd() *cobra.Command {
 
 This opens a browser for Circleback authorization (their MCP server uses
 OAuth with dynamic client registration), then stores the token for meeting
-ingestion.
-
-Examples:
-  msgvault add-circleback
-  msgvault add-circleback you@example.com`,
+ingestion.`,
+		Example: `  msgvault source circleback add
+  msgvault source circleback add you@example.com`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runAddCirclebackLocal,
 	}
@@ -166,7 +164,7 @@ func runAddCirclebackLocal(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nCircleback account authorized successfully!\n")
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Identifier: %s\n\n", src.Identifier)
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "You can now run:")
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault sync-circleback %s\n", src.Identifier)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault source circleback sync %s\n", src.Identifier)
 	return nil
 }
 
@@ -185,13 +183,11 @@ prints the server's tool inventory and a sample search result instead of
 syncing (for diagnosing schema drift). --limit caps newly searched meetings;
 due transcript maintenance items are additional work outside that cap.
 Limited runs do not save search traversal position, so repeated limited runs
-may revisit the same meetings; an unlimited run is required to complete sync.
-
-Examples:
-  msgvault sync-circleback
-  msgvault sync-circleback you@example.com --limit 5
-  msgvault sync-circleback --full --after 2024-01-01
-  msgvault sync-circleback --probe`,
+may revisit the same meetings; an unlimited run is required to complete sync.`,
+	Example: `  msgvault source circleback sync
+  msgvault source circleback sync you@example.com --limit 5
+  msgvault source circleback sync --full --after 2024-01-01
+  msgvault source circleback sync --probe`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -269,7 +265,7 @@ Examples:
 			}
 			_ = session.Close()
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-circleback to resume.")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run msgvault source circleback sync to resume.")
 			}
 			if finishErr := finish(src.Identifier, err); finishErr != nil {
 				return finishErr
@@ -367,7 +363,7 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 		return recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, errors.New("configuration is unavailable"))
 	}
 	notRegistered := fmt.Errorf(
-		"circleback source %q is not registered; run msgvault add-circleback %s first",
+		"circleback source %q is not registered; run msgvault source circleback add %s first",
 		src.Identifier, src.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, circleback.SourceType, src.Identifier, notRegistered)
 	if err != nil {

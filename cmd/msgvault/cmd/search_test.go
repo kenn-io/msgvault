@@ -527,12 +527,12 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 		{
 			name:       "awaiting owner warns",
 			indexState: "awaiting_owner",
-			wantNote:   "run rebuild-fts with owner access",
+			wantNote:   "run fts rebuild with owner access",
 		},
 		{
 			name:       "unverified check warns",
 			indexState: "unverified",
-			wantNote:   "could not be verified for this request; results may be incomplete. Search again to retry the check, or run rebuild-fts.",
+			wantNote:   "could not be verified for this request; results may be incomplete. Search again to retry the check, or run fts rebuild.",
 		},
 		{
 			name:       "building warns about rebuilding or awaiting rebuild",

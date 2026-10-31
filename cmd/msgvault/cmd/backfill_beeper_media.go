@@ -22,11 +22,9 @@ This command retries unfinished downloads and policy exclusions that are now
 allowed, such as media whose configured size cap was raised. It re-fetches
 eligible messages from Beeper Desktop and downloads their media into the
 attachment store. Already-downloaded attachments are content-addressed and
-skipped.
-
-Examples:
-  msgvault backfill-beeper-media
-  msgvault backfill-beeper-media --account signal`,
+skipped.`,
+		Example: `  msgvault source beeper backfill-media
+  msgvault source beeper backfill-media --account signal`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -50,7 +48,7 @@ Examples:
 				opts.Progress = func(s string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+s) }
 				sum, err := imp.BackfillMedia(ctx, opts)
 				if ctx.Err() != nil {
-					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run backfill-beeper-media to resume (idempotent).")
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run msgvault source beeper backfill-media to resume (idempotent).")
 					return rebuildCacheAfterWrite(dbPath, state)
 				}
 				if err != nil {

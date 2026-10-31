@@ -1680,7 +1680,7 @@ describe('EverythingWorkspace', () => {
         error: 'cache_unavailable',
         message: 'The analytical cache is absent.',
         readiness: 'absent',
-        recovery_action: 'msgvault build-cache'
+        recovery_action: 'msgvault cache build'
       }, { status: 503 });
       return Response.json(exploreResponse());
     });
@@ -1688,7 +1688,7 @@ describe('EverythingWorkspace', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('The analytical cache is absent.');
-    expect(alert.textContent).toContain('msgvault build-cache');
+    expect(alert.textContent).toContain('msgvault cache build');
     expect(state.current.selectedRow).toBe('group:domain:example.com');
     rendered.unmount();
     state.destroy();
@@ -1901,7 +1901,7 @@ describe('EverythingWorkspace', () => {
       const body = await request.clone().json();
       if (body.cursor) return Response.json({
         error: 'cache_unavailable', message: 'Cache publication changed.', readiness: 'building',
-        recovery_action: 'msgvault build-cache'
+        recovery_action: 'msgvault cache build'
       }, { status: 503 });
       return Response.json(exploreResponse({ rows: [entry(1)], total_count: 2, next_cursor: 'page-2' }));
     });
@@ -2151,7 +2151,7 @@ describe('EverythingWorkspace', () => {
       calls += 1;
       if (calls === 1) return Response.json({
         error: 'cache_unavailable', message: 'Cache missing.', readiness: 'absent',
-        recovery_action: 'msgvault build-cache'
+        recovery_action: 'msgvault cache build'
       }, { status: 503 });
       return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
     });

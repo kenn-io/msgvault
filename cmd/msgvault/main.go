@@ -5,15 +5,12 @@ import (
 	"errors"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 
 	"go.kenn.io/msgvault/cmd/msgvault/cmd"
 )
 
 const (
-	exitCodeError       = 1
 	exitCodeInterrupted = 130 // 128 + SIGINT, mirrors shell convention
 )
 
@@ -22,20 +19,15 @@ func main() {
 }
 
 func run() int {
-	if len(os.Args) == 1 && strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") == "msgvault-muesli-hook" {
-		os.Args = append([]string{os.Args[0], "muesli-hook"}, os.Args[1:]...)
-	}
+	os.Args = cmd.LauncherArgs(os.Args)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		if errors.Is(err, cmd.ErrSyncPaused) {
-			return cmd.ExitCodeSyncPaused
-		}
 		if isSignalCanceled(ctx, err) {
 			return exitCodeInterrupted
 		}
-		return exitCodeError
+		return cmd.ExitCode(err)
 	}
 	return 0
 }

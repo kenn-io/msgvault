@@ -142,7 +142,7 @@ func personGetArgs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if len(args) != 1 {
-		return usageErr(cmd, errors.New("provide a person ID or --vcard-uid"))
+		return withHint(usageErr(cmd, errors.New("provide a person ID or --vcard-uid")), "find person IDs with 'msgvault person list --json'; or pass --vcard-uid from a person profile")
 	}
 	return nil
 }
@@ -218,7 +218,7 @@ var personSetDisplayNameCmd = &cobra.Command{
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("person response was empty")
+			return readDaemonResponseError(errors.New("person response was empty"))
 		}
 		etag := fmt.Sprintf(`"person-%d-r%d"`, id, current.JSON200.Revision)
 		body := generated.PatchPersonBody{DisplayName: displayName}
@@ -259,7 +259,7 @@ var personDeleteCmd = &cobra.Command{
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("person response was empty")
+			return readDaemonResponseError(errors.New("person response was empty"))
 		}
 		etag := fmt.Sprintf(`"person-%d-r%d"`, id, current.JSON200.Revision)
 		if _, err := daemonclient.APIResponseWithStatuses(client,
@@ -643,7 +643,7 @@ func writePersonMergeDetail(cmd *cobra.Command, detail *generated.PersonMergeDet
 
 func positivePersonCLIRevision(cmd *cobra.Command, revision int64, kind string) error {
 	if revision <= 0 {
-		return usageErr(cmd, fmt.Errorf("%s revision must be a positive integer", kind))
+		return withHint(validationErr(cmd, fmt.Errorf("%s revision must be a positive integer", kind)), "read the current revision with 'msgvault person get <person-id> --json'")
 	}
 	return nil
 }
@@ -651,10 +651,10 @@ func positivePersonCLIRevision(cmd *cobra.Command, revision int64, kind string) 
 func personCLIIdempotencyKey(cmd *cobra.Command, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", usageErr(cmd, errors.New("idempotency key is required"))
+		return "", withHint(usageErr(cmd, errors.New("idempotency key is required")), "pass --idempotency-key with a unique retry key, for example --idempotency-key merge-1-2-a; reuse it only for the same request")
 	}
 	if len(value) > 128 {
-		return "", usageErr(cmd, errors.New("idempotency key must be at most 128 bytes"))
+		return "", withHint(validationErr(cmd, errors.New("idempotency key must be at most 128 bytes")), "choose --idempotency-key as a unique string of at most 128 bytes and reuse it for retries")
 	}
 	return value, nil
 }
@@ -663,7 +663,7 @@ func validatePersonCLIParticipants(cmd *cobra.Command, participantIDs []int64) e
 	seen := make(map[int64]struct{}, len(participantIDs))
 	for _, participantID := range participantIDs {
 		if participantID <= 0 {
-			return usageErr(cmd, errors.New("participant IDs must be positive integers"))
+			return withHint(validationErr(cmd, errors.New("participant IDs must be positive integers")), readParticipantIDHint)
 		}
 		if _, duplicate := seen[participantID]; duplicate {
 			return usageErr(cmd, fmt.Errorf("duplicate participant ID %d", participantID))
@@ -682,7 +682,7 @@ func personCLICandidateDecision(
 	case "rejected", "reject":
 		return generated.Reject, nil
 	default:
-		return "", usageErr(cmd, errors.New("decision must be accepted or rejected"))
+		return "", withHint(validationErr(cmd, errors.New("decision must be accepted or rejected")), "pass --decision accepted or --decision rejected after inspecting 'msgvault person merge-show <merge-id> --json'")
 	}
 }
 
@@ -731,7 +731,7 @@ func getCLIPersonByUID(
 
 func writeCLIPerson(cmd *cobra.Command, person *generated.Person) error {
 	if person == nil {
-		return errors.New("person response was empty")
+		return readDaemonResponseError(errors.New("person response was empty"))
 	}
 	if personJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), person, json.Deterministic(true))
@@ -757,7 +757,7 @@ func personDisplayName(name *string) string {
 func positivePersonCLIArg(cmd *cobra.Command, raw, kind string) (int64, error) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id <= 0 {
-		return 0, usageErr(cmd, fmt.Errorf("%s ID must be a positive integer", kind))
+		return 0, withHint(validationErr(cmd, fmt.Errorf("%s ID must be a positive integer", kind)), readResourceIDHint(kind))
 	}
 	return id, nil
 }

@@ -25,9 +25,8 @@ var (
 )
 
 var showMessageCmd = &cobra.Command{
-	Use:     "show-message <id>",
-	Aliases: []string{"show"},
-	Short:   "Show full message details",
+	Use:   "show-message <id>",
+	Short: "Show full message details",
 	Long: `Show the complete details of a message by its internal ID or Gmail ID.
 
 Uses configured remote server or the local daemon by default.
@@ -46,8 +45,8 @@ Only ">" quoting and English "On ... wrote:" headers are recognized; Outlook
 are unchanged. --body-only and --json cannot be combined.
 
 Examples:
-  msgvault show-message 12345
-	msgvault show-message 18f0abc123def --json`,
+  msgvault show 12345
+  msgvault show 18f0abc123def --json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := resolveMessageIDArg(args[0])
@@ -67,11 +66,11 @@ Examples:
 func resolveMessageIDArg(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", fmt.Errorf("invalid message ID: %q (expected a number or Gmail ID)", raw)
+		return "", withHint(validationErr(nil, fmt.Errorf("invalid message ID: %q (expected a number or Gmail ID)", raw)), readMessageIDHint)
 	}
 	if _, intErr := strconv.ParseInt(trimmed, 10, 64); intErr != nil {
 		if _, floatErr := strconv.ParseFloat(trimmed, 64); floatErr == nil {
-			return "", fmt.Errorf("invalid message ID: %q (expected a whole number)", trimmed)
+			return "", withHint(validationErr(nil, fmt.Errorf("invalid message ID: %q (expected a whole number)", trimmed)), readMessageIDHint)
 		}
 	}
 	return trimmed, nil
@@ -87,13 +86,13 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 
 	msg, err := s.GetCLIMessage(cmd.Context(), idStr)
 	if errors.Is(err, store.ErrMessageNotFound) {
-		return fmt.Errorf("message not found: %s", idStr)
+		return readMessageNotFound(idStr)
 	}
 	if err != nil {
 		return fmt.Errorf("get message: %w", err)
 	}
 	if msg == nil {
-		return fmt.Errorf("message not found: %s", idStr)
+		return readMessageNotFound(idStr)
 	}
 
 	if showMessageJSON {
@@ -116,7 +115,7 @@ func outputMessageText(w io.Writer, msg *query.MessageDetail) error {
 	_, _ = fmt.Fprintln(output, "═══════════════════════════════════════════════════════════════════════════════")
 	_, _ = fmt.Fprintf(output, "Message ID: %d (Gmail: %s)\n", msg.ID, msg.SourceMessageID)
 	if msg.RelatedMessageID != nil {
-		_, _ = fmt.Fprintf(output, "Related message: %d (show-message %d)\n", *msg.RelatedMessageID, *msg.RelatedMessageID)
+		_, _ = fmt.Fprintf(output, "Related message: %d (show %d)\n", *msg.RelatedMessageID, *msg.RelatedMessageID)
 	}
 	_, _ = fmt.Fprintln(output, "───────────────────────────────────────────────────────────────────────────────")
 

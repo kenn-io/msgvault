@@ -38,7 +38,7 @@ func registerMeetingSource(
 	}
 	_, _ = fmt.Fprintf(out, "Confirmed identity %s on %s (signal: account-email).\n", primary, identifier)
 	commandSource := strings.ReplaceAll(sourceType, "_", "-")
-	_, _ = fmt.Fprintf(out, "After identity changes, run msgvault sync-%s %s --full to refresh existing meeting attribution.\n",
+	_, _ = fmt.Fprintf(out, "After identity changes, run msgvault source %s sync %s --full to refresh existing meeting attribution.\n",
 		commandSource, identifier)
 	return source, nil
 }
@@ -55,7 +55,7 @@ type meetingSources[T any] struct {
 }
 
 func (m meetingSources[T]) missing() error {
-	return errors.New("no [[" + m.table + "]] sources configured\n\n" + m.hint)
+	return sourceNotConfigured(strings.ReplaceAll(m.table, "_", "-"), errors.New("no [["+m.table+"]] sources configured\n\n"+m.hint))
 }
 
 // one picks the entry an optional argument names; with no argument there

@@ -35,17 +35,15 @@ Apple ChatStorage.sqlite database. Apple databases currently import text
 messages from direct and group chats. Reading the native macOS WhatsApp store
 may require Full Disk Access in System Settings > Privacy & Security.
 
-Examples:
-  msgvault import-whatsapp --phone "+447700900000" /path/to/msgstore.db
-  msgvault import-whatsapp --phone "+447700900000" "$HOME/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
-  msgvault import-whatsapp --phone "+447700900000" --contacts ~/contacts.vcf /path/to/msgstore.db
-  msgvault import-whatsapp --phone "+447700900000" --media-dir /path/to/Media /path/to/msgstore.db
-  msgvault import-whatsapp --phone "+447700900000" --after 2026-01-01 "$HOME/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
-
 --after and --before (YYYY-MM-DD, local time; after is inclusive, before is
 exclusive) limit an Apple import to that window. A later unfiltered run
 imports the rest. Android msgstore.db imports reject both flags.`,
-	Args: cobra.ExactArgs(1),
+	Example: `  msgvault import whatsapp --phone "+447700900000" /path/to/msgstore.db
+  msgvault import whatsapp --phone "+447700900000" "$HOME/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
+  msgvault import whatsapp --phone "+447700900000" --contacts ~/contacts.vcf /path/to/msgstore.db
+  msgvault import whatsapp --phone "+447700900000" --media-dir /path/to/Media /path/to/msgstore.db
+  msgvault import whatsapp --phone "+447700900000" --after 2026-01-01 "$HOME/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"`,
+	Args: sourceImportArgs("phone", "your E.164 number (for example +15551234567)", "msgvault import whatsapp ./msgstore.db --phone +15551234567"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
@@ -70,12 +68,12 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		return usageErr(cmd, errors.New("--phone is required for WhatsApp import (E.164 format, e.g., +447700900000)"))
 	}
 	if !strings.HasPrefix(importPhone, "+") {
-		return usageErr(cmd, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", importPhone))
+		return validationErr(cmd, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", importPhone))
 	}
 
 	after, before, err := parseWhatsAppDateWindow(importWhatsAppAfter, importWhatsAppBefore)
 	if err != nil {
-		return usageErr(cmd, err)
+		return validationErr(cmd, err)
 	}
 
 	// Validate media dir if provided.
@@ -278,8 +276,8 @@ var importType string
 
 var importCmd = &cobra.Command{
 	Use:        "import [path]",
-	Short:      "Import messages (deprecated: use import-whatsapp)",
-	Deprecated: "use import-whatsapp instead",
+	Short:      "Import messages (deprecated: use import whatsapp)",
+	Deprecated: "use import whatsapp instead",
 	Hidden:     true,
 	Args:       cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -288,13 +286,11 @@ var importCmd = &cobra.Command{
 		}
 		if strings.ToLower(importType) != "whatsapp" {
 			return fmt.Errorf(
-				"unsupported import type %q; use import-whatsapp",
+				"unsupported import type %q; use import whatsapp",
 				importType,
 			)
 		}
-		fmt.Fprintln(os.Stderr,
-			"Warning: 'import --type whatsapp' is deprecated."+
-				" Use 'import-whatsapp' instead.")
+
 		return runWhatsAppImport(cmd, args[0])
 	},
 }

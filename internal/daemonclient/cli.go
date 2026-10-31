@@ -387,9 +387,12 @@ type cliRebuildFTSEvent struct {
 }
 
 type cliStreamEvent struct {
-	Type  string `json:"type"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	Code          string `json:"code,omitempty"`
+	ErrorReported bool   `json:"error_reported,omitempty,omitzero"`
+	ExitCode      int    `json:"exit_code,omitempty,omitzero"`
+	Type          string `json:"type"`
+	Data          string `json:"data,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 const (
@@ -630,7 +633,7 @@ func (c *Client) RunCLIRepairMessageWithPreflight(
 	}
 	if !apiSchemaVersionAtLeast(version, repairMessageMinAPISchemaVersion) {
 		return fmt.Errorf(
-			"repair-message requires daemon API schema %s or newer (daemon reports %q)",
+			"repair message requires daemon API schema %s or newer (daemon reports %q)",
 			repairMessageMinAPISchemaVersion, version,
 		)
 	}
@@ -919,9 +922,9 @@ func (c *Client) runCLIStream(
 			return true, nil
 		case "error":
 			if event.Error != "" {
-				return false, &CLIRunError{err: errors.New(event.Error)}
+				return false, &CLIRunError{err: errors.New(event.Error), exitCode: event.ExitCode, code: event.Code, errorReported: event.ErrorReported}
 			}
-			return false, &CLIRunError{err: fmt.Errorf("%s failed", operation)}
+			return false, &CLIRunError{err: fmt.Errorf("%s failed", operation), exitCode: event.ExitCode, code: event.Code, errorReported: event.ErrorReported}
 		default:
 			return false, nil
 		}

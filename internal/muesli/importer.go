@@ -94,7 +94,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, identifier)
 	if err != nil {
 		if errors.Is(err, store.ErrSourceNotFound) {
-			return nil, fmt.Errorf("muesli source %q is not registered; run msgvault add-muesli %s first",
+			return nil, fmt.Errorf("muesli source %q is not registered; run msgvault source muesli add %s first",
 				identifier, identifier)
 		}
 		return nil, fmt.Errorf("look up Muesli source %q: %w", identifier, err)

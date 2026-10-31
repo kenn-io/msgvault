@@ -2008,7 +2008,7 @@ func (s *Server) writeExploreUnavailable(
 	}
 	writeJSON(w, http.StatusServiceUnavailable, ExploreCacheUnavailableResponse{
 		Error: "analytical_cache_unavailable", Message: "The committed analytical cache is unavailable",
-		Readiness: readiness, RecoveryAction: "Run msgvault build-cache --full-rebuild and retry",
+		Readiness: readiness, RecoveryAction: "Run msgvault cache build --full-rebuild and retry",
 	})
 }
 

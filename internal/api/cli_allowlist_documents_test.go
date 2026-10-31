@@ -12,25 +12,25 @@ func TestCLIRunCommandAllowedDocumentMutations(t *testing.T) {
 		"build", "consent-mistral", "consent-docling", "purge-derived", "resume", "retire", "retry", "status",
 	} {
 		t.Run(subcommand, func(t *testing.T) {
-			assert.True(t, cliRunCommandAllowed([]string{"documents", subcommand}))
+			assert.True(t, CLIRunCommandAllowed([]string{"documents", subcommand}))
 		})
 	}
 
 	for _, subcommand := range []string{"probe-mistral", "search"} {
 		t.Run(subcommand, func(t *testing.T) {
-			assert.False(t, cliRunCommandAllowed([]string{"documents", subcommand}))
+			assert.False(t, CLIRunCommandAllowed([]string{"documents", subcommand}))
 		})
 	}
 
 	for _, subcommand := range []string{"build", "consent", "rebuild", "resume", "retire", "retry", "status"} {
 		t.Run("vectors/"+subcommand, func(t *testing.T) {
-			assert.True(t, cliRunCommandAllowed([]string{"documents", "vectors", subcommand}))
+			assert.True(t, CLIRunCommandAllowed([]string{"documents", "vectors", subcommand}))
 		})
 	}
 	for _, args := range [][]string{
 		{"documents", "vectors"},
 		{"documents", "vectors", "unknown"},
 	} {
-		assert.False(t, cliRunCommandAllowed(args))
+		assert.False(t, CLIRunCommandAllowed(args))
 	}
 }

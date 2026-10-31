@@ -132,7 +132,11 @@ func newPersonScoringRunCommand() *cobra.Command {
 				}
 			}
 			if response.ErrorData != nil {
-				return fmt.Errorf("%s: %s", response.ErrorData.Code, response.ErrorData.Message)
+				err := fmt.Errorf("%s: %s", response.ErrorData.Code, response.ErrorData.Message)
+				if response.ErrorData.Code == "consent_required" {
+					return withHint(err, "review 'msgvault person scoring status --json', then pass its current disclosure fingerprint to 'msgvault person scoring consent <disclosure-fingerprint>'")
+				}
+				return err
 			}
 			return nil
 		}}

@@ -107,7 +107,7 @@ describe('findGroupDetail', () => {
       error: 'cache_unavailable',
       message: 'The analytical cache is absent.',
       readiness: 'absent',
-      recovery_action: 'msgvault build-cache'
+      recovery_action: 'msgvault cache build'
     };
     const groups = vi.fn<ExploreAPI['groups']>(async () => ({ status: 'unavailable', unavailable }));
 

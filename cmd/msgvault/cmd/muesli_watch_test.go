@@ -100,7 +100,7 @@ func TestMuesliWatchFailureReasonsDoNotEchoValues(t *testing.T) {
 		hint string
 	}{
 		{"credentials", &daemonclient.APIError{Status: http.StatusUnauthorized, Message: privateValue}, "credentials"},
-		{"registration", &daemonclient.APIError{Status: http.StatusNotFound, Code: "source_not_found", Message: privateValue}, "add-muesli"},
+		{"registration", &daemonclient.APIError{Status: http.StatusNotFound, Code: "source_not_found", Message: privateValue}, "source muesli add"},
 		{"version", &daemonclient.APIError{Status: http.StatusNotFound, Message: privateValue}, "endpoint"},
 		{"rejection", &daemonclient.APIError{Status: http.StatusUnprocessableEntity, Message: privateValue}, "registration"},
 		{"validation", fmt.Errorf("%s: %w", privateValue, muesli.ErrRemoteValidation), "validation"},

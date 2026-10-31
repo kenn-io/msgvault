@@ -162,7 +162,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
 	if err != nil {
 		if errors.Is(err, store.ErrSourceNotFound) {
-			return nil, fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty first", opts.Identifier)
+			return nil, fmt.Errorf("twenty source %q is not registered; run msgvault source twenty add first", opts.Identifier)
 		}
 		return nil, err
 	}

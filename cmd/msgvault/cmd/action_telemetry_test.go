@@ -164,6 +164,17 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 				resetSearchFlags()
 				t.Cleanup(resetSearchFlags)
 				cmd := &cobra.Command{Use: action}
+				if action == "muesli-hook" {
+					// The canonical hook remains automatic even though its leaf
+					// name no longer matches the legacy telemetry exclusion.
+					root := &cobra.Command{Use: "msgvault"}
+					source := &cobra.Command{Use: "source"}
+					provider := &cobra.Command{Use: "muesli"}
+					root.AddCommand(source)
+					source.AddCommand(provider)
+					cmd.Use = "hook"
+					provider.AddCommand(cmd)
+				}
 				cmd.SetContext(configureRemoteSyncTest(t, server.URL))
 				if strings.HasPrefix(action, "sync") {
 					cmd.SetOut(&bytes.Buffer{})

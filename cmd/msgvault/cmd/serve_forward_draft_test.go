@@ -554,7 +554,7 @@ func TestDraftForwardPreflightWithoutAttachmentIdentity(t *testing.T) {
 		return nil
 	}, false, []draftForwardProblem{{Reason: "attachment_reader_unavailable"}})
 	require.ErrorContains(t, err, "attachment_preflight_failed")
-	assert.Equal(t, "draft-forward refused before APPEND:\nattachment_reader_unavailable\n", output.String())
+	assert.Equal(t, "draft forward refused before APPEND:\nattachment_reader_unavailable\n", output.String())
 }
 
 func TestDraftForwardEditChecksAttachmentsBeforeConnecting(t *testing.T) {

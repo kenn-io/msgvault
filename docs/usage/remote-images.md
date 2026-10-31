@@ -15,17 +15,17 @@ feature covers images that the message asks a website to load.
 ## Archive images in existing mail
 
 Start with a small scan of one source. Use the source ID from
-`msgvault list-accounts`:
+`msgvault account list`:
 
 ```bash
-msgvault archive-remote-images --allow-tracking --source-id 3 --limit 100
+msgvault attachment archive-remote-images --allow-tracking --source-id 3 --limit 100
 ```
 
 `--limit` counts messages scanned, not images downloaded. Omit `--source-id`
 to scan all email sources; omit `--limit` for an unlimited scan:
 
 ```bash
-msgvault archive-remote-images --allow-tracking
+msgvault attachment archive-remote-images --allow-tracking
 ```
 
 Every invocation requires `--allow-tracking`, even if automatic archiving is
@@ -64,7 +64,7 @@ and appear in the Files view, including small logos and tracking pixels. Use
 the normal [attachment export commands](/docs/usage/exporting/) to save their
 bytes.
 
-The original raw MIME and stored HTML stay unchanged. An `export-eml` therefore
+The original raw MIME and stored HTML stay unchanged. An `export eml` therefore
 preserves the original message, including its original image URLs; it does not
 embed the newly archived images into that EML file.
 

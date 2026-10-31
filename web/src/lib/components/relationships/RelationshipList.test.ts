@@ -347,7 +347,7 @@ describe('RelationshipList', () => {
     });
 
     expect(screen.getByText('Preparing relationship ranking…')).toBeDefined();
-    expect(screen.queryByText(/msgvault build-cache/)).toBeNull();
+    expect(screen.queryByText(/msgvault cache build/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Open Everything' })).toBeNull();
   });
 });

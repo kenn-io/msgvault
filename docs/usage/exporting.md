@@ -20,11 +20,11 @@ can remove those copies.
 
 ## Export a bounded message window
 
-`export-messages` streams normalized archive data as JSON Lines without
+`export messages` streams normalized archive data as JSON Lines without
 contacting any provider:
 
 ```bash
-msgvault export-messages \
+msgvault export messages \
   --start 2026-07-20T00:00:00Z \
   --end 2026-07-27T00:00:00Z \
   --message-type discord \
@@ -50,7 +50,7 @@ separates the source type; any remaining colons belong to the identifier.
 To export a saved person's correspondence, add their durable person ID:
 
 ```bash
-msgvault export-messages --person-id 42 \
+msgvault export messages --person-id 42 \
   --start 2026-07-01T00:00:00Z --end 2026-08-01T00:00:00Z > person-42.jsonl
 ```
 
@@ -96,13 +96,13 @@ Export a single message as a standard `.eml` file:
 
 ```bash
 # By internal message ID
-msgvault export-eml 12345 --output message.eml
+msgvault export eml 12345 --output message.eml
 
 # By source message ID
-msgvault export-eml 18abc123def --output message.eml
+msgvault export eml 18abc123def --output message.eml
 
 # Output to stdout
-msgvault export-eml 18abc123def --output -
+msgvault export eml 18abc123def --output -
 ```
 
 | Argument or flag | Description |
@@ -112,29 +112,29 @@ msgvault export-eml 18abc123def --output -
 
 The exported `.eml` contains the original raw MIME bytes preserved during sync.
 To write a conversation as numbered `.eml` files, use
-`msgvault export-eml <id> --thread --output DIR`. See the
+`msgvault export eml <id> --thread --output DIR`. See the
 [command reference](/docs/cli-reference/#export-eml) for reference resolution,
 account selection, and skipped-message behavior.
 
 ## Export a single attachment
 
-Export an attachment by its SHA-256 content hash. Get the hash from `show-message --json`:
+Export an attachment by its SHA-256 content hash. Get the hash from `show --json`:
 
 ```bash
 # Find the content hash
-msgvault show-message 45 --json | jq '.attachments[0].content_hash'
+msgvault show 45 --json | jq '.attachments[0].content_hash'
 
 # Export to a file
-msgvault export-attachment <content-hash> -o invoice.pdf
+msgvault export attachment <content-hash> -o invoice.pdf
 
 # Output to stdout (binary)
-msgvault export-attachment <content-hash> -o -
+msgvault export attachment <content-hash> -o -
 
 # Output as base64
-msgvault export-attachment <content-hash> --base64
+msgvault export attachment <content-hash> --base64
 
 # JSON output with base64-encoded data
-msgvault export-attachment <content-hash> --json
+msgvault export attachment <content-hash> --json
 ```
 
 | Flag | Description |
@@ -151,13 +151,13 @@ Export every attachment from a message as individual files with their original f
 
 ```bash
 # Export all attachments to the current directory
-msgvault export-attachments 45
+msgvault export attachments 45
 
 # Export to a specific directory
-msgvault export-attachments 45 -o ~/Downloads
+msgvault export attachments 45 -o ~/Downloads
 
 # By Gmail message ID
-msgvault export-attachments 18f0abc123def
+msgvault export attachments 18f0abc123def
 ```
 
 | Flag | Description |

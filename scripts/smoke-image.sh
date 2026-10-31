@@ -44,9 +44,9 @@ EOF
 
 msgvault version
 msgvault --help > /dev/null
-msgvault init-db
+msgvault database init
 test -s "$scratch/msgvault.db"
-msgvault build-cache --full-rebuild
+msgvault cache build --full-rebuild
 test "$(msgvault query --format csv 'SELECT COUNT(*) AS messages FROM messages')" = "$(printf 'messages\n0')"
 
 wget -q -O /dev/null http://127.0.0.1:8080/health

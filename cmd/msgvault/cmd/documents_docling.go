@@ -28,7 +28,9 @@ func requireDocumentProvider(state *invocation, provider string) error {
 func newConsentDoclingCmd(deps documentsCommandDeps) *cobra.Command {
 	var confirmed bool
 	command := &cobra.Command{
-		Use: "consent-docling", Short: "Record consent for the exact self-hosted Docling document policy", Args: cobra.NoArgs,
+		Use: "consent-docling", Short: "Record consent for the exact self-hosted Docling document policy",
+		Long:    "Record consent to extraction at the configured self-hosted Docling endpoint. Consent is tied to the exact document policy; review its disclosure before confirming with --yes.",
+		Example: "  msgvault documents consent-docling --yes", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(command, args)

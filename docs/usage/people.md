@@ -472,7 +472,7 @@ address does not by itself prove that the address is you.
 Preview all evidence for one source without changing the archive:
 
 ```bash
-msgvault list-accounts
+msgvault account list
 msgvault identity discover --source-id 14
 ```
 

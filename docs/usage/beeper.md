@@ -43,7 +43,7 @@ for the difference between an observed participant and a curated profile.
 ## Add Beeper
 
 ```bash
-msgvault add-beeper
+msgvault source beeper add
 ```
 
 The command validates the token against the running Beeper Desktop, stores it
@@ -56,15 +56,15 @@ bridging — currently iMessage — so those are found from chat data instead.
 They are printed as *found via chats* and behave like any other `beeper`
 source afterwards.
 
-`add-beeper` is safe to re-run and does not disturb existing sources, so run it
+`source beeper add` is safe to re-run and does not disturb existing sources, so run it
 again after connecting a new network in Beeper Desktop to register it.
 
 Provide the token via the interactive prompt, `--token-file <path>`, or the
 `MSGVAULT_BEEPER_TOKEN` environment variable:
 
 ```bash
-MSGVAULT_BEEPER_TOKEN="..." msgvault add-beeper
-msgvault add-beeper --token-file ~/beeper-token.txt
+MSGVAULT_BEEPER_TOKEN="..." msgvault source beeper add
+msgvault source beeper add --token-file ~/beeper-token.txt
 ```
 
 | Flag | Description |
@@ -76,13 +76,13 @@ msgvault add-beeper --token-file ~/beeper-token.txt
 
 ```bash
 # First run backfills all history; later runs are incremental.
-msgvault sync-beeper
+msgvault source beeper sync
 
 # Only specific networks.
-msgvault sync-beeper --account signal --account telegram
+msgvault source beeper sync --account signal --account telegram
 
 # Repair path: re-fetch everything, upserting in place.
-msgvault sync-beeper --full
+msgvault source beeper sync --full
 ```
 
 The first sync walks every chat's full locally-available history. This is a
@@ -113,8 +113,8 @@ account's summary reports an error count, followed by the chats behind it:
     !def:beeper.local: 11 fetch errors; last: connect to Beeper Desktop refused
   5 other errors aren't listed by chat; re-run to retry.
   Retry with the same global options (such as --local):
-    fetch errors: msgvault sync-beeper --account signal
-    attachment errors: msgvault backfill-beeper-media --account signal
+    fetch errors: msgvault source beeper sync --account signal
+    attachment errors: msgvault source beeper backfill-media --account signal
 ```
 
 Each chat line shows its title or Beeper chat ID, error count, failed steps,
@@ -144,10 +144,10 @@ text and attachment metadata. Adjust the shared
 
 | Download result | How to collect the file later |
 |---|---|
-| A download failed and remains pending | Run `msgvault backfill-beeper-media` |
+| A download failed and remains pending | Run `msgvault source beeper backfill-media` |
 | Skipped by the size or participant cap | Change the applicable policy, then retry media backfill |
-| Deferred with `--no-media` | Run `msgvault backfill-beeper-media` |
-| Excluded by `media = false` | Re-enable media, then run `msgvault backfill-beeper-media` |
+| Deferred with `--no-media` | Run `msgvault source beeper backfill-media` |
+| Excluded by `media = false` | Re-enable media, then run `msgvault source beeper backfill-media` |
 | No longer available at the source | Not collectable; msgvault does not retry it |
 
 Policy skips record a reason such as `size_cap` or `participant_threshold`.
@@ -176,7 +176,7 @@ retryable.
 The age and repeat-on-a-separate-run requirement limit how many requests an
 old missing file ever gets. Neither proves the file is permanently gone: an
 old file that later returns stays skipped, including during
-`sync-beeper --full`, and two runs close enough together to both land
+`source beeper sync --full`, and two runs close enough together to both land
 inside one brief bridge outage can retire a file the bridge would otherwise
 have recovered. Sync and backfill summaries report newly terminal files as
 "media no longer available at source".
@@ -206,8 +206,8 @@ the derivation version changes. It uses the stored JSON and reports how many
 rows it repaired. To run that repair now or finish an interrupted pass:
 
 ```bash
-msgvault repair-derived --source-type beeper
-msgvault repair-derived --source-type beeper --identifier instagramgo
+msgvault repair derived --source-type beeper
+msgvault repair derived --source-type beeper --identifier instagramgo
 ```
 
 It needs no Beeper Desktop connection, repairs messages Beeper no longer holds,
@@ -401,7 +401,7 @@ A scheduled run keeps other sources on their cadence:
   `partial Beeper sync: N fetch error(s)`. Healthy chats keep their progress,
   and the failed chats are retried on the next run.
 
-Manual `msgvault sync-beeper` runs have no time budget.
+Manual `msgvault source beeper sync` runs have no time budget.
 
 ## Configuration
 
@@ -425,13 +425,13 @@ max_media_mb = 250                 # per-attachment size cap
 
 See [Media policy](/docs/configuration/#media-policy) for how the scope, participant
 cap, size cap, and per-account overrides combine, and
-`msgvault purge-excluded-media` for removing media a changed policy would no
+`msgvault attachment purge-excluded` for removing media a changed policy would no
 longer collect.
 
 ### Overlap with native importers
 
-If you already archive a network natively (e.g. `import-whatsapp` or
-`import-imessage`), pick one path per network: msgvault does not deduplicate
+If you already archive a network natively (e.g. `import whatsapp` or
+`import imessage`), pick one path per network: msgvault does not deduplicate
 messages across sources. Add the Beeper accountID to `exclude_accounts` to
 keep Beeper sync away from that network. If both paths do run, the rows remain
 separable (different sources and different `message_type` values), and
@@ -448,7 +448,7 @@ resolving to the same person).
   checked against the source. If the installation was rebuilt, the sync stops
   with an error and marks the account. Scheduled runs then skip that account
   with one warning instead of failing every run. After repairing Beeper
-  Desktop, run `msgvault sync-beeper --account <id>` to verify again and clear
+  Desktop, run `msgvault source beeper sync --account <id>` to verify again and clear
   the mark, or remove and re-add the Beeper source.
 - **Remote daemons**: the Beeper API is loopback-only, so the msgvault daemon
   must run on the same machine as Beeper Desktop.
@@ -457,5 +457,5 @@ resolving to the same person).
   from chat data are looked for in a bounded scan of your most recently active
   conversations, so one with no chats — or none recent enough to fall inside
   that window — stays invisible until it sees activity; send or receive a
-  message, then re-run `add-beeper`. The scan logs a warning when it stops at
+  message, then re-run `source beeper add`. The scan logs a warning when it stops at
   its bound.

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/gmail"
@@ -117,6 +119,13 @@ type agentTokenListFixture struct {
 }
 
 func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
+	for _, canonical := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canonical=%v", canonical), func(t *testing.T) { testDelegatedDraftSourceScopeThroughHTTP(t, canonical) })
+	}
+}
+
+func testDelegatedDraftSourceScopeThroughHTTP(t *testing.T, canonical bool) {
+	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newDraftReplyFixture(t)
@@ -162,6 +171,9 @@ func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
 			"draft-reply", strconv.FormatInt(fixture.parentID, 10),
 			"--from", testutil.IMAPTestUsername, "--body", "reply body", "--json",
 		}
+		if canonical {
+			args = cligrammar.Canonical(args)
+		}
 		body, err := json.Marshal(map[string]any{"args": args})
 		require.NoError(err)
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
@@ -204,6 +216,13 @@ func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
 }
 
 func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
+	for _, canonical := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canonical=%v", canonical), func(t *testing.T) { testDelegatedGmailDraftLifecycleThroughHTTP(t, canonical) })
+	}
+}
+
+func testDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T, canonical bool) {
+	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newGmailDraftTestFixture(t)
@@ -246,6 +265,9 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 		return issued.Secret
 	}
 	run := func(secret string, args []string) (int, []api.CLIRunEvent) {
+		if canonical {
+			args = cligrammar.Canonical(args)
+		}
 		body, err := json.Marshal(map[string]any{"args": args})
 		require.NoError(err)
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))

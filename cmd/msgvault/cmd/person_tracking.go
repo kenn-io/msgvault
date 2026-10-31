@@ -46,7 +46,7 @@ func newPersonTrackingCommand(action string, tracked bool) *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person tracking response was empty")
+				return readDaemonResponseError(errors.New("person tracking response was empty"))
 			}
 			if personJSON {
 				_, err = cmd.OutOrStdout().Write(response.Body)

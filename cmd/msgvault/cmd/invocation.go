@@ -46,6 +46,7 @@ type invocationOptions struct {
 }
 
 type invocation struct {
+	command   *cobra.Command
 	options   invocationOptions
 	cfg       *config.Config
 	logger    *slog.Logger
@@ -128,6 +129,7 @@ func prepareInvocation(cmd *cobra.Command) *invocation {
 		inv = newInvocation()
 		root.SetContext(withInvocation(root.Context(), inv))
 	}
+	inv.command = cmd
 	if inv.logger == nil {
 		inv.logger = newInvocation().logger
 	}

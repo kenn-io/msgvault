@@ -23,11 +23,9 @@ URL, instead of re-walking every message. It is idempotent: content-addressed
 storage dedupes, so it is safe to re-run.
 
 Use --only-incomplete to retry just the messages whose inline media is still
-missing (e.g. after transient fetch failures), instead of re-fetching all.
-
-Examples:
-  msgvault backfill-teams-media user@company.com
-  msgvault backfill-teams-media user@company.com --only-incomplete`,
+missing (e.g. after transient fetch failures), instead of re-fetching all.`,
+	Example: `  msgvault source teams backfill-media user@company.com
+  msgvault source teams backfill-media user@company.com --only-incomplete`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -54,7 +52,7 @@ Examples:
 		}
 		client, err := newTeamsClient(cmd.Context(), cfg, logger, email)
 		if err != nil {
-			return fmt.Errorf("load Teams token: %w (run 'add-teams' first)", err)
+			return fmt.Errorf("load Teams token: %w (run 'msgvault source teams add' first)", err)
 		}
 
 		ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping...")
@@ -72,7 +70,7 @@ Examples:
 			Progress:       func(s string) { fmt.Println(s) },
 		})
 		if ctx.Err() != nil {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run backfill-teams-media to resume (idempotent).")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run msgvault source teams backfill-media to resume (idempotent).")
 			return rebuildCacheAfterWrite(dbPath, state)
 		}
 		if err != nil {

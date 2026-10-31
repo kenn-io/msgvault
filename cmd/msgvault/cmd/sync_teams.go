@@ -26,13 +26,11 @@ imported. Re-run to resume after an interruption.
 
 Use --full to ignore the stored cursor and re-fetch every message (e.g. to
 backfill fields added by an importer upgrade). Re-fetched messages are
-upserted in place, so this repairs existing rows without creating duplicates.
-
-Examples:
-  msgvault sync-teams user@company.com
-  msgvault sync-teams user@company.com --no-channels
-  msgvault sync-teams user@company.com --limit 100
-  msgvault sync-teams user@company.com --full`,
+upserted in place, so this repairs existing rows without creating duplicates.`,
+	Example: `  msgvault source teams sync user@company.com
+  msgvault source teams sync user@company.com --no-channels
+  msgvault source teams sync user@company.com --limit 100
+  msgvault source teams sync user@company.com --full`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -59,7 +57,7 @@ Examples:
 		}
 		client, err := newTeamsClient(cmd.Context(), cfg, logger, email)
 		if err != nil {
-			return fmt.Errorf("load Teams token: %w (run 'add-teams' first)", err)
+			return fmt.Errorf("load Teams token: %w (run 'msgvault source teams add' first)", err)
 		}
 
 		ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Saving checkpoint...")
@@ -80,7 +78,7 @@ Examples:
 		}
 		sum, err := imp.Import(ctx, opts)
 		if ctx.Err() != nil {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-teams to resume.")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run msgvault source teams sync to resume.")
 			return rebuildCacheAfterManualSync(dbPath, state)
 		}
 		if err != nil {

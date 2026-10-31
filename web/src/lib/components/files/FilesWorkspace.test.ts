@@ -175,7 +175,7 @@ describe('FilesWorkspace', () => {
       state: 'degraded',
       fetchFn: vi.fn<typeof fetch>(async () => Response.json({
         error: 'analytical_cache_unavailable', message: 'Synthetic cache unavailable.',
-        readiness: 'absent', recovery_action: 'msgvault build-cache'
+        readiness: 'absent', recovery_action: 'msgvault cache build'
       }, { status: 503 })),
       expected: null,
       rendered: 'Synthetic cache unavailable.'
@@ -930,7 +930,7 @@ describe('FilesWorkspace', () => {
       cursorCalls += 1;
       if (cursorCalls === 1) return Response.json({
         error: 'analytical_cache_unavailable', message: 'Synthetic cursor cache outage.',
-        readiness: 'absent', recovery_action: 'msgvault build-cache'
+        readiness: 'absent', recovery_action: 'msgvault cache build'
       }, { status: 503 });
       return Response.json(second);
     });
@@ -1022,7 +1022,7 @@ describe('FilesWorkspace', () => {
       cursorCalls += 1;
       if (cursorCalls === 1) return Response.json({
         error: 'analytical_cache_unavailable', message: 'Synthetic cursor cache outage.',
-        readiness: 'absent', recovery_action: 'msgvault build-cache'
+        readiness: 'absent', recovery_action: 'msgvault cache build'
       }, { status: 503 });
       return Response.json(second);
     });

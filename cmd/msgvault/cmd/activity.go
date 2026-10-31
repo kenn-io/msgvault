@@ -26,14 +26,18 @@ const (
 
 func newActivityCommand() *cobra.Command {
 	activityCmd := &cobra.Command{
-		Use:   "activity",
-		Short: "Build the derived activity spine",
+		Use:     "activity",
+		Short:   "Build the derived activity spine",
+		Long:    "Project archived messages into dated activity records used by person agendas and briefs. Run build after importing or repairing archive evidence when the derived timeline needs refreshing.",
+		Example: "  msgvault activity build",
 	}
 	var backstop bool
 	activityBuildCmd := &cobra.Command{
-		Use:   activityBuildSubcommand,
-		Short: "Project archived messages into dated activity",
-		Args:  cobra.NoArgs,
+		Use:     activityBuildSubcommand,
+		Short:   "Project archived messages into dated activity",
+		Long:    "Rebuild derived dated activity from archived messages. Person agenda and briefing commands use this timeline; rebuilding derives local records rather than changing provider messages.",
+		Example: "  msgvault activity build",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)

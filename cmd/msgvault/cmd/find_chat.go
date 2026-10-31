@@ -25,19 +25,19 @@ query word. Exact matches rank first, then most matching words, then recent
 activity. JSON results have conversation_id, message_id, source_id, network,
 title, matched_names, and match_kind; pass message_id to show-message.
 Results are candidates: read the messages before linking identities.`,
-		Example: `  msgvault find-chat "Alice Example" --json
-  msgvault find-chat alice --source-id 3 --limit 20`,
+		Example: `  msgvault chat find "Alice Example" --json
+  msgvault chat find alice --source-id 3 --limit 20`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := store.ChatDiscoveryQuery{Query: strings.Join(args, " "), Limit: limit, SourceID: sourceID}
 			if limit == 0 {
-				return usageErr(cmd, errors.New("--limit must be between 1 and 100"))
+				return withHint(validationErr(cmd, errors.New("--limit must be between 1 and 100")), "pass --limit 1 through 100, for example --limit 20")
 			}
 			if cmd.Flags().Changed("source-id") && sourceID == 0 {
-				return usageErr(cmd, errors.New("--source-id must be positive"))
+				return withHint(validationErr(cmd, errors.New("--source-id must be positive")), "find source IDs with 'msgvault account list --json'")
 			}
 			if err := store.ValidateChatDiscoveryQuery(q); err != nil {
-				return usageErr(cmd, err)
+				return withHint(validationErr(cmd, err), "use --limit 1 through 100; source IDs come from 'msgvault account list --json'")
 			}
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {

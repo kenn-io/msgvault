@@ -96,7 +96,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	start := time.Now().UTC()
 	src, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
 	if err != nil {
-		return nil, fmt.Errorf("omi source is not registered; run msgvault add-omi %s: %w", opts.Identifier, err)
+		return nil, fmt.Errorf("omi source is not registered; run msgvault source omi add %s: %w", opts.Identifier, err)
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 	var state syncState

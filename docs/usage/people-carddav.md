@@ -19,8 +19,8 @@ Select an existing connection or choose **Add connection** for another account.
 The CLI can discover the same accounts:
 
 ```bash
-msgvault add-carddav https://contacts.example.com/dav/ you@example.com
-msgvault add-carddav https://work-contacts.example.com/dav/ you@example.com --connection work
+msgvault source carddav add https://contacts.example.com/dav/ you@example.com
+msgvault source carddav add https://work-contacts.example.com/dav/ you@example.com --connection work
 msgvault carddav connections
 msgvault carddav books --connection work
 ```
@@ -110,8 +110,8 @@ in your Web application client, then run:
 
 ```bash
 msgvault carddav authorize-google you@example.com
-msgvault add-carddav --google you@example.com --schedule "*/30 * * * *"
-msgvault sync-carddav
+msgvault source carddav add --google you@example.com --schedule "*/30 * * * *"
+msgvault source carddav sync
 ```
 
 `authorize-google` opens the system browser and prints the saved token path. `--no-browser` prints the sign-in
@@ -155,16 +155,16 @@ deleted without a conflict; the contact stays in Outlook's Deleted Items.
 2. Sign in and save the connection:
 
    ```bash
-   msgvault add-carddav --microsoft you@example.com --schedule "*/30 * * * *"
+   msgvault source carddav add --microsoft you@example.com --schedule "*/30 * * * *"
    msgvault carddav books
    ```
 
-   `add-carddav --microsoft` opens a browser for Microsoft sign-in. Use
+   `source carddav add --microsoft` opens a browser for Microsoft sign-in. Use
    `--headless` to sign in with a device code instead. The token is saved as
    `tokens/mscontacts_<email>.json`, separate from mail and Teams tokens.
    For a remote daemon, copy that file to the daemon's token directory,
    preserving private file permissions, before the connection is saved.
-3. Review the roles of each folder, then run `msgvault sync-carddav`.
+3. Review the roles of each folder, then run `msgvault source carddav sync`.
 
 To sign in without saving a connection, run
 `msgvault carddav authorize-microsoft you@example.com`. Then save the
@@ -245,11 +245,11 @@ the book; resolve those dependencies first.
 Pull changes and reconcile existing publications with:
 
 ```bash
-msgvault sync-carddav
+msgvault source carddav sync
 ```
 
 Unqualified sync runs every configured, enabled connection. Use
-`msgvault sync-carddav --connection work` to sync one connection, including a
+`msgvault source carddav sync --connection work` to sync one connection, including a
 disabled connection for manual repair. Add `--full` for a full address-book
 reconciliation. A failing connection does not stop the others; partial or failed
 aggregate results make the CLI exit nonzero. With no enabled connections,
@@ -353,11 +353,11 @@ Restore the original config table, or select the orphaned connection in Settings
 and save it with the same server URL and username. The CLI can also restore it:
 
 ```bash
-msgvault add-carddav https://work-contacts.example.com/dav/ you@example.com --connection work
+msgvault source carddav add https://work-contacts.example.com/dav/ you@example.com --connection work
 ```
 
 Use the original connection name (`default` for `[carddav]`). For Google, use
-`msgvault add-carddav --google you@example.com --connection work` and the original
+`msgvault source carddav add --google you@example.com --connection work` and the original
 `--oauth-app` when one was selected. Restoring the same identity reconnects the
 existing account and books. Settle pending publications and conflicts before
 moving the write target. Adding the account under a different name is rejected.

@@ -356,7 +356,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			}
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("resolve destination source: %w", err))
 		}
-	} else if parentSource != nil && (parentSource.SourceType == "imap" || parentSource.SourceType == "gmail") {
+	} else if parentSource != nil && (parentSource.SourceType == "imap" || parentSource.SourceType == sourceTypeGmail) {
 		source = parentSource
 	} else if parentSource != nil {
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("an offline parent requires --account or --source-id for a live IMAP destination"))
@@ -420,9 +420,9 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		if imapConfig.Identifier() != source.Identifier {
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 		}
-	case "gmail":
+	case sourceTypeGmail:
 		if parentSource == nil {
-			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-compose requires an IMAP source"))
+			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft compose requires an IMAP source"))
 		}
 		if parentSource.ID != source.ID {
 			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("gmail draft replies must use the parent source"))
@@ -460,7 +460,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	emit func(api.CLIRunEvent) error,
 ) error {
 	if len(req.Env) != 0 || req.Cwd != "" {
-		return draftReplyError("invalid_args", errors.New("draft-reply accepts no environment or working directory"))
+		return draftReplyError("invalid_args", errors.New("draft reply accepts no environment or working directory"))
 	}
 	intent, err := parseDraftReplyArgs(req.Args)
 	if err != nil {
@@ -479,7 +479,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return draftReplyError("invalid_reply_metadata", err)
 	}
-	if target.source.SourceType == "gmail" {
+	if target.source.SourceType == sourceTypeGmail {
 		if len(reply.Parsed.From) != 1 || len(reply.Parsed.To)+len(reply.Parsed.Cc)+len(reply.Parsed.Bcc) == 0 {
 			return draftReplyError("invalid_reply_metadata", errors.New("composed reply needs one From and at least one recipient"))
 		}

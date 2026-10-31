@@ -182,7 +182,7 @@ func TestCacheNeedsBuild_FailedCirclebackRunWithoutCheckpoint(t *testing.T) {
 
 	rebuilt, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err)
-	require.False(rebuilt.Skipped, "direct build-cache must honor failed-run progress")
+	require.False(rebuilt.Skipped, "direct cache build must honor failed-run progress")
 
 	duckDB, err := sql.Open("duckdb", "")
 	require.NoError(err)

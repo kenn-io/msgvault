@@ -19,7 +19,7 @@ this machine's archive. It can initialize a fresh archive and is safe to repeat.
 On failure, retry with this binary or restore the backup before using an older
 binary. Optional vector and analytics cache upgrades run in their own subsystems.`,
 		Example: `  msgvault --home /path/to/archive-home daemon stop
-  msgvault --home /path/to/archive-home migrate`,
+  msgvault --home /path/to/archive-home database migrate`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error { return runMigrate(cmd) },
 	}
@@ -36,7 +36,7 @@ func runMigrate(cmd *cobra.Command) (runErr error) {
 	}
 	daemonLock, err := tryAcquireDaemonOwnerLock(currentCfg.Data.DataDir)
 	if err != nil {
-		return fmt.Errorf("migrate: %w", err)
+		return withHint(fmt.Errorf("database migrate: %w", err), "run 'msgvault daemon stop' and stop other archive users, then retry 'msgvault database migrate'")
 	}
 	defer func() { runErr = errors.Join(runErr, daemonLock.Close()) }()
 	if !store.IsPostgresURL(currentCfg.DatabaseDSN()) {
@@ -47,7 +47,7 @@ func runMigrate(cmd *cobra.Command) (runErr error) {
 			if errors.As(err, &writeOwnerLockHeldError{}) {
 				return archiveOwnedError(currentCfg.Data.DataDir)
 			}
-			return fmt.Errorf("migrate: %w", err)
+			return withHint(fmt.Errorf("database migrate: %w", err), "run 'msgvault daemon stop' and stop other archive users, then retry 'msgvault database migrate'")
 		}
 		defer func() { runErr = errors.Join(runErr, writer.Close()) }()
 	}

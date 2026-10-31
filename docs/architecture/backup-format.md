@@ -57,7 +57,7 @@ Restore is self-verifying, in layers. During materialization every blob read re-
 pack metadata after publication, preserving the downgrade/recovery path. A
 fresh target is then fully loose. An overwritten target can retain old,
 uncataloged pack files that normal maintenance may rediscover.
-`unpack-attachments` processes cataloged packs only, so a fresh restore target
+`attachment unpack` processes cataloged packs only, so a fresh restore target
 is the only path that currently guarantees a fully loose physical layout.
 Conversely, ordinary overwrite replaces packed authority with the snapshot's
 membership; maintenance may reclaim old packs whose content belonged only to
@@ -65,5 +65,5 @@ the newer target.
 
 ## Limitations
 
-- The daemon operation gate is held only through the freeze protocol (checkpoint plus read-transaction pin), not through attachment capture. A gated operation that deletes attachment files (such as `remove-account`) while a backup is still capturing can therefore delete a file the frozen database still references; the backup then fails loudly with a read or hash error and can be retried after the deletion completes. This is a deliberate trade: holding the gate — and with it every daemon write — for the full capture window would be far more disruptive than a rare retryable backup failure. A snapshot that completed is unaffected: it captured every file it references.
+- The daemon operation gate is held only through the freeze protocol (checkpoint plus read-transaction pin), not through attachment capture. A gated operation that deletes attachment files (such as `account remove`) while a backup is still capturing can therefore delete a file the frozen database still references; the backup then fails loudly with a read or hash error and can be retried after the deletion completes. This is a deliberate trade: holding the gate — and with it every daemon write — for the full capture window would be far more disruptive than a rare retryable backup failure. A snapshot that completed is unaffected: it captured every file it references.
 - Repository encryption and retention (`forget`/`prune`) are not yet implemented; see the engine's `backup/FORMAT.md` roadmap for the settled design.

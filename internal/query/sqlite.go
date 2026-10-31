@@ -2144,7 +2144,7 @@ func (e *SQLiteEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 		return nil, err
 	}
 	if !e.hasFTSTable(ctx) {
-		return nil, fmt.Errorf("%w: run 'msgvault rebuild-fts' with an FTS-enabled build", ErrMessageBodySearchUnavailable)
+		return nil, fmt.Errorf("%w: run 'msgvault fts rebuild' with an FTS-enabled build", ErrMessageBodySearchUnavailable)
 	}
 	if readinessSQL := e.dialect.FTSBodySearchReadinessSQL(); readinessSQL != "" {
 		var ready bool
@@ -2152,7 +2152,7 @@ func (e *SQLiteEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 			return nil, fmt.Errorf("check message body search index readiness: %w", err)
 		}
 		if !ready {
-			return nil, fmt.Errorf("%w: run 'msgvault rebuild-fts' or complete the FTS backfill, then retry", ErrMessageBodySearchIndexStale)
+			return nil, fmt.Errorf("%w: run 'msgvault fts rebuild' or complete the FTS backfill, then retry", ErrMessageBodySearchIndexStale)
 		}
 	}
 

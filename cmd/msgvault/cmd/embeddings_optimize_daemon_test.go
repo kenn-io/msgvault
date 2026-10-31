@@ -13,6 +13,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -153,6 +154,32 @@ func newDaemonOptimizeFixture(t *testing.T) (*config.Config, vector.GenerationID
 	require.NoError(t, backend.Upsert(t.Context(), gen, chunks))
 	require.NoError(t, backend.Close())
 	return cfg, gen
+}
+
+func TestOptimizeInvalidGenerationPreservesValidationLocally(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	cfg.Data.DataDir = t.TempDir()
+	root := newRootCommand()
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		prepareInvocation(cmd).cfg = cfg
+		return nil
+	}
+	group := &cobra.Command{Use: "embeddings"}
+	leaf := &cobra.Command{Use: embeddingsOptimizeCmd.Use, Args: embeddingsOptimizeCmd.Args, RunE: embeddingsOptimizeCmd.RunE}
+	leaf.Flags().AddFlagSet(embeddingsOptimizeCmd.Flags())
+	group.AddCommand(leaf)
+	root.AddCommand(group)
+	stdout, stderr, err := runRoot(t, root, "embeddings", "optimize", "bogus")
+	require.Error(err)
+	assert.Empty(stdout)
+	assert.Equal(3, ExitCode(err))
+	diagnostic := classifyCLIError(leaf, err)
+	assert.Equal("validation", diagnostic.Kind)
+	assert.Equal("invalid_generation_id", diagnostic.Code)
+	assert.Equal("find generation IDs with 'msgvault embeddings list'", diagnostic.Hint)
+	assert.Contains(stderr, "hint: find generation IDs with 'msgvault embeddings list'")
 }
 
 func TestDaemonOptimizeYieldsAndRestartsChangedSource(t *testing.T) {

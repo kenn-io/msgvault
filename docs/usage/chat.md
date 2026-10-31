@@ -80,14 +80,14 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 | Tool | Command | Parameters |
 |---|---|---|
-| `draft_reply` | `draft-reply` | Required `message_id`, `body`; optional `from`, `all`, `account`, `source_id` |
-| `draft_compose` | `draft-compose` | `account`, `source_id`, `from`, `to`, `cc`, `bcc`, `subject`, `body`, `conversation`, `reply_to` |
-| `draft_forward` | `draft-forward` | Required `message_id`; optional `from`, `to`, `cc`, `bcc`, `account`, `source_id`, `body` |
-| `draft_get` | `draft-get` | `draft_id` or `conversation` |
-| `draft_edit` | `draft-edit` | Required `draft_id`, `revision`, `body` |
-| `draft_delete` | `draft-delete` | Required `draft_id`, `revision` |
-| `draft_recover` | `draft-recover` | Required `draft_id`, `revision`; recovery can finish an interrupted deletion |
-| `draft_send_as` | `draft-send-as` | Required `account`; lists Gmail sender identities |
+| `draft_reply` | `draft reply` | Required `message_id`, `body`; optional `from`, `all`, `account`, `source_id` |
+| `draft_compose` | `draft compose` | `account`, `source_id`, `from`, `to`, `cc`, `bcc`, `subject`, `body`, `conversation`, `reply_to` |
+| `draft_forward` | `draft forward` | Required `message_id`; optional `from`, `to`, `cc`, `bcc`, `account`, `source_id`, `body` |
+| `draft_get` | `draft get` | `draft_id` or `conversation` |
+| `draft_edit` | `draft edit` | Required `draft_id`, `revision`, `body` |
+| `draft_delete` | `draft delete` | Required `draft_id`, `revision` |
+| `draft_recover` | `draft recover` | Required `draft_id`, `revision`; recovery can finish an interrupted deletion |
+| `draft_send_as` | `draft send-as` | Required `account`; lists Gmail sender identities |
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
@@ -124,10 +124,10 @@ API schema 3.15.0; older daemons omit them.
 Use the exact Gmail user label IDs returned by the read tool. For IMAP, use
 custom keyword atoms and optionally name a recorded `mailbox`. For Microsoft
 Graph, use category names and grant `Mail.ReadWrite` with
-[`add-o365 --graph --mail-write`](../cli-reference.md#add-o365). The update tool
+[`source o365 add --graph --mail-write`](../cli-reference.md#add-o365). The update tool
 follows the normal [write controls](#write-controls). A preview never writes.
 A partial error keeps its last observed `result` in structured content; read
-tags before retrying. See [`message-tags`](../cli-reference.md#message-tags)
+tags before retrying. See [`message tags`](../cli-reference.md#message-tags)
 for provider permissions, category limits, IMAP copy selection, and failure
 behavior. A Graph 429 returns `provider_write_failed`; retry after the limit
 clears. Uncertain writes require reading the current tags before retrying.
@@ -760,9 +760,9 @@ provenance are user-authored; MCP writes use `enrichment` provenance.
 When enabled for the transport, `stage_deletion` lets an AI assistant help you
 plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Query staging includes Gmail, Microsoft Graph, and IMAP mail. It stages every match its source can delete, or refuses without saving a batch. Chats and mail from other sources are left out of the search. Matches no longer in the archive or that cannot be deleted from their source, including archive-only mail and meetings, are skipped and counted in `skipped_count`. A query with matches but none deletable refuses without saving a batch. The 100,000 limit counts Gmail, Microsoft Graph, and IMAP matches, including skipped ones. Structured filters stage eligible Gmail and Microsoft Graph mail and do not report `skipped_count`. Narrow a larger selection with `before:`, `after:`, or `account` and stage each part.
 
-Queries with OR and text terms use full-text search once, so body and metadata matches share date ordering and one limit. Other queries try metadata first and use full-text search only when metadata finds nothing and the query has text terms. CLI `stage-delete` refuses candidate sets above 10,000 messages.
+Queries with OR and text terms use full-text search once, so body and metadata matches share date ordering and one limit. Other queries try metadata first and use full-text search only when metadata finds nothing and the query has text terms. CLI `deletion stage` refuses candidate sets above 10,000 messages.
 
-When called, `stage_deletion` creates a pending deletion manifest through the selected daemon. With a remote server configured, the manifest is saved on that remote host; otherwise it is saved by the local daemon. It does **not** delete anything. To execute the deletion, you must run `msgvault delete-staged` from the CLI. See [Deleting Email](/docs/usage/deletion/) for the full workflow.
+When called, `stage_deletion` creates a pending deletion manifest through the selected daemon. With a remote server configured, the manifest is saved on that remote host; otherwise it is saved by the local daemon. It does **not** delete anything. To execute the deletion, you must run `msgvault deletion execute` from the CLI. See [Deleting Email](/docs/usage/deletion/) for the full workflow.
 
 The tool returns the batch ID, message count, and next steps:
 
@@ -771,7 +771,7 @@ The tool returns the batch ID, message count, and next steps:
   "batch_id": "20260224-095132-from-linkedin",
   "message_count": 150,
   "status": "pending",
-  "next_step": "Run 'msgvault delete-staged' to execute deletion"
+  "next_step": "Run 'msgvault deletion execute' to execute deletion"
 }
 ```
 

@@ -81,7 +81,7 @@ func testMuesliHookBuiltArtifactDispatch(t *testing.T, binary string) {
 	command.Env = append(os.Environ(), "MSGVAULT_HOME="+t.TempDir())
 	output, err := command.CombinedOutput()
 	require.NoError(err, string(output))
-	assert.Contains(string(output), "Run msgvault as a long-running daemon")
+	assert.Contains(string(output), "Run the archive daemon in the foreground")
 	command = exec.CommandContext(t.Context(), alias)
 	command.Env = append(os.Environ(), "MSGVAULT_HOME="+t.TempDir())
 	command.Stdin = strings.NewReader(`{}`)
@@ -105,7 +105,7 @@ func testMuesliHookInstallerKeepsInvokedPath(t *testing.T, binary, suffix string
 	stable := filepath.Join(t.TempDir(), "msgvault"+suffix)
 	require.NoError(os.Symlink(binary, stable))
 	dir := t.TempDir()
-	command := exec.CommandContext(t.Context(), stable, "muesli-hook", "--install", dir)
+	command := exec.CommandContext(t.Context(), stable, "source", "muesli", "hook", "--install", dir)
 	command.Env = append(os.Environ(), "MSGVAULT_HOME="+t.TempDir())
 	output, err := command.Output()
 	require.NoError(err, string(output))
@@ -122,7 +122,7 @@ func testMuesliHookInstallerKeepsInvokedPath(t *testing.T, binary, suffix string
 	for _, reinstall := range []struct{ invoked, installDir string }{
 		{hook, dir}, {hook, alias}, {aliasHook, dir},
 	} {
-		command = exec.CommandContext(t.Context(), reinstall.invoked, "muesli-hook", "--install", reinstall.installDir)
+		command = exec.CommandContext(t.Context(), reinstall.invoked, "source", "muesli", "hook", "--install", reinstall.installDir)
 		command.Env = append(os.Environ(), "MSGVAULT_HOME="+t.TempDir())
 		output, err = command.Output()
 		require.NoError(err, string(output))
@@ -146,7 +146,7 @@ func testMuesliHookInstallerExecutableSuffix(t *testing.T, binary string) {
 	require.NoError(err)
 	require.NoError(dst.Close())
 	dir := t.TempDir()
-	command := exec.CommandContext(t.Context(), executable, "muesli-hook", "--install", dir)
+	command := exec.CommandContext(t.Context(), executable, "source", "muesli", "hook", "--install", dir)
 	command.Env = append(os.Environ(), "MSGVAULT_HOME="+t.TempDir())
 	output, err := command.Output()
 	require.NoError(err, string(output))
