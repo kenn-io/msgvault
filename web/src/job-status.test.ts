@@ -52,7 +52,7 @@ it.each([
     if (path === '/api/v1/search/coverage') return Response.json({
       eligible_count: 10, embedded_count: completed && workspace !== 'Messages' ? 10 : 0,
       percentage: completed && workspace !== 'Messages' ? 100 : 0, cache_revision: 'cache-1',
-      status: completed && workspace !== 'Messages' ? 'ready' : 'initializing', actions: completed ? [] : ['build_index'],
+      status: completed && workspace !== 'Messages' ? 'ready' : 'unavailable', actions: completed ? [] : ['build_index'],
     });
     if (request.method === 'POST' && path === '/api/v1/carddav/sync') {
       completed = true;
