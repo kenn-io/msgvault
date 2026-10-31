@@ -2558,6 +2558,7 @@ dimensions count entries, with chats collapsed into conversations.
 Day rows include `level`, ranking each count among the returned day rows for calendar shading.
 `sent_only: true` excludes drafts and unsent items from the counts.
 Day grouping is request-only and cannot be stored in a saved view.
+Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
 
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
 

@@ -15,11 +15,11 @@
   import PersonMessages from './PersonMessages.svelte';
   import DomainCalendar from './DomainCalendar.svelte';
 
-  let { client, controller, target, filesOpen, predicate, onFilesToggle, onBack,
+  let { client, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
     onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings,
     onOpenFileItem, onOpenFileConversation, personFilePresentation = 'files', personFileDirections = ['from_person'],
     onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange }:
-    { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate;
+    { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
       onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
       onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: () => void; onOpenFileItem?: (key: string) => void;
@@ -97,7 +97,7 @@
     {#if !details && scope}
       {#key `${target}:${controller.activityRevision}`}
         {#if filesOpen}
-          <div class="files"><FilesWorkspace {client} embedded showHeader={false} predicate={context} identityScope={scope} {sort} {filenameQuery} {mimeFamilies}
+          <div class="files"><FilesWorkspace {client} embedded showHeader={false} predicate={context} identityScope={durablePersonID === null ? scope : { kind: 'durable-person', id: durablePersonID }} {sort} {filenameQuery} {mimeFamilies}
             personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}
             onFilenameQueryChange={(value) => filenameQuery = value} onMIMEFamiliesChange={(value) => mimeFamilies = value}
             onPersonPresentationChange={onPersonFilePresentationChange} onPersonDirectionsChange={onPersonFileDirectionsChange}

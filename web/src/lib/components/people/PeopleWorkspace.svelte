@@ -214,7 +214,7 @@
   {#if opening}<p role="status">Loading person…</p>
   {:else if soloPerson !== null && (page.target === null || controller.detailMissing)}
     {#if soloProfile?.id === soloPerson}<section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{:else if openingError}<Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} />{/if}
-  {:else}<PersonPage {...page} onBack={narrow ? close : undefined} />{/if}
+  {:else}<PersonPage {...page} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />{/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>
