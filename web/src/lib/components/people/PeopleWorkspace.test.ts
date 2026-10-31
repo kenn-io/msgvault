@@ -122,6 +122,8 @@ it('resetting People filters commits one complete navigation', async () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
     expect(onNavigate.mock.calls.length + onShowAllChange.mock.calls.length).toBe(1);
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' });
+    await view.rerender({ urlState: { ...state.current, relationshipFacet: 'domains' } });
+    expect(await screen.findByText('No domains yet')).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
