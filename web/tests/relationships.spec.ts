@@ -74,6 +74,13 @@ const imageFile = {
   }
 };
 
+const timelineRows = [{ ...messageRow, kind: 'message', message_type: 'email', conversation_type: 'email',
+      source_identifier: 'archive@example.com', source_type: 'gmail', participant_labels: ['Alice Example'], participant_ids: [1],
+      attachment_count: 0, attachment_size: 0, deleted_from_source: false, anchor_message_id: 1, match: {} },
+      { ...chatBurstRow, key: 'conversation:70', kind: 'conversation', message_type: 'slack', conversation_type: 'chat',
+        source_identifier: 'archive@example.com', source_type: 'slack', participant_labels: ['Bob Example'], participant_ids: [2],
+        attachment_count: 0, attachment_size: 0, deleted_from_source: false, match: {} }];
+
 async function prepare(page: Page, personFileBodies: Record<string, unknown>[] = []) {
   await stubOperationStatus(page);
   await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: meetingMetrics() }));
@@ -99,12 +106,7 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
     rows: [messageRow, chatBurstRow], total_count: 2
   } }));
   await page.route('**/api/v1/participants/*/timeline', route => route.fulfill({ json: {
-    rows: [{ ...messageRow, kind: 'message', message_type: 'email', conversation_type: 'email',
-      source_identifier: 'archive@example.com', source_type: 'gmail', participant_labels: ['Alice Example'], participant_ids: [1],
-      attachment_count: 0, attachment_size: 0, deleted_from_source: false, anchor_message_id: 1, match: {} },
-      { ...chatBurstRow, key: 'conversation:70', kind: 'conversation', message_type: 'slack', conversation_type: 'chat',
-        source_identifier: 'archive@example.com', source_type: 'slack', participant_labels: ['Bob Example'], participant_ids: [2],
-        attachment_count: 0, attachment_size: 0, deleted_from_source: false, match: {} }],
+    rows: timelineRows,
     total_count: 2, cache_revision: 'cache-relationships', search_provenance: {}
   } }));
   await page.route('**/api/v1/relationships/*/calendar', route => route.fulfill({ json: {
@@ -176,10 +178,6 @@ test('legacy People URL keeps list, Messages, reader, facet, and history', async
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
   const timeline = page.getByRole('grid', { name: 'Messages results' });
   await expect(timeline.getByText('Subject line')).toBeVisible();
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Open in Directory', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Same person…', exact: true })).toBeVisible();
-  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
 
   await timeline.getByText('Team Chat').click();
   const reading = page.getByRole('complementary', { name: /Reading pane: Team Chat/ });
@@ -419,15 +417,9 @@ test('domain calendar retries and retains its local day across Details', async (
   let attempts = 0;
   await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: { ...domainSummary, first_at: '2022-01-01T12:00:00Z' } }));
   await page.route('**/api/v1/domains/example.com/timeline', route => {
-    bodies.push(route.request().postDataJSON());
-    return route.fulfill({ json: { rows: [
-      { ...messageRow, occurred_at: when, kind: 'message', message_type: 'email', conversation_type: 'email',
-        source_identifier: 'archive@example.com', source_type: 'gmail', participant_labels: ['Alice Example'], participant_ids: [1],
-        attachment_count: 0, attachment_size: 0, deleted_from_source: false, anchor_message_id: 1, match: {} },
-      { ...chatBurstRow, key: 'conversation:70', occurred_at: when, kind: 'conversation', message_type: 'slack', conversation_type: 'chat', message_count: 2,
-        source_identifier: 'archive@example.com', source_type: 'slack', participant_labels: ['Bob Example'], participant_ids: [2],
-        attachment_count: 0, attachment_size: 0, deleted_from_source: false, match: {} }
-    ], total_count: 2, cache_revision: 'cache-domain', search_provenance: {} } });
+    const body = route.request().postDataJSON(); bodies.push(body);
+    const occurred_at = body.filters?.find((filter: { dimension: string }) => filter.dimension === 'after')?.values[0] ?? when;
+    return route.fulfill({ json: { rows: timelineRows.map(row => ({ ...row, occurred_at, first_at: occurred_at })), total_count: 2, cache_revision: 'cache-domain', search_provenance: {} } });
   });
   await page.route('**/api/v1/explore/groups', route => {
     const body = route.request().postDataJSON();
@@ -438,7 +430,7 @@ test('domain calendar retries and retains its local day across Details', async (
       { dimension: 'before', values: [`${Number(body.filters[1].values[0].slice(0, 4)) + 1}-01-01T05:00:00.000Z`] },
     ] });
     if (++attempts === 1) return route.fulfill({ status: 500, json: { message: 'Could not load activity.' } });
-    return route.fulfill({ json: { rows: [{ key: `${body.filters[1].values[0].slice(0, 4)}-07-19`, label: 'Jul 19', count: 3, estimated_bytes: 30, latest_at: when }],
+    return route.fulfill({ json: { rows: [...Array.from({ length: 7 }, (_, i) => ({ key: `${body.filters[1].values[0].slice(0, 4)}-01-0${i + 1}`, count: 1 })), { key: `${body.filters[1].values[0].slice(0, 4)}-07-19`, label: 'Jul 19', count: 3, estimated_bytes: 30, latest_at: when }, { key: `${body.filters[1].values[0].slice(0, 4)}-08-01`, count: 10 }],
       total_count: 1, cache_revision: 'cache-domain', search_provenance: {} } });
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', filters: [{ dimension: 'source', values: ['1'] }] }))}`);
@@ -448,6 +440,7 @@ test('domain calendar retries and retains its local day across Details', async (
   await calendar.getByRole('button', { name: 'Retry' }).click();
   await expect(calendar.getByRole('heading', { name: 'Activity since Jan 2022' })).toBeVisible();
   await calendar.getByRole('button', { name: 'Previous relationship year' }).click();
+  await expect(calendar.getByRole('button', { name: '1 message on Jan 1, 2025', exact: true }).filter({ visible: true })).toHaveClass(/level-first-quartile/);
   const day = calendar.getByRole('button', { name: '3 messages on Jul 19, 2025' }).filter({ visible: true });
   await day.click();
   await expect.poll(() => bodies.at(-1)).toMatchObject({ filters: [

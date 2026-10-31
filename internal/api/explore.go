@@ -307,6 +307,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	prepared.query.Search = searchSpec
 	if scope != nil {
 		prepared.query.SentOnly = true
+		prepared.query.PersonInteractionsOnly = scope.Dimension == exploreFilterParticipant
 		if err := applyIdentityScope(&prepared.query.Context, *scope); err != nil {
 			writeError(w, http.StatusConflict, "identity_scope_conflict", err.Error())
 			return

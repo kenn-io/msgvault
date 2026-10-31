@@ -161,6 +161,7 @@
     bulkMessage = staleLink ? 'People linked. The identity cache needs a retry.' : 'People are now treated as the same person.';
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
+    bulkPending = true;
     bulkConflict = undefined;
     page.onAnnounce?.(`Profiles merged into ${success.survivor.display_name}.`);
     if (bulkContext) await controller.reconcilePersonMerge(bulkContext);

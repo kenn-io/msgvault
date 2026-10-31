@@ -143,6 +143,7 @@ export class RelationshipsController {
   lastContactAt = $state('');
   canonicalID = $state<number | null>(null);
   identityRevision = $state<number | null>(null);
+  activityRevision = $state(0);
   relationshipCalendar = $state<RelationshipCalendar | null>(null);
   relationshipCalendarYear = $state(new Date().getUTCFullYear());
   relationshipCalendarCurrentYear = $state(this.relationshipCalendarYear);
@@ -193,12 +194,14 @@ export class RelationshipsController {
   }
   async reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
     const reloads: Promise<void>[] = [];
+    let reopened = false;
     if (
       context.target &&
       context.targetPredicate &&
       this.target === context.target &&
       this.lastPredicateFingerprint === context.targetPredicateFingerprint
     ) {
+      reopened = true;
       reloads.push(this.openTarget(context.target, context.targetPredicate, this.withTimeline));
     }
     if (
@@ -212,6 +215,7 @@ export class RelationshipsController {
       reloads.push(this.loadList(context.listPredicate));
     }
     await Promise.all(reloads);
+    if (reopened) this.activityRevision += 1;
   }
   async loadList(predicate: ExplorePredicate): Promise<void> {
     this.clearCacheBuildRetry();
@@ -839,9 +843,11 @@ export class RelationshipsController {
       // own revision moved.
       const changed = this.identityRevision === null || this.identityRevision !== data.identity_revision;
       const reloads: Promise<void>[] = [];
-      if (changed && this.target && this.lastPredicate) reloads.push(this.openTarget(this.target, this.lastPredicate, this.withTimeline));
+      const reopened = changed && this.target !== null && this.lastPredicate !== undefined;
+      if (reopened) reloads.push(this.openTarget(this.target!, this.lastPredicate!, this.withTimeline));
       if (this.lastListPredicate) reloads.push(this.loadList(this.lastListPredicate));
       await Promise.all(reloads);
+      if (reopened) this.activityRevision += 1;
       return { ok: true, identityRevision: data.identity_revision, cacheState: data.cache_state };
     }
     const message = errorMessage(error, res.status);

@@ -86,7 +86,7 @@
           onLinkParticipants={(a, b) => controller.linkParticipants(a, b)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)} />
       </div>
     {:else if scope}
-      {#key target}
+      {#key `${target}:${controller.activityRevision}`}
         {#if filesOpen}
           <div class="files"><FilesWorkspace {client} embedded showHeader={false} predicate={context} identityScope={scope} {sort} {filenameQuery} {mimeFamilies}
             personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}

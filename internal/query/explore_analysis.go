@@ -42,6 +42,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if err != nil {
 		return nil, err
 	}
+	var groupArgs []any
 	if request.Dimension == "day" {
 		zone := request.Timezone
 		if zone == "" {
@@ -50,8 +51,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		if _, err := time.LoadLocation(zone); err != nil {
 			return nil, fmt.Errorf("%w: %w: invalid timezone %q: %w", ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, zone, err)
 		}
-		expression := "strftime(timezone('" + strings.ReplaceAll(zone, "'", "''") + "', timezone('UTC', occurred_at)), '%Y-%m-%d')"
-		spec.key, spec.label, spec.groupBy = expression, expression, expression
+		groupArgs = append(groupArgs, zone)
 	}
 	order, err := exploreGroupOrder(request.Sort)
 	if err != nil {
@@ -71,6 +71,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		return nil, err
 	}
 	conditions, args := buildExploreConditions(explore)
+	args = append(args, groupArgs...)
 	limit := request.Page.Limit
 	if limit == 0 {
 		limit = defaultExploreLimit
@@ -282,9 +283,9 @@ func exploreGroupExpressions(
 		return simple("strftime(occurred_at, '%Y-%m')"), nil
 	case "day":
 		return groupExpressions{
-			key: "strftime(occurred_at, '%Y-%m-%d')", label: "strftime(occurred_at, '%Y-%m-%d')",
-			groupBy: "strftime(occurred_at, '%Y-%m-%d')", source: "classified",
-			noLists: true,
+			key: "local_day", label: "local_day", groupBy: "local_day", source: "day_bucketed", noLists: true,
+			cte: `), day_bucketed AS (
+	SELECT *, strftime(timezone(?, timezone('UTC', occurred_at)), '%Y-%m-%d') AS local_day FROM classified`,
 		}, nil
 	default:
 		return groupExpressions{}, fmt.Errorf("%w: unknown group dimension %q", ErrInvalidExploreRequest, dimension)

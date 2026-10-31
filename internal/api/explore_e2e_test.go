@@ -1113,7 +1113,7 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 func TestParticipantTimelineKeepsLinkedAliasesAndIncomingIntersections(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, exploreFixtureDefaultMessages,
+	engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, strings.Replace(exploreFixtureDefaultMessages, "'email'", "'calendar_event'", 1),
 		`(1::BIGINT, 1::BIGINT, 'from', 'Alice'), (2::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 2::BIGINT, 'from', 'Alice Alias')`,
 		3)
 	catalog := &fileCatalogStore{mockStore: &mockStore{messages: []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}, total: 3, stats: &StoreStats{}}}
@@ -1125,7 +1125,7 @@ func TestParticipantTimelineKeepsLinkedAliasesAndIncomingIntersections(t *testin
 	require.Equal(http.StatusOK, all.Code, all.Body.String())
 	var body ExploreHTTPResponse
 	require.NoError(json.Unmarshal(all.Body.Bytes(), &body))
-	require.Len(body.Rows, 3)
+	require.Len(body.Rows, 2)
 	intersected := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{"filters":[{"dimension":"participant","values":["2"]}]}`)
 	require.Equal(http.StatusOK, intersected.Code, intersected.Body.String())
 	require.NoError(json.Unmarshal(intersected.Body.Bytes(), &body))

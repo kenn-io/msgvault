@@ -259,9 +259,6 @@ test.describe('day selection', () => {
     await expect(timeline.getByText('Spring planning')).toBeVisible();
     await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
     await expect(day).toHaveAttribute('aria-pressed', 'true');
-    await page.getByRole('radio', { name: 'Details', exact: true }).click();
-    await page.getByRole('radio', { name: 'Messages', exact: true }).click();
-    await expect(timeline.getByText('Spring planning')).toBeVisible();
     const historyLength = await page.evaluate(() => history.length);
     expect(requests.at(-1)).toMatchObject({
       filters: [

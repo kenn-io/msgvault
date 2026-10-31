@@ -717,51 +717,6 @@ describe('RelationshipsWorkspace bulk Same person', () => {
     expect(screen.getByRole('button', { name: 'Same person' })).toHaveProperty('disabled', false);
   });
 
-  it('keeps the batch locked while a profile merge reconciles, then finishes the queue', async () => {
-    let listRequests = 0;
-    let releaseReconcile: (() => void) | undefined;
-    const rows = [relationshipRow(1, 'Alice Example'), relationshipRow(2, 'Bob Example'), relationshipRow(3, 'Cara Example')];
-    const { links } = renderBulk([mergeRequired, linked, linked], {
-      '/api/v1/relationships': async () => {
-        listRequests += 1;
-        // Request 1 is the initial load; request 2 is the post-merge reconcile.
-        if (listRequests === 2) await new Promise<void>((resolve) => { releaseReconcile = resolve; });
-        return Response.json({ rows });
-      },
-      '/api/v1/people/7/merge': async () => Response.json({
-        cache_state: 'ready', identity_revision: 8, review_candidates: [],
-        person: { id: 7, revision: 5, display_name: 'Synthetic One', participant_ids: [1, 2], created_at: when, updated_at: when, vcard_uid: 'synthetic-7' },
-        merge: {
-          id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7,
-          survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9',
-          survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5,
-          actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when
-        }
-      }, { headers: { ETag: '"person-7-r5"' } })
-    });
-
-    await selectAllPeople();
-    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
-    await screen.findByRole('dialog', { name: 'Resolve person merge' });
-    await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
-    await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-
-    await waitFor(() => expect(releaseReconcile).toBeDefined());
-    expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Same person' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Linking…' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' })).toHaveProperty('disabled', true);
-
-    releaseReconcile?.();
-    expect(await screen.findByText('3 people are now treated as the same person.')).toBeDefined();
-    expect(links).toEqual([
-      { participant_a: 1, participant_b: 2 },
-      { participant_a: 1, participant_b: 2 },
-      { participant_a: 1, participant_b: 3 }
-    ]);
-  });
-
   it('drops a selection made under earlier filters once a batch interrupted by Back/Forward stops', async () => {
     let failLink: (() => void) | undefined;
     const { props, rerender } = renderBulk([

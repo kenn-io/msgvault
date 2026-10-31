@@ -19,7 +19,7 @@ async function metricsResponse(request: Request): Promise<Response> {
     : meetingMetrics());
 }
 
-function handler(detailResponse: () => Response | Promise<Response> = () => Response.json(detail)) {
+function handler(detailResponse: () => Response | Promise<Response> = () => Response.json(detail), personEmail = false) {
   const requests: Request[] = [];
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
@@ -30,13 +30,15 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path.endsWith('/meetings/metrics')) return metricsResponse(request);
     if (path.endsWith('/meetings/actions')) return Response.json(meetingActions({ rows: [action], total_count: 1 }));
     if (path.endsWith('/messages/42')) return detailResponse();
+    if (path.endsWith('/participants/7')) return Response.json({ id: 7, display_label: 'Example Person', identifiers: [], first_at: detail.sent_at, last_at: detail.sent_at, source_counts: [], activity_count: 1, file_count: 0 });
+    if (path.endsWith('/participants/7/timeline')) return Response.json({ rows: [{ key: 'message:42', anchor_message_id: 42, conversation_id: 8, kind: 'email', title: detail.subject, occurred_at: detail.sent_at, message_type: 'email', conversation_type: 'email', source_id: 3, participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, match: {} }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
     if (path.endsWith('/integrations/tasks/status')) return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
     if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 1, display_name: 'Example Person', participant_ids: [7], vcard_uid: 'person-7', created_at: '', updated_at: '' });
     if (path === '/api/v1/people/directory') return Response.json({ people: [] });
     if (path.endsWith('/brief-enrollment')) return Response.json({ person_id: 7, enrolled: false });
     if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false });
     if (path.startsWith('/api/v1/people/') || path.startsWith('/api/v1/carddav/')) return Response.json({ error: 'not_found', message: 'Synthetic optional section unavailable.' }, { status: 404 });
-    if (path.endsWith('/conversations/8')) return Response.json({ id: 8, messages: [{ ...detail, from_participant_id: 7, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }] }], anchor_id: 42, total: 1, has_before: false, has_after: false });
+    if (path.endsWith('/conversations/8')) return Response.json({ id: 8, messages: [{ ...detail, message_type: personEmail ? 'email' : detail.message_type, from_participant_id: 7, to: ['Recipient Example'], to_participants: [{ display: 'Recipient Example', participant_id: 9 }] }], anchor_id: 42, total: 1, has_before: false, has_after: false });
     return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
   });
   return { client, requests };
@@ -245,5 +247,17 @@ it('opens a person from the archived meeting reader', async () => {
     await waitFor(() => expect(state.current.workspace).toBe('relationships'));
     expect(state.current.relationshipTarget).toBe('cluster:7');
     expect(state.current.selectedRow).toBeNull();
+  } finally { view.unmount(); state.destroy(); }
+});
+
+it('opens Tasks setup from a person message reader', async () => {
+  const { client } = handler(() => Response.json({ ...detail, message_type: 'email' }), true); const state = stateWithMeetingFilter();
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:7' });
+  const view = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await within(await screen.findByRole('grid', { name: 'Messages results' })).findByText('Archived review'));
+    await fireEvent.click(await screen.findByRole('button', { name: /^Set up$/ }));
+    await waitFor(() => expect(state.current.workspace).toBe('settings'));
+    expect(state.current.settingsCategory).toBe('tasks');
   } finally { view.unmount(); state.destroy(); }
 });
