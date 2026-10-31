@@ -1119,13 +1119,25 @@ func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 			assert.Equal([]string{"a", "a"}, r.processing.Jobs)
 			var savedJobID string
 			require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&savedJobID))
-			assert.Equal(jobID, savedJobID)
+			if tc.state == "operator_required" {
+				assert.Empty(savedJobID)
+				assert.Equal(map[string]int64{"rendition_operator_required": 1}, r.processingCounts().Outcomes)
+				assert.Zero(r.processingCounts().Requested)
+			} else {
+				assert.Equal(jobID, savedJobID)
+			}
 			if tc.backfill == "during_poll" {
 				assert.Equal([]string{jobID, jobID}, r.processing.Polls)
 			} else {
 				assert.Equal([]string{jobID}, r.processing.Polls)
 			}
 			r.processing.States[jobID] = [3]string{"completed", "rendition", ""}
+			if tc.state == "operator_required" {
+				require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+				require.NoError(r.runBatch(t.Context()))
+				assert.Equal([]string{"a", "a", "a"}, r.processing.Jobs)
+				assert.Empty(r.processingCounts().Outcomes)
+			}
 			r.processingDue()
 			require.NoError(r.runBatch(t.Context()))
 			assert.Equal(int64(1), r.processingCounts().Extracted)
