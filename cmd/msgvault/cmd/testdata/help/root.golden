@@ -122,7 +122,7 @@ Import local exports:
   import-whatsapp     Import WhatsApp messages from an Android or Apple database
 
 Drafts, calendar, and Kata (write to providers):
-  calendar      Control live calendar events and query availability
+  calendar      Read archived events and control live calendars
   draft-compose Create an email, native Beeper, or local chat draft
   draft-delete  Delete a managed draft
   draft-edit    Replace the body of a managed draft

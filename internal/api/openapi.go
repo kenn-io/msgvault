@@ -379,7 +379,8 @@ import (
 // 3.26.0 adds bounded search-aware deletion resolution with an explicit
 // max_results cap and matched_count for skipped matches.
 // 3.27.0 adds optional attachment text results and recording errors in media search.
-const APISchemaVersion = "3.27.0"
+// 3.28.0 adds archived calendar occurrence listing.
+const APISchemaVersion = "3.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -990,10 +991,13 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
-	// These response properties stay required in JSON, but an empty string is
-	// meaningful for canonical aliases, direct routes, unresolved routes, and
-	// candidates whose saved display name has been cleared.
+	// These response properties stay required in JSON, but allow empty strings.
 	for _, field := range []struct{ schema, property string }{
+		{"Attendee", "email"},
+		{"Attendee", "display_name"},
+		{"CalendarOccurrence", "start_date"},
+		{"CalendarOccurrence", "end_date"},
+		{"CalendarOccurrence", "subject"},
 		{"ContactCandidate", "display_name"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},

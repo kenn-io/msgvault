@@ -1877,6 +1877,11 @@ func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error 
 		`, s.dialect.JSONBindExpr(), s.dialect.Now()), configJSON, sourceID); err != nil {
 			return err
 		}
+		if calendarConfigZone(current) != calendarConfigZone(newConfig) {
+			if err := s.refreshSourceCalendarEventsTx(ctx, tx, sourceID); err != nil {
+				return err
+			}
+		}
 		if calendarMailbox(current) == calendarMailbox(newConfig) {
 			return nil
 		}
