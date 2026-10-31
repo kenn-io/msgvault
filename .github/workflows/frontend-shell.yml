@@ -26,7 +26,6 @@ jobs:
         with:
           bun-version-file: web/package.json
       - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
-
       - name: Install frontend dependencies
         working-directory: web
         shell: bash

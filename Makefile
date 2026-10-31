@@ -454,7 +454,7 @@ custom-gcl: lint-tools
 		--version "$(GOLANGCI_LINT_VERSION)"
 
 # Run linter (auto-fix)
-lint: custom-gcl lint-workflow-retries
+lint: custom-gcl
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run --fix ./...
 
