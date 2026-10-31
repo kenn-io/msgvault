@@ -13738,6 +13738,30 @@ components:
         - source_identifier
         - source_message_id
       type: object
+    RefreshSummary:
+      additionalProperties: true
+      properties:
+        complete:
+          type: boolean
+        last_complete_at:
+          format: date-time
+          type: string
+        oldest_unchecked_at:
+          format: date-time
+          type: string
+        outstanding:
+          format: int64
+          type: integer
+        overdue:
+          type: boolean
+        pending_removal:
+          type: boolean
+      required:
+        - complete
+        - overdue
+        - outstanding
+        - pending_removal
+      type: object
     RejectPersonBriefRequest:
       additionalProperties: false
       properties:
@@ -14194,6 +14218,51 @@ components:
         - account
         - identifier
         - removed
+      type: object
+    ReplyPreparation:
+      additionalProperties: true
+      properties:
+        adopt_author_id:
+          type: string
+        adopt_post:
+          type: string
+        adopt_text:
+          type: string
+        draft_id:
+          type: string
+        mode:
+          type: string
+        receipt:
+          $ref: "#/components/schemas/SendResult"
+        reserved_micros:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        target_post_id:
+          type: string
+        text:
+          type: string
+      required:
+        - mode
+        - draft_id
+        - revision
+        - reserved_micros
+      type: object
+    ReplyPrepareRequest:
+      additionalProperties: false
+      properties:
+        adopt_post:
+          type: string
+        draft_id:
+          type: string
+        revision:
+          format: int64
+          type: integer
+      required:
+        - draft_id
+        - revision
       type: object
     Result:
       additionalProperties: true
@@ -14711,6 +14780,33 @@ components:
       required:
         - kind
         - message_id
+      type: object
+    SendResult:
+      additionalProperties: true
+      properties:
+        association:
+          type: string
+        attempt_id:
+          type: string
+        code:
+          type: string
+        draft_id:
+          type: string
+        remote_id:
+          type: string
+        reserved_micros:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        status:
+          type: string
+      required:
+        - status
+        - draft_id
+        - revision
+        - reserved_micros
       type: object
     SenderCount:
       additionalProperties: false
@@ -15275,6 +15371,8 @@ components:
           type: string
         updated_at:
           type: string
+        x:
+          $ref: "#/components/schemas/XSourceStatus"
       required:
         - id
         - source_type
@@ -16683,6 +16781,46 @@ components:
       required:
         - text
       type: object
+    XSourceStatus:
+      additionalProperties: true
+      properties:
+        credential_error:
+          type: string
+        credential_generation:
+          format: int64
+          type: integer
+        history_gap_possible:
+          type: boolean
+        mentions_complete:
+          type: boolean
+        model_error:
+          type: string
+        month:
+          type: string
+        month_estimated_micros:
+          format: int64
+          type: integer
+        month_reserved_micros:
+          format: int64
+          type: integer
+        monthly_budget_micros:
+          format: int64
+          type: integer
+        own_complete:
+          type: boolean
+        retention:
+          $ref: "#/components/schemas/RefreshSummary"
+      required:
+        - credential_generation
+        - monthly_budget_micros
+        - own_complete
+        - mentions_complete
+        - history_gap_possible
+        - month
+        - month_estimated_micros
+        - month_reserved_micros
+        - retention
+      type: object
   securitySchemes:
     apiKey:
       in: header
@@ -16690,7 +16828,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.28.0
+  version: 3.29.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -33809,6 +33947,33 @@ paths:
       security:
         - apiKey: []
       summary: Get text message totals
+      tags:
+        - API
+  /api/v1/x/replies/prepare:
+    post:
+      operationId: prepareReply
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplyPrepareRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplyPreparation"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Prepare an owner reply review; explicit adoption may perform a budgeted lookup
       tags:
         - API
   /health:
