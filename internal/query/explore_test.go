@@ -36,17 +36,19 @@ func TestExploreDayGroupsHeatLevelsRequireCompletePage(t *testing.T) {
 		{"keyed", PageSpec{}, "2026-07-04", 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Page: tc.page, GroupKey: tc.groupKey})
-			require.NoError(t, err)
-			require.Len(t, result.Rows, tc.rows)
-			assert.Equal(t, tc.total, result.TotalCount)
+			require.NoError(err)
+			require.Len(result.Rows, tc.rows)
+			assert.Equal(tc.total, result.TotalCount)
 			for _, row := range result.Rows {
 				if tc.name == "limited" || tc.name == "keyed" {
-					assert.Empty(t, row.Level)
+					assert.Empty(row.Level)
 				} else if row.Key == "2026-07-04" {
-					assert.Equal(t, identityindex.HeatFourthQuartile, row.Level)
+					assert.Equal(identityindex.HeatFourthQuartile, row.Level)
 				} else {
-					assert.NotEmpty(t, row.Level)
+					assert.NotEmpty(row.Level)
 				}
 			}
 		})
