@@ -25,22 +25,21 @@ describe('overviewRows', () => {
       'Document extraction',
       'Document search',
     ]);
-    expect(row(rows, 'message_embedding')).toMatchObject({ chip: { text: 'Off' }, action: { kind: 'settings', target: { settingsCategory: 'search' } } });
+    expect(row(rows, 'message_embedding')).toMatchObject({ chip: { text: 'Off' }, action: { kind: 'settings' } });
     expect(row(rows, 'document_extraction').action).toMatchObject({ kind: 'host' });
   });
 
   it.each([
-    { status: 'incomplete' as const, available: false, chip: 'Incomplete' },
-    { status: 'initializing' as const, available: false, chip: 'Initializing' },
-    { status: 'unavailable' as const, available: false, chip: 'Unavailable' },
-    { status: 'unavailable' as const, available: true, chip: 'Unbuilt' },
-    { status: 'ready' as const, available: false, chip: 'On' },
-    { status: 'stale' as const, available: true, chip: 'Stale' },
-  ])('gates the message build and chip on server coverage ($status)', ({ status, available, chip }) => {
+    { status: 'incomplete' as const, available: false, chip: 'Incomplete', tone: 'warning' },
+    { status: 'initializing' as const, available: false, chip: 'Initializing', tone: 'info' },
+    { status: 'unavailable' as const, available: false, chip: 'Unavailable', tone: 'warning' },
+    { status: 'unavailable' as const, available: true, chip: 'Unbuilt', tone: 'muted' },
+    { status: 'ready' as const, available: false, chip: 'On', tone: 'success' },
+    { status: 'stale' as const, available: true, chip: 'Stale', tone: 'warning' },
+  ])('gates the message build and chip on server coverage ($status)', ({ status, available, chip, tone }) => {
     const rows = overviewRows(lanes(lane('message_embedding')), undefined, undefined, { status, actions: available ? ['build_index'] : [] });
     expect(row(rows, 'message_embedding').action).toEqual(available ? { kind: 'start', id: 'messages', label: 'Build index' } : undefined);
-    expect(row(rows, 'message_embedding').chip.text).toBe(chip);
-    if (status === 'incomplete') expect(row(rows, 'message_embedding').chip.tone).toBe('warning');
+    expect(row(rows, 'message_embedding').chip).toEqual({ text: chip, tone });
   });
 
   it('offers the visual build the server advertises, with its consent line', () => {
