@@ -60,6 +60,14 @@ it.each([
   ['slack', 'sync_not_configured', undefined], ['beeper', 'sync_not_configured', undefined], ['mbox', 'sync_not_configured', undefined],
   ['meeting_import', 'sync_not_configured', undefined], ['future_source', 'sync_not_configured', undefined],
 ] as const)('offers a manual sync command only for supported source type %s', (source_type, sync_unavailable_reason, want) => {
-  const command = syncCommand({ id: 4, source_type, sync_unavailable_reason });
+  const command = syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync: run('completed') });
   expect(command).toBe(want);
+});
+
+it.each([
+  ['gmail', 'msgvault sync-full --source-id 4'],
+  ['imap', 'msgvault sync-full --source-id 4'],
+  ['msmail', 'msgvault sync --source-id 4'],
+])('offers the initial sync command for %s before its first successful sync', (source_type, want) => {
+  expect(syncCommand({ id: 4, source_type, sync_unavailable_reason: 'sync_not_configured', last_successful_sync: null })).toBe(want);
 });
