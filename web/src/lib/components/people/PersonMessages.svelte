@@ -76,7 +76,7 @@
   $effect(() => { if (exploreState.current.selectedRow !== restoredRow) restoredBounds = undefined; });
   function escape(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !exploreState.current.selectedRow || appShortcuts.activeScope() !== ROOT_SCOPE) return;
-    if ((event.target as Element | null)?.closest('input, textarea, select, [contenteditable]')) return;
+    if ((event.target as Element | null)?.closest('input, textarea, select, [contenteditable]') || document.querySelector('.kit-popover-card')) return;
     navigate({ selectedRow: null });
     focusGrid();
     event.preventDefault();

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, vi, onTestFinished } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { RelationshipsController } from '../../relationships/controller.svelte';
@@ -48,4 +48,64 @@ it('keeps the batch locked while a profile merge reconciles, then finishes the q
   releaseReconcile?.();
   expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
   expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
+});
+
+it('clears a stale cache warning when the final link refreshes the cache', async () => {
+  const links: number[] = [];
+  const client = clientFor({
+    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
+    '/api/v1/identity/links': () => { links.push(1); return Response.json({ identity_revision: 5, cache_state: links.length === 1 ? 'stale' : 'ready' }); },
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    await waitFor(() => expect(links).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the open person', async (control) => {
+  const client = clientFor({
+    '/api/v1/relationships': () => Response.json({ rows: [] }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': async request => Response.json({ year: (await request.json()).year, days: [] }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', {}, false);
+  const onNavigate = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const trigger = control === 'sort' ? await screen.findByRole('combobox', { name: 'Sort: Closest' }) : within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' });
+    await fireEvent.click(trigger);
+    if (control === 'sort') await screen.findByRole('listbox');
+    else await screen.findByPlaceholderText('Find a filter');
+    await fireEvent.keyDown(trigger, { key: 'Escape' });
+    expect(onNavigate).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    await waitFor(() => expect(screen.queryByPlaceholderText('Find a filter')).toBeNull());
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each(['fails', 'is cancelled'])('reports completed links when the next pair %s', async (outcome) => {
+  let calls = 0;
+  const client = clientFor({
+    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
+    '/api/v1/identity/links': () => ++calls === 1 ? Response.json({ identity_revision: 5, cache_state: 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    if (outcome === 'is cancelled') {
+      await screen.findByRole('dialog', { name: 'Resolve person merge' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    } else await screen.findByText(/Synthetic link failed/);
+    expect(screen.getByRole('status').textContent).toContain('1 of 2');
+    expect(calls).toBe(2);
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

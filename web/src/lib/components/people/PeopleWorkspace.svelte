@@ -35,8 +35,8 @@
   let bulkPending = $state(false);
   let bulkMessage = $state<string | null>(null);
   let bulkConflict = $state<ValidatedPersonMergeRequired>();
-  let bulkQueue = $state<number[]>([]);
-  let bulkAnchorID = $state<number>();
+  let bulkIDs = $state<number[]>([]);
+  let bulkCompleted = $state(0);
   let bulkContext = $state<ReturnType<RelationshipsController['personMergeContextSnapshot']>>();
   let staleLink = $state<{ a: number; b: number } | null>(null);
   type SoloProfile = { id: number; display_name: string; targets: string[] };
@@ -123,7 +123,7 @@
   }
   function escape(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !hasPerson || appShortcuts.activeScope() !== ROOT_SCOPE) return;
-    if ((event.target as Element | null)?.closest('input, textarea, select, [contenteditable]')) return;
+    if ((event.target as Element | null)?.closest('input, textarea, select, [contenteditable]') || document.querySelector('.kit-popover-card')) return;
     close();
     event.preventDefault();
     event.stopPropagation();
@@ -146,22 +146,22 @@
   async function startBulk(): Promise<void> {
     const ids = [...selection.explicitKeys].map((key) => /^cluster:([1-9][0-9]*)$/.exec(key)?.[1]).filter((id): id is string => id !== undefined).map(Number);
     if (ids.length < 2 || bulkPending || bulkConflict) return;
-    bulkAnchorID = ids[0]; bulkQueue = ids.slice(1); bulkContext = controller.personMergeContextSnapshot();
+    bulkIDs = ids; bulkCompleted = 0; bulkContext = controller.personMergeContextSnapshot();
     await continueBulk();
   }
   async function continueBulk(): Promise<void> {
-    if (bulkAnchorID === undefined) return;
+    if (bulkIDs.length < 2) return;
     bulkPending = true;
-    while (bulkQueue.length) {
-      const next = bulkQueue[0]!;
-      const result = await controller.linkParticipants(bulkAnchorID, next);
+    while (bulkCompleted < bulkIDs.length - 1) {
+      const next = bulkIDs[bulkCompleted + 1]!;
+      const result = await controller.linkParticipants(bulkIDs[0]!, next);
       if (result.ok || result.code === 'already_linked') {
-        if (result.ok && result.cacheState === 'stale') staleLink = { a: bulkAnchorID, b: next };
-        bulkQueue = bulkQueue.slice(1); continue;
+        if (result.ok) staleLink = result.cacheState === 'stale' ? { a: bulkIDs[0]!, b: next } : null;
+        bulkCompleted += 1; continue;
       }
       bulkPending = false;
       if (result.code === 'merge_required') { bulkConflict = result.conflict; return; }
-      bulkMessage = result.message; return;
+      bulkMessage = `${bulkCompleted} of ${bulkIDs.length - 1} linked. ${result.message}`; return;
     }
     bulkPending = false; selection.clear();
     bulkMessage = staleLink ? 'People linked. The identity cache needs a retry.' : 'People are now treated as the same person.';
@@ -226,7 +226,7 @@
       {#snippet primary()}{@render list()}{/snippet}{#snippet secondary()}{@render person()}{/snippet}
     </SplitPane>{/if}
   </div>
-  {#if bulkConflict}<PersonBindingConflictModal client={page.client} conflict={bulkConflict} onOpenProfile={(id) => page.onOpenDirectoryPerson?.(id)} onSuccess={merged} onClose={() => { bulkConflict = undefined; bulkQueue = []; bulkMessage = 'Linking stopped.'; }} />{/if}
+  {#if bulkConflict}<PersonBindingConflictModal client={page.client} conflict={bulkConflict} onOpenProfile={(id) => page.onOpenDirectoryPerson?.(id)} onSuccess={merged} onClose={() => { bulkConflict = undefined; bulkMessage = `${bulkCompleted} of ${bulkIDs.length - 1} linked. Linking stopped.`; }} />{/if}
 </main>
 <style>
   .people { display: flex; min-height: 0; height: 100%; flex-direction: column; background: var(--bg-canvas); }

@@ -19,6 +19,7 @@ function setup(paged: boolean, row = saved) {
       const body = await request.clone().json();
       return Response.json({ rows: paged && !body.cursor ? [first] : [row], total_count: paged ? 2 : 1, next_cursor: paged && !body.cursor ? 'page-two' : undefined, cache_revision: 'cache-1', search_provenance: {} });
     }
+    if (path === '/api/v1/cli/accounts') return Response.json({ accounts: [] });
     if (path === '/api/v1/conversations/2') return Response.json({ id: 2, messages: [{ id: 2, conversation_id: 2, subject: 'Saved message', sent_at: at, message_type: row.message_type, from: 'Alice Example', to: [], body: 'Restored body', snippet: 'Restored body', attachments: [] }], anchor_id: 2, total: 1, has_before: false, has_after: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
@@ -65,5 +66,21 @@ it('clears the previous reader on a period change and opens the first clicked co
     await fireEvent.click(await within(grid).findByText('Saved message'));
     await screen.findByText('Restored body');
     expect(requests.filter(request => new URL(request.url).pathname.endsWith('/timeline'))).toHaveLength(2);
+  } finally { view.unmount(); }
+});
+
+it('Escape dismisses the message filter before closing the reader', async () => {
+  const { props } = setup(false);
+  const view = render(PersonMessages, { props });
+  try {
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
+    await fireEvent.click(await within(grid).findByText('Saved message'));
+    await screen.findByText('Restored body');
+    const filter = screen.getByRole('button', { name: 'Filter' });
+    await fireEvent.click(filter);
+    await screen.findByRole('dialog', { name: 'Filter' });
+    await fireEvent.keyDown(filter, { key: 'Escape' });
+    expect(screen.queryByText('Restored body')).not.toBeNull();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull());
   } finally { view.unmount(); }
 });
