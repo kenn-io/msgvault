@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import CardDAVSettingsWorkspace from './CardDAVSettingsWorkspace.svelte';
@@ -235,7 +235,7 @@ it('restores an orphaned connection with its retained name and account details',
   });
 });
 
-it('keeps the named Google app when reopening a contacts connection for repair', async () => {
+it('selects the requested contacts connection for repair and consumes the request', async () => {
   const client = createAPIClient(async input => {
     const url = new URL((input as Request).url);
     if (url.pathname.endsWith('/connections')) return Response.json({ connections: [
@@ -245,8 +245,9 @@ it('keeps the named Google app when reopening a contacts connection for repair',
     if (url.pathname.endsWith('/status')) return Response.json(status('work'));
     return Response.json({ books: [], runs: [], conflicts: [] });
   });
-  const view = render(CardDAVSettingsWorkspace, { client, settings: [] });
-  await chooseSelectOption(await screen.findByRole('combobox', { name: /^CardDAV connection/ }), 'work');
-  await screen.findByText("msgvault carddav authorize-google 'user@example.com' --oauth-app 'Team App'");
+  const onCardDAVRequestConsumed = vi.fn();
+  const view = render(CardDAVSettingsWorkspace, { client, settings: [], cardDAVRequest: { key: 7, connection: 'work' }, onCardDAVRequestConsumed });
+  await waitFor(() => expect(screen.getByRole('combobox', { name: /^CardDAV connection/ }).textContent).toContain('work'));
+  expect(onCardDAVRequestConsumed).toHaveBeenCalledExactlyOnceWith(7);
   view.unmount();
 });
