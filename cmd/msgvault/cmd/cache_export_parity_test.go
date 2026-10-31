@@ -3,12 +3,14 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/store"
@@ -123,40 +125,91 @@ func TestCacheExportParityCopyParquetRoundTrip(t *testing.T) {
 type participantClusterInsertRecorder struct {
 	*sql.DB
 
-	inserts int
+	batchRows []int
+	failAt    int
+	insertErr error
 }
 
 func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	if strings.HasPrefix(query, `INSERT INTO tmp_participant_clusters VALUES `) {
-		r.inserts++
+		r.batchRows = append(r.batchRows, strings.Count(query, "("))
+		if len(r.batchRows) == r.failAt {
+			return nil, r.insertErr
+		}
 	}
 	return r.DB.ExecContext(ctx, query, args...)
 }
 
 func TestStageParticipantClustersBatchesInsertsWithoutChangingRows(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		count     int
+		batchRows []int
+	}{
+		{name: "empty"},
+		{name: "single", count: 1, batchRows: []int{1}},
+		{name: "below boundary", count: 1023, batchRows: []int{1023}},
+		{name: "exact boundary", count: 1024, batchRows: []int{1024}},
+		{name: "above boundary", count: 1025, batchRows: []int{1024, 1}},
+		{name: "two full batches", count: 2048, batchRows: []int{1024, 1024}},
+		{name: "final partial batch", count: 2065, batchRows: []int{1024, 1024, 17}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			db, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			db.SetMaxOpenConns(1)
+			t.Cleanup(func() { require.NoError(db.Close()) })
+			recorder := &participantClusterInsertRecorder{DB: db}
+
+			clusters := make(map[int64]int64, tt.count)
+			for id := int64(1); id <= int64(tt.count); id++ {
+				clusters[id] = id%17 + 1
+			}
+			require.NoError(stageParticipantClusters(t.Context(), recorder, clusters))
+			assert.Equal(tt.batchRows, recorder.batchRows)
+			for _, count := range recorder.batchRows {
+				assert.LessOrEqual(count, 1024)
+			}
+
+			dir := t.TempDir()
+			require.NoError(copyParquet(t.Context(), db, dir, "data.parquet", participantClustersSelectSQL))
+			rows, err := db.Query(`SELECT participant_id, canonical_id FROM read_parquet(?)`, filepath.Join(dir, "data.parquet"))
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			got := make(map[int64]int64, len(clusters))
+			var rowCount int
+			for rows.Next() {
+				var participantID, canonicalID int64
+				require.NoError(rows.Scan(&participantID, &canonicalID))
+				got[participantID] = canonicalID
+				rowCount++
+			}
+			require.NoError(rows.Err())
+			assert.Equal(tt.count, rowCount)
+			assert.Equal(clusters, got)
+		})
+	}
+}
+
+func TestStageParticipantClustersStopsOnLaterInsertError(t *testing.T) {
 	require := require.New(t)
 	db, err := sql.Open("duckdb", "")
 	require.NoError(err)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(db.Close()) })
-	recorder := &participantClusterInsertRecorder{DB: db}
+	insertErr := errors.New("insert failed")
+	recorder := &participantClusterInsertRecorder{DB: db, failAt: 2, insertErr: insertErr}
 
 	clusters := make(map[int64]int64, 2065)
 	for id := int64(1); id <= 2065; id++ {
 		clusters[id] = id%17 + 1
 	}
-	require.NoError(stageParticipantClusters(t.Context(), recorder, clusters))
-	require.Equal(3, recorder.inserts, "2065 rows must use two full batches and one final batch")
-
-	rows, err := db.Query(`SELECT participant_id, canonical_id FROM tmp_participant_clusters`)
-	require.NoError(err)
-	defer func() { require.NoError(rows.Close()) }()
-	got := make(map[int64]int64, len(clusters))
-	for rows.Next() {
-		var participantID, canonicalID int64
-		require.NoError(rows.Scan(&participantID, &canonicalID))
-		got[participantID] = canonicalID
-	}
-	require.NoError(rows.Err())
-	require.Equal(clusters, got)
+	err = stageParticipantClusters(t.Context(), recorder, clusters)
+	require.ErrorIs(err, insertErr)
+	require.ErrorContains(err, "populate participant clusters temp table")
+	assert.Equal(t, []int{1024, 1024}, recorder.batchRows, "staging must stop at the failed second insert")
+	var count int
+	require.NoError(db.QueryRow(`SELECT count(*) FROM tmp_participant_clusters`).Scan(&count))
+	assert.Equal(t, 1024, count, "only the first batch should reach the temporary table")
 }

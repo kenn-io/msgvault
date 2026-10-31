@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/identityindex"
@@ -487,7 +486,6 @@ func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[in
 		return nil
 	}
 	values := make([]string, 0, participantClusterMaxBatchRows)
-	lastFlush := time.Now()
 	flush := func() error {
 		if len(values) == 0 {
 			return nil
@@ -496,12 +494,11 @@ func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[in
 			return fmt.Errorf("populate participant clusters temp table: %w", err)
 		}
 		values = values[:0]
-		lastFlush = time.Now()
 		return nil
 	}
 	for participantID, canonicalID := range clusters {
 		values = append(values, fmt.Sprintf("(%d,%d)", participantID, canonicalID))
-		if len(values) >= participantClusterMaxBatchRows || time.Since(lastFlush) >= participantClusterFlushInterval {
+		if len(values) >= participantClusterMaxBatchRows {
 			if err := flush(); err != nil {
 				return err
 			}
@@ -512,10 +509,7 @@ func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[in
 
 const participantClustersSelectSQL = `SELECT participant_id, canonical_id FROM tmp_participant_clusters`
 
-const (
-	participantClusterMaxBatchRows  = 1024
-	participantClusterFlushInterval = time.Second
-)
+const participantClusterMaxBatchRows = 1024
 
 func conversationParticipantsSelectSQL(maxMessageID int64) string {
 	return fmt.Sprintf(`SELECT cp.conversation_id, cp.participant_id
