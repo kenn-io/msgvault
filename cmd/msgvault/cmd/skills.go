@@ -24,9 +24,9 @@ var skillsInstallCmd = newSkillsInstallCommand()
 
 func newSkillsInstallCommand() *cobra.Command {
 	command := &cobra.Command{
-	Use:   "install",
-	Short: "Install msgvault agent skills",
-	Long: `Install msgvault agent skills into detected agent skill
+		Use:   "install",
+		Short: "Install msgvault agent skills",
+		Long: `Install msgvault agent skills into detected agent skill
 directories (~/.claude/skills and ~/.codex/skills), or into an
 explicit directory with --dir.
 
@@ -40,26 +40,26 @@ Codex uses ~/.codex/hooks.json. With --dir, both targets are under that
 directory (.claude/settings.json and .codex/hooks.json). Skills still go
 directly into the supplied skills directory. Existing settings are preserved.
 Review and trust a new Codex hook through /hooks before it can run.`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		agents, err := cmd.Flags().GetStringSlice("agent")
-		if err != nil {
-			return fmt.Errorf("read --agent flag: %w", err)
-		}
-		dir, err := cmd.Flags().GetString("dir")
-		if err != nil {
-			return fmt.Errorf("read --dir flag: %w", err)
-		}
-		force, err := cmd.Flags().GetBool("force")
-		if err != nil {
-			return fmt.Errorf("read --force flag: %w", err)
-		}
-		briefing, err := cmd.Flags().GetBool("briefing")
-		if err != nil {
-			return fmt.Errorf("read --briefing flag: %w", err)
-		}
-		return runSkillsInstallWithBriefing(cmd.OutOrStdout(), agents, dir, force, briefing)
-	},
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			agents, err := cmd.Flags().GetStringSlice("agent")
+			if err != nil {
+				return fmt.Errorf("read --agent flag: %w", err)
+			}
+			dir, err := cmd.Flags().GetString("dir")
+			if err != nil {
+				return fmt.Errorf("read --dir flag: %w", err)
+			}
+			force, err := cmd.Flags().GetBool("force")
+			if err != nil {
+				return fmt.Errorf("read --force flag: %w", err)
+			}
+			briefing, err := cmd.Flags().GetBool("briefing")
+			if err != nil {
+				return fmt.Errorf("read --briefing flag: %w", err)
+			}
+			return runSkillsInstallWithBriefing(cmd.OutOrStdout(), agents, dir, force, briefing)
+		},
 	}
 	command.Flags().StringSlice("agent", nil, "restrict to specific agents (claude, codex)")
 	command.Flags().String("dir", "", "install into this skills directory instead of detected agents")
@@ -73,26 +73,26 @@ var skillsUninstallCmd = newSkillsUninstallCommand()
 
 func newSkillsUninstallCommand() *cobra.Command {
 	command := &cobra.Command{
-	Use:   "uninstall",
-	Short: "Remove installed msgvault agent skills",
-	Long: `Remove msgvault-* skill directories previously written by
+		Use:   "uninstall",
+		Short: "Remove installed msgvault agent skills",
+		Long: `Remove msgvault-* skill directories previously written by
 'msgvault skills install'. Skill files without the msgvault generation
 marker are left untouched. Also remove exact 'msgvault timeline --brief'
 SessionStart handlers from the selected agents' settings, preserving other
 settings and hooks. With --dir, use that directory's .claude/settings.json
 and .codex/hooks.json.`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		agents, err := cmd.Flags().GetStringSlice("agent")
-		if err != nil {
-			return fmt.Errorf("read --agent flag: %w", err)
-		}
-		dir, err := cmd.Flags().GetString("dir")
-		if err != nil {
-			return fmt.Errorf("read --dir flag: %w", err)
-		}
-		return runSkillsUninstall(cmd.OutOrStdout(), agents, dir)
-	},
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			agents, err := cmd.Flags().GetStringSlice("agent")
+			if err != nil {
+				return fmt.Errorf("read --agent flag: %w", err)
+			}
+			dir, err := cmd.Flags().GetString("dir")
+			if err != nil {
+				return fmt.Errorf("read --dir flag: %w", err)
+			}
+			return runSkillsUninstall(cmd.OutOrStdout(), agents, dir)
+		},
 	}
 	command.Flags().StringSlice("agent", nil, "restrict to specific agents (claude, codex)")
 	command.Flags().String("dir", "", "uninstall from this skills directory instead of detected agents")
@@ -178,7 +178,7 @@ func runSkillsUninstall(out io.Writer, agents []string, dir string) error {
 }
 
 func updateSkillsBriefing(out io.Writer, roots []skills.AgentDir, dir string, install bool) error {
-	type target struct { agent, path string }
+	type target struct{ agent, path string }
 	var targets []target
 	if dir != "" {
 		targets = []target{

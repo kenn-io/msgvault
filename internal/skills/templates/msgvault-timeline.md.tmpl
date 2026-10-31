@@ -19,13 +19,17 @@ msgvault show-message 9031 --json
 ```
 
 Search finds an internal message ID. The timeline adds nearby activity.
-Each JSON entry's `open` array names callable MCP tools with their `args`;
+Each JSON entry's `open` array names detail tools with their `args`;
 call the named tool with those structured arguments when MCP is available.
 For example, `get_message` takes `id`, `list_messages` takes
 `conversation_id`, and `get_calendar_event` takes `ref`. Use only the
 targets actually returned for the caller. In a CLI-only session,
 `show-message` reads a message by ID. Keep integer IDs exactly as returned;
 do not round them through floating point.
+
+MCP numeric arguments are limited to 9007199254740991. For larger IDs, use
+the CLI or HTTP detail reader. The exact string `anchor_ref` remains usable
+with `--around`; never send a rounded numeric argument to an MCP tool.
 
 Use an entry's `anchor_ref` as the next `--around` value to explore its
 context. Display references are shortened for reading; prefer the supplied
@@ -38,7 +42,7 @@ msgvault timeline
 msgvault timeline --date 2026-10-22
 msgvault timeline --from 2026-10-20 --to 2026-10-22 --tier 1,2
 msgvault timeline --with person:7 --json
-msgvault timeline --with alice@example.com --json
+msgvault timeline --with email:alice@example.com --json
 msgvault timeline --around msg:9031 --before 0 --after 0 --json
 msgvault timeline --around conv:412 --conversation --json
 msgvault timeline --brief
@@ -46,8 +50,8 @@ msgvault timeline --brief
 
 - Day: today and yesterday by default. `--date` selects one local date;
   `--from` and `--to` are inclusive. `--days` selects 1–31 days ending today.
-- Relationship: `--with` accepts a saved person, participant, address,
-  phone, or name. If the name is ambiguous, choose a returned candidate;
+- Relationship: `--with` accepts `person:<id>`, `participant:<id>`,
+  `email:<address>`, `phone:<number>`, or a name. If the name is ambiguous, choose a returned candidate;
   never guess a person ID. History starts with the most recent 20 entries.
 - Around: `--around` accepts a message, conversation, burst key, event
   occurrence, ISO date, or datetime. A bare conversation uses its latest
@@ -56,6 +60,10 @@ msgvault timeline --brief
   `--conversation` shows individual messages in the anchor conversation.
 - Brief: today and yesterday, the top five open loops, and the next
   24 hours, within a default 6144-byte budget.
+
+Relationship views require owner access. Delegated grants can read day and
+around views within their authorized sources; requests with `--with` are
+rejected until person-scoped grants are available.
 
 Normal output has a default 16384-byte budget. `--budget` accepts
 2048–65536 bytes. Omit `--days` or `--budget` to use defaults; explicit zero

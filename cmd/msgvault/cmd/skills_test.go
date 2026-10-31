@@ -25,6 +25,10 @@ func setTestHome(t *testing.T, home string) {
 }
 
 func TestBriefingTargetsDirWhenGiven(t *testing.T) {
+	requirements := require.New(t)
+
+	assertions := assert.New(t)
+
 	home := t.TempDir()
 	setTestHome(t, home)
 	project := filepath.Join(t.TempDir(), "project [example]")
@@ -33,87 +37,95 @@ func TestBriefingTargetsDirWhenGiven(t *testing.T) {
 	command.SetOut(&out)
 	command.SetErr(&out)
 	command.SetArgs([]string{"--dir", project, "--briefing"})
-	require.NoError(t, command.Execute())
+	requirements.NoError(command.Execute())
 	for _, target := range []string{".claude/settings.json", ".codex/hooks.json"} {
 		groups := readBriefingGroups(t, filepath.Join(project, filepath.FromSlash(target)))
-		require.Len(t, groups, 1)
-		assert.Equal(t, []briefingTestHandler{{Type: "command", Command: "msgvault timeline --brief"}}, groups[0].Hooks)
-		assert.NoFileExists(t, filepath.Join(home, filepath.FromSlash(target)))
+		requirements.Len(groups, 1)
+		assertions.Equal([]briefingTestHandler{{Type: "command", Command: "msgvault timeline --brief"}}, groups[0].Hooks)
+		assertions.NoFileExists(filepath.Join(home, filepath.FromSlash(target)))
 	}
-	assert.FileExists(t, filepath.Join(project, "msgvault-timeline", "SKILL.md"))
-	assert.Contains(t, out.String(), "/hooks", "Codex hooks retain their normal trust review")
+	assertions.FileExists(filepath.Join(project, "msgvault-timeline", "SKILL.md"))
+	assertions.Contains(out.String(), "/hooks", "Codex hooks retain their normal trust review")
 
 	uninstall := newSkillsUninstallCommand()
 	uninstall.SetOut(&out)
 	uninstall.SetErr(&out)
 	uninstall.SetArgs([]string{"--dir", project})
-	require.NoError(t, uninstall.Execute())
+	requirements.NoError(uninstall.Execute())
 	for _, target := range []string{".claude/settings.json", ".codex/hooks.json"} {
 		data, err := os.ReadFile(filepath.Join(project, filepath.FromSlash(target)))
-		require.NoError(t, err)
-		assert.JSONEq(t, `{}`, string(data))
+		requirements.NoError(err)
+		assertions.JSONEq(`{}`, string(data))
 	}
 }
 
 func TestBriefingTargetsSelectedAgent(t *testing.T) {
 	for _, agent := range []string{"claude", "codex"} {
 		t.Run(agent, func(t *testing.T) {
+			requirements := require.New(t)
+
+			assertions := assert.New(t)
+
 			home := t.TempDir()
 			setTestHome(t, home)
 			for _, name := range []string{".claude", ".codex"} {
-				require.NoError(t, os.Mkdir(filepath.Join(home, name), 0o700))
+				requirements.NoError(os.Mkdir(filepath.Join(home, name), 0o700))
 			}
 			var out bytes.Buffer
 			command := newSkillsInstallCommand()
 			command.SetOut(&out)
 			command.SetErr(&out)
 			command.SetArgs([]string{"--agent", agent, "--briefing"})
-			require.NoError(t, command.Execute())
+			requirements.NoError(command.Execute())
 			target, other := ".claude/settings.json", ".codex/hooks.json"
 			if agent == "codex" {
 				target, other = other, target
 			}
 			path := filepath.Join(home, filepath.FromSlash(target))
 			groups := readBriefingGroups(t, path)
-			require.Len(t, groups, 1)
-			assert.Equal(t, []briefingTestHandler{{Type: "command", Command: "msgvault timeline --brief"}}, groups[0].Hooks)
-			assert.NoFileExists(t, filepath.Join(home, filepath.FromSlash(other)))
+			requirements.Len(groups, 1)
+			assertions.Equal([]briefingTestHandler{{Type: "command", Command: "msgvault timeline --brief"}}, groups[0].Hooks)
+			assertions.NoFileExists(filepath.Join(home, filepath.FromSlash(other)))
 			before, err := os.ReadFile(path)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			// A normal skill refresh must leave the opt-in hook unchanged.
-			require.NoError(t, runSkillsInstall(&out, []string{agent}, "", false))
+			requirements.NoError(runSkillsInstall(&out, []string{agent}, "", false))
 			after, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, string(before), string(after))
-			require.NoError(t, runSkillsUninstall(&out, []string{agent}, ""))
+			requirements.NoError(err)
+			assertions.Equal(string(before), string(after))
+			requirements.NoError(runSkillsUninstall(&out, []string{agent}, ""))
 			data, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.JSONEq(t, `{}`, string(data))
+			requirements.NoError(err)
+			assertions.JSONEq(`{}`, string(data))
 		})
 	}
 }
 
 func TestBriefingIsOptIn(t *testing.T) {
+	requirements := require.New(t)
+
+	assertions := assert.New(t)
+
 	home := t.TempDir()
 	setTestHome(t, home)
 	for _, agent := range []string{".claude", ".codex"} {
-		require.NoError(t, os.Mkdir(filepath.Join(home, agent), 0o700))
+		requirements.NoError(os.Mkdir(filepath.Join(home, agent), 0o700))
 	}
 	var out bytes.Buffer
 	command := newSkillsInstallCommand()
 	command.SetOut(&out)
 	command.SetErr(&out)
 	command.SetArgs(nil)
-	require.NoError(t, command.Execute())
-	assert.NoFileExists(t, filepath.Join(home, ".claude", "settings.json"))
-	assert.NoFileExists(t, filepath.Join(home, ".codex", "hooks.json"))
-	require.NoError(t, runSkillsUninstall(&out, nil, ""))
-	assert.NoFileExists(t, filepath.Join(home, ".claude", "settings.json"))
-	assert.NoFileExists(t, filepath.Join(home, ".codex", "hooks.json"))
+	requirements.NoError(command.Execute())
+	assertions.NoFileExists(filepath.Join(home, ".claude", "settings.json"))
+	assertions.NoFileExists(filepath.Join(home, ".codex", "hooks.json"))
+	requirements.NoError(runSkillsUninstall(&out, nil, ""))
+	assertions.NoFileExists(filepath.Join(home, ".claude", "settings.json"))
+	assertions.NoFileExists(filepath.Join(home, ".codex", "hooks.json"))
 }
 
 type briefingTestHandler struct {
-	Type string `json:"type"`
+	Type    string `json:"type"`
 	Command string `json:"command"`
 }
 
