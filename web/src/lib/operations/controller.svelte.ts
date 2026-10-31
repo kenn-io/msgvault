@@ -153,7 +153,7 @@ export class OperationsController {
     try {
       const result = await generatedGetOperationStatus({ ...this.client, signal: request.signal });
       if (!this.ownsStatus(request, generation, context)) return this.statusRead ?? false;
-      if (!result.data) {
+      if (!Array.isArray(result.data?.lanes)) {
         this.statusError = 'Unable to load operation status.';
         return false;
       }

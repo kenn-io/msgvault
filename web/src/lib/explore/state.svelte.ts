@@ -629,7 +629,7 @@ export class ExploreState {
   current = $state<ExploreURLState>(freshDefaults());
   restorationEpoch = $state(1);
   holdLeave?: (leave: () => void, stay?: () => void) => boolean;
-  // Drops a held leave once another navigation moves history first.
+  // Drops a held leave whenever another navigation or history move commits.
   cancelHeldLeave?: () => void;
   private readonly browser: ExploreWindow;
   private readonly preferenceStorage: SearchModeStorage | null;
@@ -927,10 +927,8 @@ export class ExploreState {
     patch: Partial<ExploreURLState>,
     mode: 'push' | 'replace'
   ): void {
-    if (this.pendingHeldLeaveRestore) {
-      this.pendingHeldLeaveRestore();
-      this.cancelHeldLeave?.();
-    }
+    this.pendingHeldLeaveRestore?.();
+    this.cancelHeldLeave?.();
     if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
       this.holdLeave?.(() => this.navigate(patch, mode))) return this.clearHeldOperationHistory(patch);
     let effectivePatch = patch;

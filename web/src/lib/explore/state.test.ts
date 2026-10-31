@@ -19,7 +19,7 @@ import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
   it.each([
-    ['Back', 'stay'], ['Back', 'leave'], ['click', 'stay'], ['click', 'leave']
+    ['Back', 'stay'], ['Back', 'leave'], ['click', 'leave']
   ] as const)('holds Back to an unindexed entry from dirty Settings, then handles %s and %s', async (navigation, outcome) => {
     window.history.replaceState(null, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
@@ -143,6 +143,38 @@ describe('Explore URL state', () => {
       state.destroy();
     }
   });
+
+  it('drops a held indexed Back leave when Settings is clicked', async () => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    let leave!: () => void;
+    try {
+      state.commitWorkspace('settings');
+      state.commitWorkspace('files');
+      window.history.back();
+      await popped();
+      state.holdLeave = (next) => { leave = next; return true; };
+      window.history.back();
+      await popped();
+      await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
+      const cancel = vi.fn();
+      state.cancelHeldLeave = cancel;
+      state.commitWorkspace('settings');
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(state.current.workspace).toBe('settings');
+      state.holdLeave = undefined;
+      window.history.back();
+      await popped();
+      expect(state.current.workspace).toBe('settings');
+      window.history.back();
+      await popped();
+      expect(window.location.search).toBe('?workspace=sources&mode=full_text');
+    } finally {
+      state.destroy();
+    }
+  });
+
 
   it('closes Past runs while holding a departure from dirty Settings', () => {
     window.history.replaceState(null, '', '/?workspace=settings');
