@@ -84,8 +84,10 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(slices.Clone(args), scopeArgs...)
 	query := fmt.Sprintf(calendarEventSelect,
-		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ") ORDER BY e.message_id"
+		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
