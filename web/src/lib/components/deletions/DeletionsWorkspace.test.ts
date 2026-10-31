@@ -120,7 +120,10 @@ it('keeps the selected batch when another account lookup finishes late', async (
   await fireEvent.click(rows[0]);
   await fireEvent.click(rows[1]);
   await screen.findByText('Batch B review');
-  finish(Response.json({}, { status: 500 }));
+  const response = Response.json({}, { status: 500 });
+  const readBody = vi.spyOn(response, 'text');
+  finish(response);
+  await waitFor(() => expect(readBody).toHaveResolvedWith('{}'));
   await tick();
   expect(screen.getByText('Batch B review')).toBeDefined();
 });
