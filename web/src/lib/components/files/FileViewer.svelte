@@ -311,6 +311,9 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
+    /* Reserve the scrollbar's width up front so centered PDF pages do not
+       shift left when a later page makes the preview scroll. */
+    scrollbar-gutter: stable;
     padding: var(--pane-pad-y) var(--pane-pad-x);
     background: var(--bg-inset);
   }

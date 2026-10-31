@@ -526,7 +526,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 			m.has_attachments,
 			COALESCE(m.is_from_me, FALSE),
 			m.deleted_from_source_at,
-			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript', 'calendar_event') THEN m.metadata ELSE NULL END
 		FROM %smessages m
 		LEFT JOIN %sconversations conv ON conv.id = m.conversation_id
 		WHERE %s
@@ -567,6 +567,9 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 		return nil, err
 	}
 	msg.RelatedMessageID = related[0].RelatedMessageID
+	if msg.MessageType == messageTypeCalendar {
+		msg.Calendar = store.ParseCalendarProjection(metadata.String)
+	}
 	if sentAt.Valid {
 		msg.SentAt = sentAt.Time
 	}

@@ -53,6 +53,7 @@ export * from "./cacheStats";
 export * from "./calendarConflict";
 export * from "./calendarEventTarget";
 export * from "./calendarPlannedWrite";
+export * from "./calendarProjection";
 export * from "./calendarRequest";
 export * from "./calendarRequestAction";
 export * from "./calendarRequestResponse";
