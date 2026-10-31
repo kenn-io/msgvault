@@ -455,6 +455,16 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 // (Explore and timelines) and direct-Parquet identity endpoints alike — sees
 // one coherent committed cache.
 func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
+	if e.sqliteDB != nil {
+		pending, err := store.XContentCleanupPendingContext(ctx, e.sqliteDB, false)
+		if err != nil {
+			return nil, err
+		}
+		if pending {
+			return nil, errors.New("X content cleanup pending")
+		}
+	}
+
 	if e.analyticsDir == "" {
 		return func() {}, nil
 	}
@@ -658,6 +668,15 @@ func (e *DuckDBEngine) ensureFreshOptionalCols(ctx context.Context, fp string) e
 	e.optColsMu.RUnlock()
 	if unchanged { // another goroutine refreshed while we waited
 		return ctx.Err()
+	}
+
+	// A previous search materialized content from the retired publication.
+	// Remove it before any query, including owner SQL, can read the new one.
+	e.searchCacheMu.Lock()
+	dropErr := e.dropSearchCacheContext(ctx)
+	e.searchCacheMu.Unlock()
+	if dropErr != nil {
+		return dropErr
 	}
 
 	newCols, fp, err := stableOptionalColumns(ctx, e.cacheFingerprint, func() (map[string]map[string]bool, error) {
@@ -2917,13 +2936,22 @@ func searchCacheKeyFor(conditions []string, args []any, cacheFP string) string {
 // is canceled (avoiding leaked temp tables on the single DuckDB connection).
 // Caller must hold e.searchCacheMu.
 func (e *DuckDBEngine) dropSearchCache() {
+	_ = e.dropSearchCacheContext(context.Background())
+}
+
+// Caller must hold e.searchCacheMu. Retain the table reference on failure so
+// publication refresh refuses reads and a later call can retry its deletion.
+func (e *DuckDBEngine) dropSearchCacheContext(ctx context.Context) error {
 	if e.searchCacheTable != "" {
-		_, _ = e.db.ExecContext(context.Background(), "DROP TABLE IF EXISTS "+e.searchCacheTable)
+		if _, err := e.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+e.searchCacheTable); err != nil {
+			return fmt.Errorf("discard stale search materialization: %w", err)
+		}
 	}
 	e.searchCacheKey = ""
 	e.searchCacheTable = ""
 	e.searchCacheCount = 0
 	e.searchCacheStats = nil
+	return nil
 }
 
 // searchPageFromCache executes Phase 3 (paginated results) from the cached temp table.

@@ -74,7 +74,7 @@ func loadChatDraftDestination(
 		return dest, err
 	}
 	switch dest.sourceType {
-	case "slack", "slackdump", "teams", "discord":
+	case "slack", "slackdump", "teams", "discord", "x":
 	default:
 		return dest, fmt.Errorf("source type %q: %w", dest.sourceType, ErrChatDraftUnsupportedSource)
 	}
@@ -92,7 +92,7 @@ func (s *Store) CreateChatDraftContext(
 	}
 	draftID := ChatDraftIDPrefix + hex.EncodeToString(raw[:])
 	var draft ChatDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		dest, err := loadChatDraftDestination(ctx, tx, conversationID, authorize)
 		if err != nil {
 			return err
@@ -103,14 +103,27 @@ func (s *Store) CreateChatDraftContext(
 		var reply sql.NullString
 		if replyToMessageID != 0 {
 			err := tx.QueryRowContext(ctx, `
-				SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ?
-			`, replyToMessageID, conversationID).Scan(&reply)
+				SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ? AND source_id = ?
+			`, replyToMessageID, conversationID, dest.sourceID).Scan(&reply)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("read chat draft reply target: %w", err)
 			}
 			if strings.TrimSpace(reply.String) == "" {
 				return fmt.Errorf("reply target %d: %w", replyToMessageID, ErrChatDraftInvalidDestination)
 			}
+		}
+		if dest.sourceType == "x" {
+			if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, dest.sourceID); err != nil {
+				return err
+			}
+			if !reply.Valid {
+				return ErrChatDraftInvalidDestination
+			}
+			target, err := s.resolveXPostTx(ctx, tx, dest.sourceID, reply.String)
+			if err != nil || target.MessageID != replyToMessageID || target.ConversationID != conversationID || target.Availability != "public" {
+				return ErrChatDraftInvalidDestination
+			}
+			reply.String = target.CurrentID
 		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO chat_drafts (
@@ -168,6 +181,12 @@ func (s *Store) UpdateChatDraftContext(
 ) (ChatDraft, error) {
 	var draft ChatDraft
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockChatDraftTx(ctx, tx, draftID); err != nil {
+			return err
+		}
+		if err := checkXDraftMutable(ctx, tx, draftID); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE chat_drafts SET body = ?, revision = revision + 1, updated_at = %s
 			WHERE draft_id = ? AND revision = ?
@@ -184,6 +203,12 @@ func (s *Store) UpdateChatDraftContext(
 // DeleteChatDraftContext removes the draft when expectedRevision is current.
 func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockChatDraftTx(ctx, tx, draftID); err != nil {
+			return err
+		}
+		if err := checkXDraftMutable(ctx, tx, draftID); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM chat_drafts WHERE draft_id = ? AND revision = ?
 		`, draftID, expectedRevision)

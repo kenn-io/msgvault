@@ -48,9 +48,10 @@ This allows Claude Desktop (or any MCP client) to query your archive
 using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, list_thread, export_eml, get_stats,
 aggregate, get_person_agenda, list_saved_views, run_saved_view, stage_deletion,
 draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
-draft_recover, and draft_send_as.
+draft_recover, draft_send_as, and owner-only send_reply.
 Draft tools create, read, edit, delete, and recover managed drafts through the
-daemon. Msgvault never sends. With --agent-url and --agent-token-file, stdio
+daemon. Owners may use send_reply after explicit confirmation. With
+--agent-url and --agent-token-file, stdio
 exposes scoped read, draft and calendar tools and the daemon enforces the
 agent grant.
 
@@ -358,6 +359,10 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
 		opts.DraftCommands = mcpDraftCommands(false)
+	}
+
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.XReplySendMinAPISchemaVersion) {
+		opts.Replies = daemonMCPReplySender{client: st}
 	}
 
 	return opts

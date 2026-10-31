@@ -253,3 +253,5 @@ type PutSettingsPersonEnrichmentProviderBody = PersonEnrichmentProviderUpdate
 type PutSettingsProviderCredentialBody = ProviderCredentialWriteRequest
 
 type CaptureTelemetryEventBody = TelemetryEventRequest
+
+type PrepareReplyBody = ReplyPrepareRequest

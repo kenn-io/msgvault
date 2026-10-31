@@ -69,9 +69,7 @@ func providerUserIDScoped(
 // with a raw colon is not collision-safe because service, scope, and provider
 // values can contain that character.
 func providerIdentityKey(serviceSlug, scopeKind, scopeValue, native string) string {
-	return "provider:" + beeperidentity.EncodePart(serviceSlug) + ":" +
-		beeperidentity.EncodePart(scopeKind) + ":" + beeperidentity.EncodePart(scopeValue) + ":" +
-		beeperidentity.EncodePart(native)
+	return beeperidentity.ProviderIdentityKey(serviceSlug, scopeKind, scopeValue, native)
 }
 
 // providerNativeUserID reads the documented providerID field from a raw user

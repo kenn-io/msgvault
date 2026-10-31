@@ -5323,6 +5323,21 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 
 	var participantID int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		var err error
+		participantID, err = s.ensureParticipantByIdentifierTx(ctx, tx, identifierType, identifierValue, displayName)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return participantID, nil
+}
+
+// ensureParticipantByIdentifierTx reuses identifier creation and revision
+// behavior inside a caller's exclusive attribution transaction.
+func (s *Store) ensureParticipantByIdentifierTx(ctx context.Context, tx *loggedTx, identifierType, identifierValue, displayName string) (int64, error) {
+	var participantID int64
+	err := func() error {
 		err := tx.QueryRowContext(ctx, `
 			SELECT participant_id FROM participant_identifiers
 			WHERE identifier_type = ? AND identifier_value = ?
@@ -5392,7 +5407,7 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 			}
 		}
 		return s.bumpParticipantIdentifierRevision(ctx, tx)
-	})
+	}()
 	if err != nil {
 		return 0, err
 	}

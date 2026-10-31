@@ -396,6 +396,8 @@ import type {
   RelationshipType,
   RelationshipTypesResponse,
   RemoteImageRequest,
+  ReplyPreparation,
+  ReplyPrepareRequest,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -4433,6 +4435,23 @@ export const getTextStats = (
 ) => {
   return orvalFetch<TotalStatsResponse>(
     { url: `/api/v1/text/stats`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Prepare an owner reply review; explicit adoption may perform a budgeted lookup
+ */
+export const prepareReply = (
+  replyPrepareRequest: ReplyPrepareRequest,
+  options?: SecondParameter<typeof orvalFetch<ReplyPreparation>>,
+) => {
+  return orvalFetch<ReplyPreparation>(
+    {
+      url: `/api/v1/x/replies/prepare`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: replyPrepareRequest,
+    },
     options,
   );
 };

@@ -5,16 +5,12 @@ Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
-  msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
-  msgvault person --help
   msgvault daemon status
   msgvault setup status --json
 
 Output:
   --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
   --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.
 
 Usage:
   msgvault [command]
@@ -74,6 +70,7 @@ Add and sync sources:
   add-teams              Authorize Microsoft Teams (delegated Graph) for an account
   add-twenty             Register and validate a Twenty Call Recorder source
   add-twilio             Register and validate a Twilio call source
+  add-x                  Authorize X locally or register on the daemon host
   archive-remote-images  Download remote images in archived email (needs consent)
   backfill-beeper-media  Retry pending Beeper attachment downloads
   backfill-discord-media Retry pending Discord attachment downloads
@@ -104,6 +101,7 @@ Add and sync sources:
   sync-teams             Sync Microsoft Teams chats and channels
   sync-twenty            Sync Twenty Call Recorder meetings
   sync-twilio            Sync Twilio calls and recordings
+  sync-x                 Collect a registered X account's posts and mentions
   update-account         Update account settings
   verify                 Verify archive integrity against Gmail
 
@@ -121,7 +119,7 @@ Import local exports:
   import-synctech-sms Import SMS Backup & Restore exports
   import-whatsapp     Import WhatsApp messages from an Android or Apple database
 
-Drafts, calendar, and Kata (write to providers):
+Drafts, replies, calendar, and Kata:
   calendar      Control live calendar events and query availability
   draft-compose Create an email, native Beeper, or local chat draft
   draft-delete  Delete a managed draft
@@ -129,10 +127,11 @@ Drafts, calendar, and Kata (write to providers):
   draft-forward Create an IMAP draft forwarding an archived message
   draft-get     Read a managed draft or list a chat's local drafts
   draft-recover Recover an interrupted managed IMAP draft edit or delete
-  draft-reply   Create an IMAP or Gmail reply draft from an archived message
+  draft-reply   Create a reply draft from an archived message
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
   message-tags  Read or update native email tags
+  send-reply    Send a reviewed reply
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches

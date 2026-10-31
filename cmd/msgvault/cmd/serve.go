@@ -58,6 +58,7 @@ import (
 	"go.kenn.io/msgvault/internal/teams"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
+	xapi "go.kenn.io/msgvault/internal/x"
 	"golang.org/x/oauth2"
 )
 
@@ -332,6 +333,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := recoverNativeOperationRunsAtStartup(cmd.Context(), s, logger); err != nil {
 		return err
 	}
+	// Suppression recovery precedes analytics, vector workers, schedulers and
+	// all reader exposure. It requires neither credentials nor read admission.
+	xCleanup := NewXContentCleanup(s, cfg, nil)
+	if err := xCleanup.ResumeAtStartup(cmd.Context()); err != nil {
+		return fmt.Errorf("resume X content cleanup: %w", err)
+	}
 	// Legacy [identity] migration is deferred to the first scheduled sync's
 	// runPostSourceCreateMigrations call, which fires AFTER that sync's
 	// confirmDefaultIdentity. Calling the migration here would race
@@ -432,7 +439,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	syncFunc := func(ctx context.Context, email string) error {
 		ctx = withInvocation(ctx, state)
 		return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
-			return runScheduledSync(ctx, email, s, getOAuthMgr, state)
+			d := defaultXCommandDeps()
+			d.cleanup = xCleanup
+			return runScheduledSyncWithXDeps(ctx, email, s, getOAuthMgr, state, d)
 		})
 	}
 
@@ -884,6 +893,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
+		xCleanup:               xCleanup,
 		store:                  s,
 		operationGate:          operationGate,
 		config:                 cfg,
@@ -914,10 +924,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
-		Config:         cfg,
-		Store:          storeAdapter,
-		SavedViewStore: s,
-		Engine:         engine,
+		ContentReadGuard: xCleanup.AcquireRead,
+		Config:           cfg,
+		Store:            storeAdapter,
+		SavedViewStore:   s,
+		Engine:           engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 			if apiServer == nil {
 				return nil, nil, errors.New("daemon API server unavailable")
@@ -967,6 +978,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	xCleanup.SetServer(apiServer)
 	if cfg.People.Sweep.Enabled {
 		// The daemon owns the people sweep worker, so it owns manual brief
 		// generation: POST /api/v1/people/{id}/brief/generate reports
@@ -1770,6 +1782,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	xCleanup                  *XContentCleanup
+	xDeps                     *xCommandDeps
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
 	store                     *store.Store
@@ -2545,6 +2559,15 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunSendReply(req.Args) {
+		return a.runCLISendReply(ctx, req, emit)
+	}
+	if api.IsCLIRunXSync(req.Args) {
+		return a.runCLISyncX(ctx, req, emit)
+	}
+	if api.IsCLIRunXRegister(req.Args) {
+		return a.runCLIRegisterX(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
@@ -4126,7 +4149,7 @@ func (a *schedulerAdapter) StartJob(name string, manual bool) (scheduler.JobDisp
 }
 
 // runScheduledSync performs a sync for a scheduled account. It resolves
-// ALL syncable source rows for the identifier (gmail, imap, teams, discord) and
+// ALL syncable source rows for the identifier (gmail, imap, teams, discord, x) and
 // dispatches each in turn. When no source row matches, it falls back to
 // the Gmail token-first workflow (tokens uploaded via API before the
 // source row exists) so that legacy deployments keep working.
@@ -4143,7 +4166,11 @@ func (a *schedulerAdapter) StartJob(name string, manual bool) (scheduler.JobDisp
 // this is the email address, for IMAP it's the full
 // `imaps://user@host:port` URL recorded by `add-imap`, for Teams it is
 // the UPN/email recorded by `add-o365`.
-func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation) error {
+func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(context.Context, string) (*oauth.Manager, error), state *invocation) error {
+	return runScheduledSyncWithXDeps(ctx, identifier, s, getOAuthMgr, state, defaultXCommandDeps())
+}
+
+func runScheduledSyncWithXDeps(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(context.Context, string) (*oauth.Manager, error), state *invocation, d xCommandDeps) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -4205,6 +4232,13 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			err = runScheduledTeamsSync(ctx, src, s, state)
 		case sourceTypeMSMail:
 			err = runScheduledMSMailSync(ctx, src, s, state)
+		case sourceTypeX:
+			account := state.cfg.GetAccountSchedule(src.Identifier)
+			if account == nil || !account.Enabled {
+				err = errors.New("X account schedule is paused")
+			} else {
+				_, err = importXSourceWithDeps(ctx, s, state.cfg, src, xapi.ImportOptions{}, d)
+			}
 		case sourceTypeDiscord:
 			var discordSummary *discord.ImportSummary
 			discordSummary, err = importDiscordSourceForScheduledRun(
@@ -4297,11 +4331,23 @@ func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary
 // retiredMatch distinguishes a merged source from an identifier with no
 // registered row, which alone is eligible for the Gmail token-first fallback.
 //
-// Matches against both sources.identifier and sources.display_name.
+// X uses its exact numeric identifier exclusively. Other providers retain
+// identifier/display-name matching.
 func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Source, bool, error) {
 	rows, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
 	if err != nil {
 		return nil, false, err
+	}
+
+	// X jobs are keyed by the exact numeric owner, never by an editable handle
+	// or another provider's coincident identifier. Resolve that owner first.
+	for _, src := range rows {
+		if src.SourceType == sourceTypeX && src.Identifier == identifier {
+			if src.MergedIntoSourceID != 0 {
+				return nil, true, nil
+			}
+			return []*store.Source{src}, false, nil
+		}
 	}
 
 	// Collect first occurrence of each syncable type.

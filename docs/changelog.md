@@ -11,6 +11,8 @@ All notable changes to msgvault, grouped by release.
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
+- [X posts and replies](usage/x.md) adds opt-in public collection, numeric author evidence, capped backfill, availability refresh/removal, and revision-bound owner replies. A shared monthly allowance covers reads and sends. Unknown send outcomes never automatically submit again. Live API, billing, reply eligibility, and removal/restore verification remain release requirements.
+
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
 - Gmail full sync now includes Spam and Trash. Existing archives need an
   explicit unfiltered, unlimited `sync-full` to discover older messages omitted
@@ -178,7 +180,7 @@ All notable changes to msgvault, grouped by release.
   existing Microsoft account after upgrading walks every folder once.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
-- Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
+- Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Creating or editing a draft does not send it.
 - `person identities` and `GET /api/v1/people/{id}/identities` list the email
   addresses, phone numbers, and chat IDs your archive holds for a person, so
   you can pick an email address for `draft-compose --to`. Phone numbers and
