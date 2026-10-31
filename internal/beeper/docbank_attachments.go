@@ -627,7 +627,10 @@ func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAtt
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	if d.JobID != "" {
-		if job, err := w.client.JobStatus(ctx, d.JobID); !docbankmedia.IsNotFound(err) {
+		job, err := w.client.JobStatus(ctx, d.JobID)
+		restart := err == nil && d.Outcome == store.DocbankProcessingRetryRequested &&
+			job.State == "failed" && store.DocbankRequeueOutcome(job.FailureCode)
+		if !docbankmedia.IsNotFound(err) && !restart {
 			return job, d.JobID, err
 		}
 	}

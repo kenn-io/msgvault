@@ -460,8 +460,16 @@ func (s *Store) RecordDocbankAttachment(
 	return nil
 }
 
-// Backfill clears these outcomes so processing can be requested again.
-const docbankRequeueOutcomes = "'consent','stale_authority','pdf_password_required','rendition_operator_required','invalid_receipt'"
+// DocbankRequeueOutcomes are cleared by backfill so processing can be requested again.
+var DocbankRequeueOutcomes = []string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "invalid_receipt"}
+
+// DocbankRequeueOutcome reports whether backfill can retry a processing failure.
+func DocbankRequeueOutcome(code string) bool {
+	return slices.Contains(DocbankRequeueOutcomes, code)
+}
+
+// DocbankProcessingRetryRequested allows one restart of a recoverable saved job.
+const DocbankProcessingRetryRequested = "retry_requested"
 
 // RetryDocbankAttachments requeues failures and restarts discovery in one transaction.
 func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string) error {
@@ -472,6 +480,19 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 			SET state = 'sending', reason = '', attempts = 0, next_action_at = NULL
 			WHERE destination_key = ? AND state = 'failed'`, destination); err != nil {
 			return fmt.Errorf("requeue failed attachment mirror deliveries: %w", err)
+		}
+		if _, err := q.Exec(`
+			DELETE FROM docbank_attachment_processing
+			WHERE destination_key = ? AND next_action_at IS NULL
+			  AND outcome IN ('`+strings.Join(DocbankRequeueOutcomes, "','")+`')`, destination); err != nil {
+			return fmt.Errorf("requeue recoverable attachment processing outcomes: %w", err)
+		}
+		if _, err := q.Exec(`
+			UPDATE docbank_attachment_processing
+			SET outcome = ?, next_action_at = ?
+			WHERE destination_key = ? AND outcome = 'requested' AND job_id <> ''
+			  AND next_action_at IS NOT NULL`, DocbankProcessingRetryRequested, s.timestampValue(time.Now().UTC()), destination); err != nil {
+			return fmt.Errorf("request retry of pending attachment processing: %w", err)
 		}
 		if _, err := q.Exec(`DELETE FROM archive_metadata WHERE key = ?`, beeperMediaScanKey(destination)); err != nil {
 			return fmt.Errorf("reset attachment mirror discovery: %w", err)
