@@ -526,6 +526,26 @@ func (s *Store) AttachIdentityMatchEvidenceSourceContext(
 	})
 }
 
+// HasRejectedParticipantPairContext reports whether the user rejected any
+// match between two participants on a service, whatever the basis or key.
+func (s *Store) HasRejectedParticipantPairContext(ctx context.Context, leftID, rightID int64, serviceSlug string) (bool, error) {
+	if leftID > rightID {
+		leftID, rightID = rightID, leftID
+	}
+	var rejected bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM identity_match_candidates c
+		JOIN communication_services cs ON cs.id = c.service_id
+		WHERE c.left_kind = 'participant' AND c.left_id = ?
+		  AND c.right_kind = 'participant' AND c.right_id = ?
+		  AND c.state = 'rejected' AND cs.slug = ?
+	)`, leftID, rightID, serviceSlug).Scan(&rejected)
+	if err != nil {
+		return false, fmt.Errorf("find rejected participant pair: %w", err)
+	}
+	return rejected, nil
+}
+
 func (s *Store) ListIdentityMatchCandidatesContext(
 	ctx context.Context, states []IdentityMatchState, limit, offset int,
 ) ([]IdentityMatchCandidate, error) {
