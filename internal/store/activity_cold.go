@@ -113,7 +113,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	if err != nil {
 		return nil, filters, err
 	}
-	where := `m.conversation_id IN (SELECT conversation_id FROM conversation_policy WHERE effective_tier='cold')`
+	where := `m.message_type<>'call_record' AND m.conversation_id IN (SELECT conversation_id FROM conversation_policy WHERE effective_tier='cold')`
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	if q.ConversationID > 0 {

@@ -6,16 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechstate"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assert := assertpkg.New(t)
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 	source, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000001")
 	require.NoError(err)
@@ -83,18 +83,19 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 }
 
 func TestMigrationRepairsFailedMMSAfterOriginalSendStateMigration(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 	source, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000002")
-	require.NoError(t, err)
+	require.NoError(err)
 	conversationID, err := f.Store.EnsureConversationWithType(source.ID, "failed-mms", "direct_chat", "Synthetic peer")
-	require.NoError(t, err)
+	require.NoError(err)
 	id, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "failed-mms", MessageType: "mms", IsFromMe: true})
-	require.NoError(t, err)
-	require.NoError(t, f.Store.UpsertMessageRawWithFormat(id, []byte(`{"MessageBox":5}`), synctechstate.RawFormat))
+	require.NoError(err)
+	require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"MessageBox":5}`), synctechstate.RawFormat))
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE applied_migrations SET version=1 WHERE name=?`), "synctech_unsent_messages_v1")
-	require.NoError(t, err)
-	require.NoError(t, f.Store.InitSchemaContext(t.Context()))
+	require.NoError(err)
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
 	var sent bool
-	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT is_sent FROM messages WHERE id=?`), id).Scan(&sent))
-	assert.False(t, sent)
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT is_sent FROM messages WHERE id=?`), id).Scan(&sent))
+	assertpkg.False(t, sent)
 }
