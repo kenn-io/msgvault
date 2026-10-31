@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,4 +118,44 @@ func TestCacheExportParityCopyParquetRoundTrip(t *testing.T) {
 	require.NoError(db.QueryRow(`SELECT id, name FROM read_parquet(?)`, filepath.Join(dir, "data.parquet")).Scan(&id, &name))
 	require.Equal(7, id)
 	require.Equal("seven", name)
+}
+
+type participantClusterInsertRecorder struct {
+	*sql.DB
+	inserts int
+}
+
+func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if strings.HasPrefix(query, `INSERT INTO tmp_participant_clusters VALUES `) {
+		r.inserts++
+	}
+	return r.DB.ExecContext(ctx, query, args...)
+}
+
+func TestStageParticipantClustersBatchesInsertsWithoutChangingRows(t *testing.T) {
+	require := require.New(t)
+	db, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(db.Close()) })
+	recorder := &participantClusterInsertRecorder{DB: db}
+
+	clusters := make(map[int64]int64, 2065)
+	for id := int64(1); id <= 2065; id++ {
+		clusters[id] = id%17 + 1
+	}
+	require.NoError(stageParticipantClusters(t.Context(), recorder, clusters))
+	require.Equal(3, recorder.inserts, "2065 rows must use two full batches and one final batch")
+
+	rows, err := db.Query(`SELECT participant_id, canonical_id FROM tmp_participant_clusters`)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	got := make(map[int64]int64, len(clusters))
+	for rows.Next() {
+		var participantID, canonicalID int64
+		require.NoError(rows.Scan(&participantID, &canonicalID))
+		got[participantID] = canonicalID
+	}
+	require.NoError(rows.Err())
+	require.Equal(clusters, got)
 }
