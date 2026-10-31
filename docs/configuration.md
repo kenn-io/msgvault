@@ -2425,8 +2425,8 @@ that blocks storage, can also each send one. Each event carries only:
   `under_1m` below one minute, `1_to_5m` below five minutes, `5_to_30m` through
   30 minutes, and `over_30m` above 30 minutes
 - on `screen_viewed`, the first surface (`web` or `tui`) and a fixed screen name:
-  `everything`, `directory`, `directory_review`, `files`,
-  `relationships`, `sources`, `deletions`, `settings`, `message`,
+  `everything`, `directory`, `directory_review`, `files`, `operations`,
+  `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
   `email`, `texts`, or `meetings`. Unknown names are dropped.
 - the msgvault version and commit
 - the distribution channel that built the binary, such as `homebrew` or `kenn`
