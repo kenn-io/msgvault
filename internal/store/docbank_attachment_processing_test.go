@@ -186,4 +186,22 @@ func TestDocbankAttachmentProcessingBackfillDuringPoll(t *testing.T) {
 	var outcome string
 	require.NoError(f.Store.DB().QueryRow(`SELECT outcome FROM docbank_attachment_processing`).Scan(&outcome))
 	assert.Equal("requested", outcome, "a worker that read the retry request can consume it")
+
+	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
+	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "attachments", "documents", "new-fp"))
+	retry, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "new-fp", new(store.DocbankAttachmentProcessingCursor), 20)
+	require.NoError(err)
+	require.Len(retry, 1)
+	assert.Empty(retry[0].JobID, "a changed profile starts a new job")
+	retry[0].Fingerprint, retry[0].Outcome, retry[0].JobID = "new-fp", "requested", fmt.Sprintf("%064x", 0x5679)
+	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", retry[0], time.Now().Add(time.Hour)))
+	var fingerprint, savedJobID string
+	require.NoError(f.Store.DB().QueryRow(`SELECT fingerprint, outcome, job_id FROM docbank_attachment_processing`).Scan(&fingerprint, &outcome, &savedJobID))
+	assert.Equal("new-fp", fingerprint)
+	assert.Equal("requested", outcome)
+	assert.Equal(retry[0].JobID, savedJobID)
+	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
+	require.NoError(err)
+	assert.Equal(int64(0), counts.Waiting)
+	assert.Equal(int64(1), counts.Requested)
 }

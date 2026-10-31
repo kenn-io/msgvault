@@ -1070,13 +1070,15 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 
 func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 	for _, tc := range []struct {
-		backfill, outcome string
+		backfill, state, outcome string
 	}{
-		{"before_poll", "consent"},
-		{"during_poll", "consent"},
-		{"before_poll", "unsupported_format"},
+		{"before_poll", "failed", "consent"},
+		{"during_poll", "failed", "consent"},
+		{"before_poll", "failed", "unsupported_format"},
+		{"before_poll", "operator_required", ""},
+		{"during_poll", "operator_required", ""},
 	} {
-		t.Run(tc.backfill+"/"+tc.outcome, func(t *testing.T) {
+		t.Run(tc.backfill+"/"+tc.state+"/"+tc.outcome, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
@@ -1085,7 +1087,7 @@ func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 			assert.Equal([]string{"a"}, r.processing.Plans)
 
 			jobID := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
-			r.processing.States[jobID] = [3]string{"failed", "rendition", tc.outcome}
+			r.processing.States[jobID] = [3]string{tc.state, "rendition", tc.outcome}
 			r.processingDue()
 
 			if tc.backfill == "during_poll" {

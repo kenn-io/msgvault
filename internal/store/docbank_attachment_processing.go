@@ -103,7 +103,7 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
  (destination_key, content_hash, fingerprint, outcome, job_id, next_action_at) VALUES (?, ?, ?, ?, ?, ?)
  ON CONFLICT (destination_key, content_hash) DO UPDATE SET
  fingerprint = excluded.fingerprint, outcome = excluded.outcome, job_id = excluded.job_id,
- next_action_at = excluded.next_action_at WHERE docbank_attachment_processing.outcome <> 'retry_requested' OR ? = 'retry_requested'`),
+ next_action_at = excluded.next_action_at WHERE docbank_attachment_processing.outcome <> 'retry_requested' OR ? = 'retry_requested' OR excluded.fingerprint <> docbank_attachment_processing.fingerprint`),
 		dest, d.ContentHash, d.Fingerprint, d.Outcome, d.JobID, next, d.ReadOutcome)
 	if err != nil {
 		return fmt.Errorf("record attachment processing result: %w", err)
