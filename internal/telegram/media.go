@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"mime"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -17,10 +17,7 @@ func isMediaWarning(value string) bool {
 	switch value {
 	case "(File unavailable, please try again later)",
 		"(File exceeds maximum size. Change data exporting settings to download.)",
-		"(File not included. Change data exporting settings to download.)",
-		"(Photo unavailable, please try again later)",
-		"(Photo exceeds maximum size. Change data exporting settings to download.)",
-		"(Photo not included. Change data exporting settings to download.)":
+		"(File not included. Change data exporting settings to download.)":
 		return true
 	}
 	return false
@@ -29,6 +26,9 @@ func isMediaWarning(value string) bool {
 // mediaWrites prepares fixed slots before the message transaction. Existing
 // slots with bytes are left intact, even when a later export renames files.
 func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Message, opts ImportOptions, summary *ImportSummary) ([]store.AttachmentWrite, error) {
+	if m.Photo == "" && m.File == "" && m.Thumbnail == "" && m.ContactVCard == "" {
+		return nil, nil
+	}
 	existing := map[string]store.AttachmentRef{}
 	if messageID != 0 {
 		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
@@ -40,7 +40,7 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 		}
 	}
 	var writes []store.AttachmentWrite
-	for _, slot := range []struct{ key, path string }{{"photo", m.Photo}, {"file", m.File}, {"thumbnail", m.Thumbnail}} {
+	for _, slot := range []struct{ key, path string }{{"photo", m.Photo}, {"file", m.File}, {"thumbnail", m.Thumbnail}, {"contact_vcard", m.ContactVCard}} {
 		if slot.path == "" {
 			continue
 		}
@@ -84,9 +84,13 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 			write.MIMEType = "application/octet-stream"
 		}
 		if opts.AttachmentsDir != "" {
-			var err error
-			write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(opts.AttachmentsDir, filepath.Join(opts.RootDir, slot.path), 0)
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			source := filepath.Join(opts.RootDir, slot.path)
+			info, err := os.Lstat(source)
+			if err == nil && info.Mode().IsRegular() {
+				write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(opts.AttachmentsDir, source, 0)
+			}
+			pathErr, sourceError := errors.AsType[*os.PathError](err)
+			if err != nil && (!sourceError || pathErr.Path != source) {
 				return nil, fmt.Errorf("telegram: store media %q: %w", slot.path, err)
 			}
 			if err != nil {

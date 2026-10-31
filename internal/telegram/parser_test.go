@@ -45,7 +45,6 @@ func TestExportReaderMalformed(t *testing.T) {
 		{"sender", `{"id":1,"type":"message","date_unixtime":"1","from_id":"123","text":""}`, "invalid peer id"},
 		{"reply peer", `{"id":1,"type":"message","date_unixtime":"1","reply_to_peer_id":"userx","text":""}`, "invalid peer id"},
 		{"array text", `{"id":1,"type":"message","date_unixtime":"1","text":["keep",{"text":123}]}`, "text must be a string"},
-		{"missing text", `{"id":1,"type":"message","date_unixtime":"1"}`, "text must be a string"},
 		{"null text", `{"id":1,"type":"message","date_unixtime":"1","text":null}`, "text must be a string"},
 		{"bad time", `{"id":1,"type":"message","date_unixtime":"bad","text":""}`, "date_unixtime"},
 		{"missing time", `{"id":1,"type":"message","date":"2020-01-01T00:00:00","text":""}`, "date_unixtime"},

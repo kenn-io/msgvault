@@ -160,7 +160,7 @@ func decodeChat(dec *jsontext.Decoder, visit func(*Chat) error) error {
 	if chat.PeerKey() != "" {
 		for i := range chat.Messages {
 			m := &chat.Messages[i]
-			if m.Type != "message" {
+			if !m.supported() {
 				continue
 			}
 			if err := validateMessage(m); err != nil {
@@ -191,7 +191,9 @@ func validateMessage(m *Message) error {
 			text.WriteString(entity.Text)
 		}
 		m.Text = text.String()
-	} else if err := json.Unmarshal(m.RawText, &m.Text); err != nil || len(m.RawText) == 0 || m.RawText[0] != '"' {
+	} else if len(m.RawText) == 0 {
+		m.Text = ""
+	} else if err := json.Unmarshal(m.RawText, &m.Text); err != nil || m.RawText[0] != '"' {
 		return errors.New("text must be a string when text_entities is empty")
 	}
 	return nil

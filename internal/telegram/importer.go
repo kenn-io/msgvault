@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -36,6 +37,7 @@ type ImportOptions struct {
 }
 
 type ImportSummary struct {
+	SourceID                  int64
 	Duration                  time.Duration
 	ChatsProcessed            int
 	ChatsSkipped              int
@@ -55,9 +57,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	start := time.Now()
 	summary = &ImportSummary{}
 	defer func() { summary.Duration = time.Since(start) }()
-	if opts.Limit < 0 {
-		return summary, errors.New("telegram: --limit must be non-negative")
-	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -92,6 +91,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return summary, err
 	}
 	summary.ArchiveWritten = true
+	summary.SourceID = source.ID
 	cp := telegramCheckpoint{Version: checkpointVersion, RootDir: root, ExportSize: info.Size(), ExportModTime: info.ModTime().UnixNano()}
 	if !opts.NoResume {
 		prev, err := st.GetLatestCheckpointedSync(source.ID)
@@ -139,11 +139,12 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		}
 	}()
 	participants := map[string]int64{}
+	named := map[string]bool{}
 	resolve := func(id, name string) (int64, error) {
 		if id == "" {
 			return 0, nil
 		}
-		if pid, ok := participants[id]; ok {
+		if pid, ok := participants[id]; ok && (name == "" || named[id]) {
 			return pid, nil
 		}
 		pid, err := st.EnsureParticipantByIdentifierContext(ctx, SourceType, id, name)
@@ -151,10 +152,15 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			return 0, err
 		}
 		participants[id] = pid
+		named[id] = name != ""
 		return pid, nil
 	}
 	defer func() { summary.ParticipantsResolved = len(participants) }()
-	ownerPID, err := resolve(owner, reader.OwnerName())
+	ownerName := ""
+	if ownerID == reader.OwnerID() {
+		ownerName = reader.OwnerName()
+	}
+	ownerPID, err := resolve(owner, ownerName)
 	if err != nil {
 		return summary, err
 	}
@@ -172,7 +178,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			summary.ChatsSkipped++
 			logger.Warn("telegram: skipping unknown chat type", "type", chat.Type)
 		} else {
-			if err := importChat(ctx, st, resolve, source.ID, ownerPID, reader.OwnerName(), chat, opts, summary); err != nil {
+			if err := importChat(ctx, st, resolve, source.ID, ownerPID, ownerName, chat, opts, summary); err != nil {
 				return err
 			}
 			logger.Info("telegram: chat imported", "peer", chat.PeerKey())
@@ -204,7 +210,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 
 	ids := make([]string, 0, len(chat.Messages))
 	for _, m := range chat.Messages {
-		if m.Type == "message" {
+		if m.supported() {
 			ids = append(ids, fmt.Sprintf("%s:%d", peer, m.ID))
 		}
 	}
@@ -221,7 +227,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			summary.ServiceMessagesSkipped++
 			continue
 		}
-		if m.Type != "message" {
+		if !m.supported() {
 			summary.UnsupportedEntriesSkipped++
 			continue
 		}
@@ -294,11 +300,15 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		if err != nil {
 			return err
 		}
+		snippet := strings.TrimSpace(m.Text)
+		if utf8.RuneCountInString(snippet) > 200 {
+			snippet = string([]rune(snippet)[:200])
+		}
 		id, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
-			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: m.Text, Valid: m.Text != ""}, SizeEstimate: int64(len(m.Text))},
+			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(m.Text))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: peer, ConversationType: chat.ConvType(), Title: chat.Name, Participants: members, PreserveExistingParticipants: true},
 			Edited:       m.Edited != "" || m.EditedUnixtime != "",
-			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: &writes, FTS: &store.FTSDoc{Subject: chat.Name, Body: m.Text, FromAddr: m.FromName},
+			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: &writes, FTSFromStoredFields: true,
 		})
 		if err != nil {
 			return fmt.Errorf("telegram: persist %s: %w", key, err)

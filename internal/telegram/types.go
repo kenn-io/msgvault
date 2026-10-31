@@ -51,15 +51,19 @@ type Message struct {
 	FromName       string         `json:"from"`
 	FromID         string         `json:"from_id"`
 	RawText        jsontext.Value `json:"text"`
+	RichMessage    jsontext.Value `json:"rich_message,omitempty"`
 	TextEntities   []struct {
 		Text string `json:"text"`
 	} `json:"text_entities"`
-	Photo     string    `json:"photo"`
-	File      string    `json:"file"`
-	Thumbnail string    `json:"thumbnail"`
-	MediaType string    `json:"media_type"`
-	MimeType  string    `json:"mime_type"`
-	FileName  string    `json:"file_name"`
-	Text      string    `json:"-"`
-	SentAt    time.Time `json:"-"`
+	ContactVCard string    `json:"contact_vcard"`
+	Photo        string    `json:"photo"`
+	File         string    `json:"file"`
+	Thumbnail    string    `json:"thumbnail"`
+	MediaType    string    `json:"media_type"`
+	MimeType     string    `json:"mime_type"`
+	FileName     string    `json:"file_name"`
+	Text         string    `json:"-"`
+	SentAt       time.Time `json:"-"`
 }
+
+func (m *Message) supported() bool { return m.Type == "message" && len(m.RichMessage) == 0 }

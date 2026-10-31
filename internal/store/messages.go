@@ -111,6 +111,8 @@ type MessagePersistData struct {
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
 	SyncRunItem               *SyncRunItem
+	// FTSFromStoredFields indexes the stored body and envelope instead of FTS.
+	FTSFromStoredFields bool
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -2116,21 +2118,26 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
 			q := boundQuerier{ctx: ctx, q: tx}
 			if data.MIMEAttachmentReplacement != nil {
-				if err := s.replaceMIMEAttachmentsWith(q, id, data.MIMEAttachmentReplacement); err != nil {
-					return fmt.Errorf("persist attachments: %w", err)
-				}
-				if err := recomputeMessageAttachmentStatsWith(q, id); err != nil {
-					return fmt.Errorf("recompute attachment stats: %w", err)
+				if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+					return err
 				}
 			}
 			if data.Edited {
-				if _, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, true, id); err != nil {
-					return fmt.Errorf("mark message edited: %w", err)
-				}
+				return setMessageEditedStateWith(q, id, true)
 			}
 			return nil
 		},
 	)
+}
+
+func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
+	if err := s.replaceMIMEAttachmentsWith(q, messageID, replacement); err != nil {
+		return fmt.Errorf("persist attachments: %w", err)
+	}
+	if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+		return fmt.Errorf("recompute attachment stats: %w", err)
+	}
+	return nil
 }
 
 // PersistMessageWithParticipantsContext resolves participants and persists the
@@ -2221,13 +2228,7 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 			data.Message.RFC822MessageID, messageID); err != nil {
 			return fmt.Errorf("replace repair message RFC Message-ID: %w", err)
 		}
-		if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
-			return fmt.Errorf("replace repair message attachments: %w", err)
-		}
-		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
-			return fmt.Errorf("recompute repair message attachment stats: %w", err)
-		}
-		return nil
+		return s.persistAttachmentSnapshotWith(q, messageID, data.MIMEAttachmentReplacement)
 	}
 	messageID, err := s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLock{Sources: []int64{expected.SourceID}},
@@ -2504,8 +2505,18 @@ func (s *Store) persistMessageWith(
 	if err := s.refreshAccountAttributionAfterWriteTx(ctx, tx, messageID, delivery); err != nil {
 		return 0, err
 	}
-	if data.FTS != nil && s.fts5Available {
-		fts := *data.FTS
+	if (data.FTS != nil || data.FTSFromStoredFields) && s.fts5Available {
+		var fts FTSDoc
+		if data.FTSFromStoredFields {
+			row, err := s.loadDerivedEmailText(q, messageID)
+			if err != nil {
+				return 0, fmt.Errorf("read stored FTS fields: %w", err)
+			}
+			fts = row.fts
+			fts.Body = row.body
+		} else {
+			fts = *data.FTS
+		}
 		fts.MessageID = messageID
 		if err := s.dialect.FTSUpsert(q, fts); err != nil {
 			return 0, fmt.Errorf("upsert fts: %w", err)
@@ -3466,9 +3477,13 @@ func (s *Store) SetMessageEditedState(messageID int64, edited bool) error {
 // SetMessageEditedStateContext honors cancellation during SetMessageEditedState.
 func (s *Store) SetMessageEditedStateContext(ctx context.Context, messageID int64, edited bool) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		_, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, edited, messageID)
-		return err
+		return setMessageEditedStateWith(q, messageID, edited)
 	})
+}
+
+func setMessageEditedStateWith(q querier, messageID int64, edited bool) error {
+	_, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, edited, messageID)
+	return err
 }
 
 // SetMessageReplyContext links a message to the message it replies to while

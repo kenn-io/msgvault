@@ -342,7 +342,7 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 }
 
 func TestImportFillsMissingMediaSlots(t *testing.T) {
-	for _, initial := range []string{"(Photo not included. Change data exporting settings to download.)", "old-name.jpg"} {
+	for _, initial := range []string{"(File not included. Change data exporting settings to download.)", "old-name.jpg"} {
 		t.Run(initial, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -392,7 +392,7 @@ func TestImportFillsMissingMediaSlots(t *testing.T) {
 }
 
 func TestImportMediaFailureIsRetryable(t *testing.T) {
-	for _, kind := range []string{"source", "storage", "escape", "absolute"} {
+	for _, kind := range []string{"directory", "symlink", "unreadable", "storage", "escape", "absolute"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -402,8 +402,14 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			path := "photo.jpg"
 			opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: filepath.Join(t.TempDir(), "attachments")}
 			switch kind {
-			case "source":
+			case "directory":
 				require.NoError(os.Mkdir(media, 0700))
+			case "symlink":
+				target := filepath.Join(t.TempDir(), "photo.jpg")
+				require.NoError(os.WriteFile(target, []byte("photo"), 0600))
+				require.NoError(os.Symlink(target, media))
+			case "unreadable":
+				require.NoError(os.WriteFile(media, []byte("photo"), 0000))
 			case "storage":
 				require.NoError(os.WriteFile(media, []byte("photo"), 0600))
 				require.NoError(os.WriteFile(opts.AttachmentsDir, []byte("blocked"), 0600))
@@ -415,23 +421,34 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			encodedPath, err := json.Marshal(path)
 			require.NoError(err)
 			writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":`+string(encodedPath)+`}]}`)
-			_, err = Import(t.Context(), st, opts)
-			require.Error(err)
-			var n int
-			require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
-			assert.Zero(n)
+			summary, err := Import(t.Context(), st, opts)
+			sourceMissing := kind == "directory" || kind == "symlink" || kind == "unreadable"
+			if sourceMissing {
+				require.NoError(err)
+				assert.EqualValues(1, summary.MessagesAdded)
+				assert.Equal(1, summary.AttachmentsMissing)
+			} else {
+				require.Error(err)
+				var n int
+				require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
+				assert.Zero(n)
+			}
 			if kind == "escape" || kind == "absolute" {
 				return
 			}
-			if kind == "source" {
+			if sourceMissing {
 				require.NoError(os.Remove(media))
 				require.NoError(os.WriteFile(media, []byte("photo"), 0600))
 			} else {
 				require.NoError(os.Remove(opts.AttachmentsDir))
 			}
-			summary, err := Import(t.Context(), st, opts)
+			summary, err = Import(t.Context(), st, opts)
 			require.NoError(err)
-			assert.EqualValues(1, summary.MessagesAdded)
+			if sourceMissing {
+				assert.Zero(summary.MessagesAdded)
+			} else {
+				assert.EqualValues(1, summary.MessagesAdded)
+			}
 			assert.Equal(1, summary.AttachmentsStored)
 		})
 	}
@@ -482,4 +499,83 @@ func TestImportCompletionErrorsReported(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
 	assert.Equal(1, n)
+}
+
+func TestImportUnsupportedAndEmptyText(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	writeExport(t, root, `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"before"},{"id":2,"type":"message","date_unixtime":"1","rich_message":{"blocks":[]}},{"type":"future_record"},{"id":3,"type":"message","date_unixtime":"1"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"after"}]}]}}`)
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
+	require.NoError(err)
+	assert.EqualValues(3, summary.MessagesAdded)
+	assert.EqualValues(2, summary.UnsupportedEntriesSkipped)
+	var n int
+	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages WHERE source_message_id = 'user2:3' AND snippet IS NULL").Scan(&n))
+	assert.Equal(1, n)
+}
+
+func TestImportContactVCard(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","contact_vcard":"contact.vcard"}]}`)
+	const vcard = "BEGIN:VCARD\nVERSION:3.0\nFN:Example Contact\nEND:VCARD\n"
+	require.NoError(os.WriteFile(filepath.Join(root, "contact.vcard"), []byte(vcard), 0600))
+	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()}
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	assert.Equal(1, summary.AttachmentsStored)
+	var path string
+	require.NoError(st.DB().QueryRow("SELECT storage_path FROM attachments WHERE source_part_key = 'contact_vcard'").Scan(&path))
+	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, path))
+	require.NoError(err)
+	assert.Equal(vcard, string(data))
+}
+
+func TestImportParticipantNameBackfill(t *testing.T) {
+	for _, sender := range []string{"user1", "user3"} {
+		t.Run(sender, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","from_id":"`+sender+`","text":"first"},{"id":2,"type":"message","date_unixtime":"2","from_id":"`+sender+`","from":"Example Sender","text":"second"}]}`)
+			_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+			require.NoError(err)
+			var name string
+			require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_type = 'telegram' AND pi.identifier_value = ?"), sender).Scan(&name))
+			assert.Equal("Example Sender", name)
+		})
+	}
+}
+
+func TestImportSearchMatchesRebuiltIndex(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sender, err := st.EnsureParticipantByIdentifierContext(t.Context(), "telegram", "user3", "Senderneedle")
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind("UPDATE participants SET email_address = ? WHERE id = ?"), "searchowner@example.org", sender)
+	require.NoError(err)
+	root := t.TempDir()
+	writeExport(t, root, `{"id":2,"name":"Chatneedle","type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","from_id":"user3","from":"Senderneedle","text":"Bodyneedle"}]}`)
+	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(err)
+	for _, rebuilt := range []bool{false, true} {
+		if rebuilt {
+			_, err = st.RebuildFTS(nil)
+			require.NoError(err)
+		}
+		for _, tc := range []struct {
+			term string
+			want int64
+		}{{"Chatneedle", 0}, {"Senderneedle", 0}, {"Bodyneedle", 1}, {"searchowner", 1}} {
+			_, total, err := st.SearchMessages(tc.term, 0, 100)
+			require.NoError(err)
+			assert.Equal(tc.want, total, "term %s, rebuilt %t", tc.term, rebuilt)
+		}
+	}
 }
