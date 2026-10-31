@@ -1315,8 +1315,8 @@ func TestApplyObservationBatchUsesSameBatchPremiseSupportSourceLocks(t *testing.
 	root := observationGet(t, f.store, rootID)
 	in.Proposals = []personobs.ProposedObservation{
 		{
-			PersonID: in.PersonID, Level: personobs.LevelExplicit, Origin: personobs.OriginReasoning,
-			Kind: personobs.KindState, Content: root.Content, ConfidenceBP: 900,
+			PersonID: in.PersonID, Level: personobs.LevelExplicit, Origin: personobs.OriginExtraction,
+			Kind: personobs.KindState, Content: root.Content, Attribution: personobs.AttributionSelf, ConfidenceBP: 900,
 			Support: []personobs.SupportInput{addedSupport}, ReinforcesID: &rootID,
 		},
 		{
