@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func TestMeetingLinksDedupUndoAndPurge(t *testing.T) {
@@ -170,6 +173,87 @@ func TestMeetingLinksSourceMerge(t *testing.T) {
 	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: originalSource})
 	requirements.NoError(err)
 	assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
+}
+
+func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
+	for _, mode := range []string{"automatic", "saved", "new decision"} {
+		t.Run(mode, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			eventData, event := calendarFixture(t, st, "event", singleLinkRaw("event", "merge@example.org"))
+			data, note := projectionFixture(t, st, "unique-note", "meeting_json", meetingProjectionRaw)
+			wantActions := 1
+			if mode == "automatic" {
+				requirements.NoError(st.UpsertMessageRawWithFormat(note, []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"merge@example.org","startsAt":"2027-03-14T10:00:00Z"}}`), "twenty_json"))
+				wantActions = 0
+			}
+			target := OccurrenceRef{MessageID: event}
+			if mode == "saved" {
+				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
+			}
+			destination, err := st.GetOrCreateSource("meeting_import", "empty@example.com")
+			requirements.NoError(err)
+			merged, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: destination.ID})
+			requirements.NoError(err)
+			requirements.Equal(int64(1), merged.MessagesMoved)
+			requirements.Zero(merged.DuplicatesHidden)
+			var archived bool
+			requirements.NoError(st.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM source_merge_archive_only_messages WHERE message_id=?)`, note).Scan(&archived))
+			requirements.True(archived)
+			ids := []int64{note}
+			_, err = st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
+			requirements.NoError(err, "a unique archived note remains readable")
+			if mode == "new decision" {
+				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
+			}
+			ref := identityRef(event)
+			links, err := st.MeetingLinksContext(t.Context(), note)
+			requirements.NoError(err)
+			if assertions.Len(links, 1) {
+				assertions.Equal(ref, links[0].Ref)
+			}
+			for _, transcriptIDs := range [][]int64{ids, nil} {
+				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: transcriptIDs})
+				requirements.NoError(err)
+				assertions.Equal("occ:"+ref, got.ByTranscript[note].Key)
+				assertions.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+			}
+			counts, err := st.MeetingActionItemCountsContext(t.Context(), ids)
+			requirements.NoError(err)
+			assertions.Equal(map[int64]int{note: wantActions}, counts)
+			// Grant visibility follows the destination, not the retired source.
+			for _, sourceID := range []int64{data.Message.SourceID, destination.ID} {
+				ctx := sourcescope.WithSourceIDs(t.Context(), []int64{sourceID, eventData.Message.SourceID})
+				got, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: ids})
+				requirements.NoError(err)
+				counts, err := st.MeetingActionItemCountsContext(ctx, ids)
+				requirements.NoError(err)
+				if sourceID == destination.ID {
+					assertions.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+					assertions.Equal(map[int64]int{note: wantActions}, counts)
+				} else {
+					assertions.Empty(got.ByTranscript)
+					assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+					assertions.Empty(counts)
+				}
+			}
+			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, target))
+			assertions.Empty(linkedMeetingRefs(t, st, note)[note])
+			requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
+			assertions.Equal(ref, linkedMeetingRefs(t, st, note)[note])
+			_, err = st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, note)
+			requirements.NoError(err)
+			_, err = st.MeetingLinksContext(t.Context(), note)
+			assertions.ErrorIs(err, sql.ErrNoRows)
+			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: ids})
+			requirements.NoError(err)
+			assertions.Empty(got.ByTranscript)
+			assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+			counts, err = st.MeetingActionItemCountsContext(t.Context(), ids)
+			requirements.NoError(err)
+			assertions.Empty(counts)
+		})
+	}
 }
 
 func TestMeetingLinksSubsetCopy(t *testing.T) {
