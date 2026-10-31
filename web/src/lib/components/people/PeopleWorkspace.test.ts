@@ -280,6 +280,33 @@ it('refreshes the Saved list after merging profiles from Details', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
+it('offers Retry without the previous person page when a Directory selection fails to load', async () => {
+  const client = clientFor({
+    '/api/v1/people/directory': () => Response.json({ people: [{ ...profile(7, 1, [1]), organizations: [], categories: [], contact_state: 'active' }] }),
+    '/api/v1/people/7': () => Response.json(profile(7, 1, [1])),
+    '/api/v1/people/9': () => { throw new Error('Could not load selected person.'); },
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': async request => Response.json({ participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC', days: [], annual: [], current: { temperature: 50 }, peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1 }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', {}, false);
+  const onNavigate = vi.fn(patch => state.commitNavigation(patch));
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByText('Synthetic One'));
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: 'cluster:1', relationshipFiles: false }));
+    await view.rerender({ urlState: state.current });
+    await screen.findByRole('heading', { name: 'Alice Example' });
+    state.commitNavigation({ directoryPersonID: 9 });
+    await view.rerender({ urlState: state.current });
+    await screen.findByText('Could not load selected person.');
+    expect.soft(screen.queryByRole('button', { name: 'Retry' })).not.toBeNull();
+    expect.soft(screen.queryByRole('group', { name: 'Person page' })).toBeNull();
+    expect.soft(screen.queryByRole('heading', { name: 'Alice Example' })).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it('ignores a completed saved profile lookup after an observed person supersedes it', async () => {
   const saved = { ...profile(92, 1, []), display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active' };
   let release!: (response: Response) => void;
