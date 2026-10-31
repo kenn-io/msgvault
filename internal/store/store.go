@@ -1654,7 +1654,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("create meeting start index: %w", err)
 		}
 	}
-	if err := s.runOnceMigration(ctx, migrationSynctechUnsentMessages, 1, false, s.migrateSynctechUnsentMessages); err != nil {
+	if err := s.runOnceMigration(ctx, migrationSynctechUnsentMessages, 2, false, s.migrateSynctechUnsentMessages); err != nil {
 		return fmt.Errorf("migrate Synctech unsent messages: %w", err)
 	}
 	// account: and received: filter on the account columns, and each sync
@@ -1918,6 +1918,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return fmt.Errorf("ensure activity projection triggers: %w", err)
+	}
+
+	if err := s.runOnceMigration(ctx, migrationMessagesHiddenTextBackfill, 1, false, s.backfillMessagesHiddenText); err != nil {
+		return fmt.Errorf("backfill messages hidden text flags: %w", err)
 	}
 
 	// Gmail exposes archived chat transcripts as MIME messages carrying its

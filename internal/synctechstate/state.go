@@ -17,6 +17,7 @@ const (
 	MMSBoxSent   = 2
 	MMSBoxDraft  = 3
 	MMSBoxOutbox = 4
+	MMSBoxFailed = 5
 )
 
 // SMSWasSent excludes draft, outbox, failed, and queued records.
@@ -29,10 +30,10 @@ func SMSWasSent(kind int) bool {
 	}
 }
 
-// MMSWasSent excludes draft and outbox records.
+// MMSWasSent excludes draft, outbox, and failed records.
 func MMSWasSent(box int) bool {
 	switch box {
-	case MMSBoxDraft, MMSBoxOutbox:
+	case MMSBoxDraft, MMSBoxOutbox, MMSBoxFailed:
 		return false
 	default:
 		return true

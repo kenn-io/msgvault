@@ -382,7 +382,8 @@ import (
 // 3.28.0 adds the typed calendar projection to calendar event message details.
 // 3.29.0 adds archived calendar occurrence listing, paging, detail and source scope.
 // 3.30.0 adds owner meeting link decisions and suggestions.
-const APISchemaVersion = "3.30.0"
+// 3.31.0 adds stored hidden text flags to message details and search rows.
+const APISchemaVersion = "3.31.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

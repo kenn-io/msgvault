@@ -81,3 +81,20 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 		assert.Equal(tt.wantSent, got, "message %d: %s %s", i, tt.messageType, tt.raw)
 	}
 }
+
+func TestMigrationRepairsFailedMMSAfterOriginalSendStateMigration(t *testing.T) {
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000002")
+	require.NoError(t, err)
+	conversationID, err := f.Store.EnsureConversationWithType(source.ID, "failed-mms", "direct_chat", "Synthetic peer")
+	require.NoError(t, err)
+	id, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "failed-mms", MessageType: "mms", IsFromMe: true})
+	require.NoError(t, err)
+	require.NoError(t, f.Store.UpsertMessageRawWithFormat(id, []byte(`{"MessageBox":5}`), synctechstate.RawFormat))
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE applied_migrations SET version=1 WHERE name=?`), "synctech_unsent_messages_v1")
+	require.NoError(t, err)
+	require.NoError(t, f.Store.InitSchemaContext(t.Context()))
+	var sent bool
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT is_sent FROM messages WHERE id=?`), id).Scan(&sent))
+	assert.False(t, sent)
+}

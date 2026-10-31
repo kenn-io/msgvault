@@ -2791,6 +2791,9 @@ attachments of the message. JSON includes `snippet` (the stored preview) and `co
 The `filename:` operator requires daemon API schema 3.14.0 or newer.
 FTS adds `match_snippet` when SQLite can supply a query-specific excerpt. FTS keeps
 its array output; vector/hybrid keep their object containing `results`.
+On newer `main` builds, every JSON result includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. False does not guarantee that text is visible.
+See `show-message` below for the detector and one-time backfill.
 
 Use hybrid for natural-language intent with lexical clues, and vector for
 meaning alone. Date operators filter before ranking; `--sort date` only sorts
@@ -3299,7 +3302,7 @@ reports those errors rather than retrying an ordinary or unscoped search. See
 [filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
 and the [API contract](api-server.md#filename-suggestions).
 
-### person track, provider, sweep, and facts
+### person track, tiers, provider, sweep, and facts
 
 Tracking chooses which profiles automatic maintenance may process. It does not
 grant consent to a provider or enroll a person in briefs.
@@ -3307,6 +3310,8 @@ grant consent to a provider or enroll a person in briefs.
 | Command | Purpose |
 |---|---|
 | `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
+| `person tiers preview [--json]` | List saved people in tier 1 or 2 (two-way contact or meetings), whether they are tracked, and the latest day that counted toward the tier. Reads only; `--json` gives the IDs to pass to `person track` |
+| `person tiers explain <person-id> [--json]` | Show every count behind one person's tier against its threshold |
 | `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
 | `person provider list` | List configured model profiles |
 | `person provider use <name>` | Select a checked profile and enable sweeps |
@@ -4790,6 +4795,20 @@ preserved. With JSON, cleaning changes
 
 JSON includes `web_url` when the selected daemon can provide a browser link.
 
+On newer `main` builds, JSON includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. The check uses a set of
+inline-style heuristics, plus `hidden` and legacy color attributes. Non-blank
+HTML that fails to parse also sets the flag. Text output writes
+`Warning: this message's HTML may hide text.` to stderr when flagged, including
+with `--body-only`. Message bodies stay unchanged. The check excludes
+stylesheets and browser layout. False does not guarantee that text is visible.
+Many newsletters hide a preview line, called a preheader, and those set the flag
+too. The flag marks hidden text rather than malicious intent.
+MCP `get_message` and `search_in_message`
+return the same stored flag. CLI `search --json` and MCP `search_message_bodies`
+also include it on every result row. Archive schema 16 flags older mail during
+a one-time backfill at archive initialization; new HTML writes refresh the flag.
+
 ## show-thread
 
 On newer `main` builds, read a conversation in chronological order with quoted
@@ -4812,6 +4831,10 @@ JSON includes `conversation_id`, `total`, `offset`, `has_more`, and `messages`
 containing message details with cleaned `body_text`. Text and JSON use the same
 `--strip-quoted` policy. Pass `--strip-quoted=false` to
 keep the archived body text unchanged.
+
+Each message in `show-thread --json` includes `hidden_text_present`, using the
+same check as `show-message`. Text output prints the same stderr warning once
+when any message on the shown page is flagged.
 
 ---
 

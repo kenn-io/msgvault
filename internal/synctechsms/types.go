@@ -38,7 +38,22 @@ const (
 	MMSBoxSent   MMSBox = synctechstate.MMSBoxSent
 	MMSBoxDraft  MMSBox = synctechstate.MMSBoxDraft
 	MMSBoxOutbox MMSBox = synctechstate.MMSBoxOutbox
+	MMSBoxFailed MMSBox = synctechstate.MMSBoxFailed
 )
+
+// SMSUnsent and MMSUnsent report drafts, outbox, queued, and failed texts.
+func SMSUnsent(t SMSType) bool {
+	return t == SMSTypeDraft || t == SMSTypeOutbox || t == SMSTypeFailed || t == SMSTypeQueued
+}
+
+func MMSUnsent(box MMSBox) bool {
+	return box == MMSBoxDraft || box == MMSBoxOutbox || box == MMSBoxFailed
+}
+
+// SMSFromOwner and MMSFromOwner report texts the owner wrote, sent or not.
+func SMSFromOwner(t SMSType) bool { return t == SMSTypeSent || SMSUnsent(t) }
+
+func MMSFromOwner(box MMSBox) bool { return box == MMSBoxSent || MMSUnsent(box) }
 
 type MMSAddressType int
 

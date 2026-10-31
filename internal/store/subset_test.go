@@ -3886,6 +3886,38 @@ func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 		"identity_is_from_me should hold its schema default (FALSE)")
 }
 
+// TestCopySubset_LegacySourceMissingHiddenTextFlag covers a source archive
+// written before messages.hidden_text_present. The copy must derive the flag
+// from the copied HTML bodies instead of leaving the column at its default.
+func TestCopySubset_LegacySourceMissingHiddenTextFlag(t *testing.T) {
+	require := require.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 1)
+
+	db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
+	require.NoError(err, "open source db")
+	_, err = db.Exec(`UPDATE message_bodies SET body_html = '<p>Hi</p><div style="display:none">Hidden</div>'`)
+	require.NoError(err, "store hidden HTML body")
+	var triggers string
+	require.NoError(db.QueryRow(`SELECT group_concat('DROP TRIGGER "' || name || '"', ';') FROM sqlite_master
+		WHERE type = 'trigger' AND sql LIKE '%hidden_text_present%'`).Scan(&triggers), "list triggers that name hidden_text_present")
+	_, err = db.Exec(triggers)
+	require.NoError(err, "drop triggers that name hidden_text_present")
+	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN hidden_text_present`)
+	require.NoError(err, "drop messages.hidden_text_present")
+	require.NoError(db.Close(), "close source db")
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 1, false)
+	require.NoError(err, "CopySubset from a source without hidden_text_present")
+	dstDB, err := sql.Open(sqliteutil.DriverName(), filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination db")
+	defer func() { _ = dstDB.Close() }()
+
+	var flagged int
+	require.NoError(dstDB.QueryRow(`SELECT COUNT(*) FROM messages WHERE hidden_text_present`).Scan(&flagged))
+	assert.Equal(t, 1, flagged, "copied hidden HTML must set hidden_text_present")
+}
+
 // TestCopySubset_SourceOnlyColumnWithQuoteInName covers a source archive whose
 // messages table carries a column the destination schema does not have, and
 // whose name contains a double quote. The column falls outside the two

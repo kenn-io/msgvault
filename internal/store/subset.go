@@ -228,13 +228,19 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("preserve copied calendar observation order: %w", err)
 	}
 
-	// The empty destination's schema initialization already recorded this
-	// migration. Rebuild derived meetings from copied raw, including old sources
-	// with no projection tables, through the normal resumable upgrade below.
-	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationMeetingProjectionV1); err != nil {
+	// The empty destination's schema initialization already recorded these
+	// migrations. Rebuild derived meetings and hidden text flags from copied
+	// data, including old sources without them, through the upgrade below.
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name IN (?, ?)`, migrationMeetingProjectionV1, migrationMessagesHiddenTextBackfill); err != nil {
 		_ = tx.Rollback()
 		closeAndCleanup()
-		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
+		return nil, fmt.Errorf("reset copied derived data migrations: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
 	// The empty destination applied this before any source rows were copied.
 	// Re-run it after copy so transferred Synctech records from older archives
