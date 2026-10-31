@@ -17107,9 +17107,9 @@ func (t TimelineNoteEntry) Validate() error {
 }
 
 type TimelineOmitted struct {
-	Budget map[string]struct{} `json:"budget"`
-	Cold   int64               `json:"cold"`
-	Noise  int64               `json:"noise"`
+	Budget map[string]any `json:"budget"`
+	Cold   int64          `json:"cold"`
+	Noise  int64          `json:"noise"`
 }
 
 type TimelineOpen struct {

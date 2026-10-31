@@ -16846,7 +16846,8 @@ components:
     TimelineOmitted:
       properties:
         budget:
-          additionalProperties: {}
+          additionalProperties:
+            x-go-type: any
           type: object
         cold:
           format: int64
