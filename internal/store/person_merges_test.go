@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/personobs"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -151,6 +152,42 @@ func TestMergePersons_RootsAndBindings(t *testing.T) {
 		IdempotencyKey:           "merge-already-absorbed", Actor: "test",
 	})
 	require.ErrorIs(err, store.ErrPersonNotFound)
+}
+
+func TestMergePersons_BlocksAbsorbedOwnerObservations(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	survivorParticipant := f.EnsureParticipant("owner-obs-survivor@example.com", "Survivor", "example.com")
+	absorbedParticipant := f.EnsureParticipant("owner-obs-absorbed@example.com", "Absorbed", "example.com")
+	survivor, _, err := f.Store.CreatePersonFromParticipant(survivorParticipant)
+	require.NoError(err)
+	absorbed, _, err := f.Store.CreatePersonFromParticipant(absorbedParticipant)
+	require.NoError(err)
+
+	ownerResult := applyObservationInput(t, f.Store, personobs.BatchInput{
+		PersonID: absorbed.ID,
+		Proposals: []personobs.ProposedObservation{{
+			PersonID: absorbed.ID, Level: personobs.LevelExplicit, Origin: personobs.OriginOwner,
+			Kind: personobs.KindState, Content: "[PERSON] wants to keep this assertion", ConfidenceBP: 1000,
+		}},
+	}, 0)
+	require.Len(ownerResult.Items, 1)
+	assert.Equal("created", ownerResult.Items[0].Outcome)
+
+	_, err = f.Store.MergePersonsContext(context.Background(), store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey: "merge-owner-observation", Actor: "test",
+	})
+	require.ErrorIs(err, store.ErrPersonMergeInvalid)
+	require.ErrorContains(err, "owner-authored observations")
+
+	_, err = f.Store.GetPersonContext(context.Background(), absorbed.ID)
+	require.NoError(err)
+	observation, err := f.Store.GetPersonObservation(context.Background(), ownerResult.Items[0].ObservationID)
+	require.NoError(err)
+	assert.Equal(personobs.OriginOwner, observation.Origin)
 }
 
 func TestMergePersons_CardDAVState(t *testing.T) {

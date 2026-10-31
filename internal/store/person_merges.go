@@ -318,6 +318,21 @@ func (s *Store) mergePersonsOnce(
 			absorbed.Revision != request.ExpectedAbsorbedRevision {
 			return ErrPersonRevisionConflict
 		}
+		// Observation writes use this key before inserting evidence and hold it
+		// through commit. Serialize the preservation check and deletion with
+		// those writes so a concurrent owner assertion cannot be cascaded away.
+		if err := s.lockPersonMutationTx(ctx, tx, absorbed.ID); err != nil {
+			return err
+		}
+		var hasOwnerObservations bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM person_observations WHERE person_id=? AND origin='owner'
+		)`, absorbed.ID).Scan(&hasOwnerObservations); err != nil {
+			return fmt.Errorf("check absorbed owner observations: %w", err)
+		}
+		if hasOwnerObservations {
+			return fmt.Errorf("%w: absorbed person has owner-authored observations that merge cannot preserve", ErrPersonMergeInvalid)
+		}
 		if err := s.lockPersonMergeVCardEnvelopesTx(
 			ctx, tx, survivor.ID, absorbed.ID,
 		); err != nil {
