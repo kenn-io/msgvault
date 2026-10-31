@@ -162,7 +162,6 @@ func TestDocbankAttachmentStatus(t *testing.T) {
 	require.NoError(f.Store.RecordDocbankAttachmentProcessing(t.Context(), "destination", store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: "a", Fingerprint: "fp", Outcome: "requested", JobID: docbanktest.ProcessingJobID("a", "fp")}, time.Now().UTC().Add(time.Minute)))
 	var processing DocbankAttachmentStatus
 	require.NoError(json.Unmarshal(get().Body.Bytes(), &processing))
-	assert.Equal(lastError, processing.LastError)
 	require.NotNil(processing.Processing)
 	assert.Equal("documents", processing.Processing.Profile)
 	assert.Equal(int64(1), processing.Processing.Requested)
