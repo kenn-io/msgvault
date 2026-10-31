@@ -42,7 +42,6 @@
         });
       }
       calendar = { year: wanted, days };
-
     }).catch((cause: unknown) => { if (!abort.signal.aborted) error = cause instanceof Error ? cause.message : 'Could not load activity.'; })
       .finally(() => { if (!abort.signal.aborted) loading = false; });
     return () => abort.abort();

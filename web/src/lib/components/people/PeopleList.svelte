@@ -176,8 +176,6 @@
         />
       {/if}
       <SelectDropdown class="sort-select" title="Sort" value={sort} options={sortOptions} onchange={onSortChange} />
-      <span class="spacer"></span>
-
     </div>
     {#if chips.length > 0}
       <div class="chips">
@@ -325,10 +323,6 @@
     flex: none;
   }
 
-  .toolbar-row > .spacer {
-    flex: 1;
-  }
-
   .chips {
     display: flex;
     flex-wrap: wrap;
@@ -379,8 +373,6 @@
   }
 
   .row.open {
-    border-start-start-radius: 0;
-    border-end-start-radius: 0;
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }

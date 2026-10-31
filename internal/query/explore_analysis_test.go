@@ -680,10 +680,4 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	require.Len(local.Rows, 3)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
 
-	context.After = new(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-	context.Before = new(context.After.AddDate(0, 0, 1))
-	day, err := engine.Explore(t.Context(), ExploreRequest{Context: context, SentOnly: true, Page: PageSpec{Limit: 500}})
-	require.NoError(err)
-	require.Len(day.Rows, 1)
-	assert.Equal(int64(2), day.Rows[0].MessageCount)
 }

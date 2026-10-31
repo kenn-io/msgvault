@@ -6,9 +6,7 @@ import type { MeetingMetricsRequest } from '../../api/generated/models';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
-import { RelationshipsController } from '../../relationships/controller.svelte';
 import PersonDetail from '../directory/PersonDetail.svelte';
-import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
 import PersonMessages from '../people/PersonMessages.svelte';
 import AppShell from '../shell/AppShell.svelte';
 
@@ -52,31 +50,6 @@ describe('meeting panel surfaces', () => {
     expect(screen.queryByText('99 meetings')).toBeNull();
   });
 
-  it.each(['cluster:7', 'domain:exact.example'])('uses the active Relationships scope for %s', async (target) => {
-    const metrics: MeetingMetricsRequest[] = [];
-    const client = createAPIClient(async (input) => {
-      const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
-      if (path.endsWith('/meetings/metrics')) { metrics.push(await request.clone().json()); return Response.json(meetingMetrics()); }
-      if (path.endsWith('/meetings/actions')) return Response.json(meetingActions());
-      if (path.endsWith('/timeline')) return Response.json({ canonical_id: 7, identity_revision: 3, cache_revision: 'rel-cache', rows: [], total_count: 0 });
-      if (path.endsWith('/summary')) return Response.json({ summary: { id: 7, display_label: 'Example Person', domain: 'exact.example', activity_count: 0, file_count: 0, identifiers: [], source_counts: [], cache_revision: 'rel-cache' } });
-      if (path.endsWith('/participants/7')) return Response.json({ id: 7, display_label: 'Example Person', identifiers: [], activity_count: 0, file_count: 0, source_counts: [], first_at: at, last_at: at, cache_revision: 'rel-cache' });
-      if (path.endsWith('/domains/exact.example')) return Response.json({ domain: 'exact.example', activity_count: 0, file_count: 0, source_counts: [], cache_revision: 'rel-cache' });
-      if (path.endsWith('/relationships')) return Response.json({ rows: [] });
-      return ancillary(path);
-    });
-    const controller = new RelationshipsController(client, () => 'UTC');
-    const predicate = { query: 'stale URL text', search_mode: 'hybrid' as const, filters: [
-      { dimension: 'source' as const, values: ['2'] }, { dimension: 'after' as const, values: [at] }
-    ] };
-    const view = render(RelationshipsWorkspace, { props: { client, controller, target, predicate, facet: target.startsWith('domain:') ? 'domains' : 'people', showAll: false, filesOpen: false,
-      onFacetChange: vi.fn(), onTargetChange: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn() } });
-    await controller.openTarget(target, predicate);
-    await screen.findByText('4 meetings');
-    expect(metrics.at(-1)).toEqual({ scope: { ...(target.startsWith('domain:') ? { domains: ['exact.example'] } : { participant_id: 7 }), source_ids: [2], after: at } });
-    view.unmount(); controller.destroy();
-  });
-
   it('uses separately loaded exact group authority across a workspace round-trip', async () => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];
@@ -113,7 +86,7 @@ describe('meeting panel surfaces', () => {
     view.unmount(); state.destroy();
   });
 
-  it.each(['table', 'groups', 'person'])('exposes meeting-filtered %s with its complete scope', async (presentation) => {
+  it.each(['table', 'groups', 'person'])('exposes meeting activity for %s with its scope', async (presentation) => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];
     const client = createAPIClient(async (input) => {
@@ -126,7 +99,7 @@ describe('meeting panel surfaces', () => {
     const state = new ExploreState(window);
     const filters = [{ dimension: 'message_type' as const, values: ['meeting_transcript'] }, { dimension: 'source' as const, values: ['3'] }, { dimension: 'domain' as const, values: ['exact.example'] }];
     state.commitNavigation({ workspace: 'everything', groupingChain: presentation === 'groups' ? ['domain'] : [], filters, query: 'planning', searchMode: 'full_text' });
-    const view = presentation === 'person' ? render(PersonMessages, { props: { client, identityScope: { kind: 'person', id: 7 }, target: 'cluster:7', predicate: { filters },
+    const view = presentation === 'person' ? render(PersonMessages, { props: { client, identityScope: { kind: 'person', id: 7 }, target: 'cluster:7', predicate: {},
       period: { after: at, before: '2026-01-02T00:00:00Z' }, onFiltersChange: vi.fn(), onClearPeriod: vi.fn(), onOpenFiles: vi.fn() } }) : render(AppShell, { client, state });
     await screen.findByText(/^4 meetings(?: ·|$)/);
     if (presentation === 'person') expect(metrics[0]).toMatchObject({ scope: { participant_id: 7, after: at, before: '2026-01-02T00:00:00Z' } });

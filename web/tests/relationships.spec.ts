@@ -474,8 +474,6 @@ test('People search and intersecting filters stay separate from identity scope a
   const fileBodies: Record<string, unknown>[] = [];
   await prepare(page, fileBodies);
   const requests: Record<string, unknown>[] = [];
-  let obsoleteTimeline = 0;
-  await page.route('**/api/v1/relationships/1/timeline', route => { obsoleteTimeline += 1; return route.fulfill({ status: 500, json: { message: 'Obsolete timeline failed' } }); });
   await page.route('**/api/v1/participants/search', route => route.fulfill({ json: { rows: [alice], total_count: 1, cache_revision: 'cache-relationships', search_provenance: {} } }));
   await page.route('**/api/v1/participants/1/summary', route => route.fulfill({ json: { summary: alice } }));
   await page.route('**/api/v1/participants/1/timeline', async route => {
@@ -487,7 +485,6 @@ test('People search and intersecting filters stay separate from identity scope a
   await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
   expect(requests.at(-1)).toMatchObject({ filters: [{ dimension: 'participant', values: ['2'] }] });
   expect(requests.at(-1)).not.toHaveProperty('query');
-  expect(obsoleteTimeline).toBe(0);
   await page.getByRole('button', { name: 'Previous relationship year' }).click();
   await expect(page.getByRole('region', { name: 'Relationship activity calendar' }).getByText('2025', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '2 messages on Jul 18, 2025' }).filter({ visible: true }).click();

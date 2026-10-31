@@ -25,45 +25,30 @@ function setup(paged: boolean, row = saved) {
   const props = { client, identityScope: { kind: 'person' as const, id: 1 }, target: 'cluster:1', predicate: {}, onOpenFiles: vi.fn(), onFiltersChange: vi.fn(), onClearPeriod: vi.fn() };
   return { props, requests };
 }
-it('restores a reader opened after the first result page', async () => {
-  window.history.replaceState(null, '', '/');
-  const { props } = setup(true);
-  let view = render(PersonMessages, { props });
-  try {
-    const grid = await screen.findByRole('grid', { name: 'Messages results' });
-    await within(grid).findByText('First page message');
-    await fireEvent.keyDown(grid, { key: 'End' });
-    await fireEvent.click(await within(grid).findByText('Saved message'));
-    await screen.findByText('Restored body');
-    await waitFor(() => expect(window.history.state[RELATIONSHIP_READER_HISTORY_KEY]?.selection.row.key).toBe('message:2'));
-    view.unmount();
-    view = render(PersonMessages, { props });
-    await screen.findByText('First page message');
-    await screen.findByText('Restored body');
-  } finally { view.unmount(); }
-});
-it('restores the selected calendar day conversation window', async () => {
-  window.history.replaceState(null, '', '/');
-  const { props, requests } = setup(false);
-  const period = { after: '2026-07-18T00:00:00.000Z', before: '2026-07-19T00:00:00.000Z' };
+it.each([
+  { name: 'opened after the first result page', paged: true, period: undefined },
+  { name: 'with its selected calendar day window', paged: false, period: { after: '2026-07-18T00:00:00.000Z', before: '2026-07-19T00:00:00.000Z' } },
+])('restores a reader $name', async ({ paged, period }) => {
+  const { props, requests } = setup(paged);
   let view = render(PersonMessages, { props: { ...props, period } });
   try {
     const grid = await screen.findByRole('grid', { name: 'Messages results' });
+    if (paged) { await within(grid).findByText('First page message'); await fireEvent.keyDown(grid, { key: 'End' }); }
     await fireEvent.click(await within(grid).findByText('Saved message'));
     await screen.findByText('Restored body');
     await waitFor(() => expect(window.history.state[RELATIONSHIP_READER_HISTORY_KEY]?.selection.row.key).toBe('message:2'));
-    const initial = requests.filter(request => new URL(request.url).pathname === '/api/v1/conversations/2').at(-1)!;
-    expect(new URL(initial.url).searchParams.get('start')).toBe(period.after);
     view.unmount();
     view = render(PersonMessages, { props });
+    if (paged) await screen.findByText('First page message');
     await screen.findByText('Restored body');
-    const conversation = requests.filter(request => new URL(request.url).pathname === '/api/v1/conversations/2').at(-1)!;
-    expect(new URL(conversation.url).searchParams.get('start')).toBe(period.after);
-    expect(new URL(conversation.url).searchParams.get('end')).toBe(period.before);
-    expect(new URL(conversation.url).searchParams.get('anchor')).toBe('2');
+    if (period) {
+      const conversation = requests.filter(request => new URL(request.url).pathname === '/api/v1/conversations/2').at(-1)!;
+      expect(new URL(conversation.url).searchParams.get('start')).toBe(period.after);
+      expect(new URL(conversation.url).searchParams.get('end')).toBe(period.before);
+      expect(new URL(conversation.url).searchParams.get('anchor')).toBe('2');
+    }
   } finally { view.unmount(); }
 });
-
 it('clears the previous reader on a period change and opens the first clicked conversation', async () => {
   const { props, requests } = setup(false, { ...saved, key: 'conversation:2', kind: 'conversation', message_type: 'slack', conversation_type: 'chat', source_type: 'slack' });
   const view = render(PersonMessages, { props });

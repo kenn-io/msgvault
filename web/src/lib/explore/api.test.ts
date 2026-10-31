@@ -61,7 +61,7 @@ describe('ExploreAPI routing', () => {
     });
   });
 
-  it.each([[undefined, '/api/v1/explore'], [{ kind: 'person', id: 42 }, '/api/v1/participants/42/timeline'], [{ kind: 'domain', domain: 'example.net' }, '/api/v1/domains/example.net/timeline']] as const)('passes cursors and cancellation through %s requests', async (scope, path) => {
+  it.each([{ scope: undefined, path: '/api/v1/explore' }, { scope: { kind: 'person', id: 42 }, path: '/api/v1/participants/42/timeline' }, { scope: { kind: 'domain', domain: 'example.net' }, path: '/api/v1/domains/example.net/timeline' }] as const)('passes cursors and cancellation through $path requests', async ({ scope, path }) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

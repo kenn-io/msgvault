@@ -251,7 +251,7 @@ it('opens a person from the archived meeting reader', async () => {
 });
 
 it('opens Tasks setup from a person message reader', async () => {
-  const { client } = handler(() => Response.json({ ...detail, message_type: 'email' }), true); const state = stateWithMeetingFilter();
+  const { client } = handler(() => Response.json({ ...detail, message_type: 'email' }), true); const state = new ExploreState(window);
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:7' });
   const view = render(AppShell, { client, state });
   try {

@@ -1096,7 +1096,8 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var body ExploreGroupsHTTPResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
-	require.NotEmpty(body.Rows)
+	require.Len(body.Rows, 1)
+	assert.Equal("2026-07-18", body.Rows[0].Key)
 
 	invalid := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Invalid/Zone"}`)
 	require.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
