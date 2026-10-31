@@ -108,6 +108,7 @@ type MessagePersistData struct {
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
+	SyncRunItem               *SyncRunItem
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -2346,6 +2347,11 @@ func (s *Store) persistMessageWithParticipantsTx(
 	id, err := s.persistMessageWith(ctx, tx, data)
 	if err != nil {
 		return 0, err
+	}
+	if data.SyncRunItem != nil {
+		if err := s.recordSyncRunItemWith(ctx, tx, *data.SyncRunItem); err != nil {
+			return 0, err
+		}
 	}
 	if afterPersist != nil {
 		if err := afterPersist(ctx, tx, data, id); err != nil {

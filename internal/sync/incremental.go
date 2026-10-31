@@ -58,11 +58,10 @@ func (s *Syncer) incrementalWithRecovery(
 		return nil, fmt.Errorf("invalid history ID %q: %w", source.SyncCursor.String, err)
 	}
 
-	// Read the prior run's fetch debt before a new run exists, so a ledger error
-	// cannot fail a run and the completed run stays visible for the next attempt.
-	pendingReplayIDs, err := s.pendingFetchReplayIDs(source.ID)
+	// Read pending debt before creating a run so a read error leaves no failed run.
+	pendingReplayIDs, err := s.pendingAcquisitionReplayIDs(ctx, source.ID)
 	if err != nil {
-		return nil, fmt.Errorf("find pending fetch replays: %w", err)
+		return nil, fmt.Errorf("find pending acquisition replays: %w", err)
 	}
 
 	var predecessorID int64
@@ -93,6 +92,8 @@ func (s *Syncer) incrementalWithRecovery(
 	scoped.store = s.store.ScopedToSync(source.ID, syncID)
 	s = &scoped
 	summary.SyncRunID = syncID
+
+	s.setAcquisitionReplay(syncID, pendingReplayIDs)
 
 	// Defer failure handling — recover from panics and return as error
 	defer func() {
@@ -168,10 +169,10 @@ func (s *Syncer) incrementalWithRecovery(
 
 	var discoveryHealth pageDiscoveryHealth
 
-	// Retry the prior run's absent fetches inside this scoped run, before history
+	// Retry earlier acquisition failures inside this scoped run, before history
 	// selection, so an idle mailbox still works off its durable debt.
 	if len(pendingReplayIDs) > 0 {
-		replayedIDs, err := s.replayFetchFailures(
+		replayedIDs, err := s.replayAcquisitionFailures(
 			ctx, syncID, source.ID, pendingReplayIDs, labelMap, checkpoint, summary,
 		)
 		if err != nil {
@@ -367,7 +368,12 @@ func (s *Syncer) incrementalWithRecovery(
 
 	// Advance past item errors, including during recovery catch-up, so one
 	// permanently failing message cannot block the source. Failed fetches carry
-	// forward to the next incremental run.
+	// forward to the next incremental run through their recorded errors, so a
+	// run that could not record one keeps the old cursor instead.
+	if err := s.acquisitionRecordErr; err != nil {
+		s.failStoppedSync(syncID, err)
+		return nil, err
+	}
 	historyIDStr := strconv.FormatUint(profile.HistoryID, 10)
 	if checkpoint.ErrorsCount > 0 {
 		s.logger.Warn("incremental sync completed with errors",
@@ -396,11 +402,10 @@ func (s *Syncer) incrementalWithRecovery(
 	return summary, nil
 }
 
-// replayFetchFailures re-fetches the IDs a prior completed incremental run
-// failed to read, skipping any that already reached the archive. Reads and
-// local ingest only; a repeated failure becomes this run's fetch error and
-// carries the ID to the next run.
-func (s *Syncer) replayFetchFailures(
+// replayAcquisitionFailures retries earlier acquisition failures, skipping IDs that
+// already reached the archive. It fetches and ingests locally; repeated failures
+// remain eligible for the next run.
+func (s *Syncer) replayAcquisitionFailures(
 	ctx context.Context,
 	syncID, sourceID int64,
 	messageIDs []string,
@@ -412,7 +417,7 @@ func (s *Syncer) replayFetchFailures(
 		return nil, nil
 	}
 
-	existing, err := s.store.MessageExistsBatch(sourceID, messageIDs)
+	existing, err := s.store.MessageExistsBatchContext(ctx, sourceID, messageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("check replay messages: %w", err)
 	}
@@ -420,6 +425,10 @@ func (s *Syncer) replayFetchFailures(
 	for _, messageID := range messageIDs {
 		if _, ok := existing[messageID]; !ok {
 			fetchIDs = append(fetchIDs, messageID)
+		} else {
+			if err := s.resolveAcquisition(messageID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if len(fetchIDs) == 0 {
@@ -553,6 +562,16 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				return false, false, err
+			}
+			// Later label events in this sync must take the existing-message
+			// path, or a transient refetch failure would leave retry debt for a
+			// message that is already archived.
+			ingested, err := s.store.MessageExistsBatch(sourceID, []string{messageID})
+			if err != nil {
+				return false, false, fmt.Errorf("look up ingested message: %w", err)
+			}
+			if id, ok := ingested[messageID]; ok {
+				existingMap[messageID] = id
 			}
 			// The new message gets embed_gen = NULL by column default, so
 			// the scan-and-fill embed worker picks it up automatically — no

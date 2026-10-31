@@ -20,8 +20,9 @@ const (
 	SyncStatusPaused                       = "paused"
 	GmailHistoryRecoveryRequestFingerprint = "gmail-history-recovery:v1"
 
-	SyncRunItemStatusError   = "error"
-	SyncRunItemStatusSkipped = "skipped"
+	SyncRunItemStatusError    = "error"
+	SyncRunItemStatusSkipped  = "skipped"
+	SyncRunItemStatusResolved = "resolved"
 
 	manualTransactionCleanupTimeout = 5 * time.Second
 	syncWorkerExitedMessage         = "sync worker exited before recording completion"
@@ -395,6 +396,7 @@ type Checkpoint struct {
 // SyncRunItem records an individual item outcome within a sync run.
 // Error items are actionable and count toward SyncRun.ErrorsCount; skipped
 // items preserve expected churn such as Gmail messages deleted before fetch.
+// Resolved items settle earlier acquisition failures once a message is archived.
 type SyncRunItem struct {
 	ID              int64
 	SyncRunID       int64
@@ -953,7 +955,11 @@ func (s *Store) RecordSyncRunItem(item SyncRunItem) error {
 
 // RecordSyncRunItemContext honors cancellation during RecordSyncRunItem.
 func (s *Store) RecordSyncRunItemContext(ctx context.Context, item SyncRunItem) error {
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+	return s.recordSyncRunItemWith(ctx, s.db, item)
+}
+
+func (s *Store) recordSyncRunItemWith(ctx context.Context, q contextQuerier, item SyncRunItem) error {
+	_, err := q.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO sync_run_items (
 			sync_run_id, source_message_id, phase, status,
 			error_kind, error_message, created_at
@@ -1021,6 +1027,42 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 	}
 	defer func() { _ = rows.Close() }()
 
+	return scanSyncRunItems(rows)
+}
+
+// ListUnresolvedSyncItemErrors returns the latest fetch or ingest outcome for
+// each source message since the latest completed incremental run, keeping only
+// errors. That run supersedes older debt by recording anything still failing.
+func (s *Store) ListUnresolvedSyncItemErrors(ctx context.Context, sourceID int64) ([]SyncRunItem, error) {
+	var lowerBound int64
+	last, err := s.getLastSuccessfulSyncContext(ctx, sourceID, "incremental", true)
+	if err != nil && !errors.Is(err, ErrSyncRunNotFound) {
+		return nil, fmt.Errorf("find latest completed incremental: %w", err)
+	}
+	if last != nil {
+		lowerBound = last.ID
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, sync_run_id, source_message_id, phase, status,
+		       error_kind, error_message, created_at
+		FROM sync_run_items
+		WHERE id IN (
+			SELECT MAX(i.id)
+			FROM sync_run_items i
+			JOIN sync_runs r ON r.id = i.sync_run_id
+			WHERE r.source_id = ? AND r.id >= ? AND i.phase IN ('fetch', 'ingest')
+			GROUP BY i.source_message_id
+		) AND status = ?
+		ORDER BY id
+	`, sourceID, lowerBound, SyncRunItemStatusError)
+	if err != nil {
+		return nil, fmt.Errorf("list unresolved sync item errors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanSyncRunItems(rows)
+}
+
+func scanSyncRunItems(rows *loggedRows) ([]SyncRunItem, error) {
 	items := make([]SyncRunItem, 0)
 	for rows.Next() {
 		var item SyncRunItem
