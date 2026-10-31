@@ -1,0 +1,333 @@
+package store
+
+import (
+	"cmp"
+	"context"
+	"fmt"
+	"slices"
+	"time"
+
+	"go.kenn.io/msgvault/internal/activitydate"
+	"go.kenn.io/msgvault/internal/archivemarker"
+)
+
+type coldActivityMessage struct {
+	activityReadMessage
+
+	candidate ActivityCandidate
+	dating    activitydate.Dating
+	channel   ActivityChannel
+	copyKey   string
+	copies    int
+	audience  int
+	persons   []ActivityEventPerson
+}
+
+type coldActivityGroup struct {
+	burst    ActivityBurst
+	messages []coldActivityMessage
+	nonNoise bool
+}
+
+// ListColdActivityBurstsContext reconstructs complete cold conversation-days
+// from live message metadata, without restoring or writing projection rows.
+func (s *Store) ListColdActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
+	page := BurstPage{Bursts: []ActivityBurst{}}
+	if q.Limit < 1 || q.Limit > 5000 {
+		return page, fmt.Errorf("%w: burst limit must be 1..5000", ErrInvalidActivityRequest)
+	}
+	groups, filters, err := s.coldActivityGroupsContext(ctx, q)
+	if err != nil {
+		return page, err
+	}
+	admitted := make([]ActivityBurst, 0, len(groups))
+	for _, g := range groups {
+		if !filters.IncludeNoise && coldActivityNoise(g) {
+			page.NoiseOmitted += len(g.messages)
+			continue
+		}
+		b := g.burst
+		if q.AfterKey != nil {
+			comparison := compareColdBurstKey(BurstKey{FirstAt: b.FirstAt, Key: b.Key}, *q.AfterKey)
+			if (!q.Descending && comparison <= 0) || (q.Descending && comparison >= 0) {
+				continue
+			}
+		}
+		admitted = append(admitted, b)
+	}
+	slices.SortFunc(admitted, func(a, b ActivityBurst) int {
+		n := compareColdBurstKey(BurstKey{FirstAt: a.FirstAt, Key: a.Key}, BurstKey{FirstAt: b.FirstAt, Key: b.Key})
+		if q.Descending {
+			return -n
+		}
+		return n
+	})
+	if len(admitted) > q.Limit {
+		last := admitted[q.Limit-1]
+		page.NextKey = &BurstKey{FirstAt: last.FirstAt, Key: last.Key}
+		admitted = admitted[:q.Limit]
+	}
+	page.Bursts = admitted
+	return page, nil
+}
+
+// CountColdActivityMessagesContext counts copy-collapsed messages in admitted
+// logical groups across the whole window. Burst limits and cursors do not
+// narrow omissions; request eligibility, scope, subject and noise filters do.
+func (s *Store) CountColdActivityMessagesContext(ctx context.Context, q BurstQuery) (int, error) {
+	groups, filters, err := s.coldActivityGroupsContext(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, g := range groups {
+		if filters.IncludeNoise || !coldActivityNoise(g) {
+			count += len(g.messages)
+		}
+	}
+	return count, nil
+}
+
+func compareColdBurstKey(a, b BurstKey) int {
+	if n := a.FirstAt.Compare(b.FirstAt); n != 0 {
+		return n
+	}
+	return cmp.Compare(a.Key, b.Key)
+}
+func coldActivityNoise(g *coldActivityGroup) bool {
+	return g.burst.Inbound+g.burst.Outbound == 0 || !g.nonNoise
+}
+
+func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (map[string]*coldActivityGroup, ActivityFilters, error) {
+	filters, err := normalizedActivityFilters(q.Filters)
+	if err != nil {
+		return nil, filters, err
+	}
+	if q.ConversationID < 0 || (q.After != nil && q.Before != nil && !q.After.Before(*q.Before)) {
+		return nil, filters, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
+	}
+	zone, err := s.ActivityTimezoneTransitionContext(ctx)
+	if err != nil {
+		return nil, filters, err
+	}
+	loc, err := activitydate.LoadZone(zone.Target)
+	if err != nil {
+		return nil, filters, err
+	}
+	where := `m.conversation_id IN (SELECT conversation_id FROM conversation_policy WHERE effective_tier='cold')`
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	where += scope
+	if q.ConversationID > 0 {
+		where += ` AND m.conversation_id=?`
+		args = append(args, q.ConversationID)
+	}
+	if q.After != nil {
+		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=?`
+		args = append(args, *q.After)
+	}
+	if q.Before != nil {
+		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
+		args = append(args, *q.Before)
+	}
+	if q.After == nil && q.Before == nil {
+		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {
+			return nil, filters, fmt.Errorf("%w: invalid local dates", ErrInvalidActivityRequest)
+		}
+		// A bounded SQL superset covers every IANA offset and explicit day precision.
+		// DateEvent below applies the exact archive-zone civil-date boundary.
+		from, _ := time.Parse(time.DateOnly, q.FromDate)
+		to, _ := time.Parse(time.DateOnly, q.ToDate)
+		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=? AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
+		args = append(args, from.Add(-24*time.Hour), to.Add(48*time.Hour))
+	}
+	channel := `CASE WHEN m.message_type IN ('calendar_event','meeting_transcript') THEN 'meeting' WHEN m.message_type='call_record' THEN 'chat' WHEN c.conversation_type='email_thread' THEN 'email' WHEN c.conversation_type IN ('chat','group_chat','direct_chat','channel') THEN 'chat' ELSE 'other' END`
+	subject, subjectArgs, err := activitySubjectClause(q.Subject, "m")
+	if err != nil {
+		return nil, filters, err
+	}
+	// Materialize the scoped cold window before live eligibility and counterpart
+	// classification. Otherwise SQLite can evaluate those correlated queries for
+	// every archived message, even when no cold conversation matches.
+	args = append(args, archivemarker.EncryptedMessagePlaceholder)
+	args = append(args, subjectArgs...)
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH cold_window AS MATERIALIZED (
+ SELECT m.id FROM messages m WHERE `+where+`
+ ) SELECT m.id,`+activityCopyKeySQL(channel, "m.rfc822_message_id", "m.id")+`,m.list_id IS NOT NULL,
+ (src.source_type='matrix' AND COALESCE(m.snippet,'')=?),`+activityAudienceSizeSQL(channel, "m.conversation_id", "m.id", "m.source_id")+`
+ FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id
+ WHERE `+s.activityLiveEligibleSQL("m", "src")+subject+` ORDER BY m.source_id,m.id`), args...)
+	if err != nil {
+		return nil, filters, fmt.Errorf("read cold activity: %w", err)
+	}
+	messages := []coldActivityMessage{}
+	ids := []int64{}
+	for rows.Next() {
+		var m coldActivityMessage
+		if err = rows.Scan(&m.ID, &m.copyKey, &m.List, &m.Encrypted, &m.audience); err != nil {
+			_ = rows.Close()
+			return nil, filters, fmt.Errorf("scan cold activity: %w", err)
+		}
+		messages = append(messages, m)
+		ids = append(ids, m.ID)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, filters, fmt.Errorf("iterate cold activity: %w", err)
+	}
+	candidates, err := s.LoadActivityCandidatesByIDContext(ctx, ids)
+	if err != nil {
+		return nil, filters, err
+	}
+	byID := make(map[int64]ActivityCandidate, len(candidates))
+	for _, c := range candidates {
+		byID[c.MessageID] = c
+	}
+	representatives := []coldActivityMessage{}
+	copies := map[string]int{}
+	for _, m := range messages {
+		if err = ctx.Err(); err != nil {
+			return nil, filters, err
+		}
+		c := byID[m.ID]
+		dating, dateErr := activitydate.DateEvent(activitydate.Timestamps{SentAt: c.SentAt, ReceivedAt: c.ReceivedAt, InternalDate: c.InternalDate, DateOnly: c.DateOnly}, loc)
+		if dateErr != nil {
+			continue
+		}
+		if q.After == nil && q.Before == nil && (dating.LocalDate < q.FromDate || dating.LocalDate > q.ToDate) {
+			continue
+		}
+		// SQL ordering chooses the same lowest source/message representative as the spine.
+		copies[m.copyKey]++
+		if copies[m.copyKey] > 1 {
+			continue
+		}
+		classified := ClassifyActivityCandidate(c, filters.MaxDirect)
+		m.candidate = c
+		m.dating = dating
+		m.channel = classified.Channel
+		m.persons = classified.Persons
+		m.Direction = classified.Direction
+		m.Meeting = IsMeetingMessageType(c.MessageType)
+		maxDirect := filters.MaxDirect
+		if maxDirect == 0 {
+			maxDirect = DefaultMaxDirectActivityCounterparts
+		}
+		m.LargeInbound = m.Direction == DirectionInbound && m.audience > maxDirect
+		representatives = append(representatives, m)
+	}
+	facts := make([]activityReadMessage, len(representatives))
+	for i, m := range representatives {
+		facts[i] = m.activityReadMessage
+	}
+	if err = s.hydrateActivityCounterpartsContext(ctx, facts, filters); err != nil {
+		return nil, filters, err
+	}
+	groups := map[string]*coldActivityGroup{}
+	for i, m := range representatives {
+		m.activityReadMessage = facts[i]
+		m.copies = copies[m.copyKey]
+		conv := int64(0)
+		if m.candidate.ConversationID != nil {
+			conv = *m.candidate.ConversationID
+		}
+		key := fmt.Sprintf("burst:%d:%d:%s", m.candidate.SourceID, conv, m.dating.LocalDate)
+		g := groups[key]
+		if g == nil {
+			g = &coldActivityGroup{burst: ActivityBurst{Key: key, SourceID: m.candidate.SourceID, ConversationID: conv, Channel: m.channel, LocalDate: m.dating.LocalDate, FirstAt: m.dating.OccurredAt, LastAt: m.dating.OccurredAt, Cold: true, LatestMessageIDs: []int64{}, CopyCounts: map[int64]int{}, Counterparts: []ActivityMessageCounterpart{}}}
+			groups[key] = g
+		}
+		if m.dating.OccurredAt.Before(g.burst.FirstAt) {
+			g.burst.FirstAt = m.dating.OccurredAt
+		}
+		if m.dating.OccurredAt.After(g.burst.LastAt) {
+			g.burst.LastAt = m.dating.OccurredAt
+		}
+		if m.channel < g.burst.Channel {
+			g.burst.Channel = m.channel
+		}
+		counted, nonNoise := coldActivityCounted(m, filters), !m.List
+		for _, cp := range m.Counterparts {
+			if (cp.Role == RoleSender || cp.Role == RoleOrganizer) && cp.Excluded != "" && cp.Excluded != "owner" {
+				nonNoise = false
+			}
+		}
+		if counted {
+			if m.Direction == DirectionInbound {
+				g.burst.Inbound++
+			}
+			if m.Direction == DirectionOutbound {
+				g.burst.Outbound++
+			}
+		}
+		g.nonNoise = g.nonNoise || nonNoise
+		g.messages = append(g.messages, m)
+	}
+	for _, g := range groups {
+		finishColdActivityGroup(g)
+	}
+	return groups, filters, nil
+}
+
+// Match activityReadCTE: default limits use the strongest projected person links;
+// explicit limits reclassify raw counterpart roles and evidence. Display
+// annotations use the shared raw-population loader in both cases.
+func coldActivityCounted(m coldActivityMessage, filters ActivityFilters) bool {
+	if m.Encrypted {
+		return false
+	}
+	persons := map[int64]ActivityEventPerson{}
+	if filters.MaxDirect == 0 {
+		for _, p := range m.persons {
+			persons[p.PersonID] = p
+		}
+	}
+	refKind := "message"
+	if m.Meeting {
+		refKind = "meeting"
+	}
+	for _, cp := range m.Counterparts {
+		if cp.Excluded != "" {
+			continue
+		}
+		role, evidence := cp.Role, cp.Evidence
+		if person, found := persons[cp.PersonID]; found {
+			role, evidence = person.Role, person.Evidence
+		}
+		if CountedEvent(evidence, role, m.Direction, refKind, m.List && filters.Exclusions.ExcludeListMessages, m.LargeInbound) {
+			return true
+		}
+	}
+	return false
+}
+
+func finishColdActivityGroup(g *coldActivityGroup) {
+	slices.SortFunc(g.messages, func(a, b coldActivityMessage) int {
+		if n := b.dating.OccurredAt.Compare(a.dating.OccurredAt); n != 0 {
+			return n
+		}
+		return cmp.Compare(b.ID, a.ID)
+	})
+	counterparts := map[int64]ActivityMessageCounterpart{}
+	for _, m := range g.messages {
+		if g.burst.AnchorMessageID == 0 {
+			g.burst.AnchorMessageID = m.ID
+		}
+		if len(g.burst.LatestMessageIDs) < 5 {
+			g.burst.LatestMessageIDs = append(g.burst.LatestMessageIDs, m.ID)
+		}
+		if g.burst.Channel == ChannelEmail {
+			g.burst.CopyCounts[m.ID] = m.copies
+		}
+		for _, cp := range m.Counterparts {
+			old, found := counterparts[cp.ParticipantID]
+			if !found || (!old.Counted && cp.Counted) {
+				counterparts[cp.ParticipantID] = cp
+			}
+		}
+	}
+	for _, cp := range counterparts {
+		g.burst.Counterparts = append(g.burst.Counterparts, cp)
+	}
+	slices.SortFunc(g.burst.Counterparts, func(a, b ActivityMessageCounterpart) int { return cmp.Compare(a.ParticipantID, b.ParticipantID) })
+}

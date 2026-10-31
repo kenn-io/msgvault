@@ -321,3 +321,14 @@ func activityBurstGroupsCTE(f ActivityFilters) string {
  FROM displayed GROUP BY source_id,conversation_id,local_date
 )`
 }
+
+// activityCopyKeySQL is shared by projected and request-time cold readers.
+func activityCopyKeySQL(channel, rfcID, messageID string) string {
+	return `CASE WHEN ` + channel + `='email' THEN 'email:'||COALESCE(NULLIF(` + rfcID + `,''),'id:'||CAST(` + messageID + ` AS TEXT)) ELSE 'id:'||CAST(` + messageID + ` AS TEXT) END`
+}
+
+// activityAudienceSizeSQL preserves the counted rule's provider population.
+func activityAudienceSizeSQL(channel, conversationID, messageID, sourceID string) string {
+	return `CASE WHEN ` + channel + `='chat' THEN (SELECT COUNT(*) FROM conversation_participants chat_cp WHERE chat_cp.conversation_id=` + conversationID + ` AND NOT ` + personTierOwnerMatch("chat_cp.participant_id", sourceID) + `)
+ ELSE (SELECT COUNT(DISTINCT mail_mr.participant_id) FROM message_recipients mail_mr WHERE mail_mr.message_id=` + messageID + ` AND mail_mr.recipient_type IN ('to','cc','bcc') AND NOT ` + personTierOwnerMatch("mail_mr.participant_id", sourceID) + `) END`
+}
