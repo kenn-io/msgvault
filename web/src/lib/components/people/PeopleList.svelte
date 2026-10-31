@@ -45,6 +45,7 @@
     rows: PeopleRow[];
     loading: boolean;
     loadingMore?: boolean;
+    pageRecovery?: 'retry' | 'reload' | null;
     hasMore?: boolean;
     /** "99 people" once the total is known. */
     countLabel?: string;
@@ -74,6 +75,7 @@
     rows,
     loading,
     loadingMore = false,
+    pageRecovery = null,
     hasMore = false,
     countLabel = '',
     error,
@@ -204,7 +206,8 @@
     {#if error}
       <div class="list-error" role="alert">
         <span>{error}</span>
-        {#if hasMore}<Button size="sm" surface="outline" label="Retry" onclick={() => onLoadMore?.()} />{/if}
+        {#if pageRecovery === 'reload'}<Button size="sm" surface="outline" label="Reload" onclick={onRetry} />
+        {:else if hasMore}<Button size="sm" surface="outline" label="Retry" onclick={() => onLoadMore?.()} />{/if}
       </div>
     {/if}
     <div

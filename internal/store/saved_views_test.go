@@ -181,7 +181,7 @@ func TestSavedViewsPersistOnlyServerGroupingDimensions(t *testing.T) {
 	}
 
 	invalid := savedViewInput("Unsupported grouping")
-	invalid.CanonicalState = json.RawMessage(`{"grouping":["sender"]}`)
+	invalid.CanonicalState = json.RawMessage(`{"grouping":["day"]}`)
 	_, err := st.CreateSavedView(ctx, invalid)
 	requirements.ErrorIs(err, store.ErrSavedViewInvalidState)
 

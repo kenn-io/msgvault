@@ -2639,7 +2639,6 @@ func (s SavedViewStateEnvelopeColumns) Validate() error {
 type SavedViewStateEnvelopeGrouping string
 
 const (
-	SavedViewStateEnvelopeGroupingDay         SavedViewStateEnvelopeGrouping = "day"
 	SavedViewStateEnvelopeGroupingDomain      SavedViewStateEnvelopeGrouping = "domain"
 	SavedViewStateEnvelopeGroupingKind        SavedViewStateEnvelopeGrouping = "kind"
 	SavedViewStateEnvelopeGroupingMailingList SavedViewStateEnvelopeGrouping = "mailing_list"
@@ -2653,7 +2652,7 @@ const (
 // Validate checks if the SavedViewStateEnvelopeGrouping value is valid
 func (s SavedViewStateEnvelopeGrouping) Validate() error {
 	switch s {
-	case SavedViewStateEnvelopeGroupingDay, SavedViewStateEnvelopeGroupingDomain, SavedViewStateEnvelopeGroupingKind, SavedViewStateEnvelopeGroupingMailingList, SavedViewStateEnvelopeGroupingMessageType, SavedViewStateEnvelopeGroupingMonth, SavedViewStateEnvelopeGroupingParticipant, SavedViewStateEnvelopeGroupingSource, SavedViewStateEnvelopeGroupingYear:
+	case SavedViewStateEnvelopeGroupingDomain, SavedViewStateEnvelopeGroupingKind, SavedViewStateEnvelopeGroupingMailingList, SavedViewStateEnvelopeGroupingMessageType, SavedViewStateEnvelopeGroupingMonth, SavedViewStateEnvelopeGroupingParticipant, SavedViewStateEnvelopeGroupingSource, SavedViewStateEnvelopeGroupingYear:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewStateEnvelopeGrouping value, got: %v", s))

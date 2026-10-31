@@ -28,6 +28,11 @@
   let root = $state<HTMLElement>();
   const loader = new ExploreLoader(untrack(() => client), exploreState, {
     isEnabled: () => true,
+    predicate: () => {
+      const ordinary = exploreState.predicate();
+      return period ? { ...ordinary, filters: [...(ordinary.filters ?? []).filter((filter) => !['after', 'before'].includes(filter.dimension)),
+        { dimension: 'after', values: [period.after] }, { dimension: 'before', values: [period.before] }] } : ordinary;
+    },
     onPredicateChange: () => selection.clear(),
     onPagingNotice: (value) => notice = value ?? '',
     onRestorationFocus: focusGrid,
@@ -55,25 +60,19 @@
     if (patch.filters) { onClearPeriod(); onFiltersChange(patch.filters); }
     exploreState.commitNavigation(patch);
   }
-  let appliedFilterKey = untrack(() => JSON.stringify({ filters: predicate.filters ?? [], period }));
   const filterKey = $derived(JSON.stringify(predicate.filters ?? []));
   $effect(() => {
-    const filters: ExploreFilter[] = JSON.parse(filterKey);
-    const window = period;
-    const key = JSON.stringify({ filters, period: window });
-    if (key === appliedFilterKey) return;
-    appliedFilterKey = key;
-    untrack(() => exploreState.replaceCommittedNavigation({ filters: window
-      ? [...filters.filter((filter) => !['after', 'before'].includes(filter.dimension)),
-        { dimension: 'after', values: [window.after] }, { dimension: 'before', values: [window.before] }]
-      : filters, selectedRow: null, activeRow: null, scrollAnchor: null }));
+    const incoming = filterKey;
+    untrack(() => {
+      if (JSON.stringify(exploreState.current.filters) !== incoming) exploreState.replaceCommittedNavigation({ filters: JSON.parse(incoming), selectedRow: null, activeRow: null, scrollAnchor: null });
+    });
   });
   onDestroy(() => { loader.destroy(); exploreState.destroy(); });
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -- Escape closes the embedded reader. -->
 <div class="messages" bind:this={root} onkeydown={escape}>
-  <EverythingWorkspace {client} scope={scope} {exploreState} {loader} {session} {selection} enabled
+  <EverythingWorkspace {client} scope={scope} conversationStart={period?.after} conversationEnd={period?.before} {exploreState} {loader} {session} {selection} enabled
     readingTargetKey={exploreState.current.selectedRow} conversationAnchorId={exploreState.current.conversationAnchor ? Number(exploreState.current.conversationAnchor) : undefined}
     sortNotice={notice} searchInput={undefined} selectionPreflight={undefined} meetingSelection={undefined}
     exportSelection={() => undefined} onReviewDeletion={() => undefined} commitNavigation={navigate}

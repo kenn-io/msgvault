@@ -15,7 +15,7 @@ import type {
   ExploreFilter,
   ExploreFilesLoadResult,
   ExploreFilesResponse,
-  ExploreGroupDimension,
+  ExploreRequestGroupDimension,
   ExploreGroupLoadResult,
   ExploreGroupsPredicate,
   ExploreGroupsResponse,
@@ -104,14 +104,14 @@ export interface ExploreAPI {
   explore(predicate: ExplorePredicate, signal?: AbortSignal): Promise<ExploreLoadResult>;
   groups(
     predicate: ExploreGroupsPredicate,
-    dimension: ExploreGroupDimension,
+    dimension: ExploreRequestGroupDimension,
     signal?: AbortSignal,
   ): Promise<ExploreGroupLoadResult>;
   fileGroups(
     predicate: ExplorePredicate,
     filenameQuery: string,
     mimeFamilies: FileMIMEFamily[],
-    dimension: ExploreGroupDimension,
+    dimension: ExploreRequestGroupDimension,
     signal?: AbortSignal,
   ): Promise<ExploreGroupLoadResult>;
   files(predicate: ExplorePredicate, signal?: AbortSignal): Promise<ExploreFilesLoadResult>;

@@ -14199,7 +14199,6 @@ components:
               - kind
               - year
               - month
-              - day
             type: string
             x-enum-names:
               - SavedViewStateEnvelopeGroupingSource
@@ -14210,7 +14209,6 @@ components:
               - SavedViewStateEnvelopeGroupingKind
               - SavedViewStateEnvelopeGroupingYear
               - SavedViewStateEnvelopeGroupingMonth
-              - SavedViewStateEnvelopeGroupingDay
           type: array
         inspector_pinned:
           type: boolean

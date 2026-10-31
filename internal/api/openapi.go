@@ -814,7 +814,7 @@ func hardenExploreSchemas(doc *huma.OpenAPI) {
 }
 
 func exploreGroupingEnum() []any {
-	dimensions := explorecatalog.GroupingDimensions()
+	dimensions := explorecatalog.RequestGroupingDimensions()
 	values := make([]any, len(dimensions))
 	for index, dimension := range dimensions {
 		values[index] = dimension

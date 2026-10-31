@@ -14384,7 +14384,6 @@ components:
               - kind
               - year
               - month
-              - day
             type: string
           type: array
         inspector_pinned:

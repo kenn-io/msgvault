@@ -88,7 +88,7 @@ const (
 )
 
 var exploreGroupDimensions = func() []ExploreGroupDimension {
-	values := explorecatalog.GroupingDimensions()
+	values := explorecatalog.RequestGroupingDimensions()
 	dimensions := make([]ExploreGroupDimension, len(values))
 	for i, value := range values {
 		dimensions[i] = ExploreGroupDimension(value)

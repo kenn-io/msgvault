@@ -139,6 +139,8 @@ export class RelationshipsController {
   /** One-line notice set when a cursor_invalidated 409 silently restarted the
    * timeline from page 1; cleared on the next openTarget navigation. */
   timelineRestartNotice = $state<string | null>(null);
+  firstContactAt = $state('');
+  lastContactAt = $state('');
   canonicalID = $state<number | null>(null);
   identityRevision = $state<number | null>(null);
   relationshipCalendar = $state<RelationshipCalendar | null>(null);
@@ -386,6 +388,8 @@ export class RelationshipsController {
     this.lastPredicate = predicate;
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
     this.detail = null;
+    this.firstContactAt = '';
+    this.lastContactAt = '';
     this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
@@ -462,6 +466,7 @@ export class RelationshipsController {
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return null;
       const base = personResponse.data;
+      if (base) { this.firstContactAt = base.first_at; this.lastContactAt = base.last_at; }
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
       if (base && !this.withTimeline) this.canonicalID = base.cluster?.canonical_id ?? base.id;
@@ -500,6 +505,7 @@ export class RelationshipsController {
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return;
       const base = detailResponse.data;
+      if (base) { this.firstContactAt = base.first_at; this.lastContactAt = base.last_at; }
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(detailResponse, summaryResponse) ? { ...base, ...NO_DOMAIN_ACTIVITY } : undefined);
       if (base) this.detail = summary ? { ...base, ...summary } : base;
@@ -526,6 +532,8 @@ export class RelationshipsController {
     this.lastPredicate = undefined;
     this.lastPredicateFingerprint = null;
     this.detail = null;
+    this.firstContactAt = '';
+    this.lastContactAt = '';
     this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;

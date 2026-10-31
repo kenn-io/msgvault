@@ -38,7 +38,7 @@
   const scope = $derived(domain ? { kind: 'domain' as const, domain } : controller.target === target && controller.canonicalID !== null ? { kind: 'person' as const, id: controller.canonicalID } : undefined);
   const name = $derived(domain ?? person?.display_label ?? 'Person');
   const email = $derived(person?.identifiers?.find((identity) => identity.type === 'email')?.value ?? '');
-  const since = $derived(person?.first_at ? new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(new Date(person.first_at)) : undefined);
+  const since = $derived(controller.firstContactAt ? new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(new Date(controller.firstContactAt)) : undefined);
   const period = $derived.by(() => {
     if (!selectedDate) return null;
     if (domain) { const after = `${selectedDate}T00:00:00.000Z`; return { after, before: new Date(Date.parse(after) + 86400000).toISOString() }; }
@@ -63,7 +63,7 @@
     {#if !filesOpen && !details}
       <div class="calendar">
         {#if domain}
-          <DomainCalendar {client} {domain} firstAt={(detail as DomainSummary).first_at} lastAt={(detail as DomainSummary).last_at} {selectedDate} onDateChange={(date) => selectedDate = date} />
+          <DomainCalendar {client} {domain} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
         {:else}
           <RelationshipCalendar calendar={controller.relationshipCalendar} loading={controller.relationshipCalendarLoading} error={controller.relationshipCalendarError}
             year={controller.relationshipCalendarYear} firstYear={controller.relationshipCalendarFirstYear} currentYear={controller.relationshipCalendarCurrentYear}

@@ -33,6 +33,7 @@ import type {
   PersonIdentifier as GeneratedPersonIdentifier,
   PersonSummary as GeneratedPersonSummary,
   SearchProvenance as GeneratedSearchProvenance,
+  SavedViewStateEnvelopeGroupingItem,
   SourceIdentitiesResponse as GeneratedSourceIdentitiesResponse,
   SourceIdentityResponse as GeneratedSourceIdentityResponse,
 } from '../api/generated/models';
@@ -70,7 +71,8 @@ export type FileSearchSort = {
   direction: 'asc' | 'desc';
 };
 export type FileMIMEFamily = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'document' | 'archive' | 'other';
-export type ExploreGroupDimension = GeneratedExploreGroupDimension;
+export type ExploreGroupDimension = SavedViewStateEnvelopeGroupingItem;
+export type ExploreRequestGroupDimension = GeneratedExploreGroupDimension;
 export type ExploreGroupRow = GeneratedExploreGroupRow;
 export type ExploreGroupsResponse = GeneratedExploreGroupsHTTPResponse;
 export type ExplorePredicate = GeneratedExploreHTTPRequest;

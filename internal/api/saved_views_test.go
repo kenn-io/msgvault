@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -164,8 +165,8 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 	srv := newSavedViewTestServer(t)
 	session := loginSavedViewSession(t, srv)
 
-	for _, dimension := range exploreGroupDimensions {
-		t.Run("accept "+string(dimension), func(t *testing.T) {
+	for _, dimension := range explorecatalog.GroupingDimensions() {
+		t.Run("accept "+dimension, func(t *testing.T) {
 			body := fmt.Sprintf(
 				`{"name":"Group %s","canonical_state":{"grouping":[%q]},"schema_version":1}`,
 				dimension, dimension,
@@ -177,7 +178,7 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 	}
 
 	invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
-		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["sender"]},"schema_version":1}`),
+		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["day"]},"schema_version":1}`),
 		session.mutationHeaders())
 	assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
 
@@ -190,7 +191,7 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 	headers.Set("If-Match", savedViewETag(created))
 	patched := performSavedViewRequest(t, srv, http.MethodPatch,
 		savedViewsPath+"/"+strconv.FormatInt(created.ID, 10),
-		[]byte(`{"canonical_state":{"grouping":["arbitrary"]}}`), headers)
+		[]byte(`{"canonical_state":{"grouping":["day"]}}`), headers)
 	assert.Equal(t, http.StatusBadRequest, patched.Code, patched.Body.String())
 }
 

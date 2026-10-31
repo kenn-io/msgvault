@@ -109,7 +109,7 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
   await page.route('**/api/v1/relationships/*/calendar', route => route.fulfill({ json: {
     participant_id: 1, canonical_id: 1, year: route.request().postDataJSON().year, timezone: 'UTC', days: Array.from({ length: 300 }, (_, index) => {
       const date = new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
-      const count = index % 13 === 0 ? 3 : index % 5 === 0 ? 1 : 0;
+      const count = date === '2026-07-18' ? 2 : index % 13 === 0 ? 3 : index % 5 === 0 ? 1 : 0;
       return { date, total: count, email: count, chat: 0, meetings: 0, sent: 0, received: count, modality_mask: count ? 1 : 0, level: count === 3 ? 'FOURTH_QUARTILE' : count ? 'FIRST_QUARTILE' : 'NONE' };
     }), annual: [],
     current: { temperature: 62 }, peak_temperature: 62, peak_year: 2026,
@@ -280,7 +280,10 @@ test('Back restores the relationship message and its conversation window after f
   } }));
   await page.goto('/?workspace=relationships');
   await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  await page.getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true }).click();
   await page.getByRole('grid', { name: 'Messages results' }).getByText('Team Chat').click();
+  expect(windows.at(-1)?.get('start')).toBe('2026-07-18T00:00:00.000Z');
+  expect(windows.at(-1)?.get('end')).toBe('2026-07-19T00:00:00.000Z');
   const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
   await reading.getByRole('button', { name: 'Bob Example', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
@@ -414,9 +417,10 @@ test('relationship labels disclose on hover and identity hues retain text contra
 
 test('domain calendar retries and filters scoped Messages by UTC day', async ({ page }) => {
   await prepare(page);
+  await page.route('**/api/v1/domains/example.com/summary', route => route.fulfill({ json: { summary: { ...domainSummary, first_at: '2025-05-01T00:00:00Z', last_at: '2025-08-01T00:00:00Z' } } }));
   const bodies: Record<string, unknown>[] = [];
   let attempts = 0;
-  await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: domainSummary }));
+  await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: { ...domainSummary, first_at: '2022-01-01T00:00:00Z' } }));
   await page.route('**/api/v1/domains/example.com/timeline', route => {
     bodies.push(route.request().postDataJSON());
     return route.fulfill({ json: { rows: [
@@ -440,16 +444,17 @@ test('domain calendar retries and filters scoped Messages by UTC day', async ({ 
     return route.fulfill({ json: { rows: [{ key: '2026-07-19', label: '2026-07-19', count: 3, estimated_bytes: 30, latest_at: when }],
       total_count: 1, cache_revision: 'cache-domain', search_provenance: {} } });
   });
-  await page.goto('/?workspace=relationships');
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', filters: [{ dimension: 'source', values: ['1'] }] }))}`);
   await setKitTheme(page, 'dark');
   await page.getByRole('radio', { name: 'Domains', exact: true }).click();
   await page.getByRole('grid', { name: 'People results' }).getByText('example.com', { exact: true }).click();
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
   await calendar.getByRole('button', { name: 'Retry' }).click();
-  await expect(calendar.getByRole('heading', { name: 'Activity since Jul 2026' })).toBeVisible();
+  await expect(calendar.getByRole('heading', { name: 'Activity since Jan 2022' })).toBeVisible();
   const day = calendar.getByRole('button', { name: '3 messages on Jul 19, 2026' }).filter({ visible: true });
   await day.click();
   await expect.poll(() => bodies.at(-1)).toMatchObject({ filters: [
+    { dimension: 'source', values: ['1'] },
     { dimension: 'after', values: ['2026-07-19T00:00:00.000Z'] },
     { dimension: 'before', values: ['2026-07-20T00:00:00.000Z'] },
   ] });
@@ -501,6 +506,7 @@ test('People search and intersecting filters stay separate from identity scope a
   expect(requests.at(-1)).not.toHaveProperty('query');
   expect(obsoleteTimeline).toBe(0);
   await expect(page.getByText('Current 62/100', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true }).click();
   await page.getByRole('main', { name: 'Messages', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByLabel('From', { exact: true }).fill('2026-07-01');
   await expect.poll(async () => (await exploreHistoryState(page)).filters).toContainEqual({ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] });
@@ -567,4 +573,19 @@ test('list filters clear hidden selections and each mode offers only supported c
   await page.getByRole('button', { name: 'Profile filters', exact: true }).click();
   await page.getByRole('textbox', { name: 'Category filter', exact: true }).fill('work');
   await expect(page.getByText('1 selected', { exact: true })).toBeHidden();
+});
+
+test('Saved People retains rows and reloads after a page cursor expires', async ({ page }) => {
+  await prepare(page);
+  let loads = 0;
+  await page.route('**/api/v1/people/directory**', route => {
+    if (new URL(route.request().url()).searchParams.has('cursor')) return route.fulfill({ status: 400, json: { error: 'invalid_cursor', message: 'Directory cursor is invalid' } });
+    return route.fulfill({ json: { people: Array.from({ length: 40 }, (_, id) => ({ id: id + 1, display_name: loads ? `Reloaded ${id}` : `Contact ${id}`, organizations: [], categories: [], revision: 1, contact_state: 'active' })), next_cursor: loads++ ? undefined : 'page-2' } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
+  const list = page.getByRole('grid', { name: 'People results' });
+  await expect(list.getByText('Contact 0', { exact: true })).toBeVisible();
+  await list.evaluate(element => element.scrollTop = element.scrollHeight);
+  await page.getByRole('button', { name: 'Reload', exact: true }).click();
+  await expect(list.getByText('Reloaded 0', { exact: true })).toBeVisible();
 });

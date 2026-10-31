@@ -1697,7 +1697,7 @@ func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
 
 func TestOpenAPIExploreGroupingEnumUsesServerCatalog(t *testing.T) {
 	t.Parallel()
-	dimensions := explorecatalog.GroupingDimensions()
+	dimensions := explorecatalog.RequestGroupingDimensions()
 	want := make([]any, len(dimensions))
 	for index, dimension := range dimensions {
 		want[index] = dimension

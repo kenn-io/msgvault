@@ -3,6 +3,7 @@ import { tick, untrack } from 'svelte';
 import type { APIClient } from '../api/client';
 import type {
   EntryRow,
+  ExplorePredicate,
   ExploreCacheUnavailable,
   ExploreGroupDimension,
   ExploreGroupResult,
@@ -33,6 +34,7 @@ export type PageLoadOutcome =
  * wrote to that shared state, preserving imperative last-write-wins order. */
 export interface ExploreLoaderCallbacks {
   isEnabled: () => boolean;
+  predicate?: () => ExplorePredicate;
   onPredicateChange: () => void;
   onPagingNotice: (message: string | null) => void;
   onRestorationFocus: () => void;
@@ -113,7 +115,7 @@ export class ExploreLoader {
     // $derived field initializer referencing `this.state` would run before
     // the constructor body above assigns it; TS's field-initializer-order
     // check flags that even though $derived itself is evaluated lazily.
-    const requestFingerprint = $derived(predicateFingerprint(this.state.predicate()));
+    const requestFingerprint = $derived(predicateFingerprint(this.callbacks.predicate?.() ?? this.state.predicate()));
 
     $effect(() => {
       if (this.state.peekRestorationEpoch() === undefined) this.restoring = false;
@@ -129,7 +131,7 @@ export class ExploreLoader {
     const workspace = this.state.current.workspace;
     const restorationEpoch = this.state.restorationEpoch;
     void this.#retryRevision;
-    const predicate = untrack(() => this.state.predicate());
+    const predicate = untrack(() => this.callbacks.predicate?.() ?? this.state.predicate());
     const fingerprint = requestFingerprint;
     if (fingerprint !== this.selectionFingerprint) {
       this.callbacks.onPredicateChange();

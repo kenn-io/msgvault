@@ -55,6 +55,8 @@
 
   interface Props {
     scope?: import('../../explore/models').ExploreFilter;
+    conversationStart?: string;
+    conversationEnd?: string;
     resultsWidth?: number;
     client: APIClient;
     exploreState: ExploreState;
@@ -89,6 +91,8 @@
 
   let {
     scope = undefined,
+    conversationStart = undefined,
+    conversationEnd = undefined,
     resultsWidth = $bindable(0),
     client,
     exploreState,
@@ -849,6 +853,8 @@
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
             onOpenPerson={openRelationship}
+            {conversationStart}
+            {conversationEnd}
             {conversationAnchorId}
             onConversationAnchorChange={changeConversationAnchor}
           />

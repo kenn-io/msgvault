@@ -236,12 +236,14 @@ test.describe('day selection', () => {
     await page.route('**/api/v1/participants/1/files/search', (route) => route.fulfill({ json: {
       files: [], total_count: 0, cache_revision: 'cache-calendar', search_provenance: {}
     } }));
+    await page.getByRole('main', { name: 'Messages', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+    await page.getByLabel('From', { exact: true }).fill('2026-01-01');
     const requests: Array<{ filters?: unknown[] }> = [];
     await page.route('**/api/v1/participants/1/timeline', async (route) => {
       const body = route.request().postDataJSON();
       requests.push(body);
       const after = body.filters?.find((filter: { dimension: string }) => filter.dimension === 'after');
-      const title = after ? 'Spring planning' : 'All relationship activity';
+      const title = after?.values[0] === '2026-03-08T05:00:00.000Z' ? 'Spring planning' : 'All relationship activity';
       const rows = after?.values[0] === '2026-03-09T04:00:00.000Z' ? [] : [{
         key: 'message:10', kind: 'email', occurred_at: '2026-03-08T14:00:00Z',
         title, preview: 'A synthetic message', source_id: 1, source_type: 'gmail', source_identifier: 'archive@example.com', message_type: 'email', conversation_type: 'email', message_count: 1, has_attachments: false, attachment_count: 0, attachment_size: 0, deleted_from_source: false, match: {}
@@ -257,6 +259,9 @@ test.describe('day selection', () => {
     await expect(timeline.getByText('Spring planning')).toBeVisible();
     await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
     await expect(day).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('radio', { name: 'Details', exact: true }).click();
+    await page.getByRole('radio', { name: 'Messages', exact: true }).click();
+    await expect(timeline.getByText('Spring planning')).toBeVisible();
     const historyLength = await page.evaluate(() => history.length);
     expect(requests.at(-1)).toMatchObject({
       filters: [
@@ -279,7 +284,7 @@ test.describe('day selection', () => {
     await expect(timeline.getByText('Spring planning')).toHaveCount(0);
     await calendar.getByRole('button', { name: 'Clear date' }).click();
     await expect(timeline.getByText('All relationship activity')).toBeVisible();
-    expect(requests.at(-1)?.filters ?? []).toEqual([]);
+    expect(requests.at(-1)?.filters ?? []).toEqual([{ dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] }]);
     await expect(emptyDay).toHaveAttribute('aria-pressed', 'false');
     expect(await page.evaluate(() => history.length)).toBe(historyLength);
 

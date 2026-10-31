@@ -189,7 +189,7 @@
       </div>
     {/if}
     <div inert={bulkPending || Boolean(bulkConflict)} class="list-content">
-      <PeopleList {rows} {loading} loadingMore={directoryMode ? directory.loadingMore : controller.listLoadingMore} {hasMore}
+      <PeopleList pageRecovery={directoryMode ? directory.pageRecovery : null} {rows} {loading} loadingMore={directoryMode ? directory.loadingMore : controller.listLoadingMore} {hasMore}
         countLabel={`${(directoryMode ? rows.length : controller.listTotalCount ?? rows.length).toLocaleString()}${hasMore && directoryMode ? '+' : ''} ${facet === 'domains' ? (rows.length === 1 && !hasMore ? 'domain' : 'domains') : (rows.length === 1 && !hasMore ? 'person' : 'people')}`}
         error={directoryMode ? directory.error ?? directory.pageError : controller.listError} degraded={directoryMode ? null : controller.degraded}
         {facet} {query} {activeKey} {selection} {filterSections} filterCount={chips.length} onResetFilters={reset} {chips} sort={directoryMode && sort === 'closest' ? 'name' : sort}

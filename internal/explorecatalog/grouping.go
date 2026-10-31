@@ -23,16 +23,14 @@ var groupingDimensions = [...]string{
 	GroupKind,
 	GroupYear,
 	GroupMonth,
-	GroupDay,
 }
 
-// GroupingDimensions returns every grouping value accepted by the analytical
-// server contract. The returned slice cannot mutate the catalog.
+// GroupingDimensions returns the saved-state grouping vocabulary. The returned slice cannot mutate the catalog.
 func GroupingDimensions() []string {
 	return append([]string(nil), groupingDimensions[:]...)
 }
 
-// IsGroupingDimension reports whether value is a canonical server grouping.
+// IsGroupingDimension reports whether value is a supported saved-state grouping.
 func IsGroupingDimension(value string) bool {
 	for _, dimension := range groupingDimensions {
 		if value == dimension {
@@ -40,4 +38,9 @@ func IsGroupingDimension(value string) bool {
 		}
 	}
 	return false
+}
+
+// RequestGroupingDimensions includes daily message counts for activity requests.
+func RequestGroupingDimensions() []string {
+	return append(GroupingDimensions(), GroupDay)
 }
