@@ -835,7 +835,6 @@ describe('RelationshipsController.openTarget', () => {
       if (path.endsWith('/timeline')) timelineCalls += 1;
       if (path.endsWith('/calendar')) {
         calls += 1;
-        if (calls > 2) return Response.json({}, { status: 409 });
         return Response.json(calendar(12, 2026, `changed-${calls}`));
       }
       if (path.endsWith('/participants/12')) return Response.json({ ...person(12), cache_revision: 'cache-rel' });

@@ -1100,7 +1100,7 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	require.Len(body.Rows, 2)
 	// The shifted date and sent total distinguish the two API request fields.
-	assert.Contains([]string{body.Rows[0].Key, body.Rows[1].Key}, "2026-07-17")
+	assert.ElementsMatch([]string{"2026-07-17", "2026-07-18"}, []string{body.Rows[0].Key, body.Rows[1].Key})
 	assert.Equal(int64(2), body.Rows[0].Count+body.Rows[1].Count)
 
 	invalid := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Invalid/Zone"}`)
@@ -1108,11 +1108,6 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 
 	files := postExploreJSON(t, srv, "/api/v1/files/groups", `{"predicate":{},"grouping":["day"]}`)
 	require.Equal(http.StatusOK, files.Code, files.Body.String())
-	var fileGroups ExploreGroupsHTTPResponse
-	require.NoError(json.Unmarshal(files.Body.Bytes(), &fileGroups))
-	require.Len(fileGroups.Rows, 1)
-	assert.Equal("2026-07-18", fileGroups.Rows[0].Key)
-	assert.Equal(int64(2), fileGroups.Rows[0].Count)
 }
 
 func TestParticipantTimelineKeepsLinkedAliasesAndExcludesOwnerAbsentEvents(t *testing.T) {

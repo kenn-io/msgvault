@@ -836,8 +836,8 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
-	hotID := b.AddParticipant("hot@example.test", "example.test", "Alex Hot")
-	coldID := b.AddParticipant("cold@example.test", "example.test", "Alex Cold")
+	hotID := b.AddParticipant("hot@example.test", "example.test", "Alex A Hot")
+	coldID := b.AddParticipant("cold@example.test", "example.test", "Alex Z Cold")
 	b.AddOwnerParticipant(sourceID, ownerID)
 	for index := range 4 {
 		messageID := b.AddMessage(MessageOpt{
@@ -845,7 +845,7 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 			SentAt: time.Date(2026, time.January, 1+index, 12, 0, 0, 0, time.UTC),
 		})
 		b.AddFrom(messageID, ownerID, "Owner")
-		b.AddTo(messageID, hotID, "Alex Hot")
+		b.AddTo(messageID, hotID, "Alex A Hot")
 	}
 	for range 5 {
 		newerColdMessage := b.AddMessage(MessageOpt{
@@ -853,7 +853,7 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 			SentAt: time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC),
 		})
 		b.AddFrom(newerColdMessage, ownerID, "Owner")
-		b.AddTo(newerColdMessage, coldID, "Alex Cold")
+		b.AddTo(newerColdMessage, coldID, "Alex Z Cold")
 	}
 	engine := b.BuildEngine()
 
@@ -872,7 +872,7 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 				first int64
 			}{
 				{name: "default relevance", sort: SortSpec{Field: "activity_count", Direction: "desc"}, first: hotID},
-				{name: "name", sort: SortSpec{Field: "display_label", Direction: "asc"}, first: coldID},
+				{name: "name", sort: SortSpec{Field: "display_label", Direction: "asc"}, first: hotID},
 				{name: "most recent", sort: SortSpec{Field: "latest_at", Direction: "desc"}, first: coldID},
 			} {
 				t.Run(order.name, func(t *testing.T) {

@@ -84,14 +84,14 @@ describe('meeting panel surfaces', () => {
     view.unmount(); state.destroy();
   });
 
-  it.each(['table', 'groups'])('exposes meeting activity for %s with its scope', async (presentation) => {
+  it.each(['table', 'groups'])('exposes meeting activity for %s with its complete predicate and loaded authority', async (presentation) => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];
     const client = createAPIClient(async (input) => {
       const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
       if (path.endsWith('/meetings/metrics')) { metrics.push(await request.clone().json()); return Response.json(meetingMetrics()); }
       if (path.endsWith('/meetings/actions')) return Response.json(meetingActions());
-      if (path.endsWith('/explore') || path.endsWith('/explore/groups') || path.endsWith('/timeline')) return Response.json({ rows: [], total_count: 0, cache_revision: 'everything-cache', search_provenance: { lexical_index_revision: 'lexical-1' } });
+      if (path.endsWith('/explore') || path.endsWith('/explore/groups')) return Response.json({ rows: [], total_count: 0, cache_revision: 'everything-cache', search_provenance: { lexical_index_revision: 'lexical-1' } });
       return ancillary(path);
     });
     const state = new ExploreState(window);

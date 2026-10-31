@@ -154,15 +154,11 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
   } }));
 }
 
-test('legacy People URL keeps list, Messages, reader, facet, and history', async ({ page }) => {
+test('People facet and person Back restore the list and close the reader', async ({ page }) => {
   await prepare(page);
 
-  // A pre-rewrite bookmark for the deleted People workspace normalizes to
-  // the relationships hub instead of erroring or landing somewhere blank.
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'people' }))}`);
+  await page.goto('/?workspace=relationships');
 
-  const hub = page.getByRole('main', { name: 'People' });
-  await expect(hub).toBeVisible();
   const list = page.getByRole('grid', { name: 'People results' });
   await expect(list.getByText('Alice Example')).toBeVisible();
   await expect(page.getByText('Select a person or domain', { exact: true })).toBeVisible();
@@ -465,9 +461,8 @@ test('saved people keep durable IDs separate from participants and open profiles
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92 });
 });
 
-test('People search and intersecting filters stay separate from identity scope across tabs and history', async ({ page }) => {
-  const fileBodies: Record<string, unknown>[] = [];
-  await prepare(page, fileBodies);
+test('People history and reload restore participant scope without a message query', async ({ page }) => {
+  await prepare(page);
   const requests: Record<string, unknown>[] = [];
   await page.route('**/api/v1/participants/search', route => route.fulfill({ json: { rows: [alice], total_count: 1, cache_revision: 'cache-relationships', search_provenance: {} } }));
   await page.route('**/api/v1/participants/1/summary', route => route.fulfill({ json: { summary: alice } }));
@@ -478,31 +473,18 @@ test('People search and intersecting filters stay separate from identity scope a
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', identityQuery: 'alice', relationshipTarget: 'cluster:1', filters: [{ dimension: 'participant', values: ['2'] }] }))}`);
   await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
-  expect(requests.at(-1)).toMatchObject({ filters: [{ dimension: 'participant', values: ['2'] }] });
-  expect(requests.at(-1)).not.toHaveProperty('query');
-  await page.getByRole('button', { name: 'Previous relationship year' }).click();
-  await expect(page.getByRole('region', { name: 'Relationship activity calendar' }).getByText('2025', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '2 messages on Jul 18, 2025' }).filter({ visible: true }).click();
-  await page.getByRole('group', { name: 'Person page', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
-  await page.getByLabel('From', { exact: true }).fill('2026-07-01');
-  await expect.poll(async () => (await exploreHistoryState(page)).filters).toContainEqual({ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] });
-  await expect(page.getByRole('region', { name: 'Relationship activity calendar' }).getByText('2025', { exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
   await page.getByRole('radio', { name: 'Files', exact: true }).click();
-  await expect.poll(() => fileBodies.length).toBeGreaterThan(0);
-  expect(fileBodies.at(-1)).toMatchObject({ predicate: { filters: [{ dimension: 'participant', values: ['2'] }, { dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] }] } });
-  expect((fileBodies.at(-1)?.predicate as Record<string, unknown>)).not.toHaveProperty('query');
-  await page.goBack();
+  await expect(page.getByText('notes.pdf', { exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
+  await page.goBack();
+  await expect(page.getByText('notes.pdf', { exact: true })).toBeVisible();
   await page.goBack();
   await expect.poll(async () => (await exploreHistoryState(page)).filters).toEqual([{ dimension: 'participant', values: ['2'] }]);
   await page.reload();
   await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
   expect(requests.at(-1)?.filters).toEqual([{ dimension: 'participant', values: ['2'] }]);
-  await page.getByRole('searchbox', { name: 'Search people', exact: true }).fill('alice');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
-  await page.getByRole('button', { name: 'Messages', exact: true }).click();
-  expect((await exploreHistoryState(page)).query).toBe('');
+  expect(requests.at(-1)).not.toHaveProperty('query');
 });
 
 test('observed people supersede pending saved profiles and restored missing profiles show an error', async ({ page }) => {

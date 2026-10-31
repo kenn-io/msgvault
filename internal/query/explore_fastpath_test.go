@@ -357,7 +357,7 @@ func TestExploreParticipantPopulationKeepsMembershipAndBoundedEnrichment(t *test
 	var check func(domainPopulationProfile)
 	check = func(operator domainPopulationProfile) {
 		if strings.Contains(fmt.Sprint(operator.ExtraInfo["Aggregates"]), "list(") {
-			assert.LessOrEqual(operator.IntermediateRows, int64(3), "participant lists must be enriched only for the selected page")
+			assert.LessOrEqual(operator.IntermediateRows, int64(1), "participant lists must be enriched only for the selected page")
 		}
 		for _, child := range operator.Children {
 			check(child)
