@@ -258,7 +258,7 @@ it('refreshes the Saved list after merging profiles from Details', async () => {
   let view = render(PeopleWorkspace, { props });
   try {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
     const input = await openTypeahead('Search people to link');
     await fireEvent.input(input, { target: { value: 'Bob' } });
@@ -280,7 +280,7 @@ it('refreshes the Saved list after merging profiles from Details', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('offers Retry without the previous person page when a Directory selection fails to load', async () => {
+it.each([false, true])('offers Retry without the previous person page when a Directory selection fails to load, remount: %s', async (remount) => {
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: [{ ...profile(7, 1, [1]), organizations: [], categories: [], contact_state: 'active' }] }),
     '/api/v1/people/7': () => Response.json(profile(7, 1, [1])),
@@ -292,18 +292,41 @@ it('offers Retry without the previous person page when a Directory selection fai
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipTarget: 'cluster:1' });
   await controller.openTarget('cluster:1', {}, false);
   const onNavigate = vi.fn(patch => state.commitNavigation(patch));
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  let view = render(PeopleWorkspace, { props });
   try {
     await fireEvent.click(await screen.findByText('Synthetic One'));
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: 'cluster:1', relationshipFiles: false }));
     await view.rerender({ urlState: state.current });
     await screen.findByRole('heading', { name: 'Alice Example' });
+    if (remount) { state.commitNavigation({ workspace: 'directory' }); view.unmount(); }
     state.commitNavigation({ directoryPersonID: 9 });
-    await view.rerender({ urlState: state.current });
+    state.commitNavigation({ workspace: 'relationships' });
+    if (remount) view = render(PeopleWorkspace, { props: { ...props, urlState: state.current } }); else await view.rerender({ urlState: state.current });
     await screen.findByText('Could not load selected person.');
     expect.soft(screen.queryByRole('button', { name: 'Retry' })).not.toBeNull();
     expect.soft(screen.queryByRole('group', { name: 'Person page' })).toBeNull();
     expect.soft(screen.queryByRole('heading', { name: 'Alice Example' })).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('loads a saved person deep link before showing its person page', async () => {
+  let release!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => release = resolve);
+  const client = clientFor({
+    '/api/v1/people/7': () => pending,
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7, relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', {}, false);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await screen.findByText('Loading person…');
+    expect(screen.queryByRole('group', { name: 'Person page' })).toBeNull();
+    release(Response.json(profile(7, 1, [1])));
+    await screen.findByRole('heading', { name: 'Alice Example' });
+    expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
