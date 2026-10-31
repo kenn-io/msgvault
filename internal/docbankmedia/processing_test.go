@@ -38,7 +38,7 @@ func TestProcessingPlansAndProfiles(t *testing.T) {
 func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, err := io.WriteString(w, `{"type":"job","job":{"id":"`+docbanktest.ProcessingJobID("durable-job")+`"}}`+"\n")
+		_, err := io.WriteString(w, `{"type":"job","job":{"id":"`+docbanktest.ProcessingJobID("durable-job", "profile")+`"}}`+"\n")
 		assert.NoError(t, err)
 		assert.NoError(t, http.NewResponseController(w).Flush())
 		<-r.Context().Done()
@@ -50,14 +50,14 @@ func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {
 	defer cancel()
 	jobID, err := client.StartProcessing(ctx, docbankmedia.ProcessingSelector{NodeID: 7, ContentVersionID: "version", Profile: "documents"}, "plan")
 	require.NoError(t, err)
-	assert.Equal(t, docbanktest.ProcessingJobID("durable-job"), jobID)
+	assert.Equal(t, docbanktest.ProcessingJobID("durable-job", "profile"), jobID)
 }
 
 func TestProcessingInvalidReceipts(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 	}{
-		{name: "wrong event", body: `{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a") + `"}}`},
+		{name: "wrong event", body: `{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a", "profile") + `"}}`},
 		{name: "missing job id", body: `{"type":"job","job":{}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

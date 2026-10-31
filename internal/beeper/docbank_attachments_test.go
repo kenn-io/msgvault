@@ -1033,17 +1033,22 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Requested)
 	require.NoError(r.runBatch(t.Context()))
 	assert.Empty(r.processing.Polls)
-	r.processing.States[docbanktest.ProcessingJobID("a")] = [3]string{"completed", "rendition", ""}
+	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
 	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal(int64(1), r.processingCounts().Extracted)
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal([]string{"a"}, r.processing.Plans)
-	assert.Equal([]string{docbanktest.ProcessingJobID("a")}, r.processing.Polls)
+	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
+	var oldJobID string
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&oldJobID))
 	r.processing.Fingerprint = "profile-two"
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
 	assert.Equal(int64(1), r.processingCounts().Requested)
+	var newJobID string
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&newJobID))
+	assert.NotEqual(oldJobID, newJobID)
 }
 
 func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
@@ -1054,7 +1059,7 @@ func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal([]string{"a"}, r.processing.Plans)
 
-	jobID := docbanktest.ProcessingJobID("a")
+	jobID := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
 	r.processing.States[jobID] = [3]string{"failed", "rendition", "consent"}
 	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
@@ -1082,7 +1087,7 @@ func TestAttachmentMirrorBackfillKeepsTerminalJobFailure(t *testing.T) {
 	r.delivered("a")
 	require.NoError(r.runBatch(t.Context()))
 
-	jobID := docbanktest.ProcessingJobID("a")
+	jobID := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
 	r.processing.States[jobID] = [3]string{"failed", "rendition", "unsupported_format"}
 	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
 	require.NoError(r.runBatch(t.Context()))
@@ -1105,10 +1110,10 @@ func TestAttachmentMirrorProcessingMissingJobReplans(t *testing.T) {
 	r := newMirrorRig(t)
 	r.delivered("a")
 	require.NoError(r.runBatch(t.Context()))
-	delete(r.processing.States, docbanktest.ProcessingJobID("a"))
+	delete(r.processing.States, docbanktest.ProcessingJobID("a", r.processing.Fingerprint))
 	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{docbanktest.ProcessingJobID("a")}, r.processing.Polls)
+	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
 	assert.Equal([]string{"a", "a"}, r.processing.Plans)
 	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
 	assert.Equal(int64(1), r.processingCounts().Requested)
@@ -1122,9 +1127,9 @@ func TestAttachmentMirrorProcessingInvalidPollRetriesJob(t *testing.T) {
 	r.delivered("a")
 	var polls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method == http.MethodGet && req.URL.Path == "/api/v1/processing/jobs/"+docbanktest.ProcessingJobID("a") && polls.Add(1) == 1 {
+		if req.Method == http.MethodGet && req.URL.Path == "/api/v1/processing/jobs/"+docbanktest.ProcessingJobID("a", r.processing.Fingerprint) && polls.Add(1) == 1 {
 			w.Header().Set("Content-Type", "application/json")
-			_, err := io.WriteString(w, `{"job_id":"`+docbanktest.ProcessingJobID("a")+`","state":"completed"}`)
+			_, err := io.WriteString(w, `{"job_id":"`+docbanktest.ProcessingJobID("a", r.processing.Fingerprint)+`","state":"completed"}`)
 			assert.NoError(err)
 			return
 		}
@@ -1144,8 +1149,8 @@ func TestAttachmentMirrorProcessingInvalidPollRetriesJob(t *testing.T) {
 	var outcome, jobID string
 	require.NoError(r.f.Store.DB().QueryRow(`SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&outcome, &jobID))
 	assert.Equal("requested", outcome)
-	assert.Equal(docbanktest.ProcessingJobID("a"), jobID)
-	r.processing.States[docbanktest.ProcessingJobID("a")] = [3]string{"completed", "rendition", ""}
+	assert.Equal(docbanktest.ProcessingJobID("a", r.processing.Fingerprint), jobID)
+	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
 	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal(int32(2), polls.Load())
@@ -1221,7 +1226,7 @@ func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
 	r := newMirrorRig(t)
 	r.delivered("a")
 	require.NoError(r.runBatch(t.Context()))
-	r.processing.States[docbanktest.ProcessingJobID("a")] = [3]string{"awaiting_review", "rendition", ""}
+	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"awaiting_review", "rendition", ""}
 	r.processingDue()
 	// The scheduler publishes the batch error as last_error.
 	err := r.runBatch(t.Context())
@@ -1229,15 +1234,15 @@ func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Requested)
 	var jobID string
 	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&jobID))
-	assert.Equal(docbanktest.ProcessingJobID("a"), jobID)
-	r.processing.States[docbanktest.ProcessingJobID("a")] = [3]string{"completed", "rendition", ""}
+	assert.Equal(docbanktest.ProcessingJobID("a", r.processing.Fingerprint), jobID)
+	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
 	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{docbanktest.ProcessingJobID("a")}, r.processing.Polls)
+	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
 	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal(int64(1), r.processingCounts().Extracted)
 	assert.Empty(r.processingCounts().Outcomes)
-	assert.Equal([]string{docbanktest.ProcessingJobID("a"), docbanktest.ProcessingJobID("a")}, r.processing.Polls)
+	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint), docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
 	assert.Equal([]string{"a"}, r.processing.Jobs)
 }
 
@@ -1325,7 +1330,7 @@ func TestAttachmentMirrorProcessingDestinationFaults(t *testing.T) {
 			require.Error(err)
 			assert.Equal([]string{"c", "b", "a"}, r.processing.Plans)
 			assert.Equal([]string{"b", "a"}, r.processing.Jobs)
-			assert.Equal("queued", r.processing.States[docbanktest.ProcessingJobID("a")][0])
+			assert.Equal("queued", r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)][0])
 			delete(r.processing.Faults, "c")
 			r.processingDue()
 			require.NoError(r.runBatch(t.Context()))
@@ -1338,11 +1343,11 @@ func TestAttachmentMirrorProcessingDestinationFaults(t *testing.T) {
 			r.delivered("c", "b", "a")
 			require.NoError(r.runBatch(t.Context()))
 			r.processingDue()
-			jobC := docbanktest.ProcessingJobID("c")
+			jobC := docbanktest.ProcessingJobID("c", r.processing.Fingerprint)
 			r.processing.PollFaults[jobC] = http.StatusServiceUnavailable
 			err := r.runBatch(t.Context())
 			require.Error(err)
-			assert.Equal([]string{jobC, docbanktest.ProcessingJobID("b"), docbanktest.ProcessingJobID("a")}, r.processing.Polls)
+			assert.Equal([]string{jobC, docbanktest.ProcessingJobID("b", r.processing.Fingerprint), docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
 			assert.Equal(int64(3), r.processingCounts().Requested)
 			delete(r.processing.PollFaults, jobC)
 			r.processing.States[jobC] = [3]string{"completed", "rendition", ""}
