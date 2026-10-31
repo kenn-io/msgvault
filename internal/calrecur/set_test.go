@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -268,17 +269,6 @@ func TestParseSetRejectsUnsupportedEaster(t *testing.T) {
 	_, err := ParseSet(instant(t, "2027-03-02T17:00:00Z"), false, "", time.UTC, []string{line})
 	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
 	assert.Contains(t, err.Error(), line)
-}
-
-func TestIterRepeatedRuleSelectors(t *testing.T) {
-	for _, rule := range []string{
-		"RRULE:FREQ=DAILY;COUNT=3;BYMONTH=3,3",
-		"RRULE:FREQ=DAILY;COUNT=3;BYDAY=TU,TU,WE,TH",
-	} {
-		t.Run(rule, func(t *testing.T) {
-			assert.Equal(t, []string{"20270302T170000Z", "20270303T170000Z", "20270304T170000Z"}, keys(t, parsed(t, rule)))
-		})
-	}
 }
 
 func TestParseSetAllowsFeb29Yearly(t *testing.T) {

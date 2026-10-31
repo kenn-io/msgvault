@@ -1619,7 +1619,7 @@ type CallObservationView struct {
 	AccessPoints       []AccessPoint     `json:"access_points,omitempty"`
 	Account            string            `json:"account" validate:"required"`
 	Direction          string            `json:"direction" validate:"required"`
-	DurationSeconds    float64           `json:"duration_seconds"`
+	DurationSeconds    *float64          `json:"duration_seconds" validate:"omitempty"`
 	EndedAt            *time.Time        `json:"ended_at,omitempty"`
 	Kind               string            `json:"kind" validate:"required"`
 	MessageID          int64             `json:"message_id"`
@@ -1651,6 +1651,11 @@ func (c CallObservationView) Validate() error {
 	}
 	if err := typesValidator.Var(c.Direction, "required"); err != nil {
 		errors = errors.Append("Direction", err)
+	}
+	if v, ok := any(c.DurationSeconds).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DurationSeconds", err)
+		}
 	}
 	if err := typesValidator.Var(c.Kind, "required"); err != nil {
 		errors = errors.Append("Kind", err)

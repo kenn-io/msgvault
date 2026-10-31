@@ -707,7 +707,7 @@ func calendarAllDayDurationDays(startDate, endDate string) (int, error) {
 	return int(end.Sub(start) / (24 * time.Hour)), nil
 }
 
-func readCalendarContent(ctx context.Context, r calendarRowQueryer, messageID int64) (calevent.Content, error) {
+func readCalendarContent(ctx context.Context, r contextRowQuerier, messageID int64) (calevent.Content, error) {
 	raw, format, err := readCalendarRaw(ctx, r, messageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return calevent.Content{}, nil
@@ -718,7 +718,7 @@ func readCalendarContent(ctx context.Context, r calendarRowQueryer, messageID in
 	return decodeCalendarContent(format, raw)
 }
 
-func readCalendarRaw(ctx context.Context, r calendarRowQueryer, messageID int64) ([]byte, string, error) {
+func readCalendarRaw(ctx context.Context, r contextRowQuerier, messageID int64) ([]byte, string, error) {
 	var stored []byte
 	var format, compression sql.NullString
 	if err := r.QueryRowContext(ctx, `SELECT raw_data, raw_format, compression FROM message_raw WHERE message_id = ?`, messageID).Scan(&stored, &format, &compression); err != nil {

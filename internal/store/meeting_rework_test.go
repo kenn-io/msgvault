@@ -106,8 +106,12 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.db.Exec(`INSERT INTO meeting_link_key(message_id,kind,value,calendar_id,scheduled_at) SELECT id,'ical_uid','old@example.org','','2020-01-01 00:00:00+00:00' FROM messages WHERE source_message_id LIKE 'history-%'`)
 	requirements.NoError(err)
-	_, err = st.db.Exec(`ANALYZE`)
-	requirements.NoError(err)
+	// PostgreSQL's database-wide ANALYZE also locks other tests' schemas,
+	// which can deadlock with their concurrent index builds.
+	for _, table := range []string{"messages", "meeting_link_key"} {
+		_, err = st.db.Exec(`ANALYZE ` + table)
+		requirements.NoError(err)
+	}
 	var query string
 	var args []any
 	observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, q string, values []driver.NamedValue) error {
