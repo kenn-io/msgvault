@@ -2546,6 +2546,10 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
 
+### Participant and domain timelines
+
+`POST /api/v1/participants/{id}/timeline` and `POST /api/v1/domains/{domain}/timeline` omit drafts and unsent items. Participant timelines include events and meetings only when the archive owner participated. These rules apply to every caller, including CLI and MCP clients.
+
 ### Group analytical results
 
 **Endpoint:** `POST /api/v1/explore/groups`

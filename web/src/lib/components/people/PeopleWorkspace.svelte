@@ -1,7 +1,7 @@
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE, Button, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
-  import type { RelationshipsController } from '../../relationships/controller.svelte';
+  import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
   import { getPersonProfile } from '../../api/generated/api/api';
@@ -16,7 +16,7 @@
   import PersonPage from './PersonPage.svelte';
   import type { ComponentProps } from 'svelte';
 
-  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'onBack'>;
+  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'onBack' | 'onReconcilePersonMerge'>;
   let { directory, urlState, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
     PageProps & { directory: DirectoryController; urlState: ExploreURLState; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onDraftNavigation: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
@@ -166,11 +166,14 @@
     bulkPending = false; selection.clear();
     bulkMessage = staleLink ? 'People linked. The identity cache needs a retry.' : 'People are now treated as the same person.';
   }
+  async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
+    await Promise.all([controller.reconcilePersonMerge(context), directory.reloadFirstPage()]);
+  }
   async function merged(success: PersonMergeSuccess): Promise<void> {
     bulkPending = true;
     bulkConflict = undefined;
     page.onAnnounce?.(`Profiles merged into ${success.survivor.display_name}.`);
-    if (bulkContext) await controller.reconcilePersonMerge(bulkContext);
+    if (bulkContext) await reconcilePersonMerge(bulkContext);
     await continueBulk();
   }
   async function retryLink(): Promise<void> {
@@ -214,7 +217,7 @@
   {#if opening}<p role="status">Loading person…</p>
   {:else if soloPerson !== null && (page.target === null || controller.detailMissing)}
     {#if soloProfile?.id === soloPerson}<section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{:else if openingError}<Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} />{/if}
-  {:else}<PersonPage {...page} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />{/if}
+  {:else}<PersonPage {...page} onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />{/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>

@@ -1,3 +1,4 @@
+import { openTypeahead } from '../../../test/kit-ui';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, vi, onTestFinished } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -200,5 +201,49 @@ it('keeps files from every bound cluster when opening a saved profile', async ()
   try {
     await screen.findByText('first-address.pdf');
     await waitFor(() => expect(screen.queryByText('second-address.pdf'), requests.join(', ')).not.toBeNull());
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('refreshes the Saved list after merging profiles from Details', async () => {
+  let merged = false;
+  const one = { ...profile(7, 4, [1]), organizations: [], categories: [], contact_state: 'active' };
+  const two = { ...profile(9, 2, [2]), organizations: [], categories: [], contact_state: 'active' };
+  const client = clientFor({
+    '/api/v1/people/directory': () => Response.json({ people: merged ? [one] : [one, two] }),
+    '/api/v1/people/7': () => Response.json(one),
+    '/api/v1/participants/1': () => Response.json({ id: 1, profile: { id: 7 }, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/participants/search': () => Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
+    '/api/v1/identity/links': () => merged ? Response.json({ identity_revision: 8, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: one }, { etag: '"person-9-r2"', person: two }] }, { status: 409 }),
+    '/api/v1/people/7/merge': () => { merged = true; return Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: { ...one, revision: 5, participant_ids: [1, 2] }, merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } }); },
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 7, relationshipTarget: 'cluster:1' });
+  const directory = new DirectoryController(client);
+  const controller = new RelationshipsController(client, () => 'UTC');
+  await controller.openTarget('cluster:1', {}, false);
+  const onOpenDirectoryPerson = vi.fn();
+  const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onOpenDirectoryPerson };
+  let view = render(PeopleWorkspace, { props });
+  try {
+    await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
+    const input = await openTypeahead('Search people to link');
+    await fireEvent.input(input, { target: { value: 'Bob' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await screen.findByRole('dialog', { name: 'Resolve person merge' });
+    await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+    await waitFor(() => expect(merged).toBe(true));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
+    expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
+    view.unmount();
+    // Back returns to People with the same saved-list URL and shell-owned controllers.
+    view = render(PeopleWorkspace, { props });
+    await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
+    await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic One'));
+    await waitFor(() => expect(props.onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: 'cluster:1', relationshipFiles: false }));
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

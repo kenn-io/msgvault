@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
-import { RelationshipsController } from '../../relationships/controller.svelte';
+import { RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
 import type { RelationshipCalendar } from '../../relationships/models';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PersonPage from './PersonPage.svelte';
@@ -21,7 +21,7 @@ it('refreshes the open person after linking and profile reconciliation', async (
   const client = createAPIClient(async input => { const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname; return routes[path]?.(request) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] }); });
   const controller = new RelationshipsController(client, () => 'UTC'); const predicate = { filters: [], presentation: 'table' as const };
   await controller.openTarget('cluster:1', predicate, false);
-  const view = render(PersonPage, { props: { client, controller, target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByText('Original message');
     await controller.linkParticipants(1, 2);
@@ -56,7 +56,7 @@ it('clearing a calendar day through Files clears the conversation reader bounds'
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
-  const props = { client, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  const props = { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   const view = render(PersonPage, { props });
   try {
     await fireEvent.click((await screen.findAllByRole('button', { name: '1 message on Jul 18, 2026' }))[0]);
@@ -90,7 +90,7 @@ it('reports a filtered summary failure while retaining the loaded person', async
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', predicate, false);
-  const view = render(PersonPage, { props: { client, controller, target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByRole('heading', { name: 'Alice Example' });
     expect(controller.timelineError).toBe('Filtered activity is unavailable.');
@@ -112,7 +112,7 @@ it('keeps a stale identity mutation retry across Details and Messages', async ()
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
-  const view = render(PersonPage, { props: { client, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));

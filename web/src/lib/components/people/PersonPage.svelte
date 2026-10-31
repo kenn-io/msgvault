@@ -4,7 +4,7 @@
   import type { APIClient } from '../../api/client';
   import { listPersonAttributes } from '../../api/generated/api/api';
   import type { MeetingRef } from '../../api/generated/models';
-  import { contextPredicate, type RelationshipsController } from '../../relationships/controller.svelte';
+  import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
   import RelationshipHeader from '../relationships/RelationshipHeader.svelte';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
@@ -17,9 +17,10 @@
 
   let { client, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
     onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings,
-    onOpenFileItem, onOpenFileConversation, personFilePresentation = 'files', personFileDirections = ['from_person'],
+    onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, personFilePresentation = 'files', personFileDirections = ['from_person'],
     onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange }:
     { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
+      onReconcilePersonMerge: (context: RelationshipsMergeContext) => Promise<void>;
       onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
       onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: () => void; onOpenFileItem?: (key: string) => void;
@@ -91,7 +92,7 @@
       <RelationshipHeader showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
         loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, client)).data?.attributes ?? []}
         capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
-        onReconcilePersonMerge={(context) => controller.reconcilePersonMerge(context)}
+        {onReconcilePersonMerge}
         onLinkParticipants={(a, b) => controller.linkParticipants(a, b)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)} />
     </div>
     {#if !details && scope}
