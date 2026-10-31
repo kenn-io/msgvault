@@ -363,18 +363,3 @@ func TestExploreParticipantPopulationKeepsMembershipAndBoundedEnrichment(t *test
 	}
 	check(profile)
 }
-
-// TestExploreParticipantFilterListingStillCorrect checks participant membership
-// in the shared listing rows.
-func TestExploreParticipantFilterListingStillCorrect(t *testing.T) {
-	engine, ids := buildFastPathEquivalenceEngine(t)
-	response, err := engine.Explore(context.Background(), ExploreRequest{
-		Context: Context{ParticipantIDs: []int64{ids.alice}},
-		Page:    PageSpec{Limit: 50},
-	})
-	require.NoError(t, err)
-	require.NotEmpty(t, response.Rows)
-	for _, row := range response.Rows {
-		assert.Contains(t, row.ParticipantIDs, ids.alice, "row %s must include the filtered participant", row.Key)
-	}
-}

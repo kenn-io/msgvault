@@ -828,10 +828,11 @@ describe('RelationshipsController.openTarget', () => {
   });
 
   it('stops after one calendar revision restart without the legacy timeline', async () => {
-    let calls = 0;
+    let calls = 0; let timelineCalls = 0;
     const client = createAPIClient(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
+      if (path.endsWith('/timeline')) timelineCalls += 1;
       if (path.endsWith('/calendar')) {
         calls += 1;
         if (calls > 2) return Response.json({}, { status: 409 });
@@ -845,6 +846,7 @@ describe('RelationshipsController.openTarget', () => {
       await controller.openTarget('cluster:12', { filters: [] }, false);
       await vi.waitFor(() => expect(controller.relationshipCalendarError).toBe('Relationship activity changed again. Retry when the archive settles.'));
       expect(calls).toBe(2);
+      expect(timelineCalls).toBe(0);
     } finally { controller.destroy(); }
   });
 

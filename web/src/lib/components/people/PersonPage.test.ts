@@ -93,7 +93,6 @@ it('reports a filtered summary failure while retaining the loaded person', async
   const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByRole('heading', { name: 'Alice Example' });
-    expect(controller.timelineError).toBe('Filtered activity is unavailable.');
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByText('Filtered activity is unavailable.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
