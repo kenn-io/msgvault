@@ -445,6 +445,7 @@ func (a AnnualTemperatureSummary) Validate() error {
 
 type APIHTTPError struct {
 	ErrorData string  `json:"error" validate:"required"`
+	Hint      *string `json:"hint,omitzero"`
 	Message   *string `json:"message,omitzero"`
 }
 
@@ -1014,9 +1015,12 @@ type CLIRepairMessageRequest struct {
 }
 
 type CLIRunEvent struct {
-	Data      *string `json:"data,omitzero"`
-	ErrorData *string `json:"error,omitzero"`
-	Type      string  `json:"type" validate:"required"`
+	Code          *string `json:"code,omitzero"`
+	Data          *string `json:"data,omitzero"`
+	ErrorData     *string `json:"error,omitzero"`
+	ErrorReported *bool   `json:"error_reported,omitempty"`
+	ExitCode      *int64  `json:"exit_code,omitempty"`
+	Type          string  `json:"type" validate:"required"`
 }
 
 func (c CLIRunEvent) Validate() error {
@@ -4762,6 +4766,7 @@ func (e EntryRow) Validate() error {
 
 type ErrorResponse struct {
 	ErrorData string  `json:"error" validate:"required"`
+	Hint      *string `json:"hint,omitzero"`
 	Message   *string `json:"message,omitzero"`
 }
 
