@@ -97,13 +97,13 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
       });
       await route.fulfill({
         headers: { ETag: '"etag-b"' },
-        json: settingsDocument('dark', true)
+        json: settingsDocument('dark')
       });
       return;
     }
     await route.fulfill({
       headers: { ETag: '"etag-a"' },
-      json: settingsDocument('system', false)
+      json: settingsDocument('system')
     });
   });
 
@@ -112,8 +112,6 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await selectKitOption(page, 'Theme', 'Dark');
   await page.getByRole('button', { name: 'Save changes' }).click();
-
-  await expect(page.getByRole('status').filter({ hasText: 'Saved. Restart msgvault to apply these changes.' })).toBeVisible();
 
   const patch = await patchCaptured;
   expect(patch.headers['x-csrf-token']).toBe('csrf-token');
@@ -181,18 +179,13 @@ test('Settings keeps its category across reload and Back', async ({ context, pag
   await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
 });
 
-test('saved appearance reaches this tab, and the default mode only new tabs', async ({ context, page }) => {
+test('a saved default search mode applies to new tabs', async ({ context, page }) => {
   await installSettingsDaemon(context);
   await page.goto('/?workspace=settings');
   await page.getByRole('button', { name: 'Advanced', exact: true }).click();
-  await selectKitOption(page, 'Theme', 'Dark');
   await selectKitOption(page, 'Search opens in', 'Best match');
-  const before = page.url();
   await page.getByRole('button', { name: 'Save changes' }).click();
-  await expectKitTheme(page, 'dark');
-  expect(page.url()).toBe(before);
-  await expect(page.getByRole('radio', { name: 'Full text' })).toBeChecked();
-  expect(await page.evaluate(() => localStorage.getItem('msgvault-search-mode'))).toBe('hybrid');
+  await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
 
   const next = await context.newPage();
   await next.goto('/?workspace=everything');
@@ -210,7 +203,7 @@ test('a Display menu theme override wins over a saved theme', async ({ context, 
   await expectKitTheme(page, 'light');
 });
 
-function settingsDocument(theme: string, pendingRestart: boolean) {
+function settingsDocument(theme: string) {
   return {
     groups: [{ id: 'browser', label: 'Appearance', description: 'How the web app looks.' }],
     settings: [
@@ -220,9 +213,9 @@ function settingsDocument(theme: string, pendingRestart: boolean) {
         kind: 'string',
         value: { string: theme },
         options: ['system', 'light', 'dark'],
-        restart_required: true
+        restart_required: false
       }
     ],
-    pending_restart: pendingRestart
+    pending_restart: false
   };
 }

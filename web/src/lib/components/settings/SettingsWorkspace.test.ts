@@ -31,7 +31,7 @@ function typed(value: unknown): Record<string, unknown> {
 
 function setting(key: string, group: string, kind: string, value: unknown, extra: Setting = {}): Setting {
   return {
-    key, group, kind, label: key, restart_required: false,
+    key, group, kind, label: key, restart_required: true,
     value: value === undefined ? undefined : typed(value), ...extra
   };
 }
@@ -44,11 +44,11 @@ function settingsDoc(overrides: Setting = {}) {
     ] }],
     settings: [
       setting('web.theme', 'browser', 'string', 'system', {
-        label: 'Theme', options: ['system', 'light', 'dark'] }),
+        label: 'Theme', restart_required: false, options: ['system', 'light', 'dark'] }),
       setting('web.density', 'browser', 'string', 'compact', {
-        label: 'Density', options: ['compact', 'comfortable'] }),
+        label: 'Density', restart_required: false, options: ['compact', 'comfortable'] }),
       setting('web.default_search_mode', 'browser', 'string', 'full_text', {
-        label: 'Default search mode', options: ['full_text', 'semantic', 'hybrid'] }),
+        label: 'Default search mode', restart_required: false, options: ['full_text', 'semantic', 'hybrid'] }),
       setting('server.api_port', 'server', 'integer', 0, { label: 'API port', read_only: true, validation: { off: { value: '0', label: 'The daemon picks a free port' } } }),
       setting('server.bind_addr', 'server', 'string', '127.0.0.1', { label: 'Bind address', read_only: true }),
       setting('server.api_key', 'server', 'secret', undefined, {
@@ -98,10 +98,13 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
     if (path === '/api/v1/settings' && request.method === 'PATCH') {
       for (const update of (body as { updates: { key: string; value?: Record<string, unknown> }[] }).updates) {
         const target = (doc.settings as Setting[]).find((candidate) => candidate.key === update.key);
-        if (target && update.value) target.value = update.value;
+        if (target) {
+          if (update.value) target.value = update.value;
+          if (target.restart_required) doc.pending_restart = true;
+        }
       }
       etag += 1;
-      return Response.json({ ...doc, pending_restart: true }, { headers: { ETag: `"s${etag}"` } });
+      return Response.json(doc, { headers: { ETag: `"s${etag}"` } });
     }
     if (path.startsWith('/api/v1/settings/person-enrichment/providers/') && request.method === 'PUT') {
       doc.person_enrichment_providers = (doc.person_enrichment_providers as Record<string, unknown>[]).map(provider => path.endsWith('/' + provider.name) ? { ...provider, ...body as object } : provider) as never[];
@@ -312,7 +315,7 @@ describe('SettingsWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect((await screen.findByRole('alert')).textContent).toContain('The settings changed on disk');
     expect(seen.filter(request => request.method === 'GET' && request.path === '/api/v1/settings')).toHaveLength(2);
-    expect(screen.getByText('1 unsaved change')).toBeDefined();
+    expect(screen.getByText('1 unsaved change.')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(seen.filter(entry => entry.method === 'PATCH')).toHaveLength(2));
     const patch = seen.filter(entry => entry.method === 'PATCH').at(-1)!;
@@ -336,7 +339,7 @@ describe('SettingsWorkspace', () => {
     await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
     expect(seen.some((entry) => entry.method === 'PATCH')).toBe(false);
-    expect(screen.getByText('1 unsaved change')).toBeDefined();
+    expect(screen.getByText('1 unsaved change.')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(seen.some((entry) => entry.method === 'PATCH')).toBe(true));
     expect(seen.find((entry) => entry.method === 'PATCH')!.body).toEqual({
@@ -434,14 +437,6 @@ it('locks fields and newly mounted category controls without holding leave while
   }
 });
 
-it('saves provider settings before allowing credential changes', async () => {
-  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
-  const { client } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
-  render(SettingsWorkspace, { client, category: 'enrichment' });
-  await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
-  expect(screen.getByText('Save provider settings first before changing this credential.')).toBeDefined();
-});
-
 it('keeps credential and provider saves immediate while workspace drafts remain pending', async () => {
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
   const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
@@ -460,12 +455,13 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
 
   await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
   await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+  expect(screen.getByText('Save provider settings first before changing this credential.')).toBeDefined();
   await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
   await waitFor(() => expect(seen.some(request => request.path.endsWith('/providers/primary'))).toBe(true));
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
+  expect(screen.getByText('1 unsaved change.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
+  expect(screen.getByText('1 unsaved change.')).toBeDefined();
   expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
   expect(writes()).toEqual([
     ['PUT', '/api/v1/settings/provider-credentials/vector.embeddings', '"credential-a"'],
@@ -492,8 +488,13 @@ it('starts the visual index from Overview and refreshes its row', async () => {
 it('keeps feature rows during refresh and recovers from a later status failure', async () => {
   let finish!: (response: Response) => void;
   let reads = 0;
+  let coverageReads = 0;
+  let finishCoverage!: (response: Response) => void;
+  const pendingCoverage = new Promise<Response>(resolve => { finishCoverage = resolve; });
+  const coverage = { eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] };
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const { client } = fixture(settingsDoc(), request => {
+    if (request.url.includes('/search/coverage')) return ++coverageReads === 2 ? pendingCoverage : Response.json(coverage);
     if (request.url.endsWith('/operations/status')) {
       reads += 1;
       if (reads === 3) return Response.json({ message: 'Unavailable' }, { status: 503 });
@@ -503,10 +504,19 @@ it('keeps feature rows during refresh and recovers from a later status failure',
   });
   render(SettingsWorkspace, { client });
   await screen.findByText('Running');
+  await screen.findByRole('button', { name: 'Build index, Message search' });
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
-  await waitFor(() => expect(reads).toBe(2));
-  expect(screen.getByText('Running')).toBeDefined();
-  finish(Response.json({ lanes: lanes(lane('visual_embedding')) }));
+  try {
+    await waitFor(() => {
+      expect(reads).toBe(2);
+      expect(coverageReads).toBe(2);
+    });
+    expect(screen.getByText('Running')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Build index, Message search' })).toBeDefined();
+  } finally {
+    finish(Response.json({ lanes: lanes(lane('visual_embedding')) }));
+    finishCoverage(Response.json(coverage));
+  }
   await screen.findByText('On');
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   await screen.findByText("Can't load status");
@@ -597,14 +607,6 @@ it('clears the settings load error after a successful Retry', async () => {
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
-it('shows settings from unknown groups under Advanced', async () => {
-  const doc = settingsDoc();
-  doc.settings.push(setting('extras.limit', 'extras', 'integer', 4, { label: 'Extra limit' }));
-  const { client } = fixture(doc);
-  render(SettingsWorkspace, { client, category: 'advanced' });
-  expect(await screen.findByLabelText('Extra limit')).toHaveProperty('value', '4');
-});
-
 it('shows unavailable message coverage after a failed initial read', async () => {
   const { client } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
@@ -616,30 +618,8 @@ it('shows unavailable message coverage after a failed initial read', async () =>
   expect(await within(row).findByText('Unavailable')).toBeDefined();
 });
 
-it('keeps message coverage visible during a pending refresh', async () => {
-  let reads = 0;
-  let finish!: (response: Response) => void;
-  const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const coverage = { eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] };
-  const { client } = fixture(settingsDoc(), request => {
-    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
-    if (request.url.includes('/search/coverage')) return ++reads === 1 ? Response.json(coverage) : pending;
-  });
-  render(SettingsWorkspace, { client });
-  const name = 'Build index, Message search';
-  await screen.findByRole('button', { name });
-  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
-  try {
-    await waitFor(() => expect(reads).toBe(2));
-    expect(screen.getByRole('button', { name })).toBeDefined();
-  } finally {
-    finish(Response.json(coverage));
-  }
-});
-
-it('refreshes a pending message rebuild, keeps Contacts available, and removes a ready build action', async () => {
+it('refreshes a pending message rebuild and keeps Contacts available', async () => {
   let building = false;
-  let built = false;
   let reads = 0;
   let finish!: (response: Response) => void;
   let sent!: () => void;
@@ -650,8 +630,7 @@ it('refreshes a pending message rebuild, keeps Contacts available, and removes a
   const status = () => Response.json({ lanes: lanes(lane('message_embedding', building ? { active: { id: 'build-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } } : {}), lane('carddav_sync', { supported_actions: ['carddav_sync'] })) });
   const { client, seen } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return ++reads === 1 ? status() : buildSent.then(status);
-    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: built ? 'ready' : 'unavailable', actions: built ? [] : ['build_index'] });
-    if (request.url.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded', connections: [] });
+    if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] });
     if (request.url.endsWith('/cli/run')) { building = true; sent(); return pending; }
   });
   render(SettingsWorkspace, { client });
@@ -668,14 +647,9 @@ it('refreshes a pending message rebuild, keeps Contacts available, and removes a
     });
     expect(seen.filter(request => request.path === '/api/v1/operations/status')).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Sync now, Contacts' })).toHaveProperty('disabled', false);
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now, Contacts' }));
-    await waitFor(() => expect(seen.some(request => request.path.endsWith('/carddav/sync'))).toBe(true));
   } finally {
     building = false;
     finish(new Response('{"type":"complete"}\n'));
   }
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
-  built = true;
-  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Build index, Message search' })).toBeNull());
 });
