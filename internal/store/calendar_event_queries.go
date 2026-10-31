@@ -458,7 +458,7 @@ func queryCalendarExceptionAliases(ctx context.Context, r reboundReader, candida
 		if row.Event.Original == nil {
 			continue
 		}
-		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: row.Event.Original.Key()}
+		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: calendarExceptionAliasKey(*row.Event.Original)}
 		identities[key] = row
 	}
 	if len(identities) == 0 {

@@ -307,6 +307,15 @@ func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEven
 	return overrides
 }
 
+// Provider instance keys have whole-second precision. Alias freshness must
+// preserve the retained instant so a fractional edit cannot replace its sibling.
+func calendarExceptionAliasKey(original calrecur.Identity) string {
+	if original.AllDay {
+		return original.Date
+	}
+	return original.Instant.UTC().Format(time.RFC3339Nano)
+}
+
 // Identified snapshots collapse to their freshest alias. Exceptions without
 // an original identity remain independent bounded occurrences.
 func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
@@ -322,7 +331,7 @@ func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
 			byID[row.MessageID] = row
 			continue
 		}
-		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: row.Event.Original.Key()}
+		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: calendarExceptionAliasKey(*row.Event.Original)}
 		current, exists := identified[key]
 		if !exists || calendarEventSnapshotNewer(row, current) {
 			identified[key] = row
