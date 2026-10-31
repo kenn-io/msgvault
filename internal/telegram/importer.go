@@ -205,14 +205,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 	summary.ChatsProcessed++
 	direct := chat.Type == "personal_chat" || chat.Type == "bot_chat"
 	var peerPID int64
-
-	ids := make([]string, 0, len(chat.Messages))
-	for _, m := range chat.Messages {
-		if m.supported() {
-			ids = append(ids, fmt.Sprintf("%s:%d", peer, m.ID))
-		}
-	}
-	existing, err := st.MessageExistsBatchContext(ctx, sourceID, ids)
+	existing, err := prepareChat(ctx, st, sourceID, peer, chat)
 	if err != nil {
 		return err
 	}
@@ -308,6 +301,21 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		summary.MessagesAdded++
 	}
 	return nil
+}
+
+// prepareChat keeps a conversation for every exported chat, even one with no
+// supported messages, and returns the chat's already-imported message IDs.
+func prepareChat(ctx context.Context, st *store.Store, sourceID int64, peer string, chat *Chat) (map[string]int64, error) {
+	if _, err := st.EnsureConversationWithTypeContext(ctx, sourceID, peer, chat.ConvType(), chat.Name); err != nil {
+		return nil, fmt.Errorf("telegram: ensure conversation %s: %w", peer, err)
+	}
+	ids := make([]string, 0, len(chat.Messages))
+	for _, m := range chat.Messages {
+		if m.supported() {
+			ids = append(ids, fmt.Sprintf("%s:%d", peer, m.ID))
+		}
+	}
+	return st.MessageExistsBatchContext(ctx, sourceID, ids)
 }
 
 // replacement leaves a text-only message's attachments untouched instead of clearing them.
