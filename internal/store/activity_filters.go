@@ -168,7 +168,8 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	// These reused sets must be evaluated once. SQLite can otherwise inline
 	// them into each correlated fact lookup and rebuild the scoped population
 	// repeatedly while scoring a burst. The fences retain all eligible rows
-	// before copy selection, grouping and pagination.
+	// before copy selection, grouping and pagination. Prefer counted contact
+	// when email copies have different owner attribution, then keep stable IDs.
 	query := prefix + `eligible AS MATERIALIZED (
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
  m.message_type,m.rfc822_message_id,m.list_id,src.source_type,COALESCE(m.snippet,'') AS snippet,
@@ -194,7 +195,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  CASE WHEN ` + listExcluded + `=1 OR EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.recipient_type='from' AND f.excluded NOT IN ('','owner')) THEN 0 ELSE 1 END AS non_noise
  FROM message_flags e
  ), copies AS (
- SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY source_id,message_id) AS copy_rank,
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,source_id,message_id) AS copy_rank,
  COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
  FROM scored e
  ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
