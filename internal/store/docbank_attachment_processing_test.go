@@ -40,22 +40,37 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 		if len(files) == 0 {
 			break
 		}
+		if len(seen) == 0 {
+			require.Len(files, 20)
+			assert.Equal("requested", files[14].Outcome)
+			require.Empty(files[15].Outcome, "reserve five slots for unasked files despite the due backlog")
+		}
+		batchUnasked := 0
 		for _, d := range files {
 			require.False(seen[d.ContentHash], "file visited twice: %s", d.ContentHash)
 			seen[d.ContentHash] = true
 			if d.Outcome == "requested" {
-				assert.Zero(unasked, "due jobs come before unasked files")
+				assert.Zero(batchUnasked, "due jobs come before unasked files in each batch")
 				requested++
 				d.Outcome = "extracted"
 				require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Time{}))
 			} else {
-				require.Equal(25, requested, "poll every due job before planning new files")
+				batchUnasked++
 				unasked++
 			}
 		}
 	}
 	assert.Equal(950, unasked)
 	assert.Equal(25, requested)
+	for i := range 25 {
+		hash := fmt.Sprintf("%064x", 0xabcdef+i)
+		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
+			ContentHash: hash, Fingerprint: "fp", Outcome: "requested", JobID: hash,
+		}, time.Now().Add(-time.Minute)))
+	}
+	files, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", &cursor, 20)
+	require.NoError(err)
+	assert.Len(files, 20, "polls use the whole batch after unasked files are exhausted")
 }
 
 func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {

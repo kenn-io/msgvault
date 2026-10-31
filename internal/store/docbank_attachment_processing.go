@@ -55,6 +55,10 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  ORDER BY d.content_hash LIMIT ?`
 		args := []any{dest}
 		if !unasked {
+			pollLimit := n
+			if !cursor.unaskedDone {
+				pollLimit = n * 3 / 4
+			}
 			query = `SELECT d.content_hash, d.node_id, d.version_id, p.fingerprint, p.outcome, p.outcome, p.job_id
  FROM docbank_attachment_processing p JOIN docbank_attachment_deliveries d
  ON d.destination_key = p.destination_key AND d.content_hash = p.content_hash
@@ -63,7 +67,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  ORDER BY p.next_action_at, p.content_hash LIMIT ?`
 			args = append(args, fingerprint, s.timestampValue(time.Now().UTC()))
 			args = append(args, visibleArgs...)
-			args = append(args, n-len(result))
+			args = append(args, pollLimit)
 		} else {
 			args = append(args, visibleArgs...)
 			args = append(args, cursor.afterHash, fingerprint, n-len(result))
