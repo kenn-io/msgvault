@@ -529,11 +529,17 @@ func (s *Store) AttachIdentityMatchEvidenceSourceContext(
 // HasRejectedParticipantPairContext reports whether the user rejected any
 // match between two participants on a service, whatever the basis or key.
 func (s *Store) HasRejectedParticipantPairContext(ctx context.Context, leftID, rightID int64, serviceSlug string) (bool, error) {
+	return hasRejectedParticipantPairContext(ctx, s.db, leftID, rightID, serviceSlug)
+}
+
+func hasRejectedParticipantPairContext(
+	ctx context.Context, q contextRowQuerier, leftID, rightID int64, serviceSlug string,
+) (bool, error) {
 	if leftID > rightID {
 		leftID, rightID = rightID, leftID
 	}
 	var rejected bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM identity_match_candidates c
 		JOIN communication_services cs ON cs.id = c.service_id
 		WHERE c.left_kind = 'participant' AND c.left_id = ?
@@ -721,20 +727,10 @@ func (s *Store) decideIdentityMatchCandidateContext(
 				}
 			}
 		}
-		// A system decision is a compare-and-set from the reviewable candidate
-		// state. In particular, a user rejection that wins the identity lock
-		// must not be overwritten by a stale importer snapshot. Explicit users
-		// may still reverse their own rejection through the accept endpoint.
-		if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) &&
-			current.State == IdentityMatchStateRejected {
-			return ErrIdentityMatchRejected
-		}
-		if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) &&
-			current.State != IdentityMatchStateCandidate {
-			// System acceptance is a compare-and-set from the reviewable
-			// candidate state. Conflict and every other terminal state must
-			// survive a stale importer snapshot just like rejection does.
-			return ErrIdentityMatchNotAccepted
+		if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) {
+			if err := checkSystemAcceptanceTxContext(ctx, tx, current); err != nil {
+				return err
+			}
 		}
 		if current.State == IdentityMatchStateAccepted && state != IdentityMatchStateAccepted &&
 			state != IdentityMatchStateRejected &&
@@ -747,15 +743,6 @@ func (s *Store) decideIdentityMatchCandidateContext(
 			if _, linked := componentOf(current.LeftID, edges)[current.RightID]; linked {
 				return ErrIdentityMatchAlreadyApplied
 			}
-		}
-		// Only a stable-provider-id candidate that records which stable ID
-		// matched may be accepted without explicit user confirmation; the basis
-		// label alone is caller-supplied and proves nothing.
-		if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) &&
-			(current.Basis != IdentityMatchStableProviderID ||
-				current.NormalizedValue == nil ||
-				strings.TrimSpace(*current.NormalizedValue) == "") {
-			return ErrIdentityMatchNotAcceptable
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
 			state = ?, decided_by = ?, decided_at = `+s.dialect.Now()+`,
@@ -798,6 +785,44 @@ func (s *Store) decideIdentityMatchCandidateContext(
 		return err
 	})
 	return candidate, before, err
+}
+
+// checkSystemAcceptanceTxContext guards an automated acceptance. The caller
+// holds the identity-mutation lock, so a user's unlink or rejection that won
+// the lock is visible here and cannot be overwritten by a stale importer.
+func checkSystemAcceptanceTxContext(ctx context.Context, tx *loggedTx, current *IdentityMatchCandidate) error {
+	// A system decision is a compare-and-set from the reviewable candidate
+	// state. Explicit users may still reverse their own rejection through the
+	// accept endpoint.
+	if current.State == IdentityMatchStateRejected {
+		return ErrIdentityMatchRejected
+	}
+	// Conflict and every other terminal state must survive a stale importer
+	// snapshot just like rejection does.
+	if current.State != IdentityMatchStateCandidate {
+		return ErrIdentityMatchNotAccepted
+	}
+	// Only a stable-provider-id candidate that records which stable ID
+	// matched may be accepted without explicit user confirmation; the basis
+	// label alone is caller-supplied and proves nothing.
+	if current.Basis != IdentityMatchStableProviderID || current.NormalizedValue == nil ||
+		strings.TrimSpace(*current.NormalizedValue) == "" {
+		return ErrIdentityMatchNotAcceptable
+	}
+	// A Telegram pair the user rejected under any key stays apart, even when
+	// the importer checked the pair before that rejection landed.
+	if current.LeftKind != IdentityMatchParticipant || current.RightKind != IdentityMatchParticipant ||
+		current.ServiceSlug == nil || *current.ServiceSlug != "telegram" {
+		return nil
+	}
+	rejected, err := hasRejectedParticipantPairContext(ctx, tx, current.LeftID, current.RightID, "telegram")
+	if err != nil {
+		return err
+	}
+	if rejected {
+		return ErrIdentityMatchRejected
+	}
+	return nil
 }
 
 // rejectSystemAcceptedIdentityMatchTxContext withdraws the direct edge that
