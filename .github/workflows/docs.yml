@@ -39,4 +39,6 @@ jobs:
         run: kit-retry 3 5 uv sync --frozen --no-dev
 
       - name: Check documentation
+        env:
+          DOWNLOAD_RETRY: kit-retry 3 5
         run: make docs-check
