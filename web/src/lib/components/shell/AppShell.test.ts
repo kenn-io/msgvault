@@ -2,7 +2,7 @@ import { documentStatus, lanes } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRawSnippet, getContext, mount, tick, unmount } from 'svelte';
+import { createRawSnippet, getContext, mount, tick, unmount, type ComponentProps } from 'svelte';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
@@ -2978,10 +2978,10 @@ it('keeps Stay focused when a saved view holds departure from dirty Settings', a
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     return Response.json(exploreResponse());
   });
-  const settings = createRawSnippet(() => {
+  const settings = createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((...args) => {
     const registerLeave = getContext('msgvault:hold-settings-leave');
     return { render: () => '<div></div>', setup: element => {
-      const component = mount(SettingsWorkspace, { target: element, props: { client, category: 'server' },
+      const component = mount(SettingsWorkspace, { target: element, props: { client, operationsController: args[8](), category: 'server' },
         context: new Map([['msgvault:hold-settings-leave', registerLeave]]) });
       return () => { void unmount(component); };
     } };

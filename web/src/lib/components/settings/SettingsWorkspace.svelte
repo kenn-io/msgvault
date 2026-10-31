@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     getEmbeddingStatus as generatedGetEmbeddingStatus,
-    getOperationStatus as generatedGetOperationStatus,
     getSettings as generatedGetSettings,
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
@@ -15,7 +14,6 @@
     ProviderCredentialResponse as GeneratedProviderCredentialResponse,
     SettingUpdate as GeneratedSettingUpdate,
     SettingsResponse as GeneratedSettingsResponse,
-    OperationLaneStatus,
     Status as VisualStatus,
   } from '../../api/generated/models';
   import { createExploreAPI } from '../../explore/api';
@@ -23,6 +21,7 @@
   import type { SavedAppearance } from '../../theme/preferences.svelte';
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import { runOperationAction } from '../../operations/actions';
+  import type { OperationsController } from '../../operations/controller.svelte';
   import { pendingSecret } from '../../settings/secrets';
   import type { SearchCoverageValue } from '../../search/modes';
   import {
@@ -63,6 +62,7 @@
 
   let {
     client,
+    operationsController,
     plainHTTPWarning = false,
     cardDAVRequest = undefined,
     navigationTarget = undefined,
@@ -75,6 +75,7 @@
     onStatusChange = () => undefined,
   }: {
     client: APIClient;
+    operationsController: OperationsController;
     plainHTTPWarning?: boolean;
     cardDAVRequest?: CardDAVSettingsRequest;
     navigationTarget?: SettingsNavigationTarget;
@@ -106,9 +107,9 @@
   let root = $state<HTMLElement>();
   let embeddingStatus = $state<EmbeddingStatus>();
   let visualStatus = $state<VisualStatus>();
-  let lanes = $state<OperationLaneStatus[]>();
+  const operationStatus = $derived(operationsController.snapshot);
+  const lanes = $derived(operationStatus.statusLanes.flatMap(lane => lane.kinds));
   let coverage = $state<Pick<SearchCoverageValue, 'status' | 'actions'>>();
-  let statusSettled = $state(false);
   let building = $state<Record<string, boolean>>({});
   let consumedCategoryRequestKey: number | undefined;
   let focusedNavigationSettingKey: string | undefined;
@@ -141,7 +142,7 @@
   // An emptied number field is a draft in progress, not a value: it keeps the
   // row on, cannot be saved, and never stands in for the off value.
   const incompleteDrafts = $derived(Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length);
-  const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus, coverage));
+  const features = $derived(overviewRows(lanes, embeddingStatus, visualStatus, coverage));
 
   onMount(() => {
     void loadSettings(false);
@@ -164,7 +165,7 @@
     onCategoryChange(activeCategory = categoryID);
   }
 
-  // Overview owns feature status and index actions. Status reloads when a build starts or ends.
+  // Refresh index counts when a build starts or ends.
   let statusRevision = $state(0);
   $effect(() => {
     if (activeCategory !== 'overview') return;
@@ -183,24 +184,22 @@
         if (!controller.signal.aborted) visualStatus = response.ok ? data : undefined;
       })
       .catch(() => undefined);
-    void generatedGetOperationStatus({ ...client, signal: controller.signal })
-      .then(({ data, response }) => {
-        if (controller.signal.aborted) return;
-        lanes = response.ok ? data?.lanes : undefined;
-        statusSettled = true;
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) { lanes = undefined; statusSettled = true; }
-      });
     return () => controller.abort();
   });
+
+  function refreshFeatureStatus(): void {
+    statusRevision += 1;
+    void operationsController.refreshStatus();
+  }
 
   async function build(id: string, run: () => Promise<void>): Promise<void> {
     if (building[id]) return;
     building[id] = true;
     buildError = '';
     try {
-      await run();
+      const operation = run();
+      onStatusChange();
+      await operation;
     } catch (cause) {
       buildError = cause instanceof Error ? cause.message : "Can't build the index.";
     } finally {
@@ -568,7 +567,7 @@
     <PageHeader title="Settings">
       {#snippet actions()}
         {#if activeCategory === 'overview'}
-          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" onclick={() => (statusRevision += 1)}><RefreshCwIcon size={16} /></IconButton></span>
+          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" onclick={refreshFeatureStatus}><RefreshCwIcon size={16} /></IconButton></span>
         {/if}
       {/snippet}
     </PageHeader>
@@ -600,10 +599,10 @@
 
         <fieldset class="settings-fields" disabled={saving}>
         {#if activeId === 'overview'}
-          {#if !statusSettled}
+          {#if operationStatus.statusError}
+            <EmptyState title="Can't load status"><Button label="Retry" onclick={refreshFeatureStatus} /></EmptyState>
+          {:else if !operationStatus.statusReadable}
             <p class="state" role="status">Loading…</p>
-          {:else if !lanes}
-            <EmptyState title="Can't load status"><Button label="Retry" onclick={() => (statusRevision += 1)} /></EmptyState>
           {:else}
             <SettingsOverview onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}

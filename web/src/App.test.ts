@@ -1,4 +1,4 @@
-import { lanes } from './test/operations';
+import { lane, lanes } from './test/operations';
 import { getHealth as generatedGetHealth } from './lib/api/generated/api/api';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,34 @@ import { SEARCH_MODE_PREFERENCE_KEY } from './lib/search/modes';
 import { chooseSelectOption } from './test/kit-ui';
 import * as sessionReporting from './lib/telemetry/session';
 describe('application foundation', () => {
+  it('updates Overview when the shell refreshes a finished job', async () => {
+    let running = true;
+    const session = createSessionController(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
+      if (path === '/api/v1/settings') return Response.json({ settings: [], groups: [], pending_restart: false });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('person_enrichment', {
+        active: running ? { id: 'lookup-1', kind: 'person_enrichment', lane: 'person_facts', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } : undefined,
+      })) });
+      return Response.json({}, { status: 404 });
+    });
+    window.history.replaceState(null, '', '/?workspace=settings');
+    const rendered = render(App, { session });
+    try {
+      const features = await screen.findByRole('list', { name: 'Features' });
+      const row = within(features).getByText('People lookups').closest('li')!;
+      await within(row).findByText('Running');
+      running = false;
+      await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Running' }));
+      await screen.findByRole('button', { name: 'Sync status: Idle' });
+      await waitFor(() => expect(row.textContent).toContain('On'));
+      expect(within(row).queryByText('Running')).toBeNull();
+    } finally {
+      rendered.unmount();
+    }
+  });
+
   it('reports resolved workspaces and standalone messages', async () => {
     const events: Array<{ event: string; properties?: { screen?: string; surface?: string } }> = [];
     const session = createSessionController(async (input) => {

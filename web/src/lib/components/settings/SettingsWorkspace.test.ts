@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
+import { OperationsController } from '../../operations/controller.svelte';
 import { lane, lanes } from '../../../test/operations';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
@@ -139,16 +140,23 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
     }
     return Response.json({}, { status: 404 });
   }));
-  return { client, seen };
+  const operationsController = new OperationsController(client);
+  controllers.push(operationsController);
+  void operationsController.refreshStatus();
+  return { client, seen, operationsController, onStatusChange: () => void operationsController.refreshStatus(true) };
 }
 
-afterEach(() => vi.restoreAllMocks());
+const controllers: OperationsController[] = [];
+afterEach(() => {
+  controllers.splice(0).forEach(controller => controller.destroy());
+  vi.restoreAllMocks();
+});
 
 it('shows the restart cue before saving only while a restart-required draft is pending', async () => {
   const doc = settingsDoc();
   doc.settings.push(setting('log.enabled', 'server', 'boolean', false, { restart_required: true }));
-  const { client, seen } = fixture(doc);
-  render(SettingsWorkspace, { client, category: 'advanced' });
+  const { client, operationsController, onStatusChange, seen } = fixture(doc);
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
   await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
   const footer = screen.getByText('1 unsaved change').parentElement!;
   expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
@@ -163,10 +171,10 @@ it('shows the restart cue before saving only while a restart-required draft is p
 });
 
 it('warns before leaving with drafts, keeps them on Stay, and discards before continuing', async () => {
-  const { client } = fixture();
+  const { client, operationsController, onStatusChange } = fixture();
   let hold: ((leave: () => void) => boolean) | undefined;
   const { unmount } = render(SettingsWorkspace, {
-    props: { client, category: 'server' },
+    props: { client, operationsController, onStatusChange, category: 'server' },
     context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
   });
   const field = await screen.findByLabelText('Stop when idle after');
@@ -198,11 +206,11 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
 });
 
 it('cancels a pending leave when the category changes, keeping drafts', async () => {
-  const { client } = fixture();
+  const { client, operationsController, onStatusChange } = fixture();
   let hold: ((leave: () => void, stay?: () => void) => boolean) | undefined;
   let cancel: (() => void) | undefined;
   const { rerender } = render(SettingsWorkspace, {
-    props: { client, category: 'server' },
+    props: { client, operationsController, onStatusChange, category: 'server' },
     context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => { hold = next; cancel = nextCancel; }]])
   });
   const field = await screen.findByLabelText('Stop when idle after');
@@ -231,8 +239,8 @@ it('cancels a pending leave when the category changes, keeping drafts', async ()
 });
 
 it('blocks reload only while Settings has unsaved drafts', async () => {
-  const { client } = fixture();
-  render(SettingsWorkspace, { client, category: 'server' });
+  const { client, operationsController, onStatusChange } = fixture();
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
   const field = await screen.findByLabelText('Stop when idle after');
   const clean = new Event('beforeunload', { cancelable: true });
   window.dispatchEvent(clean);
@@ -248,11 +256,11 @@ it('blocks reload only while Settings has unsaved drafts', async () => {
 });
 
 it('keeps a failed Overview action error on Overview', async () => {
-  const { client } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('carddav_sync', { supported_actions: ['carddav_sync'] })) });
     if (request.url.endsWith('/carddav/sync')) throw new Error('Synthetic sync failure');
   });
-  render(SettingsWorkspace, { client });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await fireEvent.click(await screen.findByRole('button', { name: 'Sync now, Contacts' }));
   expect((await screen.findByRole('alert')).textContent).toContain('Synthetic sync failure');
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
@@ -263,8 +271,8 @@ it('keeps a failed Overview action error on Overview', async () => {
 
 describe('SettingsWorkspace', () => {
   it('lists the categories in order, Overview first, and opens the one it is given', async () => {
-    const { client } = fixture();
-    render(SettingsWorkspace, { client, category: 'advanced' });
+    const { client, operationsController, onStatusChange } = fixture();
+    render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
     await screen.findByRole('heading', { name: 'Advanced', level: 2 });
     const names = [...window.document.querySelectorAll('.kit-settings__nav-item')].map((item) => item.textContent?.trim());
     expect(names).toEqual([
@@ -273,8 +281,8 @@ describe('SettingsWorkspace', () => {
   });
 
   it('shows the plain-HTTP warning on Server only', async () => {
-    const { client } = fixture();
-    const view = render(SettingsWorkspace, { client, category: 'advanced', plainHTTPWarning: true });
+    const { client, operationsController, onStatusChange } = fixture();
+    const view = render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced', plainHTTPWarning: true });
     await screen.findByRole('heading', { name: 'Advanced', level: 2 });
     expect(screen.queryByText(/plain HTTP/)).toBeNull();
     await view.rerender({ client, category: 'server', plainHTTPWarning: true });
@@ -282,8 +290,8 @@ describe('SettingsWorkspace', () => {
   });
 
   it('keeps tuning behind Advanced and host values behind Set in config.toml', async () => {
-    const { client } = fixture();
-    render(SettingsWorkspace, { client, category: 'server' });
+    const { client, operationsController, onStatusChange } = fixture();
+    render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
     await screen.findByRole('heading', { name: 'Server' });
     expect(screen.getByLabelText('Stop when idle after')).toBeDefined();
     const advanced = screen.getByText('Advanced', { selector: 'summary' }).closest('details')!;
@@ -300,11 +308,11 @@ describe('SettingsWorkspace', () => {
   it('reverts and discards edits and retains a conflicted draft', async () => {
     let conflicts = 1;
     const doc = settingsDoc();
-    const { client, seen } = fixture(doc, request => {
+    const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
       if (request.method === 'GET' && request.url.endsWith('/settings')) return Response.json(doc, { headers: { ETag: conflicts ? '"s1"' : '"s-reloaded"' } });
       if (request.method === 'PATCH' && conflicts-- > 0) return Response.json({ error: 'conflict' }, { status: 412 });
     });
-    render(SettingsWorkspace, { client, category: 'server' });
+    render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
     await fireEvent.click(await screen.findByRole('switch', { name: 'Trace every SQL statement' }));
     await fireEvent.click(screen.getByRole('switch', { name: 'Trace every SQL statement' }));
     expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
@@ -323,8 +331,8 @@ describe('SettingsWorkspace', () => {
   });
 
   it('never treats an emptied number as a value and blocks saving it', async () => {
-    const { client } = fixture();
-    render(SettingsWorkspace, { client, category: 'sources' });
+    const { client, operationsController, onStatusChange } = fixture();
+    render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'sources' });
     await screen.findByRole('heading', { name: 'Sources', level: 2 });
     const field = screen.getByLabelText('Requests per second') as HTMLInputElement;
     await fireEvent.input(field, { target: { value: '' } });
@@ -333,8 +341,8 @@ describe('SettingsWorkspace', () => {
   });
 
   it('holds a typed secret until Save changes, then sends it with the settings', async () => {
-    const { client, seen } = fixture();
-    render(SettingsWorkspace, { client, category: 'tasks' });
+    const { client, operationsController, onStatusChange, seen } = fixture();
+    render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'tasks' });
     await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
     await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
@@ -348,10 +356,10 @@ describe('SettingsWorkspace', () => {
   });
 
   it('focuses an incoming Set up link without committing another navigation', async () => {
-    const { client } = fixture();
+    const { client, operationsController, onStatusChange } = fixture();
     const onCategoryChange = vi.fn();
     render(SettingsWorkspace, {
-      client, category: 'search', onCategoryChange,
+      client, operationsController, onStatusChange, category: 'search', onCategoryChange,
       navigationTarget: { authority: 'semantic_search', categoryID: 'search', settingKey: 'vector.enabled' }
     });
     await screen.findByRole('heading', { name: 'Search & AI' });
@@ -368,8 +376,8 @@ it('keeps attachment off values and cron schedules editable under Sources', asyn
     label: 'Maximum attachment size', validation: { minimum: 0, off: { value: '0', label: 'Provider default', suggest: '50', on_minimum: 1 } }
   }));
   doc.settings.push(setting('slack.schedule', 'sources', 'string', '0 3 * * *', { label: 'Slack schedule', validation: { format: 'cron' } }));
-  const { client, seen } = fixture(doc);
-  render(SettingsWorkspace, { client, category: 'sources' });
+  const { client, operationsController, onStatusChange, seen } = fixture(doc);
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'sources' });
   await fireEvent.click(await screen.findByRole('switch', { name: 'Set Discord maximum size (MiB)' }));
   expect((screen.getByLabelText('Discord maximum size (MiB)') as HTMLInputElement).value).toBe('50');
   await chooseSelectOption(screen.getByRole('combobox', { name: 'Presets: Every day at 03:00' }), 'Every 15 minutes');
@@ -387,14 +395,14 @@ it.each([
 ] as const)('validates Exa provider %s and retries conflicts with its defaults', async (name, error) => {
   const doc = settingsDoc({ person_enrichment_providers: [{ name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://api.exa.ai/search', credential: { configured: false, source: 'none' }, ...providerDefaults }] });
   let conflict = false;
-  const { client, seen } = fixture(doc, async request => {
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, async request => {
     if (request.method === 'GET' && request.url.endsWith('/settings')) return Response.json(doc, { headers: { ETag: conflict ? '"s2"' : '"s1"' } });
     if (request.method === 'PUT' && request.url.endsWith('/person-enrichment/providers/exa-primary')) {
       if (!conflict) { conflict = true; return Response.json({ error: 'settings_conflict' }, { status: 412 }); }
       return Response.json({ ...doc, person_enrichment_providers: [{ name: 'exa-primary', ...await request.json(), credential: { configured: false, source: 'none' }, credential_id: 'people.enrichment/exa-primary' }] }, { headers: { ETag: '"s3"' } });
     }
   });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
   await fireEvent.click(await screen.findByRole('button', { name: 'Add Exa' }));
   await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: name } });
   await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
@@ -417,10 +425,10 @@ it('locks fields and newly mounted category controls without holding leave while
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
   const doc = settingsDoc();
-  const { client, seen } = fixture(doc, request => request.method === 'PATCH' ? pending : undefined);
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => request.method === 'PATCH' ? pending : undefined);
   let hold: ((leave: () => void) => boolean) | undefined;
   render(SettingsWorkspace, {
-    props: { client, category: 'server' },
+    props: { client, operationsController, onStatusChange, category: 'server' },
     context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
   });
   await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
@@ -439,9 +447,9 @@ it('locks fields and newly mounted category controls without holding leave while
 
 it('keeps credential and provider saves immediate while workspace drafts remain pending', async () => {
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
-  const { client, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
+  const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
   const writes = () => seen.filter(request => request.method !== 'GET').map(({ method, path, ifMatch }) => [method, path, ifMatch]);
-  render(SettingsWorkspace, { client, category: 'search' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'search' });
   await fireEvent.input(await screen.findByLabelText('Endpoint'), { target: { value: 'https://new.example.test' } });
   expect((screen.getByRole('button', { name: 'Add API key' }) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.getByText('Save endpoint settings first before changing this credential.')).toBeDefined();
@@ -472,14 +480,14 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
 
 it('starts the visual index from Overview and refreshes its row', async () => {
   let built = false;
-  const { client } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('visual_embedding', { supported_actions: built ? [] : ['visual_build'] })) });
     if (request.url.endsWith('/multimodal/build')) {
       built = true;
       return Response.json({});
     }
   });
-  render(SettingsWorkspace, { client });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
   const name = 'Build visual index, Visual search';
   await fireEvent.click(await screen.findByRole('button', { name }));
   await waitFor(() => expect(screen.queryByRole('button', { name })).toBeNull());
@@ -493,7 +501,7 @@ it('keeps feature rows during refresh and recovers from a later status failure',
   const pendingCoverage = new Promise<Response>(resolve => { finishCoverage = resolve; });
   const coverage = { eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] };
   const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const { client } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (request.url.includes('/search/coverage')) return ++coverageReads === 2 ? pendingCoverage : Response.json(coverage);
     if (request.url.endsWith('/operations/status')) {
       reads += 1;
@@ -502,7 +510,7 @@ it('keeps feature rows during refresh and recovers from a later status failure',
       return reads === 1 ? Response.json({ lanes: lanes(lane('visual_embedding', { active: { id: 'run-1', kind: 'visual_embedding', lane: 'visual_attachments', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } })) }) : pending;
     }
   });
-  render(SettingsWorkspace, { client });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await screen.findByText('Running');
   await screen.findByRole('button', { name: 'Build index, Message search' });
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
@@ -527,9 +535,9 @@ it('keeps feature rows during refresh and recovers from a later status failure',
 it.each(['full_text', 'semantic'])('offers approved search defaults and preserves stored %s until a new choice', async stored => {
   const doc = settingsDoc();
   doc.settings.find(item => item.key === 'web.default_search_mode')!.value = typed(stored);
-  const { client, seen } = fixture(doc);
+  const { client, operationsController, onStatusChange, seen } = fixture(doc);
   const onAppearanceSaved = vi.fn();
-  render(SettingsWorkspace, { client, category: 'advanced', onAppearanceSaved });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced', onAppearanceSaved });
   const trigger = await screen.findByRole('combobox', { name: /^Search opens in:/ });
   expect(trigger.textContent).toContain(stored === 'semantic' ? 'Semantic' : 'Exact words');
   expect(screen.queryByText('1 unsaved change')).toBeNull();
@@ -551,8 +559,8 @@ it.each(['full_text', 'semantic'])('offers approved search defaults and preserve
 it('keeps edited People search details visible when switching the feature off', async () => {
   const doc = settingsDoc();
   doc.settings.push(setting('vector.people.enabled', 'search', 'boolean', false), setting('vector.people.retention_posture', 'search', 'string', 'standard'));
-  const { client, seen } = fixture(doc);
-  render(SettingsWorkspace, { client, category: 'search' });
+  const { client, operationsController, onStatusChange, seen } = fixture(doc);
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'search' });
   const toggle = await screen.findByRole('switch', { name: 'Search people' });
   expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull();
   await fireEvent.click(toggle);
@@ -569,7 +577,7 @@ it('refreshes the shared config revision when creating a profile succeeds before
   let revision = '"s1"';
   let created = false;
   const doc = settingsDoc();
-  const { client, seen } = fixture(doc, request => {
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/settings' && request.method === 'GET') return Response.json(doc, { headers: { ETag: revision } });
     if (path.includes('/settings/people-inference')) {
@@ -579,7 +587,7 @@ it('refreshes the shared config revision when creating a profile succeeds before
     }
     if (request.method === 'PATCH' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
   });
-  render(SettingsWorkspace, { client, category: 'server' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
   await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
   await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
   for (const [label, value] of [['Profile name', 'primary'], ['Model ID', 'model-one'], ['API key', 'synthetic-profile-key'], ['Archive data since (YYYY-MM-DD)', '2025-01-01'], ['Retention statement', 'No retention'], ['Training statement', 'No training']]) {
@@ -595,12 +603,12 @@ it('refreshes the shared config revision when creating a profile succeeds before
 
 it('clears the settings load error after a successful Retry', async () => {
   let reads = 0;
-  const { client } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (new URL(request.url).pathname === '/api/v1/settings' && request.method === 'GET' && ++reads === 1) {
       return Response.json({ message: 'Temporary settings read failure' }, { status: 503 });
     }
   });
-  render(SettingsWorkspace, { client, category: 'advanced' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
   await screen.findByText("Can't load settings");
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await screen.findByLabelText('Theme');
@@ -608,11 +616,11 @@ it('clears the settings load error after a successful Retry', async () => {
 });
 
 it('shows unavailable message coverage after a failed initial read', async () => {
-  const { client } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
     if (request.url.includes('/search/coverage')) return Response.json({ message: 'Unavailable' }, { status: 503 });
   });
-  render(SettingsWorkspace, { client });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await screen.findByRole('list', { name: 'Features' });
   const row = screen.getByText('Message search').closest('li')!;
   expect(await within(row).findByText('Unavailable')).toBeDefined();
@@ -628,12 +636,12 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   // later status reads wait for it the way the daemon registers a build on arrival.
   const buildSent = new Promise<void>(resolve => { sent = resolve; });
   const status = () => Response.json({ lanes: lanes(lane('message_embedding', building ? { active: { id: 'build-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } } : {}), lane('carddav_sync', { supported_actions: ['carddav_sync'] })) });
-  const { client, seen } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return ++reads === 1 ? status() : buildSent.then(status);
     if (request.url.includes('/search/coverage')) return Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] });
     if (request.url.endsWith('/cli/run')) { building = true; sent(); return pending; }
   });
-  render(SettingsWorkspace, { client });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Message search' }));
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
@@ -655,11 +663,11 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
 });
 
 it('routes Overview document extraction Details to live document status', async () => {
-  const { client } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (new URL(request.url).pathname.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents' })] });
   });
   const onOpenStatus = vi.fn();
-  render(SettingsWorkspace, { client, onOpenStatus });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, onOpenStatus });
   await fireEvent.click(await screen.findByRole('button', { name: 'Details, Document extraction' }));
   expect(onOpenStatus).toHaveBeenCalledWith('getDocumentIndexStatus');
 });

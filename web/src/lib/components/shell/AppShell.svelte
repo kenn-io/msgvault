@@ -104,7 +104,8 @@
       (categoryID: string) => void,
       () => void,
       (authority: RelatedOperationStatus) => void,
-      () => void
+      () => void,
+      OperationsController
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -1312,7 +1313,8 @@
           selectSettingsCategory,
           () => commitNavigation({ workspace: 'sources' }),
           openOperationAuthority,
-          () => void shellData.jobs.refresh(true)
+          () => void shellData.jobs.refresh(true),
+          operationsController
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenOperations={() => openOperations('source_sync')} />
