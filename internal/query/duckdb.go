@@ -307,7 +307,7 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 		}
 	}
 	if len(missing) > 0 {
-		log.Printf("[warn] Parquet cache missing columns %v — run 'msgvault build-cache --full-rebuild' to update", missing)
+		log.Printf("[warn] Parquet cache missing columns %v — run 'msgvault cache build --full-rebuild' to update", missing)
 	}
 	if !engine.archiveOnly {
 		if err := refreshUnsentMessageIDs(ctx, db, analyticsDir); err != nil {

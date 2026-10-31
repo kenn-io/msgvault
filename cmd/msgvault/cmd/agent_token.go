@@ -24,36 +24,39 @@ var (
 )
 
 var agentTokenCmd = &cobra.Command{
-	Use:   "agent-token",
-	Short: "Manage restricted agent grant tokens",
+	Use:     "agent-token",
+	Short:   "Manage restricted agent grant tokens",
+	Example: "  msgvault agent-token list --json",
 	Long: "Create, list, and revoke restricted agent grant tokens.\n\n" +
 		"Agent tokens allow delegated callers (e.g. AI agents) to perform a\n" +
 		"limited set of operations on behalf of the archive owner without\n" +
 		"exposing the full owner API key. Each token declares the permissions\n" +
 		"and source IDs it may access. A grant is valid until revoked or until\n" +
 		"its optional expiry, or until the daemon restarts.\n\n" +
-		"Requires agent_access = true and api_key to be set in config.toml.",
+		"Requires agent_access = true and api_key under [server] in config.toml. Restart the daemon after changing these settings: msgvault daemon restart.",
 }
 
 var agentTokenIssueCmd = &cobra.Command{
-	Use:   "issue",
-	Short: "Issue a new agent grant token",
-	Args:  cobra.NoArgs,
+	Use:     "issue",
+	Short:   "Issue a new agent grant token",
+	Long:    "Issue a scoped delegated token with explicit permissions and optional source and sender restrictions. The secret prints once: save it in an owner-only file and use --agent-token-file for delegated calls. The owner must enable server agent access and configure its API key first.",
+	Example: "  msgvault agent-token issue --label triage-example --permissions search.read,message.read --source-ids 1,2 --expires 168h --json",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if agentTokenLabel == "" {
-			return errors.New("--label is required")
+			return withHint(usageErr(cmd, errors.New("--label is required")), "choose a grant label, for example 'msgvault agent-token issue --label triage-example --permissions search.read,message.read --json'")
 		}
 		sourceIDs, err := parseAgentTokenSourceIDs(agentTokenSourceIDs)
 		if err != nil {
-			return err
+			return validationErr(cmd, err)
 		}
 		senderSelections, err := parseAgentTokenSenders(agentTokenSenders)
 		if err != nil {
-			return err
+			return validationErr(cmd, err)
 		}
 		expires, err := parseAgentTokenExpiry(agentTokenExpires, time.Now())
 		if err != nil {
-			return err
+			return withHint(validationErr(cmd, err), "use --expires 24h or a future RFC3339 timestamp")
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -72,9 +75,11 @@ var agentTokenIssueCmd = &cobra.Command{
 }
 
 var agentTokenListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List agent grant tokens, including expired ones",
-	Args:  cobra.NoArgs,
+	Use:     "list",
+	Short:   "List agent grant tokens, including expired ones",
+	Long:    "Inspect issued token IDs, permissions, scope, and expiry without displaying token secrets. Only the archive owner can manage grants. Use a returned ID to revoke a grant.",
+	Example: "  msgvault agent-token list --json",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -93,13 +98,15 @@ var agentTokenListCmd = &cobra.Command{
 }
 
 var agentTokenRevokeCmd = &cobra.Command{
-	Use:   "revoke <token-id>",
-	Short: "Revoke an agent grant token by ID",
-	Args:  cobra.ExactArgs(1),
+	Use:     "revoke <token-id>",
+	Short:   "Revoke an agent grant token by ID",
+	Long:    "Revoke the exact token ID returned by agent-token list. Future delegated requests using that grant will be refused; issue a replacement only with the owner-approved scope.",
+	Example: "  msgvault agent-token revoke token-example",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := strings.TrimSpace(args[0])
 		if id == "" {
-			return errors.New("token ID must not be empty")
+			return withHint(validationErr(cmd, errors.New("token ID must not be empty")), "find token IDs with 'msgvault agent-token list --json'")
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {

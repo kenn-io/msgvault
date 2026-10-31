@@ -65,7 +65,7 @@ plain_mbox="$scratch/enron-web-fixture.mbox"
 gzip -dc "$fixture_dir/enron-web-fixture.mbox.gz" > "$plain_mbox"
 owner_identifier="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["fixture"]["owner_identifier"])' "$fixture_dir/manifest.json")"
 MSGVAULT_DAEMON_CLI_PARENT_PID="$$" "$binary" --home "$home_dir" --local import-mbox "$owner_identifier" "$plain_mbox" --no-attachments >/dev/null
-MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID="$$" "$binary" --home "$home_dir" --local build-cache --full-rebuild >/dev/null
+MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID="$$" "$binary" --home "$home_dir" --local cache build --full-rebuild >/dev/null
 "$binary" --home "$home_dir" serve > "$scratch/serve.log" 2>&1 &
 daemon_pid=$!
 

@@ -3,6 +3,18 @@ title: Troubleshooting
 description: Common issues and solutions.
 ---
 
+## Recover from a CLI error
+
+Read the final `hint:` line for the next command or flag. With `--json`, read
+`error.hint` in the final stderr diagnostic. Successful JSON remains on stdout;
+warnings or progress can appear earlier on stderr. See the
+[CLI error and exit contract](cli-reference.md#agent-discovery-and-error-recovery).
+
+For a command or flag typo, run that command's `--help`. For a missing message,
+find its archive ID with `msgvault search '<query>' --json`. For a connection
+failure, check `msgvault daemon status` and the `[remote].url` in your config;
+`msgvault daemon start` starts a local daemon. `--local` selects local operation.
+
 ## Windows Path Errors in config.toml
 
 ### "invalid escape" or "expected eight hexadecimal digits after '\U'"
@@ -47,10 +59,10 @@ You created a "TVs and Limited Input devices" OAuth client, which doesn't work w
 
 ### Read-only Gmail access
 
-By default `add-account` requests `gmail.readonly` and `gmail.modify`. Pass `--readonly` to request read access only:
+By default `source gmail add` requests `gmail.readonly` and `gmail.modify`. Pass `--readonly` to request read access only:
 
 ```bash
-msgvault add-account you@gmail.com --readonly
+msgvault source gmail add you@gmail.com --readonly
 ```
 
 Sync, search, and the TUI all work on a read-only grant. Deletion does not — see below.
@@ -69,19 +81,19 @@ To make the account read-only, remove its access and grant it again:
 
 1. Revoke msgvault at [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
 2. Remove the token: with file storage, run `rm ~/.msgvault/tokens/you@gmail.com.json`; with command storage, delete its record from the configured store.
-3. `msgvault add-account you@gmail.com --readonly`
+3. `msgvault source gmail add you@gmail.com --readonly`
 
-Revoking clears every other Google scope for the account, so re-run whichever commands granted them — `add-calendar` for Calendar, `add-synctech-sms-drive` for Drive. Archived mail is unaffected. Confirm the result by reading the token's `scopes` array rather than the permissions page, which reports what msgvault is authorized to request.
+Revoking clears every other Google scope for the account, so re-run whichever commands granted them — `source calendar add` for Calendar, `source synctech-sms add` for Drive. Archived mail is unaffected. Confirm the result by reading the token's `scopes` array rather than the permissions page, which reports what msgvault is authorized to request.
 
 The same refusal applies to an account holding the broad `https://mail.google.com/` scope, which msgvault grants when you escalate for permanent deletion.
 
 The refusal also fires when the token is stored under a Gmail alias spelling of the address you typed (dots, `+suffix`, `googlemail.com`) — Google treats those as the same account, so setting up a second spelling read-only would leave the stored spelling's access in place. The message names the stored spelling to use, or the full revoke-and-re-add procedure when both spellings hold tokens.
 
-`msgvault remove-account` revokes the account's Google grant (best-effort) before deleting its token file, so removing an account and re-adding it with `--readonly` yields a genuinely fresh, read-only grant.
+`msgvault account remove` revokes the account's Google grant (best-effort) before deleting its token file, so removing an account and re-adding it with `--readonly` yields a genuinely fresh, read-only grant.
 
 #### "currently has read-only Gmail access"
 
-A plain `add-account` run against a read-only account warns before requesting write access again. Re-run with `--readonly` to keep the narrower grant. Running `add-account --readonly` against an account that is already read-only does nothing and reuses the existing token.
+A plain `source gmail add` run against a read-only account warns before requesting write access again. Re-run with `--readonly` to keep the narrower grant. Running `source gmail add --readonly` against an account that is already read-only does nothing and reuses the existing token.
 
 #### Narrowing on a headless server
 
@@ -89,7 +101,7 @@ The revoke-and-re-add procedure above works unchanged. Step 3 prints an authoriz
 
 #### Deletion on a read-only account
 
-Staged deletions need write access that a read-only account does not have, so `delete-staged` offers to re-authorize:
+Staged deletions need write access that a read-only account does not have, so `deletion execute` offers to re-authorize:
 
 - **Trash** (the default) needs `gmail.modify`, or the broader `https://mail.google.com/` if the account already holds it.
 - **Permanent** (`--permanent`) needs `https://mail.google.com/`; `gmail.modify` does not cover batch deletion.
@@ -101,7 +113,7 @@ Declining the prompt leaves both the token and the staged batch untouched. Accep
 For token-file storage:
 
 1. Remove old tokens: `rm ~/.msgvault/tokens/you@gmail.com.json`
-2. Re-add account: `msgvault add-account you@gmail.com`
+2. Re-add account: `msgvault source gmail add you@gmail.com`
 3. Revoke and retry: [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
 
 ## Headless Server Issues
@@ -110,26 +122,30 @@ For token-file storage:
 
 The standard OAuth flow requires a browser. With token-file storage, use the copy-token workflow:
 
-1. Authorize on a machine with a browser: `msgvault add-account you@gmail.com`
+1. Authorize on a machine with a browser: `msgvault source gmail add you@gmail.com`
 2. Copy the token file to your server: `scp ~/.msgvault/tokens/you@gmail.com.json user@server:~/.msgvault/tokens/`
-3. Register on the server: `msgvault add-account you@gmail.com`
+3. Register on the server: `msgvault source gmail add you@gmail.com`
 
-Run `msgvault add-account you@gmail.com --headless` to see detailed instructions with the exact paths for your configuration.
+Run `msgvault source gmail add you@gmail.com --headless` to see detailed instructions with the exact paths for your configuration.
 
-For command storage, follow [credential configuration](https://github.com/kenn-io/msgvault/blob/main/docs/configuration.md#command-backed-google-credentials-and-tokens) and [export-token](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#export-token). Use `--upload-only` for Calendar-only tokens, then register with `add-calendar` on the server.
+For command storage, follow [credential configuration](https://github.com/kenn-io/msgvault/blob/main/docs/configuration.md#command-backed-google-credentials-and-tokens) and [account export-token](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#export-token). Use `--upload-only` for Calendar-only tokens, then register with `source calendar add` on the server.
 
 ### Token copied but "account not found"
 
-After copying the token, you must run `msgvault add-account you@gmail.com` on the headless server to register the account in the database. This command detects the existing token and registers the account without opening a browser.
+After copying the token, you must run `msgvault source gmail add you@gmail.com` on the headless server to register the account in the database. This command detects the existing token and registers the account without opening a browser.
 
 ## Remote Deployment Issues
 
-### `export-token` says HTTPS is required
+<a id="export-token-says-https-is-required"></a>
 
-`msgvault export-token` enforces HTTPS by default. Most deployments use Tailscale or a home LAN where HTTP is fine — add `--allow-insecure`:
+<a id="account-export-token-says-https-is-required"></a>
+
+### `account export-token` says HTTPS is required
+
+`msgvault account export-token` enforces HTTPS by default. Most deployments use Tailscale or a home LAN where HTTP is fine — add `--allow-insecure`:
 
 ```bash
-msgvault export-token you@gmail.com --to http://nas-ip:8080 --api-key KEY --allow-insecure
+msgvault account export-token you@gmail.com --to http://nas-ip:8080 --api-key KEY --allow-insecure
 ```
 
 To avoid passing the flag every time, run `msgvault setup` with a remote server configured (it sets `allow_insecure = true` in your local config automatically), or add it manually:
@@ -139,7 +155,11 @@ To avoid passing the flag every time, run `msgvault setup` with a remote server 
 allow_insecure = true
 ```
 
-### `export-token` returns 401/Forbidden
+<a id="export-token-returns-401forbidden"></a>
+
+<a id="account-export-token-returns-401forbidden"></a>
+
+### `account export-token` returns 401/Forbidden
 
 1. Verify your remote server has an `api_key` in `[server]`.
 2. Confirm `MSGVAULT_REMOTE_API_KEY` / `--api-key` matches that value.
@@ -147,13 +167,13 @@ allow_insecure = true
 
 ### Remote command behaves unexpectedly
 
-Remote-aware CLI commands use `[remote].url` automatically when it is set. This includes `sync`, `sync-full`, `verify`, `search`, `query`, `show-message`, `stats`, aggregate list commands, identity commands, collection commands, attachment exports, `update-account`, `repair-encoding`, `rebuild-fts`, `build-cache`, `cache-stats`, and `tui`.
+Remote-aware CLI commands use `[remote].url` automatically when it is set. This includes `sync`, `sync full`, `verify`, `search`, `query`, `show`, `stats`, aggregate list commands, identity commands, collection commands, attachment exports, `account update`, `repair encoding`, `fts rebuild`, `cache build`, `cache stats`, and `tui`.
 
 For archive-access commands, use `--local` when you want the same CLI command to talk to the local background daemon instead of the configured remote:
 
 ```bash
-msgvault list-accounts --local
-msgvault rebuild-fts --local
+msgvault account list --local
+msgvault fts rebuild --local
 ```
 
 ## Docker Container Issues
@@ -204,16 +224,16 @@ services:
    ```
 
 4. For Gmail, make sure you've run the initial full sync before relying on its
-   incremental schedule. Run `sync-full` through the container's CLI; it will
+   incremental schedule. Run `sync full` through the container's CLI; it will
    connect to the running daemon over HTTP and stream progress back to your
    terminal:
    ```bash
-   docker exec msgvault msgvault sync-full you@gmail.com
+   docker exec msgvault msgvault sync full you@gmail.com
    ```
 
    Discord does not require a separate initial manual sync: its first
    scheduled run backfills history and checkpoints progress. Register the
-   guild with `add-discord` first, and use its exact guild ID (not its display
+   guild with `source discord add` first, and use its exact guild ID (not its display
    name) as the `[[accounts]].email` value.
 
 ### "No source found for email"
@@ -221,13 +241,13 @@ services:
 The account isn't registered in the database. Re-export the token from your local machine:
 
 ```bash
-msgvault export-token you@gmail.com --to http://nas-ip:8080 --api-key KEY --allow-insecure
+msgvault account export-token you@gmail.com --to http://nas-ip:8080 --api-key KEY --allow-insecure
 ```
 
 This uploads the token and registers the account. If the token file already exists on the server, register it directly:
 
 ```bash
-docker exec msgvault msgvault add-account you@gmail.com
+docker exec msgvault msgvault source gmail add you@gmail.com
 ```
 
 ## Rate Limiting
@@ -268,13 +288,13 @@ reconstruction option when every source record is still available upstream.
 Run the same sync command again. It resumes from the last checkpoint:
 
 ```bash
-msgvault sync-full you@gmail.com --after 2024-01-01 --before 2024-02-01
+msgvault sync full you@gmail.com --after 2024-01-01 --before 2024-02-01
 ```
 
 To force a fresh start:
 
 ```bash
-msgvault sync-full you@gmail.com --noresume
+msgvault sync full you@gmail.com --noresume
 ```
 
 ## CGO / Build Errors
@@ -298,7 +318,7 @@ the SQLite development headers that the default `sqlite_vec` build needs:
 If the TUI launches but shows no data:
 
 1. Verify sync completed: `msgvault stats`
-2. Rebuild the Parquet cache: `msgvault build-cache --full-rebuild`
+2. Rebuild the Parquet cache: `msgvault cache build --full-rebuild`
 3. Check the in-TUI account filter (shown in the title bar): press `A` to open the account selector and switch to "All Accounts"
 
 ## Web UI and API Server Issues
@@ -309,7 +329,7 @@ You set `bind_addr` to a non-loopback address (e.g., `0.0.0.0`) without configur
 
 ### The UI reports a missing, stale, or unavailable analytical cache
 
-Run `msgvault build-cache`, then restart a daemon that was already running. The
+Run `msgvault cache build`, then restart a daemon that was already running. The
 Web UI preserves the reported cache state instead of silently switching some
 modalities to a different query engine. See [Web UI: Cache states](/docs/web-ui/#cache-states)
 and [Configuration: analytics](/docs/configuration/#analytics).

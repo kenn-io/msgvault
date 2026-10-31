@@ -86,10 +86,10 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 	emit func(api.CLIRunEvent) error,
 ) error {
 	if req.Grant != nil {
-		return draftReplyError("not_permitted", errors.New("draft-forward requires owner access"))
+		return draftReplyError("not_permitted", errors.New("draft forward requires owner access"))
 	}
 	if len(req.Env) != 0 || req.Cwd != "" {
-		return draftReplyError("invalid_args", errors.New("draft-forward accepts no environment or working directory"))
+		return draftReplyError("invalid_args", errors.New("draft forward accepts no environment or working directory"))
 	}
 	intent, err := parseDraftForwardArgs(req.Args)
 	if err != nil {
@@ -103,7 +103,7 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 		return err
 	}
 	if target.source.SourceType != "imap" {
-		return draftReplyError("draft_disabled", errors.New("draft-forward requires an IMAP source"))
+		return draftReplyError("draft_disabled", errors.New("draft forward requires an IMAP source"))
 	}
 	parent, err := msgmime.Parse(target.raw)
 	if err != nil {
@@ -249,7 +249,7 @@ func (a *storeAPIAdapter) emitDraftForwardPreflight(
 			}
 		} else {
 			var text strings.Builder
-			text.WriteString("draft-forward refused before APPEND:\n")
+			text.WriteString("draft forward refused before APPEND:\n")
 			for _, problem := range problems {
 				if problem.Filename != "" || problem.PartKey != "" {
 					text.WriteString("attachment")

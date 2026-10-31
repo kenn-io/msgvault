@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -187,6 +188,9 @@ func setEmbeddingDiagnosticsLiveness(status *vector.EmbeddingStatus, etaWindow i
 // embeddingSlotKind maps the slot holder's label to an allowlisted kind; raw
 // labels can name accounts.
 func embeddingSlotKind(label string, held bool) string {
+	if command, ok := strings.CutPrefix(label, "msgvault "); ok {
+		label = "msgvault " + strings.Join(cligrammar.Legacy(strings.Fields(command)), " ")
+	}
 	switch {
 	case !held:
 		return "none"

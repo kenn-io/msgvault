@@ -43,26 +43,23 @@ email addresses.
 If mail-dir is omitted, defaults to ~/Library/Mail.
 
 Labels are derived from directory names. Messages that appear in
-multiple mailboxes are deduplicated and given labels from each.
-
-Examples:
-  # Auto-discover accounts from default Apple Mail location
-  msgvault import-emlx
+multiple mailboxes are deduplicated and given labels from each.`,
+	Example: `  # Auto-discover accounts from default Apple Mail location
+  msgvault import emlx
 
   # Auto-discover accounts from explicit mail directory
-  msgvault import-emlx ~/Library/Mail
+  msgvault import emlx ~/Library/Mail
 
   # Import only specific account(s)
-  msgvault import-emlx --account me@gmail.com
-  msgvault import-emlx --account me@gmail.com --account work@company.com
+  msgvault import emlx --account me@gmail.com
+  msgvault import emlx --account me@gmail.com --account work@company.com
 
   # Manual fallback: import a single directory with explicit identifier
-  msgvault import-emlx ~/Library/Mail/V10/SOME-GUID --identifier me@gmail.com
-  msgvault import-emlx ~/Mail/INBOX.mbox/ --identifier me@gmail.com
+  msgvault import emlx ~/Library/Mail/V10/SOME-GUID --identifier me@gmail.com
+  msgvault import emlx ~/Mail/INBOX.mbox/ --identifier me@gmail.com
 
   # Legacy two-arg form (deprecated, still works)
-  msgvault import-emlx me@gmail.com ~/Library/Mail/V10/SOME-GUID
-  `,
+  msgvault import emlx me@gmail.com ~/Library/Mail/V10/SOME-GUID`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("max-message-bytes") &&
@@ -280,7 +277,7 @@ func importAutoAccounts(
 			"no V10 accounts found in %s\n\n"+
 				"If this is not an Apple Mail V10 directory, use --identifier to specify\n"+
 				"the account email manually:\n\n"+
-				"  msgvault import-emlx %s --identifier you@gmail.com",
+				"  msgvault import emlx %s --identifier you@gmail.com",
 			mailDir, mailDir,
 		)
 	}

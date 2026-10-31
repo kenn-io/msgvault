@@ -7,6 +7,6 @@ import (
 
 func TestOmiDaemonCLICommands(t *testing.T) {
 	assert := assert.New(t)
-	assert.True(cliRunCommandAllowed([]string{"add-omi", "work"}))
-	assert.True(cliRunCommandAllowed([]string{"sync-omi", "work", "--full"}))
+	assert.True(CLIRunCommandAllowed([]string{"add-omi", "work"}))
+	assert.True(CLIRunCommandAllowed([]string{"sync-omi", "work", "--full"}))
 }

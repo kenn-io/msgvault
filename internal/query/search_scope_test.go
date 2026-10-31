@@ -310,7 +310,7 @@ func TestSearchMessageBodies_PostgreSQLRejectsStaleLayout(t *testing.T) {
 		&search.Query{TextTerms: []string{"stalecheck"}}, 50, 0)
 	require.Error(err, "stale body search must fail closed")
 	require.ErrorIs(err, query.ErrMessageBodySearchIndexStale)
-	assert.Contains(err.Error(), "rebuild-fts")
+	assert.Contains(err.Error(), "fts rebuild")
 	assert.Contains(err.Error(), "backfill")
 }
 

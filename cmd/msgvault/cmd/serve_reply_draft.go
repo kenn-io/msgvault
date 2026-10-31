@@ -422,7 +422,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		}
 	case "gmail":
 		if parentSource == nil {
-			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-compose requires an IMAP source"))
+			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft compose requires an IMAP source"))
 		}
 		if parentSource.ID != source.ID {
 			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("gmail draft replies must use the parent source"))
@@ -460,7 +460,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	emit func(api.CLIRunEvent) error,
 ) error {
 	if len(req.Env) != 0 || req.Cwd != "" {
-		return draftReplyError("invalid_args", errors.New("draft-reply accepts no environment or working directory"))
+		return draftReplyError("invalid_args", errors.New("draft reply accepts no environment or working directory"))
 	}
 	intent, err := parseDraftReplyArgs(req.Args)
 	if err != nil {

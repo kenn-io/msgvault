@@ -62,10 +62,12 @@ func TestCommandGmailHeadlessRecoveryForcesBrowserAuthorization(t *testing.T) {
 	commands := 0
 	for line := range strings.SplitSeq(out.String(), "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "msgvault add-account ") {
+		if strings.HasPrefix(line, "msgvault source gmail add ") {
 			fields := headlessNativeArgs(t, "cmd", fixture, line)
+			require.GreaterOrEqual(len(fields), 4)
+			assert.Equal([]string{"source", "gmail", "add"}, fields[:3])
 			cmd := newAddAccountCmd()
-			require.NoError(cmd.ParseFlags(fields[1:]))
+			require.NoError(cmd.ParseFlags(fields[3:]))
 			require.NoError(cmd.Args(cmd, cmd.Flags().Args()))
 			assert.Equal(commands == 0, forceReauth)
 			assert.Equal("work", oauthAppName)
@@ -80,9 +82,9 @@ func TestCommandCalendarHeadlessInstructionsUseUploadOnlyExport(t *testing.T) {
 	printCommandHeadlessInstructions(&out, "reader@example.com",
 		oauth.HeadlessAccountArgs("add-calendar", "reader@example.com", "work", false, true), true)
 
-	assert.Contains(t, out.String(), "msgvault export-token reader@example.com --upload-only")
-	assert.Contains(t, out.String(), "msgvault add-calendar reader@example.com --oauth-app work --write")
-	assert.NotContains(t, out.String(), "msgvault add-account")
+	assert.Contains(t, out.String(), "msgvault account export-token reader@example.com --upload-only")
+	assert.Contains(t, out.String(), "msgvault source calendar add reader@example.com --oauth-app work --write")
+	assert.NotContains(t, out.String(), "msgvault source gmail add")
 }
 
 func TestCommandTokenExport(t *testing.T) {
@@ -194,14 +196,14 @@ func TestCommandTokenFailuresAvoidReauthorization(t *testing.T) {
 				require.NoError(err)
 				_, err = getTokenSourceWithReauth(t.Context(), mgr, "reader@example.com", true, gmailReauthHint)
 				require.Error(err)
-				assert.NotContains(err.Error(), "add-account")
+				assert.NotContains(err.Error(), "source gmail add")
 			}
 			src := &store.Source{SourceType: "gmail", Identifier: "reader@example.com"}
 			_, _, err := newDaemonGmailClient(withInvocation(t.Context(), state), src.Identifier, src, cache, state, oauth.Scopes)
 			require.Error(err)
 			_, settingsHint := errors.AsType[*provideridentity.GmailCredentialError](err)
 			assert.False(settingsHint)
-			assert.NotContains(err.Error(), "add-account")
+			assert.NotContains(err.Error(), "source gmail add")
 		})
 	}
 }
@@ -457,11 +459,12 @@ func TestHeadlessCommandsPreserveNativeArguments(t *testing.T) {
 						}
 						got := headlessNativeArgs(t, shell, fixture, line)
 						require.Equal(want[1:], got)
+						require.GreaterOrEqual(len(got), 3)
 						cmd := newAddAccountCmd()
 						if flow == "calendar" {
 							cmd = newAddCalendarCmd()
 						}
-						require.NoError(cmd.ParseFlags(got[1:]))
+						require.NoError(cmd.ParseFlags(got[3:]))
 						require.NoError(cmd.Args(cmd, cmd.Flags().Args()))
 						require.NoError(validateAddAccountArgs(cmd, cmd.Flags().Args()))
 						selected, err := cmd.Flags().GetString("oauth-app")

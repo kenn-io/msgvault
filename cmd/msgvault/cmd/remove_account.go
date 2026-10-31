@@ -55,12 +55,10 @@ across accounts.
 Attachment files on disk that are not shared with another account are deleted.
 Shared attachments (same content hash across multiple accounts) are kept.
 Unique packed attachments become unreachable immediately; their immutable pack
-bytes are reclaimed by attachment maintenance.
-
-Examples:
-  msgvault remove-account you@gmail.com
-  msgvault remove-account you@gmail.com --yes
-  msgvault remove-account you@gmail.com --type mbox`,
+bytes are reclaimed by attachment maintenance.`,
+		Example: `  msgvault account remove you@gmail.com
+  msgvault account remove you@gmail.com --yes
+  msgvault account remove you@gmail.com --type mbox`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runRemoveAccount,
 	}
@@ -133,7 +131,7 @@ func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
 		if err := scanner.Err(); err != nil {
 			return false, fmt.Errorf("read confirmation: %w", err)
 		}
-		return false, errors.New("no confirmation input (stdin closed); use --yes")
+		return false, accountRemovalConfirmationEOF()
 	}
 	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 	if !isYesAnswer(answer) {
@@ -141,6 +139,14 @@ func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func accountRemovalConfirmationEOF() error {
+	return &cliError{
+		Kind: "usage", Code: "confirmation_required", ExitCode: 2, Err: io.EOF,
+		Message: "no confirmation input (stdin closed); use --yes to confirm, or --dry-run to preview (msgvault account remove you@example.com --dry-run)",
+		Hint:    "preview with 'msgvault account remove <account> --dry-run', then pass --yes after reviewing the removal",
+	}
 }
 
 func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
@@ -232,7 +238,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			if err := scanner.Err(); err != nil {
 				return fmt.Errorf("read confirmation: %w", err)
 			}
-			return errors.New("no confirmation input (stdin closed); use --yes")
+			return accountRemovalConfirmationEOF()
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if !isYesAnswer(answer) {
@@ -714,7 +720,7 @@ func removeAccountSelector(cmd *cobra.Command, args []string) (sourceops.Selecto
 	case sourceIDSet && sourceType != "":
 		return sourceops.Selector{}, errors.New("source type and source ID are mutually exclusive")
 	case !sourceIDSet && account == "":
-		return sourceops.Selector{}, errors.New("account or source ID is required")
+		return sourceops.Selector{}, errors.New("account or source ID is required; choose an account or --source-id from 'msgvault account list --json'")
 	}
 	return sourceops.Selector{
 		Account: account, SourceID: sourceID, SourceIDSet: sourceIDSet, SourceType: sourceType,

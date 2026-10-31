@@ -53,19 +53,19 @@ func TestReauthHintPreservesReadonlyGrant(t *testing.T) {
 			name:          "narrowed account keeps --readonly",
 			scopes:        []string{oauth.ScopeGmailReadonly},
 			wantReadonly:  true,
-			wantInCommand: "add-account x@gmail.com --readonly --force",
+			wantInCommand: "source gmail add x@gmail.com --readonly --force",
 		},
 		{
 			name:          "narrowed account with calendar keeps --readonly",
 			scopes:        []string{oauth.ScopeGmailReadonly, oauth.ScopeCalendarReadonly},
 			wantReadonly:  true,
-			wantInCommand: "add-account x@gmail.com --readonly --force",
+			wantInCommand: "source gmail add x@gmail.com --readonly --force",
 		},
 		{
 			name:          "write-capable account is unchanged",
 			scopes:        oauth.Scopes,
 			wantReadonly:  false,
-			wantInCommand: "add-account x@gmail.com --force",
+			wantInCommand: "source gmail add x@gmail.com --force",
 		},
 		{
 			// No Gmail scopes at all is not a narrowed grant, so guidance
@@ -73,13 +73,13 @@ func TestReauthHintPreservesReadonlyGrant(t *testing.T) {
 			name:          "calendar-only account is unchanged",
 			scopes:        []string{oauth.ScopeCalendarReadonly},
 			wantReadonly:  false,
-			wantInCommand: "add-account x@gmail.com --force",
+			wantInCommand: "source gmail add x@gmail.com --force",
 		},
 		{
 			name:          "legacy token with no recorded scopes is unchanged",
 			scopes:        nil,
 			wantReadonly:  false,
-			wantInCommand: "add-account x@gmail.com --force",
+			wantInCommand: "source gmail add x@gmail.com --force",
 		},
 	}
 
@@ -155,7 +155,7 @@ func TestReauthAliasMismatchPreservesReadonlyGrant(t *testing.T) {
 	require.Error(err)
 	var got *oauth.TokenMismatchError
 	require.ErrorAs(err, &got, "mismatch error must survive wrapping")
-	assert.Contains(err.Error(), "msgvault add-account primary@gmail.com --readonly")
+	assert.Contains(err.Error(), "msgvault source gmail add primary@gmail.com --readonly")
 }
 
 // TestReauthAliasMismatchUnchangedForWriteGrant pins that the alias recipe is
@@ -174,7 +174,7 @@ func TestReauthAliasMismatchUnchangedForWriteGrant(t *testing.T) {
 		context.Background(), mock, "alias@gmail.com", true, gmailReauthHint)
 
 	require.Error(err)
-	assert.Contains(err.Error(), "msgvault add-account primary@gmail.com")
+	assert.Contains(err.Error(), "msgvault source gmail add primary@gmail.com")
 	assert.NotContains(err.Error(), "--readonly")
 }
 
@@ -207,15 +207,15 @@ func TestAddAccountAuthorizeErrorRepeatsReadonly(t *testing.T) {
 
 	readonlyGrant = true
 	err := addAccountAuthorizeError(mismatch, false)
-	assert.Contains(err.Error(), "msgvault add-account primary@gmail.com --readonly")
+	assert.Contains(err.Error(), "msgvault source gmail add primary@gmail.com --readonly")
 
 	readonlyGrant = false
 	err = addAccountAuthorizeError(mismatch, false)
-	assert.Contains(err.Error(), "msgvault add-account primary@gmail.com")
+	assert.Contains(err.Error(), "msgvault source gmail add primary@gmail.com")
 	assert.NotContains(err.Error(), "--readonly")
 
 	oauthAppName = "work"
 	readonlyGrant = true
 	err = addAccountAuthorizeError(mismatch, false)
-	assert.Contains(err.Error(), "msgvault add-account primary@gmail.com --oauth-app 'work' --readonly")
+	assert.Contains(err.Error(), "msgvault source gmail add primary@gmail.com --oauth-app 'work' --readonly")
 }

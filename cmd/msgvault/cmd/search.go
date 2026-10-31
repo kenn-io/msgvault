@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
+const fullTextSearchMode = "fts"
+
 var (
 	searchLimit         int
 	searchOffset        int
@@ -99,24 +101,24 @@ Examples:
 		queryStr := strings.Join(args, " ")
 
 		if queryStr == "" && searchAccount == "" && searchCollection == "" && len(searchMessageTypes) == 0 {
-			return usageErr(cmd, errors.New("provide a search query or --account/--collection flag"))
+			return withHint(usageErr(cmd, errors.New("provide a search query or --account/--collection flag")), "try 'msgvault search from:alice@example.com --json'; see 'msgvault search --help' for operators")
 		}
 
 		if searchSort != "" && searchSort != "date" {
-			return usageErr(cmd, fmt.Errorf("invalid --sort: %q (want date)", searchSort))
+			return withHint(validationErr(cmd, fmt.Errorf("invalid --sort: %q (want date)", searchSort)), "use --sort date with --mode vector or --mode hybrid, or omit --sort")
 		}
 		// Validate mode before any scope work so we fail fast on a typo.
-		if searchMode != "fts" && searchMode != "vector" && searchMode != "hybrid" {
-			return usageErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode))
+		if searchMode != fullTextSearchMode && searchMode != "vector" && searchMode != "hybrid" {
+			return withHint(validationErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode)), "choose --mode fts, --mode vector, or --mode hybrid; inspect semantic indexes with 'msgvault embeddings status'")
 		}
-		if searchSort == "date" && searchMode == "fts" {
-			return usageErr(cmd, errors.New("--sort date requires --mode vector or hybrid"))
+		if searchSort == "date" && searchMode == fullTextSearchMode {
+			return withHint(usageErr(cmd, errors.New("--sort date requires --mode vector or hybrid")), "add --mode hybrid or --mode vector, or omit --sort")
 		}
 		if searchDeletionScope != "active" && searchDeletionScope != "deleted" && searchDeletionScope != "any" {
 			return usageErr(cmd, fmt.Errorf(
 				"invalid --deletion-scope: %q (want active|deleted|any)", searchDeletionScope))
 		}
-		if searchMode != "fts" && searchDeletionScope != "active" {
+		if searchMode != fullTextSearchMode && searchDeletionScope != "active" {
 			return usageErr(cmd, fmt.Errorf(
 				"--deletion-scope=%s is only supported with --mode=fts; vector and hybrid indexes cover active messages only",
 				searchDeletionScope,
@@ -136,28 +138,28 @@ Examples:
 		}
 
 		if searchLimit <= 0 {
-			return usageErr(cmd, fmt.Errorf("--limit must be a positive integer, got %d", searchLimit))
+			return withHint(validationErr(cmd, fmt.Errorf("--limit must be a positive integer, got %d", searchLimit)), "pass a positive --limit, for example --limit 50; page FTS results with --offset")
 		}
 		if searchOffset < 0 {
-			return usageErr(cmd, fmt.Errorf("--offset must be non-negative, got %d", searchOffset))
+			return withHint(validationErr(cmd, fmt.Errorf("--offset must be non-negative, got %d", searchOffset)), "pass --offset 0 or another non-negative FTS result offset")
 		}
 
 		// Reject known operators with invalid values (e.g. before:2025-13-45)
 		// rather than silently dropping the filter and running a wider query.
 		// Checked before the empty-query test so the user sees the offending
 		// value instead of a misleading "empty search query".
-		if err := search.ParseWithOR(queryStr, searchMode == "fts").Err(); err != nil {
-			return usageErr(cmd, err)
+		if err := search.ParseWithOR(queryStr, searchMode == fullTextSearchMode).Err(); err != nil {
+			return withHint(validationErr(cmd, err), "check search operators and date values in 'msgvault search --help'; dates use YYYY-MM-DD")
 		}
-		if searchMode == "fts" {
+		if searchMode == fullTextSearchMode {
 			parsed := search.ParseOR(queryStr)
 			parsed.MessageTypes = append(parsed.MessageTypes, searchMessageTypes...)
 			if parsed.IsEmpty() && searchAccount == "" && searchCollection == "" {
-				return errors.New("empty search query")
+				return withHint(usageErr(cmd, errors.New("empty search query")), "try 'msgvault search invoice --json', or select --account you@example.com")
 			}
 			return runHTTPSearch(cmd, queryStr)
 		}
-		if searchMode != "fts" && searchOffset > 0 {
+		if searchMode != fullTextSearchMode && searchOffset > 0 {
 			return usageErr(cmd, fmt.Errorf("--offset is not supported with --mode=%s (pagination is single-page)", searchMode))
 		}
 		// Vector and hybrid modes need free-text terms to embed; both
@@ -165,7 +167,7 @@ Examples:
 		// would fail at the embed call. Check both up front and surface
 		// a CLI error rather than a late engine-level one. FTS still
 		// allows scoped queryless searches.
-		if searchMode != "fts" {
+		if searchMode != fullTextSearchMode {
 			if queryStr == "" {
 				return usageErr(cmd, fmt.Errorf("--mode=%s requires query text to embed; pass a query or use --mode=fts", searchMode))
 			}
@@ -255,12 +257,12 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		}
 	case "unverified":
 		if isAgentMode(state) {
-			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Ask the archive owner to search once or run rebuild-fts.")
+			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Ask the archive owner to search once or run fts rebuild.")
 		} else {
-			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Search again to retry the check, or run rebuild-fts.")
+			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Search again to retry the check, or run fts rebuild.")
 		}
 	case "awaiting_owner":
-		fmt.Fprintln(os.Stderr, "Note: the search index is incomplete; run rebuild-fts with owner access. Results may be incomplete until it finishes.")
+		fmt.Fprintln(os.Stderr, "Note: the search index is incomplete; run fts rebuild with owner access. Results may be incomplete until it finishes.")
 	case "building":
 		fmt.Fprintln(os.Stderr,
 			"Note: the search index is rebuilding or awaiting a rebuild in the background; results may be incomplete until it finishes.")
@@ -412,7 +414,7 @@ func init() {
 	searchCmd.Flags().StringVar(&searchCollection, "collection", "",
 		"Limit results to all member accounts of one collection")
 	searchCmd.MarkFlagsMutuallyExclusive("account", "collection")
-	searchCmd.Flags().StringVar(&searchMode, "mode", "fts", "Search mode: fts|vector|hybrid")
+	searchCmd.Flags().StringVar(&searchMode, "mode", fullTextSearchMode, "Search mode: fts|vector|hybrid")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false, "Include per-signal scores in output (hybrid/vector modes)")
 	searchCmd.Flags().StringVar(&searchDeletionScope, "deletion-scope", "active",
 		"Source deletion scope: active|deleted|any (FTS mode only)")

@@ -81,7 +81,7 @@ var employmentSetCmd = &cobra.Command{Use: "set <id>", Short: "Update an employm
 		return err
 	}
 	if current.JSON200 == nil {
-		return errors.New("employment response was empty")
+		return readDaemonResponseError(errors.New("employment response was empty"))
 	}
 	body, err := employmentSetBody(cmd, current.JSON200)
 	if err != nil {
@@ -102,7 +102,7 @@ var employmentEndCmd = &cobra.Command{Use: "end <id>", Short: "End an employment
 		return err
 	}
 	if strings.TrimSpace(employmentEndDate) == "" {
-		return usageErr(cmd, errors.New("--end is required"))
+		return withHint(usageErr(cmd, errors.New("--end is required")), "pass a partial date, for example --end 2026-09; accepted forms are YYYY, YYYY-MM, and YYYY-MM-DD")
 	}
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
@@ -114,7 +114,7 @@ var employmentEndCmd = &cobra.Command{Use: "end <id>", Short: "End an employment
 		return err
 	}
 	if current.JSON200 == nil {
-		return errors.New("employment response was empty")
+		return readDaemonResponseError(errors.New("employment response was empty"))
 	}
 	body := generated.EndEmploymentBody{EndDate: employmentEndDate}
 	resp, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.EndEmploymentResp, error) {
@@ -141,7 +141,7 @@ var employmentSetPrimaryCmd = &cobra.Command{Use: "set-primary <id>", Short: "Se
 		return err
 	}
 	if current.JSON200 == nil {
-		return errors.New("employment response was empty")
+		return readDaemonResponseError(errors.New("employment response was empty"))
 	}
 	resp, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.SetPrimaryEmploymentResp, error) {
 		return api.SetPrimaryEmploymentWithResponse(cmd.Context(), &generated.SetPrimaryEmploymentRequestOptions{PathParams: &generated.SetPrimaryEmploymentPath{ID: id}, Header: &generated.SetPrimaryEmploymentHeaders{IfMatch: employmentETag(id, current.JSON200.Revision)}})
@@ -167,7 +167,7 @@ var employmentDeleteCmd = &cobra.Command{Use: "delete <id>", Short: "Permanently
 		return err
 	}
 	if current.JSON200 == nil {
-		return errors.New("employment response was empty")
+		return readDaemonResponseError(errors.New("employment response was empty"))
 	}
 	_, err = daemonclient.APIResponseWithStatuses(client, []int{http.StatusNoContent}, func(api *apiclient.Client) (*generated.DeleteEmploymentResp, error) {
 		return api.DeleteEmploymentWithResponse(cmd.Context(), &generated.DeleteEmploymentRequestOptions{PathParams: &generated.DeleteEmploymentPath{ID: id}, Header: &generated.DeleteEmploymentHeaders{IfMatch: employmentETag(id, current.JSON200.Revision)}})
@@ -182,7 +182,7 @@ var employmentDeleteCmd = &cobra.Command{Use: "delete <id>", Short: "Permanently
 var employmentListCmd = &cobra.Command{Use: cmdUseList, Short: "List employment records", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 	personSet, organizationSet := cmd.Flags().Changed("person"), cmd.Flags().Changed("organization")
 	if !personSet && !organizationSet {
-		return usageErr(cmd, errors.New("--person or --organization is required"))
+		return withHint(usageErr(cmd, errors.New("--person or --organization is required")), "use 'msgvault employment list --person <person-id> --json' or select --organization; find IDs with 'msgvault person list --json' or 'msgvault organization list --json'")
 	}
 	if personSet && organizationSet {
 		return usageErr(cmd, errors.New("--person and --organization are mutually exclusive"))
@@ -221,7 +221,7 @@ var employmentListCmd = &cobra.Command{Use: cmdUseList, Short: "List employment 
 			return getErr
 		}
 		if resp.JSON200 == nil {
-			return errors.New("employment list response was empty")
+			return readDaemonResponseError(errors.New("employment list response was empty"))
 		}
 		return writeCLIEmploymentList(cmd, resp.JSON200, true, employmentJSON)
 	}
@@ -232,7 +232,7 @@ var employmentListCmd = &cobra.Command{Use: cmdUseList, Short: "List employment 
 		return getErr
 	}
 	if resp.JSON200 == nil {
-		return errors.New("employment list response was empty")
+		return readDaemonResponseError(errors.New("employment list response was empty"))
 	}
 	return writeCLIEmploymentList(cmd, resp.JSON200, false, employmentJSON)
 }}
@@ -251,10 +251,10 @@ func employmentBodyFromFlags(cmd *cobra.Command) (generated.CreateEmploymentBody
 		return generated.CreateEmploymentBody{}, usageErr(cmd, errors.New("--primary and --no-primary are mutually exclusive"))
 	}
 	if employmentPersonID <= 0 {
-		return generated.CreateEmploymentBody{}, usageErr(cmd, errors.New("--person is required and must be a positive integer"))
+		return generated.CreateEmploymentBody{}, withHint(usageErr(cmd, errors.New("--person is required and must be a positive integer")), "pass --person from 'msgvault person list --json' and --organization from 'msgvault organization list --json'")
 	}
 	if employmentOrganizationID <= 0 {
-		return generated.CreateEmploymentBody{}, usageErr(cmd, errors.New("--organization is required and must be a positive integer"))
+		return generated.CreateEmploymentBody{}, withHint(usageErr(cmd, errors.New("--organization is required and must be a positive integer")), "find organization IDs with 'msgvault organization list --json'")
 	}
 	source := strings.TrimSpace(employmentSource)
 	if source == "" {
@@ -428,7 +428,7 @@ func cliPartialDateString(value *generated.PartialDate) (string, bool) {
 
 func writeCLIEmployment(cmd *cobra.Command, employment *generated.Employment) error {
 	if employment == nil {
-		return errors.New("employment response was empty")
+		return readDaemonResponseError(errors.New("employment response was empty"))
 	}
 	if employmentJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), employment, json.Deterministic(true))
@@ -441,7 +441,7 @@ func writeCLIEmploymentList(
 	personScoped, jsonOutput bool,
 ) error {
 	if response == nil {
-		return errors.New("employment list response was empty")
+		return readDaemonResponseError(errors.New("employment list response was empty"))
 	}
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response, json.Deterministic(true))
@@ -486,23 +486,23 @@ func init() {
 	employmentSetCmd.Flags().BoolVar(&employmentClearStart, "clear-start", false, "Remove the start date")
 	employmentSetCmd.Flags().BoolVar(&employmentClearEnd, "clear-end", false, "Remove the end date")
 	for _, command := range []*cobra.Command{employmentAddCmd, employmentSetCmd} {
-		command.Flags().Int64Var(&employmentPersonID, "person", 0, "Person ID")
-		command.Flags().Int64Var(&employmentOrganizationID, "organization", 0, "Organization ID")
+		command.Flags().Int64Var(&employmentPersonID, "person", 0, "Person ID (required for add; from person list --json)")
+		command.Flags().Int64Var(&employmentOrganizationID, "organization", 0, "Organization ID (required for add; from organization list --json)")
 		command.Flags().StringVar(&employmentTitle, "title", "", "Employment title")
 		command.Flags().StringVar(&employmentRole, "role", "", "Employment role")
 		command.Flags().StringVar(&employmentDepartment, "department", "", "Department")
 		command.Flags().StringVar(&employmentLocation, "location", "", "Location")
 		command.Flags().StringVar(&employmentDescription, "description", "", "Description")
-		command.Flags().StringVar(&employmentStartDate, "start", "", "Partial start date")
-		command.Flags().StringVar(&employmentEndDate, "end", "", "Partial end date")
+		command.Flags().StringVar(&employmentStartDate, "start", "", "Partial start date: YYYY, YYYY-MM, or YYYY-MM-DD")
+		command.Flags().StringVar(&employmentEndDate, "end", "", "Partial end date: YYYY, YYYY-MM, or YYYY-MM-DD")
 		command.Flags().StringVar(&employmentSource, "source", "", "Value source")
 		command.Flags().BoolVar(&employmentPrimary, "primary", false, "Make primary")
 		command.Flags().BoolVar(&employmentNoPrimary, "no-primary", false, "Do not make primary")
 		command.Flags().BoolVar(&employmentNotCurrent, "not-current", false, "Mark not current")
 	}
-	employmentEndCmd.Flags().StringVar(&employmentEndDate, "end", "", "Partial end date")
-	employmentListCmd.Flags().Int64Var(&employmentPersonID, "person", 0, "Person ID")
-	employmentListCmd.Flags().Int64Var(&employmentOrganizationID, "organization", 0, "Organization ID")
+	employmentEndCmd.Flags().StringVar(&employmentEndDate, "end", "", "Partial end date: YYYY, YYYY-MM, or YYYY-MM-DD")
+	employmentListCmd.Flags().Int64Var(&employmentPersonID, "person", 0, "Person ID (required for add; from person list --json)")
+	employmentListCmd.Flags().Int64Var(&employmentOrganizationID, "organization", 0, "Organization ID (required for add; from organization list --json)")
 	employmentListCmd.Flags().BoolVar(&employmentCurrentOnly, "current-only", false, "Only current employments")
 	employmentListCmd.Flags().Int64Var(&employmentLimit, "limit", 0, "Maximum results")
 	employmentListCmd.Flags().Int64Var(&employmentOffset, "offset", 0, "Results to skip")

@@ -101,7 +101,7 @@ func TestConfiguredTwentySyncRefusesRemovedSource(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	err := runConfiguredTwentySync(t.Context(), st, twentySourceConfig("removed"))
-	require.ErrorContains(err, "add-twenty")
+	require.ErrorContains(err, "source twenty add")
 }
 func TestConfiguredTwentySyncRefreshesWithUncanceledContext(t *testing.T) {
 	assert := assert.New(t)

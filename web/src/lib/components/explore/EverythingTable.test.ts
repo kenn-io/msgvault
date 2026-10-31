@@ -400,11 +400,11 @@ describe('EverythingTable', () => {
         error: 'cache_unavailable',
         message: 'The analytical cache has not been built.',
         readiness: 'absent',
-        recovery_action: 'msgvault build-cache'
+        recovery_action: 'msgvault cache build'
       },
       onRetry
     });
-    expect(screen.getByRole('alert').textContent).toContain('msgvault build-cache');
+    expect(screen.getByRole('alert').textContent).toContain('msgvault cache build');
     expect(grid.getAttribute('aria-rowcount')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry cache check' }));
     expect(onRetry).toHaveBeenCalledOnce();

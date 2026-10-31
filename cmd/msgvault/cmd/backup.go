@@ -62,43 +62,55 @@ var (
 var backupRestoreAfterDaemonPreflight func()
 
 var backupCmd = &cobra.Command{
-	Use:   "backup",
-	Short: "Back up the archive to a snapshot repository",
+	Use:     "backup",
+	Short:   "Back up the archive to a snapshot repository",
+	Long:    "Store archive snapshots in a configured backup repository or one selected with --repo. Initialize once, create snapshots, list and verify them, then restore a chosen snapshot to a separate target directory. Restore refuses a non-empty target unless --overwrite is explicitly passed.",
+	Example: "  msgvault backup init --repo /path/to/backups\n  msgvault backup create --repo /path/to/backups",
 }
 
 var backupInitCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize a new backup repository",
-	Args:  cobra.NoArgs,
-	RunE:  runBackupInit,
+	Use:     "init",
+	Short:   "Initialize a new backup repository",
+	Long:    "Initialize the snapshot repository selected by --repo or the backup configuration. Run this once before creating snapshots; use backup list to inspect an existing repository.",
+	Example: "  msgvault backup init --repo /path/to/backups",
+	Args:    cobra.NoArgs,
+	RunE:    runBackupInit,
 }
 
 var backupCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a backup snapshot",
-	Args:  cobra.NoArgs,
-	RunE:  runBackupCreate,
+	Use:     "create",
+	Short:   "Create a backup snapshot",
+	Long:    "Capture a consistent archive snapshot in the selected repository. Configuration and tokens are excluded unless explicitly requested; including secrets in an unencrypted repository requires separate confirmation flags.",
+	Example: "  msgvault backup create --repo /path/to/backups",
+	Args:    cobra.NoArgs,
+	RunE:    runBackupCreate,
 }
 
 var backupListCmd = &cobra.Command{
-	Use:   cmdUseList,
-	Short: "List backup snapshots",
-	Args:  cobra.NoArgs,
-	RunE:  runBackupList,
+	Use:     cmdUseList,
+	Short:   "List backup snapshots",
+	Long:    "List snapshot IDs and metadata in the selected backup repository. Use a returned ID with backup verify or backup restore.",
+	Example: "  msgvault backup list --repo /path/to/backups",
+	Args:    cobra.NoArgs,
+	RunE:    runBackupList,
 }
 
 var backupVerifyCmd = &cobra.Command{
-	Use:   "verify [SNAPSHOT]",
-	Short: "Verify backup repository integrity",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runBackupVerify,
+	Use:     "verify [SNAPSHOT]",
+	Short:   "Verify backup repository integrity",
+	Long:    "Verify the selected snapshot, or the latest by default. --all verifies every snapshot; --quick skips content hash verification and provides a narrower check.",
+	Example: "  msgvault backup verify --repo /path/to/backups",
+	Args:    cobra.MaximumNArgs(1),
+	RunE:    runBackupVerify,
 }
 
 var backupRestoreCmd = &cobra.Command{
-	Use:   "restore [SNAPSHOT]",
-	Short: "Restore a snapshot into a target directory",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runBackupRestore,
+	Use:     "restore [SNAPSHOT]",
+	Short:   "Restore a snapshot into a target directory",
+	Long:    "Restore a selected snapshot, or the latest, into --target. Choose a separate empty directory for inspection; a non-empty target is refused unless --overwrite is passed.",
+	Example: "  msgvault backup restore --repo /path/to/backups --target /path/to/restore",
+	Args:    cobra.MaximumNArgs(1),
+	RunE:    runBackupRestore,
 }
 
 // resolveBackupRepo applies the standard --repo precedence for every backup
@@ -111,7 +123,7 @@ func resolveBackupRepo(flagValue string, cfg *config.Config) (string, error) {
 	if cfg != nil && cfg.Backup.Repo != "" {
 		return cfg.Backup.Repo, nil
 	}
-	return "", errors.New("backup: no repository configured; pass --repo or set [backup] repo in config.toml")
+	return "", &cliError{Kind: "not_initialized", Code: "backup_repository_required", Message: "backup: no repository configured; pass --repo or set [backup] repo in config.toml", ExitCode: 5, Hint: "select a repository with --repo /path/to/backups; initialize it with 'msgvault backup init --repo /path/to/backups'"}
 }
 
 func runBackupInit(cmd *cobra.Command, _ []string) error {
@@ -701,7 +713,7 @@ func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreRe
 				"Pack metadata cleared: attachments were restored as loose files\n")
 		} else {
 			lines = append(lines, fmt.Sprintf(
-				"%d attachment blob(s) remain loose; 'msgvault pack-attachments' can pack eligible blobs later\n",
+				"%d attachment blob(s) remain loose; 'msgvault attachment pack' can pack eligible blobs later\n",
 				res.LooseAttachmentBlobs))
 		}
 	}
@@ -1067,7 +1079,7 @@ func init() {
 	backupCreateCmd.Flags().BoolVar(&backupCreateIncludeTokens, "include-tokens", false, "Include the tokens directory in the snapshot")
 	backupCreateCmd.Flags().BoolVar(&backupCreateAllowPlaintextSecrets, "allow-plaintext-secrets", false, "Allow capturing secrets in plaintext (required with --include-config/--include-tokens on an unencrypted repository)")
 	backupCreateCmd.Flags().StringVar(&backupCreateTag, "tag", "", "Optional label recorded on the snapshot manifest")
-	backupCreateCmd.Flags().BoolVar(&backupCreateForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before creating")
+	backupCreateCmd.Flags().BoolVar(&backupCreateForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before creating (only if no other backup is running)")
 	backupCreateCmd.Flags().IntVar(&backupCreateJobs, "jobs", 0, "Concurrent attachment capture workers (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")
 	backupCreateCmd.Flags().StringVar(&backupCreateProgress, "progress", "auto", "Progress output mode: auto, bar, or plain")
 	_ = backupCreateCmd.Flags().MarkHidden("progress")
@@ -1077,14 +1089,14 @@ func init() {
 	backupVerifyCmd.Flags().StringVar(&backupVerifyRepo, "repo", "", "Backup repository directory")
 	backupVerifyCmd.Flags().BoolVar(&backupVerifyAll, "all", false, "Verify every snapshot instead of only the latest")
 	backupVerifyCmd.Flags().BoolVar(&backupVerifyQuick, "quick", false, "Skip reading and hash-verifying content blobs")
-	backupVerifyCmd.Flags().BoolVar(&backupVerifyForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before verifying")
+	backupVerifyCmd.Flags().BoolVar(&backupVerifyForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before verifying (only if no other backup is running)")
 	backupVerifyCmd.Flags().IntVar(&backupVerifyJobs, "jobs", 0, "Concurrent pack readers for full verify (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")
 
 	backupRestoreCmd.Flags().StringVar(&backupRestoreRepo, "repo", "", "Backup repository directory")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreTarget, "target", "", "Directory to restore into (required)")
 	_ = backupRestoreCmd.MarkFlagRequired("target")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false, "Allow restoring into a non-empty target directory")
-	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before restoring")
+	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before restoring (only if no other backup is running)")
 	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0, "Concurrent pack readers (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreIntegrityCheck, "integrity-check", false,
 		"Run SQLite's full integrity check after restoring (slow for large databases)")

@@ -847,7 +847,7 @@ type SyncConfig struct {
 	// folders excluded from sync unless command folder flags override them.
 	IMAPSkipFolders map[string][]string `toml:"imap_skip_folders"`
 	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
-	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
+	// ACCOUNT value printed by `msgvault account list`, e.g.
 	// "imaps://user@example.com@imap.example.com:993") to that source's
 	// Sent-folder mailbox names, for servers whose (possibly localized) Sent
 	// folder advertises no RFC 6154 \Sent role. The mapping is per source:

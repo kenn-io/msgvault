@@ -160,8 +160,11 @@ func configuredNotionClients(source config.NotionMeetingsSource) (notionmeetings
 
 var addNotionMeetingsCmd = &cobra.Command{
 	Use:   "add-notion-meetings [identifier]",
+	Long:  "Register a configured Notion AI Meeting Notes source. The optional identifier selects the identifier value in a [[notion_meetings]] config block. \n\n" + notionMeetingsConfigHint,
 	Short: "Register and validate a Notion AI Meeting Notes source",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  msgvault source notion-meetings add
+  msgvault source notion-meetings add work`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {
@@ -199,7 +202,7 @@ var addNotionMeetingsCmd = &cobra.Command{
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNotion meeting source %s registered.\n", source.Identifier)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run: msgvault sync-notion-meetings %s\n", source.Identifier)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run: msgvault source notion-meetings sync %s\n", source.Identifier)
 		return nil
 	},
 }
@@ -207,6 +210,8 @@ var addNotionMeetingsCmd = &cobra.Command{
 var syncNotionMeetingsCmd = &cobra.Command{
 	Use:   "sync-notion-meetings [identifier]",
 	Short: "Sync Notion AI Meeting Notes",
+	Example: `  msgvault source notion-meetings sync
+  msgvault source notion-meetings sync work --full`,
 	Long: `Sync the latest visible Notion AI Meeting Notes into the canonical meeting archive.
 
 Notion currently returns at most 50 attendee-visible meetings and does not
@@ -300,7 +305,7 @@ func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSum
 
 func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, source config.NotionMeetingsSource) error {
 	notRegistered := fmt.Errorf(
-		"notion meeting source %q is not registered; run msgvault add-notion-meetings %s first",
+		"notion meeting source %q is not registered; run msgvault source notion-meetings add %s first",
 		source.Identifier, source.Identifier)
 	registered, err := requireRegisteredMeetingSource(
 		st, notionmeetings.SourceType, source.Identifier, notRegistered,

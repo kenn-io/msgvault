@@ -81,15 +81,13 @@ permission on the app registration. The first delete-staged for the account
 asks for Mail.ReadWrite, which the app registration must also list. A Graph
 account can request it during sign-in with --mail-write for category editing.
 The Graph account is separate: if the mailbox is also synced over IMAP, the
-vault holds two copies, and 'msgvault dedup --collection' hides the extra ones.
-
-Examples:
-  msgvault add-o365 user@outlook.com
-  msgvault add-o365 user@outlook.com --headless
-  msgvault add-o365 user@company.com --tenant my-tenant-id
-  msgvault add-o365 user@company.com --sign-in jdoe@company.onmicrosoft.com
-  msgvault add-o365 user@company.com --graph`,
-		Args: cobra.ExactArgs(1),
+vault holds two copies, and 'msgvault dedup --collection' hides the extra ones.`,
+		Example: `  msgvault source o365 add user@outlook.com
+  msgvault source o365 add user@outlook.com --headless
+  msgvault source o365 add user@company.com --tenant my-tenant-id
+  msgvault source o365 add user@company.com --sign-in jdoe@company.onmicrosoft.com
+  msgvault source o365 add user@company.com --graph`,
+		Args: sourceExactArgs(1),
 		RunE: runAddO365Local,
 	}
 	cmd.Flags().StringVar(&o365TenantID, "tenant", "",
@@ -225,7 +223,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Identifier: %s\n", identifier)
 	fmt.Println()
 	fmt.Println("You can now run:")
-	fmt.Printf("  msgvault sync-full %s\n", email)
+	fmt.Printf("  msgvault sync full %s\n", email)
 
 	return nil
 }

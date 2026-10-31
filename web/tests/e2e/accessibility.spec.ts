@@ -573,7 +573,7 @@ for (const theme of ['light', 'dark'] as const) {
         });
         if (exploreMode === 'degraded') return route.fulfill({ status: 503, json: {
           error: 'analytical_cache_unavailable', message: 'Synthetic cache unavailable.',
-          readiness: 'absent', recovery_action: 'msgvault build-cache'
+          readiness: 'absent', recovery_action: 'msgvault cache build'
         } });
         return route.fulfill({ json: {
           rows: [], total_count: 0, cache_revision: 'empty', search_provenance: {}
@@ -612,7 +612,7 @@ for (const theme of ['light', 'dark'] as const) {
       const degraded = page.getByRole('alert');
       await expect(degraded).toContainText('Analytical cache unavailable');
       await expect(degraded).toContainText('Synthetic cache unavailable.');
-      await expect(degraded).toContainText('msgvault build-cache');
+      await expect(degraded).toContainText('msgvault cache build');
       await assertNoViolations(page, `degraded ${theme}/${density}`);
     });
   }

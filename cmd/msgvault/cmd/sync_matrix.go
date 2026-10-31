@@ -22,7 +22,10 @@ func newSyncMatrixCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync-matrix",
 		Short: "Sync joined rooms from Matrix",
-		Args:  cobra.NoArgs,
+		Long:  `Archive joined Matrix rooms with the read-only device created by source matrix add. Stored room cursors make later runs incremental. Use --full to fetch complete available history again; --account selects one Matrix user ID.`,
+		Example: `  msgvault source matrix sync
+  msgvault source matrix sync --account @archive:example.org --full`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -55,7 +58,7 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 		return fmt.Errorf("list Matrix sources: %w", err)
 	}
 	if len(sources) == 0 {
-		return errors.New("no Matrix accounts registered (run 'add-matrix' first)")
+		return sourceNotConfigured("matrix", errors.New("no Matrix accounts registered (run 'msgvault source matrix add' first)"))
 	}
 	if account == "" {
 		sources = activeSyncSources(sources)

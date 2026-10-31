@@ -31,12 +31,10 @@ func newAddInlineCmd() *cobra.Command {
 		Long: `Authorize Inline with read-only OAuth, or use an authenticated Inline CLI
 on the daemon host. All accessible chats are included by default, including
 child threads. Optional --chat-id flags restrict capture to those chats.
-Re-running with IDs merges an existing filter; omitting IDs restores all chats.
-
-Examples:
-  msgvault add-inline
-  msgvault add-inline --transport cli
-  msgvault add-inline --chat-id 123 --chat-id 456`,
+Re-running with IDs merges an existing filter; omitting IDs restores all chats.`,
+		Example: `  msgvault source inline add
+  msgvault source inline add --transport cli
+  msgvault source inline add --chat-id 123 --chat-id 456`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -72,7 +70,7 @@ Examples:
 				client = inline.NewCLIClient(cliPath)
 			} else {
 				if len(payload) == 0 {
-					return errors.New("missing Inline OAuth handoff; run add-inline from the CLI")
+					return errors.New("missing Inline OAuth handoff; run msgvault source inline add from the CLI")
 				}
 				httpClient, err := mgr.HTTPClientFromPayload(cmd.Context(), payload)
 				if err != nil {
@@ -123,7 +121,7 @@ Examples:
 			if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Added Inline account %s. Run msgvault sync-inline %s. Restart the daemon after changing scheduled accounts.\n", account.Identifier(), account.Identifier()); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Added Inline account %s. Run msgvault source inline sync %s. Restart the daemon after changing scheduled accounts.\n", account.Identifier(), account.Identifier()); err != nil {
 				return fmt.Errorf("write Inline account confirmation: %w", err)
 			}
 			return nil
@@ -201,12 +199,12 @@ func resolveInlineAccounts(cfg *config.Config, args []string) ([]config.InlineAc
 	if len(args) > 0 {
 		account := cfg.GetInlineAccount(args[0])
 		if account == nil {
-			return nil, errors.New("inline account is not configured; run add-inline")
+			return nil, errors.New("inline account is not configured; run msgvault source inline add")
 		}
 		return []config.InlineAccount{*account}, nil
 	}
 	if len(cfg.Inline.Accounts) == 0 {
-		return nil, errors.New("no Inline accounts configured; run add-inline")
+		return nil, sourceNotConfigured("inline", errors.New("no Inline accounts configured; run msgvault source inline add"))
 	}
 	return cfg.Inline.Accounts, nil
 }
@@ -222,7 +220,10 @@ func newInlineReadCommand(backfill bool) *cobra.Command {
 		use, short = "backfill-inline-media [identifier]", "Retry eligible Inline attachment downloads"
 	}
 	cmd := &cobra.Command{
-		Use: use, Short: short, Args: cobra.MaximumNArgs(1),
+		Use: use, Short: short,
+		Long:    "Archive selected Inline chats using the saved read-only authorization or authenticated CLI. With no identifier, visit every configured account. --probe checks connectivity without importing messages. Use backfill-media after a sync reports pending attachments; it retries eligible downloads under the same media policy.",
+		Example: "  msgvault source inline sync\n  msgvault source inline sync --probe",
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -275,7 +276,10 @@ func newInlineReadCommand(backfill bool) *cobra.Command {
 			return errors.Join(ctx.Err(), errors.Join(errs...), rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state))
 		},
 	}
-	if !backfill {
+	if backfill {
+		cmd.Long = "Retry eligible Inline attachment downloads after a sync reports pending media. With no identifier, process every configured account. Downloads use the saved authorization and media policy; existing complete attachments remain available."
+		cmd.Example = "  msgvault source inline backfill-media"
+	} else {
 		cmd.Long = "Discover all accessible chats and archive their history by default; chat_ids can restrict an account. Archive new messages and resume interrupted history capture. Use --full to refresh surviving messages, including older edits. Previously captured deletions remain in the archive."
 		cmd.Flags().BoolVar(&full, "full", false, "start or resume a full refresh of selected chats")
 		cmd.Flags().BoolVar(&probe, "probe", false, "verify account and selected-chat schemas without archive writes or printing message text")
@@ -304,7 +308,7 @@ func inlineImportOptions(cfg *config.Config, account config.InlineAccount) (inli
 func runInlineAccount(ctx context.Context, state *invocation, s *store.Store, account config.InlineAccount, full, noMedia, backfill bool, limit int) (*inline.ImportSummary, error) {
 	registered, err := s.GetSourceByTypeAndIdentifier(sourceTypeInline, account.Identifier)
 	if errors.Is(err, store.ErrSourceNotFound) || registered == nil && err == nil {
-		return nil, errors.New("inline account is not registered; run add-inline")
+		return nil, errors.New("inline account is not registered; run msgvault source inline add")
 	}
 	if err != nil {
 		return nil, err

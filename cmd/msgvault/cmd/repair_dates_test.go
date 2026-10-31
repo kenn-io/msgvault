@@ -378,7 +378,7 @@ func TestDateRepairCacheRefreshErrorProvidesRecoveryCommand(t *testing.T) {
 	err := dateRepairCacheRefreshError(cause)
 
 	require.ErrorIs(t, err, cause)
-	require.ErrorContains(t, err, "msgvault build-cache --full-rebuild")
+	require.ErrorContains(t, err, "msgvault cache build --full-rebuild")
 }
 
 func TestDateRepairPostApplyLedgerErrorProvidesRecoveryCommand(t *testing.T) {
@@ -391,7 +391,7 @@ func TestDateRepairPostApplyLedgerErrorProvidesRecoveryCommand(t *testing.T) {
 
 	require.ErrorIs(t, err, cause)
 	require.ErrorContains(t, err, "audit ledger finalization failed")
-	require.ErrorContains(t, err, "msgvault build-cache --full-rebuild")
+	require.ErrorContains(t, err, "msgvault cache build --full-rebuild")
 }
 
 func TestDateRepairUsesAnalyticsCacheOnlyForSQLite(t *testing.T) {

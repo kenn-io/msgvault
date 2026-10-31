@@ -1858,7 +1858,7 @@ func formatMergeMethodology(sb *strings.Builder) {
 	sb.WriteString("  - Raw MIME is backfilled onto the survivor if it lacks it.\n")
 	sb.WriteString("  - Only raw MIME is backfilled; parsed message_bodies are not.\n")
 	sb.WriteString("    If a survivor is missing text for display, run\n")
-	sb.WriteString("    'msgvault repair-encoding' or 'msgvault build-cache --full-rebuild'.\n")
+	sb.WriteString("    'msgvault repair encoding' or 'msgvault cache build --full-rebuild'.\n")
 	sb.WriteString("  - Pruned duplicates are hidden in the msgvault " +
 		"database (reversible via --undo).\n")
 	sb.WriteString("  - Remote mailboxes (Gmail, IMAP) are NEVER modified by default.\n")

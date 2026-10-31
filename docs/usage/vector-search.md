@@ -452,7 +452,7 @@ on how you run it.
 
 ### CLI workflow (manual syncs)
 
-If you run `msgvault sync-full` or `msgvault sync` (alias:
+If you run `msgvault sync full` or `msgvault sync` (alias:
 `sync-incremental`) by hand, new Gmail and IMAP messages persist with
 `embed_gen = NULL`. In steady state, `msgvault embeddings build` scans
 those rows and tops up the active generation. During a rebuild, the
@@ -499,12 +499,12 @@ trigger).
 
 | Ingest path | Runs the embed worker? |
 |---|---|
-| Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
-| Manual `sync-calendar` / `sync-teams` / `sync-discord` | No. Run `msgvault embeddings build` afterward |
-| Manual `sync-slack` / `sync-beeper` / `sync-omi` / `sync-granola` / `sync-plaud` / `sync-circleback` / `sync-notion-meetings` / `sync-muesli` / `sync-twilio` / `sync-twenty` / `sync-chatwoot` | No. Run `msgvault embeddings build` afterward |
+| Manual `sync full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
+| Manual `source calendar sync` / `source teams sync` / `source discord sync` | No. Run `msgvault embeddings build` afterward |
+| Manual `source slack sync` / `source beeper sync` / `source omi sync` / `source granola sync` / `source plaud sync` / `source circleback sync` / `source notion-meetings sync` / `source muesli sync` / `source twilio sync` / `source twenty sync` / `source chatwoot sync` | No. Run `msgvault embeddings build` afterward |
 | Scheduled account syncs in `msgvault serve` (Gmail, IMAP, Teams, Discord) | Yes, when `[vector.embed.schedule].run_after_sync = true` |
 | Scheduled calendar, Slack, Beeper, Omi, Granola, Plaud, Circleback, Notion, Muesli, Twilio, Twenty, and Chatwoot syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
-| Local email imports (`import-pst`, `import-emlx`, `import-eml`, `import-mbox`) | No. Run `msgvault embeddings build` afterward |
+| Local email imports (`import pst`, `import emlx`, `import eml`, `import mbox`) | No. Run `msgvault embeddings build` afterward |
 | Local chat/text imports | No. Run `msgvault embeddings build` afterward |
 
 For ingest paths that do not immediately schedule embedding work, running
@@ -526,7 +526,7 @@ new generation activates.
 ### CAS resolution (accepted single-user residual)
 
 When a message's text changes during embedding (for example
-`msgvault repair-encoding` rewriting a body while an embed run is in flight),
+`msgvault repair encoding` rewriting a body while an embed run is in flight),
 the embed worker uses an optimistic compare-and-set on the message's
 `last_modified` timestamp to avoid stamping an embedding built from stale
 text: if `last_modified` moved between the worker reading the content and
@@ -540,7 +540,7 @@ mark an embedding current even though it was built from the now-stale text.
 This sub-second window is an accepted residual for this single-user tool — an
 edit and an embed of the *same* message within the *same second* is rare. It
 self-recovers: the next edit to that message bumps `last_modified` (and
-`repair-encoding` clears its coverage stamp outright), and a full rebuild
+`repair encoding` clears its coverage stamp outright), and a full rebuild
 (`embeddings build --full-rebuild`) or the periodic full-scan backstop
 re-embeds it regardless.
 

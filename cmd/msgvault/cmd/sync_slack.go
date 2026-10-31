@@ -42,13 +42,11 @@ re-run after an interruption and the sync continues where it stopped.
 Requires a workspace added with 'add-slack'. Use --full to start a repair
 session: every message is re-fetched and upserted in place, so existing rows
 are repaired without duplicates. A repair session survives interruptions and
---limit scoping — subsequent runs of any kind continue it until complete.
-
-Examples:
-  msgvault sync-slack
-  msgvault sync-slack T0123456789
-  msgvault sync-slack --limit 500
-  msgvault sync-slack --full`,
+--limit scoping — subsequent runs of any kind continue it until complete.`,
+		Example: `  msgvault source slack sync
+  msgvault source slack sync T0123456789
+  msgvault source slack sync --limit 500
+  msgvault source slack sync --full`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -118,7 +116,7 @@ Examples:
 			// regardless of interruptions or per-workspace failures.
 			cacheErr := rebuildCacheAfterManualSync(cfg.DatabaseDSN(), state)
 			if ctx.Err() != nil {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-slack to resume.")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run msgvault source slack sync to resume.")
 			} else if len(syncErrors) > 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nErrors:")
 				for _, e := range syncErrors {
@@ -132,7 +130,7 @@ Examples:
 	cmd.Flags().BoolVar(&syncSlackFull, "full", false, "start (or continue) a repair session: re-fetch every message, upserting in place; interrupted or --limit-scoped repairs resume across later runs until complete")
 	cmd.Flags().BoolVar(&syncSlackNoThreads, "no-threads", false, "skip thread-reply fetching (backfill inline fetches and the reply sweep) for this run")
 	cmd.Flags().BoolVar(&syncSlackMaintenance, "maintenance", false, "run the maintenance rescan: repair edits and reaction changes on recent messages (archives ignore post-capture mutations by default)")
-	cmd.Flags().BoolVar(&syncSlackNoMedia, "no-media", false, "skip file downloads for this run (files are recorded as pending; backfill-slack-media fetches them later)")
+	cmd.Flags().BoolVar(&syncSlackNoMedia, "no-media", false, "skip file downloads for this run (files are recorded as pending; source slack backfill-media fetches them later)")
 	cmd.Flags().BoolVar(&syncDMs, "dms", true, "include one-to-one DMs for this run, overriding config (true or false)")
 	cmd.Flags().BoolVar(&syncPrivateChannels, "private-channels", true, "include private channels for this run, overriding config (true or false)")
 	cmd.Flags().BoolVar(&syncGroupDMs, "group-dms", true, "include group DMs for this run, overriding config (true or false)")
@@ -165,7 +163,7 @@ func printSlackSummary(cmd *cobra.Command, teamID string, sum *slack.ImportSumma
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d files", sum.AttachmentsDownloaded)
 	}
 	if sum.AttachmentsPending > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media pending (see backfill-slack-media)", sum.AttachmentsPending)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media pending (run msgvault source slack backfill-media)", sum.AttachmentsPending)
 	}
 	if sum.AttachmentsSkipped > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media skipped by policy", sum.AttachmentsSkipped)
@@ -194,7 +192,7 @@ func resolveSlackSyncSources(s *store.Store, flagTeam string) ([]*store.Source, 
 	}
 	if flagTeam == "" {
 		if len(sources) == 0 {
-			return nil, errors.New("no Slack workspaces registered (run 'add-slack' first)")
+			return nil, sourceNotConfigured("slack", errors.New("no Slack workspaces registered (run 'msgvault source slack add' first)"))
 		}
 		active := activeSyncSources(sources)
 		if len(active) == 0 {
@@ -215,7 +213,7 @@ func resolveSlackSyncSources(s *store.Store, flagTeam string) ([]*store.Source, 
 	if len(matched) > 0 {
 		return nil, fmt.Errorf("slack workspace %q is retired: %w", flagTeam, store.ErrSourceRetired)
 	}
-	return nil, fmt.Errorf("slack workspace %q is not registered (run 'add-slack' first)", flagTeam)
+	return nil, fmt.Errorf("slack workspace %q is not registered (run 'msgvault source slack add' first)", flagTeam)
 }
 
 // slackSyncExit resolves sync-slack's exit error from the run's parts. An

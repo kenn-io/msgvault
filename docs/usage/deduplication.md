@@ -110,17 +110,17 @@ Every dedup-related command sits on one of five rungs (00 through 04). Rung 00 i
 | 00 | Backup (automatic, SQLite-only) | runs before rungs 02 and 03 | point-in-time backup; PostgreSQL uses `pg_dump` |
 | 01 | Scan | `deduplicate --dry-run` | no data touched |
 | 02 | Hide | `deduplicate` | reversible with `--undo <batch-id>` |
-| 03 | Local hard delete | `delete-deduped --batch <batch-id>` | irreversible locally |
-| 04 | Remote delete | `delete-staged` | archived content retained; Gmail/IMAP default to Trash, `--permanent` is irreversible |
+| 03 | Local hard delete | `deletion purge-deduped --batch <batch-id>` | irreversible locally |
+| 04 | Remote delete | `deletion execute` | archived content retained; Gmail/IMAP default to Trash, `--permanent` is irreversible |
 
 !!! tip "Deletion is never required"
     You can run `deduplicate` as many times as you like and stay on rung 02 forever. Rungs 03 and 04 only ever run when you invoke a different command.
 
-- **Rung 00, backup.** Before `deduplicate` or `delete-deduped` modifies any row, msgvault writes a point-in-time copy of the database alongside the live file (for example `msgvault.db.dedup-backup-20260503-091500`) using SQLite `VACUUM INTO`. The copy is built under a private temporary path and moved to the advertised backup filename only after it succeeds, so cancellation cannot leave an incomplete file looking like a valid backup. Opt out with `--no-backup`. Scanning modifies nothing and triggers no backup. This automatic backup is SQLite-only; on a PostgreSQL archive `deduplicate` refuses the built-in backup (there is no `VACUUM INTO` equivalent), so snapshot the database out-of-band with `pg_dump` first, then rerun with `--no-backup`.
+- **Rung 00, backup.** Before `deduplicate` or `deletion purge-deduped` modifies any row, msgvault writes a point-in-time copy of the database alongside the live file (for example `msgvault.db.dedup-backup-20260503-091500`) using SQLite `VACUUM INTO`. The copy is built under a private temporary path and moved to the advertised backup filename only after it succeeds, so cancellation cannot leave an incomplete file looking like a valid backup. Opt out with `--no-backup`. Scanning modifies nothing and triggers no backup. This automatic backup is SQLite-only; on a PostgreSQL archive `deduplicate` refuses the built-in backup (there is no `VACUUM INTO` equivalent), so snapshot the database out-of-band with `pg_dump` first, then rerun with `--no-backup`.
 - **Rung 01, scan.** `deduplicate --dry-run` reports the duplicate groups it found, the proposed survivor for each, and why. Nothing is modified.
 - **Rung 02, hide.** `deduplicate` applies the scan. Pruned copies are hidden from normal reads but kept on disk, and the run prints a batch ID. `--undo <batch-id>` restores them.
-- **Rung 03, local hard delete.** `delete-deduped` permanently removes hidden rows from the local archive to reclaim disk. It acts on named batches via `--batch` and refuses to touch rows it did not hide; all selected batches commit as one transaction, so cancellation rolls the whole selection back. `--all-hidden` purges every hidden row and always prompts for confirmation. Undo cannot recover purged rows.
-- **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only when the loser and survivor share a source and have matching normalized raw MIME. A group spanning two sources or lacking content equivalence stages nothing. To execute, run `delete-staged`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server, retains archived content, and records source-deletion state. Inspect first with `delete-staged --list` and target one batch with `delete-staged <batch-id>`. Execution requires durable `[deletion] remote_enabled = true` consent in the invoking CLI config, or `MSGVAULT_ENABLE_REMOTE_DELETE=1` for one command. The same-source and content-equivalence restrictions live in the staging step, not in `delete-staged`. See [Deleting Email](/docs/usage/deletion/) for how remote deletion works.
+- **Rung 03, local hard delete.** `deletion purge-deduped` permanently removes hidden rows from the local archive to reclaim disk. It acts on named batches via `--batch` and refuses to touch rows it did not hide; all selected batches commit as one transaction, so cancellation rolls the whole selection back. `--all-hidden` purges every hidden row and always prompts for confirmation. Undo cannot recover purged rows.
+- **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only when the loser and survivor share a source and have matching normalized raw MIME. A group spanning two sources or lacking content equivalence stages nothing. To execute, run `deletion execute`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server, retains archived content, and records source-deletion state. Inspect first with `deletion execute --list` and target one batch with `deletion execute <batch-id>`. Execution requires durable `[deletion] remote_enabled = true` consent in the invoking CLI config, or `MSGVAULT_ENABLE_REMOTE_DELETE=1` for one command. The same-source and content-equivalence restrictions live in the staging step, not in `deletion execute`. See [Deleting Email](/docs/usage/deletion/) for how remote deletion works.
 
 !!! note "What \"hidden\" means"
     A hidden copy is excluded from search, the Web UI, the TUI, vector and hybrid retrieval, the API, MCP responses, exports, and stats, while still living on disk. Every read path applies the same visibility rule, so a hidden duplicate cannot leak back into results through one backend.
@@ -152,7 +152,7 @@ msgvault deduplicate --undo <batch-id>
 **4. Hard-delete locally, only when you are sure.** This is rung 03 and cannot be undone:
 
 ```bash
-msgvault delete-deduped --batch <batch-id>
+msgvault deletion purge-deduped --batch <batch-id>
 ```
 
 ## Common Scenarios
@@ -175,23 +175,23 @@ msgvault deduplicate --collection gmail-plus-mbox
 **Reclaim disk from duplicates you hid earlier.** Find the batch, then hard-delete it (rung 03):
 
 ```bash
-msgvault delete-deduped --batch <batch-id>
+msgvault deletion purge-deduped --batch <batch-id>
 ```
 
-**Actually remove the duplicates from the source server.** Stage during a dedup run, review the pending manifests, then execute the specific batch. Staging only covers same-source pairs with matching normalized raw MIME; cross-source or non-equivalent pairs stage nothing. `delete-staged` itself is the generic deletion executor, and execution is gated:
+**Actually remove the duplicates from the source server.** Stage during a dedup run, review the pending manifests, then execute the specific batch. Staging only covers same-source pairs with matching normalized raw MIME; cross-source or non-equivalent pairs stage nothing. `deletion execute` itself is the generic deletion executor, and execution is gated:
 
 ```bash
 # Stage same-source duplicates for remote deletion during a dedup run
 msgvault deduplicate --collection Personal --delete-dups-from-source-server
 
 # Review the pending deletion manifests
-msgvault delete-staged --list
+msgvault deletion execute --list
 
 # Execute one batch against the source server after durable config consent
-msgvault delete-staged <batch-id>
+msgvault deletion execute <batch-id>
 
 # Or grant consent for this command only
-MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged <batch-id>
+MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute <batch-id>
 ```
 
 Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
@@ -211,20 +211,20 @@ Undo is not full time travel. It does not:
 
 - Reverse the label union applied to the survivor.
 - Reverse raw MIME backfilled onto the survivor from a non-survivor.
-- Recover rows already purged with `delete-deduped`.
+- Recover rows already purged with `deletion purge-deduped`.
 - Reverse remote deletions already executed against a source.
 
 Derived indexes catch up on their next rebuild rather than instantly.
 
 ## After a Large Local Delete
 
-A `delete-deduped` purge changes the canonical archive, but the derived analytics and vector caches may still hold stale entries. Rebuild them if you use them:
+A `deletion purge-deduped` purge changes the canonical archive, but the derived analytics and vector caches may still hold stale entries. Rebuild them if you use them:
 
 ```bash
-msgvault build-cache --full-rebuild
+msgvault cache build --full-rebuild
 msgvault embeddings build --full-rebuild
 ```
 
 ## Command Reference
 
-See the [CLI Reference](/docs/cli-reference/#deduplicate) for the complete flag list on `deduplicate`, `delete-deduped`, `identity`, and `collection`.
+See the [CLI Reference](/docs/cli-reference/#deduplicate) for the complete flag list on `deduplicate`, `deletion purge-deduped`, `identity`, and `collection`.

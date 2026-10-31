@@ -56,7 +56,7 @@ func clientTelemetryEnabled(cfg *config.Config) bool {
 // reportCLISyncFinished counts a completed manual sync. The Muesli completion
 // hook syncs automatically, so it never counts.
 func reportCLISyncFinished(cmd *cobra.Command, client *daemonclient.Client) {
-	if cmd.Name() != "muesli-hook" {
+	if stableCommandPath(cmd) != "muesli-hook" {
 		reportCLIAction(cmd, client, "sync_finished", "", "")
 	}
 }

@@ -21,11 +21,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -64,8 +66,10 @@ import (
 var serveCmd = &cobra.Command{
 	Use:         "serve",
 	Annotations: map[string]string{strictConfigAnnotation: "required"},
-	Short:       "Run msgvault as a daemon with scheduled sync",
-	Long: `Run msgvault as a long-running daemon that syncs email accounts on schedule.
+	Short:       "Run the archive daemon in the foreground",
+	Example:     "  msgvault serve",
+	Long: `Run the archive daemon in the foreground, syncing accounts on schedule.
+Use msgvault daemon start for a background process instead.
 
 The daemon runs in the foreground and performs:
   - HTTP API server (auto-selects an open port unless [server] api_port is set)
@@ -1691,7 +1695,7 @@ func openDaemonAnalyticsEngine(
 			"reason", staleness.Reason,
 			"auto_build_cache", c.Analytics.AutoBuildCache)
 	} else {
-		logger.Info("analytics cache not built - using live SQL engine (run 'msgvault build-cache' for faster aggregates)",
+		logger.Info("analytics cache not built - using live SQL engine (run 'msgvault cache build' for faster aggregates)",
 			"auto_build_cache", c.Analytics.AutoBuildCache)
 	}
 	return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, outcome, nil
@@ -2420,7 +2424,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	args = emitFolderArgs(args, "--folder", req.Folders)
 	args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 	if req.Email != "" {
-		args = append(args, req.Email)
+		args = append(args, "--", req.Email)
 	}
 	return args
 }
@@ -2545,6 +2549,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	req.Args = cligrammar.Legacy(req.Args)
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
@@ -2584,7 +2589,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	}
 	if len(req.Args) > 0 && req.Args[0] == "repack-attachments" {
 		if !repackAttachmentsParentArgsAllowed(req.Args[1:]) {
-			return errors.New("repack-attachments accepts no command-specific arguments")
+			return errors.New("attachment repack accepts no command-specific arguments")
 		}
 		if a.attachmentMaintenance == nil {
 			return errors.New("attachment maintenance is unavailable")
@@ -4423,7 +4428,7 @@ func newDaemonGmailClient(
 			}
 			if errors.Is(tsErr, os.ErrNotExist) {
 				return nil, false, provideridentity.NewGmailCredentialError(provideridentity.GmailTokenMissing,
-					fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email))
+					fmt.Errorf("get token source: %w (run 'msgvault source gmail add %s' first)", tsErr, email))
 			}
 			if isAuthInvalidError(tsErr) || errors.Is(tsErr, oauth.ErrTokenUnrefreshable) || errors.Is(tsErr, oauth.ErrInvalidTokenJSON) {
 				return nil, false, provideridentity.NewGmailCredentialError(provideridentity.GmailAuthorizationRevoked, fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(email, accountIsNarrowed(ctx, oauthMgr, email))))

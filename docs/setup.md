@@ -13,6 +13,10 @@ mail providers, chats, meetings, contacts, or local exports, use
 Already have an archive? Read [the upgrade notes](changelog.md#before-upgrading) before
 opening an existing archive with a newer build.
 
+This guide follows `main`. The [grouped CLI names](cli-reference.md#command-grammar-and-compatibility)
+are unreleased; v0.21.0 uses the previous spellings listed in that reference.
+Use `msgvault --help` to check the commands in your installed binary.
+
 ## Install Release
 
 **macOS / Linux:**
@@ -65,15 +69,15 @@ remote server, use `--local` only when intentionally selecting this host's archi
 3. Compare the candidate's expected archive version with the stored version:
 
    ```bash
-   ./candidate/msgvault schema-version
-   ./candidate/msgvault --home /path/to/archive-home schema-version --database
+   ./candidate/msgvault database version
+   ./candidate/msgvault --home /path/to/archive-home database version --database
    ```
 
 4. Run the candidate's migrations. Require exit status zero before continuing:
 
    ```bash
-   ./candidate/msgvault --home /path/to/archive-home migrate
-   ./candidate/msgvault --home /path/to/archive-home schema-version --database
+   ./candidate/msgvault --home /path/to/archive-home database migrate
+   ./candidate/msgvault --home /path/to/archive-home database version --database
    ```
 
 5. Require the stored version to equal the candidate's expected version, then
@@ -88,8 +92,8 @@ old version does not make those partial changes safe for an old executable.
 Retry with the candidate, or restore the backup before restarting the old
 binary. Older releases do not have the future-version guard.
 
-See [schema-version](cli-reference.md#schema-version) for the exact probe
-contract and [migrate](cli-reference.md#migrate) for its scope and failure behavior.
+See [database version](cli-reference.md#schema-version) for the exact probe
+contract and [database migrate](cli-reference.md#migrate) for its scope and failure behavior.
 
 ## Conda-Forge
 
@@ -171,7 +175,7 @@ msgvault stores all data (config, database, tokens, attachments) in a single dir
 | **Windows** | `C:\Users\<you>\.msgvault\` | `C:\Users\<you>\.msgvault\config.toml` |
 
 !!! tip
-    The `.msgvault` directory is created automatically the first time you run any msgvault command. If you're unsure of the exact path, run `msgvault add-account you@gmail.com`; the error message may show you where to create the config file.
+    The `.msgvault` directory is created automatically the first time you run any msgvault command. If you're unsure of the exact path, run `msgvault source gmail add you@gmail.com`; the error message may show you where to create the config file.
 
 To store data on a different drive or location, use the `--home` flag or set the `MSGVAULT_HOME` environment variable. If `MSGVAULT_HOME` is set, paths in the table above are relative to that directory instead:
 
@@ -211,7 +215,7 @@ client_secrets = "C:/Users/you/Downloads/client_secret.json"
 ## Add Your Account
 
 ```bash
-msgvault add-account you@gmail.com
+msgvault source gmail add you@gmail.com
 ```
 
 This opens your browser for OAuth consent. For headless servers, see the [copy-token workflow](/docs/guides/oauth-setup/#headless-server-setup).
@@ -227,10 +231,10 @@ because it depends on the host at runtime.
 
 ## Add an IMAP Account
 
-To sync mail from a non-Gmail provider (Fastmail, Outlook, Yahoo, self-hosted, etc.), use `add-imap`:
+To sync mail from a non-Gmail provider (Fastmail, Outlook, Yahoo, self-hosted, etc.), use `source imap add`:
 
 ```bash
-msgvault add-imap --host imap.fastmail.com --username you@fastmail.com
+msgvault source imap add --host imap.fastmail.com --username you@fastmail.com
 ```
 
 You will be prompted for your password (or set `MSGVAULT_IMAP_PASSWORD` / pipe via stdin for scripting). The command tests the connection before saving credentials. Use an app-specific password if your provider supports them.
@@ -240,23 +244,23 @@ Common IMAP servers:
 | Provider | Host | Port | Notes |
 |---|---|---|---|
 | Fastmail | `imap.fastmail.com` | 993 | App password recommended |
-| Outlook / Hotmail | `outlook.office365.com` | 993 | Use [`add-o365`](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for OAuth (recommended); or app password with 2FA |
+| Outlook / Hotmail | `outlook.office365.com` | 993 | Use [`source o365 add`](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for OAuth (recommended); or app password with 2FA |
 | Yahoo | `imap.mail.yahoo.com` | 993 | [App password](#yahoo-app-passwords) required |
 | iCloud | `imap.mail.me.com` | 993 | App-specific password required |
-| Gmail (IMAP) | `imap.gmail.com` | 993 | Use `add-account` for Gmail API instead |
+| Gmail (IMAP) | `imap.gmail.com` | 993 | Use `source gmail add` for Gmail API instead |
 | Self-hosted | your server hostname | 993 | |
 
 For STARTTLS connections (port 143), add `--starttls`:
 
 ```bash
-msgvault add-imap --host mail.example.com --username you@example.com --starttls
+msgvault source imap add --host mail.example.com --username you@example.com --starttls
 ```
 
 After adding the account, list its folders and start a sync:
 
 ```bash
-msgvault list-folders you@fastmail.com
-msgvault sync-full you@fastmail.com
+msgvault source imap folders you@fastmail.com
+msgvault sync full you@fastmail.com
 ```
 
 IMAP accounts are stored in the same database as Gmail accounts. All tools
@@ -265,7 +269,7 @@ To start with only part of a large account, see
 [IMAP Folder Sync](usage/imap.md) for `--folder` and `--skip-folder` examples.
 
 !!! tip "Microsoft 365 / Outlook.com"
-    For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `add-o365` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for details.
+    For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `source o365 add` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for details.
 
 <span id="yahoo-app-passwords"></span>
 
@@ -275,7 +279,7 @@ To start with only part of a large account, see
     1. Go to [Yahoo Account Security](https://login.yahoo.com/account/security)
     2. Under **Generate and manage app passwords**, click **Generate app password**
     3. Enter `msgvault` as the app name and copy the generated password
-    4. Use this password when `add-imap` prompts for your credentials
+    4. Use this password when `source imap add` prompts for your credentials
 
 !!! note
     After the first scan, `msgvault sync` uses QRESYNC when the server supports
@@ -287,13 +291,13 @@ To start with only part of a large account, see
 
 ```bash
 # Test with a small batch first
-msgvault sync-full you@gmail.com --limit 100
+msgvault sync full you@gmail.com --limit 100
 
 # Or sync a specific date range
-msgvault sync-full you@gmail.com --after 2024-01-01 --before 2024-02-01
+msgvault sync full you@gmail.com --after 2024-01-01 --before 2024-02-01
 
 # Sync everything (no limit)
-msgvault sync-full you@gmail.com
+msgvault sync full you@gmail.com
 ```
 
 ### What to Expect
@@ -348,7 +352,7 @@ If a sync is interrupted (network error, Ctrl+C), run the same command again. It
 
 ```bash
 # This resumes automatically
-msgvault sync-full you@gmail.com --after 2024-01-01 --before 2024-02-01
+msgvault sync full you@gmail.com --after 2024-01-01 --before 2024-02-01
 ```
 
 Checkpoint data is stored in the `sync_checkpoints` table. Use `--noresume` to discard checkpoints and start over.
@@ -431,8 +435,8 @@ To archive Calendar events alongside email, authorize Calendar access and run a
 calendar sync:
 
 ```bash
-msgvault add-calendar you@gmail.com
-msgvault sync-calendar you@gmail.com
+msgvault source calendar add you@gmail.com
+msgvault source calendar sync you@gmail.com
 ```
 
 Calendar sync is read-only. Events become searchable with
@@ -466,8 +470,8 @@ To archive Teams chats and channels, add Microsoft Graph permissions to your
 Microsoft app registration, authorize Teams, then sync:
 
 ```bash
-msgvault add-teams user@example.com
-msgvault sync-teams user@example.com
+msgvault source teams add user@example.com
+msgvault source teams sync user@example.com
 ```
 
 Teams messages become searchable with `--message-type teams`. See
@@ -481,8 +485,8 @@ Message Content Intent, View Channels, and Read Message History, then register
 and sync a guild:
 
 ```bash
-msgvault add-discord --guild 123456789012345678
-msgvault sync-discord 123456789012345678
+msgvault source discord add --guild 123456789012345678
+msgvault source discord sync 123456789012345678
 ```
 
 Discord messages become searchable with `--message-type discord`. The bot API

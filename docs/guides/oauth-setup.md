@@ -10,7 +10,7 @@ Gmail account you want to archive. OAuth lets Google grant msgvault access
 without giving it your Google password.
 
 You need [msgvault installed](../setup.md) and a Google account with Gmail.
-Use a browser on the computer where you will run `add-account`; for a server,
+Use a browser on the computer where you will run `source gmail add`; for a server,
 see [Headless Server Setup](#headless-server-setup).
 
 There are three pieces to keep straight:
@@ -92,7 +92,7 @@ For an External app, open
 While it says **Testing**:
 
 1. Scroll to **Test users** and click **Add users**.
-2. Enter the exact Gmail address you will pass to `msgvault add-account`.
+2. Enter the exact Gmail address you will pass to `msgvault source gmail add`.
 3. Click **Save**. Add every additional account you intend to authorize.
 
 The project owner's address is not automatically a test user. A Google account
@@ -130,9 +130,9 @@ line. Click **Add to table**, **Update**, then **Save**.
 
 | Workflow | Scopes to declare | msgvault command |
 | --- | --- | --- |
-| Gmail archiving with later trash-based deletion | `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.modify` | `msgvault add-account you@gmail.com` |
-| Gmail archiving with read access only | `https://www.googleapis.com/auth/gmail.readonly` | `msgvault add-account you@gmail.com --readonly` |
-| Optional Calendar archiving | Also add `https://www.googleapis.com/auth/calendar.readonly` | Authorize separately with `msgvault add-calendar you@gmail.com` |
+| Gmail archiving with later trash-based deletion | `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.modify` | `msgvault source gmail add you@gmail.com` |
+| Gmail archiving with read access only | `https://www.googleapis.com/auth/gmail.readonly` | `msgvault source gmail add you@gmail.com --readonly` |
+| Optional Calendar archiving | Also add `https://www.googleapis.com/auth/calendar.readonly` | Authorize separately with `msgvault source calendar add you@gmail.com` |
 
 !!! warning "This page does not restrict what gets granted"
     Console scope declarations describe your app for Google's review. The scopes
@@ -142,7 +142,7 @@ line. Click **Add to table**, **Update**, then **Save**.
 !!! note
     By default msgvault requests `gmail.readonly` and `gmail.modify`. Sync reads
     mail; `gmail.modify` enables later trash-based deletion. The first
-    `delete-staged --permanent` run prompts for full `https://mail.google.com/`
+    `deletion execute --permanent` run prompts for full `https://mail.google.com/`
     access for batch deletion. See [Read-Only Access](#read-only-access) before
     changing an account that already has write access.
 
@@ -239,10 +239,10 @@ Testing. Choose one grant:
 
 ```bash
 # Default: read mail and allow later trash-based deletion
-msgvault add-account you@gmail.com
+msgvault source gmail add you@gmail.com
 
 # Alternatively, for a new account that should only be read:
-msgvault add-account you@gmail.com --readonly
+msgvault source gmail add you@gmail.com --readonly
 ```
 
 1. In the browser, select the Google account matching the address in the command.
@@ -265,34 +265,34 @@ Tokens are stored locally under `~/.msgvault/tokens/`. Once the terminal confirm
 success, start the first archive:
 
 ```bash
-msgvault sync-full you@gmail.com
+msgvault sync full you@gmail.com
 ```
 
 For Calendar, enabling the API and declaring its scope do not authorize it.
-Follow [Calendar setup](../usage/calendar.md) to run `msgvault add-calendar` and
+Follow [Calendar setup](../usage/calendar.md) to run `msgvault source calendar add` and
 configure Calendar syncing separately.
 
 #### Read-Only Access
 
-By default `add-account` requests read and modify access. To request read access only:
+By default `source gmail add` requests read and modify access. To request read access only:
 
 ```bash
-msgvault add-account you@gmail.com --readonly
+msgvault source gmail add you@gmail.com --readonly
 ```
 
 Sync, search, the TUI, and tag reads and previews work on a read-only grant. Deletion and tag edits need write access.
 
-Running `--readonly` against an account that is already read-only does nothing and reuses the existing token. A plain `add-account` run against one warns before requesting write access again.
+Running `--readonly` against an account that is already read-only does nothing and reuses the existing token. A plain `source gmail add` run against one warns before requesting write access again.
 
-**Access already granted cannot be narrowed.** Re-authorizing with `--readonly` does not revoke what Google has on record, and a refresh token issued earlier keeps working with its original write scopes — so an account that once had write access still has it, whatever token msgvault happens to hold. `add-account --readonly` therefore refuses such an account rather than appearing to narrow it. `--force` does not change this and is refused too.
+**Access already granted cannot be narrowed.** Re-authorizing with `--readonly` does not revoke what Google has on record, and a refresh token issued earlier keeps working with its original write scopes — so an account that once had write access still has it, whatever token msgvault happens to hold. `source gmail add --readonly` therefore refuses such an account rather than appearing to narrow it. `--force` does not change this and is refused too.
 
 To make an existing account read-only, remove its access and grant it again:
 
 1. Revoke msgvault at [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
 2. `rm ~/.msgvault/tokens/you@gmail.com.json`
-3. `msgvault add-account you@gmail.com --readonly`
+3. `msgvault source gmail add you@gmail.com --readonly`
 
-Revoking also clears Calendar and Drive access granted through the same OAuth app. Reauthorize those integrations separately. The current `add-synctech-sms-drive` command cannot restore a missing Drive scope when a token already exists. Your archived mail is untouched: this replaces credentials, not data.
+Revoking also clears Calendar and Drive access granted through the same OAuth app. Reauthorize those integrations separately. The current `source synctech-sms add` command cannot restore a missing Drive scope when a token already exists. Your archived mail is untouched: this replaces credentials, not data.
 
 Confirm the result by reading the token's scopes:
 
@@ -312,14 +312,14 @@ running the browser to the server:
 ssh -L 8089:localhost:8089 user@server
 ```
 
-In that SSH session, run `msgvault add-account you@gmail.com`. Open the printed
+In that SSH session, run `msgvault source gmail add you@gmail.com`. Open the printed
 Google authorization URL in your local browser and complete Step 6. Keep the
 SSH connection open until the terminal confirms success. The browser's callback
 then reaches msgvault on the server.
 
 If you cannot forward the port, open the printed URL in any browser and complete
 Step 6. The browser then fails to load a `http://localhost:8089/callback?...`
-page. Copy that full URL from the address bar and, while `add-account` is still
+page. Copy that full URL from the address bar and, while `source gmail add` is still
 waiting, request it on the server:
 
 ```bash
@@ -346,13 +346,13 @@ An alternative is to authorize locally and copy the token as described in
 To replace an expired token or obtain a fresh grant after leaving Testing:
 
 ```bash
-msgvault add-account you@gmail.com --force
+msgvault source gmail add you@gmail.com --force
 ```
 
 For an account already using a read-only grant, keep it read-only:
 
 ```bash
-msgvault add-account you@gmail.com --force --readonly
+msgvault source gmail add you@gmail.com --force --readonly
 ```
 
 `--force` deletes the local token and starts browser authorization. It does not
@@ -363,11 +363,11 @@ OAuth app, keep the appropriate `--oauth-app` binding.
 
 ### Multiple Accounts
 
-For personal Gmail accounts, a single `client_secret.json` works for all of them. Each `add-account` call creates a separate token file:
+For personal Gmail accounts, a single `client_secret.json` works for all of them. Each `source gmail add` call creates a separate token file:
 
 ```bash
-msgvault add-account personal@gmail.com
-msgvault add-account other@gmail.com
+msgvault source gmail add personal@gmail.com
+msgvault source gmail add other@gmail.com
 
 msgvault sync   # syncs all accounts
 ```
@@ -392,8 +392,8 @@ client_secrets = "/path/to/acme_workspace_secret.json"
 Then specify the app when adding Workspace accounts:
 
 ```bash
-msgvault add-account you@acme.com --oauth-app acme
-msgvault add-account personal@gmail.com              # uses default
+msgvault source gmail add you@acme.com --oauth-app acme
+msgvault source gmail add personal@gmail.com              # uses default
 ```
 
 The binding is stored per account, so `sync`, `verify`, and `serve` automatically use the correct credentials. You only need `--oauth-app` when first adding or rebinding an account.
@@ -405,13 +405,13 @@ The binding is stored per account, so `sync`, `verify`, and `serve` automaticall
 To switch an existing account to a different OAuth app:
 
 ```bash
-msgvault add-account you@acme.com --oauth-app acme   # re-authorizes with new app
+msgvault source gmail add you@acme.com --oauth-app acme   # re-authorizes with new app
 ```
 
 To move an account back to the default app:
 
 ```bash
-msgvault add-account you@acme.com --oauth-app ""      # clears the binding
+msgvault source gmail add you@acme.com --oauth-app ""      # clears the binding
 ```
 
 #### Google Workspace Service Accounts
@@ -424,10 +424,10 @@ Workspace admins can avoid per-user browser OAuth by using a Google service acco
    - `https://www.googleapis.com/auth/gmail.readonly`
    - `https://www.googleapis.com/auth/gmail.modify`
    - `https://www.googleapis.com/auth/calendar.readonly` if you will sync Google Calendar
-   - `https://mail.google.com/` if you will run `delete-staged --permanent`
+   - `https://mail.google.com/` if you will run `deletion execute --permanent`
 4. Store the key with owner-only permissions, for example `chmod 600 /path/to/workspace-service-account.json`.
 
-Both `gmail.readonly` and `gmail.modify` are required. The Gmail service-account paths request that pair when minting a delegated token, so a delegation grant limited to `gmail.readonly` fails the token exchange and `add-account`, `sync`, `serve`, and `verify` all stop working for that account.
+Both `gmail.readonly` and `gmail.modify` are required. The Gmail service-account paths request that pair when minting a delegated token, so a delegation grant limited to `gmail.readonly` fails the token exchange and `source gmail add`, `sync`, `serve`, and `verify` all stop working for that account.
 
 !!! note
     `--readonly` does not apply to service accounts, and is rejected with an error if passed. Scope is set by the delegation grant in the Admin Console rather than by msgvault flags. Narrowing what the Gmail service-account paths request, so that a read-only delegation grant becomes usable, is a possible future change.
@@ -449,13 +449,13 @@ service_account_key = "/path/to/acme-service-account.json"
 Then add accounts normally:
 
 ```bash
-msgvault add-account you@acme.com
-msgvault add-account teammate@acme.com --oauth-app acme
+msgvault source gmail add you@acme.com
+msgvault source gmail add teammate@acme.com --oauth-app acme
 ```
 
 Service account mode validates the delegated Gmail profile and registers the source, but it does not create per-user token files. Do not combine service-account accounts with `--headless`, `--force` or `--readonly`; delegated tokens are minted on demand.
 
-For Google Calendar with a service account, enable the Google Calendar API and authorize the `calendar.readonly` scope above. Then configure a `[[gcal]]` source and run `msgvault sync-calendar user@domain.com --oauth-app acme` (or let `msgvault serve` run the schedule). No browser token is created.
+For Google Calendar with a service account, enable the Google Calendar API and authorize the `calendar.readonly` scope above. Then configure a `[[gcal]]` source and run `msgvault source calendar sync user@domain.com --oauth-app acme` (or let `msgvault serve` run the schedule). No browser token is created.
 
 ### Headless Server Setup
 
@@ -464,7 +464,7 @@ When running msgvault on a headless server (SSH, VPS, Docker), there is no brows
 Run `--headless` to see the setup instructions:
 
 ```bash
-msgvault add-account you@gmail.com --headless
+msgvault source gmail add you@gmail.com --headless
 ```
 
 This prints:
@@ -478,7 +478,7 @@ and copy the token to your server.
 
 Step 1: On a machine with a browser, run:
 
-    msgvault add-account you@gmail.com
+    msgvault source gmail add you@gmail.com
 
 Step 2: Copy the token file to your headless server:
 
@@ -487,13 +487,13 @@ Step 2: Copy the token file to your headless server:
 
 Step 3: On the headless server, register the account:
 
-    msgvault add-account you@gmail.com
+    msgvault source gmail add you@gmail.com
 
 The token will be detected and the account registered. No browser needed.
 ```
 
 !!! note "Read-only on a headless server"
-    `--readonly` is echoed into the commands printed above, so `msgvault add-account you@gmail.com --headless --readonly` shows the read-only variant to run on the machine with a browser.
+    `--readonly` is echoed into the commands printed above, so `msgvault source gmail add you@gmail.com --headless --readonly` shows the read-only variant to run on the machine with a browser.
 
     The revoke-and-re-add procedure above works unchanged on a headless host. Step 3 prints an authorization URL you can open from any browser, then waits for the callback exactly as described here.
 
@@ -501,7 +501,7 @@ The token will be detected and the account registered. No browser needed.
 
 1. **On your local machine** (with a browser), install msgvault and run:
    ```bash
-   msgvault add-account you@gmail.com
+   msgvault source gmail add you@gmail.com
    ```
    Complete the OAuth flow in your browser.
 
@@ -513,17 +513,17 @@ The token will be detected and the account registered. No browser needed.
 
 3. **On the headless server**, register the account:
    ```bash
-   msgvault add-account you@gmail.com
+   msgvault source gmail add you@gmail.com
    ```
    msgvault detects the existing token and registers the account. Output:
    ```
    Account you@gmail.com is ready.
-   You can now run: msgvault sync-full you@gmail.com
+   You can now run: msgvault sync full you@gmail.com
    ```
 
 4. **Sync your email**:
    ```bash
-   msgvault sync-full you@gmail.com
+   msgvault sync full you@gmail.com
    ```
 
 The token file contains a refresh token that msgvault uses to renew short-lived
@@ -536,11 +536,11 @@ expire after seven days; see [Choose Testing or In production](#choose-testing-o
 
 ## Microsoft 365 (Outlook / Hotmail)
 
-The `add-o365` command connects Outlook.com, Hotmail, Live.com, and Microsoft 365 organizational accounts via OAuth2 with XOAUTH2 IMAP authentication. No app password is needed.
+The `source o365 add` command connects Outlook.com, Hotmail, Live.com, and Microsoft 365 organizational accounts via OAuth2 with XOAUTH2 IMAP authentication. No app password is needed.
 
 ### Prerequisites: Azure AD App Registration
 
-You need to register an application in Microsoft Entra (Azure AD) before using `add-o365`.
+You need to register an application in Microsoft Entra (Azure AD) before using `source o365 add`.
 
 An Outlook.com-only account can't register an app on its own. Register it in a tenant you can use, such as a work tenant or a free Azure/Entra directory, and allow personal Microsoft accounts under supported account types.
 
@@ -577,7 +577,7 @@ When `tenant_id` is omitted (or set to `"common"`), both personal Microsoft acco
 ### Add Your Account
 
 ```bash
-msgvault add-o365 you@outlook.com
+msgvault source o365 add you@outlook.com
 ```
 
 This opens your browser for Microsoft OAuth consent. After you authorize, msgvault:
@@ -586,24 +586,24 @@ This opens your browser for Microsoft OAuth consent. After you authorize, msgvau
 - Auto-detects the correct IMAP host based on account type
 - Configures XOAUTH2 authentication automatically
 
-IMAP checks Microsoft's `email` claim when present, otherwise `preferred_username`. If that username differs from your mailbox address, pass your own sign-in name with `--sign-in`: `msgvault add-o365 john@company.com --sign-in jdoe@company.onmicrosoft.com`. This also sets the browser login hint. Re-authorization needs the flag too; msgvault previously accepted a differing username with a warning. The flag permits that username only when `email` is absent. Failed checks preserve existing credentials.
+IMAP checks Microsoft's `email` claim when present, otherwise `preferred_username`. If that username differs from your mailbox address, pass your own sign-in name with `--sign-in`: `msgvault source o365 add john@company.com --sign-in jdoe@company.onmicrosoft.com`. This also sets the browser login hint. Re-authorization needs the flag too; msgvault previously accepted a differing username with a warning. The flag permits that username only when `email` is absent. Failed checks preserve existing credentials.
 
 Graph mail (`--graph`), Teams, and Microsoft contacts consult your Microsoft profile when token identity fields differ or are absent. They accept your mailbox or an SMTP alias listed there and need no `--sign-in` flag.
 
 On a machine without a browser, such as a server or a container, add `--headless`:
 
 ```bash
-msgvault add-o365 you@outlook.com --headless
+msgvault source o365 add you@outlook.com --headless
 ```
 
-msgvault prints a Microsoft URL and a code. Open the URL on any device and enter the code. `add-teams` accepts the same flag.
+msgvault prints a Microsoft URL and a code. Open the URL on any device and enter the code. `source teams add` accepts the same flag.
 
 Personal accounts (hotmail.com, outlook.com, live.com, msn.com) connect to `outlook.office.com`. Organizational accounts (company Microsoft 365) connect to `outlook.office365.com`. This detection is automatic.
 
 To restrict to a specific tenant at authorization time:
 
 ```bash
-msgvault add-o365 you@example.com --tenant your-org-tenant-id
+msgvault source o365 add you@example.com --tenant your-org-tenant-id
 ```
 
 ### Microsoft Teams Graph Sync
@@ -611,7 +611,7 @@ msgvault add-o365 you@example.com --tenant your-org-tenant-id
 Teams ingestion uses the same `[microsoft] client_id` and redirect URI, but it
 requests Microsoft Graph delegated scopes and stores a separate token file under
 `tokens/teams_<email>.json`. The `microsoft_<email>.json` token created by
-`add-o365` is for IMAP and is not reused for Teams.
+`source o365 add` is for IMAP and is not reused for Teams.
 
 If you will archive Teams chats and channels, add these **Microsoft Graph**
 delegated permissions to the app registration:
@@ -628,8 +628,8 @@ delegated permissions to the app registration:
 Then authorize and sync Teams:
 
 ```bash
-msgvault add-teams you@example.com
-msgvault sync-teams you@example.com
+msgvault source teams add you@example.com
+msgvault source teams sync you@example.com
 ```
 
 Some organizations require administrator consent before delegated channel
@@ -638,13 +638,13 @@ full Teams workflow.
 
 ### Microsoft Graph Mail Sync
 
-If IMAP is turned off for a mailbox, `add-o365 --graph` syncs it through the
+If IMAP is turned off for a mailbox, `source o365 add --graph` syncs it through the
 Microsoft Graph mail API. It uses the same `[microsoft] client_id` and redirect
 URI. Add the **Microsoft Graph** delegated permission `Mail.Read` to the app
 registration, then authorize and sync:
 
 ```bash
-msgvault add-o365 you@example.com --graph
+msgvault source o365 add you@example.com --graph
 msgvault sync you@example.com
 ```
 
@@ -653,8 +653,8 @@ type `msmail`. Each mail folder becomes a label. The first sync downloads every
 folder. Later syncs fetch only the changes, including moves between folders
 and deletes. The daemon schedules the account like any other.
 
-To delete messages at the source with `delete-staged`, also add the delegated
-permission `Mail.ReadWrite`. Sync does not use it. The first `delete-staged`
+To delete messages at the source with `deletion execute`, also add the delegated
+permission `Mail.ReadWrite`. Sync does not use it. The first `deletion execute`
 for the account asks to upgrade the token. See
 [Deleting Email](/docs/usage/deletion/).
 
@@ -670,7 +670,7 @@ extra copies, and `--undo` to reverse it.
 After adding the account, sync it the same way as any other account:
 
 ```bash
-msgvault sync-full you@outlook.com
+msgvault sync full you@outlook.com
 ```
 
 ### Headless Servers
@@ -678,23 +678,23 @@ msgvault sync-full you@outlook.com
 Sign in from SSH, a server, or a container without opening a local browser:
 
 ```bash
-msgvault add-o365 you@outlook.com --headless
+msgvault source o365 add you@outlook.com --headless
 ```
 
 For Graph mail, add `--graph`. For Teams, run
-`msgvault add-teams you@example.com --headless`.
+`msgvault source teams add you@example.com --headless`.
 Open the printed Microsoft URL on another device and enter the code. Complete
 sign-in there; msgvault saves the token on the server.
 
 You can also authorize on another machine and copy its token. For IMAP mail:
 
-1. On your local machine, run `msgvault add-o365 you@outlook.com` and complete the browser flow.
+1. On your local machine, run `msgvault source o365 add you@outlook.com` and complete the browser flow.
 2. Copy the token to the server:
    ```bash
    ssh user@server mkdir -p ~/.msgvault/tokens
    scp ~/.msgvault/tokens/microsoft_you@outlook.com.json \
        user@server:~/.msgvault/tokens/
    ```
-3. On the server, run `msgvault add-o365 you@outlook.com` again. It detects the existing token and registers the account without a browser.
+3. On the server, run `msgvault source o365 add you@outlook.com` again. It detects the existing token and registers the account without a browser.
 
 Both machines must use the same `client_id` in their `[microsoft]` config.

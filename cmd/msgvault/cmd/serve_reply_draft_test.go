@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
@@ -277,8 +278,10 @@ func TestDraftRecipientInferenceIsReplyOnly(t *testing.T) {
 			if command == "draft-compose" {
 				args = append(args, "--subject", "Subject")
 			}
-			err := adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: args}, func(api.CLIRunEvent) error { return nil })
-			require.EqualError(t, err, "from_ambiguous")
+			for _, path := range [][]string{args, cligrammar.Canonical(args)} {
+				err := adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: path}, func(api.CLIRunEvent) error { return nil })
+				require.EqualError(t, err, "from_ambiguous", "%v", path)
+			}
 		})
 	}
 }

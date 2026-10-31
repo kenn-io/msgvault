@@ -41,9 +41,9 @@ auto_build_cache = true  # build a stale/missing cache in the background at star
 ```
 
 Opening aggregate views does not trigger a build mid-session. Scheduled syncs
-and ingest commands can refresh the cache, and `msgvault build-cache` builds or
+and ingest commands can refresh the cache, and `msgvault cache build` builds or
 repairs it on demand. Set `auto_build_cache = false` to skip automatic startup
-maintenance; use `msgvault build-cache` for an explicit build. See
+maintenance; use `msgvault cache build` for an explicit build. See
 [Configuration: analytics](/docs/configuration/#analytics).
 
 ### Local And Remote
@@ -333,7 +333,7 @@ its results are a bounded ranking. The selection must belong to one source.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-selection.svg" alt="msgvault TUI with rows selected for deletion staging" loading="lazy">
 </figure>
-A confirmation dialog shows exactly how many messages will be staged before anything happens. Messages are not deleted immediately; they are placed in a deletion batch that you review and execute separately with `msgvault delete-staged`.
+A confirmation dialog shows exactly how many messages will be staged before anything happens. Messages are not deleted immediately; they are placed in a deletion batch that you review and execute separately with `msgvault deletion execute`.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-deletion.svg" alt="msgvault TUI deletion confirmation dialog showing bulk staging" loading="lazy">
 </figure>

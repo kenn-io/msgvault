@@ -55,9 +55,13 @@ type conversationPolicyView struct {
 }
 
 func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
-	cmd := &cobra.Command{Use: "policy", Short: "Show room tiers and overrides"}
+	cmd := &cobra.Command{Use: "policy", Short: "Show room tiers and overrides",
+		Long:    "Inspect staged retention tiers for rooms, identified by source ID and provider conversation ID. full and cold are policy tiers; overrides are currently staged and the effective tier remains full. Use list to obtain both IDs before set or reset.",
+		Example: "  msgvault policy list"}
 	cmd.AddCommand(&cobra.Command{
-		Use: "list", Short: "List rooms, effective tiers and staged overrides as JSON", Args: cobra.NoArgs,
+		Use: "list", Short: "List rooms, effective tiers and staged overrides as JSON",
+		Long:    "List each room with its source ID, provider conversation ID, effective tier, and staged override. Output is JSON. Staged overrides do not yet change the effective full tier.",
+		Example: "  msgvault policy list", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st, closeStore, err := deps.open(cmd.Context())
 			if err != nil {
@@ -101,7 +105,11 @@ func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
 			argCount = 3
 			use += " TIER"
 		}
-		cmd.AddCommand(&cobra.Command{Use: use, Short: operation + " a staged override (full or cold)", Args: cobra.ExactArgs(argCount),
+		help := map[string]struct{ long, example string }{
+			"set":   {"Stage a full or cold policy override for the exact source ID and provider conversation ID returned by policy list. Overrides are saved for future policy enforcement; the current effective tier remains full.", "  msgvault policy set 1 room-example cold"},
+			"reset": {"Remove a staged CLI policy override for one source and provider conversation ID. The configured override, if any, can remain selected. Inspect policy list to see the resulting staged selection; effective tiers remain full.", "  msgvault policy reset 1 room-example"},
+		}[operation]
+		cmd.AddCommand(&cobra.Command{Use: use, Short: map[string]string{"set": "Set a staged room tier override", "reset": "Reset a staged room tier override"}[operation], Long: help.long, Example: help.example, Args: cobra.ExactArgs(argCount),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				sourceID, err := strconv.ParseInt(args[0], 10, 64)
 				if err != nil || sourceID <= 0 {

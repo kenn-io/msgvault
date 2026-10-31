@@ -116,14 +116,14 @@ func TestExtractSkillInvocations(t *testing.T) {
 		"```bash\n" +
 		"msgvault search from:alice@example.com --json |\n" +
 		"  jq -r '.[].id'\n" +
-		"msgvault show-message 12345 --json | jq '.attachments'\n" +
+		"msgvault show 12345 --json | jq '.attachments'\n" +
 		"```\n" +
 		"msgvault outside-fence-not-code is ignored\n"
 	got := extractSkillInvocations(content)
 	require.Len(got, 3)
 	assert.Equal([]string{"stats", "--json"}, got[0].Tokens)
 	assert.Equal("search", got[1].Tokens[0])
-	assert.Equal("show-message", got[2].Tokens[0])
+	assert.Equal("show", got[2].Tokens[0])
 }
 
 func TestValidateSkillInvocation_CatchesDrift(t *testing.T) {
@@ -149,6 +149,10 @@ func TestValidateSkillInvocation_CatchesDrift(t *testing.T) {
 // TestSkillsMatchCLI is the drift guard: every msgvault invocation in
 // every rendered skill must resolve against the real command tree.
 func TestSkillsMatchCLI(t *testing.T) {
+	if helpTestSubprocess(t) {
+		return
+	}
+	ensureHelpLayout(rootCmd)
 	assert := assert.New(t)
 	require := require.New(t)
 	rendered, err := skills.Render("test")

@@ -45,7 +45,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 		rest = rest[1:]
 		nameValue, ok := strings.CutPrefix(arg, "--")
 		if !ok {
-			return invalidDraftComposeArgs("draft-compose accepts flags only")
+			return invalidDraftComposeArgs("draft compose accepts flags only")
 		}
 		name, value, hasValue := strings.Cut(nameValue, "=")
 		switch name {
@@ -158,7 +158,7 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	emit func(api.CLIRunEvent) error,
 ) error {
 	if len(req.Env) != 0 || req.Cwd != "" {
-		return draftReplyError("invalid_args", errors.New("draft-compose accepts no environment or working directory"))
+		return draftReplyError("invalid_args", errors.New("draft compose accepts no environment or working directory"))
 	}
 	intent, err := parseDraftComposeArgs(req.Args)
 	if err != nil {

@@ -182,6 +182,7 @@ var topLevelCommandGroups = map[string]string{
 }
 
 func ensureHelpLayout(root *cobra.Command) {
+	ensureCommandGrammar(root)
 	if _, loaded := helpLayoutRoots.LoadOrStore(root, struct{}{}); loaded {
 		return
 	}

@@ -216,7 +216,7 @@ func TestTwilioSyncPrintsResumeHint(t *testing.T) {
 			for _, want := range tc.want {
 				assert.Contains(out, want)
 			}
-			assert.Contains(out, "Run: msgvault sync-twilio work --limit 1")
+			assert.Contains(out, "Run: msgvault source twilio sync work --limit 1")
 			assert.NotContains(out, "sync complete")
 		})
 	}
@@ -424,7 +424,7 @@ func TestTwilioRemovalDoesNotRecreateScheduledSource(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(check.Close()) })
 	err = runConfiguredTwilioSync(t.Context(), check, config.TwilioSource{Identifier: "work"})
-	require.ErrorContains(err, "add-twilio work")
+	require.ErrorContains(err, "source twilio add work")
 	_, err = check.GetSourceByTypeAndIdentifier("twilio", "work")
 	require.ErrorIs(err, store.ErrSourceNotFound)
 }

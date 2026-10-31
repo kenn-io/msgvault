@@ -25,8 +25,9 @@ var (
 
 func newAddMatrixCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "add-matrix",
-		Short: "Add a read-only Matrix account as an archive source",
+		Use:     "add-matrix",
+		Short:   "Add a read-only Matrix account as an archive source",
+		Example: `  msgvault source matrix add --homeserver https://matrix.example.org --user-id @archive:example.org --password-file ./matrix-password`,
 		Long: `Add a Matrix account using a dedicated read-only msgvault device.
 
 Password login is the default. For SSO accounts, obtain a single-use
@@ -102,7 +103,7 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 			}
 			resumed = false
 		case err != nil:
-			return fmt.Errorf("%w (login unchanged, retry add-matrix)", err)
+			return fmt.Errorf("%w (login unchanged, retry source matrix add)", err)
 		}
 	}
 	keepDevice := resumed
@@ -112,7 +113,7 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 	} else {
 		if loginSecret == "" {
 			if hadPending {
-				return errors.New("the saved Matrix login was revoked; run add-matrix again to log in")
+				return errors.New("the saved Matrix login was revoked; run msgvault source matrix add again to log in")
 			}
 			return errors.New("missing Matrix login secret in daemon subprocess")
 		}
@@ -161,14 +162,14 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 			if err := savePendingMatrixCredentials(tokensDir, creds); err != nil {
 				// A published pending file can still be resumed, so keep its device.
 				keepDevice = keepDevice || errors.Is(err, atomicfile.ErrPublished)
-				return fmt.Errorf("save the new Matrix login (login unchanged, retry add-matrix): %w", err)
+				return fmt.Errorf("save the new Matrix login (login unchanged, retry source matrix add): %w", err)
 			}
 			keepDevice, staged = true, true
 			logoutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), matrixRequestTimeout)
 			err := matrixsource.Logout(logoutCtx, previous)
 			cancel()
 			if err != nil && !matrixsource.IsUnknownToken(err) {
-				return fmt.Errorf("log out previous Matrix device %s (login unchanged, retry add-matrix to finish): %w", previous.DeviceID, err)
+				return fmt.Errorf("log out previous Matrix device %s (login unchanged, retry source matrix add to finish): %w", previous.DeviceID, err)
 			}
 		}
 	}
@@ -176,7 +177,7 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 		// A published file already replaced the old login, so keep its device.
 		keepDevice = keepDevice || errors.Is(err, atomicfile.ErrPublished)
 		if staged {
-			return fmt.Errorf("%w (the new login is saved; retry add-matrix to finish)", err)
+			return fmt.Errorf("%w (the new login is saved; retry source matrix add to finish)", err)
 		}
 		return err
 	}
@@ -185,7 +186,7 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not remove the pending Matrix login file: %v\n", err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added Matrix account %s with device %s\n", creds.UserID, creds.DeviceID)
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run: msgvault sync-matrix")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run: msgvault source matrix sync")
 	return nil
 }
 

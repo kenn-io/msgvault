@@ -262,7 +262,7 @@ func TestOutputMessageSanitizesTextLabelsAndPreservesRelatedID(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(out, "Labels:  Résolulink, ordinary\n")
 	assert.NotContains(out, "\x1b")
-	assert.Contains(out, "show-message 43")
+	assert.Contains(out, "show 43")
 
 	done = captureStdout(t)
 	err = outputMessageJSON(os.Stdout, msg)

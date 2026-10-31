@@ -138,7 +138,7 @@ func TestAddAccountCachedTokenIdentity(t *testing.T) {
 						if existing {
 							assert.Contains(err.Error(), "https://msgvault.io/usage/multi-account/#recovering-an-older-mislabeled-gmail-account")
 						} else {
-							assert.Contains(err.Error(), "msgvault add-account other@example.com")
+							assert.Contains(err.Error(), "msgvault source gmail add other@example.com")
 						}
 					} else {
 						assert.Contains(err.Error(), "HTTP 503")

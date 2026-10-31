@@ -23,8 +23,9 @@ const dateRepairSampleLimit = 10
 var repairDatesApply bool
 
 var repairDatesCmd = &cobra.Command{
-	Use:   "repair-dates",
-	Short: "Repair missing or implausible email sent dates",
+	Use:     "repair-dates",
+	Short:   "Repair missing or implausible email sent dates",
+	Example: "  msgvault repair dates\n  msgvault repair dates --apply",
 	Long: `Scan email messages whose stored sent_at is missing, before 1990, or
 more than 30 days in the future. For each candidate, resolve a canonical sent
 time from the Date header, the oldest plausible Received timestamp, or stored
@@ -272,7 +273,7 @@ func dateRepairContactInvalidationError(err error) error {
 func dateRepairPostApplyRecoveryError(problem string, err error) error {
 	return fmt.Errorf(
 		"date repairs applied, but %s; "+
-			"run `msgvault build-cache --full-rebuild` to retry: %w",
+			"run `msgvault cache build --full-rebuild` to retry: %w",
 		problem,
 		err,
 	)

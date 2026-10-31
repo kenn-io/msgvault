@@ -21,10 +21,11 @@ func newArchiveRemoteImagesCmd() *cobra.Command {
 	var sourceID int64
 	var limit int
 	command := &cobra.Command{
-		Use:   "archive-remote-images",
-		Short: "Download remote images in archived email (needs consent)",
-		Long:  "Download remote img src images from archived email for offline viewing.\n\nDownloading can activate tracking pixels and disclose the archive server's IP\naddress to senders. This command always requires --allow-tracking. It does not\nenable automatic archiving, change original messages, or re-fetch stored images.",
-		Args:  cobra.NoArgs,
+		Use:     "archive-remote-images",
+		Short:   "Download remote images in archived email (needs consent)",
+		Example: "  msgvault attachment archive-remote-images --allow-tracking --limit 10",
+		Long:    "Download remote img src images from archived email for offline viewing.\n\nDownloading can activate tracking pixels and disclose the archive server's IP\naddress to senders. This command always requires --allow-tracking. It does not\nenable automatic archiving, change original messages, or re-fetch stored images.",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {

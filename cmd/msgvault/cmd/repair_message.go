@@ -123,9 +123,11 @@ func newRepairMessageCmd(deps repairMessageCommandDeps) *cobra.Command {
 		sourceID int64
 	)
 	command := &cobra.Command{
-		Use:   "repair-message <internal-id-or-gmail-id>",
-		Short: "Repair one Gmail message snapshot or audit stored Gmail MIME",
-		Args:  cobra.ArbitraryArgs,
+		Use:     "repair-message <internal-id-or-gmail-id>",
+		Short:   "Repair one Gmail message snapshot or audit stored Gmail MIME",
+		Long:    "Refresh one Gmail message from its provider snapshot, or use --audit without a message reference to check stored Gmail MIME without writing. Use internal numeric IDs from search or a Gmail message ID. --json is available only with --audit.",
+		Example: "  msgvault repair message --audit --json\n  msgvault repair message 1234",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if invocationFromContext(cmd.Context()) != nil && deps.bind != nil {
 				deps = deps.bind(cmd.Context())
@@ -135,7 +137,7 @@ func newRepairMessageCmd(deps repairMessageCommandDeps) *cobra.Command {
 					return usageErr(cmd, errors.New("--audit does not accept a message reference"))
 				}
 			} else if len(args) != 1 {
-				return usageErr(cmd, errors.New("repair-message requires exactly one message reference unless --audit is set"))
+				return usageErr(cmd, errors.New("repair message requires exactly one message reference unless --audit is set"))
 			}
 			if cmd.Flags().Changed("source-id") && sourceID <= 0 {
 				return usageErr(cmd, errors.New("--source-id must be a positive integer"))
@@ -219,11 +221,11 @@ func runRepairMessageHTTP(
 		switch stream {
 		case cliStreamStdout:
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), data); err != nil {
-				return fmt.Errorf("write repair-message stdout: %w", err)
+				return fmt.Errorf("write repair message stdout: %w", err)
 			}
 		case cliStreamStderr:
 			if _, err := fmt.Fprint(cmd.ErrOrStderr(), data); err != nil {
-				return fmt.Errorf("write repair-message stderr: %w", err)
+				return fmt.Errorf("write repair message stderr: %w", err)
 			}
 		}
 		return nil
@@ -294,7 +296,7 @@ func runRepairMessageLocal(
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Repaired message %d (source %d, Gmail %s): %s\n",
 		result.InternalID, result.SourceID, result.SourceMessageID, result.Subject)
 	if err != nil {
-		return fmt.Errorf("write repair-message result: %w", err)
+		return fmt.Errorf("write repair message result: %w", err)
 	}
 	return nil
 }
@@ -307,10 +309,10 @@ func resolveRepairMessageSource(
 		return nil, err
 	}
 	if len(targets) == 0 {
-		return nil, fmt.Errorf("repair message %q not found", reference)
+		return nil, &cliError{Kind: "not_found", Code: "message_not_found", Message: fmt.Sprintf("repair message %q not found", reference), ExitCode: 4, Hint: "find internal message IDs with 'msgvault search <query> --json'"}
 	}
 	if len(targets) != 1 {
-		return nil, fmt.Errorf("repair message reference %q is ambiguous across %d archive rows", reference, len(targets))
+		return nil, withHint(fmt.Errorf("repair message reference %q is ambiguous across %d archive rows", reference, len(targets)), "select the source with --source-id, or use an unambiguous internal message ID from 'msgvault search <query> --json'")
 	}
 	if targets[0].SourceType != sourceTypeGmail {
 		return nil, fmt.Errorf("repair message source %d is %s, not gmail", targets[0].SourceID, targets[0].SourceType)
@@ -356,7 +358,7 @@ func writeRepairAuditHuman(w io.Writer, result syncer.RepairAuditResult) error {
 	_, err := fmt.Fprintf(w, "%s message %d (source %d, Gmail %s): %s\n",
 		result.Status, result.InternalID, result.SourceID, result.SourceMessageID, strings.Join(parts, ", "))
 	if err != nil {
-		return fmt.Errorf("write repair-message audit result: %w", err)
+		return fmt.Errorf("write repair message audit result: %w", err)
 	}
 	return nil
 }

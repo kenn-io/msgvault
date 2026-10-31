@@ -26,6 +26,8 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+
+	"go.kenn.io/msgvault/internal/cligrammar"
 )
 
 // Gmail scope identifiers. Declared once so the scope *sets* below and every
@@ -352,7 +354,7 @@ func (m *Manager) ForceRefresh(ctx context.Context, email string) error {
 
 // HeadlessAccountArgs shares account and permission flags across setup instructions.
 func HeadlessAccountArgs(command, email, app string, readonly, write bool) []string {
-	args := []string{"msgvault", command, email}
+	args := append([]string{"msgvault"}, cligrammar.Canonical([]string{command, email})...)
 	if app != "" {
 		args = append(args, "--oauth-app", app)
 	}

@@ -83,7 +83,7 @@ func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.want, cliRunCommandAllowed(test.args))
+			assert.Equal(t, test.want, CLIRunCommandAllowed(test.args))
 		})
 	}
 }
@@ -124,7 +124,7 @@ func TestCLIAllowlistPermitsExactPersonSweepCommands(t *testing.T) {
 		{args: []string{"person", "sweep", "run-everything"}},
 	}
 	for _, test := range tests {
-		assert.Equal(t, test.want, cliRunCommandAllowed(test.args), test.args)
+		assert.Equal(t, test.want, CLIRunCommandAllowed(test.args), test.args)
 	}
 }
 
@@ -183,11 +183,11 @@ func TestCLIAllowlistCodexProviderOperations(t *testing.T) {
 	checks := assert.New(t)
 	for _, operation := range []string{"login", "models"} {
 		args := []string{"person", "provider", operation}
-		checks.False(cliRunCommandAllowed(args), args)
+		checks.False(CLIRunCommandAllowed(args), args)
 	}
 	for _, operation := range []string{"logout", "delete", "exec", "account"} {
 		args := []string{"person", "provider", operation}
-		checks.False(cliRunCommandAllowed(args), args)
+		checks.False(CLIRunCommandAllowed(args), args)
 	}
 
 	srv := &Server{cfg: &config.Config{}}
@@ -229,7 +229,7 @@ func TestCLIRunCommandAllowedPermitsExactPersonEnrichmentCommandsAndRejectsRawSh
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.want, cliRunCommandAllowed(test.args))
+			assert.Equal(t, test.want, CLIRunCommandAllowed(test.args))
 		})
 	}
 }
@@ -242,7 +242,7 @@ func TestCLIRunCommandAllowedRejectsPersonSuppressionMetadataSmuggling(t *testin
 		t.Run(field, func(t *testing.T) {
 			args := []string{"person", "enrichment", "suppress", "--person=7", "--reason=opt_out",
 				"--" + field + "=RAW-MARKER"}
-			assert.False(t, cliRunCommandAllowed(args))
+			assert.False(t, CLIRunCommandAllowed(args))
 		})
 	}
 }
