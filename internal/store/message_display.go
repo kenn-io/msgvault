@@ -13,6 +13,7 @@ import (
 type MessageDisplay struct {
 	MessageID                int64
 	Subject, Snippet         string
+	MessageType              string
 	HiddenText, Encrypted    bool
 	OccurredAt               *time.Time
 	ConversationID, SourceID int64
@@ -32,7 +33,7 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 		// Undated anchors still carry safety and identity metadata.
 		eligible := s.activityLiveEligibleWithoutDateSQL()
 		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT m.id,COALESCE(m.subject,''),COALESCE(m.snippet,''),m.hidden_text_present,
-   m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,`+matrixPendingEncryptedSQL("m")+`
+   m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,`+matrixPendingEncryptedSQL("m")+`,m.message_type
    FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.id IN (`+marks+`) AND `+eligible+scope), args...)
 		if err != nil {
 			return nil, fmt.Errorf("read message display: %w", err)
@@ -40,7 +41,7 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 		for rows.Next() {
 			var d MessageDisplay
 			var sent, received, internal nullableTimestamp
-			if err = rows.Scan(&d.MessageID, &d.Subject, &d.Snippet, &d.HiddenText, &sent, &received, &internal, &d.ConversationID, &d.SourceID, &d.Encrypted); err != nil {
+			if err = rows.Scan(&d.MessageID, &d.Subject, &d.Snippet, &d.HiddenText, &sent, &received, &internal, &d.ConversationID, &d.SourceID, &d.Encrypted, &d.MessageType); err != nil {
 				_ = rows.Close()
 				return nil, fmt.Errorf("scan message display: %w", err)
 			}

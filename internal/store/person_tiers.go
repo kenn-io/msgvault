@@ -24,9 +24,8 @@ type PersonTierOptions struct {
 	Config            persontiers.Config
 	ActivityTimezone  string
 	ActivityMaxDirect int
-	// asOf replaces today for tests. Only its calendar date in the projection
-	// timezone matters.
-	asOf time.Time
+	// AsOf pins the calendar date in the projection timezone. Zero uses today.
+	AsOf time.Time
 }
 
 // PersonTierProjection is the timezone and direct-contact limit the counts
@@ -239,7 +238,7 @@ func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, options Perso
 	if err != nil {
 		return personTierPlan{}, fmt.Errorf("load projection timezone: %w", err)
 	}
-	at := options.asOf
+	at := options.AsOf
 	if at.IsZero() {
 		at = time.Now()
 	}
