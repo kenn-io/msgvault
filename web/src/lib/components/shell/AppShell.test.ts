@@ -2900,7 +2900,8 @@ it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending 
       expect(undo).toHaveBeenCalledOnce();
     } else {
       window.dispatchEvent(new Event('pagehide'));
-      expect(expire).toHaveBeenCalledOnce();
+      expect(expire).toHaveBeenCalled();
+      expect((expire.mock.contexts.at(-1) as ShellData).pending?.id).toBe(3);
     }
   } finally {
     rendered.unmount();
