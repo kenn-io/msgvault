@@ -34,6 +34,7 @@ type MessageFixture struct {
 	SentAt              time.Time
 	SizeEstimate        int64
 	HasAttachments      bool
+	HiddenTextPresent   bool
 	AttachmentCount     int
 	DeletedAt           *time.Time // nil = NULL
 	InternalDeletedAt   *time.Time // nil = omitted from legacy fixtures / NULL in opted-in fixtures
@@ -251,6 +252,7 @@ type MessageOpt struct {
 	SentAt              time.Time
 	SizeEstimate        int64
 	HasAttachments      bool
+	HiddenTextPresent   bool
 	DeletedAt           *time.Time
 	InternalDeletedAt   *time.Time
 	DeletedFromSourceAt *time.Time
@@ -302,6 +304,7 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 		SentAt:                 sentAt,
 		SizeEstimate:           opt.SizeEstimate,
 		HasAttachments:         opt.HasAttachments,
+		HiddenTextPresent:      opt.HiddenTextPresent,
 		DeletedAt:              opt.DeletedAt,
 		InternalDeletedAt:      opt.InternalDeletedAt,
 		DeletedFromSourceAt:    opt.DeletedFromSourceAt,
@@ -503,6 +506,7 @@ func (m MessageFixture) sqlValues() []string {
 		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05")),
 		fmt.Sprintf("%d::BIGINT", m.SizeEstimate),
 		strconv.FormatBool(m.HasAttachments),
+		strconv.FormatBool(m.HiddenTextPresent),
 		strconv.Itoa(m.AttachmentCount),
 		deletedFromSourceAt,
 		senderID,
@@ -551,6 +555,7 @@ func (m MessageFixture) sqlValuesWithInternalDeletion() []string {
 		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05")),
 		fmt.Sprintf("%d::BIGINT", m.SizeEstimate),
 		strconv.FormatBool(m.HasAttachments),
+		strconv.FormatBool(m.HiddenTextPresent),
 		strconv.Itoa(m.AttachmentCount),
 		internalDeletedAt,
 		deletedFromSourceAt,
@@ -675,8 +680,8 @@ func (b *TestDataBuilder) participantClustersSQL() string {
 
 // column definitions (coupled to SQL generation methods above).
 const (
-	messagesCols               = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, list_id, is_from_me, year, month"
-	messagesColsWithDeletedAt  = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_at, deleted_from_source_at, sender_id, owner_participant_id, message_type, list_id, is_from_me, year, month"
+	messagesCols               = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, hidden_text_present, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, list_id, is_from_me, year, month"
+	messagesColsWithDeletedAt  = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, hidden_text_present, attachment_count, deleted_at, deleted_from_source_at, sender_id, owner_participant_id, message_type, list_id, is_from_me, year, month"
 	sourcesCols                = "id, account_email, source_type"
 	participantsCols           = "id, email_address, domain, display_name, phone_number"
 	participantIdentifiersCols = "participant_id, identifier_type, identifier_value, display_value, is_primary"

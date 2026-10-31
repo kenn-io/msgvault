@@ -1044,6 +1044,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -1079,6 +1081,7 @@ components:
         web_url:
           type: string
       required:
+        - hidden_text_present
         - id
         - source_message_id
         - conversation_id
@@ -2724,6 +2727,8 @@ components:
           type: array
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -2772,6 +2777,7 @@ components:
         - deleted_at
         - size_estimate
         - has_attachments
+        - hidden_text_present
         - from
         - to
         - cc
@@ -6590,6 +6596,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -6634,6 +6642,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     HybridSearchMatch:
@@ -8023,6 +8032,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -8066,6 +8077,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     MessageListResponse:
@@ -8210,6 +8222,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -8246,6 +8260,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     MessageTag:
@@ -16456,7 +16471,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.28.0
+  version: 3.29.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

@@ -405,6 +405,7 @@ func TestSearchCmd_FTSUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 
 	assert.Equal(1, int(searchRequests.Load()), "search endpoint calls")
 	assert.Contains(out, `"subject": "Lunch"`, "JSON output should preserve local result shape")
+	assert.Contains(out, `"hidden_text_present": true`)
 	assert.NotContains(out, `"total"`, "local JSON search output is a bare result array")
 }
 
@@ -500,6 +501,7 @@ func searchHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 				"conversation_id": 7,
 				"subject": "Lunch",
 				"snippet": "see you there",
+				"hidden_text_present": true,
 				"from_email": "alice@example.com",
 				"sent_at": "2024-01-02T03:04:05Z",
 				"size_estimate": 123,
@@ -1056,6 +1058,20 @@ func TestOutputSearchResultsJSONShowsDeletedFromSourceOnlyWhenPresent(t *testing
 	require.Len(got, 2)
 	assert.Equal("2026-08-17T18:19:46Z", got[0]["deleted_from_source_at"])
 	assert.NotContains(got[1], "deleted_from_source_at")
+}
+
+func TestOutputSearchResultsJSONHiddenTextPresent(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	done := captureStdout(t)
+	require.NoError(outputSearchResultsJSON([]query.MessageSummary{
+		{ID: 1, HiddenTextPresent: true},
+		{ID: 2},
+	}))
+	var rows []map[string]any
+	require.NoError(json.Unmarshal([]byte(done()), &rows))
+	require.Len(rows, 2)
+	assert.Equal(true, rows[0]["hidden_text_present"])
+	assert.Equal(false, rows[1]["hidden_text_present"])
 }
 
 // Zero-match searches in --json mode must emit a valid empty JSON

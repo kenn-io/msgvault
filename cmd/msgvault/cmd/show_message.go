@@ -99,6 +99,9 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 	if showMessageJSON {
 		return outputMessageJSON(cmd.OutOrStdout(), msg)
 	}
+	if msg.HiddenTextPresent {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: this message's HTML may hide text.")
+	}
 	return outputMessageText(cmd.OutOrStdout(), msg)
 }
 
@@ -245,6 +248,7 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 		"attachments":            attachments,
 		"body_text":              msg.BodyText,
 		"body_html":              msg.BodyHTML,
+		"hidden_text_present":    msg.HiddenTextPresent,
 	}
 
 	if msg.RelatedMessageID != nil {

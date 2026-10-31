@@ -435,6 +435,21 @@ assistant can tell a cancelled or moved event from a confirmed one. A field
 is `null` when the stored event does not carry it; calendar sync does not
 store a `sequence` of 0, so a `null` sequence usually means 0.
 
+On newer `main` builds, `get_message` and `search_in_message` include
+the best-effort flag `hidden_text_present`. True means the stored HTML likely hides
+readable text. False does not guarantee that text is visible. Many newsletters
+hide a preview line, called a preheader, and those set the flag too. The flag
+marks hidden text rather than malicious intent.
+The CLI readers `show-message` and `show-thread` return
+the same flag in JSON and warn on stderr for text output. The check uses a set
+of inline-style heuristics, plus `hidden` and legacy color attributes, to flag
+HTML that may hide letters or digits, including for mail with a plain-text
+alternative. Non-blank HTML that fails to parse also sets the flag.
+Message bodies stay unchanged. The check excludes stylesheets and browser
+layout. CLI search JSON and MCP `search_message_bodies` also include the stored
+flag on every result row. Archive schema 16 flags older mail during a one-time
+backfill at archive initialization; new HTML writes refresh the flag.
+
 ### Find a person's messaging routes
 
 The unreleased contact tools require daemon API schema 3.20.0. First call
