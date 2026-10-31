@@ -109,7 +109,9 @@ type tierSignalRow struct {
 // the projector's own predicate, so a sent copy that kept draft evidence after
 // dedup still counts.
 func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	args := personMergeSnapshotIDArgs(personIDs)
+	args = append(args, scopeArgs...)
 	args = append(args,
 		asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly),
 		asOf.Format(time.DateOnly),
@@ -132,7 +134,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  JOIN messages m ON m.id=ae.message_id
  JOIN conversations c ON c.id=m.conversation_id
  JOIN sources src ON src.id=m.source_id
- WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`) AND `+counted+`
+ WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`)`+scope+` AND `+counted+`
  AND aep.local_date BETWEEN ? AND ?
  AND (aep.person_id,aep.local_date,aep.message_id) > (?,?,?)
  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND (
@@ -274,16 +276,18 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 
 // personTierBindings reads each person's addresses and identifiers for
 // the exclusions, and whether any of their participants is one of the owner's
-// own addresses in any account. The projection drops owner-linked participants
-// only within the message's own account, so this is the stricter cross-account
-// check. Primary email is authoritative over email aliases, and native IDs are
-// exact.
+// own addresses in any authorized account. The projection drops owner-linked
+// participants only within the message's own account, so this is the stricter
+// cross-account check within the caller's scope. Primary email is authoritative
+// over email aliases, and native IDs are exact.
 func personTierBindings(ctx context.Context, tx *loggedTx, marks string, args []any, signals map[int64]persontiers.Signals) error {
+	scope, scopeArgs := sourceScopeClause(ctx, "ai.source_id")
+	args = append(scopeArgs, args...)
 	rows, err := tx.QueryContext(ctx, `SELECT pp.person_id,COALESCE(p.email_address,''),COALESCE(p.phone_number,''),
  COALESCE(pi.identifier_type,''),COALESCE(pi.identifier_value,''),
- EXISTS (SELECT 1 FROM account_identities ai WHERE (`+ownerEmailMatch("p.email_address", "ai.address")+`) OR EXISTS (
+ EXISTS (SELECT 1 FROM account_identities ai WHERE ((`+ownerEmailMatch("p.email_address", "ai.address")+`) OR EXISTS (
  SELECT 1 FROM participant_identifiers oi WHERE oi.participant_id=p.id AND `+
-		ownerIdentifierMatch("oi.identifier_type", "oi.identifier_value", "ai.address", " AND (p.email_address IS NULL OR TRIM(p.email_address)='')")+`))
+		ownerIdentifierMatch("oi.identifier_type", "oi.identifier_value", "ai.address", " AND (p.email_address IS NULL OR TRIM(p.email_address)='')")+`))`+scope+`)
  FROM person_participants pp JOIN participants p ON p.id=pp.participant_id
  LEFT JOIN participant_identifiers pi ON pi.participant_id=p.id WHERE pp.person_id IN (`+marks+`)
  ORDER BY pp.person_id,p.id,pi.identifier_type,pi.identifier_value`, args...)
