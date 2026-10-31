@@ -87,3 +87,52 @@ func TestTelegramSharedKeyPreservesUsernameRename(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramNumericIDSyncPreservesUnlink(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	matcher := newIdentityMatcher(st)
+	var participants []int64
+	var accounts []captureContext
+	var outcome matchOutcome
+
+	// Before shared keys, two logins expose the same username with different account keys.
+	for _, account := range []string{"account-a", "account-b"} {
+		participant, err := st.EnsureParticipantByIdentifier(participantIdentifierType, account+"-user", "Alice Example")
+		require.NoError(err)
+		cc := captureContext{SourceID: newBeeperTestSource(t, st, account), AccountID: account, Network: "Telegram"}
+		oldKey := "provider:8:telegram:7:account:9:" + account + ":6:482111"
+		result, err := st.RecordContactObservationContext(ctx, participant, store.ParticipantContactObservationInput{
+			AddressKind: store.ContactAddressUsername, ServiceSlug: new("telegram"),
+			OriginalValue: "alice", ProviderUserID: &oldKey, SourceID: &cc.SourceID,
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+		})
+		require.NoError(err)
+		outcome, err = matcher.match(ctx, participant, result)
+		require.NoError(err)
+		participants = append(participants, participant)
+		accounts = append(accounts, cc)
+	}
+	require.Len(outcome.Conflicts, 1)
+	candidateID := outcome.Conflicts[0]
+	_, _, err := st.AcceptIdentityMatchCandidateContext(ctx, candidateID, "user", nil)
+	require.NoError(err)
+	require.True(linked(t, st, participants[0], participants[1]))
+	_, err = st.UnlinkParticipants(participants[0], participants[1])
+	require.NoError(err)
+	require.False(linked(t, st, participants[0], participants[1]))
+	candidate, err := st.GetIdentityMatchCandidateContext(ctx, candidateID)
+	require.NoError(err)
+	require.Equal(store.IdentityMatchStateRejected, candidate.State)
+
+	// A later sync introduces the shared numeric key for both logins.
+	recorder := newObservationRecorder(st)
+	matcher = newIdentityMatcher(st)
+	for i, participant := range participants {
+		captureAndMatch(t, recorder, matcher, participant,
+			&User{ID: "@telegram_482111:beeper.local", Username: "alice", Raw: []byte(`{"providerID":"482111"}`)}, accounts[i])
+	}
+	assert.False(linked(t, st, participants[0], participants[1]), "sync must preserve the user's unlink decision")
+}
