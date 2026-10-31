@@ -63,6 +63,28 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
+  it('shows a status failure and Refresh in the open panel after a sync is accepted', async () => {
+    let accepted = false;
+    const fetchFn = api([source()], (url, request) => {
+      if (request.method === 'POST' && url.pathname === '/api/v1/sync/archive%40example.com') {
+        accepted = true;
+        return Response.json({ status: 'accepted', message: 'started' }, { status: 202 });
+      }
+      if (url.pathname.endsWith('/sources/status') && accepted) {
+        return Response.json({ message: 'Source status unavailable' }, { status: 500 });
+      }
+    });
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
+    const panel = screen.getByRole('dialog', { name: 'Archive' });
+
+    await fireEvent.click(within(panel).getByRole('button', { name: /^Sync now$/ }));
+
+    const alert = await within(panel).findByRole('alert');
+    expect(alert.textContent).toContain('Source status unavailable');
+    expect(within(alert).getByRole('button', { name: 'Refresh' })).toBeDefined();
+  });
+
   it('shows a status-load failure and Refresh inside the open source panel', async () => {
     let statusReads = 0;
     const fetchFn = api([source()], url => {
