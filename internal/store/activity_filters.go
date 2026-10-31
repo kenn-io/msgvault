@@ -18,7 +18,7 @@ type activityReadWindow struct {
 	Subject          ActivitySubject
 }
 
-func normalizedActivityFilters(f ActivityFilters) (ActivityFilters, error) {
+func (s *Store) normalizedActivityFilters(ctx context.Context, f ActivityFilters) (ActivityFilters, error) {
 	if f.MaxDirect < 0 {
 		return f, fmt.Errorf("%w: negative direct counterpart limit", ErrInvalidActivityRequest)
 	}
@@ -28,7 +28,24 @@ func normalizedActivityFilters(f ActivityFilters) (ActivityFilters, error) {
 	if err := f.Exclusions.Validate(); err != nil {
 		return f, fmt.Errorf("%w: %w", ErrInvalidActivityRequest, err)
 	}
+	if f.MaxDirect == 0 {
+		policy, err := s.ActivityDirectLimitTransitionContext(ctx)
+		if err != nil {
+			return f, err
+		}
+		f.maxDirect = policy.Target
+	}
 	return f, nil
+}
+
+func (f ActivityFilters) directLimit() int {
+	if f.MaxDirect > 0 {
+		return f.MaxDirect
+	}
+	if f.maxDirect > 0 {
+		return f.maxDirect
+	}
+	return DefaultMaxDirectActivityCounterparts
 }
 
 func activitySubjectClause(subject ActivitySubject, message string) (string, []any, error) {
@@ -118,10 +135,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	}
 	where += subject
 	args = append(args, subjectArgs...)
-	maxDirect := f.MaxDirect
-	if maxDirect == 0 {
-		maxDirect = DefaultMaxDirectActivityCounterparts
-	}
+	maxDirect := f.directLimit()
 	maxSQL := strconv.Itoa(maxDirect)
 	address := `LOWER(COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),''))`
 	at := `INSTR(` + address + `,'@')`
@@ -149,9 +163,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	if f.Exclusions.ExcludeListMessages {
 		listExcluded = `CASE WHEN e.list_id IS NOT NULL THEN 1 ELSE 0 END`
 	}
-	large := `CASE WHEN e.direction='inbound' AND (
- CASE WHEN e.channel='chat' THEN (SELECT COUNT(*) FROM conversation_participants chat_cp WHERE chat_cp.conversation_id=e.conversation_id AND NOT ` + personTierOwnerMatch("chat_cp.participant_id", "e.source_id") + `)
- ELSE (SELECT COUNT(DISTINCT mail_mr.participant_id) FROM message_recipients mail_mr WHERE mail_mr.message_id=e.message_id AND mail_mr.recipient_type IN ('to','cc','bcc') AND NOT ` + personTierOwnerMatch("mail_mr.participant_id", "e.source_id") + `) END)>` + maxSQL + ` THEN 1 ELSE 0 END`
+	large := `CASE WHEN e.direction='inbound' AND COALESCE(audience.n,0)>` + maxSQL + ` THEN 1 ELSE 0 END`
 	counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "e.direction", RefKind: "e.ref_kind", ListExcluded: listExcluded, LargeInbound: "e.large_inbound"})
 	// These reused sets must be evaluated once. SQLite can otherwise inline
 	// them into each correlated fact lookup and rebuild the scoped population
@@ -174,7 +186,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  ), message_flags AS (
  SELECT e.*,` + large + ` AS large_inbound,
  CASE WHEN e.source_type='matrix' AND e.snippet='` + archivemarker.EncryptedMessagePlaceholder + `' THEN 1 ELSE 0 END AS encrypted
- FROM eligible e
+ FROM eligible e LEFT JOIN audiences audience ON audience.message_id=e.message_id
  ), scored AS (
  SELECT e.*,
  CASE WHEN e.encrypted=0 AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.excluded='' AND ` + counted + `) THEN 1 ELSE 0 END AS counted,
