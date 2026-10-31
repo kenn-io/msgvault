@@ -449,7 +449,7 @@ custom-gcl: lint-tools
 	@if [ -x "$(CUSTOM_GCL_BIN)" ] && [ "$(CUSTOM_GCL_BIN)" -nt .custom-gcl.yml ]; then case "$$("$(CUSTOM_GCL_BIN)" version --short 2>/dev/null)" in "$(GOLANGCI_LINT_VERSION)"-custom-gcl-*) exit 0;; esac; fi; \
 	mkdir -p "$(CI_TOOLS_BIN)"; \
 	unset_args=$$(git rev-parse --local-env-vars 2>/dev/null | sed 's/^/-u /' | tr '\n' ' '); \
-	env $$unset_args GOFLAGS=-buildvcs=false "$(GOLANGCI_LINT_BIN)" custom \
+	env $$unset_args GOFLAGS=-buildvcs=false $(DOWNLOAD_RETRY) "$(GOLANGCI_LINT_BIN)" custom \
 		--destination "$(CI_TOOLS_BIN)" --name custom-gcl \
 		--version "$(GOLANGCI_LINT_VERSION)"
 
