@@ -71,10 +71,10 @@
     }
     if ('domain' in row) {
       const domain = row as DomainSummary;
-      return { key: `domain:${domain.domain}`, label: domain.domain, detail: `${domain.activity_count.toLocaleString()} messages`, lastAt: domain.last_at, saved: false, domain: true };
+      return { key: `domain:${domain.domain}`, label: domain.domain, detail: `${domain.activity_count.toLocaleString()} ${domain.activity_count === 1 ? 'message' : 'messages'}`, lastAt: domain.last_at, saved: false, domain: true };
     }
     const person = row as PersonSummary;
-    return { key: `cluster:${person.id}`, label: person.display_label, detail: `${person.activity_count.toLocaleString()} messages`, lastAt: person.last_at, saved: Boolean(person.profile), domain: false };
+    return { key: `cluster:${person.id}`, label: person.display_label, detail: `${person.activity_count.toLocaleString()} ${person.activity_count === 1 ? 'message' : 'messages'}`, lastAt: person.last_at, saved: Boolean(person.profile), domain: false };
   }));
   const loading = $derived(directoryMode ? directory.loading : controller.listLoading);
   const hasMore = $derived(Boolean(directoryMode ? directory.cursor : controller.listCursor));
@@ -233,7 +233,7 @@
 </main>
 <style>
   .people { display: flex; min-height: 0; height: 100%; flex-direction: column; background: var(--bg-canvas); }
-  .heading { padding: var(--space-5) var(--page-gutter) var(--field-gap); }
+  .heading { --page-header-gap: 0px; padding: var(--space-5) var(--page-gutter) var(--field-gap); }
   .body { display: flex; min-height: 0; flex: 1; }
   .list { display: flex; min-height: 0; height: 100%; width: 100%; flex-direction: column; }
   .list-content { display: flex; min-height: 0; flex: 1; }

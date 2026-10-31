@@ -369,9 +369,11 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The padding keeps day outlines inside the scroll box, which clips them. */
   .calendar-graphs {
-    max-width: 100%;
-    margin-top: var(--section-gap);
+    max-width: calc(100% + 6px);
+    margin: calc(var(--section-gap) - 3px) -3px -3px;
+    padding: 3px;
     overflow-x: auto;
     overflow-y: hidden;
   }

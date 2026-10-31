@@ -483,6 +483,22 @@ test('People history and reload restore participant scope without a message quer
   expect(requests.at(-1)).not.toHaveProperty('query');
 });
 
+test('typing in the top bar narrows People without pressing Search', async ({ page }) => {
+  await prepare(page);
+  const queries: unknown[] = [];
+  await page.route('**/api/v1/participants/search', route => {
+    queries.push(route.request().postDataJSON().identity_query);
+    return route.fulfill({ json: { rows: [{ ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example' }], total_count: 1, cache_revision: 'cache-relationships', search_provenance: {} } });
+  });
+  await page.goto('/?workspace=relationships');
+  const list = page.getByRole('grid', { name: 'People results' });
+  await expect(list.getByText('Alice Example')).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Filter people' }).pressSequentially('bob');
+  await expect(list.getByText('Bob Example')).toBeVisible();
+  await expect(list.getByText('Alice Example')).toBeHidden();
+  expect(queries).toEqual(['bob']);
+});
+
 test('missing saved profiles keep Back to People on narrow screens', async ({ page }) => {
   await prepare(page);
   await page.setViewportSize({ width: 640, height: 900 });

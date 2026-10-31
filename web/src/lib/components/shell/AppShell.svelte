@@ -1236,11 +1236,12 @@
         workspace={exploreState.current.workspace}
         query={exploreState.current.workspace === 'relationships' ? exploreState.current.identityQuery ?? '' : exploreState.current.query}
         mode={exploreState.current.searchMode}
-        live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files'}
+        live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' || exploreState.current.workspace === 'relationships'}
         compact={narrow}
         bind:inputEl={searchInput}
-        onDraft={(query, mode) => exploreState.replaceSearchDraft(query, mode)}
+        onDraft={(query, mode) => exploreState.current.workspace === 'relationships' ? debouncedSearchPatch({ identityQuery: query }) : exploreState.replaceSearchDraft(query, mode)}
         onSubmit={submitGlobalSearch}
+        filterLabel={exploreState.current.relationshipFacet === 'domains' ? 'Filter domains' : 'Filter people'}
       />
       <div class="app-top-bar__end" aria-label="Appearance controls">
         <DisplayMenu
