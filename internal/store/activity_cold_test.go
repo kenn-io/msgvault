@@ -598,3 +598,37 @@ func TestColdAdapterHonorsListExclusionOptOut(t *testing.T) {
 		}
 	}
 }
+
+func TestColdAdapterUsesUTCWindowBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		offset int
+	}{
+		{"UTC", 0},
+		{"west", -7 * 60 * 60},
+		{"east", 9 * 60 * 60},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineActivityFixture(t)
+			room := coldTimelineRoom(t, f, f.Source.ID, "offset-window")
+			start := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			f.add(t, room, f.Source.ID, start.Add(-time.Second), false, "")
+			atStart := f.add(t, room, f.Source.ID, start, false, "")
+			inside := f.add(t, room, f.Source.ID, start.Add(30*time.Minute), false, "")
+			f.add(t, room, f.Source.ID, start.Add(time.Hour), false, "")
+			zone := time.FixedZone(tc.name, tc.offset)
+			after, before := start.In(zone), start.Add(time.Hour).In(zone)
+			q := timelineBurstQuery()
+			q.After, q.Before = &after, &before
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
+			assertions.Equal([]int64{inside, atStart}, page.Bursts[0].LatestMessageIDs)
+			assertions.Equal(2, page.Bursts[0].Inbound)
+			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Equal(2, count)
+		})
+	}
+}
