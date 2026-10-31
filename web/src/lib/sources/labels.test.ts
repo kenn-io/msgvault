@@ -53,18 +53,12 @@ it('prefers the run error over the scheduler error', () => {
 
 
 it.each([
-  ['gmail', 'scheduler_unavailable', undefined],
-  ['gmail', 'sync_not_configured', 'msgvault sync --source-id 4'],
-  ['msmail', 'sync_not_configured', 'msgvault sync --source-id 4'],
-  ['beeper', 'sync_not_configured', undefined],
-] as const)('offers a manual sync command only for supported source type %s', (source_type, sync_unavailable_reason, want) => {
-  const command = syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync: run('completed') });
-  expect(command).toBe(want);
-});
-
-it.each([
-  ['gmail', 'msgvault sync-full --source-id 4'],
-  ['msmail', 'msgvault sync --source-id 4'],
-])('offers the initial sync command for %s before its first successful sync', (source_type, want) => {
-  expect(syncCommand({ id: 4, source_type, sync_unavailable_reason: 'sync_not_configured', last_successful_sync: null })).toBe(want);
+  ['gmail', 'scheduler_unavailable', run('completed'), undefined],
+  ['gmail', 'sync_not_configured', run('completed'), 'msgvault sync --source-id 4'],
+  ['msmail', 'sync_not_configured', run('completed'), 'msgvault sync --source-id 4'],
+  ['beeper', 'sync_not_configured', run('completed'), undefined],
+  ['gmail', 'sync_not_configured', null, 'msgvault sync-full --source-id 4'],
+  ['msmail', 'sync_not_configured', null, 'msgvault sync --source-id 4'],
+] as const)('offers a manual sync command for %s with reason %s and last successful sync %j', (source_type, sync_unavailable_reason, last_successful_sync, want) => {
+  expect(syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync })).toBe(want);
 });
