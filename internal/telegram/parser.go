@@ -192,15 +192,45 @@ func validateMessage(m *Message) error {
 		}
 	}
 	if len(m.TextEntities) > 0 {
-		var text strings.Builder
-		for _, entity := range m.TextEntities {
-			text.WriteString(entity.String())
-		}
-		m.Text = text.String()
-	} else if len(m.RawText) == 0 {
-		m.Text = ""
-	} else if err := json.Unmarshal(m.RawText, &m.Text); err != nil || m.RawText[0] != '"' {
-		return errors.New("text must be a string when text_entities is empty")
+		m.Text = joinEntities(m.TextEntities)
+		return nil
 	}
-	return nil
+	m.Text, err = decodeText(m.RawText)
+	return err
+}
+
+func joinEntities(entities []textEntity) string {
+	var text strings.Builder
+	for _, entity := range entities {
+		text.WriteString(entity.String())
+	}
+	return text.String()
+}
+
+// decodeText reads a plain string, or the legacy array of strings and entity objects.
+func decodeText(raw jsontext.Value) (string, error) {
+	errText := errors.New("text must be a string when text_entities is empty")
+	switch raw.Kind() {
+	case 0:
+		return "", nil
+	case '"':
+		var text string
+		return text, json.Unmarshal(raw, &text)
+	case '[':
+		var parts []jsontext.Value
+		if err := json.Unmarshal(raw, &parts); err != nil {
+			return "", errText
+		}
+		entities := make([]textEntity, len(parts))
+		for i, part := range parts {
+			if part.Kind() == '"' {
+				part = jsontext.Value(`{"text":` + string(part) + `}`)
+			}
+			if err := json.Unmarshal(part, &entities[i]); err != nil {
+				return "", errText
+			}
+		}
+		return joinEntities(entities), nil
+	}
+	return "", errText
 }

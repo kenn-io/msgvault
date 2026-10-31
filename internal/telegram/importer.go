@@ -299,7 +299,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(m.Text))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: peer, ConversationType: chat.ConvType(), Title: chat.Name, Participants: members, PreserveExistingParticipants: true},
 			Edited:       m.Edited != "" || m.EditedUnixtime != "",
-			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: &writes, FTS: &store.FTSDoc{Body: m.Text},
+			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement(writes), FTS: &store.FTSDoc{Body: m.Text},
 		})
 		if err != nil {
 			return fmt.Errorf("telegram: persist %s: %w", key, err)
@@ -308,4 +308,12 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		summary.MessagesAdded++
 	}
 	return nil
+}
+
+// replacement leaves a text-only message's attachments untouched instead of clearing them.
+func replacement(writes []store.AttachmentWrite) *[]store.AttachmentWrite {
+	if len(writes) == 0 {
+		return nil
+	}
+	return &writes
 }
