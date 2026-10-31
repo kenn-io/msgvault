@@ -1,6 +1,10 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+
+	"go.kenn.io/msgvault/internal/identityindex"
+)
 
 // CountedEventInputs contains trusted SQL expressions for the counted-contact
 // rule. ListExcluded and LargeInbound are integer expressions (0 or 1).
@@ -38,4 +42,10 @@ func CountedEvent(evidence ActivityEvidence, role ActivityRole, direction Activi
 	default:
 		return false
 	}
+}
+
+// countedMessageTypeSQL excludes call logs and other non-message records from
+// message contact while retaining the shared email and chat classification.
+func countedMessageTypeSQL(message, conversation string) string {
+	return `(COALESCE(` + message + `.message_type,'') IN ('','` + MessageTypeEmail + `') OR ` + identityindex.IsChatSQL(message+".message_type", conversation+".conversation_type") + `)`
 }

@@ -3,6 +3,10 @@ package store_test
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
@@ -10,9 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
-	"strconv"
-	"testing"
-	"time"
 )
 
 type timelineActivityFixture struct {
@@ -59,69 +60,77 @@ func timelineBurstQuery() store.BurstQuery {
 	return store.BurstQuery{FromDate: "2026-10-01", ToDate: "2026-11-30", Limit: 5000}
 }
 func TestBurstsReturnUnsavedCorrespondents(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	id := f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
 	projectTimelineActivity(t, f, "UTC")
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	require.NoError(t, err)
-	require.Len(t, got.Bursts, 1)
+	requirements.NoError(err)
+	requirements.Len(got.Bursts, 1)
 	b := got.Bursts[0]
-	assert.Equal(t, 1, b.Inbound)
-	assert.Equal(t, id, b.AnchorMessageID)
+	assertions.Equal(1, b.Inbound)
+	assertions.Equal(id, b.AnchorMessageID)
 	var peer store.ActivityMessageCounterpart
 	for _, c := range b.Counterparts {
 		if c.ParticipantID == f.peer {
 			peer = c
 		}
 	}
-	assert.Zero(t, peer.PersonID)
-	assert.Equal(t, "alice@example.com", peer.Address)
-	assert.True(t, peer.Counted)
+	assertions.Zero(peer.PersonID)
+	assertions.Equal("alice@example.com", peer.Address)
+	assertions.True(peer.Counted)
 }
 func TestBurstsApplySourceScope(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	f.add(t, f.ConvID, f.Source.ID, at, false, "")
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	conv, err := f.Store.EnsureConversation(other.ID, "other", "Other")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	f.add(t, conv, other.ID, at, false, "")
 	projectTimelineActivity(t, f, "UTC")
 	got, err := f.Store.ListActivityBurstsContext(sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID}), timelineBurstQuery())
-	require.NoError(t, err)
-	require.Len(t, got.Bursts, 1)
-	assert.Equal(t, f.Source.ID, got.Bursts[0].SourceID)
-	assert.Zero(t, got.NoiseOmitted)
+	requirements.NoError(err)
+	requirements.Len(got.Bursts, 1)
+	assertions.Equal(f.Source.ID, got.Bursts[0].SourceID)
+	assertions.Zero(got.NoiseOmitted)
 }
 func TestBurstsCollapseEmailCopiesBeforeGrouping(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	rep := f.add(t, f.ConvID, f.Source.ID, at, false, "<copy@example.com>")
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-	require.NoError(t, err)
-	require.NoError(t, f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
 	conv, err := f.Store.EnsureConversation(other.ID, "copy", "Copy")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	f.add(t, conv, other.ID, at, false, "<copy@example.com>")
 	projectTimelineActivity(t, f, "UTC")
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	require.NoError(t, err)
-	require.Len(t, got.Bursts, 1)
-	assert.Equal(t, 1, got.Bursts[0].Inbound)
-	assert.Equal(t, 2, got.Bursts[0].CopyCounts[rep])
+	requirements.NoError(err)
+	requirements.Len(got.Bursts, 1)
+	assertions.Equal(1, got.Bursts[0].Inbound)
+	assertions.Equal(2, got.Bursts[0].CopyCounts[rep])
 	scoped, err := f.Store.ListActivityBurstsContext(sourcescope.WithSourceIDs(t.Context(), []int64{other.ID}), timelineBurstQuery())
-	require.NoError(t, err)
-	require.Len(t, scoped.Bursts, 1)
-	assert.Equal(t, other.ID, scoped.Bursts[0].SourceID)
+	requirements.NoError(err)
+	requirements.Len(scoped.Bursts, 1)
+	assertions.Equal(other.ID, scoped.Bursts[0].SourceID)
 }
 func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	// Seed real persisted spine rows in a transaction: pagination must aggregate
 	// the entire group, independently of projector batch scheduling.
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer func() { _ = tx.Rollback() }()
 	for i := range 6000 {
 		var id int64
@@ -132,20 +141,20 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 			sender = f.owner
 		}
 		err = tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sent_at,sender_id,is_sent,source_is_from_me) VALUES(?,?,?,'email',?,?,TRUE,?) RETURNING id`), f.Source.ID, f.ConvID, fmt.Sprintf("large-%d", i), at.Add(time.Duration(i)*time.Second), sender, i%2 == 1).Scan(&id)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		recipient := f.owner
 		if i%2 == 1 {
 			recipient = f.peer
 		}
 		_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')`), id, recipient)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO activity_events(message_id,ref_kind,source_id,conversation_id,channel,occurred_at,date_origin,date_precision,timezone,utc_offset_minutes,local_date,direction,projected_last_modified,projected_identity_revision,projected_account_identity_revision) VALUES(?,'message',?,?,'email',?,'sent_at','timestamp','UTC',0,'2026-10-22',?,?,0,0)`), id, f.Source.ID, f.ConvID, at.Add(time.Duration(i)*time.Second), direction, at)
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}
-	require.NoError(t, tx.Commit())
+	requirements.NoError(tx.Commit())
 	for i := range 3 {
 		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("interleave-%d", i), "Other")
-		require.NoError(t, err)
+		requirements.NoError(err)
 		f.add(t, conv, f.Source.ID, at.Add(time.Duration(i)*time.Minute), false, "")
 	}
 	// Project the three interleaved rows without replacing the large fixture.
@@ -156,15 +165,15 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 	total := 0
 	for {
 		page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		for _, b := range page.Bursts {
-			assert.False(t, seen[b.Key])
+			assertions.False(seen[b.Key])
 			seen[b.Key] = true
 			total++
 			if b.ConversationID == f.ConvID {
-				assert.Equal(t, 3000, b.Inbound)
-				assert.Equal(t, 3000, b.Outbound)
-				assert.Len(t, b.LatestMessageIDs, 5)
+				assertions.Equal(3000, b.Inbound)
+				assertions.Equal(3000, b.Outbound)
+				assertions.Len(b.LatestMessageIDs, 5)
 			}
 		}
 		if page.NextKey == nil {
@@ -172,19 +181,21 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 		}
 		q.AfterKey = page.NextKey
 	}
-	assert.Equal(t, 4, total)
+	assertions.Equal(4, total)
 }
 func TestBurstsDropNoiseAndCount(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	id := f.add(t, f.ConvID, f.Source.ID, at, false, "")
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	projectTimelineActivity(t, f, "UTC")
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	require.NoError(t, err)
-	assert.Empty(t, got.Bursts)
-	assert.Equal(t, 1, got.NoiseOmitted)
+	requirements.NoError(err)
+	assertions.Empty(got.Bursts)
+	assertions.Equal(1, got.NoiseOmitted)
 }
 func TestBurstsIncludeNoiseKeepsEligibility(t *testing.T) {
 	f := newTimelineActivityFixture(t)
@@ -200,90 +211,195 @@ func TestBurstsIncludeNoiseKeepsEligibility(t *testing.T) {
 	assert.Empty(t, got.Bursts)
 }
 func TestBurstsExcludedAddressMarksCounterpart(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address='noreply@example.com' WHERE id=?`), f.peer)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
 	projectTimelineActivity(t, f, "UTC")
 	q := timelineBurstQuery()
 	q.Filters.IncludeNoise = true
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-	require.NoError(t, err)
-	require.Len(t, got.Bursts, 1)
+	requirements.NoError(err)
+	requirements.Len(got.Bursts, 1)
 	for _, c := range got.Bursts[0].Counterparts {
 		if c.ParticipantID == f.peer {
-			assert.Equal(t, "automated_address", c.Excluded)
-			assert.False(t, c.Counted)
+			assertions.Equal("automated_address", c.Excluded)
+			assertions.False(c.Counted)
 		}
 	}
 }
 func TestBurstsCustomExclusionAndDirectLimit(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(strconv.FormatBool(saved), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			f := newTimelineActivityFixture(t)
 			if saved {
 				_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-				require.NoError(t, err)
+				requirements.NoError(err)
 			}
 			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 			id := f.add(t, f.ConvID, f.Source.ID, at, true, "")
 			bob := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
-			require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, bob}, []string{"Alice", "Bob"}))
+			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, bob}, []string{"Alice", "Bob"}))
 			projectTimelineActivity(t, f, "UTC")
 			q := timelineBurstQuery()
 			q.Filters.MaxDirect = 1
 			got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-			require.NoError(t, err)
-			assert.Empty(t, got.Bursts)
+			requirements.NoError(err)
+			assertions.Empty(got.Bursts)
 			q.Filters.MaxDirect = 25
 			q.Filters.Exclusions = persontiers.DefaultConfig()
 			q.Filters.Exclusions.ExcludeDomainPatterns = []string{"example.com"}
 			got, err = f.Store.ListActivityBurstsContext(t.Context(), q)
-			require.NoError(t, err)
-			assert.Empty(t, got.Bursts)
+			requirements.NoError(err)
+			assertions.Empty(got.Bursts)
 		})
 	}
 }
 func TestBurstsKeepLocalDateAcrossDSTDay(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC), false, "")
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC), true, "")
 	projectTimelineActivity(t, f, "America/New_York")
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	require.NoError(t, err)
-	require.Len(t, got.Bursts, 1)
-	assert.Equal(t, "2026-11-01", got.Bursts[0].LocalDate)
-	assert.Equal(t, 1, got.Bursts[0].Inbound)
-	assert.Equal(t, 1, got.Bursts[0].Outbound)
+	requirements.NoError(err)
+	requirements.Len(got.Bursts, 1)
+	assertions.Equal("2026-11-01", got.Bursts[0].LocalDate)
+	assertions.Equal(1, got.Bursts[0].Inbound)
+	assertions.Equal(1, got.Bursts[0].Outbound)
 }
 
 func TestBurstsOutboundOwnerIsNotNoise(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
 	projectTimelineActivity(t, f, "UTC")
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	require.NoError(t, err)
-	require.Len(t, got.Bursts, 1)
-	assert.Equal(t, 1, got.Bursts[0].Outbound)
-	assert.Zero(t, got.NoiseOmitted)
+	requirements.NoError(err)
+	requirements.Len(got.Bursts, 1)
+	assertions.Equal(1, got.Bursts[0].Outbound)
+	assertions.Zero(got.NoiseOmitted)
 }
 
 func TestBurstsPhoneCounterpartsAreNotEmailExclusions(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address=NULL,phone_number='+14155550123' WHERE id=?`), f.peer)
-	require.NoError(t, err)
-	require.NoError(t, f.Store.SetParticipantIdentifier(f.peer, "phone", "+14155550123"))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.SetParticipantIdentifier(f.peer, "phone", "+14155550123"))
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
 	projectTimelineActivity(t, f, "UTC")
 	q := timelineBurstQuery()
 	q.Filters.IncludeNoise = true
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-	require.NoError(t, err)
-	require.Len(t, got.Bursts, 1)
+	requirements.NoError(err)
+	requirements.Len(got.Bursts, 1)
 	for _, cp := range got.Bursts[0].Counterparts {
 		if cp.ParticipantID == f.peer {
-			assert.Empty(t, cp.Excluded)
-			assert.True(t, cp.Counted)
+			assertions.Empty(cp.Excluded)
+			assertions.True(cp.Counted)
 		}
+	}
+}
+
+func TestActivityListExclusionCanBeDisabled(t *testing.T) {
+	requirements := require.New(t)
+	f := newTimelineActivityFixture(t)
+	q := timelineContactQuery(f)
+	id := f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
+	requirements.NoError(err)
+	projectTimelineActivity(t, f, "UTC")
+	for _, exclude := range []bool{true, false} {
+		t.Run(strconv.FormatBool(exclude), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			filters := store.ActivityFilters{Exclusions: persontiers.DefaultConfig()}
+			filters.Exclusions.ExcludeListMessages = exclude
+			query := timelineBurstQuery()
+			query.Filters = filters
+			bursts, err := f.Store.ListActivityBurstsContext(t.Context(), query)
+			requirements.NoError(err)
+			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10, Filters: filters})
+			requirements.NoError(err)
+			contact := q
+			contact.Filters = filters
+			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)
+			requirements.NoError(err)
+			if exclude {
+				assertions.Empty(bursts.Bursts)
+				assertions.Empty(messages)
+				assertions.Zero(aggregate.Count)
+				return
+			}
+			requirements.Len(bursts.Bursts, 1)
+			assertions.Equal(1, bursts.Bursts[0].Inbound)
+			assertions.Zero(bursts.NoiseOmitted)
+			requirements.Len(messages, 1)
+			assertions.Equal(1, aggregate.Count)
+			requirements.NotNil(aggregate.LastAt)
+			assertions.Equal(q.Now, *aggregate.LastAt)
+		})
+	}
+}
+
+func TestActivityCallLogsNeverCountAsMessageContact(t *testing.T) {
+	for _, tc := range []struct {
+		kind, subject string
+		want          int
+	}{
+		{"synctech_sms_call", "Call missed, 0 seconds", 0},
+		{"synctech_sms_call", "Call rejected, 0 seconds", 0},
+		{"google_voice_call", "Missed call", 0},
+		{"email", "Ordinary email", 1},
+		{"sms", "Ordinary text", 1},
+	} {
+		t.Run(tc.subject, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := newTimelineActivityFixture(t)
+			q := timelineContactQuery(f)
+			id := f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type=?,subject=? WHERE id=?`), tc.kind, tc.subject, id)
+			requirements.NoError(err)
+			projectTimelineActivity(t, f, "UTC")
+			q.Filters.IncludeNoise = true
+			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Equal(tc.want, aggregate.Count)
+			burstQuery := timelineBurstQuery()
+			burstQuery.Filters.IncludeNoise = true
+			bursts, err := f.Store.ListActivityBurstsContext(t.Context(), burstQuery)
+			requirements.NoError(err)
+			requirements.Len(bursts.Bursts, 1)
+			assertions.Equal(tc.want, bursts.Bursts[0].Inbound)
+			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10, Filters: store.ActivityFilters{IncludeNoise: true}})
+			requirements.NoError(err)
+			requirements.Len(messages, 1)
+			foundPeer := false
+			for _, cp := range messages[0].Counterparts {
+				if cp.ParticipantID == f.peer {
+					foundPeer = true
+					assertions.Equal(tc.want == 1, cp.Counted)
+				}
+			}
+			assertions.True(foundPeer)
+			if tc.want == 0 {
+				assertions.Nil(aggregate.FirstAt)
+				assertions.Nil(aggregate.LastAt)
+				assertions.Nil(aggregate.LastInboundAt)
+				assertions.Nil(aggregate.LastOutboundAt)
+			} else {
+				requirements.NotNil(aggregate.LastAt)
+				assertions.Equal(q.Now, *aggregate.LastAt)
+			}
+		})
 	}
 }
