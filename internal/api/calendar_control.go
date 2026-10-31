@@ -17,9 +17,8 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 )
 
-// Calendar and Muesli domain types share short names such as Person, Result,
-// and RemoteRequest with the archive. Prefix only those packages' types to
-// preserve existing wire names.
+// Domain types share short names such as Person, Result, and RemoteRequest
+// with the archive. Prefix their schema names to preserve existing wire names.
 func prefixedSchemaName(t reflect.Type, hint string) string {
 	original := t
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
@@ -33,6 +32,12 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 		return "Calendar" + name
 	case "go.kenn.io/msgvault/internal/muesli":
 		return "Muesli" + name
+	case "go.kenn.io/msgvault/internal/timeline":
+		if name == "Timeline" {
+			// Keep the public SDK's existing Saved View Timeline enum name.
+			return "TimelineResult"
+		}
+		return "Timeline" + name
 	default:
 		return name
 	}

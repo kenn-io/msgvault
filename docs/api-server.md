@@ -82,6 +82,33 @@ never scan or rebuild the archive. See
 [ranking and maintenance](architecture/search-ranking.md#filename-suggestions)
 and [CLI usage](cli-reference.md#typo-tolerant-filenames).
 
+### Timeline, unreleased
+
+`GET /api/v1/timeline` returns a bounded view of archived activity. Set
+`mode=day|relationship|anchor`, or let `with` and `around` select a mode.
+Query parameters follow the [timeline flags](cli-reference.md#timeline), with
+underscores in `include_cold` and `include_noise`; `tiers` carries the CLI
+`--tier` values. The API defaults to compact,
+deterministic JSON; `format=markdown` returns `text/markdown`. Both encodings
+honor the requested byte budget. Responses use `Cache-Control: no-store`.
+
+A delegated token needs `message.read` on at least one admitted source.
+`calendar.event.read` alone is insufficient. Any nonempty `with` is refused
+with 403 for delegated callers, including day and anchor modes. Person-scoped
+grants are deferred; relationship filters remain owner-only.
+All readers receive the effective source grant. Owner-only sections are absent
+with `owner-only` gaps. Each emitted `open` target requires permission for its
+tool. Numeric IDs above 9007199254740991 require CLI or HTTP detail reads; MCP
+numeric opener arguments stop at that safe integer limit. String `around`
+references preserve larger IDs exactly.
+
+Bad input returns 400, including `cursor_expired` for invalid continuation.
+Ambiguous references return 409 `ambiguous_reference` with typed `candidates`.
+Owner requests share the open-loop mutation gate because loop reads can cache
+evidence. No archive schema or cache format changes are needed. The route
+requires API schema 3.33.0. See [Timeline](usage/timeline.md) for views,
+freshness, gaps, and continuation.
+
 ### Archived calendar occurrences, unreleased
 
 `GET /api/v1/calendar/events` lists archived occurrences with required RFC3339 `from` and `to` bounds. The window is half-open, positive, and at most 400 days. `limit` defaults to 100 and accepts 1–500. The response carries `occurrences`, `unexpandable`, and optional `next_cursor`.
@@ -188,7 +215,10 @@ describes every response field.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.32.0**.
+it is separate from the binary release version. The current schema is **3.33.0**.
+
+Schema 3.33.0 adds the [timeline](#timeline-unreleased) route and its typed JSON,
+Markdown, ambiguity candidates, and source-scoped reads.
 
 Schema 3.32.0 adds owner-only call evidence import, inspection and person summaries. It also adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
 
@@ -523,6 +553,12 @@ request and response fields.
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
 returning `200` while created manifests return `201`.
+For [timeline](#timeline-unreleased) reads, `GetTimelineWithResponse` decodes
+JSON. To request Markdown, use `APIClient().CreateRequest` and
+`APIClient().ExecuteRequest` and read the raw response bytes. Typed timeline
+openers use generic JSON values; callers that need exact numeric IDs above
+9007199254740991 should also decode the raw JSON with `json.Decoder.UseNumber`.
+The daemon-backed CLI handles both formats and exact IDs automatically.
 
 ### Startup and readiness
 

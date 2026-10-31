@@ -4103,6 +4103,22 @@ type GetTextStatsResponse = TotalStatsResponse
 
 type GetTextStatsErrorResponse = ErrorResponse
 
+type GetTimelineResponse = TimelineResult
+
+type GetTimelineErrorResponse = ErrorResponse
+
+type GetTimelineErrorResponseJSON = ErrorResponse
+
+type GetTimelineErrorResponseJSON403 = ErrorResponse
+
+type GetTimelineErrorResponseJSON409 = TimelineAmbiguityResponse
+
+type GetTimelineErrorResponseJSON500 = ErrorResponse
+
+type GetTimelineErrorResponseJSON503 = ErrorResponse
+
+type GetTimelineErrorResponseJSONDefault = ErrorResponse
+
 type HealthResponseJSON = HealthResponse
 
 type HealthErrorResponse = ErrorResponse
@@ -7868,6 +7884,20 @@ type GetTextStatsResp struct {
 	StatusCode   int
 	JSON200      *GetTextStatsResponse
 	JSONDefault  *GetTextStatsErrorResponse
+}
+
+type GetTimelineResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetTimelineResponse
+	JSON400      *GetTimelineErrorResponse
+	JSON401      *GetTimelineErrorResponseJSON
+	JSON403      *GetTimelineErrorResponseJSON403
+	JSON409      *GetTimelineErrorResponseJSON409
+	JSON500      *GetTimelineErrorResponseJSON500
+	JSON503      *GetTimelineErrorResponseJSON503
+	JSONDefault  *GetTimelineErrorResponseJSONDefault
 }
 
 type HealthResp struct {

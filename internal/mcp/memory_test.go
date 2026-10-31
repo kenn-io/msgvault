@@ -94,6 +94,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		Meetings:             struct{ MeetingBackend }{},
 		Calendar:             struct{ CalendarBackend }{},
 		CalEvents:            struct{ CalendarEventsBackend }{},
+		Timeline:             struct{ TimelineBackend }{},
 		MessageTags:          struct{ MessageTagBackend }{},
 		ArchiveSQLQuerier:    struct{ ArchiveSQLQuerier }{},
 		IdentityReview:       struct{ IdentityReviewBackend }{},

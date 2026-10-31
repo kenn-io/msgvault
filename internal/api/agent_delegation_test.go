@@ -281,6 +281,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	requirements.NoError(err)
 	// These expectations stay independent of the production permission map.
 	reads := map[string]struct{ path, want string }{
+		"getTimeline":             {"/api/v1/timeline?date=2027-03-01", `"mode":"day"`},
 		"searchCLI":               {"/api/v1/cli/search?q=glacier", src.Identifier},
 		"searchMessages":          {"/api/v1/search?q=glacier", src.Identifier},
 		"fastSearch":              {"/api/v1/search/fast?q=glacier", src.Identifier},

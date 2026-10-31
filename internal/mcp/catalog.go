@@ -41,6 +41,7 @@ const (
 
 type catalogCapabilities struct {
 	calEvents       bool
+	timeline        bool
 	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
@@ -114,13 +115,16 @@ type toolDefinition struct {
 }
 
 func (d toolDefinition) tool() *sdkmcp.Tool {
-	return &sdkmcp.Tool{
-		Name:         d.name,
-		Description:  d.description,
-		Annotations:  d.annotations,
-		InputSchema:  d.inputSchema,
-		OutputSchema: d.outputSchema,
+	tool := &sdkmcp.Tool{
+		Name:        d.name,
+		Description: d.description,
+		Annotations: d.annotations,
+		InputSchema: d.inputSchema,
 	}
+	if d.outputSchema != nil {
+		tool.OutputSchema = d.outputSchema
+	}
+	return tool
 }
 
 func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*toolResult, error) {
@@ -132,6 +136,7 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
 		calEvents:       opts.CalEvents != nil,
+		timeline:        opts.Timeline != nil,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -221,6 +226,7 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 
 func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
+		timelineDefinition(),
 		listCalendarEventsDefinition(),
 		getCalendarEventDefinition(),
 		aggregateDefinition(nil),

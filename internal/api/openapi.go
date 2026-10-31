@@ -384,7 +384,8 @@ import (
 // 3.30.0 adds owner meeting link decisions and suggestions.
 // 3.31.0 adds stored hidden text flags to message details and search rows.
 // 3.32.0 adds owner-only call evidence import, inspection and person summaries.
-const APISchemaVersion = "3.32.0"
+// 3.33.0 adds bounded timeline JSON and Markdown with delegated source admission.
+const APISchemaVersion = "3.33.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1498,6 +1499,13 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schemaName + "AllowedResolutionsKeepLocal",
 			schemaName + "AllowedResolutionsKeepRemote",
 		})
+	}
+	// Openers contain primitive arguments, including numeric IDs and string refs.
+	// Empty-schema map values otherwise generate struct{} and reject those values.
+	if open := schemas["TimelineOpen"]; open != nil && open.Properties["args"] != nil {
+		if values, ok := open.Properties["args"].AdditionalProperties.(*huma.Schema); ok {
+			setCodegenGoType(values, "any")
+		}
 	}
 	// Without the override, empty-schema map values generate struct{}, which cannot carry surface="web".
 	if telemetry := schemas["TelemetryEventRequest"]; telemetry != nil && telemetry.Properties["properties"] != nil {

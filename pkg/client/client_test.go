@@ -591,7 +591,7 @@ func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t
 	assertions.Equal(generated.IdentitySearchSortDirectionDesc, generated.IdentitySearchSortDirection("desc"))
 	assertions.Equal(generated.Files, generated.SavedViewStateEnvelopePresentation("files"))
 	assertions.Equal(generated.Table, generated.SavedViewStateEnvelopePresentation("table"))
-	assertions.Equal(generated.Timeline, generated.SavedViewStateEnvelopePresentation("timeline"))
+	assert.Equal(t, generated.Timeline, generated.SavedViewStateEnvelopePresentation("timeline"))
 	assertions.Equal(generated.ExploreFilterDimensionAfter, generated.ExploreFilterDimension("after"))
 	assertions.Equal(generated.ExploreFilterDimensionIdentity, generated.ExploreFilterDimension("identity"))
 	assertions.Equal(generated.ExploreGroupSortDirectionAsc, generated.ExploreGroupSortDirection("asc"))
@@ -1545,5 +1545,31 @@ func TestImportMuesliSuccessStatuses(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(int64(3), got.SourceID)
 		})
+	}
+}
+
+func TestGeneratedTimelineDecodesPrimitiveOpenerArguments(t *testing.T) {
+	require := require.New(t)
+	body := `{"mode":"day","days":[{"bursts":[{"open":[{"tool":"get_message","args":{"id":42}},{"tool":"get_calendar_event","args":{"ref":"e77"}}]}]}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/timeline", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(body))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := New(srv.URL)
+	require.NoError(err)
+	response, err := client.GetTimelineWithResponse(t.Context(), &generated.GetTimelineRequestOptions{})
+	require.NoError(err)
+	require.NotNil(response.JSON200)
+	require.Len(response.JSON200.Days, 1)
+	require.Len(response.JSON200.Days[0].Bursts, 1)
+	openers := response.JSON200.Days[0].Bursts[0].Open
+	require.Len(openers, 2)
+	for i, want := range []string{`{"id":42}`, `{"ref":"e77"}`} {
+		got, err := json.Marshal(openers[i].Args)
+		require.NoError(err)
+		assert.JSONEq(t, want, string(got))
 	}
 }

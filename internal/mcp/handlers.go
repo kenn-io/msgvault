@@ -152,6 +152,7 @@ type handlers struct {
 	meetings             MeetingBackend
 	calendar             CalendarBackend
 	calEvents            CalendarEventsBackend
+	timelineBackend      TimelineBackend
 	personAgendaBackend  PersonAgendaBackend
 	kata                 KataBackend
 	identityReview       IdentityReviewBackend
