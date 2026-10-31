@@ -379,7 +379,9 @@ import (
 // 3.26.0 adds bounded search-aware deletion resolution with an explicit
 // max_results cap and matched_count for skipped matches.
 // 3.27.0 adds optional attachment text results and recording errors in media search.
-// 3.28.0 adds exact sender and To participant identities to conversation windows.
+// 3.28.0 adds exact sender and To participant identities to conversation windows,
+// timezone-aware daily message grouping, and sent_only group filtering.
+// Participant timelines include events and meetings only when the owner attended.
 const APISchemaVersion = "3.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
@@ -813,7 +815,7 @@ func hardenExploreSchemas(doc *huma.OpenAPI) {
 }
 
 func exploreGroupingEnum() []any {
-	dimensions := explorecatalog.GroupingDimensions()
+	dimensions := explorecatalog.RequestGroupingDimensions()
 	values := make([]any, len(dimensions))
 	for index, dimension := range dimensions {
 		values[index] = dimension
@@ -1345,7 +1347,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	setEnumNames(schemas["ExploreGroupDimension"], []any{
 		"ExploreGroupDimensionSource", "ExploreGroupDimensionParticipant", "ExploreGroupDimensionDomain",
-		"ExploreGroupDimensionMessageType", "ExploreGroupDimensionMailingList", "ExploreGroupDimensionKind", "ExploreGroupDimensionYear", "ExploreGroupDimensionMonth",
+		"ExploreGroupDimensionMessageType", "ExploreGroupDimensionMailingList", "ExploreGroupDimensionKind", "ExploreGroupDimensionYear", "ExploreGroupDimensionMonth", "ExploreGroupDimensionDay",
 	})
 	if counter := schemas["OperationPublicCounter"]; counter != nil {
 		setEnumNames(counter.Properties["unit"], []any{
@@ -1429,6 +1431,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		"ExploreFilter": {
 			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount"},
 		},
+		"ExploreGroupRow": {"level": {"ExploreGroupRowLevelNone", "ExploreGroupRowLevelFirstQuartile", "ExploreGroupRowLevelSecondQuartile", "ExploreGroupRowLevelThirdQuartile", "ExploreGroupRowLevelFourthQuartile"}},
 		"ExploreGroupSort": {
 			"direction": {"ExploreGroupSortDirectionAsc", "ExploreGroupSortDirectionDesc"},
 			"field":     {"ExploreGroupSortFieldKey", "ExploreGroupSortFieldCount", "ExploreGroupSortFieldEstimatedBytes", "ExploreGroupSortFieldLatestAt"},
@@ -1453,9 +1456,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				"ImportJobResponseStatusFailed",
 			},
 		},
-		"ExploreSelection": {
-			"mode": {"ExploreSelectionModeExplicit", "ExploreSelectionModeAllMatching"},
-		},
+		"ExploreSelection": {"mode": {"ExploreSelectionModeExplicit", "ExploreSelectionModeAllMatching"}},
 		"ExploreSort": {
 			"direction": {"ExploreSortDirectionDesc"},
 			"field":     {"ExploreSortFieldOccurredAt"},

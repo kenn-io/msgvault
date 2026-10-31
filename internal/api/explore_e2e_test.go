@@ -1022,7 +1022,7 @@ func newExploreDuckDBFixtureWithMessagesAndRecipients(
 // newExploreDuckDBFixtureWithClusters also commits participant_clusters rows
 // (participant_id, canonical_id); empty clusterValues commits no clusters.
 func newExploreDuckDBFixtureWithClusters(
-	tb testing.TB, messageValues, recipientValues, clusterValues string, lastMessageID int64,
+	tb testing.TB, messageValues, recipientValues, clusterValues string, lastMessageID int64, unsentMessages ...string,
 ) (*query.DuckDBEngine, string) {
 	tb.Helper()
 	clusters, noClusters := clusterValues, clusterValues == ""
@@ -1070,7 +1070,7 @@ func newExploreDuckDBFixtureWithClusters(
 		_, err := db.Exec(fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
 		require.NoError(tb, err, "write %s", table.dir)
 	}
-	ensureIdentityCacheFixtureDatasets(tb, db, analyticsDir)
+	ensureIdentityCacheFixtureDatasets(tb, db, analyticsDir, unsentMessages...)
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	require.NoError(tb, err)
 	state, err := json.Marshal(query.CacheSyncState{
@@ -1085,4 +1085,44 @@ func newExploreDuckDBFixtureWithClusters(
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, engine.Close()) })
 	return engine, analyticsDir
+}
+
+func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Parallel()
+	engine, _ := newExploreDuckDBFixtureWithClusters(t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, "", 3,
+		"(SELECT 3::BIGINT AS message_id)")
+	srv := newTestServerWithEngine(t, engine)
+	response := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Pacific/Pago_Pago","sent_only":true,"limit":366}`)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreGroupsHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(body.Rows, 2)
+	// The shifted date and sent total distinguish the two API request fields.
+	assert.ElementsMatch([]string{"2026-07-17", "2026-07-18"}, []string{body.Rows[0].Key, body.Rows[1].Key})
+	assert.Equal(int64(2), body.Rows[0].Count+body.Rows[1].Count)
+
+	invalid := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Invalid/Zone"}`)
+	require.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
+}
+
+func TestParticipantTimelineForwardsPersonInteractionsAndLinkedAliases(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, strings.Replace(exploreFixtureDefaultMessages, "'email'", "'calendar_event'", 1),
+		`(1::BIGINT, 1::BIGINT, 'from', 'Alice'), (2::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 2::BIGINT, 'from', 'Alice Alias')`,
+		3)
+	catalog := &fileCatalogStore{mockStore: &mockStore{messages: []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}, total: 3, stats: &StoreStats{}}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  &exploreClusterStore{fileCatalogStore: catalog, members: []int64{1, 2}}, Engine: engine, Logger: testLogger(),
+	})
+	all := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{}`)
+	require.Equal(http.StatusOK, all.Code, all.Body.String())
+	var body ExploreHTTPResponse
+	require.NoError(json.Unmarshal(all.Body.Bytes(), &body))
+	require.Len(body.Rows, 2)
+	// Two rows confirm interaction scope; m3 confirms linked-alias expansion.
+	require.Contains([]string{body.Rows[0].Key, body.Rows[1].Key}, "source:2:message:m3")
 }

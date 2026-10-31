@@ -2,6 +2,8 @@ package query
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -321,40 +323,45 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 	}
 }
 
-// TestExploreParticipantContextKeepsLegacyPath pins the fork rule: participant
-// and domain context filters render list_contains predicates whose evaluation
-// already assembles participant lists archive-wide, so the two-phase rescan
-// would pay that twice.
-func TestExploreParticipantContextKeepsLegacyPath(t *testing.T) {
+func TestExploreParticipantPopulationKeepsMembershipAndBoundedEnrichment(t *testing.T) {
 	assert := assert.New(t)
-	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{}))
-	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
-		Context: Context{SourceIDs: []int64{1}, MessageTypes: []string{"email"}},
-	}))
-	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
-		Context: Context{Identity: &IdentityPredicate{
-			SourceID: 1, ParticipantIDs: []int64{7}, Direction: IdentityDirectionAny,
-		}},
-	}), "identity predicates use bounded header-row existence checks, not participant lists")
-	assert.True(exploreConditionsTouchParticipantLists(ExploreRequest{
-		Context: Context{ParticipantIDs: []int64{7}},
-	}))
-	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
-		Context: Context{Domains: []string{"example.com"}},
-	}))
-}
-
-// TestExploreParticipantFilterListingStillCorrect exercises the legacy path
-// the fork preserves for participant-scoped listings.
-func TestExploreParticipantFilterListingStillCorrect(t *testing.T) {
-	engine, ids := buildFastPathEquivalenceEngine(t)
-	response, err := engine.Explore(context.Background(), ExploreRequest{
-		Context: Context{ParticipantIDs: []int64{ids.alice}},
-		Page:    PageSpec{Limit: 50},
-	})
-	require.NoError(t, err)
-	require.NotEmpty(t, response.Rows)
-	for _, row := range response.Rows {
-		assert.Contains(t, row.ParticipantIDs, ids.alice, "row %s must include the filtered participant", row.Key)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("owner@example.com")
+	person := b.AddParticipant("person@example.com", "example.com", "Person")
+	alias := b.AddParticipant("alias@example.net", "example.net", "Alias")
+	other := b.AddParticipant("other@example.org", "example.org", "Other")
+	b.LinkCluster(person, alias)
+	at := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	sent := b.AddMessage(MessageOpt{SourceID: source, SenderID: &alias, SentAt: at})
+	b.AddTo(sent, other, "Other")
+	received := b.AddMessage(MessageOpt{SourceID: source, SenderID: &other, SentAt: at.Add(time.Minute)})
+	b.AddTo(received, alias, "Alias")
+	const conversation = int64(900)
+	b.AddMessage(MessageOpt{SourceID: source, SenderID: &other, SentAt: at.Add(2 * time.Minute), MessageType: "imessage", ConversationType: "group_chat", ConversationID: conversation})
+	b.AddConversationParticipant(conversation, alias)
+	b.AddConversationParticipant(conversation, other)
+	for range 32 {
+		b.AddMessage(MessageOpt{SourceID: source, SenderID: &other, SentAt: at.Add(3 * time.Minute)})
 	}
+	engine := b.BuildEngine()
+	request := ExploreRequest{Context: Context{ParticipantIDs: []int64{person}, AdditionalParticipantGroups: [][]int64{{other}}}, Page: PageSpec{Limit: 1}}
+	fast, legacy := runExploreBothPaths(t, engine, request)
+	assert.Equal(legacy, fast)
+	require.Len(fast.Rows, 1)
+	assert.Equal(int64(3), fast.TotalCount)
+	assert.Equal(fmt.Sprintf("source:%d:conversation:900", source), fast.Rows[0].Key)
+	assert.ElementsMatch([]int64{alias, other}, fast.Rows[0].ParticipantIDs)
+	profile, err := profileDomainPopulation(t, engine, request)
+	require.NoError(err)
+	var check func(domainPopulationProfile)
+	check = func(operator domainPopulationProfile) {
+		if strings.Contains(fmt.Sprint(operator.ExtraInfo["Aggregates"]), "list(") {
+			assert.LessOrEqual(operator.IntermediateRows, int64(1), "participant lists must be enriched only for the selected page")
+		}
+		for _, child := range operator.Children {
+			check(child)
+		}
+	}
+	check(profile)
 }

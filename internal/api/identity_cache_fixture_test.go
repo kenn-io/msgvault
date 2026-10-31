@@ -22,6 +22,7 @@ func ensureIdentityCacheFixtureDatasets(
 	tb testing.TB,
 	db *sql.DB,
 	analyticsDir string,
+	unsentMessages ...string,
 ) {
 	tb.Helper()
 	personDisplayNamesDir := filepath.Join(analyticsDir, "person_display_names")
@@ -32,8 +33,13 @@ func ensureIdentityCacheFixtureDatasets(
 		personDisplayNamesPath,
 	))
 	require.NoError(tb, err, "write empty person_display_names fixture dataset")
+	var unsent string
+	if len(unsentMessages) > 0 {
+		unsent = unsentMessages[0]
+	}
 	_, err = identityindex.Build(context.Background(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
+		UnsentMessages: unsent,
 		StagedBaseRoot: analyticsDir,
 		OutputRoot:     analyticsDir,
 	})

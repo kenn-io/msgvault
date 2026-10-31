@@ -1,6 +1,7 @@
 import { stubOperationStatus } from './kit-ui';
-import { expect, test, type Page } from '@playwright/test';
 import { setKitTheme } from './kit-ui';
+import { expect, test, type Page } from '@playwright/test';
+import { meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
 import { exploreHistoryState } from './explore-state';
 
 const when = '2026-07-19T10:00:00Z';
@@ -14,7 +15,7 @@ const alice = {
   activity_count: 4,
   file_count: 1,
   source_counts: [{ source_type: 'gmail', count: 3 }],
-  first_at: when,
+  first_at: '2025-01-01T00:00:00Z',
   last_at: when,
   cache_revision: 'cache-relationships'
 };
@@ -73,8 +74,18 @@ const imageFile = {
   }
 };
 
+const timelineRows = [{ ...messageRow, kind: 'message', message_type: 'email', conversation_type: 'email',
+      source_identifier: 'archive@example.com', source_type: 'gmail', participant_labels: ['Alice Example'], participant_ids: [1],
+      attachment_count: 0, attachment_size: 0, deleted_from_source: false, anchor_message_id: 1, match: {} },
+      { ...chatBurstRow, key: 'conversation:70', kind: 'conversation', message_type: 'slack', conversation_type: 'chat',
+        source_identifier: 'archive@example.com', source_type: 'slack', participant_labels: ['Bob Example'], participant_ids: [2],
+        attachment_count: 0, attachment_size: 0, deleted_from_source: false, match: {} }];
+
 async function prepare(page: Page, personFileBodies: Record<string, unknown>[] = []) {
   await stubOperationStatus(page);
+  await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: meetingMetrics() }));
+  await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: meetingActions() }));
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
@@ -90,9 +101,18 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
     total_count: 1, cache_revision: 'cache-relationships', identity_revision: 1
   } }));
   await page.route('**/api/v1/participants/1', (route) => route.fulfill({ json: alice }));
-  await page.route('**/api/v1/relationships/1/timeline', (route) => route.fulfill({ json: {
-    canonical_id: 1, identity_revision: 1, cache_revision: 'cache-relationships',
-    rows: [messageRow, chatBurstRow], total_count: 2
+  await page.route('**/api/v1/participants/*/timeline', route => route.fulfill({ json: {
+    rows: timelineRows,
+    total_count: 2, cache_revision: 'cache-relationships', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/relationships/*/calendar', route => route.fulfill({ json: {
+    participant_id: 1, canonical_id: 1, year: route.request().postDataJSON().year, timezone: 'UTC', days: Array.from({ length: 300 }, (_, index) => {
+      const date = new Date(Date.UTC(route.request().postDataJSON().year, 0, index + 1)).toISOString().slice(0, 10);
+      const count = date.endsWith('-07-18') ? 2 : index % 13 === 0 ? 3 : index % 5 === 0 ? 1 : 0;
+      return { date, total: count, email: count, chat: 0, meetings: 0, sent: 0, received: count, modality_mask: count ? 1 : 0, level: count === 3 ? 'FOURTH_QUARTILE' : count ? 'FIRST_QUARTILE' : 'NONE' };
+    }), annual: [],
+    current: { temperature: 62 }, peak_temperature: 62, peak_year: 2026,
+    scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', cache_revision: 'cache-relationships', identity_revision: 1
   } }));
   await page.route('**/api/v1/participants/1/files/search', async (route) => {
     const body = route.request().postDataJSON() as Record<string, unknown>;
@@ -134,16 +154,12 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
   } }));
 }
 
-test('legacy People URL lands on the Relationships hub and walks list, timeline, reading pane, facet, and history', async ({ page }) => {
+test('People facet and person Back restore the list and close the reader', async ({ page }) => {
   await prepare(page);
 
-  // A pre-rewrite bookmark for the deleted People workspace normalizes to
-  // the relationships hub instead of erroring or landing somewhere blank.
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'people' }))}`);
+  await page.goto('/?workspace=relationships');
 
-  const hub = page.getByRole('main', { name: 'Relationships' });
-  await expect(hub).toBeVisible();
-  const list = page.getByRole('grid', { name: 'Relationship results' });
+  const list = page.getByRole('grid', { name: 'People results' });
   await expect(list.getByText('Alice Example')).toBeVisible();
   await expect(page.getByText('Select a person or domain', { exact: true })).toBeVisible();
   await expect(page.getByRole('radio', { name: 'People' })).toHaveAttribute('aria-checked', 'true');
@@ -152,14 +168,11 @@ test('legacy People URL lands on the Relationships hub and walks list, timeline,
   // the timeline for that cluster.
   await list.getByText('Alice Example').click();
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
-  const timeline = page.getByRole('grid', { name: 'Relationship activity' });
+  const timeline = page.getByRole('grid', { name: 'Messages results' });
   await expect(timeline.getByText('Subject line')).toBeVisible();
 
-  // A chat-burst row opens straight into the bounded conversation window in
-  // the reading pane rather than the plain entry summary: the anchor message
-  // renders expanded as a card in the thread.
-  await timeline.getByText('6 messages in Team Chat').click();
-  const reading = page.getByRole('complementary', { name: /Reading pane: 6 messages in Team Chat/ });
+  await timeline.getByText('Team Chat').click();
+  const reading = page.getByRole('complementary', { name: /Reading pane: Team Chat/ });
   await expect(reading).toBeVisible();
   await expect(reading.getByRole('button', { name: 'Collapse message 500 from Bob Example' })).toBeVisible();
   await expect(reading.getByText('Latest chat message')).toBeVisible();
@@ -193,9 +206,9 @@ test('person attachment gallery preserves directions and Media state across sour
   await prepare(page, personFileBodies);
   await page.goto('/?workspace=relationships');
 
-  const list = page.getByRole('grid', { name: 'Relationship results' });
+  const list = page.getByRole('grid', { name: 'People results' });
   await list.getByText('Alice Example').click();
-  await page.getByRole('radio', { name: 'Files 1' }).click();
+  await page.getByRole('radio', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('notes.pdf')).toBeVisible();
   expect(personFileBodies[0]).toMatchObject({
     directions: ['from_person'],
@@ -233,9 +246,7 @@ test('person attachment gallery preserves directions and Media state across sour
 
 test('Back restores the relationship message and its conversation window after following a participant', async ({ page }) => {
   await prepare(page);
-  const windows: URLSearchParams[] = [];
   await page.route('**/api/v1/conversations/70**', route => {
-    windows.push(new URL(route.request().url()).searchParams);
     return route.fulfill({ json: {
       id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
       messages: [{
@@ -248,22 +259,17 @@ test('Back restores the relationship message and its conversation window after f
   await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
     ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
   } }));
-  await page.route('**/api/v1/relationships/2/timeline', route => route.fulfill({ json: {
-    canonical_id: 2, identity_revision: 1, cache_revision: 'cache-relationships', rows: [], total_count: 0
-  } }));
   await page.goto('/?workspace=relationships');
-  await page.getByRole('grid', { name: 'Relationship results' }).getByText('Alice Example').click();
-  await page.getByRole('grid', { name: 'Relationship activity' }).getByText('6 messages in Team Chat').click();
-  const reading = page.getByRole('complementary', { name: 'Reading pane: 6 messages in Team Chat' });
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  await page.getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true }).click();
+  await page.getByRole('grid', { name: 'Messages results' }).getByText('Team Chat').click();
+  const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
   await reading.getByRole('button', { name: 'Bob Example', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
   await expect(reading).toBeHidden();
   await page.goBack();
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
   await expect(reading.getByRole('button', { name: 'Collapse message 500 from Bob Example' })).toBeVisible();
-  expect(windows.at(-1)?.get('anchor')).toBe('500');
-  expect(windows.at(-1)?.get('start')).toBe('2026-07-18T00:00:00.000Z');
-  expect(windows.at(-1)?.get('end')).toBe('2026-07-19T00:00:00.000Z');
   await page.goForward();
   await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
   await expect(reading).toBeHidden();
@@ -271,49 +277,24 @@ test('Back restores the relationship message and its conversation window after f
   await expect(reading.getByText('Latest chat message')).toBeVisible();
 });
 
-for (const width of [1440, 420]) {
-  test(`expanded relationship overview leaves usable activity at ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
+for (const [width, height] of [[1440, 900], [420, 900], [1280, 720]]) {
+  test(`person calendar, messages, and files remain usable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
     await prepare(page);
-    await page.route('**/api/v1/relationships/1/calendar', route => route.fulfill({ json: {
-      participant_id: 1, canonical_id: 1, year: 2026, timezone: 'UTC', days: [], annual: [],
-      current: { temperature: 62, rank: 1, population: 1, raw_score: 3,
-        signals: { sent_signal: 1, received_volume: 1, meeting_signal: 0, modalities: 2 } },
-      peak_temperature: 62, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1,
-      effective_date: '2026-07-19', cache_revision: 'cache-relationships', identity_revision: 1
-    } }));
-    await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: {
-      totals: { meeting_count: 2, known_duration_count: 2, unknown_duration_count: 0,
-        total_known_seconds: 3600, average_known_seconds: 1800 },
-      duration_by_basis: [{ basis: 'provider', count: 2, total_seconds: 3600 }],
-      months: [], undated_count: 0
-    } }));
-    await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: {
-      rows: [], total_count: 0, coverage: { available: 2, meeting_count: 2, partial: 0, unavailable: 0, unsupported: 0 }
-    } }));
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'relationships', relationshipTarget: 'cluster:1'
-    }))}`);
-    const overview = page.locator('.meeting-overview');
-    await expect(overview).toHaveAttribute('open', '');
-    await expect(page.getByRole('heading', { name: '2 meetings', exact: true })).toBeVisible();
-    const timeline = page.getByRole('grid', { name: 'Relationship activity' });
-    await expect(timeline).toBeInViewport();
-    expect((await timeline.boundingBox())!.height).toBeGreaterThanOrEqual(100);
-    await timeline.getByText('6 messages in Team Chat', { exact: true }).click();
-    await expect(page.getByRole('complementary', { name: /^Reading pane:/ })).toBeVisible();
-    await expect(timeline).toBeInViewport();
-    expect((await timeline.boundingBox())!.height).toBeGreaterThanOrEqual(100);
-    await page.getByRole('radio', { name: 'Files 1', exact: true }).click();
-    const files = page.getByRole('grid', { name: 'Files results' });
-    await expect(files.getByText('notes.pdf', { exact: true })).toBeInViewport();
-    expect((await files.boundingBox())!.height).toBeGreaterThanOrEqual(100);
-    await page.getByRole('checkbox', { name: 'Group conversations' }).check();
-    await expect(page.getByRole('checkbox', { name: 'Group conversations' })).toBeInViewport();
-    await expect(files.getByText('notes.pdf', { exact: true })).toBeInViewport();
-    await expect(overview).toHaveAttribute('open', '');
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
+    await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
+    const messages = page.getByRole('grid', { name: 'Messages results' });
+    await page.getByRole('group', { name: 'Person page' }).hover();
+    await page.mouse.wheel(0, 700);
+    await expect(messages.getByText('Subject line')).toBeInViewport();
+    expect((await messages.boundingBox())!.height).toBeGreaterThan(100);
+    await page.getByRole('radio', { name: 'Files', exact: true }).click();
+    await expect(page.getByRole('grid', { name: 'Files results' }).getByText('notes.pdf')).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
-    await page.screenshot({ path: `test-results/artifacts/relationships-expanded-${width}.png` });
+    if (width === 420) {
+      await page.getByRole('button', { name: 'Back to People' }).click();
+      await expect(page.getByRole('grid', { name: 'People results' })).toBeVisible();
+    }
   });
 }
 
@@ -332,17 +313,14 @@ test('clicking a relationship label preserves keyboard navigation and one grid t
   await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
     ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
   } }));
-  await page.route('**/api/v1/relationships/2/timeline', route => route.fulfill({ json: {
-    canonical_id: 2, identity_revision: 1, cache_revision: 'cache-relationships', rows: [], total_count: 0
-  } }));
   await page.goto('/?workspace=relationships');
-  const grid = page.getByRole('grid', { name: 'Relationship results' });
+  const grid = page.getByRole('grid', { name: 'People results' });
   await grid.getByText('Alice Example', { exact: true }).click();
   await expect(grid).toBeFocused();
   await page.keyboard.press('j');
-  await expect(grid.getByRole('row', { name: /Bob Example/ })).toHaveClass(/active/);
+  await expect(grid.getByRole('row', { name: /Bob Example/ })).toHaveClass(/focus/);
   await page.keyboard.press('ArrowUp');
-  await expect(grid.getByRole('row', { name: /Alice Example/ })).toHaveClass(/active/);
+  await expect(grid.getByRole('row', { name: /Alice Example/ })).toHaveClass(/focus/);
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
@@ -363,24 +341,19 @@ test('clicking a relationship checkbox keeps keyboard selection in the grid', as
     ], total_count: 2, cache_revision: 'cache-relationships', identity_revision: 1
   } }));
   await page.goto('/?workspace=relationships');
-  const grid = page.getByRole('grid', { name: 'Relationship results' });
+  const grid = page.getByRole('grid', { name: 'People results' });
   await grid.getByRole('row', { name: /Alice Example/ }).hover();
   await grid.getByRole('checkbox', { name: 'Select Alice Example' }).click();
   await expect(grid).toBeFocused();
   await page.keyboard.press('j');
-  await expect(grid.getByRole('row', { name: /Bob Example/ })).toHaveClass(/active/);
+  await expect(grid.getByRole('row', { name: /Bob Example/ })).toHaveClass(/focus/);
   await page.keyboard.press('Space');
   await expect(grid.getByRole('checkbox', { name: 'Unselect Bob Example' })).toBeChecked();
 });
 
-test('relationship labels disclose on hover and identity hues retain text contrast', async ({ page }) => {
+test('identity hues retain text contrast', async ({ page }) => {
   await prepare(page);
   await page.goto('/?workspace=relationships');
-  const name = page.getByRole('grid', { name: 'Relationship results' }).locator('.kit-tooltip-trigger').first();
-  await name.hover();
-  await expect(page.getByRole('tooltip')).toHaveText('Alice Example');
-  await expect(page.getByRole('tooltip')).toBeInViewport();
-  await page.keyboard.press('Escape');
   for (const theme of ['light', 'dark'] as const) {
     await setKitTheme(page, theme);
     const minimum = await page.locator('.identity-avatar').first().evaluate(element => {
@@ -415,4 +388,219 @@ test('relationship labels disclose on hover and identity hues retain text contra
     });
     expect(minimum, `${theme} identity initials`).toBeGreaterThanOrEqual(4.5);
   }
+});
+
+test('domain calendar retries and retains its local day across Details', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/domains/example.com/summary', route => route.fulfill({ json: { summary: { ...domainSummary, first_at: '2025-05-01T00:00:00Z', last_at: '2025-08-01T00:00:00Z' } } }));
+  const bodies: Record<string, unknown>[] = [];
+  let attempts = 0;
+  await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: { ...domainSummary, first_at: '2022-01-01T12:00:00Z' } }));
+  await page.route('**/api/v1/domains/example.com/timeline', route => {
+    const body = route.request().postDataJSON(); bodies.push(body);
+    const occurred_at = body.filters?.find((filter: { dimension: string }) => filter.dimension === 'after')?.values[0] ?? when;
+    return route.fulfill({ json: { rows: timelineRows.map(row => ({ ...row, occurred_at, first_at: occurred_at })), total_count: 2, cache_revision: 'cache-domain', search_provenance: {} } });
+  });
+  await page.route('**/api/v1/explore/groups', route => {
+    const body = route.request().postDataJSON();
+    if (body.grouping?.[0] !== 'day') return route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'cache-domain', search_provenance: {} } });
+    if (++attempts === 1) return route.fulfill({ status: 500, json: { message: 'Could not load activity.' } });
+    return route.fulfill({ json: { rows: [...Array.from({ length: 7 }, (_, i) => ({ key: `${body.filters[1].values[0].slice(0, 4)}-01-0${i + 1}`, count: 1, level: 'FIRST_QUARTILE' })), { key: `${body.filters[1].values[0].slice(0, 4)}-07-19`, label: 'Jul 19', count: 3, estimated_bytes: 30, latest_at: when, level: 'FOURTH_QUARTILE' }, { key: `${body.filters[1].values[0].slice(0, 4)}-08-01`, count: 10, level: 'FOURTH_QUARTILE' }],
+      total_count: 1, cache_revision: 'cache-domain', search_provenance: {} } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', filters: [{ dimension: 'source', values: ['1'] }] }))}`);
+  await page.getByRole('radio', { name: 'Domains', exact: true }).click();
+  await page.getByRole('grid', { name: 'People results' }).getByText('example.com', { exact: true }).click();
+  const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+  await calendar.getByRole('button', { name: 'Retry' }).click();
+  await expect(calendar.getByRole('heading', { name: 'Activity since Jan 2022' })).toBeVisible();
+  await calendar.getByRole('button', { name: 'Previous relationship year' }).click();
+  const day = calendar.getByRole('button', { name: '3 messages on Jul 19, 2025' }).filter({ visible: true });
+  await day.click();
+  await expect.poll(() => bodies.at(-1)?.filters).toContainEqual({ dimension: 'after', values: [expect.stringContaining('2025-07-19')] });
+  await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
+  await expect(day).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => bodies.at(-1)?.filters).toEqual([]);
+});
+
+test('saved people keep durable IDs separate from participants and open profiles with no messages', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: [
+    { id: 91, display_name: 'Saved Alice', organizations: ['Example Org'], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-91' },
+    { id: 92, display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-92' },
+    { id: 93, display_name: 'Draft Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-93' },
+  ] } }));
+  await page.route('**/api/v1/people/91', route => route.fulfill({ json: { id: 91, display_name: 'Saved Alice', revision: 1, participant_ids: [1] } }));
+  await page.route('**/api/v1/people/92', route => route.fulfill({ json: { id: 92, display_name: 'Saved Contact', revision: 1, participant_ids: [] } }));
+  await page.route('**/api/v1/people/93', route => route.fulfill({ json: { id: 93, display_name: 'Draft Contact', revision: 1, participant_ids: [3] } }));
+  await page.route('**/api/v1/participants/3', route => route.fulfill({ status: 404, json: { error: 'not_found' } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
+  const list = page.getByRole('grid', { name: 'People results' });
+  await list.getByText('Saved Alice', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
+  expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 91, relationshipTarget: 'cluster:1' });
+  await list.getByText('Draft Contact', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Open in Directory', exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Domains', exact: true }).click();
+  await expect(page.getByText('Saved', { exact: true })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'People', exact: true }).click();
+  await list.getByText('Saved Contact', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Saved Contact' })).toBeVisible();
+  expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92, relationshipTarget: null });
+  await page.getByRole('button', { name: 'Open in Directory', exact: true }).click();
+  await expect.poll(async () => (await exploreHistoryState(page)).workspace).toBe('directory');
+  expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92 });
+});
+
+test('People history and reload restore participant scope without a message query', async ({ page }) => {
+  await prepare(page);
+  const requests: Record<string, unknown>[] = [];
+  await page.route('**/api/v1/participants/search', route => route.fulfill({ json: { rows: [alice], total_count: 1, cache_revision: 'cache-relationships', search_provenance: {} } }));
+  await page.route('**/api/v1/participants/1/summary', route => route.fulfill({ json: { summary: alice } }));
+  await page.route('**/api/v1/participants/1/timeline', async route => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    await route.fulfill({ json: { rows: [{ ...messageRow, title: 'Alias activity', kind: 'message', message_type: 'email', conversation_type: 'email', source_identifier: 'archive@example.com', source_type: 'gmail', participant_labels: ['Alice Alias'], participant_ids: [2], attachment_count: 0, attachment_size: 0, deleted_from_source: false, match: {} }], total_count: 1, cache_revision: 'cache-relationships', search_provenance: {} } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', identityQuery: 'alice', relationshipTarget: 'cluster:1', filters: [{ dimension: 'participant', values: ['2'] }] }))}`);
+  await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
+  await page.getByRole('radio', { name: 'Files', exact: true }).click();
+  await expect(page.getByText('notes.pdf', { exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
+  await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
+  await page.goBack();
+  await expect(page.getByText('notes.pdf', { exact: true })).toBeVisible();
+  await page.goBack();
+  await expect.poll(async () => (await exploreHistoryState(page)).filters).toEqual([{ dimension: 'participant', values: ['2'] }]);
+  await page.reload();
+  await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
+  expect(requests.at(-1)?.filters).toEqual([{ dimension: 'participant', values: ['2'] }]);
+  expect(requests.at(-1)).not.toHaveProperty('query');
+});
+
+test('missing saved profiles keep Back to People on narrow screens', async ({ page }) => {
+  await prepare(page);
+  await page.setViewportSize({ width: 640, height: 900 });
+  await page.route('**/api/v1/people/999', route => route.fulfill({ status: 404, json: { message: 'Person not found' } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 999 }))}`);
+  await expect(page.getByRole('alert')).toHaveText('Saved person not found.');
+  await expect(page.getByRole('heading', { name: 'Saved person', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Back to People', exact: true }).click();
+  await expect(page.getByRole('grid', { name: 'People results' })).toBeVisible();
+});
+
+test('list filters clear hidden selections and each mode offers only supported controls', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: [91, 92].map(id => ({ id, display_name: `Saved ${id}`, organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: `example-${id}` })) } }));
+  await page.route('**/api/v1/relationships', route => route.fulfill({ json: { rows: [1, 2].map(id => ({ canonical_id: id, display_label: id === 1 ? 'Alice Example' : 'Bob Example', last_at: when, member_ids: [id], score: 2, signals: { last_interaction_at: when, sent_count: 3 } })), total_count: 2, cache_revision: 'cache-relationships' } }));
+  await page.goto('/?workspace=relationships');
+  const list = page.getByRole('grid', { name: 'People results' });
+  await list.getByRole('row', { name: /Alice Example/ }).hover();
+  await list.getByRole('checkbox', { name: 'Select Alice Example' }).click();
+  await list.press('ArrowDown');
+  await list.press('Space');
+  await expect(page.getByText('2 selected', { exact: true })).toBeVisible();
+  await page.getByTitle('Filter people', { exact: true }).click();
+  await page.getByRole('button', { name: 'Include one-way senders', exact: true }).click();
+  await expect(page.getByText('2 selected', { exact: true })).toBeHidden();
+  await page.keyboard.press('Escape');
+  await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).click();
+  await page.getByRole('option', { name: 'Name', exact: true }).click();
+  await page.getByTitle('Filter people', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Include one-way senders', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Saved', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await page.getByRole('combobox', { name: 'Sort: Name', exact: true }).click();
+  await expect(page.getByRole('option', { name: 'Closest', exact: true })).toBeHidden();
+  await page.keyboard.press('Escape');
+  await list.getByRole('row', { name: /Saved 91/ }).hover();
+  await list.getByRole('checkbox', { name: 'Select Saved 91' }).click();
+  await expect(page.getByText('1 selected', { exact: true })).toBeVisible();
+  await page.getByTitle('Filter people', { exact: true }).click();
+  await page.getByRole('button', { name: 'Profile filters', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Category filter', exact: true }).fill('work');
+  await expect(page.getByText('1 selected', { exact: true })).toBeHidden();
+});
+
+for (const previous of ['Alice', 'no person']) {
+  test(`returning from Directory opens the selected person's messages after ${previous}`, async ({ page }) => {
+    await prepare(page);
+    const profiles = [
+      { id: 91, display_name: 'Alice Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [1], carddav_bindings: [], vcard_uid: 'example-91' },
+      { id: 92, display_name: 'Bob Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [2], carddav_bindings: [], vcard_uid: 'example-92' },
+    ];
+    await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: profiles } }));
+    for (const profile of profiles) await page.route(`**/api/v1/people/${profile.id}`, route => route.fulfill({ json: profile }));
+    await page.route('**/api/v1/people/*/**', route => route.fulfill({ status: 404, json: { error: 'not_found', message: 'Synthetic optional section unavailable.' } }));
+    await page.route('**/api/v1/participants/1', route => route.fulfill({ json: { ...alice, profile: { id: 91, display_name: 'Alice Example' } } }));
+    await page.route('**/api/v1/participants/2', route => route.fulfill({ json: { ...alice, id: 2, display_label: 'Bob Example' } }));
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
+    const list = page.getByRole('grid', { name: 'People results' });
+    if (previous === 'Alice') {
+      await list.getByText('Alice Example', { exact: true }).click();
+      await page.getByRole('radio', { name: 'Details', exact: true }).click();
+      await page.getByRole('button', { name: 'Open in Directory', exact: true }).click();
+    } else await page.getByRole('button', { name: 'Directory', exact: true }).click();
+    await page.getByRole('grid', { name: 'Directory people' }).getByText('Bob Example', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'People', exact: true }).click();
+    await expect(list.getByRole('row', { name: /Bob Example/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
+    await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
+  });
+}
+
+test('Back clears a later calendar day before restoring the same person reader', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/participants/1/timeline', route => route.fulfill({ json: { rows: timelineRows.map(row => row.key === 'message:1' ? { ...row, conversation_id: 21 } : row), total_count: 2 } }));
+  const requests: Record<string, unknown>[] = [];
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/v1/participants/1/timeline') requests.push(request.postDataJSON()); });
+  await page.route('**/api/v1/conversations/21**', route => route.fulfill({ json: { id: 21, anchor_id: 1, has_before: false, has_after: false, total: 1, messages: [{ id: 1, conversation_id: 21, subject: 'Subject line', message_type: 'email', from: 'Alice Example', to: [], sent_at: '2026-07-18T09:00:00Z', body: 'Email body', snippet: 'Email body', attachments: [] }] } }));
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await grid.getByText('Team Chat').click();
+  await expect(page.getByRole('complementary', { name: /Reading pane: Team Chat/ })).toBeVisible();
+  await page.getByRole('group', { name: 'Person page', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('From', { exact: true }).fill('2026-07-01');
+  await expect.poll(async () => (await exploreHistoryState(page)).filters).toContainEqual({ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] });
+  await page.keyboard.press('Escape');
+  const day = page.getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true });
+  await day.click();
+  await expect.poll(() => requests.at(-1)?.filters).toContainEqual({ dimension: 'after', values: ['2026-07-18T00:00:00.000Z'] });
+  await expect(grid).toHaveAttribute('aria-busy', 'false');
+  await grid.focus();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
+  await expect(day).toHaveAttribute('aria-pressed', 'true');
+  await page.goBack();
+  await expect(day).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => requests.at(-1)?.filters).toEqual([]);
+  await expect(page.getByRole('complementary', { name: /Reading pane: Team Chat/ }).getByText('Latest chat message')).toBeVisible();
+  expect(await page.evaluate(() => window.history.state.relationshipReader?.bounds)).toBeUndefined();
+  await page.goForward();
+  await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
+});
+
+test('People list keys stay in that grid while Messages is open', async ({ page }) => {
+  await prepare(page);
+  await page.goto('/?workspace=relationships');
+  const list = page.getByRole('grid', { name: 'People results' });
+  await list.getByText('Alice Example').click();
+  const messages = page.getByRole('grid', { name: 'Messages results' });
+  await expect(messages.getByText('Subject line')).toBeVisible();
+  const active = await messages.getAttribute('aria-activedescendant');
+  await list.focus();
+  await page.keyboard.press('End');
+  await expect(list).toBeFocused();
+  await page.keyboard.press('A');
+  await expect(list).toBeFocused();
+  expect(await messages.getAttribute('aria-activedescendant')).toBe(active);
+  await expect(messages.getByRole('row', { selected: true })).toHaveCount(0);
 });

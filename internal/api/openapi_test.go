@@ -16,7 +16,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -208,6 +207,9 @@ func TestCalendarRequestEnumNamesPreserveGeneratedClientExports(t *testing.T) {
 		assertions.Equal(want, field.Extensions["x-enum-names"], property)
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"ExploreGroupRow": {
+			"level": {"ExploreGroupRowLevelNone", "ExploreGroupRowLevelFirstQuartile", "ExploreGroupRowLevelSecondQuartile", "ExploreGroupRowLevelThirdQuartile", "ExploreGroupRowLevelFourthQuartile"},
+		},
 		"CreateAttributeDefinitionRequest": {
 			"cardinality": {"Single", "Multi"},
 		},
@@ -1637,7 +1639,7 @@ func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
 	schemas := doc.Components.Schemas.Map()
 	dimension := schemas["ExploreGroupDimension"]
 	requirements.NotNil(dimension)
-	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month"}, dimension.Enum)
+	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month", "day"}, dimension.Enum)
 
 	filter := schemas["ExploreFilter"]
 	requirements.NotNil(filter)
@@ -1693,20 +1695,6 @@ func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
 	assertions.Equal("jsontext.Value", property.Extensions["x-go-type"])
 	assertions.Equal(map[string]any{"path": "encoding/json/jsontext"},
 		property.Extensions["x-go-type-import"])
-}
-
-func TestOpenAPIExploreGroupingEnumUsesServerCatalog(t *testing.T) {
-	t.Parallel()
-	dimensions := explorecatalog.GroupingDimensions()
-	want := make([]any, len(dimensions))
-	for index, dimension := range dimensions {
-		want[index] = dimension
-	}
-
-	assert.Equal(t, want, exploreGroupingEnum())
-	dimension := OpenAPIDocument().Components.Schemas.Map()["ExploreGroupDimension"]
-	require.NotNil(t, dimension)
-	assert.Equal(t, want, dimension.Enum)
 }
 
 func TestOpenAPIArtifactUpToDate(t *testing.T) {

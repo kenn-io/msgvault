@@ -2546,6 +2546,24 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
 
+### Participant and domain timelines
+
+`POST /api/v1/participants/{id}/timeline` and `POST /api/v1/domains/{domain}/timeline` omit drafts and unsent items. Participant timelines include events and meetings only when the archive owner participated. These rules apply to every caller, including CLI and MCP clients.
+
+### Group analytical results
+
+**Endpoint:** `POST /api/v1/explore/groups`
+
+`grouping` takes one dimension: `source`, `participant`, `domain`,
+`message_type`, `mailing_list`, `kind`, `year`, `month`, or `day`.
+`day` returns `YYYY-MM-DD` keys and counts individual messages; other
+dimensions count entries, with chats collapsed into conversations.
+`timezone` sets the IANA time zone for day grouping and defaults to `UTC`.
+Day rows include `level`, ranking each count among the returned day rows for calendar shading.
+`sent_only: true` excludes drafts and unsent items from the counts.
+Day grouping is request-only and cannot be stored in a saved view.
+Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
+
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
 
 **Endpoint:** `POST /api/v1/explore/preflight`

@@ -40,7 +40,7 @@
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
   import { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
-  import { RelationshipsController } from '../../relationships/controller.svelte';
+  import { contextPredicate, RelationshipsController } from '../../relationships/controller.svelte';
   import { DirectoryController } from '../../directory/controller.svelte';
   import { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
@@ -69,7 +69,7 @@
   import DeletionsWorkspace from '../deletions/DeletionsWorkspace.svelte';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
-  import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
+  import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
   import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
   import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
@@ -493,6 +493,7 @@
     loader.submitted = true;
     loader.retry();
     const workspace = exploreState.current.workspace;
+    if (workspace === 'relationships') { commitNavigation({ identityQuery: query }); return; }
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
       focusGrid();
@@ -761,7 +762,7 @@
   function relayGridKey(event: KeyboardEvent, key: string, init: KeyboardEventInit = {}): void {
     if (event.target instanceof Element && event.target.closest('button, a, summary, [role="button"]')) return;
     const grid = currentGrid();
-    if (!grid || event.target === grid) return;
+    if (!grid || event.target === grid || (event.target instanceof Element && event.target.closest('[role="grid"]') && event.target.closest('[role="grid"]') !== grid)) return;
     grid.focus();
     grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   }
@@ -1083,11 +1084,8 @@
     keyboardHelpScopeCleanup?.();
     keyboardHelpScopeCleanup = keyboardHelpOpen ? appShortcuts.pushScope('everything-keyboard-help') : undefined;
   });
-  // Hydrates the Relationships hub's detail pane from a URL-carried target
-  // (initial load, or Back/Forward restoring a different one). The hub
-  // itself never opens a target on its own — RelationshipsWorkspace's own
-  // tests drive controller.openTarget explicitly — so AppShell, as the
-  // controller's owner, is the one place that reacts to the URL field.
+  // AppShell owns the People controller and opens the URL target on initial
+  // load and Back/Forward navigation.
   // Tracked (not untracked) so a predicate change alone — e.g. filters set
   // in Everything/Files that carry over when the URL-carried target stays
   // the same — re-opens the target too, mirroring how Everything's own
@@ -1110,14 +1108,14 @@
       if (relationshipsController.target !== null) relationshipsController.clearTarget();
       return;
     }
-    const predicate = exploreState.predicate();
+    const predicate = contextPredicate(exploreState.predicate());
     if (
       relationshipsController.target === target &&
       relationshipsController.lastPredicateFingerprint === predicateFingerprint(predicate)
     ) {
       return;
     }
-    void relationshipsController.openTarget(target, predicate);
+    void relationshipsController.openTarget(target, predicate, false);
   });
   function openRelationship(participantID: number): void {
     commitNavigation(relationshipDestination(participantID));
@@ -1236,7 +1234,7 @@
       {/if}
       <SearchBar
         workspace={exploreState.current.workspace}
-        query={exploreState.current.query}
+        query={exploreState.current.workspace === 'relationships' ? exploreState.current.identityQuery ?? '' : exploreState.current.query}
         mode={exploreState.current.searchMode}
         live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files'}
         compact={narrow}
@@ -1277,18 +1275,20 @@
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions(true)} />
       {:else if exploreState.current.workspace === 'relationships'}
-        <RelationshipsWorkspace
+        <PeopleWorkspace
+          directory={directoryController}
+          urlState={exploreState.current}
+          onNavigate={commitNavigation}
+          onReplaceNavigation={replaceCommittedNavigation}
+          onDraftNavigation={replaceCommittedDraft}
           {client}
           controller={relationshipsController}
-          facet={exploreState.current.relationshipFacet}
           target={exploreState.current.relationshipTarget}
-          showAll={exploreState.current.relationshipShowAll}
           filesOpen={exploreState.current.relationshipFiles}
           predicate={exploreState.predicate()}
+          onFiltersChange={(filters) => commitNavigation({ filters })}
           personFilePresentation={exploreState.current.personFilePresentation}
           personFileDirections={exploreState.current.personFileDirections}
-          onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
-          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
           onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
           onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
           onPersonFilePresentationChange={(personFilePresentation) =>
@@ -1305,7 +1305,6 @@
               selectedRow: null,
               scrollAnchor: null,
             })}
-          onOpenEverything={() => commitWorkspace('everything')}
           onOpenPerson={openRelationship}
           onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}

@@ -1,18 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { lanes } from '../../../test/operations';
 import { createAPIClient } from '../../api/client';
 import type { MeetingMetricsRequest } from '../../api/generated/models';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
-import { RelationshipsController } from '../../relationships/controller.svelte';
 import PersonDetail from '../directory/PersonDetail.svelte';
-import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
 import AppShell from '../shell/AppShell.svelte';
 
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [3, 7], vcard_uid: 'person-7', created_at: '', updated_at: '' };
-const at = '2026-01-01T00:00:00Z';
 function ancillary(path: string): Response {
   if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
   if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
@@ -51,31 +48,6 @@ describe('meeting panel surfaces', () => {
     expect(screen.queryByText('99 meetings')).toBeNull();
   });
 
-  it.each(['cluster:7', 'domain:exact.example'])('uses the active Relationships scope for %s', async (target) => {
-    const metrics: MeetingMetricsRequest[] = [];
-    const client = createAPIClient(async (input) => {
-      const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
-      if (path.endsWith('/meetings/metrics')) { metrics.push(await request.clone().json()); return Response.json(meetingMetrics()); }
-      if (path.endsWith('/meetings/actions')) return Response.json(meetingActions());
-      if (path.endsWith('/timeline')) return Response.json({ canonical_id: 7, identity_revision: 3, cache_revision: 'rel-cache', rows: [], total_count: 0 });
-      if (path.endsWith('/summary')) return Response.json({ summary: { id: 7, display_label: 'Example Person', domain: 'exact.example', activity_count: 0, file_count: 0, identifiers: [], source_counts: [], cache_revision: 'rel-cache' } });
-      if (path.endsWith('/participants/7')) return Response.json({ id: 7, display_label: 'Example Person', identifiers: [], activity_count: 0, file_count: 0, source_counts: [], first_at: at, last_at: at, cache_revision: 'rel-cache' });
-      if (path.endsWith('/domains/exact.example')) return Response.json({ domain: 'exact.example', activity_count: 0, file_count: 0, source_counts: [], cache_revision: 'rel-cache' });
-      if (path.endsWith('/relationships')) return Response.json({ rows: [] });
-      return ancillary(path);
-    });
-    const controller = new RelationshipsController(client, () => 'UTC');
-    const predicate = { query: 'stale URL text', search_mode: 'hybrid' as const, filters: [
-      { dimension: 'source' as const, values: ['2'] }, { dimension: 'after' as const, values: [at] }
-    ] };
-    const view = render(RelationshipsWorkspace, { props: { client, controller, target, predicate, facet: target.startsWith('domain:') ? 'domains' : 'people', showAll: false, filesOpen: false,
-      onFacetChange: vi.fn(), onTargetChange: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn() } });
-    await controller.openTarget(target, predicate);
-    await screen.findByText('4 meetings');
-    expect(metrics.at(-1)).toEqual({ scope: { ...(target.startsWith('domain:') ? { domains: ['exact.example'] } : { participant_id: 7 }), source_ids: [2], after: at } });
-    view.unmount(); controller.destroy();
-  });
-
   it('uses separately loaded exact group authority across a workspace round-trip', async () => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];
@@ -112,7 +84,7 @@ describe('meeting panel surfaces', () => {
     view.unmount(); state.destroy();
   });
 
-  it.each(['table', 'groups'])('exposes meeting-filtered Everything %s with the complete predicate and loaded authority', async (presentation) => {
+  it.each(['table', 'groups'])('exposes meeting activity for %s with its complete predicate and loaded authority', async (presentation) => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];
     const client = createAPIClient(async (input) => {

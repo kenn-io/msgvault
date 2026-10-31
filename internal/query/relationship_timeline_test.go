@@ -368,6 +368,11 @@ func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
 	assert.Equal("message:"+strconv.FormatInt(emailID, 10), result.Rows[1].Key,
 		"a plain email from the counterpart keeps its current owner-independent scope")
 	assert.Equal("email", result.Rows[1].Kind)
+	activity, err := engine.Explore(context.Background(), ExploreRequest{SentOnly: true, PersonInteractionsOnly: true, Context: Context{ParticipantIDs: []int64{xID}}, Page: PageSpec{Limit: 10}})
+	require.NoError(err)
+	require.Len(activity.Rows, 2, "the replacement person timeline preserves direct-owner eligibility")
+	assert.Equal(attendedEventID, *activity.Rows[0].AnchorMessageID)
+	assert.Equal(emailID, *activity.Rows[1].AnchorMessageID)
 }
 
 // TestResolveCanonicalParticipant covers both the linked case (any member ID

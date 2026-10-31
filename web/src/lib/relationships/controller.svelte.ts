@@ -70,6 +70,7 @@ type ListPageRequest =
       kind: 'people' | 'domains';
       context: ExplorePredicate;
       query: string;
+      sort: IdentitySearchSort;
     };
 interface ListPageResponse {
   data?: {
@@ -106,6 +107,7 @@ const TIMELINE_RESTART_MESSAGE = 'Timeline restarted: the archive changed.';
 export class RelationshipsController {
   facet = $state<RelationshipFacet>('people');
   query = $state('');
+  sort = $state<IdentitySearchSort>({ ...DEFAULT_IDENTITY_SORT });
   showAll = $state(false);
   listRows = $state<ListRows>([]);
   listLoading = $state(false);
@@ -137,8 +139,11 @@ export class RelationshipsController {
   /** One-line notice set when a cursor_invalidated 409 silently restarted the
    * timeline from page 1; cleared on the next openTarget navigation. */
   timelineRestartNotice = $state<string | null>(null);
+  firstContactAt = $state('');
+  lastContactAt = $state('');
   canonicalID = $state<number | null>(null);
   identityRevision = $state<number | null>(null);
+  activityRevision = $state(0);
   relationshipCalendar = $state<RelationshipCalendar | null>(null);
   relationshipCalendarYear = $state(new Date().getUTCFullYear());
   relationshipCalendarCurrentYear = $state(this.relationshipCalendarYear);
@@ -167,6 +172,7 @@ export class RelationshipsController {
   private listSeenCursors = new Set<string>();
   private seenCursors = new Set<string>();
   private lastPredicate: ExplorePredicate | undefined;
+  private withTimeline = true;
   private lastListPredicate: ExplorePredicate | undefined;
   constructor(client: APIClient, timezone: () => string) {
     this.client = client;
@@ -188,13 +194,15 @@ export class RelationshipsController {
   }
   async reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
     const reloads: Promise<void>[] = [];
+    let reopened = false;
     if (
       context.target &&
       context.targetPredicate &&
       this.target === context.target &&
       this.lastPredicateFingerprint === context.targetPredicateFingerprint
     ) {
-      reloads.push(this.openTarget(context.target, context.targetPredicate));
+      reopened = true;
+      reloads.push(this.openTarget(context.target, context.targetPredicate, this.withTimeline));
     }
     if (
       context.listPredicate &&
@@ -207,6 +215,7 @@ export class RelationshipsController {
       reloads.push(this.loadList(context.listPredicate));
     }
     await Promise.all(reloads);
+    if (reopened) this.activityRevision += 1;
   }
   async loadList(predicate: ExplorePredicate): Promise<void> {
     this.clearCacheBuildRetry();
@@ -228,10 +237,10 @@ export class RelationshipsController {
     const query = this.query.trim();
     const request: ListPageRequest =
       this.facet === 'domains'
-        ? { kind: 'domains', context: contextPredicate(predicate), query }
-        : query === ''
+        ? { kind: 'domains', context: contextPredicate(predicate), query, sort: { ...this.sort } }
+        : query === '' && this.sort.field === 'activity_count'
           ? { kind: 'relationships', filters: predicate.filters, showAll: this.showAll }
-          : { kind: 'people', context: contextPredicate(predicate), query };
+          : { kind: 'people', context: contextPredicate(predicate), query, sort: { ...this.sort } };
     this.listPageRequest = request;
     const signature = canonicalFingerprint(request);
     if (signature !== this.listContextSignature) {
@@ -308,7 +317,7 @@ export class RelationshipsController {
     const body = {
       predicate: request.context,
       identity_query: request.query,
-      sort: DEFAULT_IDENTITY_SORT,
+      sort: request.sort,
       limit: SEARCH_LIST_LIMIT,
       ...page,
     };
@@ -365,8 +374,9 @@ export class RelationshipsController {
     }
     this.listError = errorMessage(error, res.status);
   }
-  async openTarget(target: string, predicate: ExplorePredicate): Promise<void> {
-    await this.openTargetWithCalendarState(target, predicate);
+  async openTarget(target: string, predicate: ExplorePredicate, withTimeline = true): Promise<void> {
+    this.withTimeline = withTimeline;
+    await this.openTargetWithCalendarState(target, predicate, this.target === target ? { year: this.relationshipCalendarYear } : {});
   }
   private async openTargetWithCalendarState(
     target: string,
@@ -378,19 +388,23 @@ export class RelationshipsController {
     const controller = new AbortController();
     this.detailAbort = controller;
     const generation = ++this.detailGeneration;
+    const sameTarget = this.target === target && this.detail !== null;
     this.target = target;
     this.lastPredicate = predicate;
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
-    this.detail = null;
+    if (!sameTarget) { this.detail = null; this.firstContactAt = ''; this.lastContactAt = ''; }
     this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineError = null;
     this.timelineRestartNotice = null;
     this.timelineLoadingMore = false;
-    this.canonicalID = null;
-    this.identityRevision = null;
-    this.resetRelationshipCalendar(restore.year, restore.restarted);
+    if (!sameTarget) {
+      this.canonicalID = null;
+      this.identityRevision = null;
+      this.resetRelationshipCalendar(restore.year, restore.restarted);
+    }
+    this.relationshipCalendarRestarted = restore.restarted ?? false;
     this.timelineDay = restore.day ?? null;
     this.seenCursors = new Set<string>();
     const clusterID = parseClusterID(target);
@@ -412,7 +426,7 @@ export class RelationshipsController {
             this.relationshipCalendarCurrentYear,
           );
           this.relationshipCalendarYear = clampNumber(
-            this.relationshipCalendarYear,
+            restore.year ?? personFirstYear({ ...personDetail, first_at: personDetail.last_at }, this.timezone(), this.relationshipCalendarCurrentYear),
             this.relationshipCalendarFirstYear,
             this.relationshipCalendarCurrentYear,
           );
@@ -447,8 +461,8 @@ export class RelationshipsController {
             signal,
           },
         ),
-        this.fetchClusterPage(id, this.timelineFilters(), generation, undefined,
-          AbortSignal.any([signal, this.timelineAbort.signal])),
+        this.withTimeline ? this.fetchClusterPage(id, this.timelineFilters(), generation, undefined,
+          AbortSignal.any([signal, this.timelineAbort.signal])) : undefined,
         hasActiveFilters(context)
           ? generatedGetParticipantContextSummary({ id: id }, context, {
               ...this.client,
@@ -458,8 +472,10 @@ export class RelationshipsController {
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return null;
       const base = personResponse.data;
+      if (base) { this.firstContactAt = base.first_at; this.lastContactAt = base.last_at; }
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
+      if (base && !this.withTimeline) this.canonicalID = base.cluster?.canonical_id ?? base.id;
       if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
       else if (summary) this.detail = summary;
       this.reportDetailFailures(personResponse, summaryResponse, generation, signal);
@@ -485,7 +501,7 @@ export class RelationshipsController {
             signal,
           },
         ),
-        this.fetchDomainPage(domain, context, generation, undefined, signal),
+        this.withTimeline ? this.fetchDomainPage(domain, context, generation, undefined, signal) : undefined,
         hasActiveFilters(context)
           ? generatedGetDomainContextSummary({ domain: domain }, context, {
               ...this.client,
@@ -495,6 +511,7 @@ export class RelationshipsController {
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return;
       const base = detailResponse.data;
+      if (base) { this.firstContactAt = base.first_at; this.lastContactAt = base.last_at; }
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(detailResponse, summaryResponse) ? { ...base, ...NO_DOMAIN_ACTIVITY } : undefined);
       if (base) this.detail = summary ? { ...base, ...summary } : base;
@@ -521,6 +538,8 @@ export class RelationshipsController {
     this.lastPredicate = undefined;
     this.lastPredicateFingerprint = null;
     this.detail = null;
+    this.firstContactAt = '';
+    this.lastContactAt = '';
     this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
@@ -825,9 +844,11 @@ export class RelationshipsController {
       // own revision moved.
       const changed = this.identityRevision === null || this.identityRevision !== data.identity_revision;
       const reloads: Promise<void>[] = [];
-      if (changed && this.target && this.lastPredicate) reloads.push(this.openTarget(this.target, this.lastPredicate));
+      const reopened = changed && this.target !== null && this.lastPredicate !== undefined;
+      if (reopened) reloads.push(this.openTarget(this.target!, this.lastPredicate!, this.withTimeline));
       if (this.lastListPredicate) reloads.push(this.loadList(this.lastListPredicate));
       await Promise.all(reloads);
+      if (reopened) this.activityRevision += 1;
       return { ok: true, identityRevision: data.identity_revision, cacheState: data.cache_state };
     }
     const message = errorMessage(error, res.status);
@@ -963,7 +984,7 @@ function clampNumber(value: number, minimum: number, maximum: number): number {
 // ANY surface — a predicate that still carries one (a deep link minted before
 // the workspace transition started clearing it) must not half-apply to the
 // domain/people search surfaces only.
-function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
+export function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
   const {
     cursor: _cursor,
     grouping: _grouping,

@@ -30,6 +30,8 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path.endsWith('/meetings/metrics')) return metricsResponse(request);
     if (path.endsWith('/meetings/actions')) return Response.json(meetingActions({ rows: [action], total_count: 1 }));
     if (path.endsWith('/messages/42')) return detailResponse();
+    if (path.endsWith('/participants/7')) return Response.json({ id: 7, display_label: 'Example Person', identifiers: [], first_at: detail.sent_at, last_at: detail.sent_at, source_counts: [], activity_count: 1, file_count: 0 });
+    if (path.endsWith('/participants/7/timeline')) return Response.json({ rows: [{ key: 'message:42', anchor_message_id: 42, conversation_id: 8, kind: 'email', title: detail.subject, occurred_at: detail.sent_at, message_type: 'email', conversation_type: 'email', source_id: 3, participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, match: {} }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
     if (path.endsWith('/integrations/tasks/status')) return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
     if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 1, display_name: 'Example Person', participant_ids: [7], vcard_uid: 'person-7', created_at: '', updated_at: '' });
     if (path === '/api/v1/people/directory') return Response.json({ people: [] });

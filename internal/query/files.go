@@ -178,7 +178,7 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 	var queryText string
 	if request.Person != nil {
 		personCTEs, personArgs := personFileMatchCTEs(*request.Person)
-		if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(explore) {
+		if !e.exploreFastPathDisabled {
 			queryText = buildPersonFileSearchFastSQL(personCTEs, exploreConditions, fileConditions, order)
 		} else {
 			queryText = personFileSearchSQL(
@@ -187,7 +187,7 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 		}
 		args = append(append(personArgs, exploreArgs...), fileArgs...)
 		args = append(args, limit, request.Page.Offset)
-	} else if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(explore) {
+	} else if !e.exploreFastPathDisabled {
 		queryText = buildFileSearchFastSQL(exploreConditions, fileConditions, order)
 		args = append(args, exploreArgs...) // total-count scan
 		args = append(args, fileArgs...)
@@ -610,6 +610,8 @@ func fileGroupExpressions(
 		return simple("strftime(occurred_at, '%Y')"), nil
 	case timeGranularityMonth:
 		return simple("strftime(occurred_at, '%Y-%m')"), nil
+	case timeGranularityDay:
+		return simple("strftime(occurred_at, '%Y-%m-%d')"), nil
 	default:
 		return groupExpressions{}, fmt.Errorf("%w: unknown file group dimension %q", ErrInvalidExploreRequest, dimension)
 	}

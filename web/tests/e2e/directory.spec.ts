@@ -111,7 +111,7 @@ test('Person page opens the relationship and the facts review for the same perso
   const detail = page.getByRole('complementary', { name: 'Person detail' });
   await expect(detail.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await detail.getByRole('button', { name: 'Open relationship' }).click();
-  await expect(page.getByRole('main', { name: 'Relationships' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'People' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   expect(parseExploreURLState(new URL(page.url()).search).relationshipTarget).toBe('cluster:12');
 
@@ -175,7 +175,8 @@ test('Directory list stays in its flexible row when a promotion alert appears', 
   await installTallDirectory(page);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships' }))}`);
-  await page.getByRole('grid', { name: 'Relationship results' }).getByText('Archive Person').click();
+  await page.getByRole('grid', { name: 'People results' }).getByText('Archive Person').click();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
   await page.getByRole('button', { name: 'Open in Directory' }).click();
   const directory = page.getByRole('main', { name: 'Directory' });
   await expect(directory.getByRole('button', { name: 'Promote to person' })).toBeVisible();
@@ -330,9 +331,10 @@ test('Relationships supplies its selected participant to Directory promotion and
   await installMixedArchive(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships' }))}`);
 
-  const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
+  const relationshipList = page.getByRole('grid', { name: 'People results' });
   await relationshipList.getByText('Archive Person').click();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
   await page.getByRole('button', { name: 'Open in Directory' }).click();
   await expect(page.getByRole('main', { name: 'Directory' })).toBeVisible();
 

@@ -205,7 +205,7 @@ Each expanded message lists its files, recordings, linked tasks, and Kata issues
 Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
 Select meeting rows to export their context as JSON or Markdown, with transcripts
 included only when requested. Participant/domain reading panes, Directory, and
-Relationships show meeting metrics and recorded actions for their current scope.
+People show meeting metrics and recorded actions for their current scope.
 **Open archived meeting** opens the source evidence; Back restores the originating
 view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
 for selection limits, source coverage, unknown duration, and action filters.
@@ -269,20 +269,14 @@ separate choices.
 People combines identifiers backed by explicit archive identity evidence; it
 does not merge records merely because their display names match. Select a
 person to inspect contextual activity across email, chat, calendar events, and
-meeting notes, plus the files associated with that person. The active search
-and filters continue to scope both the timeline and file table.
+meeting notes, plus the files associated with that person. Message filters continue to scope both Messages and Files.
 
-Relationships lists People or Domains; switch with the facet control, and use
-the filter field to narrow the list. For a selected person, **Messages** and
-**Files** switch the view. **Open in Directory** opens the person's durable
-profile, or starts promotion when none exists. **Same person…** links
-identities that belong together.
+People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show curated Directory profiles, including people with no archived messages. Select **Same person** after checking multiple observed people to link their identities.
 
-Select a day in a person's relationship calendar to show that day's activity
-in the message timeline. Dates use your browser's local time zone. Select the
-same day again or **Clear date** to restore the previous date range. Other
-filters stay active; switching people, calendar years, or to **Files** clears
-the day selection.
+A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details keeps identity linking, attributes, and **Open in Directory** for the full profile. Directory and Reviews are also available in the People header.
+For a saved profile, Files includes all bound identities; Messages and the calendar open its first observed identity cluster, as **Open relationship** does in Directory.
+
+The Activity calendar opens on the latest active year, with the first month of contact beside its title. Select a day to narrow Messages and its conversation reader. Details keeps that day selected; select it again or choose **Clear date** to restore the shared date filters. Editing a message filter also clears the day without copying its bounds to Files. People and domains use your browser's local time zone. Domain days count individual sent messages, including chats that span several days. Calendars summarize the whole person or domain; message filters narrow the table and Files. Switching people, years, or to Files clears the day selection. Messages groups chats by conversation; a selected day limits the opened conversation to that day.
 
 People in this workspace are observed identity clusters. Source identities
 that mean “me,” explicit durable profile promotion, display-name overrides, and

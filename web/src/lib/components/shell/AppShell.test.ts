@@ -16,7 +16,7 @@ import SettingsWorkspace from '../settings/SettingsWorkspace.svelte';
 import type { CardDAVSettingsRequest } from '../../carddav/navigation';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
-import { SIDEBAR_COLLAPSED_KEY } from './navigation';
+import { relationshipDestination, SIDEBAR_COLLAPSED_KEY } from './navigation';
 import { view } from './fixtures.test-support';
 import canonical from '../../../../tests/e2e/fixtures/operations-public.json';
 import { jobRun, jobLane, sourceStatus } from '../../jobs/fixtures.test-support';
@@ -533,7 +533,7 @@ describe('AppShell', () => {
     });
 
     it.each([
-      ['relationships', 'Relationships'], ['directory', 'Directory'], ['directory_review', 'Reviews'],
+      ['relationships', 'People'], ['directory', 'Directory'], ['directory_review', 'Reviews'],
       ['everything', 'Messages'], ['files', 'Files'],
       ['sources', 'Sources'], ['deletions', 'Staged deletions']
     ])('shows one visible page title in %s', async (workspace, title) => {
@@ -1583,7 +1583,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     expect(await screen.findByRole('heading', { name: 'Alice Example' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Files 1' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     expect(state.current.relationshipFiles).toBe(true);
     await fireEvent.click((await screen.findByText('Bob Example')).closest('[role="row"]')!);
     await waitFor(() => expect(state.current).toMatchObject({
@@ -1597,7 +1597,7 @@ describe('AppShell', () => {
       relationshipTarget: 'cluster:1', relationshipFiles: true
     }));
     expect(await screen.findByRole('heading', { name: 'Alice Example' })).toBeDefined();
-    expect(screen.getByRole('radio', { name: 'Files 1' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(screen.getByRole('radiogroup', { name: 'Person tabs' })).getByRole('radio', { name: 'Files' }).getAttribute('aria-checked')).toBe('true');
 
     rendered.unmount();
     state.destroy();
@@ -1614,15 +1614,15 @@ describe('AppShell', () => {
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-legacy'
       });
-      if (path === '/api/v1/relationships/42/timeline') return Response.json({
-        canonical_id: 42, identity_revision: 1, cache_revision: 'cache-legacy', rows: [], total_count: 0
+      if (path === '/api/v1/participants/42/timeline') return Response.json({
+        cache_revision: 'cache-legacy', rows: [], total_count: 0, search_provenance: {}
       });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
     expect(state.current.workspace).toBe('relationships');
     expect(state.current.relationshipFacet).toBe('people');
     expect(state.current.relationshipTarget).toBe('cluster:42');
@@ -1849,8 +1849,8 @@ describe('AppShell', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    expect(await screen.findByText('Relationship ranking needs the analytical cache/engine')).toBeDefined();
-    expect(screen.getByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(await screen.findByText('The people list needs the analytics cache')).toBeDefined();
+    expect(screen.getByRole('main', { name: 'People' })).toBeDefined();
     expect(state.current.workspace).toBe('relationships');
     expect(screen.queryByRole('main', { name: 'Messages' })).toBeNull();
 
@@ -1869,8 +1869,8 @@ describe('AppShell', () => {
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
-      if (path === '/api/v1/relationships/1/timeline') return Response.json({
-        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+      if (path === '/api/v1/participants/1/timeline') return Response.json({
+        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
       });
       if (path === '/api/v1/relationships') return Response.json({ rows: [] });
       return Response.json(exploreResponse());
@@ -1908,8 +1908,8 @@ describe('AppShell', () => {
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
-      if (path === '/api/v1/relationships/11/timeline') return Response.json({
-        canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+      if (path === '/api/v1/participants/11/timeline') return Response.json({
+        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
       });
       if (path === '/api/v1/people/directory') return Response.json({
         people: promoted ? [{
@@ -1943,6 +1943,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
     expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Promote to person' }));
@@ -1979,8 +1980,8 @@ describe('AppShell', () => {
           activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
           last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
         });
-        if (path === '/api/v1/relationships/11/timeline') return Response.json({
-          canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+        if (path === '/api/v1/participants/11/timeline') return Response.json({
+          cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
         });
         if (path === '/api/v1/people/directory') return Response.json({ people: [] });
         return Response.json(exploreResponse());
@@ -1989,6 +1990,7 @@ describe('AppShell', () => {
       const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
       expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
+      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
       expect(await screen.findByRole('button', { name: 'Promote to person' })).toBeDefined();
 
@@ -2028,8 +2030,8 @@ describe('AppShell', () => {
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
-      if (path === '/api/v1/relationships/11/timeline') return Response.json({
-        canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+      if (path === '/api/v1/participants/11/timeline') return Response.json({
+        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
       });
       if (path === '/api/v1/people/directory') return Response.json({ people: [] });
       if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
@@ -2041,6 +2043,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
 
@@ -2083,9 +2086,8 @@ describe('AppShell', () => {
         const id = Number(path.split('/').at(-1));
         return Response.json({ id, display_label: `Candidate ${id}`, partial_label: false, identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z', last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel' });
       }
-      if (path === '/api/v1/relationships/11/timeline' || path === '/api/v1/relationships/12/timeline') {
-        const canonicalID = Number(path.split('/')[3]);
-        return Response.json({ canonical_id: canonicalID, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0 });
+      if (path === '/api/v1/participants/11/timeline' || path === '/api/v1/participants/12/timeline') {
+        return Response.json({ cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {} });
       }
       if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
         error: 'person_binding_conflict', message: 'This identity is already bound to another person'
@@ -2096,14 +2098,16 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     expect(await screen.findByRole('heading', { name: 'Prior Directory Person' })).toBeDefined();
-    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:11' });
+    state.commitNavigation(relationshipDestination(11));
     expect(await screen.findByRole('heading', { name: 'Candidate 11' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
     expect((await screen.findByRole('alert')).textContent).toContain('already bound to another person');
 
-    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:12' });
+    state.commitNavigation(relationshipDestination(12));
     expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
 
     expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
@@ -2123,15 +2127,16 @@ describe('AppShell', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      const meetingResponse = meetingFixtureResponse(path); if (meetingResponse) return meetingResponse;
       if (path === '/api/v1/participants/1') return Response.json({
         id: 1, display_label: 'Alice Example', partial_label: false, identifiers: [],
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
-      if (path === '/api/v1/relationships/1/timeline') {
+      if (path === '/api/v1/participants/1/timeline') {
         timelineBodies.push(await request.clone().json());
         return Response.json({
-          canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+          cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
         });
       }
       if (path === '/api/v1/relationships') return Response.json({ rows: [] });
@@ -2174,8 +2179,8 @@ describe('AppShell', () => {
         activity_count: 1, file_count: 1, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
-      if (path === '/api/v1/relationships/1/timeline') return Response.json({
-        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+      if (path === '/api/v1/participants/1/timeline') return Response.json({
+        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
       });
       if (path === '/api/v1/participants/1/files/search') return Response.json({
         files: [fileRow], total_count: 1, cache_revision: 'cache-rel', search_provenance: {}
@@ -2210,7 +2215,7 @@ describe('AppShell', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    await screen.findByRole('main', { name: 'Relationships' });
+    await screen.findByRole('main', { name: 'People' });
     expect(state.current.workspace).toBe('relationships');
 
     // A groupingChain left behind by a prior Everything session: commitWorkspace
@@ -2218,7 +2223,7 @@ describe('AppShell', () => {
     // from the hub must not silently pop it.
     state.replaceTransient({ groupingChain: ['source'], selectedRow: 'message:1' });
 
-    const grid = screen.getByRole('grid', { name: 'Relationship results' });
+    const grid = screen.getByRole('grid', { name: 'People results' });
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'Escape' });
 

@@ -9,8 +9,10 @@
   } from '../../relationships/models';
   import { dayTooltipText } from '../../relationships/calendar-tooltip';
 
+  type CalendarData = Pick<RelationshipCalendarModel, 'year' | 'days'> & Partial<RelationshipCalendarModel>;
+
   interface Props {
-    calendar: RelationshipCalendarModel | null;
+    calendar: CalendarData | null;
     loading: boolean;
     error: string | null;
     year?: number;
@@ -19,6 +21,12 @@
     onYearChange: (year: number) => void;
     selectedDate?: string | null;
     onDateChange: (date: string | null) => void;
+    /** When the relationship began, as "Jan 2022", shown beside the title. */
+    since?: string;
+    /** The card's heading. */
+    title?: string;
+    /** Shows the current and peak relationship scores, which only people have. */
+    showTemperature?: boolean;
   }
 
   interface CalendarCell {
@@ -42,7 +50,10 @@
     currentYear,
     onYearChange,
     selectedDate = null,
-    onDateChange
+    onDateChange,
+    since = undefined,
+    title = 'Relationship',
+    showTemperature = true
   }: Props = $props();
 
   const selectedYear = $derived(calendar?.year ?? year);
@@ -67,7 +78,7 @@
   const levels = ['none', 'first-quartile', 'second-quartile', 'third-quartile', 'fourth-quartile'];
 
   function buildCalendarPanel(
-    response: RelationshipCalendarModel,
+    response: CalendarData,
     startMonth: number,
     endMonth: number,
     key: string
@@ -240,7 +251,7 @@
 <Card padding="sm">
 <section class="relationship-calendar" aria-label="Relationship activity calendar" bind:this={root}>
   <div class="calendar-heading">
-    <h2>Relationship</h2>
+    <h2>{title}{#if since}{' '}<span class="since">since {since}</span>{/if}</h2>
     <div class="year-navigation">
       {#if multiYear}
         <IconButton
@@ -296,10 +307,12 @@
         {#each levels as level}<span class="heat-cell level-{level}" aria-hidden="true"></span>{/each}
         <span>More</span>
       </div>
-      <div class="temperature-summary">
-        <span>Current {calendar.current.temperature}/100</span>
-        <span>Peak {calendar.peak_temperature}/100 - {calendar.peak_year}</span>
-      </div>
+      {#if showTemperature && calendar.current}
+        <div class="temperature-summary">
+          <span>Current {calendar.current.temperature}/100</span>
+          <span>Peak {calendar.peak_temperature}/100 - {calendar.peak_year}</span>
+        </div>
+      {/if}
     </div>
   {:else}
     <p class="calendar-state">Relationship activity has not loaded.</p>
@@ -329,6 +342,12 @@
     margin: 0;
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
+  }
+
+  .since {
+    margin-left: var(--space-3);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-normal);
   }
 
   .year-navigation {

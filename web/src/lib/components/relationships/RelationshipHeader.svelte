@@ -22,6 +22,8 @@
     detail: PersonSummary | DomainSummary | null;
     loading?: boolean;
     filesOpen: boolean;
+    showTabs?: boolean;
+    showIdentity?: boolean;
     missing?: boolean;
     onFilesToggle: (value: boolean) => void;
     client: APIClient;
@@ -39,6 +41,8 @@
     detail,
     loading = false,
     filesOpen,
+    showTabs = true,
+    showIdentity = true,
     missing = false,
     onFilesToggle,
     client,
@@ -309,13 +313,13 @@
     </p>
   {:else}
     <div class="title-row">
-      <IdentityAvatar
+      {#if showIdentity}<IdentityAvatar
         label={displayLabel(detail)}
         seed={isPersonDetail(detail) ? `cluster:${detail.id}` : `domain:${detail.domain}`}
         shape={isPersonDetail(detail) ? 'person' : 'domain'}
         size={36}
       />
-      <h2>{displayLabel(detail)}</h2>
+      <h2>{displayLabel(detail)}</h2>{/if}
       {#if isPersonDetail(detail)}
         <div class="actions" role="group" aria-label="Person actions">
           {#if onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson)}
@@ -342,7 +346,7 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    <div class="view-row">
+    {#if showTabs}<div class="view-row">
       <SegmentedControl
         ariaLabel="Relationship view"
         value={filesOpen ? 'files' : 'messages'}
@@ -352,7 +356,7 @@
         ]}
         onchange={(value) => onFilesToggle(value === 'files')}
       />
-    </div>
+    </div>{/if}
     <p class="counts">
       {detail.activity_count.toLocaleString()} items
       {#if detail.activity_count > 0}

@@ -125,8 +125,8 @@ for exact settings and routes.
 ## Promote a durable person
 
 Directory starts empty until you save profiles or import contacts. In
-**Relationships**, select a person, choose **Open in Directory**, then
-**Promote to person**. This creates a saved profile from the contact already
+**People**, select a person, open **Details**, choose **Open in Directory**,
+then **Promote to person**. This creates a saved profile from the contact already
 observed in your archive. The profile starts with the first nonblank observed
 name in the linked cluster, ordered by participant ID. A contact without an
 observed name keeps the `Person N` fallback.

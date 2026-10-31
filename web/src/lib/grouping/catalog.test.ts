@@ -26,7 +26,7 @@ describe('universal grouping catalog', () => {
       'conversation'
     ]);
     expect(new Set(groupingOptions().map((entry) => entry.value))).toEqual(
-      new Set(Object.values(ExploreGroupDimension))
+      new Set(Object.values(ExploreGroupDimension).filter((dimension) => dimension !== 'day'))
     );
     expect(groupingByDimension('participant')).toMatchObject({
       label: 'People',
@@ -52,6 +52,7 @@ describe('universal grouping catalog', () => {
       expect.objectContaining({ value: 'unavailable:attachment_facts', disabled: true })
     ]));
     expect(isGroupingDimension('unknown')).toBe(false);
+    expect(isGroupingDimension('day')).toBe(false);
   });
 
   it('validates URL and Saved View grouping without accepting unknown dimensions', () => {
